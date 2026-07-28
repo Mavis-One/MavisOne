@@ -2,7 +2,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+const BASE_PORT = Number(process.env.PORT) || 3000;
+const MAX_PORT_RETRIES = 10;
 const DATA_FILE = path.join(__dirname, 'data', 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
@@ -657,6 +659,11 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (pathname === '/health') {
+    sendJson(res, { ok: true, uptime: Math.round(process.uptime()) });
+    return;
+  }
+
   if (pathname === '/' || pathname === '/index.html') {
     serveStatic(res, path.join(PUBLIC_DIR, 'index.html'));
     return;
@@ -675,6 +682,25 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, { error: 'Não encontrado' }, 404);
 });
 
-server.listen(PORT, () => {
-  console.log(`Servidor iniciado em http://localhost:${PORT}`);
-});
+function startServer(port, retriesLeft) {
+  server.listen(port, HOST, () => {
+    console.log(`Servidor iniciado em http://${HOST}:${port}`);
+  });
+
+  server.once('error', (error) => {
+    const isPortInUse = error && error.code === 'EADDRINUSE';
+    const canRetry = !process.env.PORT && retriesLeft > 0;
+
+    if (isPortInUse && canRetry) {
+      const nextPort = port + 1;
+      console.warn(`Porta ${port} em uso, tentando ${nextPort}...`);
+      startServer(nextPort, retriesLeft - 1);
+      return;
+    }
+
+    console.error('Falha ao iniciar servidor:', error.message || error);
+    process.exit(1);
+  });
+}
+
+startServer(BASE_PORT, MAX_PORT_RETRIES);
