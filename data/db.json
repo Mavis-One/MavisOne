@@ -1,0 +1,54 @@
+{
+  "users": [
+    {
+      "id": "user-admin",
+      "username": "admin",
+      "password": "admin123",
+      "name": "Administrador",
+      "role": "admin",
+      "allowedModules": [
+        "dashboard",
+        "sales",
+        "purchases",
+        "stock",
+        "finance",
+        "settings",
+        "cadastros"
+      ]
+    }
+  ],
+  "products": [
+    {
+      "id": "prod-1",
+      "name": "Produto Exemplo",
+      "sku": "SKU-001",
+      "stockQuantity": 20,
+      "costPrice": 50,
+      "salePrice": 75
+    }
+  ],
+  "sales": [],
+  "purchases": [],
+  "finance": [],
+  "settings": {
+    "companyName": "InfinityERP",
+    "currency": "BRL",
+    "taxRate": 0
+  },
+  "orders": [
+    {
+      "id": "ord-1785249082327-bv8h12",
+      "type": "order",
+      "customer": "Cliente Teste",
+      "date": "2026-08-01",
+      "amount": 1500,
+      "status": "pendente",
+      "note": "teste"
+    }
+  ],
+  "quotes": [],
+  "nfes": [],
+  "cadastros": [],
+  "importLogs": [],
+  "auditLogs": []
+}
