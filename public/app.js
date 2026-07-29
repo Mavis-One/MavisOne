@@ -1,5 +1,13 @@
 const app = document.getElementById('app');
-const state = { user: null, activeModule: 'dashboard', activeSub: null, selectedModule: null, cadastroDraft: { people: {}, cnpjs: {} } };
+const state = {
+  user: null,
+  activeModule: 'dashboard',
+  activeSub: null,
+  selectedModule: null,
+  cadastroDraft: { people: {}, cnpjs: {} },
+  moduleRouteHistory: {},
+  isNavigatingBack: false
+};
 const LAST_ROUTE_KEY = 'mavisone:last-route';
 
 function persistLastRoute() {
@@ -28,6 +36,75 @@ function hasModuleAccess(moduleName) {
   if (!state.user) return false;
   if (moduleName === 'dashboard') return true;
   return Array.isArray(state.user.allowedModules) && state.user.allowedModules.includes(moduleName);
+}
+
+function getRouteKey(moduleName, subKey) {
+  return `${String(moduleName || 'dashboard')}::${String(subKey || '')}`;
+}
+
+function parseRouteKey(key) {
+  const [moduleName, subKey] = String(key || 'dashboard::').split('::');
+  return {
+    module: moduleName || 'dashboard',
+    sub: subKey || null
+  };
+}
+
+function ensureModuleRouteHistory(moduleName) {
+  const moduleKey = String(moduleName || 'dashboard');
+  if (!state.moduleRouteHistory[moduleKey]) {
+    state.moduleRouteHistory[moduleKey] = {
+      stack: [],
+      currentRouteKey: ''
+    };
+  }
+  return state.moduleRouteHistory[moduleKey];
+}
+
+function trackRouteChange(moduleName, subKey) {
+  const moduleHistory = ensureModuleRouteHistory(moduleName);
+  const nextKey = getRouteKey(moduleName, subKey);
+
+  if (!moduleHistory.currentRouteKey) {
+    moduleHistory.currentRouteKey = nextKey;
+    state.isNavigatingBack = false;
+    return;
+  }
+
+  if (moduleHistory.currentRouteKey === nextKey) {
+    state.isNavigatingBack = false;
+    return;
+  }
+
+  if (!state.isNavigatingBack) {
+    moduleHistory.stack.push(parseRouteKey(moduleHistory.currentRouteKey));
+    if (moduleHistory.stack.length > 60) {
+      moduleHistory.stack.shift();
+    }
+  }
+
+  moduleHistory.currentRouteKey = nextKey;
+  state.isNavigatingBack = false;
+}
+
+function canGoBack() {
+  const moduleHistory = state.moduleRouteHistory[state.activeModule];
+  return Boolean(moduleHistory && moduleHistory.stack.length > 0);
+}
+
+function goBackToPreviousRoute() {
+  const moduleHistory = state.moduleRouteHistory[state.activeModule];
+  if (!moduleHistory || !moduleHistory.stack.length) return;
+
+  const previousRoute = moduleHistory.stack.pop();
+  if (!previousRoute) return;
+
+  state.isNavigatingBack = true;
+  state.activeModule = previousRoute.module;
+  state.activeSub = previousRoute.sub;
+  state.selectedModule = getSecondarySidebarConfig(previousRoute.module) ? previousRoute.module : null;
+  renderApp();
+  loadModule(previousRoute.module);
 }
 
 function getSecondarySidebarConfig(moduleName) {
@@ -231,6 +308,12 @@ function renderApp() {
     ? 'Edição'
     : (state.activeModule === 'cadastros' && activeSubKey === 'register')
       ? 'Cadastro'
+    : (state.activeModule === 'cadastros' && activeSubKey === 'deposits')
+      ? 'Depósitos'
+    : (state.activeModule === 'cadastros' && activeSubKey === 'deposits_register')
+      ? 'Depósitos > Cadastro'
+    : (state.activeModule === 'cadastros' && activeSubKey === 'deposits_edit')
+      ? 'Depósitos > Edição'
     : (state.activeModule === 'cadastros' && activeSubKey === 'list')
       ? ''
     : ((moduleSubItems[state.activeModule] || []).find((item) => item.key === activeSubKey)?.label || '');
@@ -265,7 +348,14 @@ function renderApp() {
       <aside class="secondary-sidebar ${showSecondarySidebar ? 'visible' : ''}"></aside>
       <main class="content">
         <div class="topbar">
-          <h1>${moduleLabels[state.activeModule]}${activeSubLabel ? ' > ' + activeSubLabel : ''}</h1>
+          <div class="topbar-title-wrap">
+            <button class="icon-btn back-btn" id="backBtn" title="Voltar para a tela anterior" aria-label="Voltar para a tela anterior" ${canGoBack() ? '' : 'disabled'}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 18l-6-6 6-6"></path>
+              </svg>
+            </button>
+            <h1>${moduleLabels[state.activeModule]}${activeSubLabel ? ' > ' + activeSubLabel : ''}</h1>
+          </div>
           <div class="topbar-actions">
             ${hasModuleAccess('settings') ? `
             <button class="icon-btn settings-btn" id="settingsBtn" title="Configurações">
@@ -287,6 +377,10 @@ function renderApp() {
   `;
 
   renderSecondarySidebar();
+
+  document.getElementById('backBtn')?.addEventListener('click', () => {
+    goBackToPreviousRoute();
+  });
 
   // main nav click handlers
   document.querySelectorAll('.nav-item').forEach((button) => {
@@ -331,6 +425,8 @@ function renderApp() {
     localStorage.removeItem(LAST_ROUTE_KEY);
     state.user = null;
     state.selectedModule = null;
+    state.moduleRouteHistory = {};
+    state.isNavigatingBack = false;
     renderAuth();
   });
 }
@@ -375,7 +471,8 @@ const moduleSubItems = {
   finance: [ { key: 'payables', label: 'Contas a pagar' }, { key: 'receivables', label: 'Contas a receber' } ],
   settings: [ { key: 'users', label: 'Usuários' }, { key: 'company', label: 'Empresa' } ],
   cadastros: [
-    { key: 'list', label: 'Cadastros' }
+    { key: 'list', label: 'Cadastros' },
+    { key: 'deposits', label: 'Depositos' }
   ]
 };
 
@@ -493,6 +590,7 @@ async function loadModule(moduleName) {
     return;
   }
 
+  trackRouteChange(moduleName, state.activeSub);
   state.activeModule = moduleName;
   persistLastRoute();
   const content = document.getElementById('moduleContent');
@@ -965,11 +1063,15 @@ async function loadModule(moduleName) {
         api('/api/cadastros/cnpjs')
       ]);
       const rawSub = state.activeSub || 'list';
-      const sub = rawSub === 'edit' ? 'edit' : (rawSub === 'register' ? 'register' : 'list');
+      const sub = ['edit', 'register', 'list', 'deposits', 'deposits_register', 'deposits_edit'].includes(rawSub)
+        ? rawSub
+        : 'list';
       const people = Array.isArray(peopleResponse.people) ? peopleResponse.people : [];
       const cnpjs = Array.isArray(cnpjsResponse.cnpjs) ? cnpjsResponse.cnpjs : [];
+      const deposits = Array.isArray(state.cadastroDraft.deposits) ? state.cadastroDraft.deposits : [];
       const peopleDraft = state.cadastroDraft.people || {};
       const cnpjDraft = state.cadastroDraft.cnpjs || {};
+      const depositDraft = state.cadastroDraft.depositForm || {};
       const listFilters = {
         show: Boolean(state.cadastroDraft.listFilters?.show),
         type: state.cadastroDraft.listFilters?.type || 'all',
@@ -1000,6 +1102,15 @@ async function loadModule(moduleName) {
         onlyInactive: state.cadastroDraft.listFilters?.onlyInactive ?? false,
         dateStart: state.cadastroDraft.listFilters?.dateStart || '',
         dateEnd: state.cadastroDraft.listFilters?.dateEnd || ''
+      };
+      const depositsFilters = {
+        show: Boolean(state.cadastroDraft.depositsFilters?.show),
+        query: state.cadastroDraft.depositsFilters?.query || '',
+        code: state.cadastroDraft.depositsFilters?.code || '',
+        city: state.cadastroDraft.depositsFilters?.city || '',
+        state: state.cadastroDraft.depositsFilters?.state || '',
+        manager: state.cadastroDraft.depositsFilters?.manager || '',
+        status: state.cadastroDraft.depositsFilters?.status || 'all'
       };
 
       const formatDate = (value) => {
@@ -1396,6 +1507,160 @@ async function loadModule(moduleName) {
 
       const renderUnifiedEdit = () => renderPeopleRegister('edit');
 
+      const renderDepositsRegister = (mode = 'register') => {
+        const isEditMode = mode === 'edit';
+        return `
+        <div class="panel cadastros-shell">
+          <div class="cadastro-page-head">
+            <div>
+              <h3>${isEditMode ? 'Edição de depósito' : 'Cadastro de depósito'}</h3>
+              <p class="muted">${isEditMode ? 'Atualize os dados de armazenagem.' : 'Preencha os dados do novo depósito.'}</p>
+            </div>
+            <div class="cadastro-page-chip">${isEditMode ? 'Edição' : 'Novo'}</div>
+          </div>
+
+          <form id="depositRegisterForm" class="cadastro-form">
+            ${section('Dados do deposito', `
+              <div class="cadastro-grid cadastro-grid-3">
+                ${field('Nome do deposito', 'name', depositDraft.name || '', 'required')}
+                ${field('Codigo interno', 'code', depositDraft.code || '')}
+                ${selectField('Status', 'status', depositDraft.status || 'ativo', [{ value: 'ativo', label: 'Ativo' }, { value: 'inativo', label: 'Inativo' }])}
+              </div>
+              <div class="cadastro-grid cadastro-grid-3">
+                ${field('Endereco', 'address', depositDraft.address || '')}
+                ${field('Cidade', 'city', depositDraft.city || '')}
+                ${field('UF', 'state', depositDraft.state || '')}
+              </div>
+              <div class="cadastro-grid cadastro-grid-2">
+                ${field('Responsavel', 'manager', depositDraft.manager || '')}
+                ${field('Observacoes', 'notes', depositDraft.notes || '')}
+              </div>
+              ${depositDraft.error ? `<p class="form-error">${escapeHtml(depositDraft.error)}</p>` : ''}
+            `)}
+
+            <div class="cadastro-actions">
+              <button type="button" class="secondary" id="depositCancelBtn">Cancelar</button>
+              <button type="submit">${isEditMode ? 'Salvar alterações' : 'Salvar deposito'}</button>
+            </div>
+          </form>
+        </div>
+      `;
+      };
+
+      const renderDepositsList = () => {
+        const normalize = (value) => String(value || '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLocaleLowerCase('pt-BR')
+          .trim();
+
+        const includesText = (fieldValue, filterValue) => normalize(fieldValue).includes(normalize(filterValue).trim());
+
+        const filteredDeposits = deposits
+          .filter((deposit) => {
+            if (depositsFilters.status !== 'all' && normalize(deposit.status) !== normalize(depositsFilters.status)) return false;
+            if (depositsFilters.code && !includesText(deposit.code, depositsFilters.code)) return false;
+            if (depositsFilters.city && !includesText(deposit.city, depositsFilters.city)) return false;
+            if (depositsFilters.state && !includesText(deposit.state, depositsFilters.state)) return false;
+            if (depositsFilters.manager && !includesText(deposit.manager, depositsFilters.manager)) return false;
+
+            const query = normalize(depositsFilters.query);
+            if (!query) return true;
+            return [deposit.name, deposit.code, deposit.address, deposit.city, deposit.state, deposit.manager]
+              .some((fieldValue) => normalize(fieldValue).includes(query));
+          })
+          .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+        return `
+        <div class="panel cadastros-shell">
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Depositos</h3>
+              <p class="muted">Histórico e gerenciamento de depósitos.</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" class="success" id="cadastroDepositNewBtn">+ Novo deposito</button>
+              <button type="button" class="secondary" id="cadastroDepositFilterToggleBtn">Filtros</button>
+            </div>
+          </div>
+
+          ${depositsFilters.show ? `
+            <form id="depositFilterForm" class="cadastro-filter-panel">
+              <div class="cadastro-filter-grid-5">
+                <label class="cadastro-field">
+                  <span>Nome do deposito</span>
+                  <input name="query" value="${escapeHtml(depositsFilters.query)}" />
+                </label>
+                <label class="cadastro-field">
+                  <span>Codigo interno</span>
+                  <input name="code" value="${escapeHtml(depositsFilters.code)}" />
+                </label>
+                <label class="cadastro-field">
+                  <span>Cidade</span>
+                  <input name="city" value="${escapeHtml(depositsFilters.city)}" />
+                </label>
+                <label class="cadastro-field">
+                  <span>UF</span>
+                  <input name="state" value="${escapeHtml(depositsFilters.state)}" />
+                </label>
+                <label class="cadastro-field">
+                  <span>Responsavel</span>
+                  <input name="manager" value="${escapeHtml(depositsFilters.manager)}" />
+                </label>
+                <label class="cadastro-field">
+                  <span>Status</span>
+                  <select name="status">
+                    <option value="all" ${depositsFilters.status === 'all' ? 'selected' : ''}>Todos</option>
+                    <option value="ativo" ${depositsFilters.status === 'ativo' ? 'selected' : ''}>Ativo</option>
+                    <option value="inativo" ${depositsFilters.status === 'inativo' ? 'selected' : ''}>Inativo</option>
+                  </select>
+                </label>
+              </div>
+              <div class="cadastro-filter-actions">
+                <button type="submit">Buscar</button>
+                <button type="button" class="secondary" id="depositFilterClearBtn">Limpar filtros</button>
+              </div>
+            </form>
+          ` : ''}
+
+          <section class="cadastro-section">
+            <div class="cadastro-section-header">
+              <div>
+                <h4>Depositos cadastrados</h4>
+                <p>Registros salvos nesta sessao.</p>
+              </div>
+            </div>
+            <div class="cadastro-section-body">
+              ${filteredDeposits.length ? `
+                <table class="table table-actions">
+                  <thead><tr><th>Nome</th><th>Codigo</th><th>Cidade/UF</th><th>Responsavel</th><th>Status</th><th>Acoes</th></tr></thead>
+                  <tbody>
+                    ${filteredDeposits.map((deposit) => `
+                      <tr>
+                        <td>${escapeHtml(deposit.name || '-')}</td>
+                        <td>${escapeHtml(deposit.code || '-')}</td>
+                        <td>${escapeHtml([deposit.city, deposit.state].filter(Boolean).join('/') || '-')}</td>
+                        <td>${escapeHtml(deposit.manager || '-')}</td>
+                        <td>${escapeHtml(deposit.status || 'ativo')}</td>
+                        <td>
+                          <button class="icon-button edit cadastro-edit-deposit" data-id="${escapeHtml(deposit.id)}" title="Editar deposito" aria-label="Editar deposito">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                          </button>
+                          <button class="icon-button cadastro-delete-deposit" data-id="${escapeHtml(deposit.id)}" title="Excluir deposito" aria-label="Excluir deposito">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                          </button>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              ` : '<p class="muted">Nenhum deposito encontrado para os filtros aplicados.</p>'}
+            </div>
+          </section>
+        </div>
+      `;
+      };
+
       const renderUnifiedList = () => {
         const normalize = (value) => String(value || '')
           .normalize('NFD')
@@ -1667,10 +1932,13 @@ async function loadModule(moduleName) {
       const pages = {
         register: renderUnifiedRegister,
         edit: renderUnifiedEdit,
+        deposits: renderDepositsList,
+        deposits_register: () => renderDepositsRegister('register'),
+        deposits_edit: () => renderDepositsRegister('edit'),
         list: renderUnifiedList
       };
 
-      content.innerHTML = (pages[sub] || renderUnifiedRegister)();
+      content.innerHTML = (pages[sub] || renderUnifiedList)();
 
       document.getElementById('cadastroNewBtn')?.addEventListener('click', () => {
         state.cadastroDraft = {
@@ -1780,6 +2048,73 @@ async function loadModule(moduleName) {
           }
         };
         state.activeSub = 'list';
+        renderApp();
+        loadModule('cadastros');
+      });
+
+      document.getElementById('cadastroDepositNewBtn')?.addEventListener('click', () => {
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          depositForm: {}
+        };
+        state.activeSub = 'deposits_register';
+        renderApp();
+        loadModule('cadastros');
+      });
+
+      document.getElementById('cadastroDepositFilterToggleBtn')?.addEventListener('click', () => {
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          depositsFilters: {
+            ...depositsFilters,
+            show: !depositsFilters.show
+          }
+        };
+        state.activeSub = 'deposits';
+        renderApp();
+        loadModule('cadastros');
+      });
+
+      const depositFilterForm = document.getElementById('depositFilterForm');
+      const applyDepositFilters = () => {
+        if (!depositFilterForm) return;
+        const data = new FormData(depositFilterForm);
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          depositsFilters: {
+            show: true,
+            query: String(data.get('query') || '').trim(),
+            code: String(data.get('code') || '').trim(),
+            city: String(data.get('city') || '').trim(),
+            state: String(data.get('state') || '').trim(),
+            manager: String(data.get('manager') || '').trim(),
+            status: String(data.get('status') || 'all')
+          }
+        };
+        state.activeSub = 'deposits';
+        renderApp();
+        loadModule('cadastros');
+      };
+
+      depositFilterForm?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        applyDepositFilters();
+      });
+
+      document.getElementById('depositFilterClearBtn')?.addEventListener('click', () => {
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          depositsFilters: {
+            show: true,
+            query: '',
+            code: '',
+            city: '',
+            state: '',
+            manager: '',
+            status: 'all'
+          }
+        };
+        state.activeSub = 'deposits';
         renderApp();
         loadModule('cadastros');
       });
@@ -2268,6 +2603,98 @@ async function loadModule(moduleName) {
         }
       });
 
+      document.getElementById('depositCancelBtn')?.addEventListener('click', () => {
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          depositForm: {}
+        };
+        state.activeSub = 'deposits';
+        renderApp();
+        loadModule('cadastros');
+      });
+
+      document.getElementById('depositRegisterForm')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const formData = new FormData(event.target);
+        const isEditing = Boolean(depositDraft.id);
+        const payload = {
+          id: isEditing ? depositDraft.id : `dep-${Date.now()}`,
+          name: String(formData.get('name') || '').trim(),
+          code: String(formData.get('code') || '').trim(),
+          status: String(formData.get('status') || 'ativo').trim() || 'ativo',
+          address: String(formData.get('address') || '').trim(),
+          city: String(formData.get('city') || '').trim(),
+          state: String(formData.get('state') || '').trim(),
+          manager: String(formData.get('manager') || '').trim(),
+          notes: String(formData.get('notes') || '').trim(),
+          createdAt: isEditing ? (depositDraft.createdAt || new Date().toISOString()) : new Date().toISOString()
+        };
+
+        if (!payload.name) {
+          showToast('Informe o nome do depósito.', 'warning');
+          state.cadastroDraft = {
+            ...state.cadastroDraft,
+            depositForm: {
+              ...payload,
+              error: 'Informe o nome do depósito.'
+            }
+          };
+          renderApp();
+          loadModule('cadastros');
+          return;
+        }
+
+        const nextDeposits = isEditing
+          ? deposits.map((entry) => (entry.id === payload.id ? payload : entry))
+          : [payload, ...deposits];
+
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          depositForm: {},
+          deposits: nextDeposits
+        };
+        showToast(isEditing ? 'Depósito atualizado com sucesso.' : 'Depósito salvo com sucesso.', 'success');
+        state.activeSub = 'deposits';
+        renderApp();
+        loadModule('cadastros');
+      });
+
+      document.querySelectorAll('.cadastro-edit-deposit').forEach((button) => {
+        button.addEventListener('click', () => {
+          const id = button.dataset.id;
+          if (!id) return;
+          const item = deposits.find((entry) => entry.id === id);
+          if (!item) return;
+
+          state.cadastroDraft = {
+            ...state.cadastroDraft,
+            depositForm: { ...item, error: '' }
+          };
+          state.activeSub = 'deposits_edit';
+          renderApp();
+          loadModule('cadastros');
+        });
+      });
+
+      document.querySelectorAll('.cadastro-delete-deposit').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const id = button.dataset.id;
+          if (!id) return;
+          const item = deposits.find((entry) => entry.id === id);
+          const label = item?.name || 'deposito';
+          const confirmed = await confirmModal(`Excluir deposito "${label}"?`);
+          if (!confirmed) return;
+
+          state.cadastroDraft = {
+            ...state.cadastroDraft,
+            deposits: deposits.filter((entry) => entry.id !== id)
+          };
+          showToast('Deposito excluido com sucesso.', 'success');
+          renderApp();
+          loadModule('cadastros');
+        });
+      });
+
       return;
     }
 
@@ -2628,6 +3055,8 @@ async function loadModule(moduleName) {
     const response = await api('/api/me');
     state.user = response.user;
     restoreLastRoute();
+    const moduleHistory = ensureModuleRouteHistory(state.activeModule);
+    moduleHistory.currentRouteKey = getRouteKey(state.activeModule, state.activeSub);
     renderApp();
     await loadModule(state.activeModule);
   } catch (error) {
