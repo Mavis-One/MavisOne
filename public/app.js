@@ -9,6 +9,23 @@ const state = {
   isNavigatingBack: false
 };
 const LAST_ROUTE_KEY = 'mavisone:last-route';
+const SESSION_TOKEN_KEY = 'mavisone:session-token';
+
+function getSessionToken() {
+  return sessionStorage.getItem(SESSION_TOKEN_KEY);
+}
+
+function setSessionToken(token) {
+  if (!token) return;
+  sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+  // Remove legacy token persistence to prevent auto-login after closing the tab.
+  localStorage.removeItem('token');
+}
+
+function clearSessionToken() {
+  sessionStorage.removeItem(SESSION_TOKEN_KEY);
+  localStorage.removeItem('token');
+}
 
 function persistLastRoute() {
   const payload = {
@@ -181,7 +198,7 @@ async function api(path, options = {}) {
   if (options.body) {
     headers['Content-Type'] = 'application/json';
   }
-  const token = localStorage.getItem('token');
+  const token = getSessionToken();
   if (token) {
     headers['x-auth-token'] = token;
   }
@@ -290,7 +307,7 @@ function renderAuth(error = '') {
         method: 'POST',
         body: JSON.stringify({ username: formData.get('username'), password: formData.get('password') })
       });
-      localStorage.setItem('token', response.token);
+      setSessionToken(response.token);
       state.user = response.user;
       showToast('Login realizado com sucesso.', 'success');
       renderApp();
@@ -420,8 +437,13 @@ function renderApp() {
     loadModule('settings');
   });
 
-  document.getElementById('logoutBtn').addEventListener('click', () => {
-    localStorage.removeItem('token');
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/logout', { method: 'POST' });
+    } catch (_) {
+      // Ignore API logout errors and always clear local session.
+    }
+    clearSessionToken();
     localStorage.removeItem(LAST_ROUTE_KEY);
     state.user = null;
     state.selectedModule = null;
@@ -599,6 +621,23 @@ async function loadModule(moduleName) {
   }
 
   try {
+    if (window.MavisModuleRouter?.render) {
+      const handled = await window.MavisModuleRouter.render(moduleName, {
+        state,
+        content,
+        api,
+        showToast,
+        escapeHtml,
+        moduleLabels,
+        confirmModal,
+        renderApp,
+        loadModule
+      });
+      if (handled) {
+        return;
+      }
+    }
+
     if (moduleName === 'dashboard') {
       const data = await api('/api/dashboard');
       const dashboardPermissions = data.permissions || {};
@@ -3045,7 +3084,10 @@ async function loadModule(moduleName) {
 }
 
 (async function bootstrap() {
-  const token = localStorage.getItem('token');
+  // Clear legacy token from older versions that used localStorage.
+  localStorage.removeItem('token');
+
+  const token = getSessionToken();
   if (!token) {
     renderAuth();
     return;
@@ -3060,7 +3102,7 @@ async function loadModule(moduleName) {
     renderApp();
     await loadModule(state.activeModule);
   } catch (error) {
-    localStorage.removeItem('token');
+    clearSessionToken();
     showToast(error.message || 'Sua sessao expirou. Faca login novamente.', 'error');
     renderAuth(error.message);
   }

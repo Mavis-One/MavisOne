@@ -294,6 +294,14 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, { user: { id: user.id, username: user.username, name: user.name, role: user.role, allowedModules: user.allowedModules } });
   }
 
+  if (pathname === '/api/logout' && req.method === 'POST') {
+    const token = req.headers['x-auth-token'];
+    if (token && sessions[token]) {
+      delete sessions[token];
+    }
+    return sendJson(res, { success: true });
+  }
+
   if (pathname === '/api/modules') {
     const data = loadData();
     const user = getCurrentUser(req, data);
