@@ -10,6 +10,19 @@ const state = {
 };
 const LAST_ROUTE_KEY = 'mavisone:last-route';
 const SESSION_TOKEN_KEY = 'mavisone:session-token';
+function getTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+function themeIconSvg(theme) {
+  return theme === 'dark'
+    ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>'
+    : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"></path></svg>';
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
+}
 
 function getSessionToken() {
   return sessionStorage.getItem(SESSION_TOKEN_KEY);
@@ -309,6 +322,7 @@ function renderAuth(error = '') {
       });
       setSessionToken(response.token);
       state.user = response.user;
+      applyTheme(state.user.theme);
       showToast('Login realizado com sucesso.', 'success');
       renderApp();
       await loadModule('dashboard');
@@ -350,7 +364,7 @@ function renderApp() {
             .map((module) => `
               <div class="nav-block">
                 <button class="nav-item ${state.activeModule === module ? 'active' : ''}" data-module="${module}">
-                  <span class="icon">${moduleLabels[module].split(' ').map(s=>s[0]).join('').slice(0,2).toUpperCase()}</span>
+                  <span class="icon">${moduleIcons[module] || ''}</span>
                   <span class="text">${moduleLabels[module]}</span>
                 </button>
                 <div class="submenu">
@@ -374,6 +388,9 @@ function renderApp() {
             <h1>${moduleLabels[state.activeModule]}${activeSubLabel ? ' > ' + activeSubLabel : ''}</h1>
           </div>
           <div class="topbar-actions">
+            <button class="icon-btn" id="themeToggleBtn" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro">
+              ${themeIconSvg(getTheme())}
+            </button>
             ${hasModuleAccess('settings') ? `
             <button class="icon-btn settings-btn" id="settingsBtn" title="Configurações">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -425,6 +442,19 @@ function renderApp() {
     });
   });
 
+  document.getElementById('themeToggleBtn')?.addEventListener('click', async () => {
+    const nextTheme = getTheme() === 'dark' ? 'light' : 'dark';
+    applyTheme(nextTheme);
+    const btn = document.getElementById('themeToggleBtn');
+    if (btn) btn.innerHTML = themeIconSvg(nextTheme);
+    if (state.user) state.user.theme = nextTheme;
+    try {
+      await api('/api/me/theme', { method: 'PUT', body: JSON.stringify({ theme: nextTheme }) });
+    } catch (error) {
+      showToast(error.message || 'Erro ao salvar preferência de tema.', 'error');
+    }
+  });
+
   document.getElementById('settingsBtn')?.addEventListener('click', () => {
     if (!hasModuleAccess('settings')) {
       showToast('Sem permissão para acessar Configurações.', 'warning');
@@ -449,6 +479,7 @@ function renderApp() {
     state.selectedModule = null;
     state.moduleRouteHistory = {};
     state.isNavigatingBack = false;
+    applyTheme('light');
     renderAuth();
   });
 }
@@ -463,9 +494,26 @@ const moduleLabels = {
   cadastros: 'Cadastros'
 };
 
-// Sub-itens por módulo (usados para exibir submenu na sidebar)
+const moduleIcons = {
+  dashboard: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>',
+  sales: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>',
+  purchases: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>',
+  stock: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline><polyline points="7.5 19.79 7.5 14.6 3 12"></polyline><polyline points="21 12 16.5 14.6 16.5 19.79"></polyline><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>',
+  finance: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>',
+  settings: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 6v6"></path><path d="M4.22 4.22l4.24 4.24m3.08 3.08l4.24 4.24"></path><path d="M1 12h6m6 0h6"></path><path d="M4.22 19.78l4.24-4.24m3.08-3.08l4.24-4.24"></path></svg>',
+  cadastros: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>'
+};
+
+// ============================================================================
+// CONFIGURAÇÃO DAS ABAS (menu principal + submenus da sidebar)
+// Cada chave de nível 1 é uma ABA principal; os arrays são as SUB-ABAS
+// exibidas no submenu daquela aba.
+// ============================================================================
 const moduleSubItems = {
+  // ABA: Dashboard Geral — sem sub-abas
   dashboard: [],
+
+  // ABA: Vendas
   sales: [
     { key: 'orders_quotes', label: 'Pedidos e Orçamentos' },
     { key: 'new_quote', label: 'Novo Orçamento' },
@@ -484,14 +532,24 @@ const moduleSubItems = {
     { key: 'configure_promotions', label: 'Configurar Promoções' },
     { key: 'new_promotion', label: 'Nova Promoção' }
   ],
+
+  // ABA: Compras
   purchases: [
     { key: 'new_purchase', label: 'Nova compra' },
     { key: 'purchase_history', label: 'Histórico de compras' },
     { key: 'suppliers', label: 'Fornecedores' }
   ],
+
+  // ABA: Estoque
   stock: [ { key: 'products', label: 'Produtos' }, { key: 'movements', label: 'Movimentos' } ],
+
+  // ABA: Financeiro
   finance: [ { key: 'payables', label: 'Contas a pagar' }, { key: 'receivables', label: 'Contas a receber' } ],
+
+  // ABA: Configurações
   settings: [ { key: 'users', label: 'Usuários' }, { key: 'company', label: 'Empresa' } ],
+
+  // ABA: Cadastros
   cadastros: [
     { key: 'list', label: 'Cadastros' },
     { key: 'deposits', label: 'Depositos' }
@@ -638,6 +696,9 @@ async function loadModule(moduleName) {
       }
     }
 
+    // ========================================================================
+    // ABA: DASHBOARD GERAL
+    // ========================================================================
     if (moduleName === 'dashboard') {
       const data = await api('/api/dashboard');
       const dashboardPermissions = data.permissions || {};
@@ -660,9 +721,13 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: VENDAS (16 sub-abas — ver comentários abaixo de cada `sub ===`)
+    // ========================================================================
     if (moduleName === 'sales') {
       const sub = state.activeSub || 'orders_quotes';
 
+      // Sub-aba: Pedidos e Orçamentos
       if (sub === 'orders_quotes') {
         const data = await api('/api/sales/records?view=orders_quotes');
         const records = [...(data.orders || []), ...(data.quotes || [])];
@@ -686,6 +751,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Novo Pedido
       if (sub === 'new_order') {
         content.innerHTML = `
           <div class="panel">
@@ -730,6 +796,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Novo Orçamento
       if (sub === 'new_quote') {
         content.innerHTML = `
           <div class="panel">
@@ -774,6 +841,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: NF-e Emitidas
       if (sub === 'nfes') {
         const data = await api('/api/sales/records?view=nfes');
         content.innerHTML = `
@@ -790,6 +858,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Nova NF-e Avulsa
       if (sub === 'new_nfe') {
         content.innerHTML = `
           <div class="panel">
@@ -836,6 +905,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Log's Vendas Importadas
       if (sub === 'import_logs') {
         const data = await api('/api/sales/records?view=import_logs');
         content.innerHTML = `
@@ -852,6 +922,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Agrupamento de Pedidos
       if (sub === 'order_groups') {
         content.innerHTML = `
           <div class="panel">
@@ -868,6 +939,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Novo Agrupamento de Pedidos
       if (sub === 'new_order_group') {
         content.innerHTML = `
           <div class="panel">
@@ -894,6 +966,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Devoluções
       if (sub === 'returns') {
         content.innerHTML = `
           <div class="panel">
@@ -913,6 +986,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Painel Vendas
       if (sub === 'sales_dashboard') {
         const data = await api('/api/dashboard');
         content.innerHTML = `
@@ -930,6 +1004,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Painel Vendedor
       if (sub === 'seller_dashboard') {
         content.innerHTML = `
           <div class="cards">
@@ -951,6 +1026,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Vales de Crédito
       if (sub === 'credits') {
         content.innerHTML = `
           <div class="panel">
@@ -970,6 +1046,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Central de Integrações
       if (sub === 'integrations') {
         content.innerHTML = `
           <div class="panel">
@@ -988,6 +1065,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Configurar Promoções
       if (sub === 'configure_promotions') {
         content.innerHTML = `
           <div class="panel">
@@ -1007,6 +1085,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Nova Promoção
       if (sub === 'new_promotion') {
         content.innerHTML = `
           <div class="panel">
@@ -1041,6 +1120,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Importar Vendas
       if (sub === 'import_sales') {
         const data = await api('/api/sales/records?view=import_logs');
         content.innerHTML = `
@@ -1096,6 +1176,11 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: CADASTROS (sub-abas: Cadastros/list, Cadastro/register, Edição/edit,
+    // Depósitos/deposits, Depósitos>Cadastro/deposits_register,
+    // Depósitos>Edição/deposits_edit — ver funções renderXxx mais abaixo)
+    // ========================================================================
     if (moduleName === 'cadastros') {
       const [peopleResponse, cnpjsResponse] = await Promise.all([
         api('/api/cadastros/pessoas'),
@@ -1197,6 +1282,7 @@ async function loadModule(moduleName) {
         </label>
       `;
 
+      // Sub-abas: Cadastro (mode 'register') e Edição (mode 'edit')
       const renderPeopleRegister = (mode = 'register') => {
         const isEditMode = mode === 'edit';
         const documentType = getDocumentType(peopleDraft.document);
@@ -1214,10 +1300,9 @@ async function loadModule(moduleName) {
               <div class="cadastro-page-chip">${isEditMode ? 'Edição' : 'Dados básicos'}</div>
             </div>
             <form id="peopleRegisterForm" class="cadastro-form">
-              ${section('Nome ou razão social', `
-                <div class="cadastro-grid cadastro-grid-3">
+              ${section('Identificação', `
+                <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
                   ${field('Nome ou razão social', 'name', peopleDraft.name || '', 'required')}
-                  ${field('Nome fantasia', 'tradeName', peopleDraft.tradeName || '')}
                   <label class="cadastro-field cadastro-field-inline">
                     <span>CPF / CNPJ</span>
                     <div class="cadastro-inline-action">
@@ -1227,108 +1312,139 @@ async function loadModule(moduleName) {
                       </button>
                     </div>
                   </label>
-                </div>
-                <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
                   ${selectField('Tipo de pessoa', 'type', selectedType, [
                     { value: 'pessoa-fisica', label: 'Pessoa física' },
                     { value: 'pessoa-juridica', label: 'Pessoa jurídica' }
                   ])}
-                  ${field('E-mail geral', 'email', peopleDraft.email || '', 'type="email"')}
-                  ${field('Telefone', 'phone', peopleDraft.phone || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('E-mail secundários', 'secondaryEmails', peopleDraft.secondaryEmails || '')}
-                  ${field('Whatsapp', 'whatsapp', peopleDraft.whatsapp || '')}
-                  ${field('Telefone celular', 'mobilePhone', peopleDraft.mobilePhone || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-2">
-                  ${field('Transportadora padrão', 'defaultCarrier', peopleDraft.defaultCarrier || '')}
-                  ${selectField('Status', 'status', peopleDraft.status || 'ativo', [{ value: 'ativo', label: 'Ativo' }, { value: 'inativo', label: 'Inativo' }])}
                 </div>
                 ${peopleDraft.error ? `<p class="form-error">${escapeHtml(peopleDraft.error)}</p>` : ''}
-              `, 'Dados principais do cliente ou parceiro.')}
+              `, 'Informações essenciais para identificar o cadastro.')}
 
-              ${section('Relação com a empresa', `
-                <div class="cadastro-check-grid">
-                  ${roles.map((role) => checkbox('roles', role, Array.isArray(peopleDraft.roles) && peopleDraft.roles.includes(role), role)).join('')}
-                </div>
-              `)}
+              <div class="cadastro-tabs" role="tablist">
+                <button type="button" class="cadastro-tab active" data-tab="dados" role="tab" aria-selected="true">
+                  <span>Dados</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="financeiro" role="tab" aria-selected="false">
+                  <span>Registros Financeiros</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="atributos" role="tab" aria-selected="false">
+                  <span>Atributos</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="mais-dados" role="tab" aria-selected="false">
+                  <span>Mais dados</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+              </div>
 
-              ${section('Mais dados', `
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Grupo', 'group', peopleDraft.group || '')}
-                  ${field('RG', 'rg', peopleDraft.rg || '')}
-                  ${field('Órgão expedidor', 'issuerBody', peopleDraft.issuerBody || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Data de expedição', 'issueDate', peopleDraft.issueDate || '', 'type="date"')}
-                  ${field('UF emissor', 'issuerState', peopleDraft.issuerState || '')}
-                  ${checkbox('ruralProducer', 'Produtor rural', Boolean(peopleDraft.ruralProducer))}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Inscrição estadual', 'stateRegistration', peopleDraft.stateRegistration || '')}
-                  ${field('Inscrição municipal', 'municipalRegistration', peopleDraft.municipalRegistration || '')}
-                  ${field('Inscrição na SUFRAMA', 'suframaRegistration', peopleDraft.suframaRegistration || '')}
-                </div>
-              `)}
-
-              ${section('Endereço', `
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${checkbox('foreignAddress', 'Endereço no exterior', Boolean(peopleDraft.foreignAddress))}
-                  ${checkbox('billingDifferent', 'Endereço de cobrança diferente', Boolean(peopleDraft.billingDifferent))}
-                  ${checkbox('deliveryDifferent', 'Endereço de entrega diferente', Boolean(peopleDraft.deliveryDifferent))}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('CEP', 'zipCode', peopleDraft.zipCode || '')}
-                  ${field('Logradouro', 'street', peopleDraft.street || '')}
-                  ${field('Número', 'streetNumber', peopleDraft.streetNumber || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Complemento', 'addressComplement', peopleDraft.addressComplement || '')}
-                  ${field('Bairro', 'neighborhood', peopleDraft.neighborhood || '')}
-                  ${field('Cidade', 'city', peopleDraft.city || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('UF', 'state', peopleDraft.state || '')}
-                  ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', peopleDraft.ibgeCityCode || '')}
-                  ${field('País', 'country', peopleDraft.country || 'Brasil')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Cód. País', 'countryCode', peopleDraft.countryCode || '1058')}
-                  ${field('Link de localização no mapa', 'mapLink', peopleDraft.mapLink || '')}
-                </div>
-              `)}
-
-              ${section('Dados financeiros / Contas bancárias', `
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Limite de crédito', 'creditLimit', peopleDraft.creditLimit || '')}
-                  ${field('Crédito utilizado', 'creditUsed', peopleDraft.creditUsed || '')}
-                  ${field('Periodicidade venda/compra (dias)', 'paymentPeriodDays', peopleDraft.paymentPeriodDays || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Valor mínimo de compra', 'minPurchaseValue', peopleDraft.minPurchaseValue || '')}
-                  ${field('Tabela de preço padrão', 'defaultPriceTable', peopleDraft.defaultPriceTable || '')}
-                  ${field('Forma de pagamento', 'paymentMethod', peopleDraft.paymentMethod || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('CPF/CNPJ da conta', 'bankDocument', peopleDraft.bankDocument || '')}
-                  ${field('Banco', 'bankName', peopleDraft.bankName || '')}
-                  ${field('Agência', 'bankAgency', peopleDraft.bankAgency || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Dígito da agência', 'bankAgencyDigit', peopleDraft.bankAgencyDigit || '')}
-                  ${field('Número da conta', 'bankNumber', peopleDraft.bankNumber || '')}
-                  ${field('Dígito da conta', 'bankNumberDigit', peopleDraft.bankNumberDigit || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Período', 'bankPeriod', peopleDraft.bankPeriod || '')}
-                  <div class="cadastro-add-account">
-                    <button type="button">Adicionar conta</button>
+              <div class="cadastro-tab-panel" data-tab-panel="dados">
+                ${section('Contato', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Nome fantasia', 'tradeName', peopleDraft.tradeName || '')}
+                    ${field('E-mail geral', 'email', peopleDraft.email || '', 'type="email"')}
+                    ${field('Telefone', 'phone', peopleDraft.phone || '')}
                   </div>
-                </div>
-              `)}
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('E-mail secundários', 'secondaryEmails', peopleDraft.secondaryEmails || '')}
+                    ${field('Whatsapp', 'whatsapp', peopleDraft.whatsapp || '')}
+                    ${field('Telefone celular', 'mobilePhone', peopleDraft.mobilePhone || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-2">
+                    ${field('Transportadora padrão', 'defaultCarrier', peopleDraft.defaultCarrier || '')}
+                    ${selectField('Status', 'status', peopleDraft.status || 'ativo', [{ value: 'ativo', label: 'Ativo' }, { value: 'inativo', label: 'Inativo' }])}
+                  </div>
+                `)}
 
-              ${section('Informações adicionais', `
+                ${section('Endereço', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${checkbox('foreignAddress', 'Endereço no exterior', Boolean(peopleDraft.foreignAddress))}
+                    ${checkbox('billingDifferent', 'Endereço de cobrança diferente', Boolean(peopleDraft.billingDifferent))}
+                    ${checkbox('deliveryDifferent', 'Endereço de entrega diferente', Boolean(peopleDraft.deliveryDifferent))}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('CEP', 'zipCode', peopleDraft.zipCode || '')}
+                    ${field('Logradouro', 'street', peopleDraft.street || '')}
+                    ${field('Número', 'streetNumber', peopleDraft.streetNumber || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Complemento', 'addressComplement', peopleDraft.addressComplement || '')}
+                    ${field('Bairro', 'neighborhood', peopleDraft.neighborhood || '')}
+                    ${field('Cidade', 'city', peopleDraft.city || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('UF', 'state', peopleDraft.state || '')}
+                    ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', peopleDraft.ibgeCityCode || '')}
+                    ${field('País', 'country', peopleDraft.country || 'Brasil')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Cód. País', 'countryCode', peopleDraft.countryCode || '1058')}
+                    ${field('Link de localização no mapa', 'mapLink', peopleDraft.mapLink || '')}
+                  </div>
+                `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="financeiro" hidden>
+                ${section('Dados financeiros / Contas bancárias', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Limite de crédito', 'creditLimit', peopleDraft.creditLimit || '')}
+                    ${field('Crédito utilizado', 'creditUsed', peopleDraft.creditUsed || '')}
+                    ${field('Periodicidade venda/compra (dias)', 'paymentPeriodDays', peopleDraft.paymentPeriodDays || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Valor mínimo de compra', 'minPurchaseValue', peopleDraft.minPurchaseValue || '')}
+                    ${field('Tabela de preço padrão', 'defaultPriceTable', peopleDraft.defaultPriceTable || '')}
+                    ${field('Forma de pagamento', 'paymentMethod', peopleDraft.paymentMethod || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('CPF/CNPJ da conta', 'bankDocument', peopleDraft.bankDocument || '')}
+                    ${field('Banco', 'bankName', peopleDraft.bankName || '')}
+                    ${field('Agência', 'bankAgency', peopleDraft.bankAgency || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Dígito da agência', 'bankAgencyDigit', peopleDraft.bankAgencyDigit || '')}
+                    ${field('Número da conta', 'bankNumber', peopleDraft.bankNumber || '')}
+                    ${field('Dígito da conta', 'bankNumberDigit', peopleDraft.bankNumberDigit || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Período', 'bankPeriod', peopleDraft.bankPeriod || '')}
+                    <div class="cadastro-add-account">
+                      <button type="button">Adicionar conta</button>
+                    </div>
+                  </div>
+                `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="atributos" hidden>
+                ${section('Relação com a empresa', `
+                  <div class="cadastro-check-grid">
+                    ${roles.map((role) => checkbox('roles', role, Array.isArray(peopleDraft.roles) && peopleDraft.roles.includes(role), role)).join('')}
+                  </div>
+                `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="mais-dados" hidden>
+                ${section('Mais dados', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Grupo', 'group', peopleDraft.group || '')}
+                    ${field('RG', 'rg', peopleDraft.rg || '')}
+                    ${field('Órgão expedidor', 'issuerBody', peopleDraft.issuerBody || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Data de expedição', 'issueDate', peopleDraft.issueDate || '', 'type="date"')}
+                    ${field('UF emissor', 'issuerState', peopleDraft.issuerState || '')}
+                    ${checkbox('ruralProducer', 'Produtor rural', Boolean(peopleDraft.ruralProducer))}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Inscrição estadual', 'stateRegistration', peopleDraft.stateRegistration || '')}
+                    ${field('Inscrição municipal', 'municipalRegistration', peopleDraft.municipalRegistration || '')}
+                    ${field('Inscrição na SUFRAMA', 'suframaRegistration', peopleDraft.suframaRegistration || '')}
+                  </div>
+                `)}
+              </div>
+
+              ${section('Observações', `
                 <label class="cadastro-field cadastro-field-full">
                   <span>Observações</span>
                   <textarea name="notes">${escapeHtml(peopleDraft.notes || '')}</textarea>
@@ -1546,6 +1662,7 @@ async function loadModule(moduleName) {
 
       const renderUnifiedEdit = () => renderPeopleRegister('edit');
 
+      // Sub-abas: Depósitos > Cadastro (mode 'register') e Depósitos > Edição (mode 'edit')
       const renderDepositsRegister = (mode = 'register') => {
         const isEditMode = mode === 'edit';
         return `
@@ -1586,6 +1703,7 @@ async function loadModule(moduleName) {
       `;
       };
 
+      // Sub-aba: Depósitos
       const renderDepositsList = () => {
         const normalize = (value) => String(value || '')
           .normalize('NFD')
@@ -1700,6 +1818,7 @@ async function loadModule(moduleName) {
       `;
       };
 
+      // Sub-aba: Cadastros (lista unificada — padrão da aba)
       const renderUnifiedList = () => {
         const normalize = (value) => String(value || '')
           .normalize('NFD')
@@ -1938,43 +2057,46 @@ async function loadModule(moduleName) {
             ` : ''}
 
             ${merged.length ? `
-              <table class="table table-actions">
-                <thead><tr><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
-                <tbody>
-                  ${merged.map((row) => `
-                    <tr>
-                      <td>${escapeHtml(row.cadastroTipo)}</td>
-                      <td>${escapeHtml(row.name)}</td>
-                      <td>${escapeHtml(row.tradeName || '-')}</td>
-                      <td>${escapeHtml(formatCpfCnpj(row.document || ''))}</td>
-                      <td>${escapeHtml(row.email || '-')}</td>
-                      <td>${escapeHtml(row.phone || '-')}</td>
-                      <td>${escapeHtml(row.status || 'ativo')}</td>
-                      <td>${escapeHtml(formatDate(row.createdAt))}</td>
-                      <td>
-                        <button class="icon-button edit cadastro-edit-row" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Editar" aria-label="Editar cadastro">
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                        </button>
-                        <button class="icon-button cadastro-delete-row" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Excluir" aria-label="Excluir cadastro">
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                        </button>
-                      </td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
+              <div class="table-scroll">
+                <table class="table table-actions">
+                  <thead><tr><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
+                  <tbody>
+                    ${merged.map((row) => `
+                      <tr>
+                        <td>${escapeHtml(row.cadastroTipo)}</td>
+                        <td>${escapeHtml(row.name)}</td>
+                        <td>${escapeHtml(row.tradeName || '-')}</td>
+                        <td>${escapeHtml(formatCpfCnpj(row.document || ''))}</td>
+                        <td>${escapeHtml(row.email || '-')}</td>
+                        <td>${escapeHtml(row.phone || '-')}</td>
+                        <td>${escapeHtml(row.status || 'ativo')}</td>
+                        <td>${escapeHtml(formatDate(row.createdAt))}</td>
+                        <td>
+                          <button class="icon-button edit cadastro-edit-row" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Editar" aria-label="Editar cadastro">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                          </button>
+                          <button class="icon-button cadastro-delete-row" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Excluir" aria-label="Excluir cadastro">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                          </button>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
             ` : '<p class="muted">Nenhum registro encontrado para os filtros aplicados.</p>'}
           </div>
         `;
       };
 
+      // Roteamento das sub-abas de Cadastros para suas funções de renderização
       const pages = {
-        register: renderUnifiedRegister,
-        edit: renderUnifiedEdit,
-        deposits: renderDepositsList,
-        deposits_register: () => renderDepositsRegister('register'),
-        deposits_edit: () => renderDepositsRegister('edit'),
-        list: renderUnifiedList
+        register: renderUnifiedRegister, // Sub-aba: Cadastro
+        edit: renderUnifiedEdit, // Sub-aba: Edição
+        deposits: renderDepositsList, // Sub-aba: Depósitos
+        deposits_register: () => renderDepositsRegister('register'), // Sub-aba: Depósitos > Cadastro
+        deposits_edit: () => renderDepositsRegister('edit'), // Sub-aba: Depósitos > Edição
+        list: renderUnifiedList // Sub-aba: Cadastros
       };
 
       content.innerHTML = (pages[sub] || renderUnifiedList)();
@@ -2478,6 +2600,21 @@ async function loadModule(moduleName) {
         }
       });
 
+      // Troca de mini-abas do formulário de Cadastro/Edição (Dados / Registros Financeiros / Atributos)
+      document.querySelectorAll('#peopleRegisterForm .cadastro-tab').forEach((tabBtn) => {
+        tabBtn.addEventListener('click', () => {
+          const target = tabBtn.dataset.tab;
+          document.querySelectorAll('#peopleRegisterForm .cadastro-tab').forEach((btn) => {
+            const isActive = btn === tabBtn;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', String(isActive));
+          });
+          document.querySelectorAll('#peopleRegisterForm .cadastro-tab-panel').forEach((panel) => {
+            panel.hidden = panel.dataset.tabPanel !== target;
+          });
+        });
+      });
+
       const cnpjDocumentInput = document.getElementById('cnpjDocumentInput');
       bindDocumentMask(cnpjDocumentInput, () => 'pessoa-juridica');
 
@@ -2737,11 +2874,15 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: COMPRAS (sub-abas: Nova compra, Histórico de compras, Fornecedores)
+    // ========================================================================
     if (moduleName === 'purchases') {
       const data = await api('/api/purchases');
       const sub = state.activeSub || 'new_purchase';
 
       const renderPage = () => {
+        // Sub-aba: Histórico de compras
         if (sub === 'purchase_history') {
           return `
             <div class="panel">
@@ -2756,6 +2897,7 @@ async function loadModule(moduleName) {
           `;
         }
 
+        // Sub-aba: Fornecedores
         if (sub === 'suppliers') {
           const suppliers = [...new Map(data.purchases.map((purchase) => [purchase.supplier, { name: purchase.supplier, purchases: 0, total: 0 }])).values()];
           data.purchases.forEach((purchase) => {
@@ -2779,6 +2921,7 @@ async function loadModule(moduleName) {
           `;
         }
 
+        // Sub-aba: Nova compra (padrão)
         return `
           <div class="panel">
             <h3>Nova compra</h3>
@@ -2827,6 +2970,9 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: ESTOQUE
+    // ========================================================================
     if (moduleName === 'stock') {
       const data = await api('/api/stock');
       content.innerHTML = `
@@ -2878,6 +3024,9 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: FINANCEIRO
+    // ========================================================================
     if (moduleName === 'finance') {
       const data = await api('/api/finance');
       content.innerHTML = `
@@ -2932,6 +3081,9 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: CONFIGURAÇÕES
+    // ========================================================================
     if (moduleName === 'settings') {
       const data = await api('/api/settings');
           const totals = data.totals || {};
@@ -3096,6 +3248,7 @@ async function loadModule(moduleName) {
   try {
     const response = await api('/api/me');
     state.user = response.user;
+    applyTheme(state.user.theme);
     restoreLastRoute();
     const moduleHistory = ensureModuleRouteHistory(state.activeModule);
     moduleHistory.currentRouteKey = getRouteKey(state.activeModule, state.activeSub);

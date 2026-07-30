@@ -16,7 +16,8 @@ const initialData = {
       password: 'SENHA-REMOVIDA-DO-HISTORICO',
       name: 'Administrador',
       role: 'admin',
-      allowedModules: ['dashboard', 'sales', 'purchases', 'stock', 'finance', 'settings', 'cadastros']
+      allowedModules: ['dashboard', 'sales', 'purchases', 'stock', 'finance', 'settings', 'cadastros'],
+      theme: 'light'
     }
   ],
   products: [
@@ -67,7 +68,8 @@ function normalizeData(data) {
   data.users = Array.isArray(data.users) ? data.users : [];
   data.users = data.users.map((user) => {
     const allowedModules = Array.isArray(user.allowedModules) ? user.allowedModules : [];
-    return { ...user, allowedModules };
+    const theme = user.theme === 'dark' ? 'dark' : 'light';
+    return { ...user, allowedModules, theme };
   });
   return data;
 }
@@ -279,7 +281,7 @@ const server = http.createServer(async (req, res) => {
 
       const token = createId('token');
       sessions[token] = user.id;
-      return sendJson(res, { token, user: { id: user.id, username: user.username, name: user.name, role: user.role, allowedModules: user.allowedModules } });
+      return sendJson(res, { token, user: { id: user.id, username: user.username, name: user.name, role: user.role, allowedModules: user.allowedModules, theme: user.theme } });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao autenticar' }, 400);
     }
@@ -291,7 +293,24 @@ const server = http.createServer(async (req, res) => {
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
     }
-    return sendJson(res, { user: { id: user.id, username: user.username, name: user.name, role: user.role, allowedModules: user.allowedModules } });
+    return sendJson(res, { user: { id: user.id, username: user.username, name: user.name, role: user.role, allowedModules: user.allowedModules, theme: user.theme } });
+  }
+
+  if (pathname === '/api/me/theme' && req.method === 'PUT') {
+    try {
+      const data = loadData();
+      const user = getCurrentUser(req, data);
+      if (!user) {
+        return sendJson(res, { error: 'Não autenticado' }, 401);
+      }
+      const body = await readBody(req);
+      const theme = body.theme === 'dark' ? 'dark' : 'light';
+      user.theme = theme;
+      saveData(data);
+      return sendJson(res, { success: true, theme });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao salvar preferência de tema' }, 400);
+    }
   }
 
   if (pathname === '/api/logout' && req.method === 'POST') {
@@ -1008,7 +1027,8 @@ const server = http.createServer(async (req, res) => {
             password: body.payload.password,
             name: body.payload.name,
             role: body.payload.role || 'user',
-            allowedModules: body.payload.allowedModules || ['dashboard']
+            allowedModules: body.payload.allowedModules || ['dashboard'],
+            theme: 'light'
           };
           data.users.push(newUser);
           saveData(data);
@@ -1141,7 +1161,8 @@ const server = http.createServer(async (req, res) => {
 
 function startServer(port, retriesLeft) {
   server.listen(port, HOST, () => {
-    console.log(`Servidor iniciado em http://${HOST}:${port}`);
+    const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
+    console.log(`Servidor iniciado em http://${displayHost}:${port}`);
   });
 
   server.once('error', (error) => {

@@ -14,7 +14,8 @@
         "finance",
         "settings",
         "cadastros"
-      ]
+      ],
+      "theme": "dark"
     },
     {
       "id": "user-1785286612473-ato3ve",
@@ -27,7 +28,8 @@
         "sales",
         "purchases",
         "cadastros"
-      ]
+      ],
+      "theme": "light"
     }
   ],
   "products": [
