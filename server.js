@@ -149,6 +149,71 @@ function isValidDocument(documentValue) {
   return false;
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function getAddressLine(record) {
+  return record.address || record.street || '';
+}
+
+function buildAddressKey(record) {
+  const line = normalizeText(getAddressLine(record));
+  if (!line) {
+    return '';
+  }
+  const parts = [
+    line,
+    normalizeText(record.streetNumber || record.addressNumber || ''),
+    normalizeText(record.neighborhood || ''),
+    normalizeText(record.city || ''),
+    normalizeText(record.state || ''),
+    sanitizeDigits(record.zipCode || '')
+  ];
+  return parts.join('|');
+}
+
+function validateRequiredRegistrationFields(record) {
+  const missing = [];
+  if (!String(record.name || '').trim()) missing.push('Nome ou razão social');
+  if (!String(record.document || '').trim()) missing.push('CPF/CNPJ');
+  if (!record.foreignAddress) {
+    if (!String(getAddressLine(record)).trim()) missing.push('Endereço (logradouro)');
+    if (!String(record.city || '').trim()) missing.push('Cidade');
+    if (!String(record.state || '').trim()) missing.push('UF');
+    if (!String(record.zipCode || '').trim()) missing.push('CEP');
+  }
+  return missing;
+}
+
+function findDuplicateRegistration(data, record, excludeId) {
+  const allRecords = [...data.people, ...data.cnpjs];
+  const document = sanitizeDigits(record.document || '');
+  const name = normalizeText(record.name || '');
+  const addressKey = buildAddressKey(record);
+
+  for (const entry of allRecords) {
+    if (excludeId && entry.id === excludeId) {
+      continue;
+    }
+    if (document && sanitizeDigits(entry.document || '') === document) {
+      return `Já existe um cadastro com o CPF/CNPJ informado (${entry.name || 'sem nome'}).`;
+    }
+    if (name && normalizeText(entry.name || '') === name) {
+      return `Já existe um cadastro com o nome "${record.name}".`;
+    }
+    if (addressKey && buildAddressKey(entry) === addressKey) {
+      return 'Já existe um cadastro com este mesmo endereço.';
+    }
+  }
+  return null;
+}
+
 async function fetchCnpjOfficialData(cnpj) {
   const url = `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`;
   const response = await fetch(url, {
@@ -608,6 +673,16 @@ const server = http.createServer(async (req, res) => {
         createdAt: body.createdAt || new Date().toISOString()
       };
 
+      const missingFields = validateRequiredRegistrationFields(person);
+      if (missingFields.length) {
+        return sendJson(res, { error: `Preencha os campos obrigatórios: ${missingFields.join(', ')}.` }, 400);
+      }
+
+      const duplicateMessage = findDuplicateRegistration(data, person);
+      if (duplicateMessage) {
+        return sendJson(res, { error: duplicateMessage }, 409);
+      }
+
       data.people.push(person);
       saveData(data);
       return sendJson(res, { success: true, person });
@@ -667,6 +742,16 @@ const server = http.createServer(async (req, res) => {
         cnpjVerifiedAt: officialData ? new Date().toISOString() : current.cnpjVerifiedAt || null,
         createdAt: current.createdAt || new Date().toISOString()
       };
+
+      const missingFields = validateRequiredRegistrationFields(person);
+      if (missingFields.length) {
+        return sendJson(res, { error: `Preencha os campos obrigatórios: ${missingFields.join(', ')}.` }, 400);
+      }
+
+      const duplicateMessage = findDuplicateRegistration(data, person, person.id);
+      if (duplicateMessage) {
+        return sendJson(res, { error: duplicateMessage }, 409);
+      }
 
       data.people[index] = person;
       saveData(data);
@@ -743,6 +828,16 @@ const server = http.createServer(async (req, res) => {
         createdAt: body.createdAt || new Date().toISOString()
       };
 
+      const missingFields = validateRequiredRegistrationFields(company);
+      if (missingFields.length) {
+        return sendJson(res, { error: `Preencha os campos obrigatórios: ${missingFields.join(', ')}.` }, 400);
+      }
+
+      const duplicateMessage = findDuplicateRegistration(data, company);
+      if (duplicateMessage) {
+        return sendJson(res, { error: duplicateMessage }, 409);
+      }
+
       data.cnpjs.push(company);
       saveData(data);
       return sendJson(res, { success: true, company });
@@ -807,6 +902,16 @@ const server = http.createServer(async (req, res) => {
         cnpjVerifiedAt: cnpjValidation ? new Date().toISOString() : current.cnpjVerifiedAt || null,
         createdAt: current.createdAt || new Date().toISOString()
       };
+
+      const missingFields = validateRequiredRegistrationFields(company);
+      if (missingFields.length) {
+        return sendJson(res, { error: `Preencha os campos obrigatórios: ${missingFields.join(', ')}.` }, 400);
+      }
+
+      const duplicateMessage = findDuplicateRegistration(data, company, company.id);
+      if (duplicateMessage) {
+        return sendJson(res, { error: duplicateMessage }, 409);
+      }
 
       data.cnpjs[index] = company;
       saveData(data);

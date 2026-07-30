@@ -122,6 +122,17 @@ function canGoBack() {
   return Boolean(moduleHistory && moduleHistory.stack.length > 0);
 }
 
+// renderApp() (chamado antes de loadModule) desenha o botão de voltar usando o
+// histórico ainda desatualizado, já que o push da rota só acontece dentro de
+// loadModule -> trackRouteChange. Sincroniza o estado do botão logo após esse push,
+// sem precisar re-renderizar (e assim apagar) o conteúdo do módulo.
+function syncBackButtonState() {
+  const backBtn = document.getElementById('backBtn');
+  if (backBtn) {
+    backBtn.disabled = !canGoBack();
+  }
+}
+
 function goBackToPreviousRoute() {
   const moduleHistory = state.moduleRouteHistory[state.activeModule];
   if (!moduleHistory || !moduleHistory.stack.length) return;
@@ -623,6 +634,69 @@ function isValidDocument(documentValue) {
   return digits.length === 11 ? isValidCpf(digits) : digits.length === 14 ? isValidCnpj(digits) : false;
 }
 
+function normalizeRegistrationText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function getRegistrationAddressLine(record) {
+  return record.address || record.street || '';
+}
+
+function buildRegistrationAddressKey(record) {
+  const line = normalizeRegistrationText(getRegistrationAddressLine(record));
+  if (!line) {
+    return '';
+  }
+  return [
+    line,
+    normalizeRegistrationText(record.streetNumber || record.addressNumber || ''),
+    normalizeRegistrationText(record.neighborhood || ''),
+    normalizeRegistrationText(record.city || ''),
+    normalizeRegistrationText(record.state || ''),
+    sanitizeDigits(record.zipCode || '')
+  ].join('|');
+}
+
+function getMissingRequiredRegistrationFields(record) {
+  const missing = [];
+  if (!String(record.name || '').trim()) missing.push('name');
+  if (!String(record.document || '').trim()) missing.push('document');
+  if (!record.foreignAddress) {
+    if (!String(getRegistrationAddressLine(record)).trim()) missing.push('addressLine');
+    if (!String(record.city || '').trim()) missing.push('city');
+    if (!String(record.state || '').trim()) missing.push('state');
+    if (!String(record.zipCode || '').trim()) missing.push('zipCode');
+  }
+  return missing;
+}
+
+function findDuplicateRegistrationClient(existingRecords, record, excludeId) {
+  const document = sanitizeDigits(record.document || '');
+  const name = normalizeRegistrationText(record.name || '');
+  const addressKey = buildRegistrationAddressKey(record);
+
+  for (const entry of existingRecords) {
+    if (excludeId && entry.id === excludeId) {
+      continue;
+    }
+    if (document && sanitizeDigits(entry.document || '') === document) {
+      return `Já existe um cadastro com o CPF/CNPJ informado (${entry.name || 'sem nome'}).`;
+    }
+    if (name && normalizeRegistrationText(entry.name || '') === name) {
+      return `Já existe um cadastro com o nome "${record.name}".`;
+    }
+    if (addressKey && buildRegistrationAddressKey(entry) === addressKey) {
+      return 'Já existe um cadastro com este mesmo endereço.';
+    }
+  }
+  return null;
+}
+
 function getDocumentType(documentValue) {
   const digits = sanitizeDigits(documentValue);
   if (digits.length === 11) return 'cpf';
@@ -671,6 +745,7 @@ async function loadModule(moduleName) {
   }
 
   trackRouteChange(moduleName, state.activeSub);
+  syncBackButtonState();
   state.activeModule = moduleName;
   persistLastRoute();
   const content = document.getElementById('moduleContent');
@@ -1259,19 +1334,21 @@ async function loadModule(moduleName) {
         </section>
       `;
 
-      const field = (label, name, value = '', attrs = '') => `
-        <label class="cadastro-field">
+      const field = (label, name, value = '', attrs = '', hasError = false) => `
+        <label class="cadastro-field${hasError ? ' cadastro-field-invalid' : ''}">
           <span>${label}</span>
           <input name="${name}" value="${escapeHtml(value)}" ${attrs} />
+          ${hasError ? '<span class="cadastro-field-error-msg">Campo obrigatório*</span>' : ''}
         </label>
       `;
 
-      const selectField = (label, name, value, options = [], attrs = '') => `
-        <label class="cadastro-field">
+      const selectField = (label, name, value, options = [], attrs = '', hasError = false) => `
+        <label class="cadastro-field${hasError ? ' cadastro-field-invalid' : ''}">
           <span>${label}</span>
           <select name="${name}" ${attrs}>
             ${options.map((option) => `<option value="${option.value}" ${option.value === value ? 'selected' : ''}>${option.label}</option>`).join('')}
           </select>
+          ${hasError ? '<span class="cadastro-field-error-msg">Campo obrigatório*</span>' : ''}
         </label>
       `;
 
@@ -1289,6 +1366,7 @@ async function loadModule(moduleName) {
         const selectedType = peopleDraft.type || (documentType === 'cnpj' ? 'pessoa-juridica' : 'pessoa-fisica');
         const documentValue = maskDocumentValue(peopleDraft.document || '', selectedType);
         const canLookupCnpj = sanitizeDigits(peopleDraft.document || '').length === 14;
+        const fieldErrors = peopleDraft.fieldErrors || {};
 
         return `
           <div class="panel cadastros-shell">
@@ -1302,15 +1380,16 @@ async function loadModule(moduleName) {
             <form id="peopleRegisterForm" class="cadastro-form">
               ${section('Identificação', `
                 <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
-                  ${field('Nome ou razão social', 'name', peopleDraft.name || '', 'required')}
-                  <label class="cadastro-field cadastro-field-inline">
+                  ${field('Nome ou razão social', 'name', peopleDraft.name || '', '', Boolean(fieldErrors.name))}
+                  <label class="cadastro-field cadastro-field-inline${fieldErrors.document ? ' cadastro-field-invalid' : ''}">
                     <span>CPF / CNPJ</span>
                     <div class="cadastro-inline-action">
-                      <input name="document" value="${escapeHtml(documentValue)}" id="peopleDocumentInput" inputmode="numeric" maxlength="18" required />
+                      <input name="document" value="${escapeHtml(documentValue)}" id="peopleDocumentInput" inputmode="numeric" maxlength="18" />
                       <button type="button" id="peopleLookupBtn" class="icon-button edit" ${canLookupCnpj ? '' : 'disabled'} title="Consultar CNPJ" aria-label="Consultar CNPJ">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                       </button>
                     </div>
+                    ${fieldErrors.document ? '<span class="cadastro-field-error-msg">Campo obrigatório*</span>' : ''}
                   </label>
                   ${selectField('Tipo de pessoa', 'type', selectedType, [
                     { value: 'pessoa-fisica', label: 'Pessoa física' },
@@ -1364,17 +1443,17 @@ async function loadModule(moduleName) {
                     ${checkbox('deliveryDifferent', 'Endereço de entrega diferente', Boolean(peopleDraft.deliveryDifferent))}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('CEP', 'zipCode', peopleDraft.zipCode || '')}
-                    ${field('Logradouro', 'street', peopleDraft.street || '')}
+                    ${field('CEP', 'zipCode', peopleDraft.zipCode || '', '', Boolean(fieldErrors.zipCode))}
+                    ${field('Logradouro', 'street', peopleDraft.street || '', '', Boolean(fieldErrors.addressLine))}
                     ${field('Número', 'streetNumber', peopleDraft.streetNumber || '')}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
                     ${field('Complemento', 'addressComplement', peopleDraft.addressComplement || '')}
                     ${field('Bairro', 'neighborhood', peopleDraft.neighborhood || '')}
-                    ${field('Cidade', 'city', peopleDraft.city || '')}
+                    ${field('Cidade', 'city', peopleDraft.city || '', '', Boolean(fieldErrors.city))}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('UF', 'state', peopleDraft.state || '')}
+                    ${field('UF', 'state', peopleDraft.state || '', '', Boolean(fieldErrors.state))}
                     ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', peopleDraft.ibgeCityCode || '')}
                     ${field('País', 'country', peopleDraft.country || 'Brasil')}
                   </div>
@@ -1500,6 +1579,7 @@ async function loadModule(moduleName) {
       const renderCnpjRegister = () => {
         const documentValue = maskDocumentValue(cnpjDraft.document || '', 'pessoa-juridica');
         const canLookupCnpj = sanitizeDigits(cnpjDraft.document || '').length === 14;
+        const fieldErrors = cnpjDraft.fieldErrors || {};
 
         return `
           <div class="panel cadastros-shell">
@@ -1513,12 +1593,12 @@ async function loadModule(moduleName) {
             <form id="cnpjRegisterForm" class="cadastro-form">
               ${section('Nome ou razão social', `
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Nome ou razão social', 'name', cnpjDraft.name || '', 'required')}
+                  ${field('Nome ou razão social', 'name', cnpjDraft.name || '', '', Boolean(fieldErrors.name))}
                   ${field('Nome fantasia', 'tradeName', cnpjDraft.tradeName || '')}
                   ${selectField('Tipo de pessoa', 'type', 'pessoa-juridica', [{ value: 'pessoa-juridica', label: 'Pessoa jurídica' }], 'disabled')}
                 </div>
                 <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
-                  ${field('CNPJ', 'document', documentValue, 'id="cnpjDocumentInput" inputmode="numeric" maxlength="18" required')}
+                  ${field('CNPJ', 'document', documentValue, 'id="cnpjDocumentInput" inputmode="numeric" maxlength="18"', Boolean(fieldErrors.document))}
                   ${field('E-mail geral', 'email', cnpjDraft.email || '', 'type="email"')}
                   ${field('Telefone', 'phone', cnpjDraft.phone || '')}
                 </div>
@@ -1555,17 +1635,17 @@ async function loadModule(moduleName) {
 
               ${section('Endereço', `
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('CEP', 'zipCode', cnpjDraft.zipCode || '')}
-                  ${field('Logradouro', 'address', cnpjDraft.address || '')}
+                  ${field('CEP', 'zipCode', cnpjDraft.zipCode || '', '', Boolean(fieldErrors.zipCode))}
+                  ${field('Logradouro', 'address', cnpjDraft.address || '', '', Boolean(fieldErrors.addressLine))}
                   ${field('Número', 'addressNumber', cnpjDraft.addressNumber || '')}
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
                   ${field('Complemento', 'addressComplement', cnpjDraft.addressComplement || '')}
                   ${field('Bairro', 'neighborhood', cnpjDraft.neighborhood || '')}
-                  ${field('Cidade', 'city', cnpjDraft.city || '')}
+                  ${field('Cidade', 'city', cnpjDraft.city || '', '', Boolean(fieldErrors.city))}
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('UF', 'state', cnpjDraft.state || '')}
+                  ${field('UF', 'state', cnpjDraft.state || '', '', Boolean(fieldErrors.state))}
                   ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', cnpjDraft.ibgeCityCode || '')}
                   ${field('País', 'country', cnpjDraft.country || 'Brasil')}
                 </div>
@@ -2062,7 +2142,7 @@ async function loadModule(moduleName) {
                   <thead><tr><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
                   <tbody>
                     ${merged.map((row) => `
-                      <tr>
+                      <tr class="cadastro-row-clickable" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Duplo clique para editar">
                         <td>${escapeHtml(row.cadastroTipo)}</td>
                         <td>${escapeHtml(row.name)}</td>
                         <td>${escapeHtml(row.tradeName || '-')}</td>
@@ -2280,29 +2360,38 @@ async function loadModule(moduleName) {
         loadModule('cadastros');
       });
 
+      const openCadastroRowForEdit = (kind, id) => {
+        if (!id) return;
+
+        if (kind === 'cnpj') {
+          const company = cnpjs.find((entry) => entry.id === id);
+          if (!company) return;
+          state.cadastroDraft = {
+            ...state.cadastroDraft,
+            activeType: 'people',
+            people: { ...company, kind: 'cnpj', type: 'pessoa-juridica', error: '', documentMessage: '' }
+          };
+        } else {
+          const person = people.find((entry) => entry.id === id);
+          if (!person) return;
+          state.cadastroDraft = { ...state.cadastroDraft, activeType: 'people', people: { ...person, kind: 'people', error: '', documentMessage: '' } };
+        }
+
+        state.activeSub = 'edit';
+        renderApp();
+        loadModule('cadastros');
+      };
+
       document.querySelectorAll('.cadastro-edit-row').forEach((button) => {
         button.addEventListener('click', () => {
-          const kind = button.dataset.kind;
-          const id = button.dataset.id;
-          if (!id) return;
+          openCadastroRowForEdit(button.dataset.kind, button.dataset.id);
+        });
+      });
 
-          if (kind === 'cnpj') {
-            const company = cnpjs.find((entry) => entry.id === id);
-            if (!company) return;
-            state.cadastroDraft = {
-              ...state.cadastroDraft,
-              activeType: 'people',
-              people: { ...company, kind: 'cnpj', type: 'pessoa-juridica', error: '', documentMessage: '' }
-            };
-          } else {
-            const person = people.find((entry) => entry.id === id);
-            if (!person) return;
-            state.cadastroDraft = { ...state.cadastroDraft, activeType: 'people', people: { ...person, kind: 'people', error: '', documentMessage: '' } };
-          }
-
-          state.activeSub = 'edit';
-          renderApp();
-          loadModule('cadastros');
+      document.querySelectorAll('.cadastro-row-clickable').forEach((row) => {
+        row.addEventListener('dblclick', (event) => {
+          if (event.target.closest('button')) return;
+          openCadastroRowForEdit(row.dataset.kind, row.dataset.id);
         });
       });
 
@@ -2400,9 +2489,40 @@ async function loadModule(moduleName) {
           [key]: {
             ...(state.cadastroDraft[key] || {}),
             ...draftTarget,
+            fieldErrors: draftTarget.fieldErrors || {},
             document,
             documentMessage: message,
             error: message
+          }
+        };
+        renderApp();
+        loadModule('cadastros');
+      };
+
+      const markFormError = (draftTarget, key, message) => {
+        showToast(message, 'error');
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          [key]: {
+            ...(state.cadastroDraft[key] || {}),
+            ...draftTarget,
+            fieldErrors: draftTarget.fieldErrors || {},
+            error: message
+          }
+        };
+        renderApp();
+        loadModule('cadastros');
+      };
+
+      const markMissingFields = (draftTarget, key, fieldErrors, message) => {
+        showToast(message, 'error');
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          [key]: {
+            ...(state.cadastroDraft[key] || {}),
+            ...draftTarget,
+            fieldErrors,
+            error: ''
           }
         };
         renderApp();
@@ -2509,16 +2629,6 @@ async function loadModule(moduleName) {
         const documentValue = sanitizeDigits(formData.get('document'));
         const type = selectedType;
 
-        if (type === 'pessoa-juridica' && !isValidCnpj(documentValue)) {
-          markInvalidDocument({ name: String(formData.get('name') || '').trim() }, 'people', 'CNPJ inválido. Não é possível salvar.', documentValue);
-          return;
-        }
-
-        if (type === 'pessoa-fisica' && !isValidCpf(documentValue)) {
-          markInvalidDocument({ name: String(formData.get('name') || '').trim() }, 'people', 'CPF inválido. Não é possível salvar.', documentValue);
-          return;
-        }
-
         const payload = {
           id: peopleDraft.id || undefined,
           name: String(formData.get('name') || '').trim(),
@@ -2574,6 +2684,30 @@ async function loadModule(moduleName) {
           bankPeriod: String(formData.get('bankPeriod') || '').trim(),
           notes: String(formData.get('notes') || '').trim()
         };
+
+        const missingFields = getMissingRequiredRegistrationFields(payload);
+        if (missingFields.length) {
+          const fieldErrors = {};
+          missingFields.forEach((key) => { fieldErrors[key] = true; });
+          markMissingFields({ ...payload }, 'people', fieldErrors, 'Preencha os campos obrigatórios destacados em vermelho.');
+          return;
+        }
+
+        if (type === 'pessoa-juridica' && !isValidCnpj(documentValue)) {
+          markInvalidDocument({ ...payload }, 'people', 'CNPJ inválido. Não é possível salvar.', documentValue);
+          return;
+        }
+
+        if (type === 'pessoa-fisica' && !isValidCpf(documentValue)) {
+          markInvalidDocument({ ...payload }, 'people', 'CPF inválido. Não é possível salvar.', documentValue);
+          return;
+        }
+
+        const duplicateMessage = findDuplicateRegistrationClient([...people, ...cnpjs], payload, payload.id);
+        if (duplicateMessage) {
+          markFormError({ ...payload }, 'people', duplicateMessage);
+          return;
+        }
 
         state.cadastroDraft = { ...state.cadastroDraft, people: payload };
 
@@ -2693,21 +2827,6 @@ async function loadModule(moduleName) {
         const formData = new FormData(event.target);
         const documentValue = sanitizeDigits(formData.get('document'));
 
-        if (!isValidCnpj(documentValue)) {
-          showToast('CNPJ invalido. Nao foi possivel salvar.', 'error');
-          state.cadastroDraft = {
-            ...state.cadastroDraft,
-            cnpjs: {
-              ...(state.cadastroDraft.cnpjs || {}),
-              document: documentValue,
-              error: 'CNPJ inválido. Não foi possível salvar.'
-            }
-          };
-          renderApp();
-          loadModule('cadastros');
-          return;
-        }
-
         const payload = {
           id: cnpjDraft.id || undefined,
           name: String(formData.get('name') || '').trim(),
@@ -2755,6 +2874,25 @@ async function loadModule(moduleName) {
           bankPeriod: String(formData.get('bankPeriod') || '').trim(),
           notes: String(formData.get('notes') || '').trim()
         };
+
+        const missingFields = getMissingRequiredRegistrationFields(payload);
+        if (missingFields.length) {
+          const fieldErrors = {};
+          missingFields.forEach((key) => { fieldErrors[key] = true; });
+          markMissingFields({ ...payload }, 'cnpjs', fieldErrors, 'Preencha os campos obrigatórios destacados em vermelho.');
+          return;
+        }
+
+        if (!isValidCnpj(documentValue)) {
+          markFormError({ ...payload }, 'cnpjs', 'CNPJ inválido. Não foi possível salvar.');
+          return;
+        }
+
+        const duplicateMessage = findDuplicateRegistrationClient([...people, ...cnpjs], payload, payload.id);
+        if (duplicateMessage) {
+          markFormError({ ...payload }, 'cnpjs', duplicateMessage);
+          return;
+        }
 
         state.cadastroDraft = { ...state.cadastroDraft, cnpjs: payload };
 

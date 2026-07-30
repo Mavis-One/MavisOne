@@ -158,7 +158,7 @@ button.success:hover { background: #15803d; }
   width: 0;
   min-width: 0;
   padding: 0;
-  background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
+  background: linear-gradient(180deg, #060a14 0%, #020617 100%);
   color: #f9fafb;
   border-right: 1px solid rgba(255,255,255,0.08);
   overflow: hidden;
@@ -313,6 +313,18 @@ button.success:hover { background: #15803d; }
 
 .cadastro-field-inline {
   align-content: end;
+}
+
+.cadastro-field-invalid input,
+.cadastro-field-invalid select {
+  border-color: var(--danger-text);
+  box-shadow: 0 0 0 1px var(--danger-text);
+}
+
+.cadastro-field-error-msg {
+  color: var(--danger-text);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .cadastro-inline-action {
@@ -581,6 +593,8 @@ button.success:hover { background: #15803d; }
 .table { width: 100%; min-width: 640px; border-collapse: collapse; margin-top: 12px; }
 .table th, .table td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .table-actions th:last-child, .table-actions td:last-child { text-align: right; width: 120px; }
+.cadastro-row-clickable { cursor: pointer; }
+.cadastro-row-clickable:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.08)); }
 .delete-user { background: transparent; border: 1px solid rgba(239,68,68,0.18); color: #ef4444; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 .delete-user:hover { background: rgba(239,68,68,0.06); }
 .muted { color: var(--muted); }
