@@ -317,7 +317,7 @@ function renderAuth(error = '') {
             <input name="password" type="password" required placeholder="Digite sua senha" />
           </label>
           <button type="submit">Entrar</button>
-          ${error ? `<p style="color:#b91c1c">${error}</p>` : ''}
+          ${error ? `<p style="color:var(--danger-text)">${error}</p>` : ''}
         </form>
       </div>
     </div>
@@ -392,7 +392,7 @@ function renderApp() {
         <div class="topbar">
           <div class="topbar-title-wrap">
             <button class="icon-btn back-btn" id="backBtn" title="Voltar para a tela anterior" aria-label="Voltar para a tela anterior" ${canGoBack() ? '' : 'disabled'}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M15 18l-6-6 6-6"></path>
               </svg>
             </button>
@@ -710,6 +710,11 @@ function maskDocumentValue(value, type = '') {
     return formatCpfCnpj(digits.slice(0, 14));
   }
   return formatCpfCnpj(digits.slice(0, 11));
+}
+
+function maskCep(value) {
+  const digits = sanitizeDigits(value).slice(0, 8);
+  return digits.replace(/^(\d{5})(\d)/, '$1-$2');
 }
 
 function getOfficialEmail(official) {
@@ -1375,7 +1380,7 @@ async function loadModule(moduleName) {
                 <h3>${isEditMode ? 'Edição de cadastro' : 'Cadastro de pessoas'}</h3>
                 <p class="muted">${isEditMode ? 'Tela exclusiva para atualização de cadastros existentes.' : 'Padronizado para pessoa física e jurídica, com validação de documento.'}</p>
               </div>
-              <div class="cadastro-page-chip">${isEditMode ? 'Edição' : 'Dados básicos'}</div>
+              <div class="cadastro-page-chip">${peopleDraft.code ? `Código ${escapeHtml(peopleDraft.code)}` : (isEditMode ? 'Edição' : 'Dados básicos')}</div>
             </div>
             <form id="peopleRegisterForm" class="cadastro-form">
               ${section('Identificação', `
@@ -1416,6 +1421,14 @@ async function loadModule(moduleName) {
                   <span>Mais dados</span>
                   <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </button>
+                <button type="button" class="cadastro-tab" data-tab="billing" role="tab" aria-selected="false" id="billingTabBtn" ${peopleDraft.billingDifferent ? '' : 'hidden'}>
+                  <span>Endereço de Cobrança</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="delivery" role="tab" aria-selected="false" id="deliveryTabBtn" ${peopleDraft.deliveryDifferent ? '' : 'hidden'}>
+                  <span>Endereço de Entrega</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
               </div>
 
               <div class="cadastro-tab-panel" data-tab-panel="dados">
@@ -1443,7 +1456,7 @@ async function loadModule(moduleName) {
                     ${checkbox('deliveryDifferent', 'Endereço de entrega diferente', Boolean(peopleDraft.deliveryDifferent))}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('CEP', 'zipCode', peopleDraft.zipCode || '', '', Boolean(fieldErrors.zipCode))}
+                    ${field('CEP', 'zipCode', maskCep(peopleDraft.zipCode || ''), 'id="peopleZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"', Boolean(fieldErrors.zipCode))}
                     ${field('Logradouro', 'street', peopleDraft.street || '', '', Boolean(fieldErrors.addressLine))}
                     ${field('Número', 'streetNumber', peopleDraft.streetNumber || '')}
                   </div>
@@ -1521,6 +1534,46 @@ async function loadModule(moduleName) {
                     ${field('Inscrição na SUFRAMA', 'suframaRegistration', peopleDraft.suframaRegistration || '')}
                   </div>
                 `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="billing" hidden>
+                ${section('Endereço de cobrança', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('CEP', 'billingZipCode', maskCep(peopleDraft.billingZipCode || ''), 'id="peopleBillingZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"')}
+                    ${field('Logradouro', 'billingStreet', peopleDraft.billingStreet || '')}
+                    ${field('Número', 'billingStreetNumber', peopleDraft.billingStreetNumber || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Complemento', 'billingAddressComplement', peopleDraft.billingAddressComplement || '')}
+                    ${field('Bairro', 'billingNeighborhood', peopleDraft.billingNeighborhood || '')}
+                    ${field('Cidade', 'billingCity', peopleDraft.billingCity || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('UF', 'billingState', peopleDraft.billingState || '')}
+                    ${field('Cód. Cidade (IBGE)', 'billingIbgeCityCode', peopleDraft.billingIbgeCityCode || '')}
+                    ${field('País', 'billingCountry', peopleDraft.billingCountry || 'Brasil')}
+                  </div>
+                `, 'Endereço usado para cobrança, diferente do endereço principal do cliente.')}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="delivery" hidden>
+                ${section('Endereço de entrega', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('CEP', 'deliveryZipCode', maskCep(peopleDraft.deliveryZipCode || ''), 'id="peopleDeliveryZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"')}
+                    ${field('Logradouro', 'deliveryStreet', peopleDraft.deliveryStreet || '')}
+                    ${field('Número', 'deliveryStreetNumber', peopleDraft.deliveryStreetNumber || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Complemento', 'deliveryAddressComplement', peopleDraft.deliveryAddressComplement || '')}
+                    ${field('Bairro', 'deliveryNeighborhood', peopleDraft.deliveryNeighborhood || '')}
+                    ${field('Cidade', 'deliveryCity', peopleDraft.deliveryCity || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('UF', 'deliveryState', peopleDraft.deliveryState || '')}
+                    ${field('Cód. Cidade (IBGE)', 'deliveryIbgeCityCode', peopleDraft.deliveryIbgeCityCode || '')}
+                    ${field('País', 'deliveryCountry', peopleDraft.deliveryCountry || 'Brasil')}
+                  </div>
+                `, 'Endereço usado para entrega, diferente do endereço principal do cliente.')}
               </div>
 
               ${section('Observações', `
@@ -1635,7 +1688,7 @@ async function loadModule(moduleName) {
 
               ${section('Endereço', `
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('CEP', 'zipCode', cnpjDraft.zipCode || '', '', Boolean(fieldErrors.zipCode))}
+                  ${field('CEP', 'zipCode', maskCep(cnpjDraft.zipCode || ''), 'id="cnpjZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"', Boolean(fieldErrors.zipCode))}
                   ${field('Logradouro', 'address', cnpjDraft.address || '', '', Boolean(fieldErrors.addressLine))}
                   ${field('Número', 'addressNumber', cnpjDraft.addressNumber || '')}
                 </div>
@@ -1925,6 +1978,7 @@ async function loadModule(moduleName) {
           ...people.map((person) => ({
             kind: 'people',
             id: person.id,
+            code: person.code || '',
             cadastroTipo: person.type === 'pessoa-juridica' ? 'Pessoa juridica' : 'Pessoa fisica',
             name: person.name || '',
             tradeName: person.tradeName || '',
@@ -1944,6 +1998,7 @@ async function loadModule(moduleName) {
           ...cnpjs.map((company) => ({
             kind: 'cnpj',
             id: company.id,
+            code: company.code || '',
             cadastroTipo: 'CNPJ',
             name: company.name || '',
             tradeName: company.tradeName || '',
@@ -1973,7 +2028,7 @@ async function loadModule(moduleName) {
 
             if (listFilters.nameFantasy && !includesText(`${row.name} ${row.tradeName}`, listFilters.nameFantasy)) return false;
             if (listFilters.corporateName && !includesText(row.name, listFilters.corporateName)) return false;
-            if (listFilters.uniqueCode && !includesText(row.id, listFilters.uniqueCode)) return false;
+            if (listFilters.uniqueCode && !includesText(row.code, listFilters.uniqueCode)) return false;
             if (listFilters.email && !includesText(row.email, listFilters.email)) return false;
             if (listFilters.document && !includesText(sanitizeDigits(row.document), sanitizeDigits(listFilters.document))) return false;
             if (listFilters.city && !includesText(row.city, listFilters.city)) return false;
@@ -2004,6 +2059,7 @@ async function loadModule(moduleName) {
 
             if (!query) return true;
             return [
+              row.code,
               row.name,
               row.tradeName,
               row.document,
@@ -2044,7 +2100,7 @@ async function loadModule(moduleName) {
                     <input name="corporateName" value="${escapeHtml(listFilters.corporateName)}" />
                   </label>
                   <label class="cadastro-field">
-                    <span>Codigo identificador unico</span>
+                    <span>Código do cliente</span>
                     <input name="uniqueCode" value="${escapeHtml(listFilters.uniqueCode)}" />
                   </label>
                   <label class="cadastro-field">
@@ -2139,10 +2195,11 @@ async function loadModule(moduleName) {
             ${merged.length ? `
               <div class="table-scroll">
                 <table class="table table-actions">
-                  <thead><tr><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
+                  <thead><tr><th>Código</th><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
                   <tbody>
                     ${merged.map((row) => `
                       <tr class="cadastro-row-clickable" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Duplo clique para editar">
+                        <td>${escapeHtml(row.code || '-')}</td>
                         <td>${escapeHtml(row.cadastroTipo)}</td>
                         <td>${escapeHtml(row.name)}</td>
                         <td>${escapeHtml(row.tradeName || '-')}</td>
@@ -2547,6 +2604,66 @@ async function loadModule(moduleName) {
         refreshPeopleLookupButton();
       });
 
+      // Preenche automaticamente Logradouro/Bairro/Cidade/UF ao sair do campo CEP (blur/Tab).
+      // fieldMap define os nomes reais dos campos no formulário (endereço principal, de cobrança ou de entrega).
+      const bindCepAutoFill = (form, draftKey, fieldMap) => {
+        const cepInput = form?.querySelector(`input[name="${fieldMap.zipCode}"]`);
+        if (!cepInput) return;
+
+        cepInput.addEventListener('input', () => {
+          cepInput.value = maskCep(cepInput.value);
+        });
+
+        const clearFieldError = (input) => {
+          const wrapper = input?.closest('.cadastro-field, .cadastro-field-inline');
+          wrapper?.classList.remove('cadastro-field-invalid');
+          wrapper?.querySelector('.cadastro-field-error-msg')?.remove();
+        };
+
+        cepInput.addEventListener('blur', async () => {
+          const cep = sanitizeDigits(cepInput.value);
+          if (cep.length !== 8) return;
+
+          try {
+            const response = await api(`/api/cep/${cep}`);
+            const address = response.address || {};
+
+            const fieldValues = {
+              [fieldMap.street]: address.street || '',
+              [fieldMap.neighborhood]: address.neighborhood || '',
+              [fieldMap.city]: address.city || '',
+              [fieldMap.state]: address.state || '',
+              [fieldMap.ibgeCityCode]: address.ibgeCityCode || ''
+            };
+
+            clearFieldError(cepInput);
+            Object.entries(fieldValues).forEach(([fieldName, value]) => {
+              if (!value) return;
+              const input = form.querySelector(`[name="${fieldName}"]`);
+              if (!input) return;
+              input.value = value;
+              clearFieldError(input);
+            });
+
+            state.cadastroDraft = {
+              ...state.cadastroDraft,
+              [draftKey]: {
+                ...(state.cadastroDraft[draftKey] || {}),
+                [fieldMap.zipCode]: address.zipCode || cep,
+                ...fieldValues
+              }
+            };
+          } catch (error) {
+            showToast(error.message || 'CEP não encontrado.', 'warning');
+          }
+        });
+      };
+
+      const peopleRegisterFormEl = document.getElementById('peopleRegisterForm');
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'zipCode', street: 'street', neighborhood: 'neighborhood', city: 'city', state: 'state', ibgeCityCode: 'ibgeCityCode' });
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'billingZipCode', street: 'billingStreet', neighborhood: 'billingNeighborhood', city: 'billingCity', state: 'billingState', ibgeCityCode: 'billingIbgeCityCode' });
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'deliveryZipCode', street: 'deliveryStreet', neighborhood: 'deliveryNeighborhood', city: 'deliveryCity', state: 'deliveryState', ibgeCityCode: 'deliveryIbgeCityCode' });
+
       document.getElementById('peopleLookupBtn')?.addEventListener('click', async () => {
         const form = document.getElementById('peopleRegisterForm');
         if (!form) return;
@@ -2669,6 +2786,24 @@ async function loadModule(moduleName) {
           country: String(formData.get('country') || '').trim(),
           countryCode: String(formData.get('countryCode') || '').trim(),
           mapLink: String(formData.get('mapLink') || '').trim(),
+          billingZipCode: String(formData.get('billingZipCode') || '').trim(),
+          billingStreet: String(formData.get('billingStreet') || '').trim(),
+          billingStreetNumber: String(formData.get('billingStreetNumber') || '').trim(),
+          billingAddressComplement: String(formData.get('billingAddressComplement') || '').trim(),
+          billingNeighborhood: String(formData.get('billingNeighborhood') || '').trim(),
+          billingCity: String(formData.get('billingCity') || '').trim(),
+          billingState: String(formData.get('billingState') || '').trim(),
+          billingIbgeCityCode: String(formData.get('billingIbgeCityCode') || '').trim(),
+          billingCountry: String(formData.get('billingCountry') || '').trim(),
+          deliveryZipCode: String(formData.get('deliveryZipCode') || '').trim(),
+          deliveryStreet: String(formData.get('deliveryStreet') || '').trim(),
+          deliveryStreetNumber: String(formData.get('deliveryStreetNumber') || '').trim(),
+          deliveryAddressComplement: String(formData.get('deliveryAddressComplement') || '').trim(),
+          deliveryNeighborhood: String(formData.get('deliveryNeighborhood') || '').trim(),
+          deliveryCity: String(formData.get('deliveryCity') || '').trim(),
+          deliveryState: String(formData.get('deliveryState') || '').trim(),
+          deliveryIbgeCityCode: String(formData.get('deliveryIbgeCityCode') || '').trim(),
+          deliveryCountry: String(formData.get('deliveryCountry') || '').trim(),
           creditLimit: String(formData.get('creditLimit') || '').trim(),
           creditUsed: String(formData.get('creditUsed') || '').trim(),
           paymentPeriodDays: String(formData.get('paymentPeriodDays') || '').trim(),
@@ -2749,8 +2884,28 @@ async function loadModule(moduleName) {
         });
       });
 
+      // Endereço de cobrança/entrega diferente: abre (ou fecha) a aba correspondente ao ligar/desligar a chave.
+      const bindDifferentAddressToggle = (checkboxName, tabBtnId) => {
+        const toggle = document.querySelector(`#peopleRegisterForm input[name="${checkboxName}"]`);
+        const tabBtn = document.getElementById(tabBtnId);
+        if (!toggle || !tabBtn) return;
+
+        toggle.addEventListener('change', () => {
+          tabBtn.hidden = !toggle.checked;
+          if (toggle.checked) {
+            tabBtn.click();
+          } else if (tabBtn.classList.contains('active')) {
+            document.querySelector('#peopleRegisterForm .cadastro-tab[data-tab="dados"]')?.click();
+          }
+        });
+      };
+
+      bindDifferentAddressToggle('billingDifferent', 'billingTabBtn');
+      bindDifferentAddressToggle('deliveryDifferent', 'deliveryTabBtn');
+
       const cnpjDocumentInput = document.getElementById('cnpjDocumentInput');
       bindDocumentMask(cnpjDocumentInput, () => 'pessoa-juridica');
+      bindCepAutoFill(document.getElementById('cnpjRegisterForm'), 'cnpjs', { zipCode: 'zipCode', street: 'address', neighborhood: 'neighborhood', city: 'city', state: 'state', ibgeCityCode: 'ibgeCityCode' });
 
       document.getElementById('consultCnpjBtn')?.addEventListener('click', async () => {
         const form = document.getElementById('cnpjRegisterForm');

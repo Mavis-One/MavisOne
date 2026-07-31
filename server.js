@@ -56,6 +56,37 @@ function ensureDataFile() {
   }
 }
 
+function formatCadastroCode(n) {
+  return String(n).padStart(2, '0');
+}
+
+// Garante que toda pessoa/CNPJ tenha um código sequencial único (compartilhado entre as duas coleções).
+// Registros antigos sem código recebem um retroativamente, na ordem de criação.
+function assignCadastroCodes(data) {
+  const allCadastros = [...data.people, ...data.cnpjs];
+  const existingCodes = allCadastros
+    .map((record) => Number(record.code))
+    .filter((n) => Number.isFinite(n) && n > 0);
+
+  let nextCode = typeof data.nextCadastroCode === 'number' && data.nextCadastroCode > 0
+    ? data.nextCadastroCode
+    : (existingCodes.length ? Math.max(...existingCodes) + 1 : 1);
+
+  const missing = allCadastros
+    .filter((record) => !record.code)
+    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+
+  missing.forEach((record) => {
+    record.code = formatCadastroCode(nextCode);
+    nextCode += 1;
+  });
+
+  data.nextCadastroCode = nextCode;
+  if (missing.length > 0) {
+    data.__needsCodeSave = true;
+  }
+}
+
 function normalizeData(data) {
   data.orders = Array.isArray(data.orders) ? data.orders : [];
   data.quotes = Array.isArray(data.quotes) ? data.quotes : [];
@@ -71,16 +102,24 @@ function normalizeData(data) {
     const theme = user.theme === 'dark' ? 'dark' : 'light';
     return { ...user, allowedModules, theme };
   });
+  assignCadastroCodes(data);
   return data;
 }
 
 function loadData() {
   ensureDataFile();
-  return normalizeData(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+  const data = normalizeData(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+  if (data.__needsCodeSave) {
+    delete data.__needsCodeSave;
+    saveData(data);
+  }
+  return data;
 }
 
 function saveData(data) {
+  delete data.__needsCodeSave;
   const normalized = normalizeData(data);
+  delete normalized.__needsCodeSave;
   fs.writeFileSync(DATA_FILE, JSON.stringify(normalized, null, 2));
 }
 
@@ -214,9 +253,26 @@ function findDuplicateRegistration(data, record, excludeId) {
   return null;
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      const timeoutError = new Error('Tempo de resposta excedido ao consultar a API externa. Tente novamente.');
+      timeoutError.status = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchCnpjOfficialData(cnpj) {
   const url = `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -260,6 +316,36 @@ async function fetchCnpjOfficialData(cnpj) {
     cnaePrincipal: payload.cnae_fiscal_descricao || (payload.cnae_fiscal ? String(payload.cnae_fiscal) : ''),
     dataAbertura: payload.data_inicio_atividade || '',
     contatos: contacts,
+    raw: payload
+  };
+}
+
+async function fetchCepData(cep) {
+  const url = `https://viacep.com.br/ws/${cep}/json/`;
+  const response = await fetchWithTimeout(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'MavisONE/1.0'
+    }
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.erro) {
+    const err = new Error('CEP não encontrado.');
+    err.status = 404;
+    throw err;
+  }
+
+  return {
+    zipCode: sanitizeDigits(payload.cep || cep),
+    street: payload.logradouro || '',
+    complement: payload.complemento || '',
+    neighborhood: payload.bairro || '',
+    city: payload.localidade || '',
+    state: payload.uf || '',
+    ibgeCityCode: payload.ibge || '',
+    ddd: payload.ddd || '',
     raw: payload
   };
 }
@@ -629,6 +715,27 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (pathname.startsWith('/api/cep/') && req.method === 'GET') {
+    try {
+      const data = loadData();
+      const user = getCurrentUser(req, data);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+
+      const cep = sanitizeDigits(pathname.replace('/api/cep/', ''));
+      if (cep.length !== 8) {
+        return sendJson(res, { error: 'CEP inválido. Informe 8 dígitos.' }, 400);
+      }
+
+      const address = await fetchCepData(cep);
+      return sendJson(res, { valid: true, address });
+    } catch (error) {
+      const status = error.status || 502;
+      return sendJson(res, { error: error.message || 'Erro ao consultar CEP' }, status);
+    }
+  }
+
   if (pathname === '/api/cadastros/pessoas' && req.method === 'POST') {
     try {
       const data = loadData();
@@ -655,6 +762,7 @@ const server = http.createServer(async (req, res) => {
         ...body,
         type,
         document,
+        code: formatCadastroCode(data.nextCadastroCode || 1),
         name: (officialData && officialData.razaoSocial) || body.name || '',
         tradeName: (officialData && officialData.nomeFantasia) || body.tradeName || '',
         email: body.email || (officialData?.contatos || []).find((contact) => contact.type === 'email')?.value || '',
@@ -672,6 +780,7 @@ const server = http.createServer(async (req, res) => {
         cnpjVerifiedAt: officialData ? new Date().toISOString() : null,
         createdAt: body.createdAt || new Date().toISOString()
       };
+      data.nextCadastroCode = (data.nextCadastroCode || 1) + 1;
 
       const missingFields = validateRequiredRegistrationFields(person);
       if (missingFields.length) {
@@ -725,6 +834,7 @@ const server = http.createServer(async (req, res) => {
         id: current.id,
         type,
         document,
+        code: current.code,
         name: (officialData && officialData.razaoSocial) || body.name || current.name || '',
         tradeName: (officialData && officialData.nomeFantasia) || body.tradeName || current.tradeName || '',
         email: body.email || (officialData?.contatos || []).find((contact) => contact.type === 'email')?.value || current.email || '',
@@ -807,6 +917,7 @@ const server = http.createServer(async (req, res) => {
         ...body,
         type: 'pessoa-juridica',
         document: cnpj,
+        code: formatCadastroCode(data.nextCadastroCode || 1),
         name: (cnpjValidation && cnpjValidation.razaoSocial) || body.name || '',
         tradeName: (cnpjValidation && cnpjValidation.nomeFantasia) || body.tradeName || '',
         email: body.email || (cnpjValidation?.contatos || []).find((contact) => contact.type === 'email')?.value || '',
@@ -827,6 +938,7 @@ const server = http.createServer(async (req, res) => {
         cnpjVerifiedAt: cnpjValidation ? new Date().toISOString() : null,
         createdAt: body.createdAt || new Date().toISOString()
       };
+      data.nextCadastroCode = (data.nextCadastroCode || 1) + 1;
 
       const missingFields = validateRequiredRegistrationFields(company);
       if (missingFields.length) {
@@ -882,6 +994,7 @@ const server = http.createServer(async (req, res) => {
         id: current.id,
         type: 'pessoa-juridica',
         document: cnpj,
+        code: current.code,
         name: (cnpjValidation && cnpjValidation.razaoSocial) || body.name || current.name || '',
         tradeName: (cnpjValidation && cnpjValidation.nomeFantasia) || body.tradeName || current.tradeName || '',
         email: body.email || (cnpjValidation?.contatos || []).find((contact) => contact.type === 'email')?.value || current.email || '',

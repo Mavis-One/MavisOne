@@ -12,6 +12,11 @@
   --input-bg: #ffffff;
   --shadow: rgba(15, 23, 42, 0.06);
   --danger-text: #b91c1c;
+  --success: #16a34a;
+  --success-hover: #15803d;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --switch-off: #cbd5e1;
 }
 
 :root[data-theme="dark"] {
@@ -27,6 +32,7 @@
   --input-bg: #101828;
   --shadow: rgba(0, 0, 0, 0.35);
   --danger-text: #f87171;
+  --switch-off: #475569;
 }
 
 * { box-sizing: border-box; }
@@ -75,6 +81,49 @@ button, input, select { font: inherit; }
 label { display: grid; gap: 6px; font-weight: 600; }
 input, select, textarea { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); }
 textarea { min-height: 110px; resize: vertical; }
+
+/* Checkboxes padronizados como toggle switches: verde quando ativo, cinza quando inativo */
+input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 40px;
+  height: 22px;
+  min-width: 40px;
+  border-radius: 999px;
+  background: var(--switch-off);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 200ms ease, border-color 200ms ease;
+}
+input[type="checkbox"]::before {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 200ms ease;
+}
+input[type="checkbox"]:checked {
+  background: var(--success);
+  border-color: var(--success);
+}
+input[type="checkbox"]:checked::before {
+  transform: translateX(18px);
+}
+input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 button {
   padding: 10px 14px;
   border: none;
@@ -84,8 +133,17 @@ button {
   cursor: pointer;
 }
 button.secondary { background: var(--panel-alt-hover); color: var(--text); }
-button.success { background: #16a34a; color: #fff; }
-button.success:hover { background: #15803d; }
+button.success { background: var(--success); color: #fff; }
+button.success:hover { background: var(--success-hover); }
+
+#logoutBtn {
+  transition: background 200ms ease, color 200ms ease, transform 150ms ease;
+}
+#logoutBtn:hover {
+  background: var(--danger);
+  color: #fff;
+  transform: translateY(-1px);
+}
 
 .layout { display: grid; grid-template-columns: auto auto minmax(0, 1fr); min-height: 100vh; }
 .sidebar {
@@ -149,7 +207,7 @@ button.success:hover { background: #15803d; }
 .nav-item .icon { display:inline-flex; width:36px; height:36px; align-items:center; justify-content:center; border-radius:8px; background: rgba(255,255,255,0.06); font-weight:700; }
 .nav-item .text { white-space: nowrap; overflow: hidden; transition: opacity 200ms ease, transform 350ms ease; opacity: 0; transform: translateX(-6px); }
 .sidebar:hover .nav-item .text, .sidebar.expanded .nav-item .text { opacity: 1; transform: none; }
-.nav-item.active .icon { background: #1d4ed8; }
+.nav-item.active .icon { background: var(--primary); }
 .submenu { margin-left: 48px; margin-top: 6px; display: none; flex-direction: column; gap: 6px; }
 .sub-item { background: transparent; color: #cbd5e1; padding: 8px 10px; border-radius: 8px; text-align: left; cursor: pointer; }
 .sub-item.active { background: rgba(255,255,255,0.06); color: #fff; }
@@ -284,6 +342,7 @@ button.success:hover { background: #15803d; }
 .cadastro-grid {
   display: grid;
   gap: 12px;
+  align-items: start;
 }
 
 .cadastro-grid-1 { grid-template-columns: 1fr; }
@@ -423,6 +482,10 @@ button.success:hover { background: #15803d; }
 
 .cadastro-tab:hover {
   color: var(--text);
+}
+
+.cadastro-tab[hidden] {
+  display: none;
 }
 
 .cadastro-tab.active {
@@ -565,6 +628,9 @@ button.success:hover { background: #15803d; }
   transform: rotate(15deg);
 }
 .back-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
   background: var(--panel);
 }
 .back-btn:hover {
@@ -595,14 +661,14 @@ button.success:hover { background: #15803d; }
 .table-actions th:last-child, .table-actions td:last-child { text-align: right; width: 120px; }
 .cadastro-row-clickable { cursor: pointer; }
 .cadastro-row-clickable:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.08)); }
-.delete-user { background: transparent; border: 1px solid rgba(239,68,68,0.18); color: #ef4444; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+.delete-user { background: transparent; border: 1px solid rgba(239,68,68,0.18); color: var(--danger); padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 .delete-user:hover { background: rgba(239,68,68,0.06); }
 .muted { color: var(--muted); }
 .row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
 .checkbox-grid label { display: flex; gap: 6px; align-items: center; font-weight: 400; }
 
-.icon-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:8px; background: transparent; border: none; cursor: pointer; color: #ef4444; }
+.icon-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:8px; background: transparent; border: none; cursor: pointer; color: var(--danger); }
 .icon-button.edit { color: var(--primary); }
 .table-actions td .icon-button + .icon-button { margin-left: 4px; }
 .icon-button svg { display:block; }
@@ -616,7 +682,7 @@ button.success:hover { background: #15803d; }
 .modal-actions { display:flex; gap:8px; justify-content:flex-end; }
 .btn { padding: 8px 12px; border-radius:8px; border: none; cursor: pointer; }
 .btn-muted { background: var(--panel-alt-hover); color: var(--text); }
-.btn-danger { background: #ef4444; color: #fff; }
+.btn-danger { background: var(--danger); color: #fff; }
 
 .toast-container {
   position: fixed;
@@ -654,11 +720,11 @@ button.success:hover { background: #15803d; }
 }
 
 .toast-error {
-  background: linear-gradient(135deg, #b91c1c, #ef4444);
+  background: linear-gradient(135deg, var(--danger-hover), var(--danger));
 }
 
 .toast-success {
-  background: linear-gradient(135deg, #047857, #10b981);
+  background: linear-gradient(135deg, var(--success-hover), var(--success));
 }
 
 .toast-warning {

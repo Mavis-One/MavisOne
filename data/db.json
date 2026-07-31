@@ -186,7 +186,8 @@
       "mainCnae": "",
       "openingDate": "",
       "contacts": [],
-      "cnpjVerifiedAt": null
+      "cnpjVerifiedAt": null,
+      "code": "01"
     },
     {
       "id": "pes-test-002",
@@ -197,7 +198,8 @@
       "phone": "51991110002",
       "status": "ativo",
       "notes": "Cadastro de teste PF 2",
-      "createdAt": "2026-07-28T10:05:00.000Z"
+      "createdAt": "2026-07-28T10:05:00.000Z",
+      "code": "02"
     },
     {
       "id": "pes-test-003",
@@ -262,7 +264,8 @@
       "mainCnae": "",
       "openingDate": "",
       "contacts": [],
-      "cnpjVerifiedAt": null
+      "cnpjVerifiedAt": null,
+      "code": "03"
     },
     {
       "id": "pes-test-004",
@@ -273,7 +276,8 @@
       "phone": "51991110004",
       "status": "inativo",
       "notes": "Cadastro de teste PF 4",
-      "createdAt": "2026-07-28T10:15:00.000Z"
+      "createdAt": "2026-07-28T10:15:00.000Z",
+      "code": "04"
     },
     {
       "id": "pes-test-005",
@@ -284,7 +288,8 @@
       "phone": "51991110005",
       "status": "ativo",
       "notes": "Cadastro de teste PF 5",
-      "createdAt": "2026-07-28T10:20:00.000Z"
+      "createdAt": "2026-07-28T10:20:00.000Z",
+      "code": "05"
     },
     {
       "id": "pes-1785282112778-ws5kx6",
@@ -306,7 +311,8 @@
       "openingDate": "",
       "contacts": [],
       "cnpjVerifiedAt": null,
-      "createdAt": "2026-07-28T23:41:52.778Z"
+      "createdAt": "2026-07-28T23:41:52.778Z",
+      "code": "11"
     }
   ],
   "cnpjs": [
@@ -322,7 +328,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "ativo",
-      "createdAt": "2026-07-28T11:00:00.000Z"
+      "createdAt": "2026-07-28T11:00:00.000Z",
+      "code": "06"
     },
     {
       "id": "cnpj-test-002",
@@ -336,7 +343,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "ativo",
-      "createdAt": "2026-07-28T11:05:00.000Z"
+      "createdAt": "2026-07-28T11:05:00.000Z",
+      "code": "07"
     },
     {
       "id": "cnpj-test-003",
@@ -350,7 +358,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "inativo",
-      "createdAt": "2026-07-28T11:10:00.000Z"
+      "createdAt": "2026-07-28T11:10:00.000Z",
+      "code": "08"
     },
     {
       "id": "cnpj-test-004",
@@ -364,7 +373,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "ativo",
-      "createdAt": "2026-07-28T11:15:00.000Z"
+      "createdAt": "2026-07-28T11:15:00.000Z",
+      "code": "09"
     },
     {
       "id": "cnpj-test-005",
@@ -378,7 +388,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "ativo",
-      "createdAt": "2026-07-28T11:20:00.000Z"
+      "createdAt": "2026-07-28T11:20:00.000Z",
+      "code": "10"
     }
   ],
   "importLogs": [],
@@ -392,5 +403,6 @@
       "byName": "Administrador",
       "at": "2026-07-29T00:56:33.859Z"
     }
-  ]
+  ],
+  "nextCadastroCode": 12
 }
