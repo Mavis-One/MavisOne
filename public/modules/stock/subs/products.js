@@ -2,7 +2,7 @@ window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
 window.MavisSubscreenRegistry.stock.products = async function renderStockProducts(ctx) {
-  const { content, data, api, showToast, loadModule } = ctx;
+  const { content, data, api, showToast, loadModule, escapeHtml } = ctx;
 
   content.innerHTML = `
     <div class="panel">
@@ -15,7 +15,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
         <div class="row">
           <label>Estoque inicial<input name="stockQuantity" type="number" required value="0" /></label>
           <label>Custo<input name="costPrice" type="number" step="0.01" required value="0" /></label>
-          <label>Preco de venda<input name="salePrice" type="number" step="0.01" required value="0" /></label>
+          <label>Preço de venda<input name="salePrice" type="number" step="0.01" required value="0" /></label>
         </div>
         <button type="submit">Salvar produto</button>
       </form>
@@ -25,7 +25,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
       <table class="table">
         <thead><tr><th>Produto</th><th>SKU</th><th>Estoque</th><th>Custo</th><th>Venda</th></tr></thead>
         <tbody>
-          ${data.products.map((product) => `<tr><td>${product.name}</td><td>${product.sku}</td><td>${product.stockQuantity}</td><td>R$ ${product.costPrice}</td><td>R$ ${product.salePrice}</td></tr>`).join('')}
+          ${data.products.map((product) => `<tr><td>${escapeHtml(product.name)}</td><td>${escapeHtml(product.sku)}</td><td>${escapeHtml(String(product.stockQuantity))}</td><td>R$ ${Number(product.costPrice || 0).toFixed(2)}</td><td>R$ ${Number(product.salePrice || 0).toFixed(2)}</td></tr>`).join('')}
         </tbody>
       </table>
     </div>

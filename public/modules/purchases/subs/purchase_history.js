@@ -6,7 +6,7 @@ window.MavisSubscreenRegistry.purchases.purchase_history = async function render
 
   content.innerHTML = `
     <div class="panel">
-      <h3>Historico de compras</h3>
+      <h3>Histórico de compras</h3>
       <table class="table">
         <thead><tr><th>ID</th><th>Fornecedor</th><th>Data</th><th>Total</th><th>Status</th></tr></thead>
         <tbody>

@@ -158,6 +158,12 @@ function getSecondarySidebarConfig(moduleName) {
   if (moduleName === 'purchases') {
     return { module: 'purchases', title: 'Compras', subtitle: 'Fluxos', items: moduleSubItems.purchases };
   }
+  if (moduleName === 'finance') {
+    return { module: 'finance', title: 'Financeiro', subtitle: 'Fluxos', items: moduleSubItems.finance };
+  }
+  if (moduleName === 'stock') {
+    return { module: 'stock', title: 'Estoque', subtitle: 'Fluxos', items: moduleSubItems.stock };
+  }
   return null;
 }
 
@@ -185,7 +191,7 @@ function renderSecondarySidebar() {
     return;
   }
 
-  const activeKey = state.activeSub || (secondaryConfig.module === 'sales' ? 'orders_quotes' : secondaryConfig.module === 'cadastros' ? 'list' : secondaryConfig.module === 'purchases' ? 'new_purchase' : null);
+  const activeKey = state.activeSub || (secondaryConfig.module === 'sales' ? 'orders_quotes' : secondaryConfig.module === 'cadastros' ? 'list' : secondaryConfig.module === 'purchases' ? 'new_purchase' : secondaryConfig.module === 'finance' ? 'dashboard' : secondaryConfig.module === 'stock' ? 'products' : null);
 
   sidebar.innerHTML = `
     <div class="secondary-header">
@@ -345,7 +351,7 @@ function renderAuth(error = '') {
 }
 
 function renderApp() {
-  const activeSubKey = state.activeSub || (state.activeModule === 'sales' ? 'orders_quotes' : state.activeModule === 'cadastros' ? 'list' : state.activeModule === 'purchases' ? 'new_purchase' : null);
+  const activeSubKey = state.activeSub || (state.activeModule === 'sales' ? 'orders_quotes' : state.activeModule === 'cadastros' ? 'list' : state.activeModule === 'purchases' ? 'new_purchase' : state.activeModule === 'finance' ? 'dashboard' : state.activeModule === 'stock' ? 'products' : null);
   const activeSubLabel = (state.activeModule === 'cadastros' && activeSubKey === 'edit')
     ? 'Edição'
     : (state.activeModule === 'cadastros' && activeSubKey === 'register')
@@ -490,6 +496,8 @@ function renderApp() {
     state.selectedModule = null;
     state.moduleRouteHistory = {};
     state.isNavigatingBack = false;
+    // Evita vazar rascunhos/depósitos não salvos do usuário anterior para o próximo login na mesma aba.
+    state.cadastroDraft = { people: {}, cnpjs: {} };
     applyTheme('light');
     renderAuth();
   });
@@ -555,7 +563,14 @@ const moduleSubItems = {
   stock: [ { key: 'products', label: 'Produtos' }, { key: 'movements', label: 'Movimentos' } ],
 
   // ABA: Financeiro
-  finance: [ { key: 'payables', label: 'Contas a pagar' }, { key: 'receivables', label: 'Contas a receber' } ],
+  finance: [
+    { key: 'dashboard', label: 'Dashboard' },
+    { key: 'lancamentos', label: 'Lançamentos' },
+    { key: 'novo_lancamento', label: 'Novo Lançamento' },
+    { key: 'nfe_emitidas', label: 'NF-e Emitidas' },
+    { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa' },
+    { key: 'extrato_open_finance', label: 'Extrato Open Finance' }
+  ],
 
   // ABA: Configurações
   settings: [ { key: 'users', label: 'Usuários' }, { key: 'company', label: 'Empresa' } ],
@@ -563,7 +578,7 @@ const moduleSubItems = {
   // ABA: Cadastros
   cadastros: [
     { key: 'list', label: 'Cadastros' },
-    { key: 'deposits', label: 'Depositos' }
+    { key: 'deposits', label: 'Depósitos' }
   ]
 };
 
@@ -910,12 +925,12 @@ async function loadModule(moduleName) {
                 note: formData.get('note')
               })
             });
-            showToast('Orcamento salvo com sucesso.', 'success');
+            showToast('Orçamento salvo com sucesso.', 'success');
             state.activeSub = 'orders_quotes';
             renderApp();
             loadModule('sales');
           } catch (error) {
-            showToast(error.message || 'Erro ao salvar orcamento.', 'error');
+            showToast(error.message || 'Erro ao salvar orçamento.', 'error');
           }
         });
         return;
@@ -1038,7 +1053,7 @@ async function loadModule(moduleName) {
         `;
         document.getElementById('orderGroupForm').addEventListener('submit', async (event) => {
           event.preventDefault();
-          showToast('Funcionalidade de agrupamento sera implementada em breve.', 'warning');
+          showToast('Funcionalidade de agrupamento será implementada em breve.', 'warning');
           state.activeSub = 'order_groups';
           renderApp();
           loadModule('sales');
@@ -1059,7 +1074,7 @@ async function loadModule(moduleName) {
               </tbody>
             </table>
             <div style="margin-top: 16px;">
-              <button class="secondary" onclick="window.notifyToast('Registrar devolucao sera implementado em breve.', 'warning')">+ Registrar Devolução</button>
+              <button class="secondary" onclick="window.notifyToast('Registrar devolução será implementado em breve.', 'warning')">+ Registrar Devolução</button>
             </div>
           </div>
         `;
@@ -1119,7 +1134,7 @@ async function loadModule(moduleName) {
               </tbody>
             </table>
             <div style="margin-top: 16px;">
-              <button class="secondary" onclick="window.notifyToast('Emitir novo vale sera implementado em breve.', 'warning')">+ Emitir Vale</button>
+              <button class="secondary" onclick="window.notifyToast('Emitir novo vale será implementado em breve.', 'warning')">+ Emitir Vale</button>
             </div>
           </div>
         `;
@@ -1192,7 +1207,7 @@ async function loadModule(moduleName) {
         `;
         document.getElementById('promotionForm').addEventListener('submit', async (event) => {
           event.preventDefault();
-          showToast('Promocao salva com sucesso!', 'success');
+          showToast('Cadastro de promoções será implementado em breve. Nada foi salvo.', 'warning');
           state.activeSub = 'configure_promotions';
           renderApp();
           loadModule('sales');
@@ -1211,7 +1226,7 @@ async function loadModule(moduleName) {
               <textarea name="csvText" rows="6" placeholder="customer,date,amount,status\nCliente A,2026-01-10,1200.00,pendente\nCliente B,2026-01-11,2500.00,faturado"></textarea>
               <div class="row">
                 <label>Tipo<select name="importType"><option value="order">Pedido</option><option value="quote">Orçamento</option><option value="nfe">NF-e</option></select></label>
-                <label>Origem<input name="source" value="importacao-csv" /></label>
+                <label>Origem<input name="source" value="importação-csv" /></label>
               </div>
               <button type="submit">Importar</button>
             </form>
@@ -1238,7 +1253,7 @@ async function loadModule(moduleName) {
                 text: formData.get('csvText')
               })
             });
-            showToast('Importacao realizada com sucesso.', 'success');
+            showToast('Importação realizada com sucesso.', 'success');
             loadModule('sales');
           } catch (error) {
             showToast(error.message || 'Erro ao importar vendas.', 'error');
@@ -1262,9 +1277,10 @@ async function loadModule(moduleName) {
     // Depósitos>Edição/deposits_edit — ver funções renderXxx mais abaixo)
     // ========================================================================
     if (moduleName === 'cadastros') {
-      const [peopleResponse, cnpjsResponse] = await Promise.all([
+      const [peopleResponse, cnpjsResponse, depositsResponse] = await Promise.all([
         api('/api/cadastros/pessoas'),
-        api('/api/cadastros/cnpjs')
+        api('/api/cadastros/cnpjs'),
+        api('/api/cadastros/deposits')
       ]);
       const rawSub = state.activeSub || 'list';
       const sub = ['edit', 'register', 'list', 'deposits', 'deposits_register', 'deposits_edit'].includes(rawSub)
@@ -1272,7 +1288,7 @@ async function loadModule(moduleName) {
         : 'list';
       const people = Array.isArray(peopleResponse.people) ? peopleResponse.people : [];
       const cnpjs = Array.isArray(cnpjsResponse.cnpjs) ? cnpjsResponse.cnpjs : [];
-      const deposits = Array.isArray(state.cadastroDraft.deposits) ? state.cadastroDraft.deposits : [];
+      const deposits = Array.isArray(depositsResponse.deposits) ? depositsResponse.deposits : [];
       const peopleDraft = state.cadastroDraft.people || {};
       const cnpjDraft = state.cadastroDraft.cnpjs || {};
       const depositDraft = state.cadastroDraft.depositForm || {};
@@ -1324,7 +1340,7 @@ async function loadModule(moduleName) {
       };
 
       const roles = [
-        'Cliente', 'Transportadora', 'Tecnico', 'Fornecedor', 'Colaborador', 'Representada', 'Vendedor', 'Líder', 'Gerente', 'Credenciadora', 'Fabricante'
+        'Cliente', 'Transportadora', 'Técnico', 'Fornecedor', 'Colaborador', 'Representada', 'Vendedor', 'Líder', 'Gerente', 'Credenciadora', 'Fabricante'
       ];
 
       const section = (title, body, description = '') => `
@@ -1501,9 +1517,6 @@ async function loadModule(moduleName) {
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
                     ${field('Período', 'bankPeriod', peopleDraft.bankPeriod || '')}
-                    <div class="cadastro-add-account">
-                      <button type="button">Adicionar conta</button>
-                    </div>
                   </div>
                 `)}
               </div>
@@ -1591,44 +1604,6 @@ async function loadModule(moduleName) {
         `;
       };
 
-      const renderPeopleList = () => `
-        <div class="panel cadastros-shell">
-          <div class="cadastro-page-head">
-            <div>
-              <h3>Pessoas</h3>
-              <p class="muted">Histórico dos cadastros de pessoas.</p>
-            </div>
-            <div class="cadastro-page-chip">Histórico</div>
-          </div>
-          ${people.length ? `
-            <table class="table table-actions">
-              <thead><tr><th>Nome / Razão social</th><th>Documento</th><th>Tipo</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
-              <tbody>
-                ${people.map((person) => `
-                  <tr>
-                    <td>${escapeHtml(person.name || '')}</td>
-                    <td>${escapeHtml(formatCpfCnpj(person.document || ''))}</td>
-                    <td>${escapeHtml(person.type === 'pessoa-juridica' ? 'Pessoa jurídica' : 'Pessoa física')}</td>
-                    <td>${escapeHtml(person.email || '')}</td>
-                    <td>${escapeHtml(person.phone || '')}</td>
-                    <td>${escapeHtml(person.status || 'ativo')}</td>
-                    <td>${escapeHtml(formatDate(person.createdAt))}</td>
-                    <td>
-                      <button class="icon-button edit cadastro-edit-person" data-id="${escapeHtml(person.id || '')}" title="Editar" aria-label="Editar pessoa">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                      </button>
-                      <button class="icon-button cadastro-delete-person" data-id="${escapeHtml(person.id || '')}" title="Excluir" aria-label="Excluir pessoa">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                      </button>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          ` : '<p class="muted">Nenhuma pessoa cadastrada ainda.</p>'}
-        </div>
-      `;
-
       const renderCnpjRegister = () => {
         const documentValue = maskDocumentValue(cnpjDraft.document || '', 'pessoa-juridica');
         const canLookupCnpj = sanitizeDigits(cnpjDraft.document || '').length === 14;
@@ -1638,7 +1613,7 @@ async function loadModule(moduleName) {
           <div class="panel cadastros-shell">
             <div class="cadastro-page-head">
               <div>
-                <h3>Cadastro de CNPJ's</h3>
+                <h3>Cadastro de CNPJs</h3>
                 <p class="muted">Consulta o CNPJ na API e preenche os dados da empresa automaticamente.</p>
               </div>
               <div class="cadastro-page-chip">Pessoa jurídica</div>
@@ -1732,9 +1707,6 @@ async function loadModule(moduleName) {
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
                   ${field('Período', 'bankPeriod', cnpjDraft.bankPeriod || '')}
-                  <div class="cadastro-add-account">
-                    <button type="button">Adicionar conta</button>
-                  </div>
                 </div>
               `)}
 
@@ -1752,44 +1724,6 @@ async function loadModule(moduleName) {
           </div>
         `;
       };
-
-      const renderCnpjList = () => `
-        <div class="panel cadastros-shell">
-          <div class="cadastro-page-head">
-            <div>
-              <h3>CNPJ's</h3>
-              <p class="muted">Histórico dos cadastros de empresas.</p>
-            </div>
-            <div class="cadastro-page-chip">Histórico</div>
-          </div>
-          ${cnpjs.length ? `
-            <table class="table table-actions">
-              <thead><tr><th>Razão social</th><th>Fantasia</th><th>CNPJ</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
-              <tbody>
-                ${cnpjs.map((company) => `
-                  <tr>
-                    <td>${escapeHtml(company.name || '')}</td>
-                    <td>${escapeHtml(company.tradeName || '')}</td>
-                    <td>${escapeHtml(formatCpfCnpj(company.document || ''))}</td>
-                    <td>${escapeHtml(company.email || '')}</td>
-                    <td>${escapeHtml(company.phone || '')}</td>
-                    <td>${escapeHtml(company.status || 'ativo')}</td>
-                    <td>${escapeHtml(formatDate(company.createdAt))}</td>
-                    <td>
-                      <button class="icon-button edit cadastro-edit-cnpj" data-id="${escapeHtml(company.id || '')}" title="Editar" aria-label="Editar CNPJ">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                      </button>
-                      <button class="icon-button cadastro-delete-cnpj" data-id="${escapeHtml(company.id || '')}" title="Excluir" aria-label="Excluir CNPJ">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                      </button>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          ` : '<p class="muted">Nenhum CNPJ cadastrado ainda.</p>'}
-        </div>
-      `;
 
       const renderUnifiedRegister = () => renderPeopleRegister('register');
 
@@ -1809,27 +1743,27 @@ async function loadModule(moduleName) {
           </div>
 
           <form id="depositRegisterForm" class="cadastro-form">
-            ${section('Dados do deposito', `
+            ${section('Dados do depósito', `
               <div class="cadastro-grid cadastro-grid-3">
-                ${field('Nome do deposito', 'name', depositDraft.name || '', 'required')}
-                ${field('Codigo interno', 'code', depositDraft.code || '')}
+                ${field('Nome do depósito', 'name', depositDraft.name || '', 'required')}
+                ${field('Código interno', 'code', depositDraft.code || '')}
                 ${selectField('Status', 'status', depositDraft.status || 'ativo', [{ value: 'ativo', label: 'Ativo' }, { value: 'inativo', label: 'Inativo' }])}
               </div>
               <div class="cadastro-grid cadastro-grid-3">
-                ${field('Endereco', 'address', depositDraft.address || '')}
+                ${field('Endereço', 'address', depositDraft.address || '')}
                 ${field('Cidade', 'city', depositDraft.city || '')}
                 ${field('UF', 'state', depositDraft.state || '')}
               </div>
               <div class="cadastro-grid cadastro-grid-2">
-                ${field('Responsavel', 'manager', depositDraft.manager || '')}
-                ${field('Observacoes', 'notes', depositDraft.notes || '')}
+                ${field('Responsável', 'manager', depositDraft.manager || '')}
+                ${field('Observações', 'notes', depositDraft.notes || '')}
               </div>
               ${depositDraft.error ? `<p class="form-error">${escapeHtml(depositDraft.error)}</p>` : ''}
             `)}
 
             <div class="cadastro-actions">
               <button type="button" class="secondary" id="depositCancelBtn">Cancelar</button>
-              <button type="submit">${isEditMode ? 'Salvar alterações' : 'Salvar deposito'}</button>
+              <button type="submit">${isEditMode ? 'Salvar alterações' : 'Salvar depósito'}</button>
             </div>
           </form>
         </div>
@@ -1865,11 +1799,11 @@ async function loadModule(moduleName) {
         <div class="panel cadastros-shell">
           <div class="cadastro-page-head">
             <div>
-              <h3>Depositos</h3>
+              <h3>Depósitos</h3>
               <p class="muted">Histórico e gerenciamento de depósitos.</p>
             </div>
             <div class="cadastro-list-actions">
-              <button type="button" class="success" id="cadastroDepositNewBtn">+ Novo deposito</button>
+              <button type="button" class="success" id="cadastroDepositNewBtn">+ Novo depósito</button>
               <button type="button" class="secondary" id="cadastroDepositFilterToggleBtn">Filtros</button>
             </div>
           </div>
@@ -1878,11 +1812,11 @@ async function loadModule(moduleName) {
             <form id="depositFilterForm" class="cadastro-filter-panel">
               <div class="cadastro-filter-grid-5">
                 <label class="cadastro-field">
-                  <span>Nome do deposito</span>
+                  <span>Nome do depósito</span>
                   <input name="query" value="${escapeHtml(depositsFilters.query)}" />
                 </label>
                 <label class="cadastro-field">
-                  <span>Codigo interno</span>
+                  <span>Código interno</span>
                   <input name="code" value="${escapeHtml(depositsFilters.code)}" />
                 </label>
                 <label class="cadastro-field">
@@ -1894,7 +1828,7 @@ async function loadModule(moduleName) {
                   <input name="state" value="${escapeHtml(depositsFilters.state)}" />
                 </label>
                 <label class="cadastro-field">
-                  <span>Responsavel</span>
+                  <span>Responsável</span>
                   <input name="manager" value="${escapeHtml(depositsFilters.manager)}" />
                 </label>
                 <label class="cadastro-field">
@@ -1916,14 +1850,14 @@ async function loadModule(moduleName) {
           <section class="cadastro-section">
             <div class="cadastro-section-header">
               <div>
-                <h4>Depositos cadastrados</h4>
-                <p>Registros salvos nesta sessao.</p>
+                <h4>Depósitos cadastrados</h4>
+                <p>Registros salvos nesta sessão.</p>
               </div>
             </div>
             <div class="cadastro-section-body">
               ${filteredDeposits.length ? `
                 <table class="table table-actions">
-                  <thead><tr><th>Nome</th><th>Codigo</th><th>Cidade/UF</th><th>Responsavel</th><th>Status</th><th>Acoes</th></tr></thead>
+                  <thead><tr><th>Nome</th><th>Código</th><th>Cidade/UF</th><th>Responsável</th><th>Status</th><th>Ações</th></tr></thead>
                   <tbody>
                     ${filteredDeposits.map((deposit) => `
                       <tr>
@@ -1933,10 +1867,10 @@ async function loadModule(moduleName) {
                         <td>${escapeHtml(deposit.manager || '-')}</td>
                         <td>${escapeHtml(deposit.status || 'ativo')}</td>
                         <td>
-                          <button class="icon-button edit cadastro-edit-deposit" data-id="${escapeHtml(deposit.id)}" title="Editar deposito" aria-label="Editar deposito">
+                          <button class="icon-button edit cadastro-edit-deposit" data-id="${escapeHtml(deposit.id)}" title="Editar depósito" aria-label="Editar depósito">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
                           </button>
-                          <button class="icon-button cadastro-delete-deposit" data-id="${escapeHtml(deposit.id)}" title="Excluir deposito" aria-label="Excluir deposito">
+                          <button class="icon-button cadastro-delete-deposit" data-id="${escapeHtml(deposit.id)}" title="Excluir depósito" aria-label="Excluir depósito">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
                           </button>
                         </td>
@@ -1944,7 +1878,7 @@ async function loadModule(moduleName) {
                     `).join('')}
                   </tbody>
                 </table>
-              ` : '<p class="muted">Nenhum deposito encontrado para os filtros aplicados.</p>'}
+              ` : '<p class="muted">Nenhum depósito encontrado para os filtros aplicados.</p>'}
             </div>
           </section>
         </div>
@@ -1963,7 +1897,7 @@ async function loadModule(moduleName) {
         const roleVisibleMap = [
           { role: 'Cliente', enabled: listFilters.showClients },
           { role: 'Fornecedor', enabled: listFilters.showSuppliers },
-          { role: 'Tecnico', enabled: listFilters.showTechnicians },
+          { role: 'Técnico', enabled: listFilters.showTechnicians },
           { role: 'Colaborador', enabled: listFilters.showCollaborators },
           { role: 'Transportadora', enabled: listFilters.showTransporters },
           { role: 'Vendedor', enabled: listFilters.showSellers },
@@ -2080,7 +2014,7 @@ async function loadModule(moduleName) {
             <div class="cadastro-page-head">
               <div>
                 <h3>Cadastros</h3>
-                <p class="muted">Consulta unificada de Pessoas e CNPJ's.</p>
+                <p class="muted">Consulta unificada de Pessoas e CNPJs.</p>
               </div>
               <div class="cadastro-list-actions">
                 <button type="button" class="success" id="cadastroNewBtn">+ Novo cadastro</button>
@@ -2108,7 +2042,7 @@ async function loadModule(moduleName) {
                     <input name="email" value="${escapeHtml(listFilters.email)}" />
                   </label>
                   <label class="cadastro-field">
-                    <span>Categoria razao social</span>
+                    <span>Categoria razão social</span>
                     <select name="categoryRole">
                       <option value="all" ${listFilters.categoryRole === 'all' ? 'selected' : ''}>Selecione</option>
                       ${roles.map((role) => `<option value="${escapeHtml(role)}" ${listFilters.categoryRole === role ? 'selected' : ''}>${escapeHtml(role)}</option>`).join('')}
@@ -2137,7 +2071,7 @@ async function loadModule(moduleName) {
                   </label>
 
                   <label class="cadastro-field">
-                    <span>Vendedor padrao</span>
+                    <span>Transportadora padrão</span>
                     <input name="defaultCarrier" value="${escapeHtml(listFilters.defaultCarrier)}" />
                   </label>
                   <label class="cadastro-field">
@@ -2145,7 +2079,7 @@ async function loadModule(moduleName) {
                     <select name="type">
                       <option value="all" ${listFilters.type === 'all' ? 'selected' : ''}>Todos</option>
                       <option value="people" ${listFilters.type === 'people' ? 'selected' : ''}>Pessoas</option>
-                      <option value="cnpj" ${listFilters.type === 'cnpj' ? 'selected' : ''}>CNPJ's</option>
+                      <option value="cnpj" ${listFilters.type === 'cnpj' ? 'selected' : ''}>CNPJs</option>
                     </select>
                   </label>
                   <label class="cadastro-field">
@@ -2467,68 +2401,10 @@ async function loadModule(moduleName) {
 
           try {
             await api(isCnpj ? `/api/cadastros/cnpjs/${id}` : `/api/cadastros/pessoas/${id}`, { method: 'DELETE' });
-            showToast(isCnpj ? 'CNPJ excluido com sucesso.' : 'Pessoa excluida com sucesso.', 'success');
+            showToast(isCnpj ? 'CNPJ excluído com sucesso.' : 'Pessoa excluída com sucesso.', 'success');
             loadModule('cadastros');
           } catch (error) {
             showToast(error.message || 'Erro ao excluir cadastro.', 'error');
-          }
-        });
-      });
-
-      document.querySelectorAll('.cadastro-edit-person').forEach((button) => {
-        button.addEventListener('click', () => {
-          const person = people.find((entry) => entry.id === button.dataset.id);
-          if (!person) return;
-          state.cadastroDraft = { ...state.cadastroDraft, activeType: 'people', people: { ...person, kind: 'people', error: '', documentMessage: '' } };
-          state.activeSub = 'edit';
-          renderApp();
-          loadModule('cadastros');
-        });
-      });
-
-      document.querySelectorAll('.cadastro-delete-person').forEach((button) => {
-        button.addEventListener('click', async () => {
-          const person = people.find((entry) => entry.id === button.dataset.id);
-          const name = person?.name || 'registro';
-          const confirmed = await confirmModal(`Excluir pessoa "${name}"?`);
-          if (!confirmed) return;
-          try {
-            await api(`/api/cadastros/pessoas/${button.dataset.id}`, { method: 'DELETE' });
-            showToast('Pessoa excluida com sucesso.', 'success');
-            loadModule('cadastros');
-          } catch (error) {
-            showToast(error.message || 'Erro ao excluir pessoa.', 'error');
-          }
-        });
-      });
-
-      document.querySelectorAll('.cadastro-edit-cnpj').forEach((button) => {
-        button.addEventListener('click', () => {
-          const company = cnpjs.find((entry) => entry.id === button.dataset.id);
-          if (!company) return;
-          state.cadastroDraft = {
-            ...state.cadastroDraft,
-            activeType: 'people',
-            people: { ...company, kind: 'cnpj', type: 'pessoa-juridica', error: '', documentMessage: '' }
-          };
-          state.activeSub = 'edit';
-          renderApp();
-          loadModule('cadastros');
-        });
-      });
-
-      document.querySelectorAll('.cadastro-delete-cnpj').forEach((button) => {
-        button.addEventListener('click', async () => {
-          const company = cnpjs.find((entry) => entry.id === button.dataset.id);
-          const name = company?.name || 'registro';
-          const confirmed = await confirmModal(`Excluir CNPJ "${name}"?`);
-          if (!confirmed) return;
-          try {
-            await api(`/api/cadastros/cnpjs/${button.dataset.id}`, { method: 'DELETE' });
-            showToast('CNPJ excluido com sucesso.', 'success');
-            loadModule('cadastros');
-          } catch (error) {
-            showToast(error.message || 'Erro ao excluir CNPJ.', 'error');
           }
         });
       });
@@ -2635,6 +2511,9 @@ async function loadModule(moduleName) {
               [fieldMap.state]: address.state || '',
               [fieldMap.ibgeCityCode]: address.ibgeCityCode || ''
             };
+            if (fieldMap.complement && address.complement) {
+              fieldValues[fieldMap.complement] = address.complement;
+            }
 
             clearFieldError(cepInput);
             Object.entries(fieldValues).forEach(([fieldName, value]) => {
@@ -2660,9 +2539,9 @@ async function loadModule(moduleName) {
       };
 
       const peopleRegisterFormEl = document.getElementById('peopleRegisterForm');
-      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'zipCode', street: 'street', neighborhood: 'neighborhood', city: 'city', state: 'state', ibgeCityCode: 'ibgeCityCode' });
-      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'billingZipCode', street: 'billingStreet', neighborhood: 'billingNeighborhood', city: 'billingCity', state: 'billingState', ibgeCityCode: 'billingIbgeCityCode' });
-      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'deliveryZipCode', street: 'deliveryStreet', neighborhood: 'deliveryNeighborhood', city: 'deliveryCity', state: 'deliveryState', ibgeCityCode: 'deliveryIbgeCityCode' });
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'zipCode', street: 'street', neighborhood: 'neighborhood', city: 'city', state: 'state', ibgeCityCode: 'ibgeCityCode', complement: 'addressComplement' });
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'billingZipCode', street: 'billingStreet', neighborhood: 'billingNeighborhood', city: 'billingCity', state: 'billingState', ibgeCityCode: 'billingIbgeCityCode', complement: 'billingAddressComplement' });
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'deliveryZipCode', street: 'deliveryStreet', neighborhood: 'deliveryNeighborhood', city: 'deliveryCity', state: 'deliveryState', ibgeCityCode: 'deliveryIbgeCityCode', complement: 'deliveryAddressComplement' });
 
       document.getElementById('peopleLookupBtn')?.addEventListener('click', async () => {
         const form = document.getElementById('peopleRegisterForm');
@@ -2673,13 +2552,13 @@ async function loadModule(moduleName) {
         const type = selectedType;
 
         if (documentValue.length !== 14) {
-          showToast('Informe um CNPJ com 14 digitos para consultar.', 'warning');
+          showToast('Informe um CNPJ com 14 dígitos para consultar.', 'warning');
           state.cadastroDraft = {
             ...state.cadastroDraft,
             people: {
               ...(state.cadastroDraft.people || {}),
               document: maskDocumentValue(documentValue, type),
-              documentMessage: 'Informe um CNPJ valido para consultar dados oficiais.'
+              documentMessage: 'Informe um CNPJ válido para consultar dados oficiais.'
             }
           };
           renderApp();
@@ -2720,7 +2599,7 @@ async function loadModule(moduleName) {
             }
           };
           if (!officialEmail || !officialPhone) {
-            showToast('A API retornou CNPJ valido, mas sem email e/ou telefone para este cadastro.', 'warning');
+            showToast('A API retornou CNPJ válido, mas sem email e/ou telefone para este cadastro.', 'warning');
           }
           showToast('CNPJ consultado com sucesso!', 'success');
           renderApp();
@@ -2905,7 +2784,7 @@ async function loadModule(moduleName) {
 
       const cnpjDocumentInput = document.getElementById('cnpjDocumentInput');
       bindDocumentMask(cnpjDocumentInput, () => 'pessoa-juridica');
-      bindCepAutoFill(document.getElementById('cnpjRegisterForm'), 'cnpjs', { zipCode: 'zipCode', street: 'address', neighborhood: 'neighborhood', city: 'city', state: 'state', ibgeCityCode: 'ibgeCityCode' });
+      bindCepAutoFill(document.getElementById('cnpjRegisterForm'), 'cnpjs', { zipCode: 'zipCode', street: 'address', neighborhood: 'neighborhood', city: 'city', state: 'state', ibgeCityCode: 'ibgeCityCode', complement: 'addressComplement' });
 
       document.getElementById('consultCnpjBtn')?.addEventListener('click', async () => {
         const form = document.getElementById('cnpjRegisterForm');
@@ -2914,7 +2793,7 @@ async function loadModule(moduleName) {
         const documentValue = sanitizeDigits(formData.get('document'));
 
         if (!isValidCnpj(documentValue)) {
-          showToast('CNPJ invalido. Informe 14 digitos numericos validos.', 'error');
+          showToast('CNPJ inválido. Informe 14 dígitos numéricos válidos.', 'error');
           state.cadastroDraft = {
             ...state.cadastroDraft,
             cnpjs: {
@@ -2957,7 +2836,7 @@ async function loadModule(moduleName) {
             }
           };
           if (!officialEmail || !officialPhone) {
-            showToast('A API retornou CNPJ valido, mas sem email e/ou telefone para este cadastro.', 'warning');
+            showToast('A API retornou CNPJ válido, mas sem email e/ou telefone para este cadastro.', 'warning');
           }
           showToast('CNPJ consultado com sucesso!', 'success');
           renderApp();
@@ -3082,12 +2961,13 @@ async function loadModule(moduleName) {
         loadModule('cadastros');
       });
 
-      document.getElementById('depositRegisterForm')?.addEventListener('submit', (event) => {
+      document.getElementById('depositRegisterForm')?.addEventListener('submit', async (event) => {
         event.preventDefault();
+        const submitBtn = event.target.querySelector('button[type="submit"]');
+        if (submitBtn?.disabled) return;
         const formData = new FormData(event.target);
         const isEditing = Boolean(depositDraft.id);
         const payload = {
-          id: isEditing ? depositDraft.id : `dep-${Date.now()}`,
           name: String(formData.get('name') || '').trim(),
           code: String(formData.get('code') || '').trim(),
           status: String(formData.get('status') || 'ativo').trim() || 'ativo',
@@ -3095,8 +2975,7 @@ async function loadModule(moduleName) {
           city: String(formData.get('city') || '').trim(),
           state: String(formData.get('state') || '').trim(),
           manager: String(formData.get('manager') || '').trim(),
-          notes: String(formData.get('notes') || '').trim(),
-          createdAt: isEditing ? (depositDraft.createdAt || new Date().toISOString()) : new Date().toISOString()
+          notes: String(formData.get('notes') || '').trim()
         };
 
         if (!payload.name) {
@@ -3104,6 +2983,7 @@ async function loadModule(moduleName) {
           state.cadastroDraft = {
             ...state.cadastroDraft,
             depositForm: {
+              ...depositDraft,
               ...payload,
               error: 'Informe o nome do depósito.'
             }
@@ -3113,19 +2993,27 @@ async function loadModule(moduleName) {
           return;
         }
 
-        const nextDeposits = isEditing
-          ? deposits.map((entry) => (entry.id === payload.id ? payload : entry))
-          : [payload, ...deposits];
-
-        state.cadastroDraft = {
-          ...state.cadastroDraft,
-          depositForm: {},
-          deposits: nextDeposits
-        };
-        showToast(isEditing ? 'Depósito atualizado com sucesso.' : 'Depósito salvo com sucesso.', 'success');
-        state.activeSub = 'deposits';
-        renderApp();
-        loadModule('cadastros');
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+          if (isEditing) {
+            await api(`/api/cadastros/deposits/${depositDraft.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+          } else {
+            await api('/api/cadastros/deposits', { method: 'POST', body: JSON.stringify(payload) });
+          }
+          state.cadastroDraft = { ...state.cadastroDraft, depositForm: {} };
+          showToast(isEditing ? 'Depósito atualizado com sucesso.' : 'Depósito salvo com sucesso.', 'success');
+          state.activeSub = 'deposits';
+          renderApp();
+          loadModule('cadastros');
+        } catch (error) {
+          showToast(error.message || 'Erro ao salvar depósito.', 'error');
+          state.cadastroDraft = {
+            ...state.cadastroDraft,
+            depositForm: { ...depositDraft, ...payload, id: isEditing ? depositDraft.id : undefined, error: error.message || 'Erro ao salvar depósito.' }
+          };
+          renderApp();
+          loadModule('cadastros');
+        }
       });
 
       document.querySelectorAll('.cadastro-edit-deposit').forEach((button) => {
@@ -3150,17 +3038,17 @@ async function loadModule(moduleName) {
           const id = button.dataset.id;
           if (!id) return;
           const item = deposits.find((entry) => entry.id === id);
-          const label = item?.name || 'deposito';
-          const confirmed = await confirmModal(`Excluir deposito "${label}"?`);
+          const label = item?.name || 'depósito';
+          const confirmed = await confirmModal(`Excluir depósito "${label}"?`);
           if (!confirmed) return;
 
-          state.cadastroDraft = {
-            ...state.cadastroDraft,
-            deposits: deposits.filter((entry) => entry.id !== id)
-          };
-          showToast('Deposito excluido com sucesso.', 'success');
-          renderApp();
-          loadModule('cadastros');
+          try {
+            await api(`/api/cadastros/deposits/${id}`, { method: 'DELETE' });
+            showToast('Depósito excluído com sucesso.', 'success');
+            loadModule('cadastros');
+          } catch (error) {
+            showToast(error.message || 'Erro ao excluir depósito.', 'error');
+          }
         });
       });
 
@@ -3365,10 +3253,10 @@ async function loadModule(moduleName) {
               method: formData.get('method')
             })
           });
-          showToast('Lancamento financeiro salvo com sucesso.', 'success');
+          showToast('Lançamento financeiro salvo com sucesso.', 'success');
           loadModule('finance');
         } catch (error) {
-          showToast(error.message || 'Erro ao salvar lancamento financeiro.', 'error');
+          showToast(error.message || 'Erro ao salvar lançamento financeiro.', 'error');
         }
       });
       return;
@@ -3385,7 +3273,7 @@ async function loadModule(moduleName) {
           const canManageUsers = Boolean(settingsPermissions.users);
           content.innerHTML = `
             <div class="cards">
-              ${canManageUsers ? `<div class="card"><h3>Usuarios</h3><p>${totals.totalUsers ?? (data.users || []).length}</p></div>` : ''}
+              ${canManageUsers ? `<div class="card"><h3>Usuários</h3><p>${totals.totalUsers ?? (data.users || []).length}</p></div>` : ''}
               <div class="card"><h3>Produtos</h3><p>${totals.totalProducts ?? 0}</p></div>
               <div class="card"><h3>Vendas</h3><p>${totals.totalSales ?? 0}</p></div>
               <div class="card"><h3>Compras</h3><p>${totals.totalPurchases ?? 0}</p></div>
@@ -3444,10 +3332,10 @@ async function loadModule(moduleName) {
                 method: 'POST',
                 body: JSON.stringify({ type: 'company', payload: { companyName: formData.get('companyName'), currency: formData.get('currency'), taxRate: Number(formData.get('taxRate')) } })
               });
-              showToast('Configuracoes da empresa salvas com sucesso.', 'success');
+              showToast('Configurações da empresa salvas com sucesso.', 'success');
               loadModule('settings');
             } catch (error) {
-              showToast(error.message || 'Erro ao salvar configuracoes da empresa.', 'error');
+              showToast(error.message || 'Erro ao salvar configurações da empresa.', 'error');
             }
           });
 
@@ -3460,10 +3348,10 @@ async function loadModule(moduleName) {
                 method: 'POST',
                 body: JSON.stringify({ type: 'user', payload: { name: formData.get('name'), username: formData.get('username'), password: formData.get('password'), role: formData.get('role'), allowedModules: selectedModules } })
               });
-              showToast('Usuario criado com sucesso.', 'success');
+              showToast('Usuário criado com sucesso.', 'success');
               loadModule('settings');
             } catch (error) {
-              showToast(error.message || 'Erro ao criar usuario.', 'error');
+              showToast(error.message || 'Erro ao criar usuário.', 'error');
             }
           });
 
@@ -3479,7 +3367,7 @@ async function loadModule(moduleName) {
                         if (!confirmed) return;
                         try {
                           await api('/api/users/delete', { method: 'POST', body: JSON.stringify({ id }) });
-                          showToast('Usuario excluido com sucesso.', 'success');
+                          showToast('Usuário excluído com sucesso.', 'success');
                           loadModule('settings');
                         } catch (err) {
                           showToast('Erro ao excluir: ' + err.message, 'error');
@@ -3523,7 +3411,7 @@ async function loadModule(moduleName) {
           return;
         }
   } catch (error) {
-    showToast(error.message || 'Erro ao carregar modulo.', 'error');
+    showToast(error.message || 'Erro ao carregar módulo.', 'error');
     content.innerHTML = `<div class="panel"><p>${error.message}</p></div>`;
   }
 }
@@ -3549,7 +3437,7 @@ async function loadModule(moduleName) {
     await loadModule(state.activeModule);
   } catch (error) {
     clearSessionToken();
-    showToast(error.message || 'Sua sessao expirou. Faca login novamente.', 'error');
+    showToast(error.message || 'Sua sessão expirou. Faça login novamente.', 'error');
     renderAuth(error.message);
   }
 })();

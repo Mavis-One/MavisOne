@@ -15,7 +15,7 @@
         "settings",
         "cadastros"
       ],
-      "theme": "light"
+      "theme": "dark"
     },
     {
       "id": "user-1785286612473-ato3ve",
@@ -220,7 +220,7 @@
       "blockWhatsappBilling": false,
       "commissionHierarchy": false,
       "roles": [
-        "Tecnico",
+        "Técnico",
         "Colaborador"
       ],
       "group": "",

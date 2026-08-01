@@ -13,14 +13,22 @@ window.MavisSubscreenRegistry.purchases.new_purchase = async function renderPurc
           <label>Data<input name="date" type="date" /></label>
         </div>
         <div class="row">
-          <label>Produto<select name="productId">${data.products.map((product) => `<option value="${product.id}">${escapeHtml(product.name)}</option>`).join('')}</select></label>
+          <label>Produto<select name="productId" id="purchaseProductSelect">${data.products.map((product) => `<option value="${product.id}" data-cost-price="${Number(product.costPrice || 0)}">${escapeHtml(product.name)}</option>`).join('')}</select></label>
           <label>Quantidade<input name="quantity" type="number" min="1" required value="1" /></label>
-          <label>Custo unitario<input name="costPrice" type="number" step="0.01" required value="${Number(data.products[0]?.costPrice || 0).toFixed(2)}" /></label>
+          <label>Custo unitário<input name="costPrice" id="purchaseCostPriceInput" type="number" step="0.01" required value="${Number(data.products[0]?.costPrice || 0).toFixed(2)}" /></label>
         </div>
         <button type="submit">Registrar compra</button>
       </form>
     </div>
   `;
+
+  document.getElementById('purchaseProductSelect')?.addEventListener('change', (event) => {
+    const selectedOption = event.target.selectedOptions[0];
+    const costPriceInput = document.getElementById('purchaseCostPriceInput');
+    if (selectedOption && costPriceInput) {
+      costPriceInput.value = Number(selectedOption.dataset.costPrice || 0).toFixed(2);
+    }
+  });
 
   document.getElementById('purchaseForm').addEventListener('submit', async (event) => {
     event.preventDefault();
