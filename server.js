@@ -37,6 +37,7 @@ const initialData = {
   financialCategories: [],
   costCenters: [],
   bankAccounts: [],
+  bankTransactions: [],
   orders: [],
   quotes: [],
   nfes: [],
@@ -104,6 +105,7 @@ function normalizeData(data) {
   data.financialCategories = Array.isArray(data.financialCategories) ? data.financialCategories : [];
   data.costCenters = Array.isArray(data.costCenters) ? data.costCenters : [];
   data.bankAccounts = Array.isArray(data.bankAccounts) ? data.bankAccounts : [];
+  data.bankTransactions = Array.isArray(data.bankTransactions) ? data.bankTransactions : [];
   delete data.cadastros;
   data.importLogs = Array.isArray(data.importLogs) ? data.importLogs : [];
   data.auditLogs = Array.isArray(data.auditLogs) ? data.auditLogs : [];
@@ -759,6 +761,100 @@ function filterNfes(data, query) {
   return list;
 }
 
+function serializeBankTransaction(tx, data) {
+  const matchedEntry = tx.matchedEntryId ? (data.finance || []).find((entry) => entry.id === tx.matchedEntryId) : null;
+  return {
+    id: tx.id,
+    bankAccountId: tx.bankAccountId || '',
+    bankAccountName: resolveById(data.bankAccounts, tx.bankAccountId),
+    date: tx.date,
+    description: tx.description,
+    amount: Number(tx.amount || 0),
+    type: tx.type,
+    status: tx.status,
+    matchedEntryId: tx.matchedEntryId || '',
+    matchedEntryDescription: matchedEntry ? matchedEntry.description : '',
+    source: tx.source || 'manual',
+    createdByName: tx.createdByName || '',
+    createdAt: tx.createdAt || ''
+  };
+}
+
+function filterBankTransactions(data, query) {
+  let list = (data.bankTransactions || []).slice();
+
+  const bankAccountId = query.get('bankAccountId');
+  if (bankAccountId) list = list.filter((tx) => tx.bankAccountId === bankAccountId);
+
+  const status = query.get('status');
+  if (status) list = list.filter((tx) => tx.status === status);
+
+  const type = query.get('type');
+  if (type) list = list.filter((tx) => tx.type === type);
+
+  const search = String(query.get('search') || '').trim().toLowerCase();
+  if (search) list = list.filter((tx) => String(tx.description || '').toLowerCase().includes(search));
+
+  const dateFrom = query.get('dateFrom');
+  const dateTo = query.get('dateTo');
+  if (dateFrom) list = list.filter((tx) => tx.date >= dateFrom);
+  if (dateTo) list = list.filter((tx) => tx.date <= dateTo);
+
+  return list;
+}
+
+function buildBankTransaction(body, user, source) {
+  return {
+    id: createId('btx'),
+    bankAccountId: body.bankAccountId || '',
+    date: body.date || new Date().toISOString().slice(0, 10),
+    description: String(body.description || '').trim(),
+    amount: Math.abs(Number(body.amount || 0)),
+    type: body.type === 'saida' ? 'saida' : 'entrada',
+    status: 'nao_conciliado',
+    matchedEntryId: '',
+    matchedPaymentId: '',
+    source,
+    createdBy: user.id,
+    createdByName: user.name,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function findBankTransactionMatches(tx, data) {
+  const wantedType = tx.type === 'entrada' ? 'receita' : 'despesa';
+  const txDate = parseDateOnly(tx.date);
+
+  const candidates = (data.finance || [])
+    .filter((entry) => classifyFinanceEntry(entry) === wantedType)
+    .filter((entry) => {
+      const status = String(entry.status || '').toLowerCase();
+      return status === 'pending' || status === 'parcial';
+    })
+    .map((entry) => {
+      const payments = getFinanceEntryPayments(data, entry.id);
+      const due = financeEntryEffectiveDue(entry, payments);
+      const paid = financeEntryPaidTotal(payments);
+      const remaining = Math.round((due - paid) * 100) / 100;
+      const amountDiff = Math.abs(remaining - Number(tx.amount || 0));
+      const daysDiff = Math.abs((parseDateOnly(financeEntryDueDate(entry)) - txDate) / 86400000);
+      return { entry, remaining, amountDiff, daysDiff };
+    })
+    .sort((a, b) => (a.amountDiff - b.amountDiff) || (a.daysDiff - b.daysDiff))
+    .slice(0, 8);
+
+  return candidates.map(({ entry, remaining, amountDiff }) => ({
+    id: entry.id,
+    description: entry.description,
+    dueDate: financeEntryDueDate(entry),
+    remaining,
+    amountPrevisto: Number(entry.amount || 0),
+    clienteFornecedor: resolveFinanceCounterparty(entry, data),
+    exactAmountMatch: amountDiff < 0.01
+  }));
+}
+
 function buildFinanceChartSeries(entries, granularity) {
   const today = getTodayLocal();
   const buckets = [];
@@ -895,6 +991,14 @@ function buildFinanceDashboardSummary(data, query) {
     return acc;
   }, {});
 
+  const bankTransactions = data.bankTransactions || [];
+  const movimentacoesBancarias = {
+    available: true,
+    total: bankTransactions.length,
+    naoConciliado: bankTransactions.filter((tx) => tx.status === 'nao_conciliado').length,
+    conciliado: bankTransactions.filter((tx) => tx.status === 'conciliado').length
+  };
+
   return {
     period,
     range,
@@ -911,7 +1015,7 @@ function buildFinanceDashboardSummary(data, query) {
     ultimosLancamentos,
     totalNfesEmitidas: nfes.length,
     nfeStats,
-    movimentacoesBancarias: { available: false, reason: 'Disponível na Fase 4 (Extrato Open Finance).' }
+    movimentacoesBancarias
   };
 }
 
@@ -2331,6 +2435,263 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'NF-e não encontrada' }, 404);
     }
     return sendJson(res, { nfe: serializeNfe(nfe, data) });
+  }
+
+  if (pathname === '/api/finance/bank-transactions' && req.method === 'GET') {
+    try {
+      const data = loadData();
+      const user = getCurrentUser(req, data);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const filtered = filterBankTransactions(data, url.searchParams)
+        .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
+      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+      const start = (page - 1) * limit;
+      const pageItems = filtered.slice(start, start + limit).map((tx) => serializeBankTransaction(tx, data));
+      const summary = {
+        naoConciliado: filtered.filter((tx) => tx.status === 'nao_conciliado').length,
+        conciliado: filtered.filter((tx) => tx.status === 'conciliado').length,
+        ignorado: filtered.filter((tx) => tx.status === 'ignorado').length
+      };
+      return sendJson(res, { transactions: pageItems, total: filtered.length, page, limit, summary });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao listar extrato' }, 500);
+    }
+  }
+
+  if (pathname === '/api/finance/bank-transactions' && req.method === 'POST') {
+    try {
+      const data = loadData();
+      const user = getCurrentUser(req, data);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      if (!body.bankAccountId) {
+        return sendJson(res, { error: 'Selecione a conta bancária' }, 400);
+      }
+      if (!String(body.description || '').trim()) {
+        return sendJson(res, { error: 'Informe a descrição da movimentação' }, 400);
+      }
+      const amount = Math.abs(Number(body.amount || 0));
+      if (!(amount > 0)) {
+        return sendJson(res, { error: 'Informe um valor maior que zero' }, 400);
+      }
+      const tx = buildBankTransaction({ ...body, amount }, user, 'manual');
+      data.bankTransactions.push(tx);
+      saveData(data);
+      return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao registrar movimentação' }, 400);
+    }
+  }
+
+  if (pathname === '/api/finance/bank-transactions/import' && req.method === 'POST') {
+    try {
+      const data = loadData();
+      const user = getCurrentUser(req, data);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      const bankAccountId = body.bankAccountId || '';
+      if (!bankAccountId) {
+        return sendJson(res, { error: 'Selecione a conta bancária de destino da importação' }, 400);
+      }
+      const rows = Array.isArray(body.rows) ? body.rows : (body.text ? parseCsv(body.text) : []);
+      if (!rows.length) {
+        return sendJson(res, { error: 'Nenhuma linha para importar. Verifique o CSV (cabeçalho: data,descricao,valor,tipo).' }, 400);
+      }
+
+      const created = [];
+      let skipped = 0;
+      rows.forEach((row) => {
+        const description = String(row.description || row.descricao || row.Descricao || row['Descrição'] || '').trim();
+        const rawAmount = row.amount ?? row.valor ?? row.Valor ?? 0;
+        const amount = Math.abs(Number(String(rawAmount).replace(',', '.')) || 0);
+        if (!description || !(amount > 0)) {
+          skipped += 1;
+          return;
+        }
+        const date = row.date || row.data || row.Data || new Date().toISOString().slice(0, 10);
+        const typeRaw = String(row.type || row.tipo || row.Tipo || '').toLowerCase();
+        const type = (typeRaw.startsWith('sa') || Number(String(rawAmount).replace(',', '.')) < 0) ? 'saida' : 'entrada';
+        const tx = buildBankTransaction({ bankAccountId, date, description, amount, type }, user, 'csv');
+        data.bankTransactions.push(tx);
+        created.push(tx);
+      });
+
+      saveData(data);
+      return sendJson(res, {
+        success: true,
+        count: created.length,
+        skipped,
+        transactions: created.map((tx) => serializeBankTransaction(tx, data))
+      });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao importar extrato' }, 400);
+    }
+  }
+
+  if (/^\/api\/finance\/bank-transactions\/[^/]+\/matches$/.test(pathname) && req.method === 'GET') {
+    const data = loadData();
+    const user = getCurrentUser(req, data);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const id = decodeURIComponent(pathname.split('/')[4]);
+    const tx = data.bankTransactions.find((item) => item.id === id);
+    if (!tx) {
+      return sendJson(res, { error: 'Transação não encontrada' }, 404);
+    }
+    return sendJson(res, { matches: findBankTransactionMatches(tx, data) });
+  }
+
+  if (/^\/api\/finance\/bank-transactions\/[^/]+\/conciliar$/.test(pathname) && req.method === 'POST') {
+    try {
+      const data = loadData();
+      const user = getCurrentUser(req, data);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      const tx = data.bankTransactions.find((item) => item.id === id);
+      if (!tx) {
+        return sendJson(res, { error: 'Transação não encontrada' }, 404);
+      }
+      if (tx.status === 'conciliado') {
+        return sendJson(res, { error: 'Transação já está conciliada' }, 400);
+      }
+
+      const body = await readBody(req);
+      const entry = data.finance.find((item) => item.id === body.entryId);
+      if (!entry) {
+        return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
+      }
+      const wantedType = tx.type === 'entrada' ? 'receita' : 'despesa';
+      if (classifyFinanceEntry(entry) !== wantedType) {
+        return sendJson(res, { error: `Uma transação de ${tx.type === 'entrada' ? 'entrada' : 'saída'} só pode ser conciliada com um lançamento de ${wantedType}.` }, 400);
+      }
+      if (entry.status === 'cancelado') {
+        return sendJson(res, { error: 'Lançamento cancelado não pode receber baixa.' }, 400);
+      }
+
+      const existingPayments = getFinanceEntryPayments(data, entry.id);
+      const dueBefore = financeEntryEffectiveDue(entry, existingPayments);
+      const paidBefore = financeEntryPaidTotal(existingPayments);
+      const maxAllowed = dueBefore - paidBefore;
+      if (tx.amount > maxAllowed + 0.01) {
+        return sendJson(res, { error: `O valor da transação (${tx.amount.toFixed(2)}) é maior que o saldo em aberto do lançamento (${Math.max(0, maxAllowed).toFixed(2)}).` }, 400);
+      }
+
+      const payment = {
+        id: createId('pay'),
+        entryId: entry.id,
+        amount: tx.amount,
+        date: tx.date,
+        bankAccountId: tx.bankAccountId,
+        interest: 0,
+        fine: 0,
+        discount: 0,
+        note: `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)})`,
+        createdBy: user.id,
+        createdByName: user.name,
+        createdAt: new Date().toISOString()
+      };
+      data.financialPayments.push(payment);
+      entry.status = recomputeFinanceEntryStatus(entry, data);
+      entry.updatedAt = new Date().toISOString();
+
+      tx.status = 'conciliado';
+      tx.matchedEntryId = entry.id;
+      tx.matchedPaymentId = payment.id;
+      tx.updatedAt = new Date().toISOString();
+
+      addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount: tx.amount, origem: 'conciliacao', transacaoId: tx.id } });
+      addFinanceAuditLog(data, { action: 'conciliarTransacao', entry: { id: tx.id, description: `Transação ${String(tx.id).slice(-8)} · ${tx.description}` }, byId: user.id, byName: user.name, details: { entryId: entry.id } });
+
+      saveData(data);
+      return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data), entry: serializeFinanceEntry(entry, data) });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao conciliar transação' }, 400);
+    }
+  }
+
+  if (/^\/api\/finance\/bank-transactions\/[^/]+\/desconciliar$/.test(pathname) && req.method === 'POST') {
+    try {
+      const data = loadData();
+      const user = getCurrentUser(req, data);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      const tx = data.bankTransactions.find((item) => item.id === id);
+      if (!tx) {
+        return sendJson(res, { error: 'Transação não encontrada' }, 404);
+      }
+      if (tx.status !== 'conciliado') {
+        return sendJson(res, { error: 'Transação não está conciliada' }, 400);
+      }
+
+      const entry = data.finance.find((item) => item.id === tx.matchedEntryId);
+      if (entry && tx.matchedPaymentId) {
+        data.financialPayments = data.financialPayments.filter((p) => p.id !== tx.matchedPaymentId);
+        entry.status = recomputeFinanceEntryStatus(entry, data);
+        entry.updatedAt = new Date().toISOString();
+        addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: tx.matchedPaymentId, motivo: 'Desconciliação de transação bancária' } });
+      }
+
+      tx.status = 'nao_conciliado';
+      tx.matchedEntryId = '';
+      tx.matchedPaymentId = '';
+      tx.updatedAt = new Date().toISOString();
+      saveData(data);
+      return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao desconciliar transação' }, 400);
+    }
+  }
+
+  if (/^\/api\/finance\/bank-transactions\/[^/]+\/ignorar$/.test(pathname) && req.method === 'POST') {
+    const data = loadData();
+    const user = getCurrentUser(req, data);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const id = decodeURIComponent(pathname.split('/')[4]);
+    const tx = data.bankTransactions.find((item) => item.id === id);
+    if (!tx) {
+      return sendJson(res, { error: 'Transação não encontrada' }, 404);
+    }
+    if (tx.status === 'conciliado') {
+      return sendJson(res, { error: 'Desconcilie a transação antes de ignorá-la.' }, 400);
+    }
+    tx.status = 'ignorado';
+    tx.updatedAt = new Date().toISOString();
+    saveData(data);
+    return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
+  }
+
+  if (/^\/api\/finance\/bank-transactions\/[^/]+\/reativar$/.test(pathname) && req.method === 'POST') {
+    const data = loadData();
+    const user = getCurrentUser(req, data);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const id = decodeURIComponent(pathname.split('/')[4]);
+    const tx = data.bankTransactions.find((item) => item.id === id);
+    if (!tx) {
+      return sendJson(res, { error: 'Transação não encontrada' }, 404);
+    }
+    if (tx.status !== 'ignorado') {
+      return sendJson(res, { error: 'Transação não está ignorada' }, 400);
+    }
+    tx.status = 'nao_conciliado';
+    tx.updatedAt = new Date().toISOString();
+    saveData(data);
+    return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
   }
 
   if (pathname === '/api/finance' && req.method === 'POST') {

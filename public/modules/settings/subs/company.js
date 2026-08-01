@@ -10,7 +10,8 @@ const SETTINGS_AUDIT_ACTION_LABELS = {
   estornarLancamento: 'Estorno de baixa',
   cancelarLancamento: 'Cancelamento de lançamento',
   emitirNfe: 'Emissão de NF-e',
-  cancelarNfe: 'Cancelamento de NF-e'
+  cancelarNfe: 'Cancelamento de NF-e',
+  conciliarTransacao: 'Conciliação de extrato bancário'
 };
 
 window.MavisSubscreenRegistry.settings.company = async function renderSettingsCompany(ctx) {

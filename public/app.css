@@ -906,3 +906,5 @@ button.success:hover { background: var(--success-hover); }
 .finance-inline-select select { flex: 1; }
 .finance-inline-add { display: flex; gap: 8px; align-items: center; margin-top: -6px; margin-bottom: 6px; }
 .finance-inline-add input { flex: 1; }
+
+.finance-extrato-actions { display: flex; flex-wrap: wrap; gap: 6px; }

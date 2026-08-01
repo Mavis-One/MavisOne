@@ -202,7 +202,7 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
         <div class="card"><h3>Resultado (período)</h3><p class="${data.resultado >= 0 ? 'finance-positive' : 'finance-negative'}">${financeFormatBRL(data.resultado)}</p></div>
         <div class="card"><h3>Previsão financeira</h3><p>${financeFormatBRL(data.previsaoFinanceira)}</p></div>
         <div class="card"><h3>NF-e emitidas</h3><p>${data.totalNfesEmitidas ?? 0}</p></div>
-        <div class="card"><h3>Movimentações bancárias</h3><p class="muted" style="font-size:14px;">${escapeHtml((data.movimentacoesBancarias && data.movimentacoesBancarias.reason) || 'Indisponível')}</p></div>
+        <div class="card"><h3>Movimentações bancárias</h3><p>${(data.movimentacoesBancarias && data.movimentacoesBancarias.total) || 0}</p><div class="card-sub"><span>Não conciliadas: ${(data.movimentacoesBancarias && data.movimentacoesBancarias.naoConciliado) || 0}</span></div></div>
       </div>
 
       <div class="panel">

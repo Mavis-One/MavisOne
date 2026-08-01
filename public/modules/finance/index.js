@@ -4,9 +4,7 @@ window.MavisSubscreenRegistry.finance = window.MavisSubscreenRegistry.finance ||
 
 const FINANCE_SUB_KEYS = ['dashboard', 'lancamentos', 'novo_lancamento', 'nfe_emitidas', 'nova_nfe_avulsa', 'extrato_open_finance'];
 
-const FINANCE_ROADMAP = {
-  extrato_open_finance: { label: 'Extrato Open Finance', phase: 'Fase 4' }
-};
+const FINANCE_ROADMAP = {};
 
 async function renderFinanceComingSoon(ctx) {
   const { content, state, loadModule } = ctx;
