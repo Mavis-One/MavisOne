@@ -1,6 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const db = require('./db');
 
 const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PORT = Number(process.env.PORT) || 3000;
@@ -363,13 +364,13 @@ async function fetchCepData(cep) {
   };
 }
 
-function getCurrentUser(req, data) {
+async function getCurrentUser(req) {
   const token = req.headers['x-auth-token'];
   if (!token || !sessions[token]) {
     return null;
   }
   const userId = sessions[token];
-  return data.users.find((user) => user.id === userId) || null;
+  return db.getUserById(userId);
 }
 
 function sendJson(res, payload, statusCode = 200) {
@@ -1045,9 +1046,8 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/login' && req.method === 'POST') {
     try {
-      const data = loadData();
       const body = await readBody(req);
-      const user = data.users.find((entry) => entry.username === body.username && entry.password === body.password);
+      const user = await db.authenticateUser(body.username, body.password);
 
       if (!user) {
         return sendJson(res, { error: 'Credenciais inválidas' }, 401);
@@ -1062,8 +1062,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/me') {
-    const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
     }
@@ -1072,15 +1071,13 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/me/theme' && req.method === 'PUT') {
     try {
-      const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user) {
         return sendJson(res, { error: 'Não autenticado' }, 401);
       }
       const body = await readBody(req);
       const theme = body.theme === 'dark' ? 'dark' : 'light';
-      user.theme = theme;
-      saveData(data);
+      await db.updateUserTheme(user.id, theme);
       return sendJson(res, { success: true, theme });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao salvar preferência de tema' }, 400);
@@ -1096,8 +1093,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/modules') {
-    const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
     }
@@ -1106,7 +1102,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/dashboard') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
     }
@@ -1116,9 +1112,11 @@ const server = http.createServer(async (req, res) => {
     const canStock = user.allowedModules.includes('stock');
     const canFinance = user.allowedModules.includes('finance');
 
+    const products = canStock ? await db.getProducts() : [];
+
     const salesTotal = canSales ? data.sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0) : 0;
     const purchaseTotal = canPurchases ? data.purchases.reduce((sum, purchase) => sum + Number(purchase.total || 0), 0) : 0;
-    const stockValue = canStock ? data.products.reduce((sum, product) => sum + Number(product.stockQuantity || 0) * Number(product.costPrice || 0), 0) : 0;
+    const stockValue = canStock ? products.reduce((sum, product) => sum + Number(product.stockQuantity || 0) * Number(product.costPrice || 0), 0) : 0;
 
     const salesWithFinance = (canSales && canFinance)
       ? data.sales.filter((sale) => data.finance.some((entry) => entry.referenceId === sale.id && entry.type === 'sale'))
@@ -1133,7 +1131,7 @@ const server = http.createServer(async (req, res) => {
       stockValue,
       balance: salesTotal - purchaseTotal,
       pendingReconciliation,
-      totalProducts: canStock ? data.products.length : 0,
+      totalProducts: canStock ? products.length : 0,
       totalSales: canSales ? data.sales.length : 0,
       totalPurchases: canPurchases ? data.purchases.length : 0,
       permissions: {
@@ -1147,7 +1145,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/sales/records' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1167,7 +1165,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/records' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1196,7 +1194,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/import' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1233,23 +1231,24 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/sales' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    return sendJson(res, { sales: data.sales, products: data.products });
+    const products = await db.getProducts();
+    return sendJson(res, { sales: data.sales, products });
   }
 
   if (pathname === '/api/sales' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
 
       const body = await readBody(req);
-      const product = data.products.find((entry) => entry.id === body.productId);
+      const product = await db.getProductById(body.productId);
       if (!product) {
         return sendJson(res, { error: 'Produto não encontrado' }, 400);
       }
@@ -1269,7 +1268,7 @@ const server = http.createServer(async (req, res) => {
       };
 
       data.sales.push(sale);
-      product.stockQuantity = Number(product.stockQuantity || 0) - Number(body.quantity || 0);
+      await db.upsertProduct({ ...product, stockQuantity: Number(product.stockQuantity || 0) - Number(body.quantity || 0) });
 
       const financeEntry = {
         id: createId('fin'),
@@ -1292,7 +1291,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/cadastros' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1301,7 +1300,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/cadastros/pessoas' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1310,7 +1309,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/cadastros/cnpjs' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1320,7 +1319,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/cnpj/') && req.method === 'GET') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1341,7 +1340,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/cep/') && req.method === 'GET') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1362,7 +1361,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/cadastros/pessoas' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1431,7 +1430,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/cadastros/pessoas/') && req.method === 'PUT') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1506,7 +1505,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/cadastros/pessoas/') && req.method === 'DELETE') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1525,7 +1524,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/cadastros/cnpjs' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1594,7 +1593,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/cadastros/cnpjs/') && req.method === 'PUT') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1669,7 +1668,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/cadastros/cnpjs/') && req.method === 'DELETE') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1687,7 +1686,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/cadastros/deposits' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1697,7 +1696,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/cadastros/deposits' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1733,7 +1732,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/cadastros/deposits/') && req.method === 'PUT') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1773,7 +1772,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/cadastros/deposits/') && req.method === 'DELETE') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1789,23 +1788,24 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/purchases' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('purchases')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    return sendJson(res, { purchases: data.purchases, products: data.products });
+    const products = await db.getProducts();
+    return sendJson(res, { purchases: data.purchases, products });
   }
 
   if (pathname === '/api/purchases' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('purchases')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
 
       const body = await readBody(req);
-      const product = data.products.find((entry) => entry.id === body.productId);
+      const product = await db.getProductById(body.productId);
       if (!product) {
         return sendJson(res, { error: 'Produto não encontrado' }, 400);
       }
@@ -1822,8 +1822,11 @@ const server = http.createServer(async (req, res) => {
       };
 
       data.purchases.push(purchase);
-      product.stockQuantity = Number(product.stockQuantity || 0) + Number(body.quantity || 0);
-      product.costPrice = Number(body.costPrice || product.costPrice || 0);
+      await db.upsertProduct({
+        ...product,
+        stockQuantity: Number(product.stockQuantity || 0) + Number(body.quantity || 0),
+        costPrice: Number(body.costPrice || product.costPrice || 0)
+      });
 
       const financeEntry = {
         id: createId('fin'),
@@ -1845,40 +1848,31 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/stock' && req.method === 'GET') {
-    const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('stock')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    return sendJson(res, { products: data.products });
+    const products = await db.getProducts();
+    return sendJson(res, { products });
   }
 
   if (pathname === '/api/stock' && req.method === 'POST') {
     try {
-      const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('stock')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
 
       const body = await readBody(req);
-      const product = {
-        id: body.id || createId('prod'),
+      const product = await db.upsertProduct({
+        id: body.id,
         name: body.name,
         sku: body.sku,
         stockQuantity: Number(body.stockQuantity || 0),
         costPrice: Number(body.costPrice || 0),
         salePrice: Number(body.salePrice || 0)
-      };
+      });
 
-      const existingIndex = data.products.findIndex((entry) => entry.id === product.id);
-      if (existingIndex >= 0) {
-        data.products[existingIndex] = product;
-      } else {
-        data.products.push(product);
-      }
-
-      saveData(data);
       return sendJson(res, { success: true, product });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao salvar produto' }, 400);
@@ -1887,7 +1881,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/finance' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1897,7 +1891,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/summary' && req.method === 'GET') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1910,7 +1904,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/finance/meta' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -1925,7 +1919,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/categories' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1946,7 +1940,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/cost-centers' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1967,7 +1961,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/bank-accounts' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -1995,7 +1989,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/entries' && req.method === 'GET') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2014,7 +2008,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/entries' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2068,7 +2062,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/payments$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2129,7 +2123,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/estorno$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2162,7 +2156,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2188,7 +2182,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'PUT') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2232,7 +2226,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -2247,7 +2241,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/nfe' && req.method === 'GET') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2266,7 +2260,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/nfe' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2376,7 +2370,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/nfe\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2425,7 +2419,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/finance/nfe/') && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -2440,7 +2434,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/bank-transactions' && req.method === 'GET') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2464,7 +2458,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/bank-transactions' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2491,7 +2485,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/bank-transactions/import' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2537,7 +2531,7 @@ const server = http.createServer(async (req, res) => {
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/matches$/.test(pathname) && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -2552,7 +2546,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/conciliar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2622,7 +2616,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/desconciliar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2656,7 +2650,7 @@ const server = http.createServer(async (req, res) => {
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/ignorar$/.test(pathname) && req.method === 'POST') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -2676,7 +2670,7 @@ const server = http.createServer(async (req, res) => {
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/reativar$/.test(pathname) && req.method === 'POST') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -2697,7 +2691,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance' && req.method === 'POST') {
     try {
       const data = loadData();
-      const user = getCurrentUser(req, data);
+      const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
@@ -2723,114 +2717,94 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/settings' && req.method === 'GET') {
     const data = loadData();
-    const user = getCurrentUser(req, data);
+    const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('settings')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-      const canManageUsers = user.role === 'admin';
-      const totals = {
-        totalUsers: canManageUsers ? data.users.length : 0,
-        totalProducts: user.allowedModules.includes('stock') ? data.products.length : 0,
-        totalSales: user.allowedModules.includes('sales') ? data.sales.length : 0,
-        totalPurchases: user.allowedModules.includes('purchases') ? data.purchases.length : 0,
-        totalFinance: user.allowedModules.includes('finance') ? data.finance.length : 0
-      };
-      const safeUsers = canManageUsers
-        ? data.users.map((entry) => ({
-            id: entry.id,
-            username: entry.username,
-            name: entry.name,
-            role: entry.role,
-            allowedModules: Array.isArray(entry.allowedModules) ? entry.allowedModules : []
-          }))
-        : [];
-      return sendJson(res, {
-        settings: data.settings,
-        users: safeUsers,
-        totals,
-        permissions: {
-          company: true,
-          users: canManageUsers
-        }
-      });
-    }
+    const canManageUsers = user.role === 'admin';
+    const [settings, allUsers, products] = await Promise.all([
+      db.getSettings(),
+      canManageUsers ? db.getUsers() : Promise.resolve([]),
+      user.allowedModules.includes('stock') ? db.getProducts() : Promise.resolve([])
+    ]);
+    const totals = {
+      totalUsers: canManageUsers ? allUsers.length : 0,
+      totalProducts: user.allowedModules.includes('stock') ? products.length : 0,
+      totalSales: user.allowedModules.includes('sales') ? data.sales.length : 0,
+      totalPurchases: user.allowedModules.includes('purchases') ? data.purchases.length : 0,
+      totalFinance: user.allowedModules.includes('finance') ? data.finance.length : 0
+    };
+    const safeUsers = canManageUsers
+      ? allUsers.map((entry) => ({
+          id: entry.id,
+          username: entry.username,
+          name: entry.name,
+          role: entry.role,
+          allowedModules: Array.isArray(entry.allowedModules) ? entry.allowedModules : []
+        }))
+      : [];
+    return sendJson(res, {
+      settings,
+      users: safeUsers,
+      totals,
+      permissions: {
+        company: true,
+        users: canManageUsers
+      }
+    });
+  }
 
-    if (pathname === '/api/settings' && req.method === 'POST') {
-      try {
-        const data = loadData();
-        const user = getCurrentUser(req, data);
-        if (!user || !user.allowedModules.includes('settings')) {
-          return sendJson(res, { error: 'Sem permissão' }, 403);
+  if (pathname === '/api/settings' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('settings')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
       }
 
-        const body = await readBody(req);
-        if (body.type === 'company') {
-          data.settings = { ...data.settings, ...body.payload };
-          saveData(data);
-          return sendJson(res, { success: true, settings: data.settings });
+      const body = await readBody(req);
+      if (body.type === 'company') {
+        const settings = await db.updateSettings({ ...(await db.getSettings()), ...body.payload });
+        return sendJson(res, { success: true, settings });
+      }
+
+      if (body.type === 'user') {
+        if (user.role !== 'admin') {
+          return sendJson(res, { error: 'Sem permissão para gerenciar usuários' }, 403);
         }
+        const newUser = await db.createUser({
+          username: body.payload.username,
+          password: body.payload.password,
+          name: body.payload.name,
+          role: body.payload.role || 'user',
+          allowedModules: body.payload.allowedModules || ['dashboard']
+        });
+        const data = loadData();
+        data.auditLogs = data.auditLogs || [];
+        data.auditLogs.push({ id: createId('audit'), action: 'createUser', targetId: newUser.id, targetUsername: newUser.username, byId: user.id, byName: user.name, at: new Date().toISOString() });
+        saveData(data);
+        return sendJson(res, { success: true, user: newUser });
+      }
 
-        if (body.type === 'user') {
-          if (user.role !== 'admin') {
-            return sendJson(res, { error: 'Sem permissão para gerenciar usuários' }, 403);
-          }
-          const newUser = {
-            id: createId('user'),
-            username: body.payload.username,
-            password: body.payload.password,
-            name: body.payload.name,
-            role: body.payload.role || 'user',
-            allowedModules: body.payload.allowedModules || ['dashboard'],
-            theme: 'light'
-          };
-          data.users.push(newUser);
-          data.auditLogs = data.auditLogs || [];
-          data.auditLogs.push({ id: createId('audit'), action: 'createUser', targetId: newUser.id, targetUsername: newUser.username, byId: user.id, byName: user.name, at: new Date().toISOString() });
-          saveData(data);
-          return sendJson(res, { success: true, user: newUser });
-        }
-
-        if (body.type === 'deleteUser') {
-          if (user.role !== 'admin') {
-            return sendJson(res, { error: 'Sem permissão para gerenciar usuários' }, 403);
-          }
-          const id = body.payload && body.payload.id;
-          if (!id) return sendJson(res, { error: 'ID ausente' }, 400);
-                  const requestingUser = getCurrentUser(req, data);
-                  if (!requestingUser) return sendJson(res, { error: 'Não autenticado' }, 401);
-                  if (requestingUser.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
-                  if (requestingUser.id === id) return sendJson(res, { error: 'Não é permitido excluir o usuário logado' }, 400);
-                  const idx = data.users.findIndex((u) => u.id === id);
-                  if (idx < 0) return sendJson(res, { error: 'Usuário não encontrado' }, 404);
-                  const deletedUser = data.users[idx];
-                  data.users.splice(idx, 1);
-                  // audit log
-                  data.auditLogs = data.auditLogs || [];
-                  data.auditLogs.push({ id: createId('audit'), action: 'deleteUser', targetId: deletedUser.id, targetUsername: deletedUser.username, byId: requestingUser.id, byName: requestingUser.name, at: new Date().toISOString() });
-                  saveData(data);
-                  return sendJson(res, { success: true });
-                }
-
-                return sendJson(res, { error: 'Tipo de configuração inválido' }, 400);
-              } catch (error) {
-                return sendJson(res, { error: 'Erro ao salvar configurações' }, 400);
-              }
-            }
+      return sendJson(res, { error: 'Tipo de configuração inválido' }, 400);
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao salvar configurações' }, 400);
+    }
+  }
 
   // GET users for debugging (admin only)
   if (pathname === '/api/users' && req.method === 'GET') {
-    const data = loadData();
-    const requester = getCurrentUser(req, data);
+    const requester = await getCurrentUser(req);
     if (!requester) return sendJson(res, { error: 'Não autenticado' }, 401);
     if (requester.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
-    return sendJson(res, { users: data.users });
+    const users = await db.getUsers();
+    return sendJson(res, { users });
   }
 
   // GET audit logs (admin-only) with simple pagination: ?limit=50&offset=0
   if (pathname === '/api/audit' && req.method === 'GET') {
     try {
       const data = loadData();
-      const requester = getCurrentUser(req, data);
+      const requester = await getCurrentUser(req);
       if (!requester) return sendJson(res, { error: 'Não autenticado' }, 401);
       if (requester.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
       const limit = Math.min(200, Number(url.searchParams.get('limit') || 50));
@@ -2846,19 +2820,18 @@ const server = http.createServer(async (req, res) => {
   // user delete endpoint (dedicated)
   if (pathname === '/api/users/delete' && req.method === 'POST') {
     try {
-      const data = loadData();
-      const requester = getCurrentUser(req, data);
+      const requester = await getCurrentUser(req);
       if (!requester) return sendJson(res, { error: 'Não autenticado' }, 401);
       if (requester.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
       const body = await readBody(req);
       const id = body && body.id;
       if (!id) return sendJson(res, { error: 'ID ausente' }, 400);
       if (requester.id === id) return sendJson(res, { error: 'Não é permitido excluir o usuário logado' }, 400);
-      const idx = data.users.findIndex((u) => u.id === id);
-      if (idx < 0) return sendJson(res, { error: 'Usuário não encontrado' }, 404);
-      const deletedUser = data.users[idx];
-      data.users.splice(idx, 1);
+      const deletedUser = await db.getUserById(id);
+      if (!deletedUser) return sendJson(res, { error: 'Usuário não encontrado' }, 404);
+      await db.deleteUser(id);
       // audit log
+      const data = loadData();
       data.auditLogs = data.auditLogs || [];
       data.auditLogs.push({ id: createId('audit'), action: 'deleteUser', targetId: deletedUser.id, targetUsername: deletedUser.username, byId: requester.id, byName: requester.name, at: new Date().toISOString() });
       saveData(data);
