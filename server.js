@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -393,6 +395,36 @@ function readBody(req) {
     });
     req.on('error', reject);
   });
+}
+
+function normalizeDashboardPins(pins) {
+  if (!Array.isArray(pins)) {
+    return [];
+  }
+
+  const uniquePins = [];
+  const seen = new Set();
+  pins.forEach((pin) => {
+    const value = String(pin || '').trim();
+    if (!value || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    uniquePins.push(value);
+  });
+  return uniquePins;
+}
+
+function serializeUserForClient(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    name: user.name,
+    role: user.role,
+    allowedModules: user.allowedModules,
+    theme: user.theme,
+    dashboardPins: normalizeDashboardPins(user.dashboardPins)
+  };
 }
 
 function parseCsv(text) {
@@ -1035,7 +1067,9 @@ function serveStatic(res, filePath) {
       res.end('Arquivo não encontrado');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentTypeMap[ext] || 'text/plain; charset=utf-8' });
+    // Sem cache: HTML/CSS/JS mudam com frequência durante o desenvolvimento e o
+    // navegador não tinha nenhum header para saber que precisa revalidar.
+    res.writeHead(200, { 'Content-Type': contentTypeMap[ext] || 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(content);
   });
 }
@@ -1055,7 +1089,7 @@ const server = http.createServer(async (req, res) => {
 
       const token = createId('token');
       sessions[token] = user.id;
-      return sendJson(res, { token, user: { id: user.id, username: user.username, name: user.name, role: user.role, allowedModules: user.allowedModules, theme: user.theme } });
+      return sendJson(res, { token, user: serializeUserForClient(user) });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao autenticar' }, 400);
     }
@@ -1066,7 +1100,7 @@ const server = http.createServer(async (req, res) => {
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
     }
-    return sendJson(res, { user: { id: user.id, username: user.username, name: user.name, role: user.role, allowedModules: user.allowedModules, theme: user.theme } });
+    return sendJson(res, { user: serializeUserForClient(user) });
   }
 
   if (pathname === '/api/me/theme' && req.method === 'PUT') {
@@ -1081,6 +1115,30 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { success: true, theme });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao salvar preferência de tema' }, 400);
+    }
+  }
+
+  if (pathname === '/api/me/dashboard-pins') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user) {
+        return sendJson(res, { error: 'Não autenticado' }, 401);
+      }
+
+      if (req.method === 'GET') {
+        return sendJson(res, { dashboardPins: normalizeDashboardPins(user.dashboardPins) });
+      }
+
+      if (req.method === 'PUT') {
+        const body = await readBody(req);
+        const dashboardPins = normalizeDashboardPins(body.dashboardPins);
+        await db.updateUserDashboardPins(user.id, dashboardPins);
+        return sendJson(res, { success: true, dashboardPins });
+      }
+
+      return sendJson(res, { error: 'Método não permitido' }, 405);
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao salvar favoritos do dashboard' }, 400);
     }
   }
 

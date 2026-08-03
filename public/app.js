@@ -20,6 +20,11 @@ function themeIconSvg(theme) {
     : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"></path></svg>';
 }
 
+// Ícone padrão (alfinete tipo taça) usado em todos os botões de favoritar/fixar do sistema.
+function favoriteIconSvg(active) {
+  return `<svg class="favorite-icon" width="18" height="18" viewBox="0 0 24 24" fill="${active ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10l-5 8z"></path><line x1="12" y1="12" x2="12" y2="20"></line></svg>`;
+}
+
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
 }
@@ -200,14 +205,19 @@ function renderSecondarySidebar() {
     </div>
     <div class="secondary-nav-list">
       ${secondaryConfig.items.map((sub) => `
-        <button class="secondary-nav-item ${(state.activeModule === secondaryConfig.module && activeKey === sub.key) ? 'active' : ''}" data-module="${secondaryConfig.module}" data-sub="${sub.key}">
-          <span>${sub.label}</span>
-        </button>
+        <div class="secondary-nav-item-row">
+          <button type="button" class="secondary-nav-item secondary-open-item ${(state.activeModule === secondaryConfig.module && activeKey === sub.key) ? 'active' : ''}" data-module="${secondaryConfig.module}" data-sub="${sub.key}">
+            <span>${sub.label}</span>
+          </button>
+          <button type="button" class="sidebar-pin-btn secondary-pin ${getDashboardPinSet().has(`${secondaryConfig.module}::${sub.key}`) ? 'active' : ''}" data-pin-key="${secondaryConfig.module}::${sub.key}" title="${getDashboardPinSet().has(`${secondaryConfig.module}::${sub.key}`) ? 'Desfixar' : 'Fixar'} ${sub.label}" aria-pressed="${getDashboardPinSet().has(`${secondaryConfig.module}::${sub.key}`) ? 'true' : 'false'}">
+            ${favoriteIconSvg(getDashboardPinSet().has(`${secondaryConfig.module}::${sub.key}`))}
+          </button>
+        </div>
       `).join('')}
     </div>
   `;
 
-  sidebar.querySelectorAll('.secondary-nav-item').forEach((btn) => {
+  sidebar.querySelectorAll('.secondary-open-item').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       state.activeModule = btn.dataset.module;
@@ -222,6 +232,78 @@ function renderSecondarySidebar() {
 function syncSecondarySidebar() {
   renderSecondarySidebar();
 }
+
+function normalizeDashboardPins(pins) {
+  if (!Array.isArray(pins)) return [];
+  const result = [];
+  const seen = new Set();
+  pins.forEach((pin) => {
+    const value = String(pin || '').trim();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    result.push(value);
+  });
+  return result;
+}
+
+function getDashboardPinsStorageKey(userId) {
+  return `mavisone:dashboard-pins:${String(userId || 'anonymous')}`;
+}
+
+function readStoredDashboardPins(userId) {
+  try {
+    const raw = localStorage.getItem(getDashboardPinsStorageKey(userId));
+    return normalizeDashboardPins(raw ? JSON.parse(raw) : []);
+  } catch (_) {
+    return [];
+  }
+}
+
+function persistStoredDashboardPins(userId, pins) {
+  localStorage.setItem(getDashboardPinsStorageKey(userId), JSON.stringify(normalizeDashboardPins(pins)));
+}
+
+function getDashboardPinSet() {
+  const serverPins = Array.isArray(state.user?.dashboardPins) ? state.user.dashboardPins : [];
+  const storedPins = state.user?.id ? readStoredDashboardPins(state.user.id) : [];
+  return new Set(normalizeDashboardPins([...serverPins, ...storedPins]));
+}
+
+function getDashboardPinLabel(pinKey) {
+  const [moduleKey, subKey] = String(pinKey || '').split('::');
+  const moduleLabel = moduleLabels[moduleKey] || moduleKey;
+  if (!subKey) {
+    return moduleLabel;
+  }
+  const subItem = (moduleSubItems[moduleKey] || []).find((item) => item.key === subKey);
+  return `${moduleLabel} > ${subItem ? subItem.label : subKey}`;
+}
+
+async function saveDashboardPins(nextPins) {
+  const normalized = normalizeDashboardPins(nextPins);
+  if (state.user?.id) {
+    persistStoredDashboardPins(state.user.id, normalized);
+  }
+
+  if (state.user) {
+    state.user.dashboardPins = normalized;
+  }
+
+  if (state.dashboardPinsSyncEnabled !== false) {
+    try {
+      await api('/api/me/dashboard-pins', {
+        method: 'PUT',
+        body: JSON.stringify({ dashboardPins: normalized })
+      });
+    } catch (_) {
+      state.dashboardPinsSyncEnabled = false;
+      // Fallback local: o banco ainda não expôs a coluna de favoritos no ambiente atual.
+    }
+  }
+  return normalized;
+}
+
+window.saveDashboardPins = saveDashboardPins;
 
 async function api(path, options = {}) {
   const headers = {};
@@ -339,6 +421,11 @@ function renderAuth(error = '') {
       });
       setSessionToken(response.token);
       state.user = response.user;
+      state.user.dashboardPins = normalizeDashboardPins([
+        ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
+        ...readStoredDashboardPins(state.user.id)
+      ]);
+      persistStoredDashboardPins(state.user.id, state.user.dashboardPins);
       applyTheme(state.user.theme);
       showToast('Login realizado com sucesso.', 'success');
       renderApp();
@@ -380,13 +467,23 @@ function renderApp() {
             .filter((module) => state.user?.allowedModules?.includes(module))
             .map((module) => `
               <div class="nav-block">
-                <button class="nav-item ${state.activeModule === module ? 'active' : ''}" data-module="${module}">
-                  <span class="icon">${moduleIcons[module] || ''}</span>
-                  <span class="text">${moduleLabels[module]}</span>
-                </button>
+                <div class="nav-item-row">
+                  <button type="button" class="nav-item nav-open-item ${state.activeModule === module ? 'active' : ''}" data-module="${module}">
+                    <span class="icon">${moduleIcons[module] || ''}</span>
+                    <span class="text">${moduleLabels[module]}</span>
+                  </button>
+                  <button type="button" class="sidebar-pin-btn ${getDashboardPinSet().has(module) ? 'active' : ''}" data-pin-key="${module}" title="${getDashboardPinSet().has(module) ? 'Desfixar' : 'Fixar'} ${moduleLabels[module]}" aria-pressed="${getDashboardPinSet().has(module) ? 'true' : 'false'}">
+                    ${favoriteIconSvg(getDashboardPinSet().has(module))}
+                  </button>
+                </div>
                 <div class="submenu">
                   ${ (moduleSubItems[module] || []).map((sub) => `
-                    <button class="sub-item ${state.activeModule === module && state.activeSub === sub.key ? 'active' : ''}" data-module="${module}" data-sub="${sub.key}">${sub.label}</button>
+                    <div class="sub-item-row">
+                      <button type="button" class="sub-item sub-open-item ${state.activeModule === module && state.activeSub === sub.key ? 'active' : ''}" data-module="${module}" data-sub="${sub.key}">${sub.label}</button>
+                      <button type="button" class="sidebar-pin-btn ${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'active' : ''}" data-pin-key="${module}::${sub.key}" title="${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'Desfixar' : 'Fixar'} ${sub.label}" aria-pressed="${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'true' : 'false'}">
+                        ${favoriteIconSvg(getDashboardPinSet().has(`${module}::${sub.key}`))}
+                      </button>
+                    </div>
                   `).join('') }
                 </div>
               </div>
@@ -434,7 +531,7 @@ function renderApp() {
   });
 
   // main nav click handlers
-  document.querySelectorAll('.nav-item').forEach((button) => {
+  document.querySelectorAll('.nav-open-item').forEach((button) => {
     button.onclick = () => {
       const module = button.dataset.module;
       state.activeModule = module;
@@ -446,7 +543,7 @@ function renderApp() {
   });
 
   // submenu handlers
-  document.querySelectorAll('.sub-item').forEach((btn) => {
+  document.querySelectorAll('.sub-open-item').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const module = btn.dataset.module;
@@ -456,6 +553,25 @@ function renderApp() {
       state.selectedModule = getSecondarySidebarConfig(module) ? module : null;
       renderApp();
       loadModule(state.activeModule);
+    });
+  });
+
+  document.querySelectorAll('.sidebar-pin-btn[data-pin-key]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pinKey = btn.dataset.pinKey;
+      if (!pinKey) return;
+      const currentPins = getDashboardPinSet();
+      const nextPins = currentPins.has(pinKey)
+        ? Array.from(currentPins).filter((item) => item !== pinKey)
+        : Array.from(new Set([...currentPins, pinKey]));
+      try {
+        await saveDashboardPins(nextPins);
+        renderApp();
+        await loadModule(state.activeModule);
+      } catch (error) {
+        showToast(error.message || 'Erro ao salvar favoritos.', 'error');
+      }
     });
   });
 
@@ -795,6 +911,19 @@ async function loadModule(moduleName) {
     // ABA: DASHBOARD GERAL
     // ========================================================================
     if (moduleName === 'dashboard') {
+      if (window.MavisModuleRegistry?.dashboard) {
+        await window.MavisModuleRegistry.dashboard({
+          api,
+          content,
+          state,
+          showToast,
+          escapeHtml,
+          renderApp,
+          loadModule
+        });
+        return;
+      }
+
       const data = await api('/api/dashboard');
       const dashboardPermissions = data.permissions || {};
       content.innerHTML = `
@@ -3429,6 +3558,11 @@ async function loadModule(moduleName) {
   try {
     const response = await api('/api/me');
     state.user = response.user;
+    state.user.dashboardPins = normalizeDashboardPins([
+      ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
+      ...readStoredDashboardPins(state.user.id)
+    ]);
+    persistStoredDashboardPins(state.user.id, state.user.dashboardPins);
     applyTheme(state.user.theme);
     restoreLastRoute();
     const moduleHistory = ensureModuleRouteHistory(state.activeModule);

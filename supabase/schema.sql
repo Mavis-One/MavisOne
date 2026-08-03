@@ -35,8 +35,12 @@ create table if not exists users (
   role text not null default 'user',
   allowed_modules text[] not null default '{}',
   theme text not null default 'light',
+  dashboard_pins jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now()
 );
+
+alter table if exists users
+  add column if not exists dashboard_pins jsonb not null default '[]'::jsonb;
 
 -- ----------------------------------------------------------------------------
 -- Configurações da empresa — linha única (id sempre 1)
