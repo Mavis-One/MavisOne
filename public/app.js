@@ -1648,13 +1648,14 @@ async function loadModule(moduleName) {
 
       // Sub-aba: Painel Vendas
       if (sub === 'sales_dashboard') {
-        const data = await api('/api/dashboard');
+        const { overview } = await api('/api/sales/dashboard');
         content.innerHTML = `
           <div class="finance-stat-cards">
-            ${financeStatCard({ tone: 'green', label: 'Vendas mês', value: salesFormatBRL(data.salesTotal) })}
-            ${financeStatCard({ tone: 'blue', label: 'Tickets médios', value: salesFormatBRL((data.salesTotal || 0) / Math.max((data.totalSales || 1), 1)) })}
-            ${financeStatCard({ tone: 'red', label: 'Pedidos pendentes', value: String(data.pendingReconciliation || 0) })}
-            ${financeStatCard({ tone: 'purple', label: 'Total de vendas', value: String(data.totalSales || 0) })}
+            ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: String(overview.totalPedidos), sub: salesFormatBRL(overview.valorPedidos) })}
+            ${financeStatCard({ tone: 'purple', label: 'Orçamentos', value: String(overview.totalOrcamentos), sub: salesFormatBRL(overview.valorOrcamentos) })}
+            ${financeStatCard({ tone: 'green', label: 'Pedidos faturados', value: String(overview.pedidosFaturados) })}
+            ${financeStatCard({ tone: 'red', label: 'Pedidos pendentes', value: String(overview.pedidosPendentes) })}
+            ${financeStatCard({ tone: 'teal', label: 'Ticket médio', value: salesFormatBRL(overview.ticketMedio) })}
           </div>
           <div class="panel">
             <h3>Painel de Vendas</h3>
@@ -1666,25 +1667,64 @@ async function loadModule(moduleName) {
 
       // Sub-aba: Painel Vendedor
       if (sub === 'seller_dashboard') {
-        content.innerHTML = `
+        const { bySeller } = await api('/api/sales/dashboard');
+
+        if (!bySeller.length) {
+          content.innerHTML = `
+            <div class="panel">
+              <h3>Painel do Vendedor</h3>
+              <p class="muted">Nenhum vendedor cadastrado — em Cadastros, marque uma pessoa com o papel "Vendedor" para que ela apareça aqui.</p>
+            </div>
+          `;
+          return;
+        }
+
+        const draft = state.salesDraft || {};
+        const selectedSellerId = bySeller.some((s) => s.sellerId === draft.sellerDashboardId) ? draft.sellerDashboardId : bySeller[0].sellerId;
+        const selected = bySeller.find((s) => s.sellerId === selectedSellerId);
+
+        const renderSellerPanel = () => `
           <div class="finance-stat-cards">
-            ${financeStatCard({ tone: 'blue', label: 'Meus pedidos', value: '0' })}
-            ${financeStatCard({ tone: 'green', label: 'Total vendido', value: salesFormatBRL(0) })}
-            ${financeStatCard({ tone: 'purple', label: 'Comissão', value: salesFormatBRL(0) })}
+            ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: String(selected.totalPedidos) })}
+            ${financeStatCard({ tone: 'green', label: 'Total vendido', value: salesFormatBRL(selected.valorTotal) })}
+            ${financeStatCard({ tone: 'teal', label: 'Ticket médio', value: salesFormatBRL(selected.ticketMedio) })}
           </div>
           <div class="panel">
             <h3>Painel do Vendedor</h3>
-            <p class="muted">Acompanhamento pessoal de vendas e comissões.</p>
             <div class="table-scroll">
               <table class="table">
-                <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Data</th></tr></thead>
+                <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Data</th><th>Status</th></tr></thead>
                 <tbody>
-                  <tr><td colspan="4" class="muted">Nenhuma venda realizada</td></tr>
+                  ${selected.orders.length ? selected.orders.map((o) => `
+                    <tr>
+                      <td>${escapeHtml(o.code)}</td>
+                      <td>${escapeHtml(o.customer)}</td>
+                      <td>${salesFormatBRL(o.amount)}</td>
+                      <td>${salesFormatDate(o.date)}</td>
+                      <td>${salesStatusBadge(o.status)}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="5" class="muted">Nenhuma venda realizada</td></tr>'}
                 </tbody>
               </table>
             </div>
           </div>
         `;
+
+        content.innerHTML = `
+          <div class="panel">
+            <label>Vendedor
+              <select id="sellerDashboardSelect">
+                ${bySeller.map((s) => `<option value="${s.sellerId}" ${s.sellerId === selectedSellerId ? 'selected' : ''}>${escapeHtml(s.sellerName)}</option>`).join('')}
+              </select>
+            </label>
+          </div>
+          <div id="sellerDashboardPanel">${renderSellerPanel()}</div>
+        `;
+
+        document.getElementById('sellerDashboardSelect')?.addEventListener('change', (event) => {
+          state.salesDraft = { ...state.salesDraft, sellerDashboardId: event.target.value };
+          loadModule('sales');
+        });
         return;
       }
 

@@ -368,7 +368,7 @@
       "at": "2026-08-04T17:01:25.483Z"
     }
   ],
-  "nextCadastroCode": 12,
+  "nextCadastroCode": 14,
   "deposits": [],
   "financialPayments": [],
   "financialCategories": [
@@ -446,5 +446,5 @@
   ],
   "bankTransactions": [],
   "companies": [],
-  "nextSalesCode": 1002
+  "nextSalesCode": 1006
 }

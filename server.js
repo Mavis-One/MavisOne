@@ -703,6 +703,43 @@ function filterSalesRecords(records, data, query) {
   return result;
 }
 
+function buildSalesDashboardSummary(data) {
+  const orders = (data.orders || []).map((record) => serializeSalesRecord(record, data));
+  const quotes = (data.quotes || []).map((record) => serializeSalesRecord(record, data));
+
+  const valorPedidos = Math.round(orders.reduce((sum, o) => sum + Number(o.amount || 0), 0) * 100) / 100;
+  const valorOrcamentos = Math.round(quotes.reduce((sum, q) => sum + Number(q.amount || 0), 0) * 100) / 100;
+  const pedidosFaturados = orders.filter((o) => o.status === 'faturado').length;
+  const pedidosPendentes = orders.filter((o) => o.status === 'pendente').length;
+
+  const overview = {
+    totalPedidos: orders.length,
+    valorPedidos,
+    totalOrcamentos: quotes.length,
+    valorOrcamentos,
+    pedidosFaturados,
+    pedidosPendentes,
+    ticketMedio: orders.length ? Math.round((valorPedidos / orders.length) * 100) / 100 : 0
+  };
+
+  const bySeller = getSellersDirectory(data).map((seller) => {
+    const sellerOrders = orders.filter((o) => o.sellerId === seller.id);
+    const valorTotal = Math.round(sellerOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0) * 100) / 100;
+    return {
+      sellerId: seller.id,
+      sellerName: seller.name,
+      totalPedidos: sellerOrders.length,
+      valorTotal,
+      ticketMedio: sellerOrders.length ? Math.round((valorTotal / sellerOrders.length) * 100) / 100 : 0,
+      orders: sellerOrders
+        .map((o) => ({ id: o.id, code: o.code, customer: o.customer, amount: o.amount, date: o.date, status: o.status }))
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    };
+  });
+
+  return { overview, bySeller };
+}
+
 function getFinanceEntryPayments(data, entryId) {
   return (data.financialPayments || []).filter((payment) => payment.entryId === entryId);
 }
@@ -1568,6 +1605,15 @@ const server = http.createServer(async (req, res) => {
       directory: getCadastroDirectory(data),
       products
     });
+  }
+
+  if (pathname === '/api/sales/dashboard' && req.method === 'GET') {
+    const data = loadData();
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    return sendJson(res, buildSalesDashboardSummary(data));
   }
 
   if (pathname === '/api/sales/records' && req.method === 'GET') {
