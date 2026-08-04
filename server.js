@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
+const fiscalDb = require('./lib/db/fiscal');
 
 const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PORT = Number(process.env.PORT) || 3000;
@@ -1748,6 +1749,100 @@ const server = http.createServer(async (req, res) => {
     }
     const status = await focusNfe.checkStatus();
     return sendJson(res, status);
+  }
+
+  // ---------------------------------------------------------------------
+  // Fiscal: empresa / estabelecimento / certificado digital (base pra
+  // emissão real de NF-e via Focus NFe). Só admins com acesso a
+  // Configurações mexem aqui — envolve CNPJ, regime tributário e token.
+  // ---------------------------------------------------------------------
+  if (pathname.startsWith('/api/fiscal/')) {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('settings') || user.role !== 'admin') {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+
+    try {
+      if (pathname === '/api/fiscal/empresas' && req.method === 'GET') {
+        const empresas = await fiscalDb.getEmpresas();
+        return sendJson(res, { empresas });
+      }
+
+      if (pathname === '/api/fiscal/empresas' && req.method === 'POST') {
+        const body = await readBody(req);
+        const empresa = await fiscalDb.createEmpresa(body);
+        return sendJson(res, { success: true, empresa });
+      }
+
+      if (pathname.startsWith('/api/fiscal/empresas/') && req.method === 'PUT') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/empresas/', ''));
+        const body = await readBody(req);
+        const empresa = await fiscalDb.updateEmpresa(id, body);
+        return sendJson(res, { success: true, empresa });
+      }
+
+      if (pathname.startsWith('/api/fiscal/empresas/') && req.method === 'DELETE') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/empresas/', ''));
+        await fiscalDb.deleteEmpresa(id);
+        return sendJson(res, { success: true });
+      }
+
+      if (pathname === '/api/fiscal/estabelecimentos' && req.method === 'GET') {
+        const empresaId = url.searchParams.get('empresaId') || undefined;
+        const estabelecimentos = await fiscalDb.getEstabelecimentos(empresaId);
+        return sendJson(res, { estabelecimentos });
+      }
+
+      if (pathname === '/api/fiscal/estabelecimentos' && req.method === 'POST') {
+        const body = await readBody(req);
+        const estabelecimento = await fiscalDb.createEstabelecimento(body);
+        return sendJson(res, { success: true, estabelecimento });
+      }
+
+      if (pathname.startsWith('/api/fiscal/estabelecimentos/') && pathname.endsWith('/focus-status') && req.method === 'GET') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/estabelecimentos/', '').replace('/focus-status', ''));
+        const creds = await fiscalDb.getEstabelecimentoFocusCredentials(id);
+        if (!creds) {
+          return sendJson(res, { configured: false, connected: false, message: 'Token não configurado para este estabelecimento.' });
+        }
+        const status = await focusNfe.checkStatus(creds);
+        return sendJson(res, status);
+      }
+
+      if (pathname.startsWith('/api/fiscal/estabelecimentos/') && req.method === 'PUT') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/estabelecimentos/', ''));
+        const body = await readBody(req);
+        const estabelecimento = await fiscalDb.updateEstabelecimento(id, body);
+        return sendJson(res, { success: true, estabelecimento });
+      }
+
+      if (pathname.startsWith('/api/fiscal/estabelecimentos/') && req.method === 'DELETE') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/estabelecimentos/', ''));
+        await fiscalDb.deleteEstabelecimento(id);
+        return sendJson(res, { success: true });
+      }
+
+      if (pathname === '/api/fiscal/certificados' && req.method === 'GET') {
+        const empresaId = url.searchParams.get('empresaId') || undefined;
+        const certificados = await fiscalDb.getCertificados(empresaId);
+        return sendJson(res, { certificados });
+      }
+
+      if (pathname === '/api/fiscal/certificados' && req.method === 'POST') {
+        const body = await readBody(req);
+        const certificado = await fiscalDb.createCertificado(body);
+        return sendJson(res, { success: true, certificado });
+      }
+
+      if (pathname.startsWith('/api/fiscal/certificados/') && req.method === 'DELETE') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/certificados/', ''));
+        await fiscalDb.deleteCertificado(id);
+        return sendJson(res, { success: true });
+      }
+    } catch (error) {
+      const status = error.status || 500;
+      return sendJson(res, { error: error.message || 'Erro ao processar dados fiscais' }, status);
+    }
   }
 
   if (pathname === '/api/cadastros/pessoas' && req.method === 'POST') {

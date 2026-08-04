@@ -875,6 +875,7 @@ button.success:hover { background: var(--success-hover); }
 .table-actions th:last-child, .table-actions td:last-child { text-align: right; width: 120px; }
 .cadastro-row-clickable { cursor: pointer; }
 .cadastro-row-clickable:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.08)); }
+.active-row { background: var(--hover-bg, rgba(59, 130, 246, 0.08)); }
 .delete-user { background: transparent; border: 1px solid rgba(239,68,68,0.18); color: var(--danger); padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 .delete-user:hover { background: rgba(239,68,68,0.06); }
 .muted { color: var(--muted); }

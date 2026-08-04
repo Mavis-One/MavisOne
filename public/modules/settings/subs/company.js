@@ -48,10 +48,11 @@ window.MavisSubscreenRegistry.settings.company = async function renderSettingsCo
       <div class="cadastro-page-head">
         <h3>Integrações — Focus NFe</h3>
         <div class="cadastro-list-actions">
-          <button type="button" class="secondary" id="focusNfeRefresh">Testar conexão</button>
+          <button type="button" id="fiscalManageBtn">Empresas e estabelecimentos</button>
+          <button type="button" class="secondary" id="focusNfeRefresh">Testar token padrão</button>
         </div>
       </div>
-      <p class="muted">Emissão de NF-e/NFC-e/NFS-e via <a href="https://doc.focusnfe.com.br" target="_blank" rel="noopener">Focus NFe</a>. O token é configurado no arquivo .env do servidor (FOCUS_NFE_TOKEN).</p>
+      <p class="muted">Emissão de NF-e/NFC-e/NFS-e via <a href="https://doc.focusnfe.com.br" target="_blank" rel="noopener">Focus NFe</a>. Cada estabelecimento cadastrado tem seu próprio token — cadastre-os em "Empresas e estabelecimentos". O teste abaixo usa só o token padrão do .env (FOCUS_NFE_TOKEN), como reserva.</p>
       <div id="focusNfeStatusBox" class="muted">Verificando conexão...</div>
     </div>
     ` : '<div class="panel"><p>Sem permissão para visualizar configurações da empresa.</p></div>'}
@@ -138,6 +139,11 @@ window.MavisSubscreenRegistry.settings.company = async function renderSettingsCo
   }
   document.getElementById('focusNfeRefresh')?.addEventListener('click', loadFocusNfeStatus);
   if (canManageCompany) setTimeout(loadFocusNfeStatus, 50);
+
+  document.getElementById('fiscalManageBtn')?.addEventListener('click', () => {
+    state.activeSub = 'fiscal';
+    loadModule('settings');
+  });
 
   document.getElementById('newUserBtn')?.addEventListener('click', () => {
     state.activeSub = 'users_register';
