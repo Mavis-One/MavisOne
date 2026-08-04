@@ -320,7 +320,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
       btn.addEventListener('click', async () => {
         const empresa = empresas.find((e) => e.id === btn.dataset.id);
         if (!empresa) return;
-        const confirmed = await confirmModal(`Excluir a empresa "${empresa.razaoSocial}"? Isso também remove seus estabelecimentos.`);
+        const confirmed = await confirmModal(`Excluir a empresa "${empresa.razaoSocial}"? Só é possível se ela não tiver estabelecimentos cadastrados.`);
         if (!confirmed) return;
         try {
           await api(`/api/fiscal/empresas/${empresa.id}`, { method: 'DELETE' });
