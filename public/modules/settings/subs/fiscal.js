@@ -19,6 +19,15 @@ const FISCAL_ESTAB_TIPO_OPTIONS = [
   { value: 'DEPOSITO_FECHADO', label: 'Depósito fechado' },
   { value: 'ARMAZEM_GERAL', label: 'Armazém geral' }
 ];
+const FISCAL_TIPO_OPERACAO_OPTIONS = [
+  { value: 'VENDA', label: 'Venda' },
+  { value: 'TRANSFERENCIA', label: 'Transferência' },
+  { value: 'REMESSA', label: 'Remessa' },
+  { value: 'RETORNO', label: 'Retorno' },
+  { value: 'DEVOLUCAO', label: 'Devolução' },
+  { value: 'BONIFICACAO', label: 'Bonificação' },
+  { value: 'ENTRADA_IMPORTACAO', label: 'Entrada de importação' }
+];
 
 function fiscalDigitsOnly(value) {
   return String(value || '').replace(/\D/g, '');
@@ -45,6 +54,8 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   let empresaForm = null; // null | {} (nova) | objeto empresa (edição)
   let estabForm = null; // null | {} (novo) | objeto estabelecimento (edição)
   let estabStatusById = {};
+  let regrasFiscais = [];
+  let regraForm = null; // null | {} (nova) | objeto regra (edição)
 
   async function loadEmpresas() {
     const res = await api('/api/fiscal/empresas');
@@ -54,6 +65,11 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   async function loadEstabelecimentos(empresaId) {
     const res = await api(`/api/fiscal/estabelecimentos?empresaId=${encodeURIComponent(empresaId)}`);
     estabelecimentos = res.estabelecimentos || [];
+  }
+
+  async function loadRegrasFiscais(empresaId) {
+    const res = await api(`/api/fiscal/regras?empresaId=${encodeURIComponent(empresaId)}`);
+    regrasFiscais = res.regras || [];
   }
 
   function selectedEmpresa() {
@@ -178,6 +194,98 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         ` : '<p class="muted">Nenhum estabelecimento cadastrado ainda.</p>'}
       </div>
       ${renderEstabForm()}
+      ${renderRegrasFiscaisSection()}
+    `;
+  }
+
+  function renderRegrasFiscaisSection() {
+    const empresa = selectedEmpresa();
+    if (!empresa) return '';
+    return `
+      <div class="panel">
+        <div class="cadastro-page-head">
+          <div>
+            <h3>Regras fiscais — ${escapeHtml(empresa.razaoSocial)}</h3>
+            <p class="muted">Define CFOP e tributação (ICMS/PIS/COFINS) por NCM e tipo de operação. Deixe um campo em branco pra ele valer como "qualquer" — a regra mais específica cadastrada é usada na emissão.</p>
+          </div>
+          <div class="cadastro-list-actions">
+            <button type="button" id="fiscalNewRegraBtn">+ Nova regra</button>
+          </div>
+        </div>
+        ${regrasFiscais.length ? `
+          <div class="table-scroll">
+          <table class="table table-actions">
+            <thead><tr><th>Operação</th><th>NCM</th><th>UF dest.</th><th>CFOP</th><th>CSOSN/CST</th><th>PIS/COFINS</th><th>Prioridade</th><th>Ações</th></tr></thead>
+            <tbody>
+              ${regrasFiscais.map((regra) => `
+                <tr data-regra-id="${regra.id}">
+                  <td>${escapeHtml((FISCAL_TIPO_OPERACAO_OPTIONS.find((o) => o.value === regra.tipoOperacao) || {}).label || regra.tipoOperacao)}</td>
+                  <td>${escapeHtml(regra.ncm || 'qualquer')}</td>
+                  <td>${escapeHtml(regra.ufDestino || 'qualquer')}</td>
+                  <td>${escapeHtml(regra.cfop)}</td>
+                  <td>${escapeHtml(regra.csosn || regra.cstIcms || '—')}</td>
+                  <td>${escapeHtml([regra.cstPis, regra.cstCofins].filter(Boolean).join(' / ') || '—')}</td>
+                  <td>${escapeHtml(String(regra.prioridade))}</td>
+                  <td>
+                    <button class="edit-regra icon-button edit" data-id="${regra.id}" title="Editar regra" aria-label="Editar regra">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                    </button>
+                    <button class="delete-regra icon-button" data-id="${regra.id}" title="Excluir regra" aria-label="Excluir regra">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          </div>
+        ` : '<p class="muted">Nenhuma regra fiscal cadastrada ainda — sem regra, a emissão de NF-e não sabe qual CFOP/tributação usar.</p>'}
+      </div>
+      ${renderRegraForm()}
+    `;
+  }
+
+  function renderRegraForm() {
+    if (!regraForm) return '';
+    const isEditing = Boolean(regraForm.id);
+    return `
+      <div class="panel">
+        <h3>${isEditing ? 'Editar regra fiscal' : 'Nova regra fiscal'}</h3>
+        <form id="fiscalRegraForm" class="form-grid">
+          <div class="row">
+            <label>Tipo de operação
+              <select name="tipoOperacao" required>
+                ${FISCAL_TIPO_OPERACAO_OPTIONS.map((o) => `<option value="${o.value}" ${regraForm.tipoOperacao === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
+              </select>
+            </label>
+            <label>NCM (vazio = qualquer)<input name="ncm" maxlength="8" inputmode="numeric" value="${escapeHtml(regraForm.ncm || '')}" /></label>
+            <label>UF destino (vazio = qualquer)<input name="ufDestino" maxlength="2" value="${escapeHtml(regraForm.ufDestino || '')}" /></label>
+          </div>
+          <div class="row">
+            <label>CFOP<input name="cfop" required maxlength="4" value="${escapeHtml(regraForm.cfop || '')}" /></label>
+            <label>CSOSN (Simples Nacional)<input name="csosn" maxlength="3" value="${escapeHtml(regraForm.csosn || '')}" placeholder="ex.: 102" /></label>
+            <label>CST ICMS (Regime Normal)<input name="cstIcms" maxlength="2" value="${escapeHtml(regraForm.cstIcms || '')}" placeholder="ex.: 00" /></label>
+          </div>
+          <div class="row">
+            <label>Alíquota ICMS (%)<input name="aliquotaIcms" type="number" step="0.01" min="0" value="${regraForm.aliquotaIcms ?? ''}" /></label>
+            <label>CST PIS<input name="cstPis" maxlength="2" value="${escapeHtml(regraForm.cstPis || '')}" placeholder="ex.: 49" /></label>
+            <label>Alíquota PIS (%)<input name="aliquotaPis" type="number" step="0.0001" min="0" value="${regraForm.aliquotaPis ?? ''}" /></label>
+          </div>
+          <div class="row">
+            <label>CST COFINS<input name="cstCofins" maxlength="2" value="${escapeHtml(regraForm.cstCofins || '')}" placeholder="ex.: 49" /></label>
+            <label>Alíquota COFINS (%)<input name="aliquotaCofins" type="number" step="0.0001" min="0" value="${regraForm.aliquotaCofins ?? ''}" /></label>
+            <label>Prioridade (desempate)<input name="prioridade" type="number" step="1" value="${regraForm.prioridade ?? 0}" /></label>
+          </div>
+          <div class="row">
+            <label>Vigência início<input name="vigenciaInicio" type="date" required value="${regraForm.vigenciaInicio || new Date().toISOString().slice(0, 10)}" /></label>
+            <label>Vigência fim (vazio = sem prazo)<input name="vigenciaFim" type="date" value="${regraForm.vigenciaFim || ''}" /></label>
+          </div>
+          <div class="row">
+            <button type="submit">${isEditing ? 'Salvar alterações' : 'Criar regra'}</button>
+            <button type="button" class="secondary" id="fiscalRegraCancel">Cancelar</button>
+          </div>
+        </form>
+      </div>
     `;
   }
 
@@ -338,10 +446,11 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
       btn.addEventListener('click', async () => {
         selectedEmpresaId = btn.dataset.id;
         estabForm = null;
+        regraForm = null;
         try {
-          await loadEstabelecimentos(selectedEmpresaId);
+          await Promise.all([loadEstabelecimentos(selectedEmpresaId), loadRegrasFiscais(selectedEmpresaId)]);
         } catch (error) {
-          showToast(error.message || 'Erro ao carregar estabelecimentos.', 'error');
+          showToast(error.message || 'Erro ao carregar estabelecimentos/regras.', 'error');
         }
         renderAll();
       });
@@ -440,6 +549,76 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
           if (cell) cell.innerHTML = label;
         } catch (error) {
           if (cell) cell.textContent = 'Erro: ' + (error.message || error);
+        }
+      });
+    });
+
+    document.getElementById('fiscalNewRegraBtn')?.addEventListener('click', () => {
+      regraForm = { empresaId: selectedEmpresaId, tipoOperacao: 'VENDA', prioridade: 0, vigenciaInicio: new Date().toISOString().slice(0, 10) };
+      renderAll();
+    });
+    document.getElementById('fiscalRegraCancel')?.addEventListener('click', () => {
+      regraForm = null;
+      renderAll();
+    });
+    document.getElementById('fiscalRegraForm')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      const payload = {
+        empresaId: selectedEmpresaId,
+        tipoOperacao: formData.get('tipoOperacao'),
+        ncm: fiscalDigitsOnly(formData.get('ncm')) || null,
+        ufDestino: String(formData.get('ufDestino') || '').toUpperCase() || null,
+        cfop: formData.get('cfop'),
+        csosn: formData.get('csosn') || null,
+        cstIcms: formData.get('cstIcms') || null,
+        aliquotaIcms: formData.get('aliquotaIcms') || null,
+        cstPis: formData.get('cstPis') || null,
+        aliquotaPis: formData.get('aliquotaPis') || null,
+        cstCofins: formData.get('cstCofins') || null,
+        aliquotaCofins: formData.get('aliquotaCofins') || null,
+        prioridade: Number(formData.get('prioridade') || 0),
+        vigenciaInicio: formData.get('vigenciaInicio'),
+        vigenciaFim: formData.get('vigenciaFim') || null
+      };
+      try {
+        if (regraForm.id) {
+          await api(`/api/fiscal/regras/${regraForm.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+          showToast('Regra fiscal atualizada com sucesso.', 'success');
+        } else {
+          await api('/api/fiscal/regras', { method: 'POST', body: JSON.stringify(payload) });
+          showToast('Regra fiscal criada com sucesso.', 'success');
+        }
+        regraForm = null;
+        await loadRegrasFiscais(selectedEmpresaId);
+        renderAll();
+      } catch (error) {
+        showToast(error.message || 'Erro ao salvar regra fiscal.', 'error');
+      }
+    });
+
+    document.querySelectorAll('.edit-regra').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const regra = regrasFiscais.find((r) => r.id === btn.dataset.id);
+        if (!regra) return;
+        regraForm = { ...regra };
+        renderAll();
+      });
+    });
+
+    document.querySelectorAll('.delete-regra').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const regra = regrasFiscais.find((r) => r.id === btn.dataset.id);
+        if (!regra) return;
+        const confirmed = await confirmModal(`Excluir a regra fiscal de "${(FISCAL_TIPO_OPERACAO_OPTIONS.find((o) => o.value === regra.tipoOperacao) || {}).label || regra.tipoOperacao}" (CFOP ${regra.cfop})?`);
+        if (!confirmed) return;
+        try {
+          await api(`/api/fiscal/regras/${regra.id}`, { method: 'DELETE' });
+          showToast('Regra fiscal excluída.', 'success');
+          await loadRegrasFiscais(selectedEmpresaId);
+          renderAll();
+        } catch (error) {
+          showToast(error.message || 'Erro ao excluir regra fiscal.', 'error');
         }
       });
     });

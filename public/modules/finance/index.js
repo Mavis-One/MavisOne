@@ -2,7 +2,7 @@ window.MavisModuleRegistry = window.MavisModuleRegistry || {};
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.finance = window.MavisSubscreenRegistry.finance || {};
 
-const FINANCE_SUB_KEYS = ['dashboard', 'lancamentos', 'novo_lancamento', 'nfe_emitidas', 'nova_nfe_avulsa', 'extrato_open_finance'];
+const FINANCE_SUB_KEYS = ['dashboard', 'lancamentos', 'novo_lancamento', 'nfe_emitidas', 'nova_nfe_avulsa', 'extrato_open_finance', 'emitir_nfe_focus'];
 
 const FINANCE_ROADMAP = {};
 

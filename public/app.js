@@ -683,6 +683,7 @@ const moduleSubItems = {
     { key: 'novo_lancamento', label: 'Novo Lançamento' },
     { key: 'nfe_emitidas', label: 'NF-e Emitidas' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa' },
+    { key: 'emitir_nfe_focus', label: 'Emitir NF-e (Focus)' },
     { key: 'extrato_open_finance', label: 'Extrato Open Finance' }
   ],
 
