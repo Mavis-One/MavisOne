@@ -228,6 +228,7 @@ button.success:hover { background: var(--success-hover); }
   width: 30px;
   height: 30px;
   min-width: 30px;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.06);
@@ -248,9 +249,9 @@ button.success:hover { background: var(--success-hover); }
   transform: none;
 }
 .sidebar-pin-btn.active {
-  background: rgba(245, 158, 11, 0.22);
-  border-color: rgba(245, 158, 11, 0.5);
-  color: #fbbf24;
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #0f172a;
 }
 
 /* Ícone padronizado (alfinete) de todos os botões de favoritar/fixar do sistema */
@@ -305,8 +306,12 @@ button.success:hover { background: var(--success-hover); }
   color: #fff;
 }
 .secondary-nav-item-row .sidebar-pin-btn {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.03);
+  /* Mesmas cores/ícone do botão de fixar da sidebar principal (.sidebar-pin-btn) —
+     só a visibilidade muda: a secundária não é uma trilha que expande no hover como
+     a principal, fica sempre totalmente visível, então o botão também deve ficar. */
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
 }
 
 .cadastro-switcher {
@@ -677,17 +682,18 @@ button.success:hover { background: var(--success-hover); }
 .topbar-title-wrap { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .topbar-title-wrap h1 { margin: 0; }
 .topbar-actions { display: flex; gap: 12px; align-items: center; }
-.icon-btn { 
-  display: flex; 
-  align-items: center; 
-  justify-content: center; 
-  width: 40px; 
-  height: 40px; 
-  border-radius: 10px; 
-  background: transparent; 
-  border: 1px solid var(--border); 
-  color: var(--text); 
-  cursor: pointer; 
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
   transition: all 150ms ease;
 }
 .icon-btn:hover { 
@@ -726,11 +732,20 @@ button.success:hover { background: var(--success-hover); }
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  border-width: 3px;
+  border-width: 1px;
   border-style: solid;
-  border-color: var(--text);
+  border-color: var(--border);
   border-radius: 30px;
 }
+
+.dashboard-charts-section { display: grid; gap: 12px; }
+.dashboard-charts-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  align-items: start;
+}
+.dashboard-charts-grid .panel { margin-bottom: 0; }
 .dashboard-favorites-hero h3 { margin: 0 0 6px; font-size: 1.15rem; letter-spacing: 0.04em; }
 .dashboard-favorites-hero p { margin: 0; }
 .dashboard-favorites-grid {
@@ -750,7 +765,7 @@ button.success:hover { background: var(--success-hover); }
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  border: 3px solid var(--text);
+  border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--panel);
   transition: box-shadow 150ms ease;
@@ -780,7 +795,7 @@ button.success:hover { background: var(--success-hover); }
   align-items: center;
   justify-content: center;
   background: transparent;
-  border: 2px solid var(--text);
+  border: 1px solid var(--border);
   color: var(--text);
   font-size: 0.85rem;
   font-weight: 800;
@@ -790,19 +805,10 @@ button.success:hover { background: var(--success-hover); }
 .dashboard-module-heading span { color: var(--muted); font-size: 0.78rem; }
 
 .dashboard-tabs-balloon {
-  border: 3px solid var(--text);
+  border: 1px solid var(--border);
   border-radius: 30px;
   background: var(--panel);
   overflow: hidden;
-}
-.dashboard-tabs-balloon-header {
-  padding: 12px 18px;
-  border-bottom: 2px dashed var(--border);
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 .dashboard-tabs-column { display: grid; gap: 10px; padding: 14px 16px 16px; }
 .dashboard-tab-row { display: flex; align-items: stretch; gap: 10px; }
@@ -813,7 +819,7 @@ button.success:hover { background: var(--success-hover); }
   align-items: center;
   padding: 12px 16px;
   border-radius: 20px;
-  border: 2px solid var(--border);
+  border: 1px solid var(--border);
   background: var(--panel-alt);
   color: var(--text);
   cursor: pointer;
@@ -831,9 +837,10 @@ button.success:hover { background: var(--success-hover); }
   justify-content: center;
   width: 32px;
   height: 32px;
+  padding: 0;
   flex: none;
   border-radius: 999px;
-  border: 2px solid var(--text);
+  border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
   cursor: pointer;
@@ -846,11 +853,10 @@ button.success:hover { background: var(--success-hover); }
   background: rgba(var(--text-rgb), 0.08);
 }
 .dashboard-pin-btn.active:hover { color: var(--text); border-color: var(--text); }
-.dashboard-empty-module { margin: 0; padding: 4px 2px; font-size: 0.85rem; }
 .dashboard-empty-state {
   padding: 18px;
   text-align: center;
-  border: 2px dashed var(--text);
+  border: 1px dashed var(--border);
   border-radius: 26px;
 }
 .dashboard-empty-state strong {
@@ -876,7 +882,7 @@ button.success:hover { background: var(--success-hover); }
 .checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
 .checkbox-grid label { display: flex; gap: 6px; align-items: center; font-weight: 400; }
 
-.icon-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:8px; background: transparent; border: none; cursor: pointer; color: var(--danger); }
+.icon-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding: 0; border-radius:8px; background: transparent; border: none; cursor: pointer; color: var(--danger); }
 .icon-button.edit { color: var(--primary); }
 .table-actions td .icon-button + .icon-button { margin-left: 4px; }
 .icon-button svg { display:block; }
@@ -1032,19 +1038,120 @@ button.success:hover { background: var(--success-hover); }
 .finance-positive { color: var(--success); }
 .finance-negative { color: var(--danger-text); }
 
+/* Badge "Atualizado há Xs" no topo do dashboard financeiro */
+.finance-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.finance-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  flex: none;
+  animation: finance-live-pulse 2s ease-in-out infinite;
+}
+@keyframes finance-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Cards de estatística do dashboard financeiro: accent colorido no topo, ponto
+   colorido no rótulo e um círculo decorativo translúcido no canto. */
+.finance-stat-cards {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  margin-bottom: 16px;
+}
+.finance-stat-card {
+  position: relative;
+  padding: 18px 18px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.finance-stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+}
+.finance-stat-card::after {
+  content: '';
+  position: absolute;
+  top: -32px;
+  right: -32px;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  opacity: 0.07;
+}
+.finance-stat-card-blue::before, .finance-stat-card-blue::after, .finance-stat-card-blue .finance-stat-dot { background: #2563eb; }
+.finance-stat-card-red::before, .finance-stat-card-red::after, .finance-stat-card-red .finance-stat-dot { background: #ef4444; }
+.finance-stat-card-green::before, .finance-stat-card-green::after, .finance-stat-card-green .finance-stat-dot { background: #16a34a; }
+.finance-stat-card-purple::before, .finance-stat-card-purple::after, .finance-stat-card-purple .finance-stat-dot { background: #8b5cf6; }
+.finance-stat-card-cyan::before, .finance-stat-card-cyan::after, .finance-stat-card-cyan .finance-stat-dot { background: #0ea5e9; }
+.finance-stat-card-teal::before, .finance-stat-card-teal::after, .finance-stat-card-teal .finance-stat-dot { background: #14b8a6; }
+.finance-stat-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; position: relative; z-index: 1; }
+.finance-stat-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.finance-stat-label { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
+.finance-stat-value { font-size: 1.35rem; font-weight: 700; margin: 0; position: relative; z-index: 1; }
+.finance-stat-badge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.finance-stat-sub { display: grid; gap: 4px; margin-top: 10px; position: relative; z-index: 1; }
+.finance-stat-sub-row { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; padding: 3px 8px; border-radius: 8px; width: fit-content; }
+.finance-stat-sub-row.danger { background: rgba(239, 68, 68, 0.1); color: var(--danger-text); }
+.finance-stat-sub-row.warning { background: rgba(245, 158, 11, 0.12); color: var(--warning-text); }
+.finance-stat-sub-row.success { background: rgba(22, 163, 74, 0.1); color: var(--success); }
+.finance-stat-delta { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; font-weight: 700; margin-top: 6px; position: relative; z-index: 1; }
+.finance-stat-delta.up { color: var(--success); }
+.finance-stat-delta.down { color: var(--danger-text); }
+
+/* Faixa colorida no topo dos painéis do dashboard financeiro */
+.finance-panel-stripe { border-top-width: 3px; border-top-style: solid; border-radius: 16px 16px 0 0; }
+.finance-panel-stripe-chart { border-top-color: var(--success); background: linear-gradient(90deg, var(--success), var(--primary) 55%, var(--danger)); background-size: 100% 3px; background-repeat: no-repeat; border-top: none; padding-top: 15px; }
+.finance-panel-stripe-due { border-top: none; background: linear-gradient(90deg, var(--warning), var(--danger)); background-size: 100% 3px; background-repeat: no-repeat; padding-top: 15px; }
+.finance-panel-stripe-entries { border-top: none; background: linear-gradient(90deg, #8b5cf6, #14b8a6); background-size: 100% 3px; background-repeat: no-repeat; padding-top: 15px; }
+
 .finance-chart-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .finance-chart-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.82rem; color: var(--muted); margin-bottom: 10px; }
 .finance-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
 .finance-legend-receita { background: var(--success); }
 .finance-legend-despesa { background: var(--danger); }
-.finance-legend-line { display: inline-block; width: 16px; height: 2px; background: var(--primary); margin-right: 6px; vertical-align: middle; }
+.finance-legend-line { display: inline-block; width: 16px; height: 2px; background: var(--primary); margin-right: 6px; vertical-align: middle; border-top: 2px dashed var(--primary); background: none; }
 
 .finance-chart-wrap { width: 100%; overflow-x: auto; }
 .finance-chart-svg { width: 100%; height: 220px; min-width: 480px; display: block; }
-.finance-chart-bar-receita { fill: var(--success); opacity: 0.85; }
-.finance-chart-bar-despesa { fill: var(--danger); opacity: 0.85; }
 .finance-chart-axis { stroke: var(--border); stroke-width: 1; }
-.finance-chart-line { fill: none; stroke: var(--primary); stroke-width: 2; }
+.finance-chart-line-receita { fill: none; stroke: var(--success); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.finance-chart-line-despesa { fill: none; stroke: var(--danger); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.finance-chart-line-saldo { fill: none; stroke: var(--primary); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 6 5; }
+.finance-chart-line-blue { fill: none; stroke: #2563eb; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.finance-chart-line-purple { fill: none; stroke: #8b5cf6; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.finance-chart-dot { fill: var(--panel); stroke-width: 2; }
 .finance-chart-label { font-size: 9px; fill: var(--muted); }
 
 .finance-due-list { display: grid; gap: 10px; margin-top: 12px; }

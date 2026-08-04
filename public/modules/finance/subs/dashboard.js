@@ -51,43 +51,69 @@ function financeStatusBadge(status) {
   return `<span class="finance-badge finance-badge-${meta.tone}">${meta.label}</span>`;
 }
 
-function financeBuildChartSvg(series, escapeHtml) {
+function financeStatCard({ tone, label, value, badge, sub, delta }) {
+  return `
+    <div class="finance-stat-card finance-stat-card-${tone}">
+      ${badge ? `<span class="finance-stat-badge">${badge}</span>` : ''}
+      <div class="finance-stat-card-head">
+        <span class="finance-stat-dot"></span>
+        <span class="finance-stat-label">${label}</span>
+      </div>
+      <p class="finance-stat-value">${value}</p>
+      ${sub ? `<div class="finance-stat-sub">${sub}</div>` : ''}
+      ${delta || ''}
+    </div>
+  `;
+}
+
+function financeStatSubRow(tone, label, value) {
+  return `<span class="finance-stat-sub-row ${tone}">${label}: ${financeFormatBRL(value)}</span>`;
+}
+
+// Utilitário de gráfico de tendência (linhas por período) compartilhado entre o
+// Financeiro e o Dashboard Geral. "lines" define quais campos da série viram
+// linhas e com qual classe de cor — por padrão, as 3 linhas do Financeiro
+// (Receitas/Despesas/Saldo); o Dashboard Geral passa sua própria configuração
+// pro gráfico de fluxo de Vendas (Pedidos/Orçamentos), mesmo motor de desenho.
+function financeBuildChartSvg(series, escapeHtml, lines) {
   const width = 760;
   const height = 220;
-  const paddingTop = 12;
+  const paddingTop = 16;
   const paddingBottom = 26;
   const chartHeight = height - paddingTop - paddingBottom;
   const n = Math.max(series.length, 1);
-  const groupWidth = width / n;
-  const barWidth = Math.max(4, Math.min(18, groupWidth / 3));
-  const maxVal = Math.max(1, ...series.map((s) => Math.max(s.receitas, s.despesas, Math.abs(s.saldo))));
+  const step = n > 1 ? width / (n - 1) : width;
+  const baseY = paddingTop + chartHeight;
 
-  const bars = series.map((s, i) => {
-    const groupX = i * groupWidth;
-    const receitaH = (s.receitas / maxVal) * chartHeight;
-    const despesaH = (s.despesas / maxVal) * chartHeight;
-    const receitaX = groupX + groupWidth / 2 - barWidth - 2;
-    const despesaX = groupX + groupWidth / 2 + 2;
-    const baseY = paddingTop + chartHeight;
-    return `
-      <rect x="${receitaX.toFixed(1)}" y="${(baseY - receitaH).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${receitaH.toFixed(1)}" rx="2" class="finance-chart-bar finance-chart-bar-receita"><title>Receitas ${escapeHtml(s.label)}: ${financeFormatBRL(s.receitas)}</title></rect>
-      <rect x="${despesaX.toFixed(1)}" y="${(baseY - despesaH).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${despesaH.toFixed(1)}" rx="2" class="finance-chart-bar finance-chart-bar-despesa"><title>Despesas ${escapeHtml(s.label)}: ${financeFormatBRL(s.despesas)}</title></rect>
-      <text x="${(groupX + groupWidth / 2).toFixed(1)}" y="${height - 6}" text-anchor="middle" class="finance-chart-label">${escapeHtml(s.label)}</text>
-    `;
+  const activeLines = lines || [
+    { key: 'receitas', cssClass: 'finance-chart-line-receita' },
+    { key: 'despesas', cssClass: 'finance-chart-line-despesa' },
+    { key: 'saldo', cssClass: 'finance-chart-line-saldo' }
+  ];
+  const maxVal = Math.max(1, ...series.map((s) => Math.max(...activeLines.map((line) => Math.abs(Number(s[line.key]) || 0)))));
+
+  const pointsFor = (key) => series.map((s, i) => {
+    const x = n > 1 ? i * step : width / 2;
+    const y = baseY - (Number(s[key]) / maxVal) * chartHeight;
+    return { x, y, s };
+  });
+
+  const linePath = (points) => points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const dots = (points, cls, key) => points.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" class="finance-chart-dot ${cls}"><title>${escapeHtml(p.s.label)}: ${financeFormatBRL(p.s[key])}</title></circle>`).join('');
+
+  const linesData = activeLines.map((line) => ({ ...line, points: pointsFor(line.key) }));
+
+  const labels = series.map((s, i) => {
+    const x = n > 1 ? i * step : width / 2;
+    return `<text x="${x.toFixed(1)}" y="${height - 6}" text-anchor="middle" class="finance-chart-label">${escapeHtml(s.label)}</text>`;
   }).join('');
 
-  const baseY = paddingTop + chartHeight;
-  const linePoints = series.map((s, i) => {
-    const x = i * groupWidth + groupWidth / 2;
-    const y = baseY - (s.saldo / maxVal) * chartHeight;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-
   return `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de receitas, despesas e saldo">
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de tendência por período">
       <line x1="0" y1="${baseY}" x2="${width}" y2="${baseY}" class="finance-chart-axis"></line>
-      ${bars}
-      <polyline points="${linePoints}" class="finance-chart-line"></polyline>
+      ${linesData.map((line) => `<polyline points="${linePath(line.points)}" class="${line.cssClass}"></polyline>`).join('')}
+      ${linesData.map((line) => dots(line.points, line.cssClass, line.key)).join('')}
+      ${labels}
     </svg>
   `;
 }
@@ -100,10 +126,25 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
   let customFrom = '';
   let customTo = '';
   let dueTab = 'proximos7';
+  let lastLoadedAt = Date.now();
+  const AUTO_REFRESH_MS = 60000;
 
   function goTo(sub) {
     state.activeSub = sub;
     loadModule('finance');
+  }
+
+  function tickLiveBadge() {
+    const badge = document.getElementById('financeLiveBadgeText');
+    if (!badge || !document.body.contains(badge)) return; // usuário navegou pra outra tela: para o timer
+    const elapsedS = Math.round((Date.now() - lastLoadedAt) / 1000);
+    if (elapsedS * 1000 >= AUTO_REFRESH_MS) {
+      load();
+      return;
+    }
+    const nextInS = Math.max(0, Math.round((AUTO_REFRESH_MS - elapsedS * 1000) / 1000));
+    badge.textContent = `Atualizado há ${elapsedS}s · próxima em ${nextInS}s`;
+    setTimeout(tickLiveBadge, 1000);
   }
 
   function attachHandlers(data) {
@@ -157,11 +198,14 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
     const dueList = (data.proximosVencimentos && data.proximosVencimentos[dueTab]) || [];
 
     content.innerHTML = `
-      <div class="finance-actions-row">
-        <button type="button" data-goto="novo_lancamento">+ Novo Lançamento</button>
-        <button type="button" class="secondary" data-goto="lancamentos">Ver Lançamentos</button>
-        <button type="button" class="secondary" data-goto="nfe_emitidas">Ver NF-e</button>
-        <button type="button" class="secondary" data-goto="extrato_open_finance">Ver Extrato</button>
+      <div class="finance-actions-row" style="justify-content: space-between; align-items: center;">
+        <div class="finance-actions-row" style="margin-bottom: 0;">
+          <button type="button" data-goto="novo_lancamento">+ Novo Lançamento</button>
+          <button type="button" class="secondary" data-goto="lancamentos">Ver Lançamentos</button>
+          <button type="button" class="secondary" data-goto="nfe_emitidas">Ver NF-e</button>
+          <button type="button" class="secondary" data-goto="extrato_open_finance">Ver Extrato</button>
+        </div>
+        <span class="finance-live-badge"><span class="finance-live-dot"></span><span id="financeLiveBadgeText">Atualizado agora</span></span>
       </div>
 
       <div class="panel">
@@ -179,33 +223,44 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
         </div>
       </div>
 
-      <div class="cards">
-        <div class="card"><h3>Saldo atual</h3><p>${financeFormatBRL(data.saldoAtual)}</p></div>
-        <div class="card">
-          <h3>Contas a pagar</h3><p>${financeFormatBRL(ap.total)}</p>
-          <div class="card-sub">
-            <span>Vencidas: ${financeFormatBRL(ap.vencidas)}</span>
-            <span>A vencer: ${financeFormatBRL(ap.aVencer)}</span>
-            <span>Pagas: ${financeFormatBRL(ap.pagas)}</span>
-          </div>
-        </div>
-        <div class="card">
-          <h3>Contas a receber</h3><p>${financeFormatBRL(ar.total)}</p>
-          <div class="card-sub">
-            <span>Vencidas: ${financeFormatBRL(ar.vencidas)}</span>
-            <span>A receber: ${financeFormatBRL(ar.aReceber)}</span>
-            <span>Recebidas: ${financeFormatBRL(ar.recebidas)}</span>
-          </div>
-        </div>
-        <div class="card"><h3>Receitas (período)</h3><p>${financeFormatBRL(data.receitas)}</p></div>
-        <div class="card"><h3>Despesas (período)</h3><p>${financeFormatBRL(data.despesas)}</p></div>
-        <div class="card"><h3>Resultado (período)</h3><p class="${data.resultado >= 0 ? 'finance-positive' : 'finance-negative'}">${financeFormatBRL(data.resultado)}</p></div>
-        <div class="card"><h3>Previsão financeira</h3><p>${financeFormatBRL(data.previsaoFinanceira)}</p></div>
-        <div class="card"><h3>NF-e emitidas</h3><p>${data.totalNfesEmitidas ?? 0}</p></div>
-        <div class="card"><h3>Movimentações bancárias</h3><p>${(data.movimentacoesBancarias && data.movimentacoesBancarias.total) || 0}</p><div class="card-sub"><span>Não conciliadas: ${(data.movimentacoesBancarias && data.movimentacoesBancarias.naoConciliado) || 0}</span></div></div>
+      <div class="finance-stat-cards">
+        ${financeStatCard({ tone: 'blue', label: 'Saldo atual', value: financeFormatBRL(data.saldoAtual) })}
+        ${financeStatCard({
+          tone: 'red',
+          label: 'Contas a pagar',
+          value: financeFormatBRL(ap.total),
+          badge: ap.vencidas > 0 ? 'Vencido' : '',
+          sub: `${financeStatSubRow('danger', 'Vencidas', ap.vencidas)}${financeStatSubRow('warning', 'A vencer', ap.aVencer)}`
+        })}
+        ${financeStatCard({
+          tone: 'green',
+          label: 'Contas a receber',
+          value: financeFormatBRL(ar.total),
+          sub: `${financeStatSubRow('danger', 'Vencidas', ar.vencidas)}${financeStatSubRow('success', 'A receber', ar.aReceber)}`
+        })}
+        ${financeStatCard({ tone: 'green', label: 'Receitas', value: financeFormatBRL(data.receitas) })}
+        ${financeStatCard({ tone: 'red', label: 'Despesas', value: financeFormatBRL(data.despesas) })}
+        ${financeStatCard({
+          tone: 'purple',
+          label: 'Resultado',
+          value: financeFormatBRL(data.resultado),
+          delta: typeof data.resultadoDeltaPercent === 'number' ? `
+            <span class="finance-stat-delta ${data.resultadoDeltaPercent >= 0 ? 'up' : 'down'}">
+              ${data.resultadoDeltaPercent >= 0 ? '▲' : '▼'} ${Math.abs(data.resultadoDeltaPercent).toFixed(0)}% vs. período anterior
+            </span>
+          ` : ''
+        })}
+        ${financeStatCard({ tone: 'cyan', label: 'Previsão', value: financeFormatBRL(data.previsaoFinanceira) })}
+        ${financeStatCard({ tone: 'teal', label: 'NF-e emitidas', value: String(data.totalNfesEmitidas ?? 0) })}
+        ${financeStatCard({
+          tone: 'purple',
+          label: 'Movimentações',
+          value: String((data.movimentacoesBancarias && data.movimentacoesBancarias.total) || 0),
+          sub: (data.movimentacoesBancarias && data.movimentacoesBancarias.naoConciliado) ? `<span class="finance-stat-sub-row warning">Não conciliadas: ${data.movimentacoesBancarias.naoConciliado}</span>` : ''
+        })}
       </div>
 
-      <div class="panel">
+      <div class="panel finance-panel-stripe-chart">
         <div class="finance-chart-head">
           <h3>Fluxo financeiro</h3>
           <div class="finance-granularity-group" role="tablist">
@@ -223,7 +278,7 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
       </div>
 
       <div class="row" style="align-items: start;">
-        <div class="panel">
+        <div class="panel finance-panel-stripe-due">
           <h3>Próximos vencimentos</h3>
           <div class="finance-due-tabs" role="tablist">
             ${FINANCE_DUE_TABS.map((tab) => `<button type="button" class="finance-pill finance-pill-sm ${dueTab === tab.key ? 'active' : ''}" data-due-tab="${tab.key}">${tab.label}</button>`).join('')}
@@ -245,7 +300,7 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel finance-panel-stripe-entries">
           <div class="finance-chart-head">
             <h3>Últimos lançamentos</h3>
             <button type="button" class="secondary" data-goto="lancamentos">Ver todos</button>
@@ -291,7 +346,9 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
     }
     try {
       const data = await api(`/api/finance/summary?${params.toString()}`);
+      lastLoadedAt = Date.now();
       renderView(data);
+      setTimeout(tickLiveBadge, 1000);
     } catch (error) {
       content.innerHTML = `<div class="panel"><p class="muted">Erro ao carregar o dashboard financeiro: ${escapeHtml(error.message || 'erro desconhecido')}</p></div>`;
     }

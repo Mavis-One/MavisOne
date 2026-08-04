@@ -5,6 +5,7 @@ const state = {
   activeSub: null,
   selectedModule: null,
   cadastroDraft: { people: {}, cnpjs: {} },
+  salesDraft: {},
   moduleRouteHistory: {},
   isNavigatingBack: false
 };
@@ -20,9 +21,9 @@ function themeIconSvg(theme) {
     : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"></path></svg>';
 }
 
-// Ícone padrão (alfinete tipo taça) usado em todos os botões de favoritar/fixar do sistema.
+// Ícone padrão (clipe de papel) usado em todos os botões de favoritar/fixar do sistema.
 function favoriteIconSvg(active) {
-  return `<svg class="favorite-icon" width="18" height="18" viewBox="0 0 24 24" fill="${active ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10l-5 8z"></path><line x1="12" y1="12" x2="12" y2="20"></line></svg>`;
+  return `<svg class="favorite-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${active ? 2.5 : 2}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>`;
 }
 
 function applyTheme(theme) {
@@ -507,12 +508,9 @@ function renderApp() {
             </button>
             ${hasModuleAccess('settings') ? `
             <button class="icon-btn settings-btn" id="settingsBtn" title="Configurações">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"></circle>
-                <path d="M12 1v6m0 6v6"></path>
-                <path d="M4.22 4.22l4.24 4.24m3.08 3.08l4.24 4.24"></path>
-                <path d="M1 12h6m6 0h6"></path>
-                <path d="M4.22 19.78l4.24-4.24m3.08-3.08l4.24-4.24"></path>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
               </svg>
             </button>
             ` : ''}
@@ -951,117 +949,504 @@ async function loadModule(moduleName) {
     if (moduleName === 'sales') {
       const sub = state.activeSub || 'orders_quotes';
 
+      const SALES_STATUS_BADGE_META = {
+        'pendente': { label: 'Pendente', tone: 'warning' },
+        'faturado': { label: 'Faturado', tone: 'success' },
+        'cancelado': { label: 'Cancelado', tone: 'danger' },
+        'em aberto': { label: 'Em aberto', tone: 'info' },
+        'aprovado': { label: 'Aprovado', tone: 'success' },
+        'reprovado': { label: 'Reprovado', tone: 'danger' },
+        'emitida': { label: 'Emitida', tone: 'success' },
+        'cancelada': { label: 'Cancelada', tone: 'danger' }
+      };
+      const salesStatusBadge = (status) => {
+        const key = String(status || '').toLowerCase();
+        const meta = SALES_STATUS_BADGE_META[key] || { label: status || '-', tone: 'muted' };
+        return `<span class="finance-badge finance-badge-${meta.tone}">${meta.label}</span>`;
+      };
+      const salesFormatDate = (value) => {
+        if (!value) return '-';
+        const [y, m, d] = String(value).split('-');
+        if (!y || !m || !d) return value;
+        return `${d}/${m}/${y}`;
+      };
+      const salesFormatBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
       // Sub-aba: Pedidos e Orçamentos
       if (sub === 'orders_quotes') {
-        const data = await api('/api/sales/records?view=orders_quotes');
-        const records = [...(data.orders || []), ...(data.quotes || [])];
-        content.innerHTML = `
-          <div class="cards">
-            <div class="card"><h3>Pedidos</h3><p>${data.orders?.length || 0}</p></div>
-            <div class="card"><h3>Orçamentos</h3><p>${data.quotes?.length || 0}</p></div>
-            <div class="card"><h3>NF-e</h3><p>${data.nfes?.length || 0}</p></div>
-            <div class="card"><h3>Importações</h3><p>${data.importLogs?.length || 0}</p></div>
-          </div>
-          <div class="panel">
-            <h3>Pedidos e Orçamentos</h3>
-            <table class="table">
-              <thead><tr><th>Tipo</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Status</th></tr></thead>
-              <tbody>
-                ${records.map((record) => `<tr><td>${record.type === 'quote' ? 'Orçamento' : 'Pedido'}</td><td>${escapeHtml(record.customer)}</td><td>${escapeHtml(record.date)}</td><td>R$ ${Number(record.amount || 0).toFixed(2)}</td><td>${escapeHtml(record.status || 'pendente')}</td></tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-        `;
-        return;
-      }
+        const draft = state.salesDraft || (state.salesDraft = {});
+        const filters = draft.ordersFilters || (draft.ordersFilters = { search: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
+        const showFilters = Boolean(draft.showOrdersFilters);
+        const page = draft.ordersPage || 1;
+        const limit = 15;
 
-      // Sub-aba: Novo Pedido
-      if (sub === 'new_order') {
+        const params = new URLSearchParams({ view: 'orders_quotes', page: String(page), limit: String(limit) });
+        Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+
+        const data = await api(`/api/sales/records?${params.toString()}`);
+        const records = data.records || [];
+        const totalPages = Math.max(1, Math.ceil((data.total || 0) / limit));
+        const meta = data.meta || { companies: [], sellers: [], deposits: [], directory: [] };
+
         content.innerHTML = `
-          <div class="panel">
-            <h3>Novo Pedido</h3>
-            <form id="salesOrderForm" class="form-grid">
-              <div class="row">
-                <label>Cliente<input name="customer" required /></label>
-                <label>Data<input name="date" type="date" /></label>
-                <label>Valor<input name="amount" type="number" step="0.01" required value="0" /></label>
+          <div class="finance-stat-cards">
+            ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: String(data.orders?.length || 0) })}
+            ${financeStatCard({ tone: 'purple', label: 'Orçamentos', value: String(data.quotes?.length || 0) })}
+            ${financeStatCard({ tone: 'teal', label: 'NF-e', value: String(data.nfes?.length || 0) })}
+            ${financeStatCard({ tone: 'cyan', label: 'Importações', value: String(data.importLogs?.length || 0) })}
+          </div>
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Pedidos e Orçamentos</h3>
+              <p class="muted">${data.total || 0} registro${data.total === 1 ? '' : 's'} encontrado${data.total === 1 ? '' : 's'}</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" onclick="state.salesDraft.editRecord=null; state.activeSub='new_order'; renderApp(); loadModule('sales');">+ Novo Pedido</button>
+              <button type="button" class="secondary" onclick="state.salesDraft.editRecord=null; state.activeSub='new_quote'; renderApp(); loadModule('sales');">+ Novo Orçamento</button>
+              <button type="button" class="secondary" id="salesFilterToggleBtn">${showFilters ? 'Ocultar filtros' : 'Busca avançada'}</button>
+            </div>
+          </div>
+
+          <form id="salesQuickSearchForm" class="row" style="margin-bottom: 12px;">
+            <label class="cadastro-field" style="grid-column: span 3;">
+              <span>Busca</span>
+              <input id="salesQuickSearch" name="search" value="${escapeHtml(filters.search)}" placeholder="Código ou cliente" />
+            </label>
+            <div style="align-self: end;"><button type="submit" class="secondary">Buscar</button></div>
+          </form>
+
+          ${showFilters ? `
+            <form id="salesFilterForm" class="cadastro-filter-panel">
+              <div class="cadastro-filter-grid-5">
+                <label class="cadastro-field">
+                  <span>Status</span>
+                  <select name="status">
+                    <option value="">Todos</option>
+                    ${['pendente', 'faturado', 'cancelado', 'em aberto', 'aprovado', 'reprovado'].map((value) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${value.charAt(0).toUpperCase() + value.slice(1)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="cadastro-field">
+                  <span>Empresa</span>
+                  <select name="companyId">
+                    <option value="">Todas</option>
+                    ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.companyId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="cadastro-field">
+                  <span>Vendedor</span>
+                  <select name="sellerId">
+                    <option value="">Todos</option>
+                    ${meta.sellers.map((s) => `<option value="${escapeHtml(s.id)}" ${filters.sellerId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="cadastro-field">
+                  <span>Cliente/Fornecedor</span>
+                  <select name="clientSupplierId">
+                    <option value="">Todos</option>
+                    ${meta.directory.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.clientSupplierId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="cadastro-field">
+                  <span>Data inicial</span>
+                  <input type="date" name="dateFrom" value="${escapeHtml(filters.dateFrom)}" />
+                </label>
+                <label class="cadastro-field">
+                  <span>Data final</span>
+                  <input type="date" name="dateTo" value="${escapeHtml(filters.dateTo)}" />
+                </label>
               </div>
-              <div class="row">
-                <label>Status<select name="status"><option value="pendente">Pendente</option><option value="faturado">Faturado</option><option value="cancelado">Cancelado</option></select></label>
-                <label>Observação<input name="note" /></label>
+              <div class="cadastro-filter-actions">
+                <button type="submit">Aplicar filtros</button>
+                <button type="button" class="secondary" id="salesFilterClearBtn">Limpar filtros</button>
               </div>
-              <button type="submit">Salvar pedido</button>
             </form>
+          ` : ''}
+
+          <div class="panel">
+            <div class="table-scroll">
+              <table class="table table-actions">
+                <thead><tr><th>Código</th><th>Tipo</th><th>Data</th><th>Cliente</th><th>Empresa</th><th>Vendedor</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+                <tbody>
+                  ${records.length ? records.map((record) => `
+                    <tr>
+                      <td>${escapeHtml(String(record.code))}</td>
+                      <td>${record.type === 'quote' ? 'Orçamento' : 'Pedido'}</td>
+                      <td>${salesFormatDate(record.date)}</td>
+                      <td>${escapeHtml(record.customer)}</td>
+                      <td>${escapeHtml(record.companyName || '-')}</td>
+                      <td>${escapeHtml(record.sellerName || '-')}</td>
+                      <td>${salesFormatBRL(record.amount)}</td>
+                      <td>${salesStatusBadge(record.status)}</td>
+                      <td>
+                        <button class="icon-button edit sales-edit-record" data-id="${escapeHtml(record.id)}" title="Editar" aria-label="Editar">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                        </button>
+                        <button class="icon-button sales-delete-record" data-id="${escapeHtml(record.id)}" title="Excluir" aria-label="Excluir">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                        </button>
+                      </td>
+                    </tr>
+                  `).join('') : `<tr><td colspan="9" class="muted">Nenhum pedido ou orçamento encontrado${filters.search || showFilters ? ' com os filtros atuais' : ''}.</td></tr>`}
+                </tbody>
+              </table>
+            </div>
+            <div class="finance-pagination">
+              <button type="button" class="secondary" id="salesPrevPage" ${page <= 1 ? 'disabled' : ''}>Anterior</button>
+              <span class="muted">Página ${page} de ${totalPages}</span>
+              <button type="button" class="secondary" id="salesNextPage" ${page >= totalPages ? 'disabled' : ''}>Próxima</button>
+            </div>
           </div>
         `;
-        document.getElementById('salesOrderForm').addEventListener('submit', async (event) => {
+
+        document.getElementById('salesFilterToggleBtn')?.addEventListener('click', () => {
+          state.salesDraft.showOrdersFilters = !showFilters;
+          loadModule('sales');
+        });
+        document.getElementById('salesQuickSearchForm')?.addEventListener('submit', (event) => {
+          event.preventDefault();
+          filters.search = document.getElementById('salesQuickSearch').value;
+          state.salesDraft.ordersPage = 1;
+          loadModule('sales');
+        });
+        document.getElementById('salesFilterForm')?.addEventListener('submit', (event) => {
           event.preventDefault();
           const formData = new FormData(event.target);
-          try {
-            await api('/api/sales/records', {
-              method: 'POST',
-              body: JSON.stringify({
-                type: 'order',
-                customer: formData.get('customer'),
-                date: formData.get('date'),
-                amount: Number(formData.get('amount')),
-                status: formData.get('status'),
-                note: formData.get('note')
-              })
-            });
-            showToast('Pedido salvo com sucesso.', 'success');
-            state.activeSub = 'orders_quotes';
+          filters.status = formData.get('status') || '';
+          filters.companyId = formData.get('companyId') || '';
+          filters.sellerId = formData.get('sellerId') || '';
+          filters.clientSupplierId = formData.get('clientSupplierId') || '';
+          filters.dateFrom = formData.get('dateFrom') || '';
+          filters.dateTo = formData.get('dateTo') || '';
+          state.salesDraft.ordersPage = 1;
+          loadModule('sales');
+        });
+        document.getElementById('salesFilterClearBtn')?.addEventListener('click', () => {
+          Object.assign(filters, { search: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
+          state.salesDraft.ordersPage = 1;
+          loadModule('sales');
+        });
+        document.getElementById('salesPrevPage')?.addEventListener('click', () => {
+          if (page > 1) { state.salesDraft.ordersPage = page - 1; loadModule('sales'); }
+        });
+        document.getElementById('salesNextPage')?.addEventListener('click', () => {
+          if (page < totalPages) { state.salesDraft.ordersPage = page + 1; loadModule('sales'); }
+        });
+        document.querySelectorAll('.sales-edit-record').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const record = records.find((entry) => entry.id === btn.dataset.id);
+            if (!record) return;
+            state.salesDraft.editRecord = record;
+            state.activeSub = record.type === 'quote' ? 'new_quote' : 'new_order';
             renderApp();
             loadModule('sales');
-          } catch (error) {
-            showToast(error.message || 'Erro ao salvar pedido.', 'error');
-          }
+          });
+        });
+        document.querySelectorAll('.sales-delete-record').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const confirmed = await confirmModal('Confirma excluir este registro?');
+            if (!confirmed) return;
+            try {
+              await api(`/api/sales/records/${btn.dataset.id}`, { method: 'DELETE' });
+              showToast('Registro excluído com sucesso.', 'success');
+              loadModule('sales');
+            } catch (error) {
+              showToast(error.message || 'Erro ao excluir registro.', 'error');
+            }
+          });
         });
         return;
       }
 
-      // Sub-aba: Novo Orçamento
-      if (sub === 'new_quote') {
-        content.innerHTML = `
-          <div class="panel">
-            <h3>Novo Orçamento</h3>
-            <form id="salesQuoteForm" class="form-grid">
-              <div class="row">
-                <label>Cliente<input name="customer" required /></label>
-                <label>Data<input name="date" type="date" /></label>
-                <label>Valor<input name="amount" type="number" step="0.01" required value="0" /></label>
+      // Sub-abas: Novo Pedido / Novo Orçamento — mesmo formulário, só muda o tipo
+      // (evita duplicar a lógica de itens/totais entre as duas telas).
+      if (sub === 'new_order' || sub === 'new_quote') {
+        const recordType = sub === 'new_order' ? 'order' : 'quote';
+        const editRecord = state.salesDraft?.editRecord && state.salesDraft.editRecord.type === recordType
+          ? state.salesDraft.editRecord
+          : null;
+        const isEditing = Boolean(editRecord);
+        const title = recordType === 'order' ? 'Pedido' : 'Orçamento';
+        const statusOptions = recordType === 'order'
+          ? [{ value: 'pendente', label: 'Pendente' }, { value: 'faturado', label: 'Faturado' }, { value: 'cancelado', label: 'Cancelado' }]
+          : [{ value: 'em aberto', label: 'Em aberto' }, { value: 'aprovado', label: 'Aprovado' }, { value: 'reprovado', label: 'Reprovado' }];
+
+        let meta = { companies: [], sellers: [], deposits: [], directory: [], products: [] };
+        try {
+          meta = await api('/api/sales/meta');
+        } catch (error) {
+          showToast('Não foi possível carregar clientes/empresas/produtos para o formulário.', 'warning');
+        }
+
+        let items = isEditing ? (editRecord.items || []).map((item) => ({ ...item })) : [];
+        let discountAmount = isEditing ? Number(editRecord.discountAmount || 0) : 0;
+        let discountPercent = isEditing ? Number(editRecord.discountPercent || 0) : 0;
+        let freight = isEditing ? Number(editRecord.freight || 0) : 0;
+
+        // O formulário inteiro é redesenhado a cada produto adicionado/removido (mais simples
+        // que atualizar só a tabela). Isso apagaria os campos de cabeçalho já preenchidos, então
+        // o valor atual é salvo aqui antes de cada redesenho e usado para repopular o HTML novo.
+        const formState = {
+          clientSupplierId: editRecord?.clientSupplierId || '',
+          companyId: editRecord?.companyId || '',
+          sellerId: editRecord?.sellerId || '',
+          depositId: editRecord?.depositId || '',
+          status: editRecord?.status || statusOptions[0].value,
+          date: editRecord?.date || new Date().toISOString().slice(0, 10),
+          dueDate: editRecord?.dueDate || '',
+          note: editRecord?.note || ''
+        };
+        const syncFormState = () => {
+          const form = document.getElementById('salesRecordForm');
+          if (!form) return;
+          formState.clientSupplierId = form.querySelector('[name="clientSupplierId"]')?.value || '';
+          formState.companyId = form.querySelector('[name="companyId"]')?.value || '';
+          formState.sellerId = form.querySelector('[name="sellerId"]')?.value || '';
+          formState.depositId = form.querySelector('[name="depositId"]')?.value || '';
+          formState.status = form.querySelector('[name="status"]')?.value || formState.status;
+          formState.date = form.querySelector('[name="date"]')?.value || formState.date;
+          formState.dueDate = form.querySelector('[name="dueDate"]')?.value || formState.dueDate;
+          formState.note = form.querySelector('[name="note"]')?.value || '';
+        };
+
+        const computeTotals = () => {
+          const itemsTotal = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0);
+          const percentOff = itemsTotal * (Number(discountPercent || 0) / 100);
+          const totalAmount = Math.max(0, itemsTotal - Number(discountAmount || 0) - percentOff + Number(freight || 0));
+          return { itemsTotal, totalAmount };
+        };
+
+        const renderForm = () => {
+          const { itemsTotal, totalAmount } = computeTotals();
+
+          content.innerHTML = `
+            <div class="cadastro-page-head">
+              <div>
+                <h3>${isEditing ? `Editar ${title} #${escapeHtml(String(editRecord.code))}` : `Novo ${title}`}</h3>
+                <p class="muted">${isEditing ? 'Código gerado automaticamente na criação.' : 'O código é gerado automaticamente ao salvar.'}</p>
               </div>
-              <div class="row">
-                <label>Status<select name="status"><option value="em aberto">Em aberto</option><option value="aprovado">Aprovado</option><option value="reprovado">Reprovado</option></select></label>
-                <label>Observação<input name="note" /></label>
-              </div>
-              <button type="submit">Salvar orçamento</button>
-            </form>
-          </div>
-        `;
-        document.getElementById('salesQuoteForm').addEventListener('submit', async (event) => {
-          event.preventDefault();
-          const formData = new FormData(event.target);
-          try {
-            await api('/api/sales/records', {
-              method: 'POST',
-              body: JSON.stringify({
-                type: 'quote',
-                customer: formData.get('customer'),
-                date: formData.get('date'),
-                amount: Number(formData.get('amount')),
-                status: formData.get('status'),
-                note: formData.get('note')
-              })
+            </div>
+
+            <div class="panel">
+              <form id="salesRecordForm" class="form-grid">
+                <div class="row">
+                  <label>Cliente/Fornecedor *
+                    <select name="clientSupplierId" required>
+                      <option value="">Selecione</option>
+                      ${meta.directory.map((entry) => `<option value="${escapeHtml(entry.id)}" ${formState.clientSupplierId === entry.id ? 'selected' : ''}>${escapeHtml(entry.name)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <label>Empresa
+                    <select name="companyId">
+                      <option value="">Nenhuma</option>
+                      ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${formState.companyId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <button type="button" class="icon-button edit" id="salesQuickAddCompany" title="Nova empresa">+</button>
+                </div>
+                <div id="salesInlineAddCompanyRow" class="row hidden" style="margin-top: -8px;">
+                  <label>Nome da empresa<input id="salesNewCompanyName" placeholder="Razão social" /></label>
+                  <label>CNPJ<input id="salesNewCompanyDocument" placeholder="Somente números" /></label>
+                  <div style="align-self: end;"><button type="button" class="secondary" id="salesSaveNewCompany">Salvar empresa</button></div>
+                </div>
+
+                <div class="row">
+                  <label>Vendedor
+                    <select name="sellerId">
+                      <option value="">Nenhum</option>
+                      ${meta.sellers.map((s) => `<option value="${escapeHtml(s.id)}" ${formState.sellerId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <label>Depósito
+                    <select name="depositId">
+                      <option value="">Nenhum</option>
+                      ${meta.deposits.map((d) => `<option value="${escapeHtml(d.id)}" ${formState.depositId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <label>Status
+                    <select name="status">
+                      ${statusOptions.map((opt) => `<option value="${opt.value}" ${formState.status === opt.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
+                    </select>
+                  </label>
+                </div>
+
+                ${meta.sellers.length === 0 ? '<p class="muted">Nenhum vendedor cadastrado — em Cadastros, marque uma pessoa com o papel "Vendedor" para que ela apareça aqui.</p>' : ''}
+
+                <div class="cadastro-section">
+                  <div class="cadastro-section-header">
+                    <h4>Produtos</h4>
+                    <p>Adicione um ou mais produtos ao ${title.toLowerCase()}.</p>
+                  </div>
+                  <div class="cadastro-section-body">
+                    <div class="row">
+                      <label style="flex: 2;">Produto
+                        <select id="salesProductSelect">
+                          <option value="">Selecione um produto</option>
+                          ${meta.products.map((p) => `<option value="${escapeHtml(p.id)}" data-price="${Number(p.salePrice || 0)}" data-name="${escapeHtml(p.name)}" data-sku="${escapeHtml(p.sku || '')}">${escapeHtml(p.name)}${p.sku ? ` (${escapeHtml(p.sku)})` : ''} — ${salesFormatBRL(p.salePrice)}</option>`).join('')}
+                        </select>
+                      </label>
+                      <label>Quantidade<input id="salesProductQty" type="number" min="1" step="1" value="1" /></label>
+                      <div style="align-self: end;"><button type="button" class="secondary" id="salesAddItemBtn">+ Adicionar</button></div>
+                    </div>
+
+                    <div class="table-scroll" style="margin-top: 12px;">
+                      <table class="table table-actions">
+                        <thead><tr><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th><th>Ações</th></tr></thead>
+                        <tbody>
+                          ${items.length ? items.map((item, index) => `
+                            <tr>
+                              <td>${escapeHtml(item.name)}</td>
+                              <td><input type="number" min="1" step="1" class="sales-item-qty" data-index="${index}" value="${item.quantity}" style="width: 80px;" /></td>
+                              <td><input type="number" min="0" step="0.01" class="sales-item-price" data-index="${index}" value="${item.unitPrice}" style="width: 110px;" /></td>
+                              <td>${salesFormatBRL(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</td>
+                              <td><button type="button" class="icon-button sales-remove-item" data-index="${index}" title="Remover">×</button></td>
+                            </tr>
+                          `).join('') : '<tr><td colspan="5" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="row">
+                  <label>Desconto (R$)<input name="discountAmount" type="number" min="0" step="0.01" value="${discountAmount}" /></label>
+                  <label>Desconto (%)<input name="discountPercent" type="number" min="0" max="100" step="0.01" value="${discountPercent}" /></label>
+                  <label>Frete (R$)<input name="freight" type="number" min="0" step="0.01" value="${freight}" /></label>
+                </div>
+                <div class="row">
+                  <label>Subtotal dos produtos<input value="${salesFormatBRL(itemsTotal)}" disabled /></label>
+                  <label><strong>Total do ${title.toLowerCase()}</strong><input value="${salesFormatBRL(totalAmount)}" disabled style="font-weight: 700;" /></label>
+                </div>
+
+                <div class="row">
+                  <label>Data<input name="date" type="date" value="${formState.date}" /></label>
+                  ${recordType === 'quote' ? `<label>Validade<input name="dueDate" type="date" value="${formState.dueDate}" /></label>` : ''}
+                </div>
+                <div class="row">
+                  <label style="flex: 1;">Observações<textarea name="note" rows="3">${escapeHtml(formState.note)}</textarea></label>
+                </div>
+
+                <button type="submit">${isEditing ? `Salvar alterações` : `Salvar ${title.toLowerCase()}`}</button>
+              </form>
+            </div>
+          `;
+
+          document.getElementById('salesQuickAddCompany')?.addEventListener('click', () => {
+            document.getElementById('salesInlineAddCompanyRow')?.classList.toggle('hidden');
+          });
+          document.getElementById('salesSaveNewCompany')?.addEventListener('click', async () => {
+            const name = document.getElementById('salesNewCompanyName')?.value.trim();
+            if (!name) {
+              showToast('Informe o nome da empresa.', 'warning');
+              return;
+            }
+            try {
+              const res = await api('/api/cadastros/empresas', {
+                method: 'POST',
+                body: JSON.stringify({ name, document: document.getElementById('salesNewCompanyDocument')?.value.trim() || '' })
+              });
+              meta.companies.push(res.company);
+              showToast('Empresa cadastrada com sucesso.', 'success');
+              const select = content.querySelector('select[name="companyId"]');
+              if (select) {
+                select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(res.company.id)}" selected>${escapeHtml(res.company.name)}</option>`);
+                select.value = res.company.id;
+              }
+              document.getElementById('salesInlineAddCompanyRow')?.classList.add('hidden');
+            } catch (error) {
+              showToast(error.message || 'Erro ao cadastrar empresa.', 'error');
+            }
+          });
+
+          document.getElementById('salesAddItemBtn')?.addEventListener('click', () => {
+            const select = document.getElementById('salesProductSelect');
+            const qtyInput = document.getElementById('salesProductQty');
+            const option = select?.selectedOptions[0];
+            if (!select?.value || !option) {
+              showToast('Selecione um produto.', 'warning');
+              return;
+            }
+            const quantity = Math.max(1, Number(qtyInput?.value || 1));
+            items.push({
+              productId: select.value,
+              name: option.dataset.name,
+              sku: option.dataset.sku || '',
+              quantity,
+              unitPrice: Number(option.dataset.price || 0)
             });
-            showToast('Orçamento salvo com sucesso.', 'success');
-            state.activeSub = 'orders_quotes';
-            renderApp();
-            loadModule('sales');
-          } catch (error) {
-            showToast(error.message || 'Erro ao salvar orçamento.', 'error');
-          }
-        });
+            syncFormState();
+            renderForm();
+          });
+
+          content.querySelectorAll('.sales-remove-item').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              items.splice(Number(btn.dataset.index), 1);
+              syncFormState();
+              renderForm();
+            });
+          });
+          content.querySelectorAll('.sales-item-qty').forEach((input) => {
+            input.addEventListener('change', () => {
+              items[Number(input.dataset.index)].quantity = Math.max(1, Number(input.value || 1));
+              syncFormState();
+              renderForm();
+            });
+          });
+          content.querySelectorAll('.sales-item-price').forEach((input) => {
+            input.addEventListener('change', () => {
+              items[Number(input.dataset.index)].unitPrice = Math.max(0, Number(input.value || 0));
+              syncFormState();
+              renderForm();
+            });
+          });
+
+          const form = document.getElementById('salesRecordForm');
+          form.querySelector('[name="discountAmount"]').addEventListener('change', (e) => { discountAmount = Number(e.target.value || 0); syncFormState(); renderForm(); });
+          form.querySelector('[name="discountPercent"]').addEventListener('change', (e) => { discountPercent = Number(e.target.value || 0); syncFormState(); renderForm(); });
+          form.querySelector('[name="freight"]').addEventListener('change', (e) => { freight = Number(e.target.value || 0); syncFormState(); renderForm(); });
+
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!items.length) {
+              showToast('Adicione ao menos um produto.', 'warning');
+              return;
+            }
+            const formData = new FormData(form);
+            const clientOption = form.querySelector('select[name="clientSupplierId"]')?.selectedOptions[0];
+            const payload = {
+              type: recordType,
+              clientSupplierId: formData.get('clientSupplierId') || '',
+              clientSupplierName: clientOption ? clientOption.textContent : '',
+              companyId: formData.get('companyId') || '',
+              sellerId: formData.get('sellerId') || '',
+              depositId: formData.get('depositId') || '',
+              date: formData.get('date') || '',
+              dueDate: formData.get('dueDate') || '',
+              items: items.map((item) => ({ productId: item.productId, name: item.name, sku: item.sku, quantity: item.quantity, unitPrice: item.unitPrice })),
+              discountAmount,
+              discountPercent,
+              freight,
+              status: formData.get('status') || '',
+              note: formData.get('note') || ''
+            };
+            try {
+              if (isEditing) {
+                await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+                showToast(`${title} atualizado com sucesso.`, 'success');
+              } else {
+                await api('/api/sales/records', { method: 'POST', body: JSON.stringify(payload) });
+                showToast(`${title} salvo com sucesso.`, 'success');
+              }
+              state.salesDraft.editRecord = null;
+              state.activeSub = 'orders_quotes';
+              renderApp();
+              loadModule('sales');
+            } catch (error) {
+              showToast(error.message || `Erro ao salvar ${title.toLowerCase()}.`, 'error');
+            }
+          });
+        };
+
+        renderForm();
         return;
       }
 
@@ -1069,14 +1454,32 @@ async function loadModule(moduleName) {
       if (sub === 'nfes') {
         const data = await api('/api/sales/records?view=nfes');
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>NF-e Emitidas</h3>
+              <p class="muted">${data.nfes.length} nota${data.nfes.length === 1 ? '' : 's'} encontrada${data.nfes.length === 1 ? '' : 's'}</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" onclick="state.activeSub='new_nfe'; renderApp(); loadModule('sales');">+ Nova NF-e Avulsa</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>NF-e Emitidas</h3>
-            <table class="table">
-              <thead><tr><th>Número</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Status</th></tr></thead>
-              <tbody>
-                ${data.nfes.map((nfe) => `<tr><td>${escapeHtml(nfe.number || nfe.id)}</td><td>${escapeHtml(nfe.customer)}</td><td>${escapeHtml(nfe.date)}</td><td>R$ ${Number(nfe.amount || 0).toFixed(2)}</td><td>${escapeHtml(nfe.status || 'emitida')}</td></tr>`).join('')}
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Número</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Status</th></tr></thead>
+                <tbody>
+                  ${data.nfes.length ? data.nfes.map((nfe) => `
+                    <tr>
+                      <td>${escapeHtml(nfe.number || nfe.id)}</td>
+                      <td>${escapeHtml(nfe.customer)}</td>
+                      <td>${salesFormatDate(nfe.date)}</td>
+                      <td>${salesFormatBRL(nfe.amount)}</td>
+                      <td>${salesStatusBadge(nfe.status || 'emitida')}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="5" class="muted">Nenhuma NF-e emitida.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         `;
         return;
@@ -1133,14 +1536,31 @@ async function loadModule(moduleName) {
       if (sub === 'import_logs') {
         const data = await api('/api/sales/records?view=import_logs');
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Log's Vendas Importadas</h3>
+              <p class="muted">${data.importLogs.length} importação${data.importLogs.length === 1 ? '' : 'ões'} registrada${data.importLogs.length === 1 ? '' : 's'}</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" onclick="state.activeSub='import_sales'; renderApp(); loadModule('sales');">+ Importar Vendas</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>Logs de Vendas Importadas</h3>
-            <table class="table">
-              <thead><tr><th>Origem</th><th>Tipo</th><th>Itens</th><th>Data</th></tr></thead>
-              <tbody>
-                ${data.importLogs.map((entry) => `<tr><td>${escapeHtml(entry.source || 'manual')}</td><td>${escapeHtml(entry.type || 'order')}</td><td>${entry.count || 0}</td><td>${escapeHtml(entry.createdAt)}</td></tr>`).join('')}
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Origem</th><th>Tipo</th><th>Itens</th><th>Data</th></tr></thead>
+                <tbody>
+                  ${data.importLogs.length ? data.importLogs.map((entry) => `
+                    <tr>
+                      <td>${escapeHtml(entry.source || 'manual')}</td>
+                      <td>${escapeHtml(entry.type || 'order')}</td>
+                      <td>${entry.count || 0}</td>
+                      <td>${escapeHtml(new Date(entry.createdAt).toLocaleString('pt-BR'))}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="4" class="muted">Nenhuma importação registrada.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         `;
         return;
@@ -1149,15 +1569,24 @@ async function loadModule(moduleName) {
       // Sub-aba: Agrupamento de Pedidos
       if (sub === 'order_groups') {
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Agrupamento de Pedidos</h3>
+              <p class="muted">Visualize e gerencie grupos de pedidos.</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" onclick="state.activeSub='new_order_group'; renderApp(); loadModule('sales');">+ Novo Agrupamento</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>Agrupamento de Pedidos</h3>
-            <p class="muted">Visualize e gerencie grupos de pedidos.</p>
-            <table class="table">
-              <thead><tr><th>ID Grupo</th><th>Qtd. Pedidos</th><th>Valor Total</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr><td colspan="4" class="muted">Nenhum agrupamento salvo</td></tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>ID Grupo</th><th>Qtd. Pedidos</th><th>Valor Total</th><th>Status</th></tr></thead>
+                <tbody>
+                  <tr><td colspan="4" class="muted">Nenhum agrupamento salvo</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         `;
         return;
@@ -1193,17 +1622,23 @@ async function loadModule(moduleName) {
       // Sub-aba: Devoluções
       if (sub === 'returns') {
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Devoluções</h3>
+              <p class="muted">Gerencie devoluções de produtos.</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" class="secondary" onclick="window.notifyToast('Registrar devolução será implementado em breve.', 'warning')">+ Registrar Devolução</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>Devoluções</h3>
-            <p class="muted">Gerencie devoluções de produtos.</p>
-            <table class="table">
-              <thead><tr><th>ID Devolução</th><th>Pedido Original</th><th>Cliente</th><th>Data</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr><td colspan="5" class="muted">Nenhuma devolução registrada</td></tr>
-              </tbody>
-            </table>
-            <div style="margin-top: 16px;">
-              <button class="secondary" onclick="window.notifyToast('Registrar devolução será implementado em breve.', 'warning')">+ Registrar Devolução</button>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>ID Devolução</th><th>Pedido Original</th><th>Cliente</th><th>Data</th><th>Status</th></tr></thead>
+                <tbody>
+                  <tr><td colspan="5" class="muted">Nenhuma devolução registrada</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         `;
@@ -1214,11 +1649,11 @@ async function loadModule(moduleName) {
       if (sub === 'sales_dashboard') {
         const data = await api('/api/dashboard');
         content.innerHTML = `
-          <div class="cards">
-            <div class="card"><h3>Vendas mês</h3><p>R$ ${(data.salesTotal || 0).toFixed(2)}</p></div>
-            <div class="card"><h3>Tickets médios</h3><p>R$ ${((data.salesTotal || 0) / Math.max((data.totalSales || 1), 1)).toFixed(2)}</p></div>
-            <div class="card"><h3>Pedidos pendentes</h3><p>${data.pendingReconciliation || 0}</p></div>
-            <div class="card"><h3>Total de vendas</h3><p>${data.totalSales || 0}</p></div>
+          <div class="finance-stat-cards">
+            ${financeStatCard({ tone: 'green', label: 'Vendas mês', value: salesFormatBRL(data.salesTotal) })}
+            ${financeStatCard({ tone: 'blue', label: 'Tickets médios', value: salesFormatBRL((data.salesTotal || 0) / Math.max((data.totalSales || 1), 1)) })}
+            ${financeStatCard({ tone: 'red', label: 'Pedidos pendentes', value: String(data.pendingReconciliation || 0) })}
+            ${financeStatCard({ tone: 'purple', label: 'Total de vendas', value: String(data.totalSales || 0) })}
           </div>
           <div class="panel">
             <h3>Painel de Vendas</h3>
@@ -1231,20 +1666,22 @@ async function loadModule(moduleName) {
       // Sub-aba: Painel Vendedor
       if (sub === 'seller_dashboard') {
         content.innerHTML = `
-          <div class="cards">
-            <div class="card"><h3>Meus pedidos</h3><p>0</p></div>
-            <div class="card"><h3>Total vendido</h3><p>R$ 0.00</p></div>
-            <div class="card"><h3>Comissão</h3><p>R$ 0.00</p></div>
+          <div class="finance-stat-cards">
+            ${financeStatCard({ tone: 'blue', label: 'Meus pedidos', value: '0' })}
+            ${financeStatCard({ tone: 'green', label: 'Total vendido', value: salesFormatBRL(0) })}
+            ${financeStatCard({ tone: 'purple', label: 'Comissão', value: salesFormatBRL(0) })}
           </div>
           <div class="panel">
             <h3>Painel do Vendedor</h3>
             <p class="muted">Acompanhamento pessoal de vendas e comissões.</p>
-            <table class="table">
-              <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Data</th></tr></thead>
-              <tbody>
-                <tr><td colspan="4" class="muted">Nenhuma venda realizada</td></tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Data</th></tr></thead>
+                <tbody>
+                  <tr><td colspan="4" class="muted">Nenhuma venda realizada</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         `;
         return;
@@ -1253,17 +1690,23 @@ async function loadModule(moduleName) {
       // Sub-aba: Vales de Crédito
       if (sub === 'credits') {
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Vales de Crédito</h3>
+              <p class="muted">Gerencie vales de crédito de clientes.</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" class="secondary" onclick="window.notifyToast('Emitir novo vale será implementado em breve.', 'warning')">+ Emitir Vale</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>Vales de Crédito</h3>
-            <p class="muted">Gerencie vales de crédito de clientes.</p>
-            <table class="table">
-              <thead><tr><th>Cliente</th><th>Saldo Vale</th><th>Data Emissão</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr><td colspan="4" class="muted">Nenhum vale registrado</td></tr>
-              </tbody>
-            </table>
-            <div style="margin-top: 16px;">
-              <button class="secondary" onclick="window.notifyToast('Emitir novo vale será implementado em breve.', 'warning')">+ Emitir Vale</button>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Cliente</th><th>Saldo Vale</th><th>Data Emissão</th><th>Status</th></tr></thead>
+                <tbody>
+                  <tr><td colspan="4" class="muted">Nenhum vale registrado</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         `;

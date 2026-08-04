@@ -55,7 +55,13 @@ function navigateToModule(ctx, moduleKey, subKey) {
   loadModule(moduleKey);
 }
 
-async function saveDashboardPins(ctx, nextPins) {
+// Nome não pode ser "saveDashboardPins": app.js já declara uma função global com esse
+// nome (assinatura de 1 argumento). Como estes são scripts clássicos, os dois top-level
+// "function saveDashboardPins" viram a MESMA variável global — a de app.js, carregada
+// por último, vence. Uma chamada daqui com (ctx, nextPins) caía na versão de app.js,
+// que só declara 1 parâmetro: "ctx" virava o valor de "nextPins" lá dentro, falhava o
+// Array.isArray() e zerava todos os favoritos a cada clique. Nome diferente evita a colisão.
+async function applyDashboardPins(ctx, nextPins) {
   if (typeof window.saveDashboardPins === 'function') {
     const saved = await window.saveDashboardPins(nextPins);
     ctx.state.user.dashboardPins = saved;
@@ -108,29 +114,37 @@ function renderModuleGroup(ctx, module, pinnedSet) {
         ${renderPinButton(ctx, mainPinKey, module.label, pinnedSet)}
       </section>
 
-      <section class="dashboard-tabs-balloon">
-        <header class="dashboard-tabs-balloon-header">Abas favoritas</header>
-        <div class="dashboard-tabs-column">
-          ${pinnedItems.length ? pinnedItems.map((item) => {
-            const pinKey = buildPinKey(module.key, item.key);
-            const isActive = state.activeModule === module.key && state.activeSub === item.key;
-            return `
-              <div class="dashboard-tab-row ${isActive ? 'active' : ''}">
-                <button type="button" class="dashboard-tab-open" data-open-sub="${escapeHtml(module.key)}::${escapeHtml(item.key)}">
-                  ${escapeHtml(item.label)}
-                </button>
-                ${renderPinButton(ctx, pinKey, item.label, pinnedSet)}
-              </div>
-            `;
-          }).join('') : '<p class="muted dashboard-empty-module">Nenhuma aba fixada neste módulo.</p>'}
-        </div>
-      </section>
+      ${pinnedItems.length ? `
+        <section class="dashboard-tabs-balloon">
+          <div class="dashboard-tabs-column">
+            ${pinnedItems.map((item) => {
+              const pinKey = buildPinKey(module.key, item.key);
+              const isActive = state.activeModule === module.key && state.activeSub === item.key;
+              return `
+                <div class="dashboard-tab-row ${isActive ? 'active' : ''}">
+                  <button type="button" class="dashboard-tab-open" data-open-sub="${escapeHtml(module.key)}::${escapeHtml(item.key)}">
+                    ${escapeHtml(item.label)}
+                  </button>
+                  ${renderPinButton(ctx, pinKey, item.label, pinnedSet)}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      ` : ''}
     </div>
   `;
 }
 
+const DASHBOARD_CHART_GRANULARITY_OPTIONS = [
+  { key: 'day', label: 'Diário' },
+  { key: 'week', label: 'Semanal' },
+  { key: 'month', label: 'Mensal' },
+  { key: 'year', label: 'Anual' }
+];
+
 window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
-  const { content, state, showToast } = ctx;
+  const { content, state, showToast, api, escapeHtml } = ctx;
   const visibleModules = getVisibleModules(state);
   const pinnedSet = getDashboardPinSet();
   const favoriteModules = visibleModules.filter((module) => {
@@ -139,6 +153,14 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
     return mainPinned || hasPinnedItems;
   });
 
+  const granularity = state.dashboardChartGranularity || 'month';
+  let charts = { salesChartSeries: [], financeChartSeries: [], permissions: {} };
+  try {
+    charts = await api(`/api/dashboard/charts?granularity=${granularity}`);
+  } catch (error) {
+    // Sem os gráficos o resto do Dashboard Geral (favoritos) continua funcionando normalmente.
+  }
+
   async function togglePin(pinKey, label) {
     const wasPinned = pinnedSet.has(pinKey);
     const nextPins = wasPinned
@@ -146,13 +168,43 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
       : Array.from(new Set([...pinnedSet, pinKey]));
 
     try {
-      await saveDashboardPins(ctx, nextPins);
+      await applyDashboardPins(ctx, nextPins);
       showToast(wasPinned ? `Removido dos fixados: ${label}` : `Fixado: ${label}`, 'success');
       await window.MavisModuleRegistry.dashboard(ctx);
     } catch (error) {
       showToast(error.message || 'Erro ao salvar favoritos do dashboard.', 'error');
     }
   }
+
+  const salesChartPanel = charts.permissions?.sales ? `
+    <section class="panel finance-panel-stripe-chart">
+      <h3>Fluxo de Vendas</h3>
+      <div class="finance-chart-legend">
+        <span><i class="finance-legend-dot" style="background:#2563eb;"></i> Pedidos</span>
+        <span><i class="finance-legend-dot" style="background:#8b5cf6;"></i> Orçamentos</span>
+      </div>
+      <div class="finance-chart-wrap">
+        ${financeBuildChartSvg(charts.salesChartSeries || [], escapeHtml, [
+          { key: 'pedidos', cssClass: 'finance-chart-line-blue' },
+          { key: 'orcamentos', cssClass: 'finance-chart-line-purple' }
+        ])}
+      </div>
+    </section>
+  ` : '';
+
+  const financeChartPanel = charts.permissions?.finance ? `
+    <section class="panel finance-panel-stripe-chart">
+      <h3>Fluxo Financeiro</h3>
+      <div class="finance-chart-legend">
+        <span><i class="finance-legend-dot finance-legend-receita"></i> Receitas</span>
+        <span><i class="finance-legend-dot finance-legend-despesa"></i> Despesas</span>
+        <span><i class="finance-legend-line"></i> Saldo</span>
+      </div>
+      <div class="finance-chart-wrap">
+        ${financeBuildChartSvg(charts.financeChartSeries || [], escapeHtml)}
+      </div>
+    </section>
+  ` : '';
 
   content.innerHTML = `
     <div class="dashboard-shell">
@@ -162,6 +214,21 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
           <p class="muted">Somente os módulos e abas fixados aparecem aqui.</p>
         </div>
       </section>
+
+      ${(salesChartPanel || financeChartPanel) ? `
+        <div class="dashboard-charts-section">
+          <div class="finance-chart-head">
+            <h3>Fluxo geral</h3>
+            <div class="finance-granularity-group" role="tablist">
+              ${DASHBOARD_CHART_GRANULARITY_OPTIONS.map((opt) => `<button type="button" class="finance-pill finance-pill-sm ${granularity === opt.key ? 'active' : ''}" data-dashboard-granularity="${opt.key}">${opt.label}</button>`).join('')}
+            </div>
+          </div>
+          <div class="dashboard-charts-grid">
+            ${salesChartPanel}
+            ${financeChartPanel}
+          </div>
+        </div>
+      ` : ''}
 
       <section class="panel">
         ${favoriteModules.length ? `
@@ -177,6 +244,13 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
       </section>
     </div>
   `;
+
+  content.querySelectorAll('[data-dashboard-granularity]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.dashboardChartGranularity = button.dataset.dashboardGranularity;
+      window.MavisModuleRegistry.dashboard(ctx);
+    });
+  });
 
   content.querySelectorAll('[data-open-module]').forEach((button) => {
     button.addEventListener('click', () => {

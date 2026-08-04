@@ -632,6 +632,33 @@
       "byId": "user-admin",
       "byName": "Administrador",
       "at": "2026-08-03T17:00:09.119Z"
+    },
+    {
+      "id": "audit-1785862882221-enxvow",
+      "action": "createUser",
+      "targetId": "user-1785862881594-ydl8wd",
+      "targetUsername": "teste.edicao",
+      "byId": "user-admin",
+      "byName": "Administrador",
+      "at": "2026-08-04T17:01:22.221Z"
+    },
+    {
+      "id": "audit-1785862883744-sm1di5",
+      "action": "updateUser",
+      "targetId": "user-1785862881594-ydl8wd",
+      "targetUsername": "teste.edicao",
+      "byId": "user-admin",
+      "byName": "Administrador",
+      "at": "2026-08-04T17:01:23.744Z"
+    },
+    {
+      "id": "audit-1785862885483-vh5w2p",
+      "action": "deleteUser",
+      "targetId": "user-1785862881594-ydl8wd",
+      "targetUsername": "teste.edicao",
+      "byId": "user-admin",
+      "byName": "Administrador",
+      "at": "2026-08-04T17:01:25.483Z"
     }
   ],
   "nextCadastroCode": 12,
@@ -781,5 +808,7 @@
       "createdAt": "2026-06-01T09:00:00.000Z"
     }
   ],
-  "bankTransactions": []
+  "bankTransactions": [],
+  "companies": [],
+  "nextSalesCode": 1002
 }

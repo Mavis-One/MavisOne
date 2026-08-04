@@ -3,6 +3,7 @@ window.MavisSubscreenRegistry.settings = window.MavisSubscreenRegistry.settings 
 
 const SETTINGS_AUDIT_ACTION_LABELS = {
   createUser: 'Criação de usuário',
+  updateUser: 'Edição de usuário',
   deleteUser: 'Exclusão de usuário',
   criarLancamento: 'Criação de lançamento',
   editarLancamento: 'Edição de lançamento',
@@ -23,11 +24,11 @@ window.MavisSubscreenRegistry.settings.company = async function renderSettingsCo
   const canManageUsers = Boolean(settingsPermissions.users);
 
   content.innerHTML = `
-    <div class="cards">
-      ${canManageUsers ? `<div class="card"><h3>Usuários</h3><p>${totals.totalUsers ?? (data.users || []).length}</p></div>` : ''}
-      <div class="card"><h3>Produtos</h3><p>${totals.totalProducts ?? 0}</p></div>
-      <div class="card"><h3>Vendas</h3><p>${totals.totalSales ?? 0}</p></div>
-      <div class="card"><h3>Compras</h3><p>${totals.totalPurchases ?? 0}</p></div>
+    <div class="finance-stat-cards">
+      ${canManageUsers ? financeStatCard({ tone: 'blue', label: 'Usuários', value: String(totals.totalUsers ?? (data.users || []).length) }) : ''}
+      ${financeStatCard({ tone: 'teal', label: 'Produtos', value: String(totals.totalProducts ?? 0) })}
+      ${financeStatCard({ tone: 'green', label: 'Vendas', value: String(totals.totalSales ?? 0) })}
+      ${financeStatCard({ tone: 'red', label: 'Compras', value: String(totals.totalPurchases ?? 0) })}
     </div>
 
     ${canManageCompany ? `
@@ -42,33 +43,46 @@ window.MavisSubscreenRegistry.settings.company = async function renderSettingsCo
         <button type="submit">Salvar</button>
       </form>
     </div>
+
+    <div class="panel">
+      <div class="cadastro-page-head">
+        <h3>Integrações — Focus NFe</h3>
+        <div class="cadastro-list-actions">
+          <button type="button" class="secondary" id="focusNfeRefresh">Testar conexão</button>
+        </div>
+      </div>
+      <p class="muted">Emissão de NF-e/NFC-e/NFS-e via <a href="https://doc.focusnfe.com.br" target="_blank" rel="noopener">Focus NFe</a>. O token é configurado no arquivo .env do servidor (FOCUS_NFE_TOKEN).</p>
+      <div id="focusNfeStatusBox" class="muted">Verificando conexão...</div>
+    </div>
     ` : '<div class="panel"><p>Sem permissão para visualizar configurações da empresa.</p></div>'}
 
     ${canManageUsers ? `
     <div class="panel">
-      <h3>Criar usuário</h3>
-      <form id="userForm" class="form-grid">
-        <div class="row">
-          <label>Nome<input name="name" required /></label>
-          <label>Usuário<input name="username" required /></label>
-          <label>Senha<input name="password" required /></label>
+      <div class="cadastro-page-head">
+        <h3>Usuários cadastrados</h3>
+        <div class="cadastro-list-actions">
+          <button type="button" id="newUserBtn">+ Novo usuário</button>
         </div>
-        <div class="row">
-          <label>Função<select name="role"><option value="user">Usuário</option><option value="admin">Admin</option></select></label>
-        </div>
-        <div class="checkbox-grid">
-          ${['dashboard', 'sales', 'purchases', 'stock', 'finance', 'settings', 'cadastros'].map((module) => `<label><input type="checkbox" name="module" value="${module}" /> ${moduleLabels[module]}</label>`).join('')}
-        </div>
-        <button type="submit">Criar usuário</button>
-      </form>
-    </div>
-
-    <div class="panel">
-      <h3>Usuários cadastrados</h3>
+      </div>
       <table class="table table-actions">
         <thead><tr><th>Usuário</th><th>Nome</th><th>Função</th><th>Módulos</th><th>Ações</th></tr></thead>
         <tbody>
-          ${data.users.map((user) => `\n            <tr data-user-id="${user.id}">\n              <td>${escapeHtml(user.username)}</td>\n              <td>${escapeHtml(user.name)}</td>\n              <td>${escapeHtml(user.role)}</td>\n              <td>${escapeHtml(user.allowedModules.join(', '))}</td>\n              <td>\n                <button class="delete-user icon-button" data-id="${user.id}" title="Excluir usuário" ${state.user?.role !== 'admin' || state.user?.id === user.id ? 'disabled' : ''}>\n                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>\n                </button>\n              </td>\n            </tr>\n          `).join('') }
+          ${data.users.map((user) => `
+            <tr data-user-id="${user.id}">
+              <td>${escapeHtml(user.username)}</td>
+              <td>${escapeHtml(user.name)}</td>
+              <td>${escapeHtml(user.role)}</td>
+              <td>${escapeHtml(user.allowedModules.join(', '))}</td>
+              <td>
+                <button class="edit-user icon-button edit" data-id="${user.id}" title="Editar usuário" aria-label="Editar usuário">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                </button>
+                <button class="delete-user icon-button" data-id="${user.id}" title="Excluir usuário" aria-label="Excluir usuário" ${state.user?.role !== 'admin' || state.user?.id === user.id ? 'disabled' : ''}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </button>
+              </td>
+            </tr>
+          `).join('') }
         </tbody>
       </table>
     </div>
@@ -104,20 +118,41 @@ window.MavisSubscreenRegistry.settings.company = async function renderSettingsCo
     }
   });
 
-  document.getElementById('userForm')?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const selectedModules = formData.getAll('module');
+  async function loadFocusNfeStatus() {
+    const box = document.getElementById('focusNfeStatusBox');
+    if (!box) return;
+    box.textContent = 'Verificando conexão...';
     try {
-      await api('/api/settings', {
-        method: 'POST',
-        body: JSON.stringify({ type: 'user', payload: { name: formData.get('name'), username: formData.get('username'), password: formData.get('password'), role: formData.get('role'), allowedModules: selectedModules } })
-      });
-      showToast('Usuário criado com sucesso.', 'success');
-      loadModule('settings');
+      const status = await api('/api/focusnfe/status');
+      const ambienteLabel = status.ambiente === 'producao' ? 'Produção' : 'Homologação';
+      if (!status.configured) {
+        box.innerHTML = `<span class="finance-badge finance-badge-muted">Não configurado</span> Defina <code>FOCUS_NFE_TOKEN</code> no .env do servidor e reinicie-o.`;
+      } else if (status.connected) {
+        box.innerHTML = `<span class="finance-badge finance-badge-success">Conectado</span> Ambiente: ${escapeHtml(ambienteLabel)}.`;
+      } else {
+        box.innerHTML = `<span class="finance-badge finance-badge-danger">Falha na conexão</span> Ambiente: ${escapeHtml(ambienteLabel)}. ${escapeHtml(status.message || '')}`;
+      }
     } catch (error) {
-      showToast(error.message || 'Erro ao criar usuário.', 'error');
+      box.textContent = 'Erro ao verificar Focus NFe: ' + (error.message || error);
     }
+  }
+  document.getElementById('focusNfeRefresh')?.addEventListener('click', loadFocusNfeStatus);
+  if (canManageCompany) setTimeout(loadFocusNfeStatus, 50);
+
+  document.getElementById('newUserBtn')?.addEventListener('click', () => {
+    state.activeSub = 'users_register';
+    loadModule('settings');
+  });
+
+  document.querySelectorAll('.edit-user').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const user = (data.users || []).find((entry) => entry.id === id);
+      if (!user) return;
+      state.settingsDraft = { ...state.settingsDraft, editUser: user };
+      state.activeSub = 'users_edit';
+      loadModule('settings');
+    });
   });
 
   document.querySelectorAll('.delete-user').forEach((btn) => {

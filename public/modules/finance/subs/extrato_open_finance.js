@@ -87,10 +87,10 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         </div>
       </div>
 
-      <div class="cards">
-        <div class="card"><h3>Não conciliadas</h3><p class="finance-negative">${summary.naoConciliado}</p></div>
-        <div class="card"><h3>Conciliadas</h3><p class="finance-positive">${summary.conciliado}</p></div>
-        <div class="card"><h3>Ignoradas</h3><p>${summary.ignorado}</p></div>
+      <div class="finance-stat-cards">
+        ${financeStatCard({ tone: 'red', label: 'Não conciliadas', value: String(summary.naoConciliado) })}
+        ${financeStatCard({ tone: 'green', label: 'Conciliadas', value: String(summary.conciliado) })}
+        ${financeStatCard({ tone: 'cyan', label: 'Ignoradas', value: String(summary.ignorado) })}
       </div>
 
       <form id="extratoFilterForm" class="cadastro-filter-panel">

@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const db = require('./db');
+const focusNfe = require('./lib/focusnfe');
 
 const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PORT = Number(process.env.PORT) || 3000;
@@ -108,6 +109,7 @@ function normalizeData(data) {
   data.financialCategories = Array.isArray(data.financialCategories) ? data.financialCategories : [];
   data.costCenters = Array.isArray(data.costCenters) ? data.costCenters : [];
   data.bankAccounts = Array.isArray(data.bankAccounts) ? data.bankAccounts : [];
+  data.companies = Array.isArray(data.companies) ? data.companies : [];
   data.bankTransactions = Array.isArray(data.bankTransactions) ? data.bankTransactions : [];
   delete data.cadastros;
   data.importLogs = Array.isArray(data.importLogs) ? data.importLogs : [];
@@ -491,6 +493,17 @@ function getPeriodRange(period, fromQ, toQ) {
   return { from: toDateStr(first), to: toDateStr(last) };
 }
 
+// Período imediatamente anterior, com a mesma duração — usado só para o indicador
+// de variação percentual do "Resultado" no dashboard (não depende do tipo de período).
+function getPreviousPeriodRange(range) {
+  const fromDate = new Date(`${range.from}T00:00:00`);
+  const toDate = new Date(`${range.to}T00:00:00`);
+  const spanMs = toDate.getTime() - fromDate.getTime();
+  const prevTo = new Date(fromDate.getTime() - 24 * 60 * 60 * 1000);
+  const prevFrom = new Date(prevTo.getTime() - spanMs);
+  return { from: toDateStr(prevFrom), to: toDateStr(prevTo) };
+}
+
 function classifyFinanceEntry(entry) {
   const t = String(entry.type || '').toLowerCase();
   if (t === 'sale' || t === 'receita') return 'receita';
@@ -569,6 +582,123 @@ function resolveById(list, id) {
   if (!id) return '';
   const found = (list || []).find((item) => item.id === id);
   return found ? found.name : '';
+}
+
+// Vendedores não são uma entidade própria: são pessoas do Cadastro marcadas
+// com a tag de papel 'Vendedor' (mesmo campo roles[] que a lista de Cadastros já filtra).
+function getSellersDirectory(data) {
+  return (data.people || [])
+    .filter((person) => Array.isArray(person.roles) && person.roles.includes('Vendedor'))
+    .map((person) => ({ id: person.id, name: person.name }));
+}
+
+function getNextSalesCode(data) {
+  const next = (typeof data.nextSalesCode === 'number' && data.nextSalesCode > 0) ? data.nextSalesCode : 1001;
+  data.nextSalesCode = next + 1;
+  return next;
+}
+
+function normalizeSalesItems(rawItems) {
+  if (!Array.isArray(rawItems)) return [];
+  return rawItems
+    .map((item) => {
+      const quantity = Number(item.quantity || 0);
+      const unitPrice = Number(item.unitPrice || 0);
+      return {
+        productId: item.productId || '',
+        name: String(item.name || '').trim(),
+        sku: item.sku || '',
+        quantity,
+        unitPrice,
+        total: Math.round(quantity * unitPrice * 100) / 100
+      };
+    })
+    .filter((item) => item.name && item.quantity > 0);
+}
+
+function computeSalesTotals(items, discountAmount, discountPercent, freight) {
+  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.total || 0), 0);
+  const percentDiscount = itemsTotal * (Number(discountPercent || 0) / 100);
+  const totalAmount = Math.max(0, itemsTotal - Number(discountAmount || 0) - percentDiscount + Number(freight || 0));
+  return {
+    itemsTotal: Math.round(itemsTotal * 100) / 100,
+    totalAmount: Math.round(totalAmount * 100) / 100
+  };
+}
+
+// Pedidos/orçamentos antigos (importados via CSV ou criados antes desta fase) não têm
+// items[]/totalAmount — o serializer cai no campo "amount" achatado que eles já tinham,
+// pra continuar aparecendo na lista sem quebrar.
+function serializeSalesRecord(record, data) {
+  const items = Array.isArray(record.items) ? record.items : [];
+  const itemsTotal = items.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  const totalAmount = typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || itemsTotal || 0);
+
+  let customerName = record.clientSupplierName || record.customer || '';
+  if (record.clientSupplierId) {
+    const found = getCadastroDirectory(data).find((entry) => entry.id === record.clientSupplierId);
+    if (found) customerName = found.name;
+  }
+
+  return {
+    id: record.id,
+    type: record.type,
+    code: record.code || String(record.id).slice(-6),
+    date: record.date,
+    dueDate: record.dueDate || '',
+    clientSupplierId: record.clientSupplierId || '',
+    customer: customerName || '-',
+    companyId: record.companyId || '',
+    companyName: resolveById(data.companies, record.companyId),
+    sellerId: record.sellerId || '',
+    sellerName: resolveById(getSellersDirectory(data), record.sellerId),
+    depositId: record.depositId || '',
+    depositName: resolveById(data.deposits, record.depositId),
+    items,
+    discountAmount: Number(record.discountAmount || 0),
+    discountPercent: Number(record.discountPercent || 0),
+    freight: Number(record.freight || 0),
+    itemsTotal: Math.round(itemsTotal * 100) / 100,
+    amount: totalAmount,
+    note: record.note || '',
+    status: record.status || (record.type === 'quote' ? 'em aberto' : 'pendente'),
+    createdByName: record.createdByName || '',
+    createdAt: record.createdAt || '',
+    updatedAt: record.updatedAt || ''
+  };
+}
+
+function filterSalesRecords(records, data, query) {
+  let result = records.slice();
+
+  const search = String(query.get('search') || '').trim().toLowerCase();
+  if (search) {
+    result = result.filter((record) => {
+      const serialized = serializeSalesRecord(record, data);
+      return String(serialized.code).toLowerCase().includes(search)
+        || serialized.customer.toLowerCase().includes(search)
+        || String(record.id).toLowerCase().includes(search);
+    });
+  }
+
+  const status = query.get('status');
+  if (status) result = result.filter((record) => (record.status || '') === status);
+
+  const companyId = query.get('companyId');
+  if (companyId) result = result.filter((record) => record.companyId === companyId);
+
+  const sellerId = query.get('sellerId');
+  if (sellerId) result = result.filter((record) => record.sellerId === sellerId);
+
+  const clientSupplierId = query.get('clientSupplierId');
+  if (clientSupplierId) result = result.filter((record) => record.clientSupplierId === clientSupplierId);
+
+  const dateFrom = query.get('dateFrom');
+  const dateTo = query.get('dateTo');
+  if (dateFrom) result = result.filter((record) => record.date >= dateFrom);
+  if (dateTo) result = result.filter((record) => record.date <= dateTo);
+
+  return result;
 }
 
 function getFinanceEntryPayments(data, entryId) {
@@ -888,7 +1018,10 @@ function findBankTransactionMatches(tx, data) {
   }));
 }
 
-function buildFinanceChartSeries(entries, granularity) {
+// Janela de datas por granularidade — compartilhada entre o gráfico do Financeiro
+// e o gráfico de Vendas do Dashboard Geral, pra manter os dois com o mesmo recorte
+// de tempo/rótulos ao trocar "Diário/Semanal/Mensal/Anual".
+function buildPeriodBuckets(granularity) {
   const today = getTodayLocal();
   const buckets = [];
 
@@ -925,11 +1058,32 @@ function buildFinanceChartSeries(entries, granularity) {
     }
   }
 
+  return buckets;
+}
+
+function buildFinanceChartSeries(entries, granularity) {
+  const buckets = buildPeriodBuckets(granularity);
+
   return buckets.map((bucket) => {
     const inRange = entries.filter((entry) => entry.date >= bucket.from && entry.date <= bucket.to);
     const receitas = sumFinanceAmount(inRange.filter((entry) => classifyFinanceEntry(entry) === 'receita' && isFinanceEntryRealized(entry)));
     const despesas = sumFinanceAmount(inRange.filter((entry) => classifyFinanceEntry(entry) === 'despesa' && isFinanceEntryRealized(entry)));
     return { label: bucket.label, from: bucket.from, to: bucket.to, receitas, despesas, saldo: receitas - despesas };
+  });
+}
+
+// Fluxo de Vendas do Dashboard Geral: pedidos x orçamentos por período (mesmo
+// recorte de tempo do gráfico do Financeiro, mesma ideia de "linhas por período").
+function buildSalesChartSeries(data, granularity) {
+  const buckets = buildPeriodBuckets(granularity);
+  const orders = data.orders || [];
+  const quotes = data.quotes || [];
+  const amountOf = (record) => (typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || 0));
+
+  return buckets.map((bucket) => {
+    const pedidos = sumBy(orders.filter((o) => o.date >= bucket.from && o.date <= bucket.to).map((o) => ({ v: amountOf(o) })), 'v');
+    const orcamentos = sumBy(quotes.filter((q) => q.date >= bucket.from && q.date <= bucket.to).map((q) => ({ v: amountOf(q) })), 'v');
+    return { label: bucket.label, from: bucket.from, to: bucket.to, pedidos, orcamentos };
   });
 }
 
@@ -970,6 +1124,18 @@ function buildFinanceDashboardSummary(data, query) {
   const periodDespesas = sumFinanceAmount(
     despesaEntries.filter((entry) => isFinanceEntryRealized(entry) && entry.date >= range.from && entry.date <= range.to)
   );
+
+  const previousRange = getPreviousPeriodRange(range);
+  const previousReceitas = sumFinanceAmount(
+    receitaEntries.filter((entry) => isFinanceEntryRealized(entry) && entry.date >= previousRange.from && entry.date <= previousRange.to)
+  );
+  const previousDespesas = sumFinanceAmount(
+    despesaEntries.filter((entry) => isFinanceEntryRealized(entry) && entry.date >= previousRange.from && entry.date <= previousRange.to)
+  );
+  const resultadoAnterior = previousReceitas - previousDespesas;
+  const resultadoDeltaPercent = resultadoAnterior !== 0
+    ? ((periodReceitas - periodDespesas - resultadoAnterior) / Math.abs(resultadoAnterior)) * 100
+    : null;
 
   const saldoAtual = sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized)) - sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized));
   const previsaoFinanceira = saldoAtual + contasAReceber.aReceber - contasAPagar.aVencer;
@@ -1042,6 +1208,7 @@ function buildFinanceDashboardSummary(data, query) {
     receitas: periodReceitas,
     despesas: periodDespesas,
     resultado: periodReceitas - periodDespesas,
+    resultadoDeltaPercent,
     previsaoFinanceira,
     chartSeries: buildFinanceChartSeries(entries, granularity),
     proximosVencimentos: dueBuckets,
@@ -1201,6 +1368,47 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // Gráficos do Dashboard Geral (fluxo de Vendas + fluxo do Financeiro), no mesmo
+  // recorte de período — reaproveita os construtores de série já usados pelos
+  // dashboards de cada módulo, só filtrados pelo que o usuário tem permissão de ver.
+  if (pathname === '/api/dashboard/charts' && req.method === 'GET') {
+    const data = loadData();
+    const user = await getCurrentUser(req);
+    if (!user) {
+      return sendJson(res, { error: 'Não autenticado' }, 401);
+    }
+    const granularity = url.searchParams.get('granularity') || 'month';
+    const canSales = user.allowedModules.includes('sales');
+    const canFinance = user.allowedModules.includes('finance');
+
+    const salesChartSeries = canSales ? buildSalesChartSeries(data, granularity) : [];
+    const financeEntries = canFinance ? (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry)) : [];
+    const financeChartSeries = canFinance ? buildFinanceChartSeries(financeEntries, granularity) : [];
+
+    return sendJson(res, {
+      granularity,
+      salesChartSeries,
+      financeChartSeries,
+      permissions: { sales: canSales, finance: canFinance }
+    });
+  }
+
+  if (pathname === '/api/sales/meta' && req.method === 'GET') {
+    const data = loadData();
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const products = await db.getProducts();
+    return sendJson(res, {
+      companies: data.companies,
+      sellers: getSellersDirectory(data),
+      deposits: data.deposits,
+      directory: getCadastroDirectory(data),
+      products
+    });
+  }
+
   if (pathname === '/api/sales/records' && req.method === 'GET') {
     const data = loadData();
     const user = await getCurrentUser(req);
@@ -1209,7 +1417,29 @@ const server = http.createServer(async (req, res) => {
     }
     const view = url.searchParams.get('view') || 'orders_quotes';
     if (view === 'orders_quotes') {
-      return sendJson(res, { orders: data.orders, quotes: data.quotes, nfes: data.nfes, importLogs: data.importLogs });
+      const combined = [...data.orders, ...data.quotes];
+      const filtered = filterSalesRecords(combined, data, url.searchParams)
+        .sort((a, b) => Number(b.code || 0) - Number(a.code || 0) || String(b.date || '').localeCompare(String(a.date || '')));
+      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 15)));
+      const start = (page - 1) * limit;
+      const records = filtered.slice(start, start + limit).map((record) => serializeSalesRecord(record, data));
+      return sendJson(res, {
+        records,
+        total: filtered.length,
+        page,
+        limit,
+        orders: data.orders,
+        quotes: data.quotes,
+        nfes: data.nfes,
+        importLogs: data.importLogs,
+        meta: {
+          companies: data.companies,
+          sellers: getSellersDirectory(data),
+          deposits: data.deposits,
+          directory: getCadastroDirectory(data)
+        }
+      });
     }
     if (view === 'nfes') {
       return sendJson(res, { nfes: data.nfes });
@@ -1230,12 +1460,37 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const type = body.type || 'order';
       let record;
-      if (type === 'order') {
-        record = { id: createId('ord'), type: 'order', customer: body.customer || 'Cliente', date: body.date || new Date().toISOString().slice(0, 10), amount: Number(body.amount || 0), status: body.status || 'pendente', note: body.note || '' };
-        data.orders.push(record);
-      } else if (type === 'quote') {
-        record = { id: createId('qte'), type: 'quote', customer: body.customer || 'Cliente', date: body.date || new Date().toISOString().slice(0, 10), amount: Number(body.amount || 0), status: body.status || 'em aberto', note: body.note || '' };
-        data.quotes.push(record);
+      if (type === 'order' || type === 'quote') {
+        const items = normalizeSalesItems(body.items);
+        if (!items.length) {
+          return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
+        }
+        const { itemsTotal, totalAmount } = computeSalesTotals(items, body.discountAmount, body.discountPercent, body.freight);
+        record = {
+          id: createId(type === 'order' ? 'ord' : 'qte'),
+          type,
+          code: getNextSalesCode(data),
+          clientSupplierId: body.clientSupplierId || '',
+          clientSupplierName: body.clientSupplierName || '',
+          companyId: body.companyId || '',
+          sellerId: body.sellerId || '',
+          depositId: body.depositId || '',
+          date: body.date || new Date().toISOString().slice(0, 10),
+          dueDate: body.dueDate || '',
+          items,
+          discountAmount: Number(body.discountAmount || 0),
+          discountPercent: Number(body.discountPercent || 0),
+          freight: Number(body.freight || 0),
+          itemsTotal,
+          totalAmount,
+          note: body.note || '',
+          status: body.status || (type === 'order' ? 'pendente' : 'em aberto'),
+          createdBy: user.id,
+          createdByName: user.name,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        data[type === 'order' ? 'orders' : 'quotes'].push(record);
       } else if (type === 'nfe') {
         record = { id: createId('nfe'), type: 'nfe', number: body.number || createId('nfe-num'), customer: body.customer || 'Cliente', date: body.date || new Date().toISOString().slice(0, 10), amount: Number(body.amount || 0), status: body.status || 'emitida', key: body.key || '' };
         data.nfes.push(record);
@@ -1243,10 +1498,80 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Tipo inválido' }, 400);
       }
       saveData(data);
-      return sendJson(res, { success: true, record });
+      const responseRecord = (type === 'order' || type === 'quote') ? serializeSalesRecord(record, data) : record;
+      return sendJson(res, { success: true, record: responseRecord });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao salvar venda' }, 400);
     }
+  }
+
+  if (pathname.startsWith('/api/sales/records/') && req.method === 'PUT') {
+    try {
+      const data = loadData();
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
+      const list = data.orders.some((entry) => entry.id === id) ? data.orders : data.quotes;
+      const index = list.findIndex((entry) => entry.id === id);
+      if (index < 0) {
+        return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      }
+      const body = await readBody(req);
+      const items = normalizeSalesItems(body.items);
+      if (!items.length) {
+        return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
+      }
+      const { itemsTotal, totalAmount } = computeSalesTotals(items, body.discountAmount, body.discountPercent, body.freight);
+      const current = list[index];
+      const updated = {
+        ...current,
+        clientSupplierId: body.clientSupplierId || '',
+        clientSupplierName: body.clientSupplierName || '',
+        companyId: body.companyId || '',
+        sellerId: body.sellerId || '',
+        depositId: body.depositId || '',
+        date: body.date || current.date,
+        dueDate: body.dueDate || '',
+        items,
+        discountAmount: Number(body.discountAmount || 0),
+        discountPercent: Number(body.discountPercent || 0),
+        freight: Number(body.freight || 0),
+        itemsTotal,
+        totalAmount,
+        note: body.note || '',
+        status: body.status || current.status,
+        updatedAt: new Date().toISOString()
+      };
+      list[index] = updated;
+      saveData(data);
+      return sendJson(res, { success: true, record: serializeSalesRecord(updated, data) });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao atualizar pedido/orçamento' }, 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/sales/records/') && req.method === 'DELETE') {
+    const data = loadData();
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
+    let removed = false;
+    ['orders', 'quotes'].forEach((key) => {
+      const index = data[key].findIndex((entry) => entry.id === id);
+      if (index >= 0) {
+        data[key].splice(index, 1);
+        removed = true;
+      }
+    });
+    if (!removed) {
+      return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+    }
+    saveData(data);
+    return sendJson(res, { success: true });
   }
 
   if (pathname === '/api/sales/import' && req.method === 'POST') {
@@ -1414,6 +1739,15 @@ const server = http.createServer(async (req, res) => {
       const status = error.status || 502;
       return sendJson(res, { error: error.message || 'Erro ao consultar CEP' }, status);
     }
+  }
+
+  if (pathname === '/api/focusnfe/status' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('settings')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const status = await focusNfe.checkStatus();
+    return sendJson(res, status);
   }
 
   if (pathname === '/api/cadastros/pessoas' && req.method === 'POST') {
@@ -1840,6 +2174,63 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Depósito não encontrado' }, 404);
     }
     data.deposits.splice(index, 1);
+    saveData(data);
+    return sendJson(res, { success: true });
+  }
+
+  // Empresas/filiais: cadastro leve (nome + CNPJ) usado só como seletor/etiqueta
+  // nos documentos de Vendas — não isola dados entre empresas.
+  if (pathname === '/api/cadastros/empresas' && req.method === 'GET') {
+    const data = loadData();
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('cadastros')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    return sendJson(res, { companies: data.companies });
+  }
+
+  if (pathname === '/api/cadastros/empresas' && req.method === 'POST') {
+    try {
+      const data = loadData();
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      const name = String(body.name || '').trim();
+      if (!name) {
+        return sendJson(res, { error: 'Informe o nome da empresa' }, 400);
+      }
+      const company = {
+        id: createId('company'),
+        name,
+        tradeName: body.tradeName || '',
+        document: body.document || '',
+        address: body.address || '',
+        city: body.city || '',
+        state: body.state || '',
+        createdAt: new Date().toISOString()
+      };
+      data.companies.push(company);
+      saveData(data);
+      return sendJson(res, { success: true, company });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao criar empresa' }, 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/cadastros/empresas/') && req.method === 'DELETE') {
+    const data = loadData();
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('cadastros')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const id = decodeURIComponent(pathname.replace('/api/cadastros/empresas/', ''));
+    const index = data.companies.findIndex((entry) => entry.id === id);
+    if (index < 0) {
+      return sendJson(res, { error: 'Empresa não encontrada' }, 404);
+    }
+    data.companies.splice(index, 1);
     saveData(data);
     return sendJson(res, { success: true });
   }
@@ -2896,6 +3287,38 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { success: true });
     } catch (err) {
       return sendJson(res, { error: 'Erro ao excluir usuário' }, 500);
+    }
+  }
+
+  // user edit endpoint (dedicado — tela de edição separada da de cadastro)
+  if (pathname.startsWith('/api/users/') && pathname !== '/api/users/delete' && req.method === 'PUT') {
+    try {
+      const requester = await getCurrentUser(req);
+      if (!requester) return sendJson(res, { error: 'Não autenticado' }, 401);
+      if (requester.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/users/', ''));
+      const target = await db.getUserById(id);
+      if (!target) return sendJson(res, { error: 'Usuário não encontrado' }, 404);
+      const body = await readBody(req);
+      const name = String(body.name || '').trim();
+      if (!name) return sendJson(res, { error: 'Informe o nome do usuário' }, 400);
+      const role = body.role || target.role;
+      if (requester.id === id && role !== 'admin') {
+        return sendJson(res, { error: 'Não é permitido remover o próprio acesso de administrador' }, 400);
+      }
+      const updated = await db.updateUser(id, {
+        name,
+        role,
+        allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules : target.allowedModules,
+        password: body.password ? String(body.password) : undefined
+      });
+      const data = loadData();
+      data.auditLogs = data.auditLogs || [];
+      data.auditLogs.push({ id: createId('audit'), action: 'updateUser', targetId: id, targetUsername: target.username, byId: requester.id, byName: requester.name, at: new Date().toISOString() });
+      saveData(data);
+      return sendJson(res, { success: true, user: updated });
+    } catch (err) {
+      return sendJson(res, { error: 'Erro ao atualizar usuário' }, 400);
     }
   }
 
