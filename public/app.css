@@ -87,6 +87,18 @@ label { display: grid; gap: 6px; font-weight: 600; }
 input, select, textarea { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); }
 textarea { min-height: 110px; resize: vertical; }
 
+/* Campo de busca que substitui um <select> (ver renderSearchableSelect em app.js) */
+.searchable-select { position: relative; }
+.searchable-select-input { width: 100%; }
+.searchable-select-dropdown {
+  position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 240px; overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 12px 30px rgba(2, 6, 23, 0.25);
+}
+.searchable-select-option { padding: 8px 12px; cursor: pointer; font-weight: 400; }
+.searchable-select-option:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.12)); }
+.searchable-select-empty { padding: 8px 12px; color: var(--muted); font-weight: 400; }
+
 /* Checkboxes padronizados como toggle switches: verde quando ativo, cinza quando inativo */
 input[type="checkbox"] {
   -webkit-appearance: none;

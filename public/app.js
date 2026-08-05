@@ -706,6 +706,64 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
+// Campo de busca reutilizável que substitui um <select> comum: digita
+// qualquer parte do texto (ex.: "Marcos") e filtra entre TODAS as opções que
+// contêm o termo (não só as que começam com ele, como o <select> nativo faz).
+// Usa um <input type="hidden"> com o mesmo "name" por baixo, então
+// FormData(form) continua funcionando exatamente igual a um <select>.
+function renderSearchableSelect({ id, name, options, selectedValue, placeholder, required }) {
+  const selected = options.find((o) => String(o.value) === String(selectedValue || ''));
+  return `
+    <div class="searchable-select" id="${id}Wrapper">
+      <input type="text" class="searchable-select-input" id="${id}Input" autocomplete="off"
+        placeholder="${escapeHtml(placeholder || 'Buscar...')}" value="${escapeHtml(selected ? selected.label : '')}" ${required ? 'required' : ''} />
+      <input type="hidden" name="${name}" id="${id}Value" value="${escapeHtml(selectedValue || '')}" />
+      <div class="searchable-select-dropdown" id="${id}Dropdown" hidden></div>
+    </div>
+  `;
+}
+
+// Chamar depois de inserir o HTML no DOM (mesmo padrão de outros handlers
+// desta tela, que são reconectados a cada re-render). `onSelect(value, option)`
+// dispara quando o usuário escolhe um item — `option` é o objeto original
+// passado em `options`, útil pra ler outros campos dele (preço, sku etc.).
+function attachSearchableSelect({ id, options, onSelect }) {
+  const input = document.getElementById(`${id}Input`);
+  const hidden = document.getElementById(`${id}Value`);
+  const dropdown = document.getElementById(`${id}Dropdown`);
+  if (!input || !hidden || !dropdown) return;
+
+  function renderDropdown(filterText) {
+    const term = (filterText || '').trim().toLowerCase();
+    const filtered = term ? options.filter((o) => o.label.toLowerCase().includes(term)) : options;
+    dropdown.innerHTML = filtered.length
+      ? filtered.slice(0, 50).map((o) => `<div class="searchable-select-option" data-value="${escapeHtml(String(o.value))}">${escapeHtml(o.label)}</div>`).join('')
+      : '<div class="searchable-select-empty">Nenhum resultado</div>';
+    dropdown.hidden = false;
+  }
+
+  input.addEventListener('focus', () => renderDropdown(''));
+  input.addEventListener('input', () => {
+    hidden.value = '';
+    renderDropdown(input.value);
+  });
+  input.addEventListener('blur', () => {
+    // atraso pra deixar o "mousedown" do clique na opção disparar antes do dropdown fechar
+    setTimeout(() => { dropdown.hidden = true; }, 150);
+  });
+  dropdown.addEventListener('mousedown', (event) => {
+    const optionEl = event.target.closest('.searchable-select-option');
+    if (!optionEl) return;
+    event.preventDefault();
+    const value = optionEl.dataset.value;
+    const found = options.find((o) => String(o.value) === String(value));
+    hidden.value = value;
+    input.value = found ? found.label : '';
+    dropdown.hidden = true;
+    if (onSelect) onSelect(value, found);
+  });
+}
+
 function sanitizeDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
@@ -1231,16 +1289,10 @@ async function loadModule(moduleName) {
               <form id="salesRecordForm" class="form-grid">
                 <div class="row">
                   <label>Cliente/Fornecedor *
-                    <select name="clientSupplierId" required>
-                      <option value="">Selecione</option>
-                      ${meta.directory.map((entry) => `<option value="${escapeHtml(entry.id)}" ${formState.clientSupplierId === entry.id ? 'selected' : ''}>${escapeHtml(entry.name)}</option>`).join('')}
-                    </select>
+                    ${renderSearchableSelect({ id: 'salesClientSupplier', name: 'clientSupplierId', options: meta.directory.map((entry) => ({ value: entry.id, label: entry.name })), selectedValue: formState.clientSupplierId, placeholder: 'Buscar por nome...', required: true })}
                   </label>
                   <label>Empresa
-                    <select name="companyId">
-                      <option value="">Nenhuma</option>
-                      ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${formState.companyId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-                    </select>
+                    ${renderSearchableSelect({ id: 'salesCompany', name: 'companyId', options: meta.companies.map((c) => ({ value: c.id, label: c.name })), selectedValue: formState.companyId, placeholder: 'Buscar empresa...' })}
                   </label>
                   <button type="button" class="icon-button edit" id="salesQuickAddCompany" title="Nova empresa">+</button>
                 </div>
@@ -1252,16 +1304,10 @@ async function loadModule(moduleName) {
 
                 <div class="row">
                   <label>Vendedor
-                    <select name="sellerId">
-                      <option value="">Nenhum</option>
-                      ${meta.sellers.map((s) => `<option value="${escapeHtml(s.id)}" ${formState.sellerId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
-                    </select>
+                    ${renderSearchableSelect({ id: 'salesSeller', name: 'sellerId', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })), selectedValue: formState.sellerId, placeholder: 'Buscar vendedor...' })}
                   </label>
                   <label>Depósito
-                    <select name="depositId">
-                      <option value="">Nenhum</option>
-                      ${meta.deposits.map((d) => `<option value="${escapeHtml(d.id)}" ${formState.depositId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
-                    </select>
+                    ${renderSearchableSelect({ id: 'salesDeposit', name: 'depositId', options: meta.deposits.map((d) => ({ value: d.id, label: d.name })), selectedValue: formState.depositId, placeholder: 'Buscar depósito...' })}
                   </label>
                   <label>Status
                     <select name="status">
@@ -1280,10 +1326,7 @@ async function loadModule(moduleName) {
                   <div class="cadastro-section-body">
                     <div class="row">
                       <label style="flex: 2;">Produto
-                        <select id="salesProductSelect">
-                          <option value="">Selecione um produto</option>
-                          ${meta.products.map((p) => `<option value="${escapeHtml(p.id)}" data-price="${Number(p.salePrice || 0)}" data-name="${escapeHtml(p.name)}" data-sku="${escapeHtml(p.sku || '')}">${escapeHtml(p.name)}${p.sku ? ` (${escapeHtml(p.sku)})` : ''} — ${salesFormatBRL(p.salePrice)}</option>`).join('')}
-                        </select>
+                        ${renderSearchableSelect({ id: 'salesProduct', name: 'productPick', options: meta.products.map((p) => ({ value: p.id, label: `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)}` })), selectedValue: '', placeholder: 'Buscar produto...' })}
                       </label>
                       <label>Quantidade<input id="salesProductQty" type="number" min="1" step="1" value="1" /></label>
                       <div style="align-self: end;"><button type="button" class="secondary" id="salesAddItemBtn">+ Adicionar</button></div>
@@ -1331,6 +1374,15 @@ async function loadModule(moduleName) {
             </div>
           `;
 
+          attachSearchableSelect({ id: 'salesClientSupplier', options: meta.directory.map((entry) => ({ value: entry.id, label: entry.name })) });
+          attachSearchableSelect({ id: 'salesCompany', options: meta.companies.map((c) => ({ value: c.id, label: c.name })) });
+          attachSearchableSelect({ id: 'salesSeller', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })) });
+          attachSearchableSelect({ id: 'salesDeposit', options: meta.deposits.map((d) => ({ value: d.id, label: d.name })) });
+          attachSearchableSelect({
+            id: 'salesProduct',
+            options: meta.products.map((p) => ({ value: p.id, label: `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)}`, product: p }))
+          });
+
           document.getElementById('salesQuickAddCompany')?.addEventListener('click', () => {
             document.getElementById('salesInlineAddCompanyRow')?.classList.toggle('hidden');
           });
@@ -1347,11 +1399,10 @@ async function loadModule(moduleName) {
               });
               meta.companies.push(res.company);
               showToast('Empresa cadastrada com sucesso.', 'success');
-              const select = content.querySelector('select[name="companyId"]');
-              if (select) {
-                select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(res.company.id)}" selected>${escapeHtml(res.company.name)}</option>`);
-                select.value = res.company.id;
-              }
+              const hidden = document.getElementById('salesCompanyValue');
+              const input = document.getElementById('salesCompanyInput');
+              if (hidden) hidden.value = res.company.id;
+              if (input) input.value = res.company.name;
               document.getElementById('salesInlineAddCompanyRow')?.classList.add('hidden');
             } catch (error) {
               showToast(error.message || 'Erro ao cadastrar empresa.', 'error');
@@ -1359,20 +1410,20 @@ async function loadModule(moduleName) {
           });
 
           document.getElementById('salesAddItemBtn')?.addEventListener('click', () => {
-            const select = document.getElementById('salesProductSelect');
+            const productId = document.getElementById('salesProductValue')?.value;
             const qtyInput = document.getElementById('salesProductQty');
-            const option = select?.selectedOptions[0];
-            if (!select?.value || !option) {
+            const product = meta.products.find((p) => p.id === productId);
+            if (!productId || !product) {
               showToast('Selecione um produto.', 'warning');
               return;
             }
             const quantity = Math.max(1, Number(qtyInput?.value || 1));
             items.push({
-              productId: select.value,
-              name: option.dataset.name,
-              sku: option.dataset.sku || '',
+              productId: product.id,
+              name: product.name,
+              sku: product.sku || '',
               quantity,
-              unitPrice: Number(option.dataset.price || 0)
+              unitPrice: Number(product.salePrice || 0)
             });
             syncFormState();
             renderForm();
@@ -1412,11 +1463,11 @@ async function loadModule(moduleName) {
               return;
             }
             const formData = new FormData(form);
-            const clientOption = form.querySelector('select[name="clientSupplierId"]')?.selectedOptions[0];
+            const clientEntry = meta.directory.find((entry) => entry.id === formData.get('clientSupplierId'));
             const payload = {
               type: recordType,
               clientSupplierId: formData.get('clientSupplierId') || '',
-              clientSupplierName: clientOption ? clientOption.textContent : '',
+              clientSupplierName: clientEntry ? clientEntry.name : '',
               companyId: formData.get('companyId') || '',
               sellerId: formData.get('sellerId') || '',
               depositId: formData.get('depositId') || '',
