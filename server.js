@@ -7,6 +7,7 @@ const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
 const { buildNfePayload } = require('./lib/nfePayloadBuilder');
+const openFinanceService = require('./lib/openfinance/service');
 const openFinanceSync = require('./lib/openfinance/sync');
 const openFinanceDb = require('./lib/db/openfinance');
 
@@ -3973,6 +3974,120 @@ const server = http.createServer(async (req, res) => {
     tx.updatedAt = new Date().toISOString();
     saveData(data);
     return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
+  }
+
+  // ---------------------------------------------------------------------
+  // Open Finance: conexão bancária real (Pluggy/Polp/Celcoin) via
+  // lib/openfinance/service.js. Mesmo gate de permissão do resto do
+  // Financeiro (user.allowedModules.includes('finance')) — é uma extensão
+  // do Extrato que já existe, não um módulo à parte.
+  // ---------------------------------------------------------------------
+  if (pathname.startsWith('/api/open-finance/')) {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+
+    try {
+      if (pathname === '/api/open-finance/status' && req.method === 'GET') {
+        const status = await openFinanceService.healthCheck();
+        return sendJson(res, status);
+      }
+
+      if (pathname === '/api/open-finance/institutions' && req.method === 'GET') {
+        // Tenta atualizar o catálogo com o provider de verdade; sem provider
+        // configurado (ou se a chamada falhar), segue com o que já tem em
+        // cache — a tela não pode quebrar só por não ter provider ainda.
+        if (openFinanceService.isConfigured()) {
+          try {
+            const fromProvider = await openFinanceService.getInstitutions();
+            const providerName = openFinanceService.getActiveProviderName();
+            for (const institution of fromProvider) {
+              await openFinanceDb.upsertInstitution({ ...institution, provider: providerName });
+            }
+          } catch {
+            // Provider selecionado mas ainda sem credencial válida — cai pro cache abaixo.
+          }
+        }
+        const institutions = await openFinanceDb.getInstitutions();
+        return sendJson(res, { institutions, providerConfigured: openFinanceService.isConfigured() });
+      }
+
+      if (pathname === '/api/open-finance/connections' && req.method === 'GET') {
+        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || undefined;
+        const connections = await openFinanceDb.getConnections(estabelecimentoId);
+        return sendJson(res, { connections });
+      }
+
+      if (pathname === '/api/open-finance/connections' && req.method === 'POST') {
+        const body = await readBody(req);
+        if (!body.estabelecimentoId) {
+          return sendJson(res, { error: 'Informe o estabelecimento' }, 400);
+        }
+        // Sem provider configurado, isso lança o erro claro da Fase 1 em vez
+        // de simular uma conexão — é o aviso que a tela deve mostrar.
+        const providerConnection = await openFinanceService.createConnection({
+          estabelecimentoId: body.estabelecimentoId,
+          institutionId: body.institutionId
+        });
+        const connection = await openFinanceDb.createConnection({
+          estabelecimentoId: body.estabelecimentoId,
+          provider: openFinanceService.getActiveProviderName(),
+          providerConnectionId: providerConnection.id,
+          institutionId: body.institutionId || null,
+          status: providerConnection.status || 'pending',
+          credentials: providerConnection.credentials
+        });
+        await openFinanceDb.recordAuditLog({
+          connectionId: connection.id,
+          estabelecimentoId: body.estabelecimentoId,
+          action: 'CONNECTION_CREATED',
+          byId: user.id,
+          byName: user.name
+        });
+        return sendJson(res, { success: true, connection });
+      }
+
+      if (/^\/api\/open-finance\/connections\/[^/]+\/sync$/.test(pathname) && req.method === 'POST') {
+        const id = decodeURIComponent(pathname.split('/')[4]);
+        const resultado = await syncOpenFinanceConnection(id);
+        return sendJson(res, { success: true, resultado });
+      }
+
+      if (/^\/api\/open-finance\/connections\/[^/]+\/disconnect$/.test(pathname) && req.method === 'POST') {
+        const id = decodeURIComponent(pathname.split('/')[4]);
+        const connection = await openFinanceDb.getConnectionById(id);
+        if (!connection) {
+          return sendJson(res, { error: 'Conexão não encontrada' }, 404);
+        }
+        const credentials = await openFinanceDb.getConnectionCredentials(id);
+        await openFinanceService.disconnectConnection({ ...connection, credentials });
+        await openFinanceDb.updateConnection(id, { status: 'disconnected' });
+        await openFinanceDb.recordAuditLog({
+          connectionId: id,
+          estabelecimentoId: connection.estabelecimentoId,
+          action: 'CONNECTION_DISCONNECTED',
+          byId: user.id,
+          byName: user.name
+        });
+        return sendJson(res, { success: true });
+      }
+
+      if (/^\/api\/open-finance\/connections\/[^/]+\/accounts$/.test(pathname) && req.method === 'GET') {
+        const id = decodeURIComponent(pathname.split('/')[4]);
+        const data = loadData();
+        const accounts = data.bankAccounts.filter((acc) => acc.connectionId === id);
+        return sendJson(res, { accounts });
+      }
+
+      if (/^\/api\/open-finance\/connections\/[^/]+\/audit$/.test(pathname) && req.method === 'GET') {
+        const id = decodeURIComponent(pathname.split('/')[4]);
+        const logs = await openFinanceDb.getAuditLogs({ connectionId: id });
+        return sendJson(res, { logs });
+      }
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro no Open Finance' }, error.status || 500);
+    }
   }
 
   if (pathname === '/api/finance' && req.method === 'POST') {

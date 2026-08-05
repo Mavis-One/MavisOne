@@ -684,7 +684,8 @@ const moduleSubItems = {
     { key: 'nfe_emitidas', label: 'NF-e Emitidas' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa' },
     { key: 'emitir_nfe_focus', label: 'Emitir NF-e (Focus)' },
-    { key: 'extrato_open_finance', label: 'Extrato Open Finance' }
+    { key: 'extrato_open_finance', label: 'Extrato Open Finance' },
+    { key: 'bancos_conectados', label: 'Bancos Conectados' }
   ],
 
   // ABA: Configurações

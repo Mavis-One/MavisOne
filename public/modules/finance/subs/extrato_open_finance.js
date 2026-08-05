@@ -12,6 +12,20 @@ function bankTxStatusBadge(status) {
   return `<span class="finance-badge finance-badge-${meta.tone}">${meta.label}</span>`;
 }
 
+const MATCH_SCORE_META = {
+  MATCH_EXACT: { label: 'Correspondência exata', tone: 'success' },
+  MATCH_HIGH: { label: 'Correspondência alta', tone: 'success' },
+  MATCH_MEDIUM: { label: 'Correspondência média', tone: 'warning' },
+  MATCH_LOW: { label: 'Correspondência baixa', tone: 'muted' },
+  NO_MATCH: { label: 'Sem correspondência', tone: 'muted' }
+};
+
+function matchScoreBadge(score) {
+  const meta = MATCH_SCORE_META[score];
+  if (!meta) return '';
+  return `<span class="finance-badge finance-badge-${meta.tone}">${meta.label}</span>`;
+}
+
 window.MavisSubscreenRegistry.finance.extrato_open_finance = async function renderExtratoOpenFinance(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml, confirmModal } = ctx;
 
@@ -141,7 +155,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
               ${result.transactions.length ? result.transactions.map((tx) => `
                 <tr>
                   <td>${financeFormatDate(tx.date)}</td>
-                  <td>${escapeHtml(tx.description)}</td>
+                  <td>${tx.source === 'open_finance' ? '<span class="finance-badge finance-badge-info" title="Importado via sincronização Open Finance">Sync</span> ' : ''}${escapeHtml(tx.description)}</td>
                   <td class="${tx.type === 'entrada' ? 'finance-positive' : 'finance-negative'}">${tx.type === 'entrada' ? '+' : '-'} ${financeFormatBRL(tx.amount)}</td>
                   <td>${tx.type === 'entrada' ? 'Entrada' : 'Saída'}</td>
                   <td>${escapeHtml(tx.bankAccountName || '-')}</td>
@@ -373,7 +387,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
           ${matches.length ? matches.map((m) => `
             <div class="finance-due-item">
               <div>
-                <strong>${escapeHtml(m.description)}</strong> ${m.exactAmountMatch ? '<span class="finance-badge finance-badge-success">Valor exato</span>' : ''}
+                <strong>${escapeHtml(m.description)}</strong> ${matchScoreBadge(m.matchScore)}
                 <div class="muted">${escapeHtml(m.clienteFornecedor || '-')} · Vencimento: ${financeFormatDate(m.dueDate)}</div>
               </div>
               <div class="finance-due-item-amount">
