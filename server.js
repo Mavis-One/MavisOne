@@ -7,6 +7,8 @@ const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
 const { buildNfePayload } = require('./lib/nfePayloadBuilder');
+const openFinanceSync = require('./lib/openfinance/sync');
+const openFinanceDb = require('./lib/db/openfinance');
 
 const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PORT = Number(process.env.PORT) || 3000;
@@ -1055,6 +1057,105 @@ function findBankTransactionMatches(tx, data) {
     clienteFornecedor: resolveFinanceCounterparty(entry, data),
     exactAmountMatch: amountDiff < 0.01
   }));
+}
+
+// Ponte entre lib/openfinance/sync.js (que não conhece data/db.json — só
+// recebe callbacks) e o armazenamento real de bank_accounts/bank_transactions
+// hoje, que é o arquivo local (a versão Supabase dessas duas tabelas existe
+// em lib/db/financeiro.js mas nenhuma rota usa ela ainda — ver db.js). Saldo
+// (account_balances) é a exceção: tabela nova, sem equivalente no JSON, então
+// vai direto pro Supabase via lib/db/openfinance.js.
+function buildOpenFinanceSyncDeps(data) {
+  return {
+    getExistingAccounts: async (connectionId) => data.bankAccounts.filter((acc) => acc.connectionId === connectionId),
+    persistAccount: async ({ connectionId, estabelecimentoId, account }) => {
+      const bankAccount = {
+        id: createId('bank'),
+        name: account.name || 'Conta sincronizada',
+        bank: account.institutionName || '',
+        agency: '',
+        number: '',
+        createdAt: new Date().toISOString(),
+        estabelecimentoId: estabelecimentoId || '',
+        connectionId,
+        provider: account.provider || '',
+        providerAccountId: account.providerAccountId,
+        accountType: account.accountType || '',
+        currency: account.currency || 'BRL',
+        currentBalance: account.currentBalance ?? null,
+        availableBalance: account.availableBalance ?? null,
+        status: 'ativa',
+        lastSyncAt: new Date().toISOString()
+      };
+      data.bankAccounts.push(bankAccount);
+      return bankAccount;
+    },
+    updateAccount: async (localId, account) => {
+      const existing = data.bankAccounts.find((acc) => acc.id === localId);
+      if (!existing) return;
+      if (account.currentBalance !== undefined) existing.currentBalance = account.currentBalance;
+      if (account.availableBalance !== undefined) existing.availableBalance = account.availableBalance;
+      existing.status = 'ativa';
+      existing.lastSyncAt = new Date().toISOString();
+    },
+    recordBalance: async (localId, balance) => {
+      await openFinanceDb.recordAccountBalance({
+        accountId: localId,
+        currentBalance: balance.currentBalance,
+        availableBalance: balance.availableBalance
+      });
+    },
+    getExistingTransactions: async (localAccountId) => data.bankTransactions.filter((tx) => tx.bankAccountId === localAccountId),
+    persistTransaction: async (localAccountId, tx) => {
+      const bankTransaction = {
+        id: createId('btx'),
+        bankAccountId: localAccountId,
+        date: tx.date,
+        description: tx.description || '',
+        amount: Math.abs(Number(tx.amount || 0)),
+        type: tx.direction === 'saida' ? 'saida' : 'entrada',
+        status: 'nao_conciliado',
+        matchedEntryId: '',
+        matchedPaymentId: '',
+        source: 'open_finance',
+        createdBy: '',
+        createdByName: 'Sincronização Open Finance',
+        createdAt: new Date().toISOString(),
+        provider: tx.provider || '',
+        providerTransactionId: tx.providerTransactionId,
+        processingDate: tx.processingDate || '',
+        direction: tx.direction || '',
+        category: tx.category || '',
+        subcategory: tx.subcategory || '',
+        merchantName: tx.merchantName || '',
+        merchantDocument: tx.merchantDocument || '',
+        counterpartyName: tx.counterpartyName || '',
+        counterpartyDocument: tx.counterpartyDocument || '',
+        paymentMethod: tx.paymentMethod || '',
+        pixKey: tx.pixKey || '',
+        pixEndToEndId: tx.pixEndToEndId || '',
+        pixType: tx.pixType || '',
+        documentNumber: tx.documentNumber || '',
+        originalData: tx.raw || null
+      };
+      data.bankTransactions.push(bankTransaction);
+      return bankTransaction;
+    }
+  };
+}
+
+// Sincroniza uma conexão de ponta a ponta e salva o resultado no arquivo
+// local. Falha parcial (ex.: 2ª conta deu erro) ainda salva o progresso da
+// 1ª — cada conta/transação é um registro completo e independente, não faz
+// sentido descartar o que já sincronizou com sucesso.
+async function syncOpenFinanceConnection(connectionId) {
+  const data = loadData();
+  const deps = buildOpenFinanceSyncDeps(data);
+  try {
+    return await openFinanceSync.syncConnection(connectionId, deps);
+  } finally {
+    saveData(data);
+  }
 }
 
 // Janela de datas por granularidade — compartilhada entre o gráfico do Financeiro
