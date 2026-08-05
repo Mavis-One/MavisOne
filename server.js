@@ -3177,6 +3177,31 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (pathname.startsWith('/api/stock/') && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('stock')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/stock/', ''));
+
+      // Vendas/Compras ainda vivem no arquivo local (não são Supabase ainda),
+      // então a FK do banco não protege esse caso hoje — checa direto aqui.
+      const data = loadData();
+      const emUsoEmVendas = [...data.orders, ...data.quotes].some((record) =>
+        (record.items || []).some((item) => item.productId === id));
+      const emUsoEmCompras = (data.purchases || []).some((purchase) => purchase.productId === id);
+      if (emUsoEmVendas || emUsoEmCompras) {
+        return sendJson(res, { error: 'Não é possível excluir: este produto está vinculado a pedidos, orçamentos ou compras existentes.' }, 409);
+      }
+
+      await db.deleteProduct(id);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao excluir produto' }, error.status || 400);
+    }
+  }
+
   if (pathname === '/api/finance' && req.method === 'GET') {
     const data = loadData();
     const user = await getCurrentUser(req);
