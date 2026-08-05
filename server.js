@@ -578,6 +578,41 @@ function resolveFinanceCounterparty(entry, data) {
   return entry.clienteFornecedor || entry.counterpartyName || '-';
 }
 
+// Documento (CPF/CNPJ) da contraparte de um lançamento — só existe quando o
+// lançamento está de fato vinculado a um cadastro (clientSupplierId). Usado
+// pra conciliação com score (scoreBankTransactionMatch): documento batendo é
+// o sinal mais forte que existe, mais confiável que nome ou valor sozinhos.
+function resolveFinanceCounterpartyDocument(entry, data) {
+  if (!entry.clientSupplierId) return '';
+  const found = getCadastroDirectory(data).find((c) => c.id === entry.clientSupplierId);
+  return found ? String(found.document || '') : '';
+}
+
+// Score nomeado de conciliação (seção 17-18 do documento de Open Finance):
+// puramente informativo pra ordenar/destacar candidatos na tela — a regra de
+// ouro continua sendo que NENHUM score, por mais alto que seja, concilia
+// sozinho. O clique do usuário é sempre obrigatório (ver rota /conciliar).
+function scoreBankTransactionMatch({ amountDiff, daysDiff, remaining, nameMatch, documentMatch }) {
+  const exactAmount = amountDiff < 0.01;
+  const amountToleranceRelativa = remaining > 0 ? amountDiff / remaining <= 0.02 : false;
+  const closeAmount = exactAmount || amountToleranceRelativa;
+
+  if (documentMatch && exactAmount) return 'MATCH_EXACT';
+  if (exactAmount && (daysDiff <= 3 || nameMatch)) return 'MATCH_HIGH';
+  if (closeAmount && daysDiff <= 7) return 'MATCH_MEDIUM';
+  if (nameMatch || documentMatch || daysDiff <= 3) return 'MATCH_LOW';
+  return 'NO_MATCH';
+}
+
+// "a contém b" ou "b contém a", os dois já normalizados (sem acento/case) —
+// nome de banco costuma vir abreviado/em ordem diferente do cadastro interno.
+function looseNameMatch(a, b) {
+  const normA = normalizeText(a);
+  const normB = normalizeText(b);
+  if (normA.length < 3 || normB.length < 3) return false;
+  return normA.includes(normB) || normB.includes(normA);
+}
+
 function sumBy(list, key) {
   return (list || []).reduce((sum, item) => sum + Number(item[key] || 0), 0);
 }
@@ -1029,6 +1064,12 @@ function buildBankTransaction(body, user, source) {
 function findBankTransactionMatches(tx, data) {
   const wantedType = tx.type === 'entrada' ? 'receita' : 'despesa';
   const txDate = parseDateOnly(tx.date);
+  // Contraparte vinda de uma sincronização Open Finance de verdade
+  // (merchantName/counterpartyName + os documentos) — em transação manual
+  // isso vem tudo vazio e o score cai pra considerar só valor/data, igual
+  // sempre funcionou.
+  const txCounterpartyName = tx.counterpartyName || tx.merchantName || '';
+  const txCounterpartyDocument = sanitizeDigits(tx.counterpartyDocument || tx.merchantDocument || '');
 
   const candidates = (data.finance || [])
     .filter((entry) => classifyFinanceEntry(entry) === wantedType)
@@ -1043,19 +1084,25 @@ function findBankTransactionMatches(tx, data) {
       const remaining = Math.round((due - paid) * 100) / 100;
       const amountDiff = Math.abs(remaining - Number(tx.amount || 0));
       const daysDiff = Math.abs((parseDateOnly(financeEntryDueDate(entry)) - txDate) / 86400000);
-      return { entry, remaining, amountDiff, daysDiff };
+
+      const entryDocument = sanitizeDigits(resolveFinanceCounterpartyDocument(entry, data));
+      const documentMatch = Boolean(entryDocument && txCounterpartyDocument && entryDocument === txCounterpartyDocument);
+      const nameMatch = Boolean(txCounterpartyName) && looseNameMatch(resolveFinanceCounterparty(entry, data), txCounterpartyName);
+
+      return { entry, remaining, amountDiff, daysDiff, documentMatch, nameMatch };
     })
     .sort((a, b) => (a.amountDiff - b.amountDiff) || (a.daysDiff - b.daysDiff))
     .slice(0, 8);
 
-  return candidates.map(({ entry, remaining, amountDiff }) => ({
+  return candidates.map(({ entry, remaining, amountDiff, daysDiff, documentMatch, nameMatch }) => ({
     id: entry.id,
     description: entry.description,
     dueDate: financeEntryDueDate(entry),
     remaining,
     amountPrevisto: Number(entry.amount || 0),
     clienteFornecedor: resolveFinanceCounterparty(entry, data),
-    exactAmountMatch: amountDiff < 0.01
+    exactAmountMatch: amountDiff < 0.01,
+    matchScore: scoreBankTransactionMatch({ amountDiff, daysDiff, remaining, nameMatch, documentMatch })
   }));
 }
 
