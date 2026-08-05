@@ -3213,7 +3213,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     const products = await db.getProducts();
-    return sendJson(res, { purchases: data.purchases, products });
+    return sendJson(res, { purchases: data.purchases, products, directory: getCadastroDirectory(data) });
   }
 
   if (pathname === '/api/purchases' && req.method === 'POST') {
@@ -3230,10 +3230,22 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Produto não encontrado' }, 400);
       }
 
+      // supplierId aponta pro Cadastro (pessoa ou CNPJ) quando o usuário
+      // escolheu um fornecedor cadastrado; supplierName fica salvo junto
+      // (mesmo padrão de clientSupplierId/clientSupplierName em Vendas) pra
+      // exibição continuar funcionando mesmo que o cadastro mude depois.
+      // Sem supplierId, cai pro texto livre antigo (compatibilidade).
+      let supplierName = body.supplier || 'Fornecedor';
+      if (body.supplierId) {
+        const found = getCadastroDirectory(data).find((entry) => entry.id === body.supplierId);
+        if (found) supplierName = found.name;
+      }
+
       const purchase = {
         id: createId('purchase'),
         date: body.date || new Date().toISOString().slice(0, 10),
-        supplier: body.supplier || 'Fornecedor',
+        supplierId: body.supplierId || '',
+        supplier: supplierName,
         productId: product.id,
         quantity: Number(body.quantity || 0),
         costPrice: Number(body.costPrice || product.costPrice || 0),
@@ -3269,6 +3281,59 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { success: true, purchase, financeEntry });
     } catch (error) {
       return sendJson(res, { error: error.message || 'Erro ao criar compra' }, error.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/purchases/') && req.method === 'PUT') {
+    try {
+      const data = loadData();
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/purchases/', ''));
+      const purchase = data.purchases.find((item) => item.id === id);
+      if (!purchase) {
+        return sendJson(res, { error: 'Compra não encontrada' }, 404);
+      }
+      const body = await readBody(req);
+      const novoStatus = body.status;
+      if (!['pendente', 'recebida', 'cancelada'].includes(novoStatus)) {
+        return sendJson(res, { error: 'Status inválido' }, 400);
+      }
+      if (purchase.status === 'cancelada') {
+        return sendJson(res, { error: 'Esta compra já está cancelada' }, 400);
+      }
+
+      // Cancelar devolve o estoque que a compra tinha somado (o modelo atual
+      // não tem uma etapa separada de "recebimento" — o estoque já entra na
+      // criação) e cancela o lançamento financeiro se ele ainda não foi pago.
+      if (novoStatus === 'cancelada' && purchase.status !== 'cancelada') {
+        const product = await db.getProductById(purchase.productId);
+        if (product) {
+          if (Number(product.stockQuantity || 0) < Number(purchase.quantity || 0)) {
+            const err = new Error(`Não é possível cancelar: das ${purchase.quantity} unidades desta compra, só há ${product.stockQuantity} em estoque hoje (parte já deve ter sido vendida ou ajustada).`);
+            err.status = 409;
+            throw err;
+          }
+          await db.upsertProduct({ ...product, stockQuantity: Number(product.stockQuantity || 0) - Number(purchase.quantity || 0) });
+          registrarMovimentoEstoque(data, {
+            productId: purchase.productId, productName: product.name, type: 'estorno',
+            quantityDelta: -Number(purchase.quantity || 0), referenceType: 'purchase', referenceId: purchase.id,
+            note: `Cancelamento da compra de ${purchase.supplier}`, user
+          });
+        }
+        const financeEntry = data.finance.find((entry) => entry.referenceId === purchase.id && entry.type === 'purchase');
+        if (financeEntry && financeEntry.status === 'pending') {
+          financeEntry.status = 'cancelado';
+        }
+      }
+
+      purchase.status = novoStatus;
+      saveData(data);
+      return sendJson(res, { success: true, purchase });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao atualizar compra' }, error.status || 400);
     }
   }
 

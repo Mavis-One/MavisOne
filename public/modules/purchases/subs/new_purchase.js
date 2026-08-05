@@ -3,13 +3,16 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
 
 window.MavisSubscreenRegistry.purchases.new_purchase = async function renderPurchasesNew(ctx) {
   const { content, data, api, showToast, state, renderApp, loadModule, escapeHtml } = ctx;
+  const directory = data.directory || [];
 
   content.innerHTML = `
     <div class="panel">
       <h3>Nova compra</h3>
       <form id="purchaseForm" class="form-grid">
         <div class="row">
-          <label>Fornecedor<input name="supplier" required /></label>
+          <label>Fornecedor
+            ${renderSearchableSelect({ id: 'purchaseSupplier', name: 'supplierId', options: directory.map((entry) => ({ value: entry.id, label: entry.name })), placeholder: 'Buscar fornecedor cadastrado...' })}
+          </label>
           <label>Data<input name="date" type="date" /></label>
         </div>
         <div class="row">
@@ -22,6 +25,8 @@ window.MavisSubscreenRegistry.purchases.new_purchase = async function renderPurc
     </div>
   `;
 
+  attachSearchableSelect({ id: 'purchaseSupplier', options: directory.map((entry) => ({ value: entry.id, label: entry.name })) });
+
   document.getElementById('purchaseProductSelect')?.addEventListener('change', (event) => {
     const selectedOption = event.target.selectedOptions[0];
     const costPriceInput = document.getElementById('purchaseCostPriceInput');
@@ -33,11 +38,18 @@ window.MavisSubscreenRegistry.purchases.new_purchase = async function renderPurc
   document.getElementById('purchaseForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const formData = new FormData(event.target);
+    const supplierId = document.getElementById('purchaseSupplierValue')?.value || '';
+    const supplierName = document.getElementById('purchaseSupplierInput')?.value || '';
+    if (!supplierId && !supplierName.trim()) {
+      showToast('Informe o fornecedor.', 'warning');
+      return;
+    }
     try {
       await api('/api/purchases', {
         method: 'POST',
         body: JSON.stringify({
-          supplier: formData.get('supplier'),
+          supplierId,
+          supplier: supplierName,
           date: formData.get('date'),
           productId: formData.get('productId'),
           quantity: Number(formData.get('quantity')),
