@@ -1113,10 +1113,20 @@ function findBankTransactionMatches(tx, data) {
 // em lib/db/financeiro.js mas nenhuma rota usa ela ainda — ver db.js). Saldo
 // (account_balances) é a exceção: tabela nova, sem equivalente no JSON, então
 // vai direto pro Supabase via lib/db/openfinance.js.
-function buildOpenFinanceSyncDeps(data) {
+//
+// Cada callback faz seu PRÓPRIO loadData()/saveData(), em vez de carregar
+// uma vez no início da sincronização inteira e salvar só no final — uma
+// sincronização passa por vários "await" (chamadas ao provider, ao Supabase)
+// e o resto do sistema não pausa nesse meio-tempo. Se outra rota gravasse
+// data/db.json enquanto uma sincronização longa ainda está com uma cópia
+// antiga em memória, a gravação final da sincronização apagaria essa outra
+// mudança. Manter cada leitura+escrita curta e imediata (mesmo padrão já
+// usado em toda rota HTTP deste arquivo) evita essa janela de corrida.
+function buildOpenFinanceSyncDeps() {
   return {
-    getExistingAccounts: async (connectionId) => data.bankAccounts.filter((acc) => acc.connectionId === connectionId),
+    getExistingAccounts: async (connectionId) => loadData().bankAccounts.filter((acc) => acc.connectionId === connectionId),
     persistAccount: async ({ connectionId, estabelecimentoId, account }) => {
+      const data = loadData();
       const bankAccount = {
         id: createId('bank'),
         name: account.name || 'Conta sincronizada',
@@ -1136,15 +1146,18 @@ function buildOpenFinanceSyncDeps(data) {
         lastSyncAt: new Date().toISOString()
       };
       data.bankAccounts.push(bankAccount);
+      saveData(data);
       return bankAccount;
     },
     updateAccount: async (localId, account) => {
+      const data = loadData();
       const existing = data.bankAccounts.find((acc) => acc.id === localId);
       if (!existing) return;
       if (account.currentBalance !== undefined) existing.currentBalance = account.currentBalance;
       if (account.availableBalance !== undefined) existing.availableBalance = account.availableBalance;
       existing.status = 'ativa';
       existing.lastSyncAt = new Date().toISOString();
+      saveData(data);
     },
     recordBalance: async (localId, balance) => {
       await openFinanceDb.recordAccountBalance({
@@ -1153,8 +1166,9 @@ function buildOpenFinanceSyncDeps(data) {
         availableBalance: balance.availableBalance
       });
     },
-    getExistingTransactions: async (localAccountId) => data.bankTransactions.filter((tx) => tx.bankAccountId === localAccountId),
+    getExistingTransactions: async (localAccountId) => loadData().bankTransactions.filter((tx) => tx.bankAccountId === localAccountId),
     persistTransaction: async (localAccountId, tx) => {
+      const data = loadData();
       const bankTransaction = {
         id: createId('btx'),
         bankAccountId: localAccountId,
@@ -1187,23 +1201,19 @@ function buildOpenFinanceSyncDeps(data) {
         originalData: tx.raw || null
       };
       data.bankTransactions.push(bankTransaction);
+      saveData(data);
       return bankTransaction;
     }
   };
 }
 
-// Sincroniza uma conexão de ponta a ponta e salva o resultado no arquivo
-// local. Falha parcial (ex.: 2ª conta deu erro) ainda salva o progresso da
-// 1ª — cada conta/transação é um registro completo e independente, não faz
-// sentido descartar o que já sincronizou com sucesso.
+// Sincroniza uma conexão de ponta a ponta. Falha parcial (ex.: 2ª conta deu
+// erro) ainda mantém salvo o progresso da 1ª — cada conta/transação já foi
+// gravada de forma independente pelos callbacks acima, não há nada a
+// descartar nem um saveData() final pra esquecer de chamar no catch.
 async function syncOpenFinanceConnection(connectionId) {
-  const data = loadData();
-  const deps = buildOpenFinanceSyncDeps(data);
-  try {
-    return await openFinanceSync.syncConnection(connectionId, deps);
-  } finally {
-    saveData(data);
-  }
+  const deps = buildOpenFinanceSyncDeps();
+  return openFinanceSync.syncConnection(connectionId, deps);
 }
 
 // Janela de datas por granularidade — compartilhada entre o gráfico do Financeiro
