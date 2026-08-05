@@ -727,3 +727,174 @@ create table if not exists nfe_arquivos (
 -- Permissões granulares do módulo Fiscal (fiscal.emitir, fiscal.cancelar
 -- etc.) — só addição de coluna, não muda nada do resto do sistema.
 alter table if exists users add column if not exists fiscal_permissions text[] not null default '{}';
+
+-- ============================================================================
+-- Fase E — Módulo Open Finance (conexão bancária real via Pluggy/Polp/Celcoin)
+-- Integração: lib/openfinance/service.js. Isolamento multiempresa reaproveita
+-- estabelecimento (Fase C) em vez de um "companyId" novo. bank_accounts e
+-- bank_transactions (Fase A) ganham colunas novas em vez de tabelas
+-- paralelas — o fluxo manual/CSV que já existe continua funcionando igual.
+-- ============================================================================
+
+-- Catálogo de instituições (bancos) que cada provider conhece. Um mesmo banco
+-- pode ter um id diferente em cada provider, por isso a chave é o par
+-- (provider, provider_institution_id), não o nome.
+create table if not exists financial_institutions (
+  id uuid primary key default gen_random_uuid(),
+  provider text not null check (provider in ('pluggy','polp','celcoin')),
+  provider_institution_id text not null,
+  name text not null,
+  image_url text,
+  type text,
+  created_at timestamptz not null default now(),
+  unique (provider, provider_institution_id)
+);
+
+-- Uma conexão = um vínculo com um banco via um provider, pra um
+-- estabelecimento específico. As credenciais/tokens que o provider devolve
+-- (ex.: itemId da Pluggy) ficam cifradas — nunca em texto puro — com chave
+-- própria (OPEN_FINANCE_ENCRYPTION_KEY, independente da chave da Focus NFe).
+create table if not exists open_finance_connections (
+  id uuid primary key default gen_random_uuid(),
+  estabelecimento_id uuid not null references estabelecimento(id),
+  provider text not null check (provider in ('pluggy','polp','celcoin')),
+  provider_connection_id text,
+  institution_id uuid references financial_institutions(id),
+  status text not null default 'pending' check (status in ('pending','connected','error','disconnected')),
+  credentials_encrypted bytea,
+  error_message text,
+  last_sync_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (estabelecimento_id, provider, provider_connection_id)
+);
+create index if not exists idx_of_connections_estabelecimento on open_finance_connections (estabelecimento_id);
+
+-- Colunas novas em bank_accounts (Fase A) pra refletir contas vindas de uma
+-- conexão de verdade, sem duplicar a tabela. Tudo nullable: conta manual
+-- (fluxo que já existe) continua com essas colunas vazias.
+alter table if exists bank_accounts add column if not exists estabelecimento_id uuid references estabelecimento(id);
+alter table if exists bank_accounts add column if not exists connection_id uuid references open_finance_connections(id);
+alter table if exists bank_accounts add column if not exists provider text check (provider is null or provider in ('pluggy','polp','celcoin'));
+alter table if exists bank_accounts add column if not exists provider_account_id text;
+alter table if exists bank_accounts add column if not exists account_type text check (account_type is null or account_type in ('corrente','poupanca','credito'));
+alter table if exists bank_accounts add column if not exists currency text not null default 'BRL';
+alter table if exists bank_accounts add column if not exists current_balance numeric;
+alter table if exists bank_accounts add column if not exists available_balance numeric;
+alter table if exists bank_accounts add column if not exists status text check (status is null or status in ('ativa','erro','desconectada'));
+alter table if exists bank_accounts add column if not exists last_sync_at timestamptz;
+
+-- Idempotência de sincronização de contas: a mesma conta do provider nunca
+-- aparece duas vezes pra mesma conexão. Constraint cheia, não parcial: no
+-- Postgres, NULL nunca é igual a NULL numa unique constraint multi-coluna,
+-- então contas manuais (connection_id/provider_account_id nulos) não
+-- conflitam entre si — e um constraint cheio (não índice parcial) é o que
+-- permite usar .upsert({...}, {onConflict:'connection_id,provider_account_id'})
+-- direto pelo PostgREST, igual já funciona hoje pra nfe_arquivos (unique
+-- nfe_id,tipo). Índice parcial não é aceito como alvo de ON CONFLICT.
+create unique index if not exists idx_bank_accounts_connection_provider_account
+  on bank_accounts (connection_id, provider_account_id);
+
+-- Histórico de saldo — cada sincronização INSERE uma linha nova, nunca
+-- sobrescreve (é isso que permite ver evolução de saldo no tempo).
+create table if not exists account_balances (
+  id uuid primary key default gen_random_uuid(),
+  account_id text not null references bank_accounts(id) on delete cascade,
+  current_balance numeric not null,
+  available_balance numeric,
+  captured_at timestamptz not null default now()
+);
+create index if not exists idx_account_balances_account_captured on account_balances (account_id, captured_at desc);
+
+-- Colunas novas em bank_transactions (Fase A) — o essencial pra idempotência
+-- real é (bank_account_id, provider_transaction_id): a mesma transação nunca
+-- entra duas vezes, mesmo que a sincronização rode de novo (Fase 3).
+alter table if exists bank_transactions add column if not exists provider text check (provider is null or provider in ('pluggy','polp','celcoin'));
+alter table if exists bank_transactions add column if not exists provider_transaction_id text;
+alter table if exists bank_transactions add column if not exists processing_date date;
+alter table if exists bank_transactions add column if not exists direction text check (direction is null or direction in ('entrada','saida'));
+alter table if exists bank_transactions add column if not exists category text;
+alter table if exists bank_transactions add column if not exists subcategory text;
+alter table if exists bank_transactions add column if not exists merchant_name text;
+alter table if exists bank_transactions add column if not exists merchant_document text;
+alter table if exists bank_transactions add column if not exists counterparty_name text;
+alter table if exists bank_transactions add column if not exists counterparty_document text;
+alter table if exists bank_transactions add column if not exists payment_method text;
+alter table if exists bank_transactions add column if not exists pix_key text;
+alter table if exists bank_transactions add column if not exists pix_end_to_end_id text;
+alter table if exists bank_transactions add column if not exists pix_type text;
+alter table if exists bank_transactions add column if not exists document_number text;
+alter table if exists bank_transactions add column if not exists original_data jsonb;
+
+-- Constraint cheia (não parcial) pelo mesmo motivo do idx_bank_accounts_*
+-- acima — permite upsert direto por onConflict e ainda deixa transações
+-- manuais (provider_transaction_id nulo) livres pra coexistir sem conflito.
+create unique index if not exists idx_bank_transactions_account_provider_tx
+  on bank_transactions (bank_account_id, provider_transaction_id);
+
+-- Cartões vinculados a uma conexão, e as transações de cada cartão — mesma
+-- lógica de idempotência (constraint cheia, ver nota acima).
+create table if not exists bank_cards (
+  id uuid primary key default gen_random_uuid(),
+  connection_id uuid not null references open_finance_connections(id) on delete cascade,
+  provider_card_id text not null,
+  brand text,
+  last4 char(4),
+  type text check (type is null or type in ('credito','debito')),
+  created_at timestamptz not null default now(),
+  unique (connection_id, provider_card_id)
+);
+
+create table if not exists card_transactions (
+  id uuid primary key default gen_random_uuid(),
+  card_id uuid not null references bank_cards(id) on delete cascade,
+  provider_transaction_id text,
+  amount numeric not null default 0,
+  currency text not null default 'BRL',
+  description text,
+  date date not null,
+  installments smallint,
+  original_data jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_card_transactions_card_date on card_transactions (card_id, date desc);
+create unique index if not exists idx_card_transactions_card_provider_tx
+  on card_transactions (card_id, provider_transaction_id);
+
+-- Eventos brutos de webhook — gravado ANTES de qualquer processamento (se o
+-- processamento falhar, o evento não se perde). provider_event_id pode ser
+-- nulo pra provider que não manda um id estável; nesse caso não há dedup
+-- automático (múltiplos nulos não conflitam entre si no unique abaixo).
+create table if not exists open_finance_webhook_events (
+  id uuid primary key default gen_random_uuid(),
+  provider text not null,
+  connection_id uuid references open_finance_connections(id) on delete set null,
+  provider_event_id text,
+  payload jsonb not null,
+  processed boolean not null default false,
+  error text,
+  received_at timestamptz not null default now(),
+  unique (provider, provider_event_id)
+);
+create index if not exists idx_of_webhook_events_connection on open_finance_webhook_events (connection_id);
+
+-- Trilha de auditoria específica do Open Finance (acesso a dado bancário,
+-- sincronização, conexão/desconexão) — separada da audit_logs genérica
+-- porque aqui o registro é sobre acesso a dado financeiro sensível, não
+-- sobre uma ação administrativa qualquer. by_id/by_name ficam nullable
+-- porque nem todo evento (ex.: sync automático, webhook) tem um usuário
+-- logado por trás, e (igual audit_logs genérica) by_id de propósito NÃO tem
+-- FK pra users — o registro tem que sobreviver mesmo que o usuário seja
+-- excluído depois.
+create table if not exists open_finance_audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  connection_id uuid references open_finance_connections(id) on delete set null,
+  estabelecimento_id uuid references estabelecimento(id),
+  action text not null,
+  by_id text,
+  by_name text,
+  details jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_of_audit_logs_connection on open_finance_audit_logs (connection_id);
+create index if not exists idx_of_audit_logs_created_at on open_finance_audit_logs (created_at desc);
