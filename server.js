@@ -649,10 +649,18 @@ function getSellersDirectory(data) {
     .map((person) => ({ id: person.id, name: person.name }));
 }
 
-function getNextSalesCode(data) {
-  const next = (typeof data.nextSalesCode === 'number' && data.nextSalesCode > 0) ? data.nextSalesCode : 1001;
-  data.nextSalesCode = next + 1;
-  return next;
+// orders/quotes são Supabase de verdade a partir desta fase — mesma
+// estratégia de syncCadastroData(): popula data.orders/data.quotes com o
+// conteúdo atual do Supabase logo após loadData(), pra buildSalesDashboardSummary/
+// buildSalesChartSeries/filterSalesRecords/serializeSalesRecord (todas leem
+// data.orders/data.quotes) continuarem exatamente como eram antes da
+// migração. Escrita (criar/editar/excluir) é código novo, não passa por
+// aqui — ver db.createOrder/updateOrder/deleteOrder direto nas rotas.
+async function syncSalesData(data) {
+  const [orders, quotes, importLogs] = await Promise.all([db.getOrders(), db.getQuotes(), db.getImportLogs()]);
+  data.orders = orders;
+  data.quotes = quotes;
+  data.importLogs = importLogs;
 }
 
 function normalizeSalesItems(rawItems) {
@@ -2060,6 +2068,7 @@ const server = http.createServer(async (req, res) => {
     const granularity = url.searchParams.get('granularity') || 'month';
     const canSales = user.allowedModules.includes('sales');
     const canFinance = user.allowedModules.includes('finance');
+    if (canSales) await syncSalesData(data);
 
     const salesChartSeries = canSales ? buildSalesChartSeries(data, granularity) : [];
     const financeEntries = canFinance ? (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry)) : [];
@@ -2093,6 +2102,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/dashboard' && req.method === 'GET') {
     const data = loadData();
     await syncCadastroData(data);
+    await syncSalesData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2103,6 +2113,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/records' && req.method === 'GET') {
     const data = loadData();
     await syncCadastroData(data);
+    await syncSalesData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2162,7 +2173,7 @@ const server = http.createServer(async (req, res) => {
         record = {
           id: createId(type === 'order' ? 'ord' : 'qte'),
           type,
-          code: getNextSalesCode(data),
+          code: await db.getNextSalesCode(),
           clientSupplierId: body.clientSupplierId || '',
           clientSupplierName: body.clientSupplierName || '',
           companyId: body.companyId || '',
@@ -2186,18 +2197,23 @@ const server = http.createServer(async (req, res) => {
         };
         // Orçamento nunca mexe em estoque (é só proposta). Pedido só desconta
         // se já nasce "faturado" — o caminho normal é criar "pendente" e
-        // faturar depois via PUT (ver rota de atualização, mais abaixo).
+        // faturar depois via PUT (ver rota de atualização, mais abaixo). Roda
+        // ANTES de gravar no Supabase: se faltar estoque, nada é criado.
         if (type === 'order' && record.status === 'faturado') {
           await transitionOrderStockEffect(data, { oldItems: [], newItems: items, wasApplied: false, willApply: true, record, user });
           record.stockApplied = true;
         }
-        data[type === 'order' ? 'orders' : 'quotes'].push(record);
+        record = type === 'order' ? await db.createOrder(record) : await db.createQuote(record);
       } else if (type === 'nfe') {
         record = { id: createId('nfe'), type: 'nfe', number: body.number || createId('nfe-num'), customer: body.customer || 'Cliente', date: body.date || new Date().toISOString().slice(0, 10), amount: Number(body.amount || 0), status: body.status || 'emitida', key: body.key || '' };
         data.nfes.push(record);
       } else {
         return sendJson(res, { error: 'Tipo inválido' }, 400);
       }
+      // O registro em si (order/quote) já foi gravado no Supabase acima; isso
+      // aqui persiste o que ainda é do arquivo local — nfe (branch acima) e,
+      // mais importante, data.stockMovements (ledger do estoque), que
+      // transitionOrderStockEffect pode ter alterado mesmo no branch de pedido.
       saveData(data);
       const responseRecord = (type === 'order' || type === 'quote') ? serializeSalesRecord(record, data) : record;
       return sendJson(res, { success: true, record: responseRecord });
@@ -2210,14 +2226,16 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncSalesData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
-      const list = data.orders.some((entry) => entry.id === id) ? data.orders : data.quotes;
-      const index = list.findIndex((entry) => entry.id === id);
-      if (index < 0) {
+      const isOrder = data.orders.some((entry) => entry.id === id);
+      const list = isOrder ? data.orders : data.quotes;
+      const current = list.find((entry) => entry.id === id);
+      if (!current) {
         return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       }
       const body = await readBody(req);
@@ -2226,8 +2244,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
       }
       const { itemsTotal, totalAmount } = computeSalesTotals(items, body.discountAmount, body.discountPercent, body.freight);
-      const current = list[index];
-      const updated = {
+      let updated = {
         ...current,
         clientSupplierId: body.clientSupplierId || '',
         clientSupplierName: body.clientSupplierName || '',
@@ -2254,7 +2271,10 @@ const server = http.createServer(async (req, res) => {
         updated.stockApplied = willApply;
       }
 
-      list[index] = updated;
+      updated = isOrder ? await db.updateOrder(id, updated) : await db.updateQuote(id, updated);
+      // updateOrder/updateQuote não tocam data.orders/data.quotes (já
+      // gravaram no Supabase direto) — saveData aqui é só pra persistir
+      // data.stockMovements, que transitionOrderStockEffect pode ter alterado.
       saveData(data);
       return sendJson(res, { success: true, record: serializeSalesRecord(updated, data) });
     } catch (error) {
@@ -2270,26 +2290,21 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
-      let recordKey = null;
-      let index = -1;
-      for (const key of ['orders', 'quotes']) {
-        const found = data[key].findIndex((entry) => entry.id === id);
-        if (found >= 0) {
-          recordKey = key;
-          index = found;
-          break;
-        }
-      }
-      if (index < 0) {
+      const order = await db.getOrderById(id);
+      const recordKey = order ? 'orders' : 'quotes';
+      const record = order || await db.getQuoteById(id);
+      if (!record) {
         return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       }
-      const record = data[recordKey][index];
       if (recordKey === 'orders' && record.stockApplied) {
         // Excluir um pedido já faturado devolve o estoque reservado — não faz
         // sentido "sumir" com uma reserva de estoque junto com o registro.
         await transitionOrderStockEffect(data, { oldItems: record.items || [], newItems: [], wasApplied: true, willApply: false, record, user });
       }
-      data[recordKey].splice(index, 1);
+      await (recordKey === 'orders' ? db.deleteOrder(id) : db.deleteQuote(id));
+      // saveData aqui é só pra persistir data.stockMovements (ver comentário
+      // equivalente na rota PUT acima) — o registro em si já foi excluído
+      // do Supabase pela linha anterior.
       saveData(data);
       return sendJson(res, { success: true });
     } catch (error) {
@@ -2308,30 +2323,38 @@ const server = http.createServer(async (req, res) => {
       const rows = body.rows || (body.text ? parseCsv(body.text) : []);
       const type = body.type || 'order';
       const created = [];
-      rows.forEach((row) => {
+      // CSV importado é sempre "achatado" (sem itens/desconto/frete) — cai
+      // nos defaults de buildOrderQuoteRow (items: [], etc.). clientSupplierName
+      // preenchido explicitamente com o nome da planilha, não só o fallback
+      // da coluna antiga "customer".
+      for (const row of rows) {
         const customer = row.customer || row.cliente || row.Cliente || '';
         const amount = Number(row.amount || row.valor || row.total || 0);
         const date = row.date || row.data || new Date().toISOString().slice(0, 10);
         const status = row.status || row.statusPedido || 'pendente';
         if (type === 'order') {
-          const record = { id: createId('ord'), type: 'order', customer, date, amount, status, note: row.note || '' };
-          data.orders.push(record);
+          const record = await db.createOrder({
+            clientSupplierName: customer, date, totalAmount: amount, itemsTotal: amount, status, note: row.note || '',
+            createdBy: user.id, createdByName: user.name, code: await db.getNextSalesCode()
+          });
           created.push(record);
         } else if (type === 'quote') {
-          const record = { id: createId('qte'), type: 'quote', customer, date, amount, status, note: row.note || '' };
-          data.quotes.push(record);
+          const record = await db.createQuote({
+            clientSupplierName: customer, date, totalAmount: amount, itemsTotal: amount, status, note: row.note || '',
+            createdBy: user.id, createdByName: user.name, code: await db.getNextSalesCode()
+          });
           created.push(record);
         } else if (type === 'nfe') {
           const record = { id: createId('nfe'), type: 'nfe', number: row.number || row.numero || createId('nfe-num'), customer, date, amount, status, key: row.key || '' };
           data.nfes.push(record);
           created.push(record);
         }
-      });
-      data.importLogs.push({ id: createId('import'), type, source: body.source || 'manual', count: created.length, createdAt: new Date().toISOString() });
+      }
+      await db.addImportLog({ type, source: body.source || 'manual', count: created.length });
       saveData(data);
       return sendJson(res, { success: true, created, count: created.length });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao importar vendas' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao importar vendas' }, error.status || 400);
     }
   }
 
@@ -3392,9 +3415,12 @@ const server = http.createServer(async (req, res) => {
       }
       const id = decodeURIComponent(pathname.replace('/api/stock/', ''));
 
-      // Vendas/Compras ainda vivem no arquivo local (não são Supabase ainda),
-      // então a FK do banco não protege esse caso hoje — checa direto aqui.
+      // Vendas já é Supabase (a FK do schema em sales/purchases ainda não
+      // protege esse caso — são tabelas diferentes das de verdade usadas
+      // aqui, orders/quotes). Compras ainda vive no arquivo local. Checa
+      // direto nas duas fontes.
       const data = loadData();
+      await syncSalesData(data);
       const emUsoEmVendas = [...data.orders, ...data.quotes].some((record) =>
         (record.items || []).some((item) => item.productId === id));
       const emUsoEmCompras = (data.purchases || []).some((purchase) => purchase.productId === id);

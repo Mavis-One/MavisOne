@@ -115,6 +115,56 @@ create table if not exists quotes (
   created_at timestamptz not null default now()
 );
 
+-- Fase F — orders/quotes (Fase A) só tinham o modelo antigo de item único
+-- (customer/amount). O formulário real de Vendas (Novo Pedido/Orçamento) usa
+-- múltiplos itens, cliente/empresa/vendedor/depósito vinculados a cadastro,
+-- desconto e frete — nenhuma dessas colunas existia. "customer"/"amount"
+-- continuam sendo escritas (mapeadas de clientSupplierName/totalAmount) só
+-- pra não quebrar a constraint not null antiga; quem lê de verdade é
+-- client_supplier_name/total_amount daqui pra frente.
+alter table if exists orders add column if not exists code integer;
+alter table if exists orders add column if not exists client_supplier_id text;
+alter table if exists orders add column if not exists client_supplier_name text;
+alter table if exists orders add column if not exists company_id text;
+alter table if exists orders add column if not exists seller_id text;
+alter table if exists orders add column if not exists deposit_id text;
+alter table if exists orders add column if not exists due_date date;
+alter table if exists orders add column if not exists items jsonb not null default '[]'::jsonb;
+alter table if exists orders add column if not exists discount_amount numeric not null default 0;
+alter table if exists orders add column if not exists discount_percent numeric not null default 0;
+alter table if exists orders add column if not exists freight numeric not null default 0;
+alter table if exists orders add column if not exists items_total numeric not null default 0;
+alter table if exists orders add column if not exists total_amount numeric not null default 0;
+alter table if exists orders add column if not exists stock_applied boolean not null default false;
+alter table if exists orders add column if not exists created_by text;
+alter table if exists orders add column if not exists created_by_name text;
+alter table if exists orders add column if not exists updated_at timestamptz not null default now();
+create index if not exists idx_orders_code on orders (code);
+create index if not exists idx_orders_client_supplier on orders (client_supplier_id);
+
+alter table if exists quotes add column if not exists code integer;
+alter table if exists quotes add column if not exists client_supplier_id text;
+alter table if exists quotes add column if not exists client_supplier_name text;
+alter table if exists quotes add column if not exists company_id text;
+alter table if exists quotes add column if not exists seller_id text;
+alter table if exists quotes add column if not exists deposit_id text;
+alter table if exists quotes add column if not exists due_date date;
+alter table if exists quotes add column if not exists items jsonb not null default '[]'::jsonb;
+alter table if exists quotes add column if not exists discount_amount numeric not null default 0;
+alter table if exists quotes add column if not exists discount_percent numeric not null default 0;
+alter table if exists quotes add column if not exists freight numeric not null default 0;
+alter table if exists quotes add column if not exists items_total numeric not null default 0;
+alter table if exists quotes add column if not exists total_amount numeric not null default 0;
+alter table if exists quotes add column if not exists stock_applied boolean not null default false;
+alter table if exists quotes add column if not exists created_by text;
+alter table if exists quotes add column if not exists created_by_name text;
+alter table if exists quotes add column if not exists updated_at timestamptz not null default now();
+create index if not exists idx_quotes_code on quotes (code);
+create index if not exists idx_quotes_client_supplier on quotes (client_supplier_id);
+
+-- Log's Vendas Importadas — já existia a tabela (Fase A), sem alteração
+-- necessária, só passa a ser usada de verdade a partir desta fase.
+
 create table if not exists import_logs (
   id text primary key,
   type text,
