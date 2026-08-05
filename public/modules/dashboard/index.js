@@ -1,0 +1,279 @@
+window.MavisModuleRegistry = window.MavisModuleRegistry || {};
+
+// Ordem das abas exibidas nos favoritos do dashboard (mesma ordem do menu lateral).
+// Rótulos e sub-abas vêm de moduleLabels/moduleSubItems (definidos em app.js) para
+// que sidebar e dashboard nunca fiquem dessincronizados.
+const DASHBOARD_MODULE_ORDER = ['dashboard', 'sales', 'purchases', 'stock', 'finance', 'cadastros'];
+
+// Sub-aba padrão ao abrir cada módulo pelo balão do dashboard.
+const DASHBOARD_DEFAULT_SUB = {
+  sales: 'orders_quotes',
+  cadastros: 'list',
+  purchases: 'new_purchase',
+  finance: 'dashboard',
+  stock: 'products'
+};
+
+function buildPinKey(moduleKey, subKey) {
+  return subKey ? `${moduleKey}::${subKey}` : moduleKey;
+}
+
+function getModuleIcon(label) {
+  const letters = String(label || '')
+    .replace(/[^A-Za-zÀ-ÿ0-9 ]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
+  return letters || 'MO';
+}
+
+function getVisibleModules(state) {
+  const allowed = new Set(Array.isArray(state.user?.allowedModules) ? state.user.allowedModules : []);
+  return DASHBOARD_MODULE_ORDER
+    .filter((moduleKey) => moduleKey === 'dashboard' || allowed.has(moduleKey))
+    .map((moduleKey) => ({
+      key: moduleKey,
+      label: moduleLabels[moduleKey] || moduleKey,
+      items: moduleSubItems[moduleKey] || []
+    }));
+}
+
+function getDefaultSubKey(moduleKey) {
+  return DASHBOARD_DEFAULT_SUB[moduleKey] || null;
+}
+
+function navigateToModule(ctx, moduleKey, subKey) {
+  const { state, renderApp, loadModule } = ctx;
+  state.activeModule = moduleKey;
+  state.activeSub = subKey || null;
+  state.selectedModule = null;
+  renderApp();
+  loadModule(moduleKey);
+}
+
+// Nome não pode ser "saveDashboardPins": app.js já declara uma função global com esse
+// nome (assinatura de 1 argumento). Como estes são scripts clássicos, os dois top-level
+// "function saveDashboardPins" viram a MESMA variável global — a de app.js, carregada
+// por último, vence. Uma chamada daqui com (ctx, nextPins) caía na versão de app.js,
+// que só declara 1 parâmetro: "ctx" virava o valor de "nextPins" lá dentro, falhava o
+// Array.isArray() e zerava todos os favoritos a cada clique. Nome diferente evita a colisão.
+async function applyDashboardPins(ctx, nextPins) {
+  if (typeof window.saveDashboardPins === 'function') {
+    const saved = await window.saveDashboardPins(nextPins);
+    ctx.state.user.dashboardPins = saved;
+    return saved;
+  }
+
+  ctx.state.user.dashboardPins = nextPins;
+  return nextPins;
+}
+
+function renderPinButton(ctx, pinKey, label, pinnedSet) {
+  const pinned = pinnedSet.has(pinKey);
+  return `
+    <button
+      type="button"
+      class="dashboard-pin-btn favorite-btn ${pinned ? 'active' : ''}"
+      aria-pressed="${pinned ? 'true' : 'false'}"
+      title="${pinned ? 'Desfixar' : 'Fixar'} ${ctx.escapeHtml(label)}"
+      data-pin-key="${ctx.escapeHtml(pinKey)}"
+    >
+      ${favoriteIconSvg(pinned)}
+    </button>
+  `;
+}
+
+// Cada módulo favoritado gera DOIS balões independentes: um para o módulo em si
+// (título + fixar/desfixar) e outro, ao lado/abaixo, com a coluna das abas
+// daquele módulo marcadas como favoritas.
+function renderModuleGroup(ctx, module, pinnedSet) {
+  const { state, escapeHtml } = ctx;
+  const mainPinKey = buildPinKey(module.key);
+  const isMainPinned = pinnedSet.has(mainPinKey);
+  const pinnedItems = module.items.filter((item) => pinnedSet.has(buildPinKey(module.key, item.key)));
+  const showModule = isMainPinned || pinnedItems.length > 0;
+
+  if (!showModule) {
+    return '';
+  }
+
+  return `
+    <div class="dashboard-favorite-group">
+      <section class="dashboard-module-balloon ${state.activeModule === module.key ? 'active' : ''}">
+        <button type="button" class="dashboard-module-title" data-open-module="${escapeHtml(module.key)}">
+          <span class="dashboard-module-avatar">${escapeHtml(getModuleIcon(module.label))}</span>
+          <span class="dashboard-module-heading">
+            <strong>${escapeHtml(module.label)}</strong>
+            <span>${isMainPinned ? 'Módulo fixado' : 'Abas fixadas'}</span>
+          </span>
+        </button>
+        ${renderPinButton(ctx, mainPinKey, module.label, pinnedSet)}
+      </section>
+
+      ${pinnedItems.length ? `
+        <section class="dashboard-tabs-balloon">
+          <div class="dashboard-tabs-column">
+            ${pinnedItems.map((item) => {
+              const pinKey = buildPinKey(module.key, item.key);
+              const isActive = state.activeModule === module.key && state.activeSub === item.key;
+              return `
+                <div class="dashboard-tab-row ${isActive ? 'active' : ''}">
+                  <button type="button" class="dashboard-tab-open" data-open-sub="${escapeHtml(module.key)}::${escapeHtml(item.key)}">
+                    ${escapeHtml(item.label)}
+                  </button>
+                  ${renderPinButton(ctx, pinKey, item.label, pinnedSet)}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      ` : ''}
+    </div>
+  `;
+}
+
+const DASHBOARD_CHART_GRANULARITY_OPTIONS = [
+  { key: 'day', label: 'Diário' },
+  { key: 'week', label: 'Semanal' },
+  { key: 'month', label: 'Mensal' },
+  { key: 'year', label: 'Anual' }
+];
+
+window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
+  const { content, state, showToast, api, escapeHtml } = ctx;
+  const visibleModules = getVisibleModules(state);
+  const pinnedSet = getDashboardPinSet();
+  const favoriteModules = visibleModules.filter((module) => {
+    const mainPinned = pinnedSet.has(buildPinKey(module.key));
+    const hasPinnedItems = module.items.some((item) => pinnedSet.has(buildPinKey(module.key, item.key)));
+    return mainPinned || hasPinnedItems;
+  });
+
+  const granularity = state.dashboardChartGranularity || 'month';
+  let charts = { salesChartSeries: [], financeChartSeries: [], permissions: {} };
+  try {
+    charts = await api(`/api/dashboard/charts?granularity=${granularity}`);
+  } catch (error) {
+    // Sem os gráficos o resto do Dashboard Geral (favoritos) continua funcionando normalmente.
+  }
+
+  async function togglePin(pinKey, label) {
+    const wasPinned = pinnedSet.has(pinKey);
+    const nextPins = wasPinned
+      ? Array.from(pinnedSet).filter((item) => item !== pinKey)
+      : Array.from(new Set([...pinnedSet, pinKey]));
+
+    try {
+      await applyDashboardPins(ctx, nextPins);
+      showToast(wasPinned ? `Removido dos fixados: ${label}` : `Fixado: ${label}`, 'success');
+      await window.MavisModuleRegistry.dashboard(ctx);
+    } catch (error) {
+      showToast(error.message || 'Erro ao salvar favoritos do dashboard.', 'error');
+    }
+  }
+
+  const salesChartPanel = charts.permissions?.sales ? `
+    <section class="panel finance-panel-stripe-chart">
+      <h3>Fluxo de Vendas</h3>
+      <div class="finance-chart-legend">
+        <span><i class="finance-legend-dot" style="background:#2563eb;"></i> Pedidos</span>
+        <span><i class="finance-legend-dot" style="background:#8b5cf6;"></i> Orçamentos</span>
+      </div>
+      <div class="finance-chart-wrap">
+        ${financeBuildChartSvg(charts.salesChartSeries || [], escapeHtml, [
+          { key: 'pedidos', cssClass: 'finance-chart-line-blue' },
+          { key: 'orcamentos', cssClass: 'finance-chart-line-purple' }
+        ])}
+      </div>
+    </section>
+  ` : '';
+
+  const financeChartPanel = charts.permissions?.finance ? `
+    <section class="panel finance-panel-stripe-chart">
+      <h3>Fluxo Financeiro</h3>
+      <div class="finance-chart-legend">
+        <span><i class="finance-legend-dot finance-legend-receita"></i> Receitas</span>
+        <span><i class="finance-legend-dot finance-legend-despesa"></i> Despesas</span>
+        <span><i class="finance-legend-line"></i> Saldo</span>
+      </div>
+      <div class="finance-chart-wrap">
+        ${financeBuildChartSvg(charts.financeChartSeries || [], escapeHtml)}
+      </div>
+    </section>
+  ` : '';
+
+  content.innerHTML = `
+    <div class="dashboard-shell">
+      <section class="panel dashboard-favorites-hero">
+        <div>
+          <h3>FAVORITOS:</h3>
+          <p class="muted">Somente os módulos e abas fixados aparecem aqui.</p>
+        </div>
+      </section>
+
+      ${(salesChartPanel || financeChartPanel) ? `
+        <div class="dashboard-charts-section">
+          <div class="finance-chart-head">
+            <h3>Fluxo geral</h3>
+            <div class="finance-granularity-group" role="tablist">
+              ${DASHBOARD_CHART_GRANULARITY_OPTIONS.map((opt) => `<button type="button" class="finance-pill finance-pill-sm ${granularity === opt.key ? 'active' : ''}" data-dashboard-granularity="${opt.key}">${opt.label}</button>`).join('')}
+            </div>
+          </div>
+          <div class="dashboard-charts-grid">
+            ${salesChartPanel}
+            ${financeChartPanel}
+          </div>
+        </div>
+      ` : ''}
+
+      <section class="panel">
+        ${favoriteModules.length ? `
+          <div class="dashboard-favorites-grid">
+            ${favoriteModules.map((module) => renderModuleGroup(ctx, module, pinnedSet)).join('')}
+          </div>
+        ` : `
+          <div class="dashboard-empty-state">
+            <strong>Sem favoritos</strong>
+            <p class="muted">Fixe módulos ou abas para que eles apareçam aqui.</p>
+          </div>
+        `}
+      </section>
+    </div>
+  `;
+
+  content.querySelectorAll('[data-dashboard-granularity]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.dashboardChartGranularity = button.dataset.dashboardGranularity;
+      window.MavisModuleRegistry.dashboard(ctx);
+    });
+  });
+
+  content.querySelectorAll('[data-open-module]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const moduleKey = button.dataset.openModule;
+      if (!moduleKey) return;
+      navigateToModule(ctx, moduleKey, getDefaultSubKey(moduleKey));
+    });
+  });
+
+  content.querySelectorAll('[data-open-sub]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const [moduleKey, subKey] = String(button.dataset.openSub || '').split('::');
+      if (!moduleKey || !subKey) return;
+      navigateToModule(ctx, moduleKey, subKey);
+    });
+  });
+
+  content.querySelectorAll('[data-pin-key]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const pinKey = button.dataset.pinKey;
+      if (!pinKey) return;
+      togglePin(pinKey, getDashboardPinLabel(pinKey));
+    });
+  });
+};

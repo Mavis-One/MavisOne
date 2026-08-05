@@ -5,10 +5,46 @@ const state = {
   activeSub: null,
   selectedModule: null,
   cadastroDraft: { people: {}, cnpjs: {} },
+  salesDraft: {},
   moduleRouteHistory: {},
   isNavigatingBack: false
 };
 const LAST_ROUTE_KEY = 'mavisone:last-route';
+const SESSION_TOKEN_KEY = 'mavisone:session-token';
+function getTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+function themeIconSvg(theme) {
+  return theme === 'dark'
+    ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>'
+    : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"></path></svg>';
+}
+
+// Ícone padrão (clipe de papel) usado em todos os botões de favoritar/fixar do sistema.
+function favoriteIconSvg(active) {
+  return `<svg class="favorite-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${active ? 2.5 : 2}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>`;
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
+}
+
+function getSessionToken() {
+  return sessionStorage.getItem(SESSION_TOKEN_KEY);
+}
+
+function setSessionToken(token) {
+  if (!token) return;
+  sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+  // Remove legacy token persistence to prevent auto-login after closing the tab.
+  localStorage.removeItem('token');
+}
+
+function clearSessionToken() {
+  sessionStorage.removeItem(SESSION_TOKEN_KEY);
+  localStorage.removeItem('token');
+}
 
 function persistLastRoute() {
   const payload = {
@@ -92,6 +128,17 @@ function canGoBack() {
   return Boolean(moduleHistory && moduleHistory.stack.length > 0);
 }
 
+// renderApp() (chamado antes de loadModule) desenha o botão de voltar usando o
+// histórico ainda desatualizado, já que o push da rota só acontece dentro de
+// loadModule -> trackRouteChange. Sincroniza o estado do botão logo após esse push,
+// sem precisar re-renderizar (e assim apagar) o conteúdo do módulo.
+function syncBackButtonState() {
+  const backBtn = document.getElementById('backBtn');
+  if (backBtn) {
+    backBtn.disabled = !canGoBack();
+  }
+}
+
 function goBackToPreviousRoute() {
   const moduleHistory = state.moduleRouteHistory[state.activeModule];
   if (!moduleHistory || !moduleHistory.stack.length) return;
@@ -116,6 +163,12 @@ function getSecondarySidebarConfig(moduleName) {
   }
   if (moduleName === 'purchases') {
     return { module: 'purchases', title: 'Compras', subtitle: 'Fluxos', items: moduleSubItems.purchases };
+  }
+  if (moduleName === 'finance') {
+    return { module: 'finance', title: 'Financeiro', subtitle: 'Fluxos', items: moduleSubItems.finance };
+  }
+  if (moduleName === 'stock') {
+    return { module: 'stock', title: 'Estoque', subtitle: 'Fluxos', items: moduleSubItems.stock };
   }
   return null;
 }
@@ -144,7 +197,7 @@ function renderSecondarySidebar() {
     return;
   }
 
-  const activeKey = state.activeSub || (secondaryConfig.module === 'sales' ? 'orders_quotes' : secondaryConfig.module === 'cadastros' ? 'list' : secondaryConfig.module === 'purchases' ? 'new_purchase' : null);
+  const activeKey = state.activeSub || (secondaryConfig.module === 'sales' ? 'orders_quotes' : secondaryConfig.module === 'cadastros' ? 'list' : secondaryConfig.module === 'purchases' ? 'new_purchase' : secondaryConfig.module === 'finance' ? 'dashboard' : secondaryConfig.module === 'stock' ? 'products' : null);
 
   sidebar.innerHTML = `
     <div class="secondary-header">
@@ -153,14 +206,19 @@ function renderSecondarySidebar() {
     </div>
     <div class="secondary-nav-list">
       ${secondaryConfig.items.map((sub) => `
-        <button class="secondary-nav-item ${(state.activeModule === secondaryConfig.module && activeKey === sub.key) ? 'active' : ''}" data-module="${secondaryConfig.module}" data-sub="${sub.key}">
-          <span>${sub.label}</span>
-        </button>
+        <div class="secondary-nav-item-row">
+          <button type="button" class="secondary-nav-item secondary-open-item ${(state.activeModule === secondaryConfig.module && activeKey === sub.key) ? 'active' : ''}" data-module="${secondaryConfig.module}" data-sub="${sub.key}">
+            <span>${sub.label}</span>
+          </button>
+          <button type="button" class="sidebar-pin-btn secondary-pin ${getDashboardPinSet().has(`${secondaryConfig.module}::${sub.key}`) ? 'active' : ''}" data-pin-key="${secondaryConfig.module}::${sub.key}" title="${getDashboardPinSet().has(`${secondaryConfig.module}::${sub.key}`) ? 'Desfixar' : 'Fixar'} ${sub.label}" aria-pressed="${getDashboardPinSet().has(`${secondaryConfig.module}::${sub.key}`) ? 'true' : 'false'}">
+            ${favoriteIconSvg(getDashboardPinSet().has(`${secondaryConfig.module}::${sub.key}`))}
+          </button>
+        </div>
       `).join('')}
     </div>
   `;
 
-  sidebar.querySelectorAll('.secondary-nav-item').forEach((btn) => {
+  sidebar.querySelectorAll('.secondary-open-item').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       state.activeModule = btn.dataset.module;
@@ -176,12 +234,84 @@ function syncSecondarySidebar() {
   renderSecondarySidebar();
 }
 
+function normalizeDashboardPins(pins) {
+  if (!Array.isArray(pins)) return [];
+  const result = [];
+  const seen = new Set();
+  pins.forEach((pin) => {
+    const value = String(pin || '').trim();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    result.push(value);
+  });
+  return result;
+}
+
+function getDashboardPinsStorageKey(userId) {
+  return `mavisone:dashboard-pins:${String(userId || 'anonymous')}`;
+}
+
+function readStoredDashboardPins(userId) {
+  try {
+    const raw = localStorage.getItem(getDashboardPinsStorageKey(userId));
+    return normalizeDashboardPins(raw ? JSON.parse(raw) : []);
+  } catch (_) {
+    return [];
+  }
+}
+
+function persistStoredDashboardPins(userId, pins) {
+  localStorage.setItem(getDashboardPinsStorageKey(userId), JSON.stringify(normalizeDashboardPins(pins)));
+}
+
+function getDashboardPinSet() {
+  const serverPins = Array.isArray(state.user?.dashboardPins) ? state.user.dashboardPins : [];
+  const storedPins = state.user?.id ? readStoredDashboardPins(state.user.id) : [];
+  return new Set(normalizeDashboardPins([...serverPins, ...storedPins]));
+}
+
+function getDashboardPinLabel(pinKey) {
+  const [moduleKey, subKey] = String(pinKey || '').split('::');
+  const moduleLabel = moduleLabels[moduleKey] || moduleKey;
+  if (!subKey) {
+    return moduleLabel;
+  }
+  const subItem = (moduleSubItems[moduleKey] || []).find((item) => item.key === subKey);
+  return `${moduleLabel} > ${subItem ? subItem.label : subKey}`;
+}
+
+async function saveDashboardPins(nextPins) {
+  const normalized = normalizeDashboardPins(nextPins);
+  if (state.user?.id) {
+    persistStoredDashboardPins(state.user.id, normalized);
+  }
+
+  if (state.user) {
+    state.user.dashboardPins = normalized;
+  }
+
+  if (state.dashboardPinsSyncEnabled !== false) {
+    try {
+      await api('/api/me/dashboard-pins', {
+        method: 'PUT',
+        body: JSON.stringify({ dashboardPins: normalized })
+      });
+    } catch (_) {
+      state.dashboardPinsSyncEnabled = false;
+      // Fallback local: o banco ainda não expôs a coluna de favoritos no ambiente atual.
+    }
+  }
+  return normalized;
+}
+
+window.saveDashboardPins = saveDashboardPins;
+
 async function api(path, options = {}) {
   const headers = {};
   if (options.body) {
     headers['Content-Type'] = 'application/json';
   }
-  const token = localStorage.getItem('token');
+  const token = getSessionToken();
   if (token) {
     headers['x-auth-token'] = token;
   }
@@ -276,7 +406,7 @@ function renderAuth(error = '') {
             <input name="password" type="password" required placeholder="Digite sua senha" />
           </label>
           <button type="submit">Entrar</button>
-          ${error ? `<p style="color:#b91c1c">${error}</p>` : ''}
+          ${error ? `<p style="color:var(--danger-text)">${error}</p>` : ''}
         </form>
       </div>
     </div>
@@ -290,8 +420,14 @@ function renderAuth(error = '') {
         method: 'POST',
         body: JSON.stringify({ username: formData.get('username'), password: formData.get('password') })
       });
-      localStorage.setItem('token', response.token);
+      setSessionToken(response.token);
       state.user = response.user;
+      state.user.dashboardPins = normalizeDashboardPins([
+        ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
+        ...readStoredDashboardPins(state.user.id)
+      ]);
+      persistStoredDashboardPins(state.user.id, state.user.dashboardPins);
+      applyTheme(state.user.theme);
       showToast('Login realizado com sucesso.', 'success');
       renderApp();
       await loadModule('dashboard');
@@ -303,7 +439,7 @@ function renderAuth(error = '') {
 }
 
 function renderApp() {
-  const activeSubKey = state.activeSub || (state.activeModule === 'sales' ? 'orders_quotes' : state.activeModule === 'cadastros' ? 'list' : state.activeModule === 'purchases' ? 'new_purchase' : null);
+  const activeSubKey = state.activeSub || (state.activeModule === 'sales' ? 'orders_quotes' : state.activeModule === 'cadastros' ? 'list' : state.activeModule === 'purchases' ? 'new_purchase' : state.activeModule === 'finance' ? 'dashboard' : state.activeModule === 'stock' ? 'products' : null);
   const activeSubLabel = (state.activeModule === 'cadastros' && activeSubKey === 'edit')
     ? 'Edição'
     : (state.activeModule === 'cadastros' && activeSubKey === 'register')
@@ -332,13 +468,23 @@ function renderApp() {
             .filter((module) => state.user?.allowedModules?.includes(module))
             .map((module) => `
               <div class="nav-block">
-                <button class="nav-item ${state.activeModule === module ? 'active' : ''}" data-module="${module}">
-                  <span class="icon">${moduleLabels[module].split(' ').map(s=>s[0]).join('').slice(0,2).toUpperCase()}</span>
-                  <span class="text">${moduleLabels[module]}</span>
-                </button>
+                <div class="nav-item-row">
+                  <button type="button" class="nav-item nav-open-item ${state.activeModule === module ? 'active' : ''}" data-module="${module}">
+                    <span class="icon">${moduleIcons[module] || ''}</span>
+                    <span class="text">${moduleLabels[module]}</span>
+                  </button>
+                  <button type="button" class="sidebar-pin-btn ${getDashboardPinSet().has(module) ? 'active' : ''}" data-pin-key="${module}" title="${getDashboardPinSet().has(module) ? 'Desfixar' : 'Fixar'} ${moduleLabels[module]}" aria-pressed="${getDashboardPinSet().has(module) ? 'true' : 'false'}">
+                    ${favoriteIconSvg(getDashboardPinSet().has(module))}
+                  </button>
+                </div>
                 <div class="submenu">
                   ${ (moduleSubItems[module] || []).map((sub) => `
-                    <button class="sub-item ${state.activeModule === module && state.activeSub === sub.key ? 'active' : ''}" data-module="${module}" data-sub="${sub.key}">${sub.label}</button>
+                    <div class="sub-item-row">
+                      <button type="button" class="sub-item sub-open-item ${state.activeModule === module && state.activeSub === sub.key ? 'active' : ''}" data-module="${module}" data-sub="${sub.key}">${sub.label}</button>
+                      <button type="button" class="sidebar-pin-btn ${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'active' : ''}" data-pin-key="${module}::${sub.key}" title="${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'Desfixar' : 'Fixar'} ${sub.label}" aria-pressed="${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'true' : 'false'}">
+                        ${favoriteIconSvg(getDashboardPinSet().has(`${module}::${sub.key}`))}
+                      </button>
+                    </div>
                   `).join('') }
                 </div>
               </div>
@@ -350,21 +496,21 @@ function renderApp() {
         <div class="topbar">
           <div class="topbar-title-wrap">
             <button class="icon-btn back-btn" id="backBtn" title="Voltar para a tela anterior" aria-label="Voltar para a tela anterior" ${canGoBack() ? '' : 'disabled'}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M15 18l-6-6 6-6"></path>
               </svg>
             </button>
             <h1>${moduleLabels[state.activeModule]}${activeSubLabel ? ' > ' + activeSubLabel : ''}</h1>
           </div>
           <div class="topbar-actions">
+            <button class="icon-btn" id="themeToggleBtn" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro">
+              ${themeIconSvg(getTheme())}
+            </button>
             ${hasModuleAccess('settings') ? `
             <button class="icon-btn settings-btn" id="settingsBtn" title="Configurações">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"></circle>
-                <path d="M12 1v6m0 6v6"></path>
-                <path d="M4.22 4.22l4.24 4.24m3.08 3.08l4.24 4.24"></path>
-                <path d="M1 12h6m6 0h6"></path>
-                <path d="M4.22 19.78l4.24-4.24m3.08-3.08l4.24-4.24"></path>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
               </svg>
             </button>
             ` : ''}
@@ -383,7 +529,7 @@ function renderApp() {
   });
 
   // main nav click handlers
-  document.querySelectorAll('.nav-item').forEach((button) => {
+  document.querySelectorAll('.nav-open-item').forEach((button) => {
     button.onclick = () => {
       const module = button.dataset.module;
       state.activeModule = module;
@@ -395,7 +541,7 @@ function renderApp() {
   });
 
   // submenu handlers
-  document.querySelectorAll('.sub-item').forEach((btn) => {
+  document.querySelectorAll('.sub-open-item').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const module = btn.dataset.module;
@@ -406,6 +552,38 @@ function renderApp() {
       renderApp();
       loadModule(state.activeModule);
     });
+  });
+
+  document.querySelectorAll('.sidebar-pin-btn[data-pin-key]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pinKey = btn.dataset.pinKey;
+      if (!pinKey) return;
+      const currentPins = getDashboardPinSet();
+      const nextPins = currentPins.has(pinKey)
+        ? Array.from(currentPins).filter((item) => item !== pinKey)
+        : Array.from(new Set([...currentPins, pinKey]));
+      try {
+        await saveDashboardPins(nextPins);
+        renderApp();
+        await loadModule(state.activeModule);
+      } catch (error) {
+        showToast(error.message || 'Erro ao salvar favoritos.', 'error');
+      }
+    });
+  });
+
+  document.getElementById('themeToggleBtn')?.addEventListener('click', async () => {
+    const nextTheme = getTheme() === 'dark' ? 'light' : 'dark';
+    applyTheme(nextTheme);
+    const btn = document.getElementById('themeToggleBtn');
+    if (btn) btn.innerHTML = themeIconSvg(nextTheme);
+    if (state.user) state.user.theme = nextTheme;
+    try {
+      await api('/api/me/theme', { method: 'PUT', body: JSON.stringify({ theme: nextTheme }) });
+    } catch (error) {
+      showToast(error.message || 'Erro ao salvar preferência de tema.', 'error');
+    }
   });
 
   document.getElementById('settingsBtn')?.addEventListener('click', () => {
@@ -420,13 +598,21 @@ function renderApp() {
     loadModule('settings');
   });
 
-  document.getElementById('logoutBtn').addEventListener('click', () => {
-    localStorage.removeItem('token');
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/logout', { method: 'POST' });
+    } catch (_) {
+      // Ignore API logout errors and always clear local session.
+    }
+    clearSessionToken();
     localStorage.removeItem(LAST_ROUTE_KEY);
     state.user = null;
     state.selectedModule = null;
     state.moduleRouteHistory = {};
     state.isNavigatingBack = false;
+    // Evita vazar rascunhos/depósitos não salvos do usuário anterior para o próximo login na mesma aba.
+    state.cadastroDraft = { people: {}, cnpjs: {} };
+    applyTheme('light');
     renderAuth();
   });
 }
@@ -441,9 +627,26 @@ const moduleLabels = {
   cadastros: 'Cadastros'
 };
 
-// Sub-itens por módulo (usados para exibir submenu na sidebar)
+const moduleIcons = {
+  dashboard: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>',
+  sales: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>',
+  purchases: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>',
+  stock: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline><polyline points="7.5 19.79 7.5 14.6 3 12"></polyline><polyline points="21 12 16.5 14.6 16.5 19.79"></polyline><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>',
+  finance: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>',
+  settings: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 6v6"></path><path d="M4.22 4.22l4.24 4.24m3.08 3.08l4.24 4.24"></path><path d="M1 12h6m6 0h6"></path><path d="M4.22 19.78l4.24-4.24m3.08-3.08l4.24-4.24"></path></svg>',
+  cadastros: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>'
+};
+
+// ============================================================================
+// CONFIGURAÇÃO DAS ABAS (menu principal + submenus da sidebar)
+// Cada chave de nível 1 é uma ABA principal; os arrays são as SUB-ABAS
+// exibidas no submenu daquela aba.
+// ============================================================================
 const moduleSubItems = {
+  // ABA: Dashboard Geral — sem sub-abas
   dashboard: [],
+
+  // ABA: Vendas
   sales: [
     { key: 'orders_quotes', label: 'Pedidos e Orçamentos' },
     { key: 'new_quote', label: 'Novo Orçamento' },
@@ -462,17 +665,35 @@ const moduleSubItems = {
     { key: 'configure_promotions', label: 'Configurar Promoções' },
     { key: 'new_promotion', label: 'Nova Promoção' }
   ],
+
+  // ABA: Compras
   purchases: [
     { key: 'new_purchase', label: 'Nova compra' },
     { key: 'purchase_history', label: 'Histórico de compras' },
     { key: 'suppliers', label: 'Fornecedores' }
   ],
+
+  // ABA: Estoque
   stock: [ { key: 'products', label: 'Produtos' }, { key: 'movements', label: 'Movimentos' } ],
-  finance: [ { key: 'payables', label: 'Contas a pagar' }, { key: 'receivables', label: 'Contas a receber' } ],
+
+  // ABA: Financeiro
+  finance: [
+    { key: 'dashboard', label: 'Dashboard' },
+    { key: 'lancamentos', label: 'Lançamentos' },
+    { key: 'novo_lancamento', label: 'Novo Lançamento' },
+    { key: 'nfe_emitidas', label: 'NF-e Emitidas' },
+    { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa' },
+    { key: 'emitir_nfe_focus', label: 'Emitir NF-e (Focus)' },
+    { key: 'extrato_open_finance', label: 'Extrato Open Finance' }
+  ],
+
+  // ABA: Configurações
   settings: [ { key: 'users', label: 'Usuários' }, { key: 'company', label: 'Empresa' } ],
+
+  // ABA: Cadastros
   cadastros: [
     { key: 'list', label: 'Cadastros' },
-    { key: 'deposits', label: 'Depositos' }
+    { key: 'deposits', label: 'Depósitos' }
   ]
 };
 
@@ -543,6 +764,69 @@ function isValidDocument(documentValue) {
   return digits.length === 11 ? isValidCpf(digits) : digits.length === 14 ? isValidCnpj(digits) : false;
 }
 
+function normalizeRegistrationText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function getRegistrationAddressLine(record) {
+  return record.address || record.street || '';
+}
+
+function buildRegistrationAddressKey(record) {
+  const line = normalizeRegistrationText(getRegistrationAddressLine(record));
+  if (!line) {
+    return '';
+  }
+  return [
+    line,
+    normalizeRegistrationText(record.streetNumber || record.addressNumber || ''),
+    normalizeRegistrationText(record.neighborhood || ''),
+    normalizeRegistrationText(record.city || ''),
+    normalizeRegistrationText(record.state || ''),
+    sanitizeDigits(record.zipCode || '')
+  ].join('|');
+}
+
+function getMissingRequiredRegistrationFields(record) {
+  const missing = [];
+  if (!String(record.name || '').trim()) missing.push('name');
+  if (!String(record.document || '').trim()) missing.push('document');
+  if (!record.foreignAddress) {
+    if (!String(getRegistrationAddressLine(record)).trim()) missing.push('addressLine');
+    if (!String(record.city || '').trim()) missing.push('city');
+    if (!String(record.state || '').trim()) missing.push('state');
+    if (!String(record.zipCode || '').trim()) missing.push('zipCode');
+  }
+  return missing;
+}
+
+function findDuplicateRegistrationClient(existingRecords, record, excludeId) {
+  const document = sanitizeDigits(record.document || '');
+  const name = normalizeRegistrationText(record.name || '');
+  const addressKey = buildRegistrationAddressKey(record);
+
+  for (const entry of existingRecords) {
+    if (excludeId && entry.id === excludeId) {
+      continue;
+    }
+    if (document && sanitizeDigits(entry.document || '') === document) {
+      return `Já existe um cadastro com o CPF/CNPJ informado (${entry.name || 'sem nome'}).`;
+    }
+    if (name && normalizeRegistrationText(entry.name || '') === name) {
+      return `Já existe um cadastro com o nome "${record.name}".`;
+    }
+    if (addressKey && buildRegistrationAddressKey(entry) === addressKey) {
+      return 'Já existe um cadastro com este mesmo endereço.';
+    }
+  }
+  return null;
+}
+
 function getDocumentType(documentValue) {
   const digits = sanitizeDigits(documentValue);
   if (digits.length === 11) return 'cpf';
@@ -556,6 +840,11 @@ function maskDocumentValue(value, type = '') {
     return formatCpfCnpj(digits.slice(0, 14));
   }
   return formatCpfCnpj(digits.slice(0, 11));
+}
+
+function maskCep(value) {
+  const digits = sanitizeDigits(value).slice(0, 8);
+  return digits.replace(/^(\d{5})(\d)/, '$1-$2');
 }
 
 function getOfficialEmail(official) {
@@ -591,6 +880,7 @@ async function loadModule(moduleName) {
   }
 
   trackRouteChange(moduleName, state.activeSub);
+  syncBackButtonState();
   state.activeModule = moduleName;
   persistLastRoute();
   const content = document.getElementById('moduleContent');
@@ -599,7 +889,40 @@ async function loadModule(moduleName) {
   }
 
   try {
+    if (window.MavisModuleRouter?.render) {
+      const handled = await window.MavisModuleRouter.render(moduleName, {
+        state,
+        content,
+        api,
+        showToast,
+        escapeHtml,
+        moduleLabels,
+        confirmModal,
+        renderApp,
+        loadModule
+      });
+      if (handled) {
+        return;
+      }
+    }
+
+    // ========================================================================
+    // ABA: DASHBOARD GERAL
+    // ========================================================================
     if (moduleName === 'dashboard') {
+      if (window.MavisModuleRegistry?.dashboard) {
+        await window.MavisModuleRegistry.dashboard({
+          api,
+          content,
+          state,
+          showToast,
+          escapeHtml,
+          renderApp,
+          loadModule
+        });
+        return;
+      }
+
       const data = await api('/api/dashboard');
       const dashboardPermissions = data.permissions || {};
       content.innerHTML = `
@@ -621,136 +944,549 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: VENDAS (16 sub-abas — ver comentários abaixo de cada `sub ===`)
+    // ========================================================================
     if (moduleName === 'sales') {
       const sub = state.activeSub || 'orders_quotes';
 
+      const SALES_STATUS_BADGE_META = {
+        'pendente': { label: 'Pendente', tone: 'warning' },
+        'faturado': { label: 'Faturado', tone: 'success' },
+        'cancelado': { label: 'Cancelado', tone: 'danger' },
+        'em aberto': { label: 'Em aberto', tone: 'info' },
+        'aprovado': { label: 'Aprovado', tone: 'success' },
+        'reprovado': { label: 'Reprovado', tone: 'danger' },
+        'emitida': { label: 'Emitida', tone: 'success' },
+        'cancelada': { label: 'Cancelada', tone: 'danger' }
+      };
+      const salesStatusBadge = (status) => {
+        const key = String(status || '').toLowerCase();
+        const meta = SALES_STATUS_BADGE_META[key] || { label: status || '-', tone: 'muted' };
+        return `<span class="finance-badge finance-badge-${meta.tone}">${meta.label}</span>`;
+      };
+      const salesFormatDate = (value) => {
+        if (!value) return '-';
+        const [y, m, d] = String(value).split('-');
+        if (!y || !m || !d) return value;
+        return `${d}/${m}/${y}`;
+      };
+      const salesFormatBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+      // Sub-aba: Pedidos e Orçamentos
       if (sub === 'orders_quotes') {
-        const data = await api('/api/sales/records?view=orders_quotes');
-        const records = [...(data.orders || []), ...(data.quotes || [])];
-        content.innerHTML = `
-          <div class="cards">
-            <div class="card"><h3>Pedidos</h3><p>${data.orders?.length || 0}</p></div>
-            <div class="card"><h3>Orçamentos</h3><p>${data.quotes?.length || 0}</p></div>
-            <div class="card"><h3>NF-e</h3><p>${data.nfes?.length || 0}</p></div>
-            <div class="card"><h3>Importações</h3><p>${data.importLogs?.length || 0}</p></div>
-          </div>
-          <div class="panel">
-            <h3>Pedidos e Orçamentos</h3>
-            <table class="table">
-              <thead><tr><th>Tipo</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Status</th></tr></thead>
-              <tbody>
-                ${records.map((record) => `<tr><td>${record.type === 'quote' ? 'Orçamento' : 'Pedido'}</td><td>${escapeHtml(record.customer)}</td><td>${escapeHtml(record.date)}</td><td>R$ ${Number(record.amount || 0).toFixed(2)}</td><td>${escapeHtml(record.status || 'pendente')}</td></tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-        `;
-        return;
-      }
+        const draft = state.salesDraft || (state.salesDraft = {});
+        const filters = draft.ordersFilters || (draft.ordersFilters = { search: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
+        const showFilters = Boolean(draft.showOrdersFilters);
+        const page = draft.ordersPage || 1;
+        const limit = 15;
 
-      if (sub === 'new_order') {
+        const params = new URLSearchParams({ view: 'orders_quotes', page: String(page), limit: String(limit) });
+        Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+
+        const data = await api(`/api/sales/records?${params.toString()}`);
+        const records = data.records || [];
+        const totalPages = Math.max(1, Math.ceil((data.total || 0) / limit));
+        const meta = data.meta || { companies: [], sellers: [], deposits: [], directory: [] };
+
         content.innerHTML = `
-          <div class="panel">
-            <h3>Novo Pedido</h3>
-            <form id="salesOrderForm" class="form-grid">
-              <div class="row">
-                <label>Cliente<input name="customer" required /></label>
-                <label>Data<input name="date" type="date" /></label>
-                <label>Valor<input name="amount" type="number" step="0.01" required value="0" /></label>
+          <div class="finance-stat-cards">
+            ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: String(data.orders?.length || 0) })}
+            ${financeStatCard({ tone: 'purple', label: 'Orçamentos', value: String(data.quotes?.length || 0) })}
+            ${financeStatCard({ tone: 'teal', label: 'NF-e', value: String(data.nfes?.length || 0) })}
+            ${financeStatCard({ tone: 'cyan', label: 'Importações', value: String(data.importLogs?.length || 0) })}
+          </div>
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Pedidos e Orçamentos</h3>
+              <p class="muted">${data.total || 0} registro${data.total === 1 ? '' : 's'} encontrado${data.total === 1 ? '' : 's'}</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" onclick="state.salesDraft.editRecord=null; state.activeSub='new_order'; renderApp(); loadModule('sales');">+ Novo Pedido</button>
+              <button type="button" class="secondary" onclick="state.salesDraft.editRecord=null; state.activeSub='new_quote'; renderApp(); loadModule('sales');">+ Novo Orçamento</button>
+              <button type="button" class="secondary" id="salesFilterToggleBtn">${showFilters ? 'Ocultar filtros' : 'Busca avançada'}</button>
+            </div>
+          </div>
+
+          <form id="salesQuickSearchForm" class="row" style="margin-bottom: 12px;">
+            <label class="cadastro-field" style="grid-column: span 3;">
+              <span>Busca</span>
+              <input id="salesQuickSearch" name="search" value="${escapeHtml(filters.search)}" placeholder="Código ou cliente" />
+            </label>
+            <div style="align-self: end;"><button type="submit" class="secondary">Buscar</button></div>
+          </form>
+
+          ${showFilters ? `
+            <form id="salesFilterForm" class="cadastro-filter-panel">
+              <div class="cadastro-filter-grid-5">
+                <label class="cadastro-field">
+                  <span>Status</span>
+                  <select name="status">
+                    <option value="">Todos</option>
+                    ${['pendente', 'faturado', 'cancelado', 'em aberto', 'aprovado', 'reprovado'].map((value) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${value.charAt(0).toUpperCase() + value.slice(1)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="cadastro-field">
+                  <span>Empresa</span>
+                  <select name="companyId">
+                    <option value="">Todas</option>
+                    ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.companyId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="cadastro-field">
+                  <span>Vendedor</span>
+                  <select name="sellerId">
+                    <option value="">Todos</option>
+                    ${meta.sellers.map((s) => `<option value="${escapeHtml(s.id)}" ${filters.sellerId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="cadastro-field">
+                  <span>Cliente/Fornecedor</span>
+                  <select name="clientSupplierId">
+                    <option value="">Todos</option>
+                    ${meta.directory.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.clientSupplierId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                  </select>
+                </label>
+                <label class="cadastro-field">
+                  <span>Data inicial</span>
+                  <input type="date" name="dateFrom" value="${escapeHtml(filters.dateFrom)}" />
+                </label>
+                <label class="cadastro-field">
+                  <span>Data final</span>
+                  <input type="date" name="dateTo" value="${escapeHtml(filters.dateTo)}" />
+                </label>
               </div>
-              <div class="row">
-                <label>Status<select name="status"><option value="pendente">Pendente</option><option value="faturado">Faturado</option><option value="cancelado">Cancelado</option></select></label>
-                <label>Observação<input name="note" /></label>
+              <div class="cadastro-filter-actions">
+                <button type="submit">Aplicar filtros</button>
+                <button type="button" class="secondary" id="salesFilterClearBtn">Limpar filtros</button>
               </div>
-              <button type="submit">Salvar pedido</button>
             </form>
+          ` : ''}
+
+          <div class="panel">
+            <div class="table-scroll">
+              <table class="table table-actions">
+                <thead><tr><th>Código</th><th>Tipo</th><th>Data</th><th>Cliente</th><th>Empresa</th><th>Vendedor</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+                <tbody>
+                  ${records.length ? records.map((record) => `
+                    <tr>
+                      <td>${escapeHtml(String(record.code))}</td>
+                      <td>${record.type === 'quote' ? 'Orçamento' : 'Pedido'}</td>
+                      <td>${salesFormatDate(record.date)}</td>
+                      <td>${escapeHtml(record.customer)}</td>
+                      <td>${escapeHtml(record.companyName || '-')}</td>
+                      <td>${escapeHtml(record.sellerName || '-')}</td>
+                      <td>${salesFormatBRL(record.amount)}</td>
+                      <td>${salesStatusBadge(record.status)}</td>
+                      <td>
+                        <button class="icon-button edit sales-edit-record" data-id="${escapeHtml(record.id)}" title="Editar" aria-label="Editar">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                        </button>
+                        <button class="icon-button sales-delete-record" data-id="${escapeHtml(record.id)}" title="Excluir" aria-label="Excluir">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                        </button>
+                      </td>
+                    </tr>
+                  `).join('') : `<tr><td colspan="9" class="muted">Nenhum pedido ou orçamento encontrado${filters.search || showFilters ? ' com os filtros atuais' : ''}.</td></tr>`}
+                </tbody>
+              </table>
+            </div>
+            <div class="finance-pagination">
+              <button type="button" class="secondary" id="salesPrevPage" ${page <= 1 ? 'disabled' : ''}>Anterior</button>
+              <span class="muted">Página ${page} de ${totalPages}</span>
+              <button type="button" class="secondary" id="salesNextPage" ${page >= totalPages ? 'disabled' : ''}>Próxima</button>
+            </div>
           </div>
         `;
-        document.getElementById('salesOrderForm').addEventListener('submit', async (event) => {
+
+        document.getElementById('salesFilterToggleBtn')?.addEventListener('click', () => {
+          state.salesDraft.showOrdersFilters = !showFilters;
+          loadModule('sales');
+        });
+        document.getElementById('salesQuickSearchForm')?.addEventListener('submit', (event) => {
+          event.preventDefault();
+          filters.search = document.getElementById('salesQuickSearch').value;
+          state.salesDraft.ordersPage = 1;
+          loadModule('sales');
+        });
+        document.getElementById('salesFilterForm')?.addEventListener('submit', (event) => {
           event.preventDefault();
           const formData = new FormData(event.target);
-          try {
-            await api('/api/sales/records', {
-              method: 'POST',
-              body: JSON.stringify({
-                type: 'order',
-                customer: formData.get('customer'),
-                date: formData.get('date'),
-                amount: Number(formData.get('amount')),
-                status: formData.get('status'),
-                note: formData.get('note')
-              })
-            });
-            showToast('Pedido salvo com sucesso.', 'success');
-            state.activeSub = 'orders_quotes';
+          filters.status = formData.get('status') || '';
+          filters.companyId = formData.get('companyId') || '';
+          filters.sellerId = formData.get('sellerId') || '';
+          filters.clientSupplierId = formData.get('clientSupplierId') || '';
+          filters.dateFrom = formData.get('dateFrom') || '';
+          filters.dateTo = formData.get('dateTo') || '';
+          state.salesDraft.ordersPage = 1;
+          loadModule('sales');
+        });
+        document.getElementById('salesFilterClearBtn')?.addEventListener('click', () => {
+          Object.assign(filters, { search: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
+          state.salesDraft.ordersPage = 1;
+          loadModule('sales');
+        });
+        document.getElementById('salesPrevPage')?.addEventListener('click', () => {
+          if (page > 1) { state.salesDraft.ordersPage = page - 1; loadModule('sales'); }
+        });
+        document.getElementById('salesNextPage')?.addEventListener('click', () => {
+          if (page < totalPages) { state.salesDraft.ordersPage = page + 1; loadModule('sales'); }
+        });
+        document.querySelectorAll('.sales-edit-record').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const record = records.find((entry) => entry.id === btn.dataset.id);
+            if (!record) return;
+            state.salesDraft.editRecord = record;
+            state.activeSub = record.type === 'quote' ? 'new_quote' : 'new_order';
             renderApp();
             loadModule('sales');
-          } catch (error) {
-            showToast(error.message || 'Erro ao salvar pedido.', 'error');
-          }
+          });
+        });
+        document.querySelectorAll('.sales-delete-record').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const confirmed = await confirmModal('Confirma excluir este registro?');
+            if (!confirmed) return;
+            try {
+              await api(`/api/sales/records/${btn.dataset.id}`, { method: 'DELETE' });
+              showToast('Registro excluído com sucesso.', 'success');
+              loadModule('sales');
+            } catch (error) {
+              showToast(error.message || 'Erro ao excluir registro.', 'error');
+            }
+          });
         });
         return;
       }
 
-      if (sub === 'new_quote') {
-        content.innerHTML = `
-          <div class="panel">
-            <h3>Novo Orçamento</h3>
-            <form id="salesQuoteForm" class="form-grid">
-              <div class="row">
-                <label>Cliente<input name="customer" required /></label>
-                <label>Data<input name="date" type="date" /></label>
-                <label>Valor<input name="amount" type="number" step="0.01" required value="0" /></label>
+      // Sub-abas: Novo Pedido / Novo Orçamento — mesmo formulário, só muda o tipo
+      // (evita duplicar a lógica de itens/totais entre as duas telas).
+      if (sub === 'new_order' || sub === 'new_quote') {
+        const recordType = sub === 'new_order' ? 'order' : 'quote';
+        const editRecord = state.salesDraft?.editRecord && state.salesDraft.editRecord.type === recordType
+          ? state.salesDraft.editRecord
+          : null;
+        const isEditing = Boolean(editRecord);
+        const title = recordType === 'order' ? 'Pedido' : 'Orçamento';
+        const statusOptions = recordType === 'order'
+          ? [{ value: 'pendente', label: 'Pendente' }, { value: 'faturado', label: 'Faturado' }, { value: 'cancelado', label: 'Cancelado' }]
+          : [{ value: 'em aberto', label: 'Em aberto' }, { value: 'aprovado', label: 'Aprovado' }, { value: 'reprovado', label: 'Reprovado' }];
+
+        let meta = { companies: [], sellers: [], deposits: [], directory: [], products: [] };
+        try {
+          meta = await api('/api/sales/meta');
+        } catch (error) {
+          showToast('Não foi possível carregar clientes/empresas/produtos para o formulário.', 'warning');
+        }
+
+        let items = isEditing ? (editRecord.items || []).map((item) => ({ ...item })) : [];
+        let discountAmount = isEditing ? Number(editRecord.discountAmount || 0) : 0;
+        let discountPercent = isEditing ? Number(editRecord.discountPercent || 0) : 0;
+        let freight = isEditing ? Number(editRecord.freight || 0) : 0;
+
+        // O formulário inteiro é redesenhado a cada produto adicionado/removido (mais simples
+        // que atualizar só a tabela). Isso apagaria os campos de cabeçalho já preenchidos, então
+        // o valor atual é salvo aqui antes de cada redesenho e usado para repopular o HTML novo.
+        const formState = {
+          clientSupplierId: editRecord?.clientSupplierId || '',
+          companyId: editRecord?.companyId || '',
+          sellerId: editRecord?.sellerId || '',
+          depositId: editRecord?.depositId || '',
+          status: editRecord?.status || statusOptions[0].value,
+          date: editRecord?.date || new Date().toISOString().slice(0, 10),
+          dueDate: editRecord?.dueDate || '',
+          note: editRecord?.note || ''
+        };
+        const syncFormState = () => {
+          const form = document.getElementById('salesRecordForm');
+          if (!form) return;
+          formState.clientSupplierId = form.querySelector('[name="clientSupplierId"]')?.value || '';
+          formState.companyId = form.querySelector('[name="companyId"]')?.value || '';
+          formState.sellerId = form.querySelector('[name="sellerId"]')?.value || '';
+          formState.depositId = form.querySelector('[name="depositId"]')?.value || '';
+          formState.status = form.querySelector('[name="status"]')?.value || formState.status;
+          formState.date = form.querySelector('[name="date"]')?.value || formState.date;
+          formState.dueDate = form.querySelector('[name="dueDate"]')?.value || formState.dueDate;
+          formState.note = form.querySelector('[name="note"]')?.value || '';
+        };
+
+        const computeTotals = () => {
+          const itemsTotal = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0);
+          const percentOff = itemsTotal * (Number(discountPercent || 0) / 100);
+          const totalAmount = Math.max(0, itemsTotal - Number(discountAmount || 0) - percentOff + Number(freight || 0));
+          return { itemsTotal, totalAmount };
+        };
+
+        const renderForm = () => {
+          const { itemsTotal, totalAmount } = computeTotals();
+
+          content.innerHTML = `
+            <div class="cadastro-page-head">
+              <div>
+                <h3>${isEditing ? `Editar ${title} #${escapeHtml(String(editRecord.code))}` : `Novo ${title}`}</h3>
+                <p class="muted">${isEditing ? 'Código gerado automaticamente na criação.' : 'O código é gerado automaticamente ao salvar.'}</p>
               </div>
-              <div class="row">
-                <label>Status<select name="status"><option value="em aberto">Em aberto</option><option value="aprovado">Aprovado</option><option value="reprovado">Reprovado</option></select></label>
-                <label>Observação<input name="note" /></label>
-              </div>
-              <button type="submit">Salvar orçamento</button>
-            </form>
-          </div>
-        `;
-        document.getElementById('salesQuoteForm').addEventListener('submit', async (event) => {
-          event.preventDefault();
-          const formData = new FormData(event.target);
-          try {
-            await api('/api/sales/records', {
-              method: 'POST',
-              body: JSON.stringify({
-                type: 'quote',
-                customer: formData.get('customer'),
-                date: formData.get('date'),
-                amount: Number(formData.get('amount')),
-                status: formData.get('status'),
-                note: formData.get('note')
-              })
+            </div>
+
+            <div class="panel">
+              <form id="salesRecordForm" class="form-grid">
+                <div class="row">
+                  <label>Cliente/Fornecedor *
+                    <select name="clientSupplierId" required>
+                      <option value="">Selecione</option>
+                      ${meta.directory.map((entry) => `<option value="${escapeHtml(entry.id)}" ${formState.clientSupplierId === entry.id ? 'selected' : ''}>${escapeHtml(entry.name)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <label>Empresa
+                    <select name="companyId">
+                      <option value="">Nenhuma</option>
+                      ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${formState.companyId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <button type="button" class="icon-button edit" id="salesQuickAddCompany" title="Nova empresa">+</button>
+                </div>
+                <div id="salesInlineAddCompanyRow" class="row hidden" style="margin-top: -8px;">
+                  <label>Nome da empresa<input id="salesNewCompanyName" placeholder="Razão social" /></label>
+                  <label>CNPJ<input id="salesNewCompanyDocument" placeholder="Somente números" /></label>
+                  <div style="align-self: end;"><button type="button" class="secondary" id="salesSaveNewCompany">Salvar empresa</button></div>
+                </div>
+
+                <div class="row">
+                  <label>Vendedor
+                    <select name="sellerId">
+                      <option value="">Nenhum</option>
+                      ${meta.sellers.map((s) => `<option value="${escapeHtml(s.id)}" ${formState.sellerId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <label>Depósito
+                    <select name="depositId">
+                      <option value="">Nenhum</option>
+                      ${meta.deposits.map((d) => `<option value="${escapeHtml(d.id)}" ${formState.depositId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <label>Status
+                    <select name="status">
+                      ${statusOptions.map((opt) => `<option value="${opt.value}" ${formState.status === opt.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
+                    </select>
+                  </label>
+                </div>
+
+                ${meta.sellers.length === 0 ? '<p class="muted">Nenhum vendedor cadastrado — em Cadastros, marque uma pessoa com o papel "Vendedor" para que ela apareça aqui.</p>' : ''}
+
+                <div class="cadastro-section">
+                  <div class="cadastro-section-header">
+                    <h4>Produtos</h4>
+                    <p>Adicione um ou mais produtos ao ${title.toLowerCase()}.</p>
+                  </div>
+                  <div class="cadastro-section-body">
+                    <div class="row">
+                      <label style="flex: 2;">Produto
+                        <select id="salesProductSelect">
+                          <option value="">Selecione um produto</option>
+                          ${meta.products.map((p) => `<option value="${escapeHtml(p.id)}" data-price="${Number(p.salePrice || 0)}" data-name="${escapeHtml(p.name)}" data-sku="${escapeHtml(p.sku || '')}">${escapeHtml(p.name)}${p.sku ? ` (${escapeHtml(p.sku)})` : ''} — ${salesFormatBRL(p.salePrice)}</option>`).join('')}
+                        </select>
+                      </label>
+                      <label>Quantidade<input id="salesProductQty" type="number" min="1" step="1" value="1" /></label>
+                      <div style="align-self: end;"><button type="button" class="secondary" id="salesAddItemBtn">+ Adicionar</button></div>
+                    </div>
+
+                    <div class="table-scroll" style="margin-top: 12px;">
+                      <table class="table table-actions">
+                        <thead><tr><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th><th>Ações</th></tr></thead>
+                        <tbody>
+                          ${items.length ? items.map((item, index) => `
+                            <tr>
+                              <td>${escapeHtml(item.name)}</td>
+                              <td><input type="number" min="1" step="1" class="sales-item-qty" data-index="${index}" value="${item.quantity}" style="width: 80px;" /></td>
+                              <td><input type="number" min="0" step="0.01" class="sales-item-price" data-index="${index}" value="${item.unitPrice}" style="width: 110px;" /></td>
+                              <td>${salesFormatBRL(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</td>
+                              <td><button type="button" class="icon-button sales-remove-item" data-index="${index}" title="Remover">×</button></td>
+                            </tr>
+                          `).join('') : '<tr><td colspan="5" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="row">
+                  <label>Desconto (R$)<input name="discountAmount" type="number" min="0" step="0.01" value="${discountAmount}" /></label>
+                  <label>Desconto (%)<input name="discountPercent" type="number" min="0" max="100" step="0.01" value="${discountPercent}" /></label>
+                  <label>Frete (R$)<input name="freight" type="number" min="0" step="0.01" value="${freight}" /></label>
+                </div>
+                <div class="row">
+                  <label>Subtotal dos produtos<input value="${salesFormatBRL(itemsTotal)}" disabled /></label>
+                  <label><strong>Total do ${title.toLowerCase()}</strong><input value="${salesFormatBRL(totalAmount)}" disabled style="font-weight: 700;" /></label>
+                </div>
+
+                <div class="row">
+                  <label>Data<input name="date" type="date" value="${formState.date}" /></label>
+                  ${recordType === 'quote' ? `<label>Validade<input name="dueDate" type="date" value="${formState.dueDate}" /></label>` : ''}
+                </div>
+                <div class="row">
+                  <label style="flex: 1;">Observações<textarea name="note" rows="3">${escapeHtml(formState.note)}</textarea></label>
+                </div>
+
+                <button type="submit">${isEditing ? `Salvar alterações` : `Salvar ${title.toLowerCase()}`}</button>
+              </form>
+            </div>
+          `;
+
+          document.getElementById('salesQuickAddCompany')?.addEventListener('click', () => {
+            document.getElementById('salesInlineAddCompanyRow')?.classList.toggle('hidden');
+          });
+          document.getElementById('salesSaveNewCompany')?.addEventListener('click', async () => {
+            const name = document.getElementById('salesNewCompanyName')?.value.trim();
+            if (!name) {
+              showToast('Informe o nome da empresa.', 'warning');
+              return;
+            }
+            try {
+              const res = await api('/api/cadastros/empresas', {
+                method: 'POST',
+                body: JSON.stringify({ name, document: document.getElementById('salesNewCompanyDocument')?.value.trim() || '' })
+              });
+              meta.companies.push(res.company);
+              showToast('Empresa cadastrada com sucesso.', 'success');
+              const select = content.querySelector('select[name="companyId"]');
+              if (select) {
+                select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(res.company.id)}" selected>${escapeHtml(res.company.name)}</option>`);
+                select.value = res.company.id;
+              }
+              document.getElementById('salesInlineAddCompanyRow')?.classList.add('hidden');
+            } catch (error) {
+              showToast(error.message || 'Erro ao cadastrar empresa.', 'error');
+            }
+          });
+
+          document.getElementById('salesAddItemBtn')?.addEventListener('click', () => {
+            const select = document.getElementById('salesProductSelect');
+            const qtyInput = document.getElementById('salesProductQty');
+            const option = select?.selectedOptions[0];
+            if (!select?.value || !option) {
+              showToast('Selecione um produto.', 'warning');
+              return;
+            }
+            const quantity = Math.max(1, Number(qtyInput?.value || 1));
+            items.push({
+              productId: select.value,
+              name: option.dataset.name,
+              sku: option.dataset.sku || '',
+              quantity,
+              unitPrice: Number(option.dataset.price || 0)
             });
-            showToast('Orcamento salvo com sucesso.', 'success');
-            state.activeSub = 'orders_quotes';
-            renderApp();
-            loadModule('sales');
-          } catch (error) {
-            showToast(error.message || 'Erro ao salvar orcamento.', 'error');
-          }
-        });
+            syncFormState();
+            renderForm();
+          });
+
+          content.querySelectorAll('.sales-remove-item').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              items.splice(Number(btn.dataset.index), 1);
+              syncFormState();
+              renderForm();
+            });
+          });
+          content.querySelectorAll('.sales-item-qty').forEach((input) => {
+            input.addEventListener('change', () => {
+              items[Number(input.dataset.index)].quantity = Math.max(1, Number(input.value || 1));
+              syncFormState();
+              renderForm();
+            });
+          });
+          content.querySelectorAll('.sales-item-price').forEach((input) => {
+            input.addEventListener('change', () => {
+              items[Number(input.dataset.index)].unitPrice = Math.max(0, Number(input.value || 0));
+              syncFormState();
+              renderForm();
+            });
+          });
+
+          const form = document.getElementById('salesRecordForm');
+          form.querySelector('[name="discountAmount"]').addEventListener('change', (e) => { discountAmount = Number(e.target.value || 0); syncFormState(); renderForm(); });
+          form.querySelector('[name="discountPercent"]').addEventListener('change', (e) => { discountPercent = Number(e.target.value || 0); syncFormState(); renderForm(); });
+          form.querySelector('[name="freight"]').addEventListener('change', (e) => { freight = Number(e.target.value || 0); syncFormState(); renderForm(); });
+
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!items.length) {
+              showToast('Adicione ao menos um produto.', 'warning');
+              return;
+            }
+            const formData = new FormData(form);
+            const clientOption = form.querySelector('select[name="clientSupplierId"]')?.selectedOptions[0];
+            const payload = {
+              type: recordType,
+              clientSupplierId: formData.get('clientSupplierId') || '',
+              clientSupplierName: clientOption ? clientOption.textContent : '',
+              companyId: formData.get('companyId') || '',
+              sellerId: formData.get('sellerId') || '',
+              depositId: formData.get('depositId') || '',
+              date: formData.get('date') || '',
+              dueDate: formData.get('dueDate') || '',
+              items: items.map((item) => ({ productId: item.productId, name: item.name, sku: item.sku, quantity: item.quantity, unitPrice: item.unitPrice })),
+              discountAmount,
+              discountPercent,
+              freight,
+              status: formData.get('status') || '',
+              note: formData.get('note') || ''
+            };
+            try {
+              if (isEditing) {
+                await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+                showToast(`${title} atualizado com sucesso.`, 'success');
+              } else {
+                await api('/api/sales/records', { method: 'POST', body: JSON.stringify(payload) });
+                showToast(`${title} salvo com sucesso.`, 'success');
+              }
+              state.salesDraft.editRecord = null;
+              state.activeSub = 'orders_quotes';
+              renderApp();
+              loadModule('sales');
+            } catch (error) {
+              showToast(error.message || `Erro ao salvar ${title.toLowerCase()}.`, 'error');
+            }
+          });
+        };
+
+        renderForm();
         return;
       }
 
+      // Sub-aba: NF-e Emitidas
       if (sub === 'nfes') {
         const data = await api('/api/sales/records?view=nfes');
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>NF-e Emitidas</h3>
+              <p class="muted">${data.nfes.length} nota${data.nfes.length === 1 ? '' : 's'} encontrada${data.nfes.length === 1 ? '' : 's'}</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" onclick="state.activeSub='new_nfe'; renderApp(); loadModule('sales');">+ Nova NF-e Avulsa</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>NF-e Emitidas</h3>
-            <table class="table">
-              <thead><tr><th>Número</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Status</th></tr></thead>
-              <tbody>
-                ${data.nfes.map((nfe) => `<tr><td>${escapeHtml(nfe.number || nfe.id)}</td><td>${escapeHtml(nfe.customer)}</td><td>${escapeHtml(nfe.date)}</td><td>R$ ${Number(nfe.amount || 0).toFixed(2)}</td><td>${escapeHtml(nfe.status || 'emitida')}</td></tr>`).join('')}
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Número</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Status</th></tr></thead>
+                <tbody>
+                  ${data.nfes.length ? data.nfes.map((nfe) => `
+                    <tr>
+                      <td>${escapeHtml(nfe.number || nfe.id)}</td>
+                      <td>${escapeHtml(nfe.customer)}</td>
+                      <td>${salesFormatDate(nfe.date)}</td>
+                      <td>${salesFormatBRL(nfe.amount)}</td>
+                      <td>${salesStatusBadge(nfe.status || 'emitida')}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="5" class="muted">Nenhuma NF-e emitida.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         `;
         return;
       }
 
+      // Sub-aba: Nova NF-e Avulsa
       if (sub === 'new_nfe') {
         content.innerHTML = `
           <div class="panel">
@@ -797,38 +1533,67 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Log's Vendas Importadas
       if (sub === 'import_logs') {
         const data = await api('/api/sales/records?view=import_logs');
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Log's Vendas Importadas</h3>
+              <p class="muted">${data.importLogs.length} importação${data.importLogs.length === 1 ? '' : 'ões'} registrada${data.importLogs.length === 1 ? '' : 's'}</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" onclick="state.activeSub='import_sales'; renderApp(); loadModule('sales');">+ Importar Vendas</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>Logs de Vendas Importadas</h3>
-            <table class="table">
-              <thead><tr><th>Origem</th><th>Tipo</th><th>Itens</th><th>Data</th></tr></thead>
-              <tbody>
-                ${data.importLogs.map((entry) => `<tr><td>${escapeHtml(entry.source || 'manual')}</td><td>${escapeHtml(entry.type || 'order')}</td><td>${entry.count || 0}</td><td>${escapeHtml(entry.createdAt)}</td></tr>`).join('')}
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Origem</th><th>Tipo</th><th>Itens</th><th>Data</th></tr></thead>
+                <tbody>
+                  ${data.importLogs.length ? data.importLogs.map((entry) => `
+                    <tr>
+                      <td>${escapeHtml(entry.source || 'manual')}</td>
+                      <td>${escapeHtml(entry.type || 'order')}</td>
+                      <td>${entry.count || 0}</td>
+                      <td>${escapeHtml(new Date(entry.createdAt).toLocaleString('pt-BR'))}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="4" class="muted">Nenhuma importação registrada.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         `;
         return;
       }
 
+      // Sub-aba: Agrupamento de Pedidos
       if (sub === 'order_groups') {
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Agrupamento de Pedidos</h3>
+              <p class="muted">Visualize e gerencie grupos de pedidos.</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" onclick="state.activeSub='new_order_group'; renderApp(); loadModule('sales');">+ Novo Agrupamento</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>Agrupamento de Pedidos</h3>
-            <p class="muted">Visualize e gerencie grupos de pedidos.</p>
-            <table class="table">
-              <thead><tr><th>ID Grupo</th><th>Qtd. Pedidos</th><th>Valor Total</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr><td colspan="4" class="muted">Nenhum agrupamento salvo</td></tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>ID Grupo</th><th>Qtd. Pedidos</th><th>Valor Total</th><th>Status</th></tr></thead>
+                <tbody>
+                  <tr><td colspan="4" class="muted">Nenhum agrupamento salvo</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         `;
         return;
       }
 
+      // Sub-aba: Novo Agrupamento de Pedidos
       if (sub === 'new_order_group') {
         content.innerHTML = `
           <div class="panel">
@@ -847,7 +1612,7 @@ async function loadModule(moduleName) {
         `;
         document.getElementById('orderGroupForm').addEventListener('submit', async (event) => {
           event.preventDefault();
-          showToast('Funcionalidade de agrupamento sera implementada em breve.', 'warning');
+          showToast('Funcionalidade de agrupamento será implementada em breve.', 'warning');
           state.activeSub = 'order_groups';
           renderApp();
           loadModule('sales');
@@ -855,33 +1620,42 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Devoluções
       if (sub === 'returns') {
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Devoluções</h3>
+              <p class="muted">Gerencie devoluções de produtos.</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" class="secondary" onclick="window.notifyToast('Registrar devolução será implementado em breve.', 'warning')">+ Registrar Devolução</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>Devoluções</h3>
-            <p class="muted">Gerencie devoluções de produtos.</p>
-            <table class="table">
-              <thead><tr><th>ID Devolução</th><th>Pedido Original</th><th>Cliente</th><th>Data</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr><td colspan="5" class="muted">Nenhuma devolução registrada</td></tr>
-              </tbody>
-            </table>
-            <div style="margin-top: 16px;">
-              <button class="secondary" onclick="window.notifyToast('Registrar devolucao sera implementado em breve.', 'warning')">+ Registrar Devolução</button>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>ID Devolução</th><th>Pedido Original</th><th>Cliente</th><th>Data</th><th>Status</th></tr></thead>
+                <tbody>
+                  <tr><td colspan="5" class="muted">Nenhuma devolução registrada</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         `;
         return;
       }
 
+      // Sub-aba: Painel Vendas
       if (sub === 'sales_dashboard') {
-        const data = await api('/api/dashboard');
+        const { overview } = await api('/api/sales/dashboard');
         content.innerHTML = `
-          <div class="cards">
-            <div class="card"><h3>Vendas mês</h3><p>R$ ${(data.salesTotal || 0).toFixed(2)}</p></div>
-            <div class="card"><h3>Tickets médios</h3><p>R$ ${((data.salesTotal || 0) / Math.max((data.totalSales || 1), 1)).toFixed(2)}</p></div>
-            <div class="card"><h3>Pedidos pendentes</h3><p>${data.pendingReconciliation || 0}</p></div>
-            <div class="card"><h3>Total de vendas</h3><p>${data.totalSales || 0}</p></div>
+          <div class="finance-stat-cards">
+            ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: String(overview.totalPedidos), sub: salesFormatBRL(overview.valorPedidos) })}
+            ${financeStatCard({ tone: 'purple', label: 'Orçamentos', value: String(overview.totalOrcamentos), sub: salesFormatBRL(overview.valorOrcamentos) })}
+            ${financeStatCard({ tone: 'green', label: 'Pedidos faturados', value: String(overview.pedidosFaturados) })}
+            ${financeStatCard({ tone: 'red', label: 'Pedidos pendentes', value: String(overview.pedidosPendentes) })}
+            ${financeStatCard({ tone: 'teal', label: 'Ticket médio', value: salesFormatBRL(overview.ticketMedio) })}
           </div>
           <div class="panel">
             <h3>Painel de Vendas</h3>
@@ -891,46 +1665,96 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Painel Vendedor
       if (sub === 'seller_dashboard') {
-        content.innerHTML = `
-          <div class="cards">
-            <div class="card"><h3>Meus pedidos</h3><p>0</p></div>
-            <div class="card"><h3>Total vendido</h3><p>R$ 0.00</p></div>
-            <div class="card"><h3>Comissão</h3><p>R$ 0.00</p></div>
+        const { bySeller } = await api('/api/sales/dashboard');
+
+        if (!bySeller.length) {
+          content.innerHTML = `
+            <div class="panel">
+              <h3>Painel do Vendedor</h3>
+              <p class="muted">Nenhum vendedor cadastrado — em Cadastros, marque uma pessoa com o papel "Vendedor" para que ela apareça aqui.</p>
+            </div>
+          `;
+          return;
+        }
+
+        const draft = state.salesDraft || {};
+        const selectedSellerId = bySeller.some((s) => s.sellerId === draft.sellerDashboardId) ? draft.sellerDashboardId : bySeller[0].sellerId;
+        const selected = bySeller.find((s) => s.sellerId === selectedSellerId);
+
+        const renderSellerPanel = () => `
+          <div class="finance-stat-cards">
+            ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: String(selected.totalPedidos) })}
+            ${financeStatCard({ tone: 'green', label: 'Total vendido', value: salesFormatBRL(selected.valorTotal) })}
+            ${financeStatCard({ tone: 'teal', label: 'Ticket médio', value: salesFormatBRL(selected.ticketMedio) })}
           </div>
           <div class="panel">
             <h3>Painel do Vendedor</h3>
-            <p class="muted">Acompanhamento pessoal de vendas e comissões.</p>
-            <table class="table">
-              <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Data</th></tr></thead>
-              <tbody>
-                <tr><td colspan="4" class="muted">Nenhuma venda realizada</td></tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Data</th><th>Status</th></tr></thead>
+                <tbody>
+                  ${selected.orders.length ? selected.orders.map((o) => `
+                    <tr>
+                      <td>${escapeHtml(o.code)}</td>
+                      <td>${escapeHtml(o.customer)}</td>
+                      <td>${salesFormatBRL(o.amount)}</td>
+                      <td>${salesFormatDate(o.date)}</td>
+                      <td>${salesStatusBadge(o.status)}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="5" class="muted">Nenhuma venda realizada</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         `;
+
+        content.innerHTML = `
+          <div class="panel">
+            <label>Vendedor
+              <select id="sellerDashboardSelect">
+                ${bySeller.map((s) => `<option value="${s.sellerId}" ${s.sellerId === selectedSellerId ? 'selected' : ''}>${escapeHtml(s.sellerName)}</option>`).join('')}
+              </select>
+            </label>
+          </div>
+          <div id="sellerDashboardPanel">${renderSellerPanel()}</div>
+        `;
+
+        document.getElementById('sellerDashboardSelect')?.addEventListener('change', (event) => {
+          state.salesDraft = { ...state.salesDraft, sellerDashboardId: event.target.value };
+          loadModule('sales');
+        });
         return;
       }
 
+      // Sub-aba: Vales de Crédito
       if (sub === 'credits') {
         content.innerHTML = `
+          <div class="cadastro-page-head">
+            <div>
+              <h3>Vales de Crédito</h3>
+              <p class="muted">Gerencie vales de crédito de clientes.</p>
+            </div>
+            <div class="cadastro-list-actions">
+              <button type="button" class="secondary" onclick="window.notifyToast('Emitir novo vale será implementado em breve.', 'warning')">+ Emitir Vale</button>
+            </div>
+          </div>
           <div class="panel">
-            <h3>Vales de Crédito</h3>
-            <p class="muted">Gerencie vales de crédito de clientes.</p>
-            <table class="table">
-              <thead><tr><th>Cliente</th><th>Saldo Vale</th><th>Data Emissão</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr><td colspan="4" class="muted">Nenhum vale registrado</td></tr>
-              </tbody>
-            </table>
-            <div style="margin-top: 16px;">
-              <button class="secondary" onclick="window.notifyToast('Emitir novo vale sera implementado em breve.', 'warning')">+ Emitir Vale</button>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Cliente</th><th>Saldo Vale</th><th>Data Emissão</th><th>Status</th></tr></thead>
+                <tbody>
+                  <tr><td colspan="4" class="muted">Nenhum vale registrado</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         `;
         return;
       }
 
+      // Sub-aba: Central de Integrações
       if (sub === 'integrations') {
         content.innerHTML = `
           <div class="panel">
@@ -949,6 +1773,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Configurar Promoções
       if (sub === 'configure_promotions') {
         content.innerHTML = `
           <div class="panel">
@@ -968,6 +1793,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Nova Promoção
       if (sub === 'new_promotion') {
         content.innerHTML = `
           <div class="panel">
@@ -994,7 +1820,7 @@ async function loadModule(moduleName) {
         `;
         document.getElementById('promotionForm').addEventListener('submit', async (event) => {
           event.preventDefault();
-          showToast('Promocao salva com sucesso!', 'success');
+          showToast('Cadastro de promoções será implementado em breve. Nada foi salvo.', 'warning');
           state.activeSub = 'configure_promotions';
           renderApp();
           loadModule('sales');
@@ -1002,6 +1828,7 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Importar Vendas
       if (sub === 'import_sales') {
         const data = await api('/api/sales/records?view=import_logs');
         content.innerHTML = `
@@ -1012,7 +1839,7 @@ async function loadModule(moduleName) {
               <textarea name="csvText" rows="6" placeholder="customer,date,amount,status\nCliente A,2026-01-10,1200.00,pendente\nCliente B,2026-01-11,2500.00,faturado"></textarea>
               <div class="row">
                 <label>Tipo<select name="importType"><option value="order">Pedido</option><option value="quote">Orçamento</option><option value="nfe">NF-e</option></select></label>
-                <label>Origem<input name="source" value="importacao-csv" /></label>
+                <label>Origem<input name="source" value="importação-csv" /></label>
               </div>
               <button type="submit">Importar</button>
             </form>
@@ -1039,7 +1866,7 @@ async function loadModule(moduleName) {
                 text: formData.get('csvText')
               })
             });
-            showToast('Importacao realizada com sucesso.', 'success');
+            showToast('Importação realizada com sucesso.', 'success');
             loadModule('sales');
           } catch (error) {
             showToast(error.message || 'Erro ao importar vendas.', 'error');
@@ -1057,10 +1884,16 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: CADASTROS (sub-abas: Cadastros/list, Cadastro/register, Edição/edit,
+    // Depósitos/deposits, Depósitos>Cadastro/deposits_register,
+    // Depósitos>Edição/deposits_edit — ver funções renderXxx mais abaixo)
+    // ========================================================================
     if (moduleName === 'cadastros') {
-      const [peopleResponse, cnpjsResponse] = await Promise.all([
+      const [peopleResponse, cnpjsResponse, depositsResponse] = await Promise.all([
         api('/api/cadastros/pessoas'),
-        api('/api/cadastros/cnpjs')
+        api('/api/cadastros/cnpjs'),
+        api('/api/cadastros/deposits')
       ]);
       const rawSub = state.activeSub || 'list';
       const sub = ['edit', 'register', 'list', 'deposits', 'deposits_register', 'deposits_edit'].includes(rawSub)
@@ -1068,7 +1901,7 @@ async function loadModule(moduleName) {
         : 'list';
       const people = Array.isArray(peopleResponse.people) ? peopleResponse.people : [];
       const cnpjs = Array.isArray(cnpjsResponse.cnpjs) ? cnpjsResponse.cnpjs : [];
-      const deposits = Array.isArray(state.cadastroDraft.deposits) ? state.cadastroDraft.deposits : [];
+      const deposits = Array.isArray(depositsResponse.deposits) ? depositsResponse.deposits : [];
       const peopleDraft = state.cadastroDraft.people || {};
       const cnpjDraft = state.cadastroDraft.cnpjs || {};
       const depositDraft = state.cadastroDraft.depositForm || {};
@@ -1120,7 +1953,7 @@ async function loadModule(moduleName) {
       };
 
       const roles = [
-        'Cliente', 'Transportadora', 'Tecnico', 'Fornecedor', 'Colaborador', 'Representada', 'Vendedor', 'Líder', 'Gerente', 'Credenciadora', 'Fabricante'
+        'Cliente', 'Transportadora', 'Técnico', 'Fornecedor', 'Colaborador', 'Representada', 'Vendedor', 'Líder', 'Gerente', 'Credenciadora', 'Fabricante'
       ];
 
       const section = (title, body, description = '') => `
@@ -1135,19 +1968,21 @@ async function loadModule(moduleName) {
         </section>
       `;
 
-      const field = (label, name, value = '', attrs = '') => `
-        <label class="cadastro-field">
+      const field = (label, name, value = '', attrs = '', hasError = false) => `
+        <label class="cadastro-field${hasError ? ' cadastro-field-invalid' : ''}">
           <span>${label}</span>
           <input name="${name}" value="${escapeHtml(value)}" ${attrs} />
+          ${hasError ? '<span class="cadastro-field-error-msg">Campo obrigatório*</span>' : ''}
         </label>
       `;
 
-      const selectField = (label, name, value, options = [], attrs = '') => `
-        <label class="cadastro-field">
+      const selectField = (label, name, value, options = [], attrs = '', hasError = false) => `
+        <label class="cadastro-field${hasError ? ' cadastro-field-invalid' : ''}">
           <span>${label}</span>
           <select name="${name}" ${attrs}>
             ${options.map((option) => `<option value="${option.value}" ${option.value === value ? 'selected' : ''}>${option.label}</option>`).join('')}
           </select>
+          ${hasError ? '<span class="cadastro-field-error-msg">Campo obrigatório*</span>' : ''}
         </label>
       `;
 
@@ -1158,12 +1993,14 @@ async function loadModule(moduleName) {
         </label>
       `;
 
+      // Sub-abas: Cadastro (mode 'register') e Edição (mode 'edit')
       const renderPeopleRegister = (mode = 'register') => {
         const isEditMode = mode === 'edit';
         const documentType = getDocumentType(peopleDraft.document);
         const selectedType = peopleDraft.type || (documentType === 'cnpj' ? 'pessoa-juridica' : 'pessoa-fisica');
         const documentValue = maskDocumentValue(peopleDraft.document || '', selectedType);
         const canLookupCnpj = sanitizeDigits(peopleDraft.document || '').length === 14;
+        const fieldErrors = peopleDraft.fieldErrors || {};
 
         return `
           <div class="panel cadastros-shell">
@@ -1172,124 +2009,200 @@ async function loadModule(moduleName) {
                 <h3>${isEditMode ? 'Edição de cadastro' : 'Cadastro de pessoas'}</h3>
                 <p class="muted">${isEditMode ? 'Tela exclusiva para atualização de cadastros existentes.' : 'Padronizado para pessoa física e jurídica, com validação de documento.'}</p>
               </div>
-              <div class="cadastro-page-chip">${isEditMode ? 'Edição' : 'Dados básicos'}</div>
+              <div class="cadastro-page-chip">${peopleDraft.code ? `Código ${escapeHtml(peopleDraft.code)}` : (isEditMode ? 'Edição' : 'Dados básicos')}</div>
             </div>
             <form id="peopleRegisterForm" class="cadastro-form">
-              ${section('Nome ou razão social', `
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Nome ou razão social', 'name', peopleDraft.name || '', 'required')}
-                  ${field('Nome fantasia', 'tradeName', peopleDraft.tradeName || '')}
-                  <label class="cadastro-field cadastro-field-inline">
+              ${section('Identificação', `
+                <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
+                  ${field('Nome ou razão social', 'name', peopleDraft.name || '', '', Boolean(fieldErrors.name))}
+                  <label class="cadastro-field cadastro-field-inline${fieldErrors.document ? ' cadastro-field-invalid' : ''}">
                     <span>CPF / CNPJ</span>
                     <div class="cadastro-inline-action">
-                      <input name="document" value="${escapeHtml(documentValue)}" id="peopleDocumentInput" inputmode="numeric" maxlength="18" required />
+                      <input name="document" value="${escapeHtml(documentValue)}" id="peopleDocumentInput" inputmode="numeric" maxlength="18" />
                       <button type="button" id="peopleLookupBtn" class="icon-button edit" ${canLookupCnpj ? '' : 'disabled'} title="Consultar CNPJ" aria-label="Consultar CNPJ">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                       </button>
                     </div>
+                    ${fieldErrors.document ? '<span class="cadastro-field-error-msg">Campo obrigatório*</span>' : ''}
                   </label>
-                </div>
-                <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
                   ${selectField('Tipo de pessoa', 'type', selectedType, [
                     { value: 'pessoa-fisica', label: 'Pessoa física' },
                     { value: 'pessoa-juridica', label: 'Pessoa jurídica' }
                   ])}
-                  ${field('E-mail geral', 'email', peopleDraft.email || '', 'type="email"')}
-                  ${field('Telefone', 'phone', peopleDraft.phone || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('E-mail secundários', 'secondaryEmails', peopleDraft.secondaryEmails || '')}
-                  ${field('Whatsapp', 'whatsapp', peopleDraft.whatsapp || '')}
-                  ${field('Telefone celular', 'mobilePhone', peopleDraft.mobilePhone || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-2">
-                  ${field('Transportadora padrão', 'defaultCarrier', peopleDraft.defaultCarrier || '')}
-                  ${selectField('Status', 'status', peopleDraft.status || 'ativo', [{ value: 'ativo', label: 'Ativo' }, { value: 'inativo', label: 'Inativo' }])}
                 </div>
                 ${peopleDraft.error ? `<p class="form-error">${escapeHtml(peopleDraft.error)}</p>` : ''}
-              `, 'Dados principais do cliente ou parceiro.')}
+              `, 'Informações essenciais para identificar o cadastro.')}
 
-              ${section('Relação com a empresa', `
-                <div class="cadastro-check-grid">
-                  ${roles.map((role) => checkbox('roles', role, Array.isArray(peopleDraft.roles) && peopleDraft.roles.includes(role), role)).join('')}
-                </div>
-              `)}
+              <div class="cadastro-tabs" role="tablist">
+                <button type="button" class="cadastro-tab active" data-tab="dados" role="tab" aria-selected="true">
+                  <span>Dados</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="financeiro" role="tab" aria-selected="false">
+                  <span>Registros Financeiros</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="atributos" role="tab" aria-selected="false">
+                  <span>Atributos</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="mais-dados" role="tab" aria-selected="false">
+                  <span>Mais dados</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="billing" role="tab" aria-selected="false" id="billingTabBtn" ${peopleDraft.billingDifferent ? '' : 'hidden'}>
+                  <span>Endereço de Cobrança</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button type="button" class="cadastro-tab" data-tab="delivery" role="tab" aria-selected="false" id="deliveryTabBtn" ${peopleDraft.deliveryDifferent ? '' : 'hidden'}>
+                  <span>Endereço de Entrega</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+              </div>
 
-              ${section('Mais dados', `
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Grupo', 'group', peopleDraft.group || '')}
-                  ${field('RG', 'rg', peopleDraft.rg || '')}
-                  ${field('Órgão expedidor', 'issuerBody', peopleDraft.issuerBody || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Data de expedição', 'issueDate', peopleDraft.issueDate || '', 'type="date"')}
-                  ${field('UF emissor', 'issuerState', peopleDraft.issuerState || '')}
-                  ${checkbox('ruralProducer', 'Produtor rural', Boolean(peopleDraft.ruralProducer))}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Inscrição estadual', 'stateRegistration', peopleDraft.stateRegistration || '')}
-                  ${field('Inscrição municipal', 'municipalRegistration', peopleDraft.municipalRegistration || '')}
-                  ${field('Inscrição na SUFRAMA', 'suframaRegistration', peopleDraft.suframaRegistration || '')}
-                </div>
-              `)}
-
-              ${section('Endereço', `
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${checkbox('foreignAddress', 'Endereço no exterior', Boolean(peopleDraft.foreignAddress))}
-                  ${checkbox('billingDifferent', 'Endereço de cobrança diferente', Boolean(peopleDraft.billingDifferent))}
-                  ${checkbox('deliveryDifferent', 'Endereço de entrega diferente', Boolean(peopleDraft.deliveryDifferent))}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('CEP', 'zipCode', peopleDraft.zipCode || '')}
-                  ${field('Logradouro', 'street', peopleDraft.street || '')}
-                  ${field('Número', 'streetNumber', peopleDraft.streetNumber || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Complemento', 'addressComplement', peopleDraft.addressComplement || '')}
-                  ${field('Bairro', 'neighborhood', peopleDraft.neighborhood || '')}
-                  ${field('Cidade', 'city', peopleDraft.city || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('UF', 'state', peopleDraft.state || '')}
-                  ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', peopleDraft.ibgeCityCode || '')}
-                  ${field('País', 'country', peopleDraft.country || 'Brasil')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Cód. País', 'countryCode', peopleDraft.countryCode || '1058')}
-                  ${field('Link de localização no mapa', 'mapLink', peopleDraft.mapLink || '')}
-                </div>
-              `)}
-
-              ${section('Dados financeiros / Contas bancárias', `
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Limite de crédito', 'creditLimit', peopleDraft.creditLimit || '')}
-                  ${field('Crédito utilizado', 'creditUsed', peopleDraft.creditUsed || '')}
-                  ${field('Periodicidade venda/compra (dias)', 'paymentPeriodDays', peopleDraft.paymentPeriodDays || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Valor mínimo de compra', 'minPurchaseValue', peopleDraft.minPurchaseValue || '')}
-                  ${field('Tabela de preço padrão', 'defaultPriceTable', peopleDraft.defaultPriceTable || '')}
-                  ${field('Forma de pagamento', 'paymentMethod', peopleDraft.paymentMethod || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('CPF/CNPJ da conta', 'bankDocument', peopleDraft.bankDocument || '')}
-                  ${field('Banco', 'bankName', peopleDraft.bankName || '')}
-                  ${field('Agência', 'bankAgency', peopleDraft.bankAgency || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Dígito da agência', 'bankAgencyDigit', peopleDraft.bankAgencyDigit || '')}
-                  ${field('Número da conta', 'bankNumber', peopleDraft.bankNumber || '')}
-                  ${field('Dígito da conta', 'bankNumberDigit', peopleDraft.bankNumberDigit || '')}
-                </div>
-                <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Período', 'bankPeriod', peopleDraft.bankPeriod || '')}
-                  <div class="cadastro-add-account">
-                    <button type="button">Adicionar conta</button>
+              <div class="cadastro-tab-panel" data-tab-panel="dados">
+                ${section('Contato', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Nome fantasia', 'tradeName', peopleDraft.tradeName || '')}
+                    ${field('E-mail geral', 'email', peopleDraft.email || '', 'type="email"')}
+                    ${field('Telefone', 'phone', peopleDraft.phone || '')}
                   </div>
-                </div>
-              `)}
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('E-mail secundários', 'secondaryEmails', peopleDraft.secondaryEmails || '')}
+                    ${field('Whatsapp', 'whatsapp', peopleDraft.whatsapp || '')}
+                    ${field('Telefone celular', 'mobilePhone', peopleDraft.mobilePhone || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-2">
+                    ${field('Transportadora padrão', 'defaultCarrier', peopleDraft.defaultCarrier || '')}
+                    ${selectField('Status', 'status', peopleDraft.status || 'ativo', [{ value: 'ativo', label: 'Ativo' }, { value: 'inativo', label: 'Inativo' }])}
+                  </div>
+                `)}
 
-              ${section('Informações adicionais', `
+                ${section('Endereço', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${checkbox('foreignAddress', 'Endereço no exterior', Boolean(peopleDraft.foreignAddress))}
+                    ${checkbox('billingDifferent', 'Endereço de cobrança diferente', Boolean(peopleDraft.billingDifferent))}
+                    ${checkbox('deliveryDifferent', 'Endereço de entrega diferente', Boolean(peopleDraft.deliveryDifferent))}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('CEP', 'zipCode', maskCep(peopleDraft.zipCode || ''), 'id="peopleZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"', Boolean(fieldErrors.zipCode))}
+                    ${field('Logradouro', 'street', peopleDraft.street || '', '', Boolean(fieldErrors.addressLine))}
+                    ${field('Número', 'streetNumber', peopleDraft.streetNumber || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Complemento', 'addressComplement', peopleDraft.addressComplement || '')}
+                    ${field('Bairro', 'neighborhood', peopleDraft.neighborhood || '')}
+                    ${field('Cidade', 'city', peopleDraft.city || '', '', Boolean(fieldErrors.city))}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('UF', 'state', peopleDraft.state || '', '', Boolean(fieldErrors.state))}
+                    ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', peopleDraft.ibgeCityCode || '')}
+                    ${field('País', 'country', peopleDraft.country || 'Brasil')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Cód. País', 'countryCode', peopleDraft.countryCode || '1058')}
+                    ${field('Link de localização no mapa', 'mapLink', peopleDraft.mapLink || '')}
+                  </div>
+                `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="financeiro" hidden>
+                ${section('Dados financeiros / Contas bancárias', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Limite de crédito', 'creditLimit', peopleDraft.creditLimit || '')}
+                    ${field('Crédito utilizado', 'creditUsed', peopleDraft.creditUsed || '')}
+                    ${field('Periodicidade venda/compra (dias)', 'paymentPeriodDays', peopleDraft.paymentPeriodDays || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Valor mínimo de compra', 'minPurchaseValue', peopleDraft.minPurchaseValue || '')}
+                    ${field('Tabela de preço padrão', 'defaultPriceTable', peopleDraft.defaultPriceTable || '')}
+                    ${field('Forma de pagamento', 'paymentMethod', peopleDraft.paymentMethod || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('CPF/CNPJ da conta', 'bankDocument', peopleDraft.bankDocument || '')}
+                    ${field('Banco', 'bankName', peopleDraft.bankName || '')}
+                    ${field('Agência', 'bankAgency', peopleDraft.bankAgency || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Dígito da agência', 'bankAgencyDigit', peopleDraft.bankAgencyDigit || '')}
+                    ${field('Número da conta', 'bankNumber', peopleDraft.bankNumber || '')}
+                    ${field('Dígito da conta', 'bankNumberDigit', peopleDraft.bankNumberDigit || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Período', 'bankPeriod', peopleDraft.bankPeriod || '')}
+                  </div>
+                `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="atributos" hidden>
+                ${section('Relação com a empresa', `
+                  <div class="cadastro-check-grid">
+                    ${roles.map((role) => checkbox('roles', role, Array.isArray(peopleDraft.roles) && peopleDraft.roles.includes(role), role)).join('')}
+                  </div>
+                `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="mais-dados" hidden>
+                ${section('Mais dados', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Grupo', 'group', peopleDraft.group || '')}
+                    ${field('RG', 'rg', peopleDraft.rg || '')}
+                    ${field('Órgão expedidor', 'issuerBody', peopleDraft.issuerBody || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Data de expedição', 'issueDate', peopleDraft.issueDate || '', 'type="date"')}
+                    ${field('UF emissor', 'issuerState', peopleDraft.issuerState || '')}
+                    ${checkbox('ruralProducer', 'Produtor rural', Boolean(peopleDraft.ruralProducer))}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Inscrição estadual', 'stateRegistration', peopleDraft.stateRegistration || '')}
+                    ${field('Inscrição municipal', 'municipalRegistration', peopleDraft.municipalRegistration || '')}
+                    ${field('Inscrição na SUFRAMA', 'suframaRegistration', peopleDraft.suframaRegistration || '')}
+                  </div>
+                `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="billing" hidden>
+                ${section('Endereço de cobrança', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('CEP', 'billingZipCode', maskCep(peopleDraft.billingZipCode || ''), 'id="peopleBillingZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"')}
+                    ${field('Logradouro', 'billingStreet', peopleDraft.billingStreet || '')}
+                    ${field('Número', 'billingStreetNumber', peopleDraft.billingStreetNumber || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Complemento', 'billingAddressComplement', peopleDraft.billingAddressComplement || '')}
+                    ${field('Bairro', 'billingNeighborhood', peopleDraft.billingNeighborhood || '')}
+                    ${field('Cidade', 'billingCity', peopleDraft.billingCity || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('UF', 'billingState', peopleDraft.billingState || '')}
+                    ${field('Cód. Cidade (IBGE)', 'billingIbgeCityCode', peopleDraft.billingIbgeCityCode || '')}
+                    ${field('País', 'billingCountry', peopleDraft.billingCountry || 'Brasil')}
+                  </div>
+                `, 'Endereço usado para cobrança, diferente do endereço principal do cliente.')}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="delivery" hidden>
+                ${section('Endereço de entrega', `
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('CEP', 'deliveryZipCode', maskCep(peopleDraft.deliveryZipCode || ''), 'id="peopleDeliveryZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"')}
+                    ${field('Logradouro', 'deliveryStreet', peopleDraft.deliveryStreet || '')}
+                    ${field('Número', 'deliveryStreetNumber', peopleDraft.deliveryStreetNumber || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('Complemento', 'deliveryAddressComplement', peopleDraft.deliveryAddressComplement || '')}
+                    ${field('Bairro', 'deliveryNeighborhood', peopleDraft.deliveryNeighborhood || '')}
+                    ${field('Cidade', 'deliveryCity', peopleDraft.deliveryCity || '')}
+                  </div>
+                  <div class="cadastro-grid cadastro-grid-3">
+                    ${field('UF', 'deliveryState', peopleDraft.deliveryState || '')}
+                    ${field('Cód. Cidade (IBGE)', 'deliveryIbgeCityCode', peopleDraft.deliveryIbgeCityCode || '')}
+                    ${field('País', 'deliveryCountry', peopleDraft.deliveryCountry || 'Brasil')}
+                  </div>
+                `, 'Endereço usado para entrega, diferente do endereço principal do cliente.')}
+              </div>
+
+              ${section('Observações', `
                 <label class="cadastro-field cadastro-field-full">
                   <span>Observações</span>
                   <textarea name="notes">${escapeHtml(peopleDraft.notes || '')}</textarea>
@@ -1304,53 +2217,16 @@ async function loadModule(moduleName) {
         `;
       };
 
-      const renderPeopleList = () => `
-        <div class="panel cadastros-shell">
-          <div class="cadastro-page-head">
-            <div>
-              <h3>Pessoas</h3>
-              <p class="muted">Histórico dos cadastros de pessoas.</p>
-            </div>
-            <div class="cadastro-page-chip">Histórico</div>
-          </div>
-          ${people.length ? `
-            <table class="table table-actions">
-              <thead><tr><th>Nome / Razão social</th><th>Documento</th><th>Tipo</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
-              <tbody>
-                ${people.map((person) => `
-                  <tr>
-                    <td>${escapeHtml(person.name || '')}</td>
-                    <td>${escapeHtml(formatCpfCnpj(person.document || ''))}</td>
-                    <td>${escapeHtml(person.type === 'pessoa-juridica' ? 'Pessoa jurídica' : 'Pessoa física')}</td>
-                    <td>${escapeHtml(person.email || '')}</td>
-                    <td>${escapeHtml(person.phone || '')}</td>
-                    <td>${escapeHtml(person.status || 'ativo')}</td>
-                    <td>${escapeHtml(formatDate(person.createdAt))}</td>
-                    <td>
-                      <button class="icon-button edit cadastro-edit-person" data-id="${escapeHtml(person.id || '')}" title="Editar" aria-label="Editar pessoa">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                      </button>
-                      <button class="icon-button cadastro-delete-person" data-id="${escapeHtml(person.id || '')}" title="Excluir" aria-label="Excluir pessoa">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                      </button>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          ` : '<p class="muted">Nenhuma pessoa cadastrada ainda.</p>'}
-        </div>
-      `;
-
       const renderCnpjRegister = () => {
         const documentValue = maskDocumentValue(cnpjDraft.document || '', 'pessoa-juridica');
         const canLookupCnpj = sanitizeDigits(cnpjDraft.document || '').length === 14;
+        const fieldErrors = cnpjDraft.fieldErrors || {};
 
         return `
           <div class="panel cadastros-shell">
             <div class="cadastro-page-head">
               <div>
-                <h3>Cadastro de CNPJ's</h3>
+                <h3>Cadastro de CNPJs</h3>
                 <p class="muted">Consulta o CNPJ na API e preenche os dados da empresa automaticamente.</p>
               </div>
               <div class="cadastro-page-chip">Pessoa jurídica</div>
@@ -1358,12 +2234,12 @@ async function loadModule(moduleName) {
             <form id="cnpjRegisterForm" class="cadastro-form">
               ${section('Nome ou razão social', `
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('Nome ou razão social', 'name', cnpjDraft.name || '', 'required')}
+                  ${field('Nome ou razão social', 'name', cnpjDraft.name || '', '', Boolean(fieldErrors.name))}
                   ${field('Nome fantasia', 'tradeName', cnpjDraft.tradeName || '')}
                   ${selectField('Tipo de pessoa', 'type', 'pessoa-juridica', [{ value: 'pessoa-juridica', label: 'Pessoa jurídica' }], 'disabled')}
                 </div>
                 <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
-                  ${field('CNPJ', 'document', documentValue, 'id="cnpjDocumentInput" inputmode="numeric" maxlength="18" required')}
+                  ${field('CNPJ', 'document', documentValue, 'id="cnpjDocumentInput" inputmode="numeric" maxlength="18"', Boolean(fieldErrors.document))}
                   ${field('E-mail geral', 'email', cnpjDraft.email || '', 'type="email"')}
                   ${field('Telefone', 'phone', cnpjDraft.phone || '')}
                 </div>
@@ -1400,17 +2276,17 @@ async function loadModule(moduleName) {
 
               ${section('Endereço', `
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('CEP', 'zipCode', cnpjDraft.zipCode || '')}
-                  ${field('Logradouro', 'address', cnpjDraft.address || '')}
+                  ${field('CEP', 'zipCode', maskCep(cnpjDraft.zipCode || ''), 'id="cnpjZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"', Boolean(fieldErrors.zipCode))}
+                  ${field('Logradouro', 'address', cnpjDraft.address || '', '', Boolean(fieldErrors.addressLine))}
                   ${field('Número', 'addressNumber', cnpjDraft.addressNumber || '')}
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
                   ${field('Complemento', 'addressComplement', cnpjDraft.addressComplement || '')}
                   ${field('Bairro', 'neighborhood', cnpjDraft.neighborhood || '')}
-                  ${field('Cidade', 'city', cnpjDraft.city || '')}
+                  ${field('Cidade', 'city', cnpjDraft.city || '', '', Boolean(fieldErrors.city))}
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('UF', 'state', cnpjDraft.state || '')}
+                  ${field('UF', 'state', cnpjDraft.state || '', '', Boolean(fieldErrors.state))}
                   ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', cnpjDraft.ibgeCityCode || '')}
                   ${field('País', 'country', cnpjDraft.country || 'Brasil')}
                 </div>
@@ -1444,9 +2320,6 @@ async function loadModule(moduleName) {
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
                   ${field('Período', 'bankPeriod', cnpjDraft.bankPeriod || '')}
-                  <div class="cadastro-add-account">
-                    <button type="button">Adicionar conta</button>
-                  </div>
                 </div>
               `)}
 
@@ -1465,48 +2338,11 @@ async function loadModule(moduleName) {
         `;
       };
 
-      const renderCnpjList = () => `
-        <div class="panel cadastros-shell">
-          <div class="cadastro-page-head">
-            <div>
-              <h3>CNPJ's</h3>
-              <p class="muted">Histórico dos cadastros de empresas.</p>
-            </div>
-            <div class="cadastro-page-chip">Histórico</div>
-          </div>
-          ${cnpjs.length ? `
-            <table class="table table-actions">
-              <thead><tr><th>Razão social</th><th>Fantasia</th><th>CNPJ</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
-              <tbody>
-                ${cnpjs.map((company) => `
-                  <tr>
-                    <td>${escapeHtml(company.name || '')}</td>
-                    <td>${escapeHtml(company.tradeName || '')}</td>
-                    <td>${escapeHtml(formatCpfCnpj(company.document || ''))}</td>
-                    <td>${escapeHtml(company.email || '')}</td>
-                    <td>${escapeHtml(company.phone || '')}</td>
-                    <td>${escapeHtml(company.status || 'ativo')}</td>
-                    <td>${escapeHtml(formatDate(company.createdAt))}</td>
-                    <td>
-                      <button class="icon-button edit cadastro-edit-cnpj" data-id="${escapeHtml(company.id || '')}" title="Editar" aria-label="Editar CNPJ">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                      </button>
-                      <button class="icon-button cadastro-delete-cnpj" data-id="${escapeHtml(company.id || '')}" title="Excluir" aria-label="Excluir CNPJ">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                      </button>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          ` : '<p class="muted">Nenhum CNPJ cadastrado ainda.</p>'}
-        </div>
-      `;
-
       const renderUnifiedRegister = () => renderPeopleRegister('register');
 
       const renderUnifiedEdit = () => renderPeopleRegister('edit');
 
+      // Sub-abas: Depósitos > Cadastro (mode 'register') e Depósitos > Edição (mode 'edit')
       const renderDepositsRegister = (mode = 'register') => {
         const isEditMode = mode === 'edit';
         return `
@@ -1520,33 +2356,34 @@ async function loadModule(moduleName) {
           </div>
 
           <form id="depositRegisterForm" class="cadastro-form">
-            ${section('Dados do deposito', `
+            ${section('Dados do depósito', `
               <div class="cadastro-grid cadastro-grid-3">
-                ${field('Nome do deposito', 'name', depositDraft.name || '', 'required')}
-                ${field('Codigo interno', 'code', depositDraft.code || '')}
+                ${field('Nome do depósito', 'name', depositDraft.name || '', 'required')}
+                ${field('Código interno', 'code', depositDraft.code || '')}
                 ${selectField('Status', 'status', depositDraft.status || 'ativo', [{ value: 'ativo', label: 'Ativo' }, { value: 'inativo', label: 'Inativo' }])}
               </div>
               <div class="cadastro-grid cadastro-grid-3">
-                ${field('Endereco', 'address', depositDraft.address || '')}
+                ${field('Endereço', 'address', depositDraft.address || '')}
                 ${field('Cidade', 'city', depositDraft.city || '')}
                 ${field('UF', 'state', depositDraft.state || '')}
               </div>
               <div class="cadastro-grid cadastro-grid-2">
-                ${field('Responsavel', 'manager', depositDraft.manager || '')}
-                ${field('Observacoes', 'notes', depositDraft.notes || '')}
+                ${field('Responsável', 'manager', depositDraft.manager || '')}
+                ${field('Observações', 'notes', depositDraft.notes || '')}
               </div>
               ${depositDraft.error ? `<p class="form-error">${escapeHtml(depositDraft.error)}</p>` : ''}
             `)}
 
             <div class="cadastro-actions">
               <button type="button" class="secondary" id="depositCancelBtn">Cancelar</button>
-              <button type="submit">${isEditMode ? 'Salvar alterações' : 'Salvar deposito'}</button>
+              <button type="submit">${isEditMode ? 'Salvar alterações' : 'Salvar depósito'}</button>
             </div>
           </form>
         </div>
       `;
       };
 
+      // Sub-aba: Depósitos
       const renderDepositsList = () => {
         const normalize = (value) => String(value || '')
           .normalize('NFD')
@@ -1575,11 +2412,11 @@ async function loadModule(moduleName) {
         <div class="panel cadastros-shell">
           <div class="cadastro-page-head">
             <div>
-              <h3>Depositos</h3>
+              <h3>Depósitos</h3>
               <p class="muted">Histórico e gerenciamento de depósitos.</p>
             </div>
             <div class="cadastro-list-actions">
-              <button type="button" class="success" id="cadastroDepositNewBtn">+ Novo deposito</button>
+              <button type="button" class="success" id="cadastroDepositNewBtn">+ Novo depósito</button>
               <button type="button" class="secondary" id="cadastroDepositFilterToggleBtn">Filtros</button>
             </div>
           </div>
@@ -1588,11 +2425,11 @@ async function loadModule(moduleName) {
             <form id="depositFilterForm" class="cadastro-filter-panel">
               <div class="cadastro-filter-grid-5">
                 <label class="cadastro-field">
-                  <span>Nome do deposito</span>
+                  <span>Nome do depósito</span>
                   <input name="query" value="${escapeHtml(depositsFilters.query)}" />
                 </label>
                 <label class="cadastro-field">
-                  <span>Codigo interno</span>
+                  <span>Código interno</span>
                   <input name="code" value="${escapeHtml(depositsFilters.code)}" />
                 </label>
                 <label class="cadastro-field">
@@ -1604,7 +2441,7 @@ async function loadModule(moduleName) {
                   <input name="state" value="${escapeHtml(depositsFilters.state)}" />
                 </label>
                 <label class="cadastro-field">
-                  <span>Responsavel</span>
+                  <span>Responsável</span>
                   <input name="manager" value="${escapeHtml(depositsFilters.manager)}" />
                 </label>
                 <label class="cadastro-field">
@@ -1626,14 +2463,14 @@ async function loadModule(moduleName) {
           <section class="cadastro-section">
             <div class="cadastro-section-header">
               <div>
-                <h4>Depositos cadastrados</h4>
-                <p>Registros salvos nesta sessao.</p>
+                <h4>Depósitos cadastrados</h4>
+                <p>Registros salvos nesta sessão.</p>
               </div>
             </div>
             <div class="cadastro-section-body">
               ${filteredDeposits.length ? `
                 <table class="table table-actions">
-                  <thead><tr><th>Nome</th><th>Codigo</th><th>Cidade/UF</th><th>Responsavel</th><th>Status</th><th>Acoes</th></tr></thead>
+                  <thead><tr><th>Nome</th><th>Código</th><th>Cidade/UF</th><th>Responsável</th><th>Status</th><th>Ações</th></tr></thead>
                   <tbody>
                     ${filteredDeposits.map((deposit) => `
                       <tr>
@@ -1643,10 +2480,10 @@ async function loadModule(moduleName) {
                         <td>${escapeHtml(deposit.manager || '-')}</td>
                         <td>${escapeHtml(deposit.status || 'ativo')}</td>
                         <td>
-                          <button class="icon-button edit cadastro-edit-deposit" data-id="${escapeHtml(deposit.id)}" title="Editar deposito" aria-label="Editar deposito">
+                          <button class="icon-button edit cadastro-edit-deposit" data-id="${escapeHtml(deposit.id)}" title="Editar depósito" aria-label="Editar depósito">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
                           </button>
-                          <button class="icon-button cadastro-delete-deposit" data-id="${escapeHtml(deposit.id)}" title="Excluir deposito" aria-label="Excluir deposito">
+                          <button class="icon-button cadastro-delete-deposit" data-id="${escapeHtml(deposit.id)}" title="Excluir depósito" aria-label="Excluir depósito">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
                           </button>
                         </td>
@@ -1654,13 +2491,14 @@ async function loadModule(moduleName) {
                     `).join('')}
                   </tbody>
                 </table>
-              ` : '<p class="muted">Nenhum deposito encontrado para os filtros aplicados.</p>'}
+              ` : '<p class="muted">Nenhum depósito encontrado para os filtros aplicados.</p>'}
             </div>
           </section>
         </div>
       `;
       };
 
+      // Sub-aba: Cadastros (lista unificada — padrão da aba)
       const renderUnifiedList = () => {
         const normalize = (value) => String(value || '')
           .normalize('NFD')
@@ -1672,7 +2510,7 @@ async function loadModule(moduleName) {
         const roleVisibleMap = [
           { role: 'Cliente', enabled: listFilters.showClients },
           { role: 'Fornecedor', enabled: listFilters.showSuppliers },
-          { role: 'Tecnico', enabled: listFilters.showTechnicians },
+          { role: 'Técnico', enabled: listFilters.showTechnicians },
           { role: 'Colaborador', enabled: listFilters.showCollaborators },
           { role: 'Transportadora', enabled: listFilters.showTransporters },
           { role: 'Vendedor', enabled: listFilters.showSellers },
@@ -1687,6 +2525,7 @@ async function loadModule(moduleName) {
           ...people.map((person) => ({
             kind: 'people',
             id: person.id,
+            code: person.code || '',
             cadastroTipo: person.type === 'pessoa-juridica' ? 'Pessoa juridica' : 'Pessoa fisica',
             name: person.name || '',
             tradeName: person.tradeName || '',
@@ -1706,6 +2545,7 @@ async function loadModule(moduleName) {
           ...cnpjs.map((company) => ({
             kind: 'cnpj',
             id: company.id,
+            code: company.code || '',
             cadastroTipo: 'CNPJ',
             name: company.name || '',
             tradeName: company.tradeName || '',
@@ -1735,7 +2575,7 @@ async function loadModule(moduleName) {
 
             if (listFilters.nameFantasy && !includesText(`${row.name} ${row.tradeName}`, listFilters.nameFantasy)) return false;
             if (listFilters.corporateName && !includesText(row.name, listFilters.corporateName)) return false;
-            if (listFilters.uniqueCode && !includesText(row.id, listFilters.uniqueCode)) return false;
+            if (listFilters.uniqueCode && !includesText(row.code, listFilters.uniqueCode)) return false;
             if (listFilters.email && !includesText(row.email, listFilters.email)) return false;
             if (listFilters.document && !includesText(sanitizeDigits(row.document), sanitizeDigits(listFilters.document))) return false;
             if (listFilters.city && !includesText(row.city, listFilters.city)) return false;
@@ -1766,6 +2606,7 @@ async function loadModule(moduleName) {
 
             if (!query) return true;
             return [
+              row.code,
               row.name,
               row.tradeName,
               row.document,
@@ -1786,7 +2627,7 @@ async function loadModule(moduleName) {
             <div class="cadastro-page-head">
               <div>
                 <h3>Cadastros</h3>
-                <p class="muted">Consulta unificada de Pessoas e CNPJ's.</p>
+                <p class="muted">Consulta unificada de Pessoas e CNPJs.</p>
               </div>
               <div class="cadastro-list-actions">
                 <button type="button" class="success" id="cadastroNewBtn">+ Novo cadastro</button>
@@ -1806,7 +2647,7 @@ async function loadModule(moduleName) {
                     <input name="corporateName" value="${escapeHtml(listFilters.corporateName)}" />
                   </label>
                   <label class="cadastro-field">
-                    <span>Codigo identificador unico</span>
+                    <span>Código do cliente</span>
                     <input name="uniqueCode" value="${escapeHtml(listFilters.uniqueCode)}" />
                   </label>
                   <label class="cadastro-field">
@@ -1814,7 +2655,7 @@ async function loadModule(moduleName) {
                     <input name="email" value="${escapeHtml(listFilters.email)}" />
                   </label>
                   <label class="cadastro-field">
-                    <span>Categoria razao social</span>
+                    <span>Categoria razão social</span>
                     <select name="categoryRole">
                       <option value="all" ${listFilters.categoryRole === 'all' ? 'selected' : ''}>Selecione</option>
                       ${roles.map((role) => `<option value="${escapeHtml(role)}" ${listFilters.categoryRole === role ? 'selected' : ''}>${escapeHtml(role)}</option>`).join('')}
@@ -1843,7 +2684,7 @@ async function loadModule(moduleName) {
                   </label>
 
                   <label class="cadastro-field">
-                    <span>Vendedor padrao</span>
+                    <span>Transportadora padrão</span>
                     <input name="defaultCarrier" value="${escapeHtml(listFilters.defaultCarrier)}" />
                   </label>
                   <label class="cadastro-field">
@@ -1851,7 +2692,7 @@ async function loadModule(moduleName) {
                     <select name="type">
                       <option value="all" ${listFilters.type === 'all' ? 'selected' : ''}>Todos</option>
                       <option value="people" ${listFilters.type === 'people' ? 'selected' : ''}>Pessoas</option>
-                      <option value="cnpj" ${listFilters.type === 'cnpj' ? 'selected' : ''}>CNPJ's</option>
+                      <option value="cnpj" ${listFilters.type === 'cnpj' ? 'selected' : ''}>CNPJs</option>
                     </select>
                   </label>
                   <label class="cadastro-field">
@@ -1899,43 +2740,47 @@ async function loadModule(moduleName) {
             ` : ''}
 
             ${merged.length ? `
-              <table class="table table-actions">
-                <thead><tr><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
-                <tbody>
-                  ${merged.map((row) => `
-                    <tr>
-                      <td>${escapeHtml(row.cadastroTipo)}</td>
-                      <td>${escapeHtml(row.name)}</td>
-                      <td>${escapeHtml(row.tradeName || '-')}</td>
-                      <td>${escapeHtml(formatCpfCnpj(row.document || ''))}</td>
-                      <td>${escapeHtml(row.email || '-')}</td>
-                      <td>${escapeHtml(row.phone || '-')}</td>
-                      <td>${escapeHtml(row.status || 'ativo')}</td>
-                      <td>${escapeHtml(formatDate(row.createdAt))}</td>
-                      <td>
-                        <button class="icon-button edit cadastro-edit-row" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Editar" aria-label="Editar cadastro">
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                        </button>
-                        <button class="icon-button cadastro-delete-row" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Excluir" aria-label="Excluir cadastro">
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                        </button>
-                      </td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
+              <div class="table-scroll">
+                <table class="table table-actions">
+                  <thead><tr><th>Código</th><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
+                  <tbody>
+                    ${merged.map((row) => `
+                      <tr class="cadastro-row-clickable" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Duplo clique para editar">
+                        <td>${escapeHtml(row.code || '-')}</td>
+                        <td>${escapeHtml(row.cadastroTipo)}</td>
+                        <td>${escapeHtml(row.name)}</td>
+                        <td>${escapeHtml(row.tradeName || '-')}</td>
+                        <td>${escapeHtml(formatCpfCnpj(row.document || ''))}</td>
+                        <td>${escapeHtml(row.email || '-')}</td>
+                        <td>${escapeHtml(row.phone || '-')}</td>
+                        <td>${escapeHtml(row.status || 'ativo')}</td>
+                        <td>${escapeHtml(formatDate(row.createdAt))}</td>
+                        <td>
+                          <button class="icon-button edit cadastro-edit-row" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Editar" aria-label="Editar cadastro">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                          </button>
+                          <button class="icon-button cadastro-delete-row" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Excluir" aria-label="Excluir cadastro">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                          </button>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
             ` : '<p class="muted">Nenhum registro encontrado para os filtros aplicados.</p>'}
           </div>
         `;
       };
 
+      // Roteamento das sub-abas de Cadastros para suas funções de renderização
       const pages = {
-        register: renderUnifiedRegister,
-        edit: renderUnifiedEdit,
-        deposits: renderDepositsList,
-        deposits_register: () => renderDepositsRegister('register'),
-        deposits_edit: () => renderDepositsRegister('edit'),
-        list: renderUnifiedList
+        register: renderUnifiedRegister, // Sub-aba: Cadastro
+        edit: renderUnifiedEdit, // Sub-aba: Edição
+        deposits: renderDepositsList, // Sub-aba: Depósitos
+        deposits_register: () => renderDepositsRegister('register'), // Sub-aba: Depósitos > Cadastro
+        deposits_edit: () => renderDepositsRegister('edit'), // Sub-aba: Depósitos > Edição
+        list: renderUnifiedList // Sub-aba: Cadastros
       };
 
       content.innerHTML = (pages[sub] || renderUnifiedList)();
@@ -2119,29 +2964,38 @@ async function loadModule(moduleName) {
         loadModule('cadastros');
       });
 
+      const openCadastroRowForEdit = (kind, id) => {
+        if (!id) return;
+
+        if (kind === 'cnpj') {
+          const company = cnpjs.find((entry) => entry.id === id);
+          if (!company) return;
+          state.cadastroDraft = {
+            ...state.cadastroDraft,
+            activeType: 'people',
+            people: { ...company, kind: 'cnpj', type: 'pessoa-juridica', error: '', documentMessage: '' }
+          };
+        } else {
+          const person = people.find((entry) => entry.id === id);
+          if (!person) return;
+          state.cadastroDraft = { ...state.cadastroDraft, activeType: 'people', people: { ...person, kind: 'people', error: '', documentMessage: '' } };
+        }
+
+        state.activeSub = 'edit';
+        renderApp();
+        loadModule('cadastros');
+      };
+
       document.querySelectorAll('.cadastro-edit-row').forEach((button) => {
         button.addEventListener('click', () => {
-          const kind = button.dataset.kind;
-          const id = button.dataset.id;
-          if (!id) return;
+          openCadastroRowForEdit(button.dataset.kind, button.dataset.id);
+        });
+      });
 
-          if (kind === 'cnpj') {
-            const company = cnpjs.find((entry) => entry.id === id);
-            if (!company) return;
-            state.cadastroDraft = {
-              ...state.cadastroDraft,
-              activeType: 'people',
-              people: { ...company, kind: 'cnpj', type: 'pessoa-juridica', error: '', documentMessage: '' }
-            };
-          } else {
-            const person = people.find((entry) => entry.id === id);
-            if (!person) return;
-            state.cadastroDraft = { ...state.cadastroDraft, activeType: 'people', people: { ...person, kind: 'people', error: '', documentMessage: '' } };
-          }
-
-          state.activeSub = 'edit';
-          renderApp();
-          loadModule('cadastros');
+      document.querySelectorAll('.cadastro-row-clickable').forEach((row) => {
+        row.addEventListener('dblclick', (event) => {
+          if (event.target.closest('button')) return;
+          openCadastroRowForEdit(row.dataset.kind, row.dataset.id);
         });
       });
 
@@ -2160,68 +3014,10 @@ async function loadModule(moduleName) {
 
           try {
             await api(isCnpj ? `/api/cadastros/cnpjs/${id}` : `/api/cadastros/pessoas/${id}`, { method: 'DELETE' });
-            showToast(isCnpj ? 'CNPJ excluido com sucesso.' : 'Pessoa excluida com sucesso.', 'success');
+            showToast(isCnpj ? 'CNPJ excluído com sucesso.' : 'Pessoa excluída com sucesso.', 'success');
             loadModule('cadastros');
           } catch (error) {
             showToast(error.message || 'Erro ao excluir cadastro.', 'error');
-          }
-        });
-      });
-
-      document.querySelectorAll('.cadastro-edit-person').forEach((button) => {
-        button.addEventListener('click', () => {
-          const person = people.find((entry) => entry.id === button.dataset.id);
-          if (!person) return;
-          state.cadastroDraft = { ...state.cadastroDraft, activeType: 'people', people: { ...person, kind: 'people', error: '', documentMessage: '' } };
-          state.activeSub = 'edit';
-          renderApp();
-          loadModule('cadastros');
-        });
-      });
-
-      document.querySelectorAll('.cadastro-delete-person').forEach((button) => {
-        button.addEventListener('click', async () => {
-          const person = people.find((entry) => entry.id === button.dataset.id);
-          const name = person?.name || 'registro';
-          const confirmed = await confirmModal(`Excluir pessoa "${name}"?`);
-          if (!confirmed) return;
-          try {
-            await api(`/api/cadastros/pessoas/${button.dataset.id}`, { method: 'DELETE' });
-            showToast('Pessoa excluida com sucesso.', 'success');
-            loadModule('cadastros');
-          } catch (error) {
-            showToast(error.message || 'Erro ao excluir pessoa.', 'error');
-          }
-        });
-      });
-
-      document.querySelectorAll('.cadastro-edit-cnpj').forEach((button) => {
-        button.addEventListener('click', () => {
-          const company = cnpjs.find((entry) => entry.id === button.dataset.id);
-          if (!company) return;
-          state.cadastroDraft = {
-            ...state.cadastroDraft,
-            activeType: 'people',
-            people: { ...company, kind: 'cnpj', type: 'pessoa-juridica', error: '', documentMessage: '' }
-          };
-          state.activeSub = 'edit';
-          renderApp();
-          loadModule('cadastros');
-        });
-      });
-
-      document.querySelectorAll('.cadastro-delete-cnpj').forEach((button) => {
-        button.addEventListener('click', async () => {
-          const company = cnpjs.find((entry) => entry.id === button.dataset.id);
-          const name = company?.name || 'registro';
-          const confirmed = await confirmModal(`Excluir CNPJ "${name}"?`);
-          if (!confirmed) return;
-          try {
-            await api(`/api/cadastros/cnpjs/${button.dataset.id}`, { method: 'DELETE' });
-            showToast('CNPJ excluido com sucesso.', 'success');
-            loadModule('cadastros');
-          } catch (error) {
-            showToast(error.message || 'Erro ao excluir CNPJ.', 'error');
           }
         });
       });
@@ -2239,9 +3035,40 @@ async function loadModule(moduleName) {
           [key]: {
             ...(state.cadastroDraft[key] || {}),
             ...draftTarget,
+            fieldErrors: draftTarget.fieldErrors || {},
             document,
             documentMessage: message,
             error: message
+          }
+        };
+        renderApp();
+        loadModule('cadastros');
+      };
+
+      const markFormError = (draftTarget, key, message) => {
+        showToast(message, 'error');
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          [key]: {
+            ...(state.cadastroDraft[key] || {}),
+            ...draftTarget,
+            fieldErrors: draftTarget.fieldErrors || {},
+            error: message
+          }
+        };
+        renderApp();
+        loadModule('cadastros');
+      };
+
+      const markMissingFields = (draftTarget, key, fieldErrors, message) => {
+        showToast(message, 'error');
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          [key]: {
+            ...(state.cadastroDraft[key] || {}),
+            ...draftTarget,
+            fieldErrors,
+            error: ''
           }
         };
         renderApp();
@@ -2266,6 +3093,69 @@ async function loadModule(moduleName) {
         refreshPeopleLookupButton();
       });
 
+      // Preenche automaticamente Logradouro/Bairro/Cidade/UF ao sair do campo CEP (blur/Tab).
+      // fieldMap define os nomes reais dos campos no formulário (endereço principal, de cobrança ou de entrega).
+      const bindCepAutoFill = (form, draftKey, fieldMap) => {
+        const cepInput = form?.querySelector(`input[name="${fieldMap.zipCode}"]`);
+        if (!cepInput) return;
+
+        cepInput.addEventListener('input', () => {
+          cepInput.value = maskCep(cepInput.value);
+        });
+
+        const clearFieldError = (input) => {
+          const wrapper = input?.closest('.cadastro-field, .cadastro-field-inline');
+          wrapper?.classList.remove('cadastro-field-invalid');
+          wrapper?.querySelector('.cadastro-field-error-msg')?.remove();
+        };
+
+        cepInput.addEventListener('blur', async () => {
+          const cep = sanitizeDigits(cepInput.value);
+          if (cep.length !== 8) return;
+
+          try {
+            const response = await api(`/api/cep/${cep}`);
+            const address = response.address || {};
+
+            const fieldValues = {
+              [fieldMap.street]: address.street || '',
+              [fieldMap.neighborhood]: address.neighborhood || '',
+              [fieldMap.city]: address.city || '',
+              [fieldMap.state]: address.state || '',
+              [fieldMap.ibgeCityCode]: address.ibgeCityCode || ''
+            };
+            if (fieldMap.complement && address.complement) {
+              fieldValues[fieldMap.complement] = address.complement;
+            }
+
+            clearFieldError(cepInput);
+            Object.entries(fieldValues).forEach(([fieldName, value]) => {
+              if (!value) return;
+              const input = form.querySelector(`[name="${fieldName}"]`);
+              if (!input) return;
+              input.value = value;
+              clearFieldError(input);
+            });
+
+            state.cadastroDraft = {
+              ...state.cadastroDraft,
+              [draftKey]: {
+                ...(state.cadastroDraft[draftKey] || {}),
+                [fieldMap.zipCode]: address.zipCode || cep,
+                ...fieldValues
+              }
+            };
+          } catch (error) {
+            showToast(error.message || 'CEP não encontrado.', 'warning');
+          }
+        });
+      };
+
+      const peopleRegisterFormEl = document.getElementById('peopleRegisterForm');
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'zipCode', street: 'street', neighborhood: 'neighborhood', city: 'city', state: 'state', ibgeCityCode: 'ibgeCityCode', complement: 'addressComplement' });
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'billingZipCode', street: 'billingStreet', neighborhood: 'billingNeighborhood', city: 'billingCity', state: 'billingState', ibgeCityCode: 'billingIbgeCityCode', complement: 'billingAddressComplement' });
+      bindCepAutoFill(peopleRegisterFormEl, 'people', { zipCode: 'deliveryZipCode', street: 'deliveryStreet', neighborhood: 'deliveryNeighborhood', city: 'deliveryCity', state: 'deliveryState', ibgeCityCode: 'deliveryIbgeCityCode', complement: 'deliveryAddressComplement' });
+
       document.getElementById('peopleLookupBtn')?.addEventListener('click', async () => {
         const form = document.getElementById('peopleRegisterForm');
         if (!form) return;
@@ -2275,13 +3165,13 @@ async function loadModule(moduleName) {
         const type = selectedType;
 
         if (documentValue.length !== 14) {
-          showToast('Informe um CNPJ com 14 digitos para consultar.', 'warning');
+          showToast('Informe um CNPJ com 14 dígitos para consultar.', 'warning');
           state.cadastroDraft = {
             ...state.cadastroDraft,
             people: {
               ...(state.cadastroDraft.people || {}),
               document: maskDocumentValue(documentValue, type),
-              documentMessage: 'Informe um CNPJ valido para consultar dados oficiais.'
+              documentMessage: 'Informe um CNPJ válido para consultar dados oficiais.'
             }
           };
           renderApp();
@@ -2322,7 +3212,7 @@ async function loadModule(moduleName) {
             }
           };
           if (!officialEmail || !officialPhone) {
-            showToast('A API retornou CNPJ valido, mas sem email e/ou telefone para este cadastro.', 'warning');
+            showToast('A API retornou CNPJ válido, mas sem email e/ou telefone para este cadastro.', 'warning');
           }
           showToast('CNPJ consultado com sucesso!', 'success');
           renderApp();
@@ -2347,16 +3237,6 @@ async function loadModule(moduleName) {
         const selectedType = String(formData.get('type') || 'pessoa-fisica');
         const documentValue = sanitizeDigits(formData.get('document'));
         const type = selectedType;
-
-        if (type === 'pessoa-juridica' && !isValidCnpj(documentValue)) {
-          markInvalidDocument({ name: String(formData.get('name') || '').trim() }, 'people', 'CNPJ inválido. Não é possível salvar.', documentValue);
-          return;
-        }
-
-        if (type === 'pessoa-fisica' && !isValidCpf(documentValue)) {
-          markInvalidDocument({ name: String(formData.get('name') || '').trim() }, 'people', 'CPF inválido. Não é possível salvar.', documentValue);
-          return;
-        }
 
         const payload = {
           id: peopleDraft.id || undefined,
@@ -2398,6 +3278,24 @@ async function loadModule(moduleName) {
           country: String(formData.get('country') || '').trim(),
           countryCode: String(formData.get('countryCode') || '').trim(),
           mapLink: String(formData.get('mapLink') || '').trim(),
+          billingZipCode: String(formData.get('billingZipCode') || '').trim(),
+          billingStreet: String(formData.get('billingStreet') || '').trim(),
+          billingStreetNumber: String(formData.get('billingStreetNumber') || '').trim(),
+          billingAddressComplement: String(formData.get('billingAddressComplement') || '').trim(),
+          billingNeighborhood: String(formData.get('billingNeighborhood') || '').trim(),
+          billingCity: String(formData.get('billingCity') || '').trim(),
+          billingState: String(formData.get('billingState') || '').trim(),
+          billingIbgeCityCode: String(formData.get('billingIbgeCityCode') || '').trim(),
+          billingCountry: String(formData.get('billingCountry') || '').trim(),
+          deliveryZipCode: String(formData.get('deliveryZipCode') || '').trim(),
+          deliveryStreet: String(formData.get('deliveryStreet') || '').trim(),
+          deliveryStreetNumber: String(formData.get('deliveryStreetNumber') || '').trim(),
+          deliveryAddressComplement: String(formData.get('deliveryAddressComplement') || '').trim(),
+          deliveryNeighborhood: String(formData.get('deliveryNeighborhood') || '').trim(),
+          deliveryCity: String(formData.get('deliveryCity') || '').trim(),
+          deliveryState: String(formData.get('deliveryState') || '').trim(),
+          deliveryIbgeCityCode: String(formData.get('deliveryIbgeCityCode') || '').trim(),
+          deliveryCountry: String(formData.get('deliveryCountry') || '').trim(),
           creditLimit: String(formData.get('creditLimit') || '').trim(),
           creditUsed: String(formData.get('creditUsed') || '').trim(),
           paymentPeriodDays: String(formData.get('paymentPeriodDays') || '').trim(),
@@ -2413,6 +3311,30 @@ async function loadModule(moduleName) {
           bankPeriod: String(formData.get('bankPeriod') || '').trim(),
           notes: String(formData.get('notes') || '').trim()
         };
+
+        const missingFields = getMissingRequiredRegistrationFields(payload);
+        if (missingFields.length) {
+          const fieldErrors = {};
+          missingFields.forEach((key) => { fieldErrors[key] = true; });
+          markMissingFields({ ...payload }, 'people', fieldErrors, 'Preencha os campos obrigatórios destacados em vermelho.');
+          return;
+        }
+
+        if (type === 'pessoa-juridica' && !isValidCnpj(documentValue)) {
+          markInvalidDocument({ ...payload }, 'people', 'CNPJ inválido. Não é possível salvar.', documentValue);
+          return;
+        }
+
+        if (type === 'pessoa-fisica' && !isValidCpf(documentValue)) {
+          markInvalidDocument({ ...payload }, 'people', 'CPF inválido. Não é possível salvar.', documentValue);
+          return;
+        }
+
+        const duplicateMessage = findDuplicateRegistrationClient([...people, ...cnpjs], payload, payload.id);
+        if (duplicateMessage) {
+          markFormError({ ...payload }, 'people', duplicateMessage);
+          return;
+        }
 
         state.cadastroDraft = { ...state.cadastroDraft, people: payload };
 
@@ -2439,8 +3361,43 @@ async function loadModule(moduleName) {
         }
       });
 
+      // Troca de mini-abas do formulário de Cadastro/Edição (Dados / Registros Financeiros / Atributos)
+      document.querySelectorAll('#peopleRegisterForm .cadastro-tab').forEach((tabBtn) => {
+        tabBtn.addEventListener('click', () => {
+          const target = tabBtn.dataset.tab;
+          document.querySelectorAll('#peopleRegisterForm .cadastro-tab').forEach((btn) => {
+            const isActive = btn === tabBtn;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', String(isActive));
+          });
+          document.querySelectorAll('#peopleRegisterForm .cadastro-tab-panel').forEach((panel) => {
+            panel.hidden = panel.dataset.tabPanel !== target;
+          });
+        });
+      });
+
+      // Endereço de cobrança/entrega diferente: abre (ou fecha) a aba correspondente ao ligar/desligar a chave.
+      const bindDifferentAddressToggle = (checkboxName, tabBtnId) => {
+        const toggle = document.querySelector(`#peopleRegisterForm input[name="${checkboxName}"]`);
+        const tabBtn = document.getElementById(tabBtnId);
+        if (!toggle || !tabBtn) return;
+
+        toggle.addEventListener('change', () => {
+          tabBtn.hidden = !toggle.checked;
+          if (toggle.checked) {
+            tabBtn.click();
+          } else if (tabBtn.classList.contains('active')) {
+            document.querySelector('#peopleRegisterForm .cadastro-tab[data-tab="dados"]')?.click();
+          }
+        });
+      };
+
+      bindDifferentAddressToggle('billingDifferent', 'billingTabBtn');
+      bindDifferentAddressToggle('deliveryDifferent', 'deliveryTabBtn');
+
       const cnpjDocumentInput = document.getElementById('cnpjDocumentInput');
       bindDocumentMask(cnpjDocumentInput, () => 'pessoa-juridica');
+      bindCepAutoFill(document.getElementById('cnpjRegisterForm'), 'cnpjs', { zipCode: 'zipCode', street: 'address', neighborhood: 'neighborhood', city: 'city', state: 'state', ibgeCityCode: 'ibgeCityCode', complement: 'addressComplement' });
 
       document.getElementById('consultCnpjBtn')?.addEventListener('click', async () => {
         const form = document.getElementById('cnpjRegisterForm');
@@ -2449,7 +3406,7 @@ async function loadModule(moduleName) {
         const documentValue = sanitizeDigits(formData.get('document'));
 
         if (!isValidCnpj(documentValue)) {
-          showToast('CNPJ invalido. Informe 14 digitos numericos validos.', 'error');
+          showToast('CNPJ inválido. Informe 14 dígitos numéricos válidos.', 'error');
           state.cadastroDraft = {
             ...state.cadastroDraft,
             cnpjs: {
@@ -2492,7 +3449,7 @@ async function loadModule(moduleName) {
             }
           };
           if (!officialEmail || !officialPhone) {
-            showToast('A API retornou CNPJ valido, mas sem email e/ou telefone para este cadastro.', 'warning');
+            showToast('A API retornou CNPJ válido, mas sem email e/ou telefone para este cadastro.', 'warning');
           }
           showToast('CNPJ consultado com sucesso!', 'success');
           renderApp();
@@ -2516,21 +3473,6 @@ async function loadModule(moduleName) {
         event.preventDefault();
         const formData = new FormData(event.target);
         const documentValue = sanitizeDigits(formData.get('document'));
-
-        if (!isValidCnpj(documentValue)) {
-          showToast('CNPJ invalido. Nao foi possivel salvar.', 'error');
-          state.cadastroDraft = {
-            ...state.cadastroDraft,
-            cnpjs: {
-              ...(state.cadastroDraft.cnpjs || {}),
-              document: documentValue,
-              error: 'CNPJ inválido. Não foi possível salvar.'
-            }
-          };
-          renderApp();
-          loadModule('cadastros');
-          return;
-        }
 
         const payload = {
           id: cnpjDraft.id || undefined,
@@ -2580,6 +3522,25 @@ async function loadModule(moduleName) {
           notes: String(formData.get('notes') || '').trim()
         };
 
+        const missingFields = getMissingRequiredRegistrationFields(payload);
+        if (missingFields.length) {
+          const fieldErrors = {};
+          missingFields.forEach((key) => { fieldErrors[key] = true; });
+          markMissingFields({ ...payload }, 'cnpjs', fieldErrors, 'Preencha os campos obrigatórios destacados em vermelho.');
+          return;
+        }
+
+        if (!isValidCnpj(documentValue)) {
+          markFormError({ ...payload }, 'cnpjs', 'CNPJ inválido. Não foi possível salvar.');
+          return;
+        }
+
+        const duplicateMessage = findDuplicateRegistrationClient([...people, ...cnpjs], payload, payload.id);
+        if (duplicateMessage) {
+          markFormError({ ...payload }, 'cnpjs', duplicateMessage);
+          return;
+        }
+
         state.cadastroDraft = { ...state.cadastroDraft, cnpjs: payload };
 
         try {
@@ -2613,12 +3574,13 @@ async function loadModule(moduleName) {
         loadModule('cadastros');
       });
 
-      document.getElementById('depositRegisterForm')?.addEventListener('submit', (event) => {
+      document.getElementById('depositRegisterForm')?.addEventListener('submit', async (event) => {
         event.preventDefault();
+        const submitBtn = event.target.querySelector('button[type="submit"]');
+        if (submitBtn?.disabled) return;
         const formData = new FormData(event.target);
         const isEditing = Boolean(depositDraft.id);
         const payload = {
-          id: isEditing ? depositDraft.id : `dep-${Date.now()}`,
           name: String(formData.get('name') || '').trim(),
           code: String(formData.get('code') || '').trim(),
           status: String(formData.get('status') || 'ativo').trim() || 'ativo',
@@ -2626,8 +3588,7 @@ async function loadModule(moduleName) {
           city: String(formData.get('city') || '').trim(),
           state: String(formData.get('state') || '').trim(),
           manager: String(formData.get('manager') || '').trim(),
-          notes: String(formData.get('notes') || '').trim(),
-          createdAt: isEditing ? (depositDraft.createdAt || new Date().toISOString()) : new Date().toISOString()
+          notes: String(formData.get('notes') || '').trim()
         };
 
         if (!payload.name) {
@@ -2635,6 +3596,7 @@ async function loadModule(moduleName) {
           state.cadastroDraft = {
             ...state.cadastroDraft,
             depositForm: {
+              ...depositDraft,
               ...payload,
               error: 'Informe o nome do depósito.'
             }
@@ -2644,19 +3606,27 @@ async function loadModule(moduleName) {
           return;
         }
 
-        const nextDeposits = isEditing
-          ? deposits.map((entry) => (entry.id === payload.id ? payload : entry))
-          : [payload, ...deposits];
-
-        state.cadastroDraft = {
-          ...state.cadastroDraft,
-          depositForm: {},
-          deposits: nextDeposits
-        };
-        showToast(isEditing ? 'Depósito atualizado com sucesso.' : 'Depósito salvo com sucesso.', 'success');
-        state.activeSub = 'deposits';
-        renderApp();
-        loadModule('cadastros');
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+          if (isEditing) {
+            await api(`/api/cadastros/deposits/${depositDraft.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+          } else {
+            await api('/api/cadastros/deposits', { method: 'POST', body: JSON.stringify(payload) });
+          }
+          state.cadastroDraft = { ...state.cadastroDraft, depositForm: {} };
+          showToast(isEditing ? 'Depósito atualizado com sucesso.' : 'Depósito salvo com sucesso.', 'success');
+          state.activeSub = 'deposits';
+          renderApp();
+          loadModule('cadastros');
+        } catch (error) {
+          showToast(error.message || 'Erro ao salvar depósito.', 'error');
+          state.cadastroDraft = {
+            ...state.cadastroDraft,
+            depositForm: { ...depositDraft, ...payload, id: isEditing ? depositDraft.id : undefined, error: error.message || 'Erro ao salvar depósito.' }
+          };
+          renderApp();
+          loadModule('cadastros');
+        }
       });
 
       document.querySelectorAll('.cadastro-edit-deposit').forEach((button) => {
@@ -2681,28 +3651,32 @@ async function loadModule(moduleName) {
           const id = button.dataset.id;
           if (!id) return;
           const item = deposits.find((entry) => entry.id === id);
-          const label = item?.name || 'deposito';
-          const confirmed = await confirmModal(`Excluir deposito "${label}"?`);
+          const label = item?.name || 'depósito';
+          const confirmed = await confirmModal(`Excluir depósito "${label}"?`);
           if (!confirmed) return;
 
-          state.cadastroDraft = {
-            ...state.cadastroDraft,
-            deposits: deposits.filter((entry) => entry.id !== id)
-          };
-          showToast('Deposito excluido com sucesso.', 'success');
-          renderApp();
-          loadModule('cadastros');
+          try {
+            await api(`/api/cadastros/deposits/${id}`, { method: 'DELETE' });
+            showToast('Depósito excluído com sucesso.', 'success');
+            loadModule('cadastros');
+          } catch (error) {
+            showToast(error.message || 'Erro ao excluir depósito.', 'error');
+          }
         });
       });
 
       return;
     }
 
+    // ========================================================================
+    // ABA: COMPRAS (sub-abas: Nova compra, Histórico de compras, Fornecedores)
+    // ========================================================================
     if (moduleName === 'purchases') {
       const data = await api('/api/purchases');
       const sub = state.activeSub || 'new_purchase';
 
       const renderPage = () => {
+        // Sub-aba: Histórico de compras
         if (sub === 'purchase_history') {
           return `
             <div class="panel">
@@ -2717,6 +3691,7 @@ async function loadModule(moduleName) {
           `;
         }
 
+        // Sub-aba: Fornecedores
         if (sub === 'suppliers') {
           const suppliers = [...new Map(data.purchases.map((purchase) => [purchase.supplier, { name: purchase.supplier, purchases: 0, total: 0 }])).values()];
           data.purchases.forEach((purchase) => {
@@ -2740,6 +3715,7 @@ async function loadModule(moduleName) {
           `;
         }
 
+        // Sub-aba: Nova compra (padrão)
         return `
           <div class="panel">
             <h3>Nova compra</h3>
@@ -2788,6 +3764,9 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: ESTOQUE
+    // ========================================================================
     if (moduleName === 'stock') {
       const data = await api('/api/stock');
       content.innerHTML = `
@@ -2839,6 +3818,9 @@ async function loadModule(moduleName) {
       return;
     }
 
+    // ========================================================================
+    // ABA: FINANCEIRO
+    // ========================================================================
     if (moduleName === 'finance') {
       const data = await api('/api/finance');
       content.innerHTML = `
@@ -2884,15 +3866,18 @@ async function loadModule(moduleName) {
               method: formData.get('method')
             })
           });
-          showToast('Lancamento financeiro salvo com sucesso.', 'success');
+          showToast('Lançamento financeiro salvo com sucesso.', 'success');
           loadModule('finance');
         } catch (error) {
-          showToast(error.message || 'Erro ao salvar lancamento financeiro.', 'error');
+          showToast(error.message || 'Erro ao salvar lançamento financeiro.', 'error');
         }
       });
       return;
     }
 
+    // ========================================================================
+    // ABA: CONFIGURAÇÕES
+    // ========================================================================
     if (moduleName === 'settings') {
       const data = await api('/api/settings');
           const totals = data.totals || {};
@@ -2901,7 +3886,7 @@ async function loadModule(moduleName) {
           const canManageUsers = Boolean(settingsPermissions.users);
           content.innerHTML = `
             <div class="cards">
-              ${canManageUsers ? `<div class="card"><h3>Usuarios</h3><p>${totals.totalUsers ?? (data.users || []).length}</p></div>` : ''}
+              ${canManageUsers ? `<div class="card"><h3>Usuários</h3><p>${totals.totalUsers ?? (data.users || []).length}</p></div>` : ''}
               <div class="card"><h3>Produtos</h3><p>${totals.totalProducts ?? 0}</p></div>
               <div class="card"><h3>Vendas</h3><p>${totals.totalSales ?? 0}</p></div>
               <div class="card"><h3>Compras</h3><p>${totals.totalPurchases ?? 0}</p></div>
@@ -2960,10 +3945,10 @@ async function loadModule(moduleName) {
                 method: 'POST',
                 body: JSON.stringify({ type: 'company', payload: { companyName: formData.get('companyName'), currency: formData.get('currency'), taxRate: Number(formData.get('taxRate')) } })
               });
-              showToast('Configuracoes da empresa salvas com sucesso.', 'success');
+              showToast('Configurações da empresa salvas com sucesso.', 'success');
               loadModule('settings');
             } catch (error) {
-              showToast(error.message || 'Erro ao salvar configuracoes da empresa.', 'error');
+              showToast(error.message || 'Erro ao salvar configurações da empresa.', 'error');
             }
           });
 
@@ -2976,10 +3961,10 @@ async function loadModule(moduleName) {
                 method: 'POST',
                 body: JSON.stringify({ type: 'user', payload: { name: formData.get('name'), username: formData.get('username'), password: formData.get('password'), role: formData.get('role'), allowedModules: selectedModules } })
               });
-              showToast('Usuario criado com sucesso.', 'success');
+              showToast('Usuário criado com sucesso.', 'success');
               loadModule('settings');
             } catch (error) {
-              showToast(error.message || 'Erro ao criar usuario.', 'error');
+              showToast(error.message || 'Erro ao criar usuário.', 'error');
             }
           });
 
@@ -2995,7 +3980,7 @@ async function loadModule(moduleName) {
                         if (!confirmed) return;
                         try {
                           await api('/api/users/delete', { method: 'POST', body: JSON.stringify({ id }) });
-                          showToast('Usuario excluido com sucesso.', 'success');
+                          showToast('Usuário excluído com sucesso.', 'success');
                           loadModule('settings');
                         } catch (err) {
                           showToast('Erro ao excluir: ' + err.message, 'error');
@@ -3039,13 +4024,16 @@ async function loadModule(moduleName) {
           return;
         }
   } catch (error) {
-    showToast(error.message || 'Erro ao carregar modulo.', 'error');
+    showToast(error.message || 'Erro ao carregar módulo.', 'error');
     content.innerHTML = `<div class="panel"><p>${error.message}</p></div>`;
   }
 }
 
 (async function bootstrap() {
-  const token = localStorage.getItem('token');
+  // Clear legacy token from older versions that used localStorage.
+  localStorage.removeItem('token');
+
+  const token = getSessionToken();
   if (!token) {
     renderAuth();
     return;
@@ -3054,14 +4042,20 @@ async function loadModule(moduleName) {
   try {
     const response = await api('/api/me');
     state.user = response.user;
+    state.user.dashboardPins = normalizeDashboardPins([
+      ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
+      ...readStoredDashboardPins(state.user.id)
+    ]);
+    persistStoredDashboardPins(state.user.id, state.user.dashboardPins);
+    applyTheme(state.user.theme);
     restoreLastRoute();
     const moduleHistory = ensureModuleRouteHistory(state.activeModule);
     moduleHistory.currentRouteKey = getRouteKey(state.activeModule, state.activeSub);
     renderApp();
     await loadModule(state.activeModule);
   } catch (error) {
-    localStorage.removeItem('token');
-    showToast(error.message || 'Sua sessao expirou. Faca login novamente.', 'error');
+    clearSessionToken();
+    showToast(error.message || 'Sua sessão expirou. Faça login novamente.', 'error');
     renderAuth(error.message);
   }
 })();

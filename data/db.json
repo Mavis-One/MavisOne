@@ -14,7 +14,8 @@
         "finance",
         "settings",
         "cadastros"
-      ]
+      ],
+      "theme": "dark"
     },
     {
       "id": "user-1785286612473-ato3ve",
@@ -27,7 +28,8 @@
         "sales",
         "purchases",
         "cadastros"
-      ]
+      ],
+      "theme": "light"
     }
   ],
   "products": [
@@ -40,87 +42,15 @@
       "salePrice": 75
     }
   ],
-  "sales": [
-    {
-      "id": "sale-test-001",
-      "date": "2026-07-25",
-      "customer": "Cliente Alpha",
-      "productId": "prod-1",
-      "quantity": 3,
-      "unitPrice": 80,
-      "total": 240,
-      "status": "faturado"
-    },
-    {
-      "id": "sale-test-002",
-      "date": "2026-07-26",
-      "customer": "Cliente Beta",
-      "productId": "prod-1",
-      "quantity": 5,
-      "unitPrice": 78,
-      "total": 390,
-      "status": "faturado"
-    },
-    {
-      "id": "sale-test-003",
-      "date": "2026-07-27",
-      "customer": "Cliente Gama",
-      "productId": "prod-1",
-      "quantity": 2,
-      "unitPrice": 75,
-      "total": 150,
-      "status": "faturado"
-    }
-  ],
-  "purchases": [
-    {
-      "id": "purchase-test-001",
-      "date": "2026-07-24",
-      "supplier": "Fornecedor Atlas",
-      "productId": "prod-1",
-      "quantity": 4,
-      "costPrice": 52,
-      "total": 208,
-      "status": "pendente"
-    },
-    {
-      "id": "purchase-test-002",
-      "date": "2026-07-25",
-      "supplier": "Fornecedor Nexus",
-      "productId": "prod-1",
-      "quantity": 6,
-      "costPrice": 50,
-      "total": 300,
-      "status": "pendente"
-    },
-    {
-      "id": "purchase-test-003",
-      "date": "2026-07-27",
-      "supplier": "Fornecedor Prime",
-      "productId": "prod-1",
-      "quantity": 3,
-      "costPrice": 49,
-      "total": 147,
-      "status": "pendente"
-    }
-  ],
+  "sales": [],
+  "purchases": [],
   "finance": [],
   "settings": {
     "companyName": "MavisONE",
     "currency": "BRL",
     "taxRate": 0
   },
-  "orders": [
-    {
-      "id": "ord-1785249082327-bv8h12",
-      "type": "order",
-      "customer": "Cliente Teste",
-      "date": "2026-08-01",
-      "amount": 1500,
-      "status": "pendente",
-      "note": "teste"
-    }
-  ],
+  "orders": [],
   "quotes": [],
   "nfes": [],
   "people": [
@@ -184,7 +114,8 @@
       "mainCnae": "",
       "openingDate": "",
       "contacts": [],
-      "cnpjVerifiedAt": null
+      "cnpjVerifiedAt": null,
+      "code": "01"
     },
     {
       "id": "pes-test-002",
@@ -195,7 +126,8 @@
       "phone": "51991110002",
       "status": "ativo",
       "notes": "Cadastro de teste PF 2",
-      "createdAt": "2026-07-28T10:05:00.000Z"
+      "createdAt": "2026-07-28T10:05:00.000Z",
+      "code": "02"
     },
     {
       "id": "pes-test-003",
@@ -216,7 +148,7 @@
       "blockWhatsappBilling": false,
       "commissionHierarchy": false,
       "roles": [
-        "Tecnico",
+        "Técnico",
         "Colaborador"
       ],
       "group": "",
@@ -260,7 +192,8 @@
       "mainCnae": "",
       "openingDate": "",
       "contacts": [],
-      "cnpjVerifiedAt": null
+      "cnpjVerifiedAt": null,
+      "code": "03"
     },
     {
       "id": "pes-test-004",
@@ -271,7 +204,8 @@
       "phone": "51991110004",
       "status": "inativo",
       "notes": "Cadastro de teste PF 4",
-      "createdAt": "2026-07-28T10:15:00.000Z"
+      "createdAt": "2026-07-28T10:15:00.000Z",
+      "code": "04"
     },
     {
       "id": "pes-test-005",
@@ -282,7 +216,8 @@
       "phone": "51991110005",
       "status": "ativo",
       "notes": "Cadastro de teste PF 5",
-      "createdAt": "2026-07-28T10:20:00.000Z"
+      "createdAt": "2026-07-28T10:20:00.000Z",
+      "code": "05"
     },
     {
       "id": "pes-1785282112778-ws5kx6",
@@ -304,69 +239,8 @@
       "openingDate": "",
       "contacts": [],
       "cnpjVerifiedAt": null,
-      "createdAt": "2026-07-28T23:41:52.778Z"
-    },
-    {
-      "id": "pes-1785282148282-wcsf1y",
-      "name": "Smoke PF",
-      "phone": "11999990001",
-      "type": "pessoa-fisica",
-      "email": "pf@smoke.com",
-      "document": "52998224725",
-      "status": "ativo",
-      "tradeName": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "zipCode": "",
-      "neighborhood": "",
-      "addressNumber": "",
-      "addressComplement": "",
-      "mainCnae": "",
-      "openingDate": "",
-      "contacts": [],
-      "cnpjVerifiedAt": null,
-      "createdAt": "2026-07-28T23:42:28.283Z",
-      "secondaryEmails": "",
-      "whatsapp": "",
-      "mobilePhone": "",
-      "defaultCarrier": "",
-      "inactive": true,
-      "blockWhatsappBilling": true,
-      "commissionHierarchy": true,
-      "roles": [],
-      "group": "",
-      "rg": "",
-      "issuerBody": "",
-      "issueDate": "",
-      "issuerState": "",
-      "ruralProducer": false,
-      "stateRegistration": "",
-      "municipalRegistration": "",
-      "suframaRegistration": "",
-      "foreignAddress": false,
-      "billingDifferent": false,
-      "deliveryDifferent": false,
-      "street": "",
-      "streetNumber": "",
-      "ibgeCityCode": "",
-      "country": "Brasil",
-      "countryCode": "1058",
-      "mapLink": "",
-      "creditLimit": "",
-      "creditUsed": "",
-      "paymentPeriodDays": "",
-      "minPurchaseValue": "",
-      "defaultPriceTable": "",
-      "paymentMethod": "",
-      "bankDocument": "",
-      "bankName": "",
-      "bankAgency": "",
-      "bankAgencyDigit": "",
-      "bankNumber": "",
-      "bankNumberDigit": "",
-      "bankPeriod": "",
-      "notes": ""
+      "createdAt": "2026-07-28T23:41:52.778Z",
+      "code": "11"
     }
   ],
   "cnpjs": [
@@ -382,7 +256,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "ativo",
-      "createdAt": "2026-07-28T11:00:00.000Z"
+      "createdAt": "2026-07-28T11:00:00.000Z",
+      "code": "06"
     },
     {
       "id": "cnpj-test-002",
@@ -396,7 +271,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "ativo",
-      "createdAt": "2026-07-28T11:05:00.000Z"
+      "createdAt": "2026-07-28T11:05:00.000Z",
+      "code": "07"
     },
     {
       "id": "cnpj-test-003",
@@ -410,7 +286,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "inativo",
-      "createdAt": "2026-07-28T11:10:00.000Z"
+      "createdAt": "2026-07-28T11:10:00.000Z",
+      "code": "08"
     },
     {
       "id": "cnpj-test-004",
@@ -424,7 +301,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "ativo",
-      "createdAt": "2026-07-28T11:15:00.000Z"
+      "createdAt": "2026-07-28T11:15:00.000Z",
+      "code": "09"
     },
     {
       "id": "cnpj-test-005",
@@ -438,7 +316,8 @@
       "state": "RS",
       "registrationStatus": "ATIVA",
       "status": "ativo",
-      "createdAt": "2026-07-28T11:20:00.000Z"
+      "createdAt": "2026-07-28T11:20:00.000Z",
+      "code": "10"
     }
   ],
   "importLogs": [],
@@ -451,6 +330,121 @@
       "byId": "user-admin",
       "byName": "Administrador",
       "at": "2026-07-29T00:56:33.859Z"
+    },
+    {
+      "id": "audit-1785776409119-1h1wsd",
+      "action": "createUser",
+      "targetId": "user-1785776408786-fgtxb1",
+      "targetUsername": "nicolas.mavis",
+      "byId": "user-admin",
+      "byName": "Administrador",
+      "at": "2026-08-03T17:00:09.119Z"
+    },
+    {
+      "id": "audit-1785862882221-enxvow",
+      "action": "createUser",
+      "targetId": "user-1785862881594-ydl8wd",
+      "targetUsername": "teste.edicao",
+      "byId": "user-admin",
+      "byName": "Administrador",
+      "at": "2026-08-04T17:01:22.221Z"
+    },
+    {
+      "id": "audit-1785862883744-sm1di5",
+      "action": "updateUser",
+      "targetId": "user-1785862881594-ydl8wd",
+      "targetUsername": "teste.edicao",
+      "byId": "user-admin",
+      "byName": "Administrador",
+      "at": "2026-08-04T17:01:23.744Z"
+    },
+    {
+      "id": "audit-1785862885483-vh5w2p",
+      "action": "deleteUser",
+      "targetId": "user-1785862881594-ydl8wd",
+      "targetUsername": "teste.edicao",
+      "byId": "user-admin",
+      "byName": "Administrador",
+      "at": "2026-08-04T17:01:25.483Z"
     }
-  ]
+  ],
+  "nextCadastroCode": 14,
+  "deposits": [],
+  "financialPayments": [],
+  "financialCategories": [
+    {
+      "id": "cat-test-001",
+      "name": "Vendas de Produtos",
+      "type": "receita",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "cat-test-002",
+      "name": "Prestação de Serviços",
+      "type": "receita",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "cat-test-003",
+      "name": "Aluguel",
+      "type": "despesa",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "cat-test-004",
+      "name": "Salários",
+      "type": "despesa",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "cat-test-005",
+      "name": "Fornecedores",
+      "type": "despesa",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "cat-test-006",
+      "name": "Marketing",
+      "type": "despesa",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    }
+  ],
+  "costCenters": [
+    {
+      "id": "cc-test-001",
+      "name": "Administrativo",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "cc-test-002",
+      "name": "Comercial",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "cc-test-003",
+      "name": "Operacional",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    }
+  ],
+  "bankAccounts": [
+    {
+      "id": "bank-test-001",
+      "name": "Banco do Brasil - CC",
+      "bank": "Banco do Brasil",
+      "agency": "1234-5",
+      "number": "12345-6",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    },
+    {
+      "id": "bank-test-002",
+      "name": "Itaú - CC",
+      "bank": "Itaú",
+      "agency": "5678",
+      "number": "98765-4",
+      "createdAt": "2026-06-01T09:00:00.000Z"
+    }
+  ],
+  "bankTransactions": [],
+  "companies": [],
+  "nextSalesCode": 1006
 }
