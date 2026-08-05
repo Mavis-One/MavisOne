@@ -142,8 +142,8 @@ window.MavisSubscreenRegistry.finance.bancos_conectados = async function renderB
         const confirmed = await confirmModal('Confirma desconectar este banco? A sincronização automática vai parar até reconectar.');
         if (!confirmed) return;
         try {
-          await api(`/api/open-finance/connections/${btn.dataset.disconnect}/disconnect`, { method: 'POST' });
-          showToast('Banco desconectado.', 'success');
+          const res = await api(`/api/open-finance/connections/${btn.dataset.disconnect}/disconnect`, { method: 'POST' });
+          showToast(res.avisoProvider ? `Desconectado localmente. Aviso do provider: ${res.avisoProvider}` : 'Banco desconectado.', res.avisoProvider ? 'warning' : 'success');
           loadConnections();
         } catch (error) {
           showToast(error.message || 'Erro ao desconectar.', 'error');

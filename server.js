@@ -4070,17 +4070,28 @@ const server = http.createServer(async (req, res) => {
         if (!connection) {
           return sendJson(res, { error: 'Conexão não encontrada' }, 404);
         }
-        const credentials = await openFinanceDb.getConnectionCredentials(id);
-        await openFinanceService.disconnectConnection({ ...connection, credentials });
+        // Revogar do lado do provider é best-effort: se o provider não está
+        // configurado, a credencial expirou ou a API dele está fora do ar,
+        // o usuário não pode ficar PRESO com uma conexão que não consegue
+        // marcar como desconectada localmente. O status local sempre muda;
+        // uma falha do lado do provider só fica registrada na auditoria.
+        let avisoProvider = null;
+        try {
+          const credentials = await openFinanceDb.getConnectionCredentials(id);
+          await openFinanceService.disconnectConnection({ ...connection, credentials });
+        } catch (error) {
+          avisoProvider = error.message;
+        }
         await openFinanceDb.updateConnection(id, { status: 'disconnected' });
         await openFinanceDb.recordAuditLog({
           connectionId: id,
           estabelecimentoId: connection.estabelecimentoId,
           action: 'CONNECTION_DISCONNECTED',
           byId: user.id,
-          byName: user.name
+          byName: user.name,
+          details: avisoProvider ? { avisoProvider } : null
         });
-        return sendJson(res, { success: true });
+        return sendJson(res, { success: true, avisoProvider });
       }
 
       if (/^\/api\/open-finance\/connections\/[^/]+\/accounts$/.test(pathname) && req.method === 'GET') {
