@@ -116,6 +116,7 @@ function normalizeData(data) {
   data.bankAccounts = Array.isArray(data.bankAccounts) ? data.bankAccounts : [];
   data.companies = Array.isArray(data.companies) ? data.companies : [];
   data.bankTransactions = Array.isArray(data.bankTransactions) ? data.bankTransactions : [];
+  data.stockMovements = Array.isArray(data.stockMovements) ? data.stockMovements : [];
   delete data.cadastros;
   data.importLogs = Array.isArray(data.importLogs) ? data.importLogs : [];
   data.auditLogs = Array.isArray(data.auditLogs) ? data.auditLogs : [];
@@ -664,6 +665,98 @@ function computeSalesTotals(items, discountAmount, discountPercent, freight) {
     itemsTotal: Math.round(itemsTotal * 100) / 100,
     totalAmount: Math.round(totalAmount * 100) / 100
   };
+}
+
+// Registro de ledger — nunca sobrescreve, só insere (mesmo espírito de
+// account_balances no Open Finance). Mutação em memória; quem chama ainda
+// precisa dar saveData(data) no final da rota.
+function registrarMovimentoEstoque(data, { productId, productName, type, quantityDelta, referenceType, referenceId, note, user }) {
+  data.stockMovements.push({
+    id: createId('mov'),
+    productId,
+    productName: productName || '',
+    type,
+    quantityDelta,
+    referenceType,
+    referenceId: referenceId || '',
+    note: note || '',
+    createdBy: user?.id || '',
+    createdByName: user?.name || '',
+    createdAt: new Date().toISOString()
+  });
+}
+
+// Estoque só é afetado de verdade quando um PEDIDO (não orçamento — orçamento
+// é só proposta) está ou passa a estar "faturado". Cobre os 4 casos de uma
+// vez (criar já faturado, faturar depois, deixar de ser faturado, continuar
+// faturado com itens diferentes) pra nunca deixar estoque inconsistente:
+// primeiro PROJETA o resultado (devolve o que o pedido antigo reservava,
+// desconta o que o novo vai reservar) e só grava de verdade se o resultado
+// projetado não fica negativo em nenhum produto.
+async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied, willApply, record, user }) {
+  if (!wasApplied && !willApply) return;
+
+  const idsEnvolvidos = new Set([
+    ...(wasApplied ? oldItems : []).map((item) => item.productId),
+    ...(willApply ? newItems : []).map((item) => item.productId)
+  ].filter(Boolean));
+
+  const produtos = new Map();
+  for (const id of idsEnvolvidos) {
+    produtos.set(id, await db.getProductById(id));
+  }
+
+  const projetado = new Map();
+  for (const [id, produto] of produtos) {
+    projetado.set(id, Number(produto?.stockQuantity || 0));
+  }
+  if (wasApplied) {
+    for (const item of oldItems) {
+      if (!item.productId || !projetado.has(item.productId)) continue;
+      projetado.set(item.productId, projetado.get(item.productId) + Number(item.quantity || 0));
+    }
+  }
+  if (willApply) {
+    for (const item of newItems) {
+      if (!item.productId || !projetado.has(item.productId)) continue;
+      const restante = projetado.get(item.productId) - Number(item.quantity || 0);
+      if (restante < 0) {
+        const produto = produtos.get(item.productId);
+        const err = new Error(`Estoque insuficiente para "${item.name}" (disponível: ${produto?.stockQuantity ?? 0}, necessário: ${item.quantity}).`);
+        err.status = 400;
+        throw err;
+      }
+      projetado.set(item.productId, restante);
+    }
+  }
+
+  // Validado — agora aplica de verdade, um produto por vez.
+  if (wasApplied) {
+    for (const item of oldItems) {
+      if (!item.productId) continue;
+      const produto = produtos.get(item.productId);
+      if (!produto) continue;
+      await db.upsertProduct({ ...produto, stockQuantity: Number(produto.stockQuantity || 0) + Number(item.quantity || 0) });
+      registrarMovimentoEstoque(data, {
+        productId: item.productId, productName: item.name, type: 'estorno',
+        quantityDelta: Number(item.quantity || 0), referenceType: 'order', referenceId: record.id,
+        note: `Estorno do pedido ${record.code || record.id}`, user
+      });
+    }
+  }
+  if (willApply) {
+    for (const item of newItems) {
+      if (!item.productId) continue;
+      const produtoAtual = await db.getProductById(item.productId); // relê: pode ter mudado no passo do estorno acima
+      if (!produtoAtual) continue;
+      await db.upsertProduct({ ...produtoAtual, stockQuantity: Number(produtoAtual.stockQuantity || 0) - Number(item.quantity || 0) });
+      registrarMovimentoEstoque(data, {
+        productId: item.productId, productName: item.name, type: 'venda',
+        quantityDelta: -Number(item.quantity || 0), referenceType: 'order', referenceId: record.id,
+        note: `Pedido ${record.code || record.id}`, user
+      });
+    }
+  }
 }
 
 // Pedidos/orçamentos antigos (importados via CSV ou criados antes desta fase) não têm
@@ -2065,11 +2158,19 @@ const server = http.createServer(async (req, res) => {
           totalAmount,
           note: body.note || '',
           status: body.status || (type === 'order' ? 'pendente' : 'em aberto'),
+          stockApplied: false,
           createdBy: user.id,
           createdByName: user.name,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
+        // Orçamento nunca mexe em estoque (é só proposta). Pedido só desconta
+        // se já nasce "faturado" — o caminho normal é criar "pendente" e
+        // faturar depois via PUT (ver rota de atualização, mais abaixo).
+        if (type === 'order' && record.status === 'faturado') {
+          await transitionOrderStockEffect(data, { oldItems: [], newItems: items, wasApplied: false, willApply: true, record, user });
+          record.stockApplied = true;
+        }
         data[type === 'order' ? 'orders' : 'quotes'].push(record);
       } else if (type === 'nfe') {
         record = { id: createId('nfe'), type: 'nfe', number: body.number || createId('nfe-num'), customer: body.customer || 'Cliente', date: body.date || new Date().toISOString().slice(0, 10), amount: Number(body.amount || 0), status: body.status || 'emitida', key: body.key || '' };
@@ -2081,7 +2182,7 @@ const server = http.createServer(async (req, res) => {
       const responseRecord = (type === 'order' || type === 'quote') ? serializeSalesRecord(record, data) : record;
       return sendJson(res, { success: true, record: responseRecord });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar venda' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao salvar venda' }, error.status || 400);
     }
   }
 
@@ -2124,34 +2225,55 @@ const server = http.createServer(async (req, res) => {
         status: body.status || current.status,
         updatedAt: new Date().toISOString()
       };
+
+      if (current.type === 'order') {
+        const wasApplied = Boolean(current.stockApplied);
+        const willApply = updated.status === 'faturado';
+        await transitionOrderStockEffect(data, { oldItems: current.items || [], newItems: items, wasApplied, willApply, record: updated, user });
+        updated.stockApplied = willApply;
+      }
+
       list[index] = updated;
       saveData(data);
       return sendJson(res, { success: true, record: serializeSalesRecord(updated, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao atualizar pedido/orçamento' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao atualizar pedido/orçamento' }, error.status || 400);
     }
   }
 
   if (pathname.startsWith('/api/sales/records/') && req.method === 'DELETE') {
-    const data = loadData();
-    const user = await getCurrentUser(req);
-    if (!user || !user.allowedModules.includes('sales')) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
-    }
-    const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
-    let removed = false;
-    ['orders', 'quotes'].forEach((key) => {
-      const index = data[key].findIndex((entry) => entry.id === id);
-      if (index >= 0) {
-        data[key].splice(index, 1);
-        removed = true;
+    try {
+      const data = loadData();
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
       }
-    });
-    if (!removed) {
-      return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
+      let recordKey = null;
+      let index = -1;
+      for (const key of ['orders', 'quotes']) {
+        const found = data[key].findIndex((entry) => entry.id === id);
+        if (found >= 0) {
+          recordKey = key;
+          index = found;
+          break;
+        }
+      }
+      if (index < 0) {
+        return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      }
+      const record = data[recordKey][index];
+      if (recordKey === 'orders' && record.stockApplied) {
+        // Excluir um pedido já faturado devolve o estoque reservado — não faz
+        // sentido "sumir" com uma reserva de estoque junto com o registro.
+        await transitionOrderStockEffect(data, { oldItems: record.items || [], newItems: [], wasApplied: true, willApply: false, record, user });
+      }
+      data[recordKey].splice(index, 1);
+      saveData(data);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao excluir pedido/orçamento' }, error.status || 400);
     }
-    saveData(data);
-    return sendJson(res, { success: true });
   }
 
   if (pathname === '/api/sales/import' && req.method === 'POST') {
@@ -3125,6 +3247,11 @@ const server = http.createServer(async (req, res) => {
         stockQuantity: Number(product.stockQuantity || 0) + Number(body.quantity || 0),
         costPrice: Number(body.costPrice || product.costPrice || 0)
       });
+      registrarMovimentoEstoque(data, {
+        productId: product.id, productName: product.name, type: 'compra',
+        quantityDelta: Number(body.quantity || 0), referenceType: 'purchase', referenceId: purchase.id,
+        note: `Compra de ${purchase.supplier}`, user
+      });
 
       const financeEntry = {
         id: createId('fin'),
@@ -3141,7 +3268,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, purchase, financeEntry });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao criar compra' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao criar compra' }, error.status || 400);
     }
   }
 
@@ -3152,6 +3279,19 @@ const server = http.createServer(async (req, res) => {
     }
     const products = await db.getProducts();
     return sendJson(res, { products });
+  }
+
+  if (pathname === '/api/stock/movements' && req.method === 'GET') {
+    const data = loadData();
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('stock')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const productId = url.searchParams.get('productId');
+    let movements = data.stockMovements.slice().reverse(); // mais recente primeiro
+    if (productId) movements = movements.filter((m) => m.productId === productId);
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 100)));
+    return sendJson(res, { movements: movements.slice(0, limit) });
   }
 
   if (pathname === '/api/stock' && req.method === 'POST') {

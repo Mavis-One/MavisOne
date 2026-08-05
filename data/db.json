@@ -446,5 +446,6 @@
   ],
   "bankTransactions": [],
   "companies": [],
-  "nextSalesCode": 1007
+  "nextSalesCode": 1007,
+  "stockMovements": []
 }
