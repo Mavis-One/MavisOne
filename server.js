@@ -2300,6 +2300,51 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Webhook do Open Finance — chamado pelo provider (Pluggy/Polp/Celcoin),
+  // não pelo navegador. Mesmo padrão do webhook fiscal acima: fora do gate
+  // de sessão, autenticado por segredo compartilhado no header. O provider
+  // vem da própria URL porque mais de um pode estar configurado.
+  if (/^\/api\/open-finance\/webhooks\/[^/]+$/.test(pathname) && req.method === 'POST') {
+    try {
+      const secretEsperado = String(process.env.OPEN_FINANCE_WEBHOOK_SECRET || '').trim();
+      const secretRecebido = req.headers['x-open-finance-webhook-secret'];
+      if (!secretEsperado || secretRecebido !== secretEsperado) {
+        return sendJson(res, { error: 'Não autorizado' }, 401);
+      }
+      const provider = decodeURIComponent(pathname.replace('/api/open-finance/webhooks/', ''));
+      const body = await readBody(req);
+
+      // Formato exato do payload (nome dos campos de id do evento/conexão)
+      // ainda não é conhecido pra nenhum dos 3 providers — sem credencial
+      // real, isso só pode ser confirmado quando o primeiro webhook de
+      // verdade chegar. providerEventId e connectionId ficam null até lá,
+      // mas o evento bruto é gravado do mesmo jeito (nunca se perde).
+      const providerEventId = body.eventId || body.id || null;
+      const connectionId = body.connectionId || body.itemId || null;
+      const evento = await openFinanceDb.recordWebhookEvent({ provider, connectionId, providerEventId, payload: body });
+
+      if (evento.processed) {
+        // Reenvio do provider pro mesmo evento — já processamos antes.
+        return sendJson(res, { success: true, jaProcessado: true });
+      }
+
+      try {
+        if (connectionId) {
+          await syncOpenFinanceConnection(connectionId);
+        }
+        await openFinanceDb.markWebhookEventProcessed(evento.id, null);
+      } catch (syncError) {
+        await openFinanceDb.markWebhookEventProcessed(evento.id, syncError.message);
+        // Evento já está salvo — não propaga como erro HTTP pro provider
+        // ficar reenviando indefinidamente por causa de uma falha nossa.
+      }
+
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao processar webhook' }, error.status || 500);
+    }
+  }
+
   // ---------------------------------------------------------------------
   // Fiscal: empresa / estabelecimento / certificado / regras / NF-e (base
   // pra emissão real via Focus NFe). Permissão granular por ação
