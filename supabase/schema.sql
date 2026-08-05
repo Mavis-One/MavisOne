@@ -797,9 +797,16 @@ create unique index if not exists idx_bank_accounts_connection_provider_account
 
 -- Histórico de saldo — cada sincronização INSERE uma linha nova, nunca
 -- sobrescreve (é isso que permite ver evolução de saldo no tempo).
+--
+-- account_id SEM foreign key pra bank_accounts(id) de propósito: bank_accounts
+-- (Fase A) existe como tabela no Supabase mas está com 0 linhas — quem
+-- alimenta contas de verdade hoje é o arquivo local data/db.json (ver nota em
+-- lib/openfinance/sync.js e db.js). Um FK contra uma tabela que nunca recebe
+-- os IDs reais quebraria TODA sincronização em produção. Reavaliar quando
+-- Finance migrar de fato pro Supabase.
 create table if not exists account_balances (
   id uuid primary key default gen_random_uuid(),
-  account_id text not null references bank_accounts(id) on delete cascade,
+  account_id text not null,
   current_balance numeric not null,
   available_balance numeric,
   captured_at timestamptz not null default now()
