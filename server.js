@@ -545,6 +545,22 @@ function sumFinanceAmount(entries) {
   return entries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
 }
 
+// Cadastros (pessoas/CNPJs) são Supabase de verdade a partir desta fase —
+// data.people/data.cnpjs (e data.deposits, ver mais abaixo) não são mais
+// lidos/gravados do arquivo local. Em vez de mudar a assinatura de toda
+// função que usa data.people/data.cnpjs/data.deposits (getCadastroDirectory,
+// resolveFinanceCounterparty, serializeSalesRecord, filterSalesRecords,
+// buildSalesDashboardSummary, serializeFinanceEntry...), cada rota que
+// precisa desses dados populada data.people/data.cnpjs/data.deposits com o
+// conteúdo atual do Supabase logo após loadData() (ver syncCadastroData()) —
+// as funções abaixo continuam exatamente como eram antes da migração.
+async function syncCadastroData(data) {
+  const [people, cnpjs, deposits] = await Promise.all([db.getPeople(), db.getCnpjs(), db.getDeposits()]);
+  data.people = people;
+  data.cnpjs = cnpjs;
+  data.deposits = deposits;
+}
+
 function getCadastroDirectory(data) {
   const project = (record, kind) => ({
     id: record.id,
@@ -2059,6 +2075,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/sales/meta' && req.method === 'GET') {
     const data = loadData();
+    await syncCadastroData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2075,6 +2092,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/sales/dashboard' && req.method === 'GET') {
     const data = loadData();
+    await syncCadastroData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2084,6 +2102,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/sales/records' && req.method === 'GET') {
     const data = loadData();
+    await syncCadastroData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2126,6 +2145,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/records' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2189,6 +2209,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/sales/records/') && req.method === 'PUT') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2384,21 +2405,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/cadastros/pessoas' && req.method === 'GET') {
-    const data = loadData();
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    return sendJson(res, { people: data.people });
+    return sendJson(res, { people: await db.getPeople() });
   }
 
   if (pathname === '/api/cadastros/cnpjs' && req.method === 'GET') {
-    const data = loadData();
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    return sendJson(res, { cnpjs: data.cnpjs });
+    return sendJson(res, { cnpjs: await db.getCnpjs() });
   }
 
   if (pathname.startsWith('/api/cnpj/') && req.method === 'GET') {
@@ -2724,6 +2743,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/cadastros/pessoas' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2751,7 +2771,6 @@ const server = http.createServer(async (req, res) => {
         ...body,
         type,
         document,
-        code: formatCadastroCode(data.nextCadastroCode || 1),
         name: (officialData && officialData.razaoSocial) || body.name || '',
         tradeName: (officialData && officialData.nomeFantasia) || body.tradeName || '',
         email: body.email || (officialData?.contatos || []).find((contact) => contact.type === 'email')?.value || '',
@@ -2770,7 +2789,6 @@ const server = http.createServer(async (req, res) => {
         cnpjVerifiedAt: officialData ? new Date().toISOString() : null,
         createdAt: body.createdAt || new Date().toISOString()
       };
-      data.nextCadastroCode = (data.nextCadastroCode || 1) + 1;
 
       const missingFields = validateRequiredRegistrationFields(person);
       if (missingFields.length) {
@@ -2782,17 +2800,17 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: duplicateMessage }, 409);
       }
 
-      data.people.push(person);
-      saveData(data);
-      return sendJson(res, { success: true, person });
+      const created = await db.createPerson(person);
+      return sendJson(res, { success: true, person: created });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar pessoa' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao salvar pessoa' }, error.status || 400);
     }
   }
 
   if (pathname.startsWith('/api/cadastros/pessoas/') && req.method === 'PUT') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2858,35 +2876,33 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: duplicateMessage }, 409);
       }
 
-      data.people[index] = person;
-      saveData(data);
-      return sendJson(res, { success: true, person });
+      const updated = await db.updatePerson(id, person);
+      return sendJson(res, { success: true, person: updated });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao atualizar pessoa' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao atualizar pessoa' }, error.status || 400);
     }
   }
 
   if (pathname.startsWith('/api/cadastros/pessoas/') && req.method === 'DELETE') {
-    const data = loadData();
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
 
     const id = decodeURIComponent(pathname.replace('/api/cadastros/pessoas/', ''));
-    const index = data.people.findIndex((entry) => entry.id === id);
-    if (index < 0) {
+    const existing = await db.getPersonById(id);
+    if (!existing) {
       return sendJson(res, { error: 'Pessoa não encontrada' }, 404);
     }
 
-    data.people.splice(index, 1);
-    saveData(data);
+    await db.deletePerson(id);
     return sendJson(res, { success: true });
   }
 
   if (pathname === '/api/cadastros/cnpjs' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2912,7 +2928,6 @@ const server = http.createServer(async (req, res) => {
         ...body,
         type: 'pessoa-juridica',
         document: cnpj,
-        code: formatCadastroCode(data.nextCadastroCode || 1),
         name: (cnpjValidation && cnpjValidation.razaoSocial) || body.name || '',
         tradeName: (cnpjValidation && cnpjValidation.nomeFantasia) || body.tradeName || '',
         email: body.email || (cnpjValidation?.contatos || []).find((contact) => contact.type === 'email')?.value || '',
@@ -2933,7 +2948,6 @@ const server = http.createServer(async (req, res) => {
         cnpjVerifiedAt: cnpjValidation ? new Date().toISOString() : null,
         createdAt: body.createdAt || new Date().toISOString()
       };
-      data.nextCadastroCode = (data.nextCadastroCode || 1) + 1;
 
       const missingFields = validateRequiredRegistrationFields(company);
       if (missingFields.length) {
@@ -2945,17 +2959,17 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: duplicateMessage }, 409);
       }
 
-      data.cnpjs.push(company);
-      saveData(data);
-      return sendJson(res, { success: true, company });
+      const created = await db.createCnpj(company);
+      return sendJson(res, { success: true, company: created });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar CNPJ' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao salvar CNPJ' }, error.status || 400);
     }
   }
 
   if (pathname.startsWith('/api/cadastros/cnpjs/') && req.method === 'PUT') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3021,44 +3035,39 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: duplicateMessage }, 409);
       }
 
-      data.cnpjs[index] = company;
-      saveData(data);
-      return sendJson(res, { success: true, company });
+      const updated = await db.updateCnpj(id, company);
+      return sendJson(res, { success: true, company: updated });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao atualizar CNPJ' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao atualizar CNPJ' }, error.status || 400);
     }
   }
 
   if (pathname.startsWith('/api/cadastros/cnpjs/') && req.method === 'DELETE') {
-    const data = loadData();
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
 
     const id = decodeURIComponent(pathname.replace('/api/cadastros/cnpjs/', ''));
-    const index = data.cnpjs.findIndex((entry) => entry.id === id);
-    if (index < 0) {
+    const existing = await db.getCnpjById(id);
+    if (!existing) {
       return sendJson(res, { error: 'CNPJ não encontrado' }, 404);
     }
 
-    data.cnpjs.splice(index, 1);
-    saveData(data);
+    await db.deleteCnpj(id);
     return sendJson(res, { success: true });
   }
 
   if (pathname === '/api/cadastros/deposits' && req.method === 'GET') {
-    const data = loadData();
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    return sendJson(res, { deposits: data.deposits });
+    return sendJson(res, { deposits: await db.getDeposits() });
   }
 
   if (pathname === '/api/cadastros/deposits' && req.method === 'POST') {
     try {
-      const data = loadData();
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3069,11 +3078,11 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Informe o nome do depósito.' }, 400);
       }
       const code = String(body.code || '').trim();
-      if (code && data.deposits.some((entry) => entry.code && entry.code.toLowerCase() === code.toLowerCase())) {
+      const deposits = await db.getDeposits();
+      if (code && deposits.some((entry) => entry.code && entry.code.toLowerCase() === code.toLowerCase())) {
         return sendJson(res, { error: 'Já existe um depósito com este código interno.' }, 409);
       }
-      const deposit = {
-        id: createId('dep'),
+      const created = await db.createDeposit({
         name,
         code,
         status: String(body.status || 'ativo').trim() || 'ativo',
@@ -3081,41 +3090,36 @@ const server = http.createServer(async (req, res) => {
         city: body.city || '',
         state: body.state || '',
         manager: body.manager || '',
-        notes: body.notes || '',
-        createdAt: new Date().toISOString()
-      };
-      data.deposits.push(deposit);
-      saveData(data);
-      return sendJson(res, { success: true, deposit });
+        notes: body.notes || ''
+      });
+      return sendJson(res, { success: true, deposit: created });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar depósito' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao salvar depósito' }, error.status || 400);
     }
   }
 
   if (pathname.startsWith('/api/cadastros/deposits/') && req.method === 'PUT') {
     try {
-      const data = loadData();
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.replace('/api/cadastros/deposits/', ''));
-      const index = data.deposits.findIndex((entry) => entry.id === id);
-      if (index < 0) {
+      const deposits = await db.getDeposits();
+      const current = deposits.find((entry) => entry.id === id);
+      if (!current) {
         return sendJson(res, { error: 'Depósito não encontrado' }, 404);
       }
-      const current = data.deposits[index];
       const body = await readBody(req);
       const name = String(body.name ?? current.name ?? '').trim();
       if (!name) {
         return sendJson(res, { error: 'Informe o nome do depósito.' }, 400);
       }
       const code = String(body.code ?? current.code ?? '').trim();
-      if (code && data.deposits.some((entry) => entry.id !== id && entry.code && entry.code.toLowerCase() === code.toLowerCase())) {
+      if (code && deposits.some((entry) => entry.id !== id && entry.code && entry.code.toLowerCase() === code.toLowerCase())) {
         return sendJson(res, { error: 'Já existe um depósito com este código interno.' }, 409);
       }
-      const deposit = {
-        ...current,
+      const updated = await db.updateDeposit(id, {
         name,
         code,
         status: String(body.status ?? current.status ?? 'ativo').trim() || 'ativo',
@@ -3124,28 +3128,24 @@ const server = http.createServer(async (req, res) => {
         state: body.state ?? current.state ?? '',
         manager: body.manager ?? current.manager ?? '',
         notes: body.notes ?? current.notes ?? ''
-      };
-      data.deposits[index] = deposit;
-      saveData(data);
-      return sendJson(res, { success: true, deposit });
+      });
+      return sendJson(res, { success: true, deposit: updated });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao atualizar depósito' }, 400);
+      return sendJson(res, { error: error.message || 'Erro ao atualizar depósito' }, error.status || 400);
     }
   }
 
   if (pathname.startsWith('/api/cadastros/deposits/') && req.method === 'DELETE') {
-    const data = loadData();
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     const id = decodeURIComponent(pathname.replace('/api/cadastros/deposits/', ''));
-    const index = data.deposits.findIndex((entry) => entry.id === id);
-    if (index < 0) {
+    const deposits = await db.getDeposits();
+    if (!deposits.some((entry) => entry.id === id)) {
       return sendJson(res, { error: 'Depósito não encontrado' }, 404);
     }
-    data.deposits.splice(index, 1);
-    saveData(data);
+    await db.deleteDeposit(id);
     return sendJson(res, { success: true });
   }
 
@@ -3208,6 +3208,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/purchases' && req.method === 'GET') {
     const data = loadData();
+    await syncCadastroData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('purchases')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3219,6 +3220,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/purchases' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('purchases')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3432,6 +3434,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/finance/meta' && req.method === 'GET') {
     const data = loadData();
+    await syncCadastroData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3517,6 +3520,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/entries' && req.method === 'GET') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3536,6 +3540,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/entries' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3590,6 +3595,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/payments$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3651,6 +3657,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/estorno$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3684,6 +3691,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3710,6 +3718,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'PUT') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3754,6 +3763,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'GET') {
     const data = loadData();
+    await syncCadastroData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4059,6 +4069,7 @@ const server = http.createServer(async (req, res) => {
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/matches$/.test(pathname) && req.method === 'GET') {
     const data = loadData();
+    await syncCadastroData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4074,6 +4085,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/conciliar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
