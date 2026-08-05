@@ -1,37 +1,4 @@
 {
-  "users": [
-    {
-      "id": "user-admin",
-      "username": "admin",
-      "password": "SENHA-REMOVIDA-DO-HISTORICO",
-      "name": "Administrador",
-      "role": "admin",
-      "allowedModules": [
-        "dashboard",
-        "sales",
-        "purchases",
-        "stock",
-        "finance",
-        "settings",
-        "cadastros"
-      ],
-      "theme": "dark"
-    },
-    {
-      "id": "user-1785286612473-ato3ve",
-      "username": "nicolas.mavis",
-      "password": "SENHA-REMOVIDA-DO-HISTORICO",
-      "name": "Nicolas",
-      "role": "admin",
-      "allowedModules": [
-        "dashboard",
-        "sales",
-        "purchases",
-        "cadastros"
-      ],
-      "theme": "light"
-    }
-  ],
   "products": [
     {
       "id": "prod-1",

@@ -17,18 +17,11 @@ const MAX_PORT_RETRIES = 10;
 const DATA_FILE = path.join(__dirname, 'data', 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+// Usuários NÃO moram mais aqui: a autenticação é 100% Supabase (users.password_hash,
+// bcrypt) via lib/db/auth.js. O antigo array `users` guardava senha em texto puro e
+// não era lido por nenhuma rota — foi removido, e normalizeData() apaga o resíduo de
+// arquivos db.json antigos.
 const initialData = {
-  users: [
-    {
-      id: 'user-admin',
-      username: 'admin',
-      password: 'SENHA-REMOVIDA-DO-HISTORICO',
-      name: 'Administrador',
-      role: 'admin',
-      allowedModules: ['dashboard', 'sales', 'purchases', 'stock', 'finance', 'settings', 'cadastros'],
-      theme: 'light'
-    }
-  ],
   products: [
     {
       id: 'prod-1',
@@ -120,12 +113,9 @@ function normalizeData(data) {
   delete data.cadastros;
   data.importLogs = Array.isArray(data.importLogs) ? data.importLogs : [];
   data.auditLogs = Array.isArray(data.auditLogs) ? data.auditLogs : [];
-  data.users = Array.isArray(data.users) ? data.users : [];
-  data.users = data.users.map((user) => {
-    const allowedModules = Array.isArray(user.allowedModules) ? user.allowedModules : [];
-    const theme = user.theme === 'dark' ? 'dark' : 'light';
-    return { ...user, allowedModules, theme };
-  });
+  // Resíduo do modelo pré-Supabase: guardava senha em texto puro e nunca foi lido.
+  // Apagar aqui garante que qualquer db.json antigo seja limpo no primeiro saveData().
+  delete data.users;
   assignCadastroCodes(data);
   return data;
 }
@@ -2034,17 +2024,29 @@ const server = http.createServer(async (req, res) => {
     const canStock = user.allowedModules.includes('stock');
     const canFinance = user.allowedModules.includes('finance');
 
+    // As coleções legadas data.sales/data.purchases do db.json não recebem mais
+    // escrita: vendas viraram orders/quotes e compras viraram purchases, ambas no
+    // Supabase. Sem estes syncs o painel somava arrays sempre vazios e exibia R$ 0.
+    if (canSales) await syncSalesData(data);
+    if (canPurchases) await syncPurchasesData(data);
+
     const products = canStock ? await db.getProducts() : [];
 
-    const salesTotal = canSales ? data.sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0) : 0;
-    const purchaseTotal = canPurchases ? data.purchases.reduce((sum, purchase) => sum + Number(purchase.total || 0), 0) : 0;
+    // Reaproveita o mesmo cálculo do Painel de Vendas para que os dois batam.
+    const salesSummary = canSales ? buildSalesDashboardSummary(data).overview : null;
+    const salesTotal = salesSummary ? salesSummary.valorPedidos : 0;
+
+    // Compra cancelada não é custo — o Histórico de Compras usa o mesmo critério.
+    const activePurchases = canPurchases
+      ? (data.purchases || []).filter((purchase) => purchase.status !== 'cancelada')
+      : [];
+    const purchaseTotal = activePurchases.reduce((sum, purchase) => sum + Number(purchase.total || 0), 0);
     const stockValue = canStock ? products.reduce((sum, product) => sum + Number(product.stockQuantity || 0) * Number(product.costPrice || 0), 0) : 0;
 
-    const salesWithFinance = (canSales && canFinance)
-      ? data.sales.filter((sale) => data.finance.some((entry) => entry.referenceId === sale.id && entry.type === 'sale'))
-      : [];
+    // O fluxo novo de Vendas não gera lançamento financeiro por pedido, então medir
+    // "a conciliar" a partir dos próprios lançamentos de venda em aberto.
     const pendingReconciliation = (canSales && canFinance)
-      ? salesWithFinance.filter((sale) => !data.finance.some((entry) => entry.referenceId === sale.id && entry.type === 'sale' && entry.status === 'paid')).length
+      ? (data.finance || []).filter((entry) => entry.type === 'sale' && entry.status !== 'paid' && !isFinanceEntryCancelled(entry)).length
       : 0;
 
     return sendJson(res, {
@@ -2054,8 +2056,8 @@ const server = http.createServer(async (req, res) => {
       balance: salesTotal - purchaseTotal,
       pendingReconciliation,
       totalProducts: canStock ? products.length : 0,
-      totalSales: canSales ? data.sales.length : 0,
-      totalPurchases: canPurchases ? data.purchases.length : 0,
+      totalSales: salesSummary ? salesSummary.totalPedidos : 0,
+      totalPurchases: activePurchases.length,
       permissions: {
         sales: canSales,
         purchases: canPurchases,
@@ -3450,6 +3452,8 @@ const server = http.createServer(async (req, res) => {
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
+    // data.purchases só é populado pelo sync com o Supabase; sem isto vinha vazio.
+    await syncPurchasesData(data);
     return sendJson(res, { finance: data.finance, sales: data.sales, purchases: data.purchases });
   }
 
@@ -4431,6 +4435,11 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     const canManageUsers = user.role === 'admin';
+    const canSeeSales = user.allowedModules.includes('sales');
+    const canSeePurchases = user.allowedModules.includes('purchases');
+    // Mesmas coleções legadas vazias do /api/dashboard: precisam vir do Supabase.
+    if (canSeeSales) await syncSalesData(data);
+    if (canSeePurchases) await syncPurchasesData(data);
     const [settings, allUsers, products] = await Promise.all([
       db.getSettings(),
       canManageUsers ? db.getUsers() : Promise.resolve([]),
@@ -4439,8 +4448,8 @@ const server = http.createServer(async (req, res) => {
     const totals = {
       totalUsers: canManageUsers ? allUsers.length : 0,
       totalProducts: user.allowedModules.includes('stock') ? products.length : 0,
-      totalSales: user.allowedModules.includes('sales') ? data.sales.length : 0,
-      totalPurchases: user.allowedModules.includes('purchases') ? data.purchases.length : 0,
+      totalSales: canSeeSales ? (data.orders || []).length : 0,
+      totalPurchases: canSeePurchases ? (data.purchases || []).filter((p) => p.status !== 'cancelada').length : 0,
       totalFinance: user.allowedModules.includes('finance') ? data.finance.length : 0
     };
     const safeUsers = canManageUsers
