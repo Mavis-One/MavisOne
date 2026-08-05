@@ -162,6 +162,14 @@ alter table if exists quotes add column if not exists updated_at timestamptz not
 create index if not exists idx_quotes_code on quotes (code);
 create index if not exists idx_quotes_client_supplier on quotes (client_supplier_id);
 
+-- Fase G — purchases (Fase A) só tinha fornecedor em texto livre. Agora
+-- aceita vínculo opcional a um Cadastro (pessoa/CNPJ) via supplier_id, mesmo
+-- padrão de client_supplier_id em orders/quotes — "supplier" continua
+-- gravado (nome resolvido no momento da compra) pra exibição não depender
+-- do cadastro não ter sido alterado/excluído depois.
+alter table if exists purchases add column if not exists supplier_id text;
+create index if not exists idx_purchases_supplier on purchases (supplier_id);
+
 -- Log's Vendas Importadas — já existia a tabela (Fase A), sem alteração
 -- necessária, só passa a ser usada de verdade a partir desta fase.
 

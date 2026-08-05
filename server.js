@@ -663,6 +663,15 @@ async function syncSalesData(data) {
   data.importLogs = importLogs;
 }
 
+// Mesmo papel de syncCadastroData/syncSalesData: popula data.purchases com o
+// conteúdo atual do Supabase logo após loadData(), pra resolveFinanceCounterparty
+// (Financeiro) e a checagem de produto-em-uso (Estoque) continuarem lendo
+// data.purchases normalmente. Escrita (criar/mudar status) usa
+// db.createPurchase/updatePurchase direto nas rotas de Compras.
+async function syncPurchasesData(data) {
+  data.purchases = await db.getPurchases();
+}
+
 function normalizeSalesItems(rawItems) {
   if (!Array.isArray(rawItems)) return [];
   return rawItems
@@ -3236,8 +3245,8 @@ const server = http.createServer(async (req, res) => {
     if (!user || !user.allowedModules.includes('purchases')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    const products = await db.getProducts();
-    return sendJson(res, { purchases: data.purchases, products, directory: getCadastroDirectory(data) });
+    const [products, purchases] = await Promise.all([db.getProducts(), db.getPurchases()]);
+    return sendJson(res, { purchases, products, directory: getCadastroDirectory(data) });
   }
 
   if (pathname === '/api/purchases' && req.method === 'POST') {
@@ -3266,27 +3275,27 @@ const server = http.createServer(async (req, res) => {
         if (found) supplierName = found.name;
       }
 
-      const purchase = {
-        id: createId('purchase'),
+      const quantity = Number(body.quantity || 0);
+      const costPrice = Number(body.costPrice || product.costPrice || 0);
+      const purchase = await db.createPurchase({
         date: body.date || new Date().toISOString().slice(0, 10),
         supplierId: body.supplierId || '',
         supplier: supplierName,
         productId: product.id,
-        quantity: Number(body.quantity || 0),
-        costPrice: Number(body.costPrice || product.costPrice || 0),
-        total: Number(body.quantity || 0) * Number(body.costPrice || product.costPrice || 0),
+        quantity,
+        costPrice,
+        total: quantity * costPrice,
         status: 'pendente'
-      };
+      });
 
-      data.purchases.push(purchase);
       await db.upsertProduct({
         ...product,
-        stockQuantity: Number(product.stockQuantity || 0) + Number(body.quantity || 0),
-        costPrice: Number(body.costPrice || product.costPrice || 0)
+        stockQuantity: Number(product.stockQuantity || 0) + quantity,
+        costPrice
       });
       registrarMovimentoEstoque(data, {
         productId: product.id, productName: product.name, type: 'compra',
-        quantityDelta: Number(body.quantity || 0), referenceType: 'purchase', referenceId: purchase.id,
+        quantityDelta: quantity, referenceType: 'purchase', referenceId: purchase.id,
         note: `Compra de ${purchase.supplier}`, user
       });
 
@@ -3317,7 +3326,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.replace('/api/purchases/', ''));
-      const purchase = data.purchases.find((item) => item.id === id);
+      const purchase = await db.getPurchaseById(id);
       if (!purchase) {
         return sendJson(res, { error: 'Compra não encontrada' }, 404);
       }
@@ -3354,9 +3363,9 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      purchase.status = novoStatus;
+      const updated = await db.updatePurchase(id, { status: novoStatus });
       saveData(data);
-      return sendJson(res, { success: true, purchase });
+      return sendJson(res, { success: true, purchase: updated });
     } catch (error) {
       return sendJson(res, { error: error.message || 'Erro ao atualizar compra' }, error.status || 400);
     }
@@ -3415,12 +3424,12 @@ const server = http.createServer(async (req, res) => {
       }
       const id = decodeURIComponent(pathname.replace('/api/stock/', ''));
 
-      // Vendas já é Supabase (a FK do schema em sales/purchases ainda não
-      // protege esse caso — são tabelas diferentes das de verdade usadas
-      // aqui, orders/quotes). Compras ainda vive no arquivo local. Checa
-      // direto nas duas fontes.
+      // Vendas e Compras já são Supabase (a FK do schema em sales/purchases
+      // não protege esse caso — são tabelas diferentes das de verdade usadas
+      // aqui, orders/quotes/purchases). Checa direto nas duas fontes.
       const data = loadData();
       await syncSalesData(data);
+      await syncPurchasesData(data);
       const emUsoEmVendas = [...data.orders, ...data.quotes].some((record) =>
         (record.items || []).some((item) => item.productId === id));
       const emUsoEmCompras = (data.purchases || []).some((purchase) => purchase.productId === id);
@@ -3547,6 +3556,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncPurchasesData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3567,6 +3577,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncPurchasesData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3622,6 +3633,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncPurchasesData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3684,6 +3696,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncPurchasesData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3718,6 +3731,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncPurchasesData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3745,6 +3759,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncPurchasesData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3790,6 +3805,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'GET') {
     const data = loadData();
     await syncCadastroData(data);
+    await syncPurchasesData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4096,6 +4112,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/matches$/.test(pathname) && req.method === 'GET') {
     const data = loadData();
     await syncCadastroData(data);
+    await syncPurchasesData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4112,6 +4129,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncPurchasesData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
