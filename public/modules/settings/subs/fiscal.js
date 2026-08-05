@@ -56,6 +56,8 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   let estabStatusById = {};
   let regrasFiscais = [];
   let regraForm = null; // null | {} (nova) | objeto regra (edição)
+  let certificados = [];
+  let certificadoForm = null; // null | {} (novo)
 
   async function loadEmpresas() {
     const res = await api('/api/fiscal/empresas');
@@ -70,6 +72,19 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   async function loadRegrasFiscais(empresaId) {
     const res = await api(`/api/fiscal/regras?empresaId=${encodeURIComponent(empresaId)}`);
     regrasFiscais = res.regras || [];
+  }
+
+  async function loadCertificados(empresaId) {
+    const res = await api(`/api/fiscal/certificados?empresaId=${encodeURIComponent(empresaId)}`);
+    certificados = res.certificados || [];
+  }
+
+  function certificadoStatusBadge(validoAte) {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const em30Dias = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    if (validoAte < hoje) return '<span class="finance-badge finance-badge-danger">Vencido</span>';
+    if (validoAte <= em30Dias) return '<span class="finance-badge finance-badge-warning">Vence em breve</span>';
+    return '<span class="finance-badge finance-badge-success">Válido</span>';
   }
 
   function selectedEmpresa() {
@@ -150,6 +165,76 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
     `;
   }
 
+  function renderCertificadosSection() {
+    const empresa = selectedEmpresa();
+    if (!empresa) return '';
+    return `
+      <div class="panel">
+        <div class="cadastro-page-head">
+          <div>
+            <h3>Certificado digital — ${escapeHtml(empresa.razaoSocial)}</h3>
+            <p class="muted">Só controla a validade e avisa quando estiver vencendo — o arquivo (.pfx) e a senha ficam só na Focus NFe, nunca aqui.</p>
+          </div>
+          <div class="cadastro-list-actions">
+            <button type="button" id="fiscalNewCertificadoBtn">+ Novo certificado</button>
+          </div>
+        </div>
+        ${certificados.length ? `
+          <div class="table-scroll">
+          <table class="table table-actions">
+            <thead><tr><th>Tipo</th><th>CNPJ titular</th><th>Válido de</th><th>Válido até</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody>
+              ${certificados.map((cert) => `
+                <tr>
+                  <td>${escapeHtml(cert.tipo)}</td>
+                  <td>${escapeHtml(fiscalFormatCnpj(cert.titularCnpj))}</td>
+                  <td>${escapeHtml(cert.validoDe)}</td>
+                  <td>${escapeHtml(cert.validoAte)}</td>
+                  <td>${certificadoStatusBadge(cert.validoAte)}</td>
+                  <td>
+                    <button class="delete-certificado icon-button" data-id="${cert.id}" title="Excluir registro" aria-label="Excluir registro">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          </div>
+        ` : '<p class="muted">Nenhum certificado registrado ainda.</p>'}
+      </div>
+      ${renderCertificadoForm()}
+    `;
+  }
+
+  function renderCertificadoForm() {
+    if (!certificadoForm) return '';
+    return `
+      <div class="panel">
+        <h3>Novo certificado</h3>
+        <form id="fiscalCertificadoForm" class="form-grid">
+          <div class="row">
+            <label>Tipo
+              <select name="tipo">
+                <option value="A1">A1</option>
+                <option value="A3">A3</option>
+              </select>
+            </label>
+            <label>CNPJ titular<input name="titularCnpj" required maxlength="14" inputmode="numeric" placeholder="Somente números" /></label>
+          </div>
+          <div class="row">
+            <label>Válido de<input name="validoDe" type="date" required /></label>
+            <label>Válido até<input name="validoAte" type="date" required /></label>
+          </div>
+          <div class="row">
+            <button type="submit">Salvar</button>
+            <button type="button" class="secondary" id="fiscalCertificadoCancel">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
   function renderEstabelecimentosSection() {
     const empresa = selectedEmpresa();
     if (!empresa) return '';
@@ -179,6 +264,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
                   <td data-estab-status="${estab.id}">${estabStatusById[estab.id] || ''}</td>
                   <td>
                     <button type="button" class="secondary fiscal-test-estab" data-id="${estab.id}">Testar conexão</button>
+                    <button type="button" class="secondary fiscal-registrar-webhook" data-id="${estab.id}">Registrar webhook</button>
                     <button class="edit-estab icon-button edit" data-id="${estab.id}" title="Editar estabelecimento" aria-label="Editar estabelecimento">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
                     </button>
@@ -371,6 +457,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         ${renderEmpresasTable()}
       </div>
       ${renderEmpresaForm()}
+      ${renderCertificadosSection()}
       ${renderEstabelecimentosSection()}
     `;
     attachHandlers();
@@ -447,12 +534,56 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         selectedEmpresaId = btn.dataset.id;
         estabForm = null;
         regraForm = null;
+        certificadoForm = null;
         try {
-          await Promise.all([loadEstabelecimentos(selectedEmpresaId), loadRegrasFiscais(selectedEmpresaId)]);
+          await Promise.all([loadEstabelecimentos(selectedEmpresaId), loadRegrasFiscais(selectedEmpresaId), loadCertificados(selectedEmpresaId)]);
         } catch (error) {
-          showToast(error.message || 'Erro ao carregar estabelecimentos/regras.', 'error');
+          showToast(error.message || 'Erro ao carregar estabelecimentos/regras/certificados.', 'error');
         }
         renderAll();
+      });
+    });
+
+    document.getElementById('fiscalNewCertificadoBtn')?.addEventListener('click', () => {
+      certificadoForm = { empresaId: selectedEmpresaId };
+      renderAll();
+    });
+    document.getElementById('fiscalCertificadoCancel')?.addEventListener('click', () => {
+      certificadoForm = null;
+      renderAll();
+    });
+    document.getElementById('fiscalCertificadoForm')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      const payload = {
+        empresaId: selectedEmpresaId,
+        tipo: formData.get('tipo'),
+        titularCnpj: fiscalDigitsOnly(formData.get('titularCnpj')),
+        validoDe: formData.get('validoDe'),
+        validoAte: formData.get('validoAte')
+      };
+      try {
+        await api('/api/fiscal/certificados', { method: 'POST', body: JSON.stringify(payload) });
+        showToast('Certificado registrado com sucesso.', 'success');
+        certificadoForm = null;
+        await loadCertificados(selectedEmpresaId);
+        renderAll();
+      } catch (error) {
+        showToast(error.message || 'Erro ao registrar certificado.', 'error');
+      }
+    });
+    document.querySelectorAll('.delete-certificado').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const confirmed = await confirmModal('Excluir este registro de certificado?');
+        if (!confirmed) return;
+        try {
+          await api(`/api/fiscal/certificados/${btn.dataset.id}`, { method: 'DELETE' });
+          showToast('Registro excluído.', 'success');
+          await loadCertificados(selectedEmpresaId);
+          renderAll();
+        } catch (error) {
+          showToast(error.message || 'Erro ao excluir.', 'error');
+        }
       });
     });
 
@@ -549,6 +680,20 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
           if (cell) cell.innerHTML = label;
         } catch (error) {
           if (cell) cell.textContent = 'Erro: ' + (error.message || error);
+        }
+      });
+    });
+
+    document.querySelectorAll('.fiscal-registrar-webhook').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/fiscal/estabelecimentos/${btn.dataset.id}/webhook`, { method: 'POST' });
+          showToast('Webhook registrado com sucesso na Focus NFe.', 'success');
+        } catch (error) {
+          showToast(error.message || 'Erro ao registrar webhook.', 'error');
+        } finally {
+          btn.disabled = false;
         }
       });
     });

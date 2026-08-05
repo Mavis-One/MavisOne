@@ -14,6 +14,8 @@ const SETTINGS_AUDIT_ACTION_LABELS = {
   cancelarNfe: 'Cancelamento de NF-e',
   emitirNfeFiscal: 'Emissão de NF-e (Focus)',
   cancelarNfeFiscal: 'Cancelamento de NF-e (Focus)',
+  emitirCartaCorrecaoFiscal: 'Carta de Correção (Focus)',
+  inutilizarNumeracaoFiscal: 'Inutilização de numeração (Focus)',
   conciliarTransacao: 'Conciliação de extrato bancário'
 };
 

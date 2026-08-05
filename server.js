@@ -1292,9 +1292,69 @@ function mapFocusStatusToNfeStatus(focusStatus) {
   return map[focusStatus] || 'ERRO';
 }
 
+// Ordem importa: sufixos específicos (/cancelar, /cce, /eventos...) checados
+// antes do prefixo genérico "/api/fiscal/nfe/" + GET, mesma ordem em que as
+// próprias rotas abaixo fazem o match.
+function resolveFiscalPermission(pathname, method) {
+  if (pathname === '/api/fiscal/empresas') return method === 'GET' ? 'visualizar' : 'configurar';
+  if (pathname.startsWith('/api/fiscal/empresas/')) return 'configurar';
+
+  if (pathname === '/api/fiscal/estabelecimentos') return method === 'GET' ? 'visualizar' : 'configurar';
+  if (pathname.endsWith('/focus-status')) return 'visualizar';
+  if (pathname.endsWith('/webhook')) return 'configurar';
+  if (pathname.startsWith('/api/fiscal/estabelecimentos/')) return 'configurar';
+
+  if (pathname === '/api/fiscal/certificados') return method === 'GET' ? 'visualizar' : 'certificado';
+  if (pathname.startsWith('/api/fiscal/certificados/')) return 'certificado';
+
+  if (pathname === '/api/fiscal/regras') return method === 'GET' ? 'visualizar' : 'regras';
+  if (pathname.startsWith('/api/fiscal/regras/')) return 'regras';
+
+  if (pathname === '/api/fiscal/nfe') return 'visualizar';
+  if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
+  if (pathname.endsWith('/cancelar')) return 'cancelar';
+  if (pathname.endsWith('/cce')) return 'cce';
+  if (pathname.endsWith('/eventos')) return 'visualizar';
+  if (pathname === '/api/fiscal/inutilizar') return 'inutilizar';
+  if (pathname.endsWith('/xml')) return 'xml';
+  if (pathname.endsWith('/danfe')) return 'danfe';
+  if (pathname.startsWith('/api/fiscal/nfe/')) return 'visualizar';
+
+  return 'configurar';
+}
+
 // Emissão real de NF-e: resolve a tributação de cada item via regra_fiscal,
 // monta o payload da Focus NFe, grava um rascunho (auditoria mesmo se a
 // chamada falhar) e só então transmite.
+// Chave de comparação pra idempotência: mesmo destinatário + mesmos itens
+// (não usa a referência, que é sempre nova por design).
+function buildNfeConteudoKey(payloadFocus) {
+  const documento = payloadFocus.cnpj_destinatario || payloadFocus.cpf_destinatario || '';
+  const itensKey = (payloadFocus.items || [])
+    .map((item) => `${item.codigo_produto}|${item.descricao}|${item.quantidade_comercial}|${item.valor_unitario_comercial}`)
+    .join(';');
+  return `${documento}::${itensKey}`;
+}
+
+// Evita criar uma NF-e duplicada quando o usuário clica duas vezes (ou o
+// frontend reenvia por timeout): se já existe uma NF-e recente (últimos 2
+// minutos) com o mesmo destinatário+itens ainda em PROCESSANDO ou já
+// AUTORIZADA pra este estabelecimento, devolve ela em vez de emitir de novo.
+const NFE_IDEMPOTENCIA_JANELA_MS = 2 * 60 * 1000;
+
+async function encontrarNfeIdempotente(estabelecimentoId, payloadFocus) {
+  const chave = buildNfeConteudoKey(payloadFocus);
+  const recentes = await fiscalDb.getNfeRecords(estabelecimentoId);
+  const agora = Date.now();
+  return recentes.find((nfeExistente) => {
+    if (!['PROCESSANDO', 'AUTORIZADO'].includes(nfeExistente.status)) return false;
+    const criadoEmMs = new Date(nfeExistente.criadoEm).getTime();
+    if (!Number.isFinite(criadoEmMs) || agora - criadoEmMs > NFE_IDEMPOTENCIA_JANELA_MS) return false;
+    if (!nfeExistente.payloadEnviado) return false;
+    return buildNfeConteudoKey(nfeExistente.payloadEnviado) === chave;
+  });
+}
+
 async function emitirNfeFiscal(body, user) {
   const estabelecimento = await fiscalDb.getEstabelecimentoById(body.estabelecimentoId);
   if (!estabelecimento) {
@@ -1372,6 +1432,11 @@ async function emitirNfeFiscal(body, user) {
     dataEmissao
   });
 
+  const nfeExistente = await encontrarNfeIdempotente(estabelecimento.id, payload);
+  if (nfeExistente) {
+    return nfeExistente;
+  }
+
   let nfe = await fiscalDb.createNfeRascunho({
     estabelecimentoId: estabelecimento.id,
     referencia,
@@ -1386,18 +1451,7 @@ async function emitirNfeFiscal(body, user) {
   try {
     const client = await focusNfe.forEstabelecimento(estabelecimento.id);
     const resposta = await client.emitirNfe(referencia, payload);
-    nfe = await fiscalDb.updateNfeAposResposta(nfe.id, {
-      status: mapFocusStatusToNfeStatus(resposta.status),
-      serie: resposta.serie,
-      numero: resposta.numero,
-      chaveAcesso: resposta.chave_nfe,
-      mensagemSefaz: resposta.mensagem_sefaz,
-      protocolo: resposta.protocolo,
-      urlXml: resposta.caminho_xml_nota_fiscal,
-      urlDanfe: resposta.caminho_danfe,
-      respostaFocus: resposta,
-      autorizadoEm: resposta.status === 'autorizado' ? new Date().toISOString() : null
-    });
+    nfe = await aplicarRespostaFocusNaNfe(nfe, resposta);
     const data = loadData();
     data.auditLogs = data.auditLogs || [];
     data.auditLogs.push({ id: createId('audit'), action: 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referencia, byId: user.id, byName: user.name, at: new Date().toISOString() });
@@ -1411,6 +1465,80 @@ async function emitirNfeFiscal(body, user) {
     });
     throw error;
   }
+}
+
+// Usado tanto pela resposta síncrona da emissão quanto pelo webhook — é o
+// único lugar que decide o novo status de uma NF-e a partir da Focus NFe.
+// Idempotente: se o status recebido já é o mesmo que já estava salvo, não
+// faz nada (evita reprocessar o mesmo evento duas vezes).
+async function aplicarRespostaFocusNaNfe(nfe, resposta) {
+  const novoStatus = mapFocusStatusToNfeStatus(resposta.status);
+  if (novoStatus === nfe.status) {
+    return nfe;
+  }
+  const atualizada = await fiscalDb.updateNfeAposResposta(nfe.id, {
+    status: novoStatus,
+    serie: resposta.serie,
+    numero: resposta.numero,
+    chaveAcesso: resposta.chave_nfe,
+    mensagemSefaz: resposta.mensagem_sefaz,
+    protocolo: resposta.protocolo,
+    urlXml: resposta.caminho_xml_nota_fiscal,
+    urlDanfe: resposta.caminho_danfe,
+    respostaFocus: resposta,
+    autorizadoEm: novoStatus === 'AUTORIZADO' ? new Date().toISOString() : null
+  });
+
+  if (novoStatus === 'AUTORIZADO') {
+    // Melhor esforço: guarda uma cópia local do XML/DANFE pra não depender
+    // do link da Focus continuar disponível pra sempre. Se falhar (rede,
+    // arquivo ainda não gerado etc.), não derruba a autorização — a NF-e já
+    // está autorizada pela SEFAZ de qualquer forma.
+    baixarEGuardarArquivosNfe(atualizada).catch((error) => {
+      console.error('Falha ao baixar XML/DANFE da NF-e', atualizada.id, error.message);
+    });
+  }
+
+  return atualizada;
+}
+
+async function baixarEGuardarArquivosNfe(nfe) {
+  const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
+  if (nfe.urlXml) {
+    const conteudo = await client.baixarArquivo(nfe.urlXml);
+    await fiscalDb.createNfeArquivo({ nfeId: nfe.id, tipo: 'xml', conteudo });
+  }
+  if (nfe.urlDanfe) {
+    const conteudo = await client.baixarArquivo(nfe.urlDanfe);
+    await fiscalDb.createNfeArquivo({ nfeId: nfe.id, tipo: 'danfe', conteudo });
+  }
+}
+
+// Cadastra na Focus NFe a URL de callback pra este estabelecimento — sem
+// isso, a Focus nunca chama nosso webhook e NF-e assíncrona (202) fica presa
+// em PROCESSANDO até alguém consultar manualmente.
+async function registrarWebhookFiscal(estabelecimentoId) {
+  const webhookUrl = String(process.env.FISCAL_WEBHOOK_URL || '').trim();
+  const webhookSecret = String(process.env.FISCAL_WEBHOOK_SECRET || '').trim();
+  if (!webhookUrl || !webhookSecret) {
+    const err = new Error('Configure FISCAL_WEBHOOK_URL e FISCAL_WEBHOOK_SECRET no .env do servidor antes de registrar o webhook.');
+    err.status = 400;
+    throw err;
+  }
+  const estabelecimento = await fiscalDb.getEstabelecimentoById(estabelecimentoId);
+  if (!estabelecimento) {
+    const err = new Error('Estabelecimento não encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  const client = await focusNfe.forEstabelecimento(estabelecimentoId);
+  return client.criarWebhook({
+    event: 'nfe',
+    cnpj: estabelecimento.cnpj,
+    url: webhookUrl,
+    secret: webhookSecret,
+    secretHeader: 'X-Fiscal-Webhook-Secret'
+  });
 }
 
 async function cancelarNfeFiscal(id, justificativa, user) {
@@ -1432,11 +1560,97 @@ async function cancelarNfeFiscal(id, justificativa, user) {
     mensagemSefaz: resposta.mensagem_sefaz,
     respostaFocus: resposta
   });
+  await fiscalDb.createNfeEvento({
+    nfeId: nfe.id,
+    estabelecimentoId: nfe.estabelecimentoId,
+    tipo: 'CANCELAMENTO',
+    payloadEnviado: { justificativa },
+    respostaFocus: resposta,
+    status: updated.status
+  });
   const data = loadData();
   data.auditLogs = data.auditLogs || [];
   data.auditLogs.push({ id: createId('audit'), action: 'cancelarNfeFiscal', targetId: nfe.id, targetUsername: nfe.referencia, byId: user.id, byName: user.name, at: new Date().toISOString() });
   saveData(data);
   return updated;
+}
+
+async function emitirCartaCorrecaoFiscal(id, correcao, user) {
+  if (!correcao || correcao.trim().length < 15 || correcao.trim().length > 1000) {
+    const err = new Error('A correção precisa ter entre 15 e 1000 caracteres (exigência da SEFAZ).');
+    err.status = 400;
+    throw err;
+  }
+  const nfe = await fiscalDb.getNfeById(id);
+  if (!nfe) {
+    const err = new Error('NF-e não encontrada.');
+    err.status = 404;
+    throw err;
+  }
+  if (nfe.status !== 'AUTORIZADO') {
+    const err = new Error('Só é possível emitir Carta de Correção para uma NF-e autorizada.');
+    err.status = 400;
+    throw err;
+  }
+  const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
+  const resposta = await client.emitirCartaCorrecao(nfe.referencia, correcao);
+  const evento = await fiscalDb.createNfeEvento({
+    nfeId: nfe.id,
+    estabelecimentoId: nfe.estabelecimentoId,
+    tipo: 'CCE',
+    payloadEnviado: { correcao },
+    respostaFocus: resposta,
+    status: resposta.status
+  });
+  const data = loadData();
+  data.auditLogs = data.auditLogs || [];
+  data.auditLogs.push({ id: createId('audit'), action: 'emitirCartaCorrecaoFiscal', targetId: nfe.id, targetUsername: nfe.referencia, byId: user.id, byName: user.name, at: new Date().toISOString() });
+  saveData(data);
+  return evento;
+}
+
+async function inutilizarNumeracaoFiscal(body, user) {
+  const justificativa = String(body.justificativa || '');
+  if (justificativa.trim().length < 15) {
+    const err = new Error('Justificativa precisa ter ao menos 15 caracteres (exigência da SEFAZ).');
+    err.status = 400;
+    throw err;
+  }
+  const numeroInicial = Number(body.numeroInicial);
+  const numeroFinal = Number(body.numeroFinal);
+  if (!body.serie || !Number.isFinite(numeroInicial) || !Number.isFinite(numeroFinal) || numeroFinal < numeroInicial) {
+    const err = new Error('Informe série e uma faixa de numeração válida (número final maior ou igual ao inicial).');
+    err.status = 400;
+    throw err;
+  }
+  const estabelecimento = await fiscalDb.getEstabelecimentoById(body.estabelecimentoId);
+  if (!estabelecimento) {
+    const err = new Error('Estabelecimento não encontrado.');
+    err.status = 404;
+    throw err;
+  }
+
+  const client = await focusNfe.forEstabelecimento(estabelecimento.id);
+  const resposta = await client.inutilizarNumeracao({
+    cnpj: estabelecimento.cnpj,
+    serie: body.serie,
+    numeroInicial,
+    numeroFinal,
+    justificativa
+  });
+  const evento = await fiscalDb.createNfeEvento({
+    nfeId: null,
+    estabelecimentoId: estabelecimento.id,
+    tipo: 'INUTILIZACAO',
+    payloadEnviado: { serie: body.serie, numeroInicial, numeroFinal, justificativa },
+    respostaFocus: resposta,
+    status: resposta.status
+  });
+  const data = loadData();
+  data.auditLogs = data.auditLogs || [];
+  data.auditLogs.push({ id: createId('audit'), action: 'inutilizarNumeracaoFiscal', targetId: estabelecimento.id, targetUsername: `${body.serie}: ${numeroInicial}-${numeroFinal}`, byId: user.id, byName: user.name, at: new Date().toISOString() });
+  saveData(data);
+  return evento;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1957,26 +2171,53 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, status);
   }
 
+  // Webhook da Focus NFe — chamado por ELES, não pelo navegador do usuário.
+  // Não usa sessão/login: autentica pelo segredo compartilhado configurado
+  // no registro do webhook (ver criarWebhookFiscal). Fica fora do gate
+  // `/api/fiscal/` de propósito, que exige usuário logado.
+  if (pathname === '/api/fiscal/webhooks/focus' && req.method === 'POST') {
+    try {
+      const secretEsperado = String(process.env.FISCAL_WEBHOOK_SECRET || '').trim();
+      const secretRecebido = req.headers['x-fiscal-webhook-secret'];
+      if (!secretEsperado || secretRecebido !== secretEsperado) {
+        return sendJson(res, { error: 'Não autorizado' }, 401);
+      }
+      const body = await readBody(req);
+      const referencia = body.ref || body.referencia;
+      if (!referencia) {
+        return sendJson(res, { error: 'Payload sem referência (ref)' }, 400);
+      }
+      const nfe = await fiscalDb.getNfeByReferencia(referencia);
+      if (!nfe) {
+        // Não é erro nosso — pode ser webhook de outro ambiente/empresa.
+        return sendJson(res, { success: true, ignorado: true });
+      }
+      await aplicarRespostaFocusNaNfe(nfe, body);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao processar webhook' }, error.status || 500);
+    }
+  }
+
   // ---------------------------------------------------------------------
-  // Fiscal: empresa / estabelecimento / certificado digital (base pra
-  // emissão real de NF-e via Focus NFe). Só admins com acesso a
-  // Configurações mexem aqui — envolve CNPJ, regime tributário e token.
+  // Fiscal: empresa / estabelecimento / certificado / regras / NF-e (base
+  // pra emissão real via Focus NFe). Permissão granular por ação
+  // (fiscal.emitir, fiscal.cancelar etc. — user.fiscalPermissions), em vez
+  // do padrão de permissão-por-módulo-inteiro que o resto do sistema usa —
+  // decisão explícita do usuário, dado o tanto de coisa sensível aqui
+  // (CNPJ, regime tributário, token, emissão de documento fiscal real).
+  // Admin sempre passa (mesmo padrão do resto do app).
   // ---------------------------------------------------------------------
   if (pathname.startsWith('/api/fiscal/')) {
     const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    // Cadastro/edição de empresa/estabelecimento/regra fiscal é configuração
-    // (admin + Configurações). Emitir/consultar NF-e, e só listar (GET)
-    // empresas/estabelecimentos pra escolher o emitente, é operação do dia a
-    // dia do Financeiro — qualquer usuário com acesso ao módulo pode.
-    const isNfeOperationRoute = pathname === '/api/fiscal/nfe' || pathname.startsWith('/api/fiscal/nfe/');
-    const isReadOnlyPickerRoute = req.method === 'GET' && (pathname === '/api/fiscal/empresas' || pathname === '/api/fiscal/estabelecimentos');
-    const isAdminConfig = user.allowedModules.includes('settings') && user.role === 'admin';
-    const hasPermission = (isNfeOperationRoute || isReadOnlyPickerRoute)
-      ? (user.allowedModules.includes('finance') || isAdminConfig)
-      : isAdminConfig;
+    const method = req.method;
+    const requiredPermission = resolveFiscalPermission(pathname, method);
+    const temAcessoAoModulo = user.allowedModules.includes('finance') || user.allowedModules.includes('settings');
+    const hasPermission = user.role === 'admin'
+      || (temAcessoAoModulo && (user.fiscalPermissions || []).includes(requiredPermission));
     if (!hasPermission) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
@@ -2026,6 +2267,12 @@ const server = http.createServer(async (req, res) => {
         }
         const status = await focusNfe.checkStatus(creds);
         return sendJson(res, status);
+      }
+
+      if (pathname.startsWith('/api/fiscal/estabelecimentos/') && pathname.endsWith('/webhook') && req.method === 'POST') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/estabelecimentos/', '').replace('/webhook', ''));
+        const resultado = await registrarWebhookFiscal(id);
+        return sendJson(res, { success: true, webhook: resultado });
       }
 
       if (pathname.startsWith('/api/fiscal/estabelecimentos/') && req.method === 'PUT') {
@@ -2101,6 +2348,39 @@ const server = http.createServer(async (req, res) => {
         const body = await readBody(req);
         const nfe = await cancelarNfeFiscal(id, body.justificativa || '', user);
         return sendJson(res, { success: true, nfe });
+      }
+
+      if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/cce') && req.method === 'POST') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', '').replace('/cce', ''));
+        const body = await readBody(req);
+        const evento = await emitirCartaCorrecaoFiscal(id, body.correcao || '', user);
+        return sendJson(res, { success: true, evento });
+      }
+
+      if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/eventos') && req.method === 'GET') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', '').replace('/eventos', ''));
+        const eventos = await fiscalDb.getNfeEventos(id);
+        return sendJson(res, { eventos });
+      }
+
+      if (pathname === '/api/fiscal/inutilizar' && req.method === 'POST') {
+        const body = await readBody(req);
+        const evento = await inutilizarNumeracaoFiscal(body, user);
+        return sendJson(res, { success: true, evento });
+      }
+
+      if (pathname.startsWith('/api/fiscal/nfe/') && (pathname.endsWith('/xml') || pathname.endsWith('/danfe')) && req.method === 'GET') {
+        const tipo = pathname.endsWith('/xml') ? 'xml' : 'danfe';
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', '').replace(`/${tipo}`, ''));
+        const arquivo = await fiscalDb.getNfeArquivo(id, tipo);
+        if (!arquivo || !arquivo.conteudo) {
+          return sendJson(res, { error: `${tipo.toUpperCase()} ainda não disponível para esta NF-e (só existe depois de autorizada).` }, 404);
+        }
+        res.writeHead(200, {
+          'Content-Type': tipo === 'xml' ? 'application/xml; charset=utf-8' : 'application/pdf',
+          'Content-Disposition': `inline; filename="nfe-${id}.${tipo === 'xml' ? 'xml' : 'pdf'}"`
+        });
+        return res.end(arquivo.conteudo);
       }
 
       if (pathname.startsWith('/api/fiscal/nfe/') && req.method === 'GET') {
@@ -3554,7 +3834,8 @@ const server = http.createServer(async (req, res) => {
           username: entry.username,
           name: entry.name,
           role: entry.role,
-          allowedModules: Array.isArray(entry.allowedModules) ? entry.allowedModules : []
+          allowedModules: Array.isArray(entry.allowedModules) ? entry.allowedModules : [],
+          fiscalPermissions: Array.isArray(entry.fiscalPermissions) ? entry.fiscalPermissions : []
         }))
       : [];
     return sendJson(res, {
@@ -3590,7 +3871,8 @@ const server = http.createServer(async (req, res) => {
           password: body.payload.password,
           name: body.payload.name,
           role: body.payload.role || 'user',
-          allowedModules: body.payload.allowedModules || ['dashboard']
+          allowedModules: body.payload.allowedModules || ['dashboard'],
+          fiscalPermissions: body.payload.fiscalPermissions || []
         });
         const data = loadData();
         data.auditLogs = data.auditLogs || [];
@@ -3675,6 +3957,7 @@ const server = http.createServer(async (req, res) => {
         name,
         role,
         allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules : target.allowedModules,
+        fiscalPermissions: Array.isArray(body.fiscalPermissions) ? body.fiscalPermissions : target.fiscalPermissions,
         password: body.password ? String(body.password) : undefined
       });
       const data = loadData();

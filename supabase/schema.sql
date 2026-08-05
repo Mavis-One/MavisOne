@@ -693,3 +693,37 @@ create table if not exists nfe (
 
 create index if not exists idx_nfe_estab_data on nfe (estabelecimento_id, data_emissao desc);
 create index if not exists idx_nfe_status on nfe (status) where status in ('PROCESSANDO','ERRO');
+
+-- ============================================================================
+-- Fase D — Fecha lacunas do módulo fiscal (CC-e, inutilização, webhook,
+-- armazenamento local de XML/DANFE, permissões granulares).
+-- ============================================================================
+
+-- Histórico de eventos de uma NF-e (Carta de Correção, cancelamento) ou de
+-- uma faixa de numeração (inutilização — por isso nfe_id é opcional).
+create table if not exists nfe_eventos (
+  id uuid primary key default gen_random_uuid(),
+  nfe_id uuid references nfe(id) on delete cascade,
+  estabelecimento_id uuid not null references estabelecimento(id),
+  tipo text not null check (tipo in ('CCE','CANCELAMENTO','INUTILIZACAO')),
+  payload_enviado jsonb,
+  resposta_focus jsonb,
+  status text,
+  criado_em timestamptz not null default now()
+);
+create index if not exists idx_nfe_eventos_nfe_id on nfe_eventos (nfe_id);
+
+-- Cópia local do XML/DANFE — não depende do link da Focus NFe continuar
+-- disponível pra sempre. Um registro por (nfe, tipo).
+create table if not exists nfe_arquivos (
+  id uuid primary key default gen_random_uuid(),
+  nfe_id uuid not null references nfe(id) on delete cascade,
+  tipo text not null check (tipo in ('xml','danfe')),
+  conteudo bytea not null,
+  baixado_em timestamptz not null default now(),
+  unique (nfe_id, tipo)
+);
+
+-- Permissões granulares do módulo Fiscal (fiscal.emitir, fiscal.cancelar
+-- etc.) — só addição de coluna, não muda nada do resto do sistema.
+alter table if exists users add column if not exists fiscal_permissions text[] not null default '{}';

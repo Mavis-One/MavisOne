@@ -3,6 +3,24 @@ window.MavisSubscreenRegistry.settings = window.MavisSubscreenRegistry.settings 
 
 const SETTINGS_USER_MODULES = ['dashboard', 'sales', 'purchases', 'stock', 'finance', 'settings', 'cadastros'];
 
+const SETTINGS_FISCAL_PERMISSIONS = [
+  { value: 'visualizar', label: 'Visualizar' },
+  { value: 'criar', label: 'Criar' },
+  { value: 'editar', label: 'Editar' },
+  { value: 'emitir', label: 'Emitir NF-e' },
+  { value: 'cancelar', label: 'Cancelar NF-e' },
+  { value: 'cce', label: 'Carta de Correção' },
+  { value: 'inutilizar', label: 'Inutilizar numeração' },
+  { value: 'configurar', label: 'Configurar empresa/estabelecimento' },
+  { value: 'regras', label: 'Regras fiscais' },
+  { value: 'certificado', label: 'Certificado digital' },
+  { value: 'documentos_recebidos', label: 'Documentos recebidos' },
+  { value: 'manifestar', label: 'Manifestar documentos' },
+  { value: 'xml', label: 'Baixar XML' },
+  { value: 'danfe', label: 'Baixar DANFE' },
+  { value: 'auditoria', label: 'Auditoria fiscal' }
+];
+
 // Cadastro e edição de usuário são o mesmo formulário — só muda se o "Usuário"
 // (login) pode ser editado e se a Senha é obrigatória ou opcional.
 function renderSettingsUserForm(ctx, mode) {
@@ -47,7 +65,14 @@ function renderSettingsUserForm(ctx, mode) {
           </label>
         </div>
         <div class="checkbox-grid">
-          ${SETTINGS_USER_MODULES.map((module) => `<label><input type="checkbox" name="module" value="${module}" ${(editUser?.allowedModules || []).includes(module) ? 'checked' : ''} /> ${moduleLabels[module]}</label>`).join('')}
+          ${SETTINGS_USER_MODULES.map((module) => `<label><input type="checkbox" name="module" class="user-form-module" value="${module}" ${(editUser?.allowedModules || []).includes(module) ? 'checked' : ''} /> ${moduleLabels[module]}</label>`).join('')}
+        </div>
+        <div id="fiscalPermissionsSection" hidden>
+          <h4>Permissões fiscais</h4>
+          <p class="muted">Só vale se o usuário tiver acesso ao módulo Financeiro ou Configurações.</p>
+          <div class="checkbox-grid">
+            ${SETTINGS_FISCAL_PERMISSIONS.map((perm) => `<label><input type="checkbox" name="fiscalPermission" value="${perm.value}" ${(editUser?.fiscalPermissions || []).includes(perm.value) ? 'checked' : ''} /> ${perm.label}</label>`).join('')}
+          </div>
         </div>
         <div class="row">
           <button type="submit">${isEditing ? 'Salvar alterações' : 'Criar usuário'}</button>
@@ -57,12 +82,21 @@ function renderSettingsUserForm(ctx, mode) {
     </div>
   `;
 
+  function atualizarVisibilidadePermissoesFiscais() {
+    const marcados = Array.from(document.querySelectorAll('.user-form-module:checked')).map((el) => el.value);
+    const secao = document.getElementById('fiscalPermissionsSection');
+    if (secao) secao.hidden = !(marcados.includes('finance') || marcados.includes('settings'));
+  }
+  document.querySelectorAll('.user-form-module').forEach((el) => el.addEventListener('change', atualizarVisibilidadePermissoesFiscais));
+  atualizarVisibilidadePermissoesFiscais();
+
   document.getElementById('userFormCancel')?.addEventListener('click', goBack);
 
   document.getElementById('userFormPage')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const formData = new FormData(event.target);
     const selectedModules = formData.getAll('module');
+    const selectedFiscalPermissions = formData.getAll('fiscalPermission');
     const password = formData.get('password');
 
     try {
@@ -73,6 +107,7 @@ function renderSettingsUserForm(ctx, mode) {
             name: formData.get('name'),
             role: formData.get('role'),
             allowedModules: selectedModules,
+            fiscalPermissions: selectedFiscalPermissions,
             password: password || undefined
           })
         });
@@ -82,7 +117,7 @@ function renderSettingsUserForm(ctx, mode) {
           method: 'POST',
           body: JSON.stringify({
             type: 'user',
-            payload: { name: formData.get('name'), username: formData.get('username'), password, role: formData.get('role'), allowedModules: selectedModules }
+            payload: { name: formData.get('name'), username: formData.get('username'), password, role: formData.get('role'), allowedModules: selectedModules, fiscalPermissions: selectedFiscalPermissions }
           })
         });
         showToast('Usuário criado com sucesso.', 'success');
