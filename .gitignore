@@ -1,5 +1,10 @@
 node_modules/
 .vscode/
 *.log
-data/db.sqlite
 .env
+
+# Estado de execução, não código: o db.json é recriado por ensureDataFile() no
+# primeiro boot e cada saveData() reescreve o arquivo inteiro, o que sujava o
+# histórico a cada operação. Enquanto o Financeiro não migra para o Supabase,
+# este arquivo é a base local de cada máquina — não deve ser versionado.
+data/
