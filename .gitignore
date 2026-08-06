@@ -1,6 +1,7 @@
 node_modules/
 .vscode/
 *.log
+logs/
 .env
 
 # Estado de execução, não código: o db.json é recriado por ensureDataFile() no
