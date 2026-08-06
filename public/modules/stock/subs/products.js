@@ -2,148 +2,160 @@ window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
 window.MavisSubscreenRegistry.stock.products = async function renderStockProducts(ctx) {
-  const { content, data, api, showToast, loadModule, confirmModal, escapeHtml } = ctx;
+  const { content, api, showToast, state, loadModule, confirmModal } = ctx;
+  const S = window.MavisStock;
 
-  content.innerHTML = `
-    <div class="panel">
-      <h3>Novo produto</h3>
-      <form id="stockForm" class="form-grid">
-        <div class="row">
-          <label>Nome<input name="name" required /></label>
-          <label>SKU<input name="sku" required /></label>
-        </div>
-        <div class="row">
-          <label>Estoque inicial<input name="stockQuantity" type="number" required value="0" /></label>
-          <label>Custo<input name="costPrice" type="number" step="0.01" required value="0" /></label>
-          <label>Preço de venda<input name="salePrice" type="number" step="0.01" required value="0" /></label>
-        </div>
-        <button type="submit">Salvar produto</button>
-      </form>
-    </div>
-    <div class="panel">
-      <h3>Estoque atual</h3>
-      <table class="table table-actions">
-        <thead><tr><th>Produto</th><th>SKU</th><th>Estoque</th><th>Custo</th><th>Venda</th><th>Ações</th></tr></thead>
-        <tbody>
-          ${data.products.map((product) => `
-            <tr>
-              <td>${escapeHtml(product.name)}</td>
-              <td>${escapeHtml(product.sku)}</td>
-              <td>${escapeHtml(String(product.stockQuantity))}</td>
-              <td>R$ ${Number(product.costPrice || 0).toFixed(2)}</td>
-              <td>R$ ${Number(product.salePrice || 0).toFixed(2)}</td>
-              <td>
-                <button type="button" class="icon-button edit" data-edit="${escapeHtml(product.id)}" title="Editar produto" aria-label="Editar produto">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                </button>
-                <button type="button" class="icon-button" data-delete="${escapeHtml(product.id)}" title="Excluir produto" aria-label="Excluir produto">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                </button>
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
+  const meta = await S.loadMeta(api, showToast);
+  const filters = { search: '', categoryId: '', status: '', situation: '', depositId: '' };
 
-  document.getElementById('stockForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const formData = new FormData(event.target);
+  async function fetchProducts() {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
     try {
-      await api('/api/stock', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: formData.get('name'),
-          sku: formData.get('sku'),
-          stockQuantity: Number(formData.get('stockQuantity')),
-          costPrice: Number(formData.get('costPrice')),
-          salePrice: Number(formData.get('salePrice'))
-        })
-      });
-      showToast('Produto salvo com sucesso.', 'success');
-      loadModule('stock');
+      const res = await api(`/api/stock/products?${params.toString()}`);
+      return res.products || [];
     } catch (error) {
-      showToast(error.message || 'Erro ao salvar produto.', 'error');
+      showToast(error.message || 'Erro ao carregar produtos.', 'error');
+      return [];
     }
-  });
-
-  function closeEditModal() {
-    document.getElementById('stockEditModal')?.remove();
   }
 
-  document.querySelectorAll('[data-edit]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const product = data.products.find((item) => item.id === btn.dataset.edit);
-      if (!product) return;
-      closeEditModal();
-      const overlay = document.createElement('div');
-      overlay.id = 'stockEditModal';
-      overlay.className = 'modal-overlay';
-      overlay.innerHTML = `
-        <div class="modal">
-          <h3>Editar produto</h3>
-          <form id="stockEditForm" class="form-grid">
-            <div class="row">
-              <label>Nome<input name="name" required value="${escapeHtml(product.name)}" /></label>
-              <label>SKU<input name="sku" required value="${escapeHtml(product.sku)}" /></label>
-            </div>
-            <div class="row">
-              <label>Estoque<input name="stockQuantity" type="number" required value="${Number(product.stockQuantity || 0)}" /></label>
-              <label>Custo<input name="costPrice" type="number" step="0.01" required value="${Number(product.costPrice || 0).toFixed(2)}" /></label>
-              <label>Preço de venda<input name="salePrice" type="number" step="0.01" required value="${Number(product.salePrice || 0).toFixed(2)}" /></label>
-            </div>
-            <div class="modal-actions">
-              <button type="button" class="btn-muted" id="stockEditCancel">Cancelar</button>
-              <button type="submit" class="btn">Salvar</button>
-            </div>
-          </form>
+  function totalsPanel(products) {
+    const totalUnits = products.reduce((sum, p) => sum + Number(p.stockQuantity || 0), 0);
+    const totalCost = products.reduce((sum, p) => sum + Number(p.stockQuantity || 0) * Number(p.costPrice || 0), 0);
+    const alerts = products.filter((p) => p.situation === 'abaixo-minimo' || p.situation === 'zerado').length;
+    return `
+      <div class="row">
+        <div class="panel"><strong>${products.length}</strong><p class="muted">Produtos listados</p></div>
+        <div class="panel"><strong>${S.formatQty(totalUnits)}</strong><p class="muted">Unidades em estoque</p></div>
+        <div class="panel"><strong>${S.formatBRL(totalCost)}</strong><p class="muted">Valor a custo</p></div>
+        <div class="panel"><strong>${alerts}</strong><p class="muted">Zerados ou abaixo do mínimo</p></div>
+      </div>
+    `;
+  }
+
+  async function render() {
+    const products = await fetchProducts();
+    content.innerHTML = `
+      <div class="panel">
+        ${S.pageHead('Produtos', 'Cadastro e posição de estoque. O saldo por depósito vem das movimentações.', '<button type="button" id="stockNewProduct">Novo produto</button>')}
+        <form id="stockProductFilters" class="form-grid">
+          <div class="row">
+            <label>Buscar<input type="search" name="search" value="${S.escape(filters.search)}" placeholder="Nome, SKU ou código de barras" /></label>
+            <label>Categoria<select name="categoryId">${S.options(meta.productCategories, filters.categoryId, { empty: 'Todas' })}</select></label>
+            <label>Depósito<select name="depositId">${S.options(meta.deposits, filters.depositId, { empty: 'Todos' })}</select></label>
+            <label>Status
+              <select name="status">
+                <option value="">Todos</option>
+                <option value="ativo" ${filters.status === 'ativo' ? 'selected' : ''}>Ativo</option>
+                <option value="inativo" ${filters.status === 'inativo' ? 'selected' : ''}>Inativo</option>
+              </select>
+            </label>
+            <label>Situação
+              <select name="situation">
+                <option value="">Todas</option>
+                <option value="normal" ${filters.situation === 'normal' ? 'selected' : ''}>Normal</option>
+                <option value="abaixo-minimo" ${filters.situation === 'abaixo-minimo' ? 'selected' : ''}>Abaixo do mínimo</option>
+                <option value="acima-maximo" ${filters.situation === 'acima-maximo' ? 'selected' : ''}>Acima do máximo</option>
+                <option value="zerado" ${filters.situation === 'zerado' ? 'selected' : ''}>Zerado</option>
+              </select>
+            </label>
+          </div>
+          <div class="finance-actions-row">
+            <button type="submit">Filtrar</button>
+            <button type="button" class="secondary" id="stockProductClear">Limpar</button>
+          </div>
+        </form>
+      </div>
+
+      ${totalsPanel(products)}
+
+      <div class="panel">
+        <div class="table-scroll">
+          <table class="table table-actions">
+            <thead>
+              <tr>
+                <th>Produto</th><th>SKU</th><th>Categoria</th><th>Un.</th>
+                <th>Custo</th><th>Venda</th><th>Margem</th><th>Saldo</th><th>Situação</th><th>Status</th><th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${products.length === 0
+                ? S.emptyRow(11, 'Nenhum produto encontrado.')
+                : products.map((product) => `
+                  <tr>
+                    <td>${S.escape(product.name)}</td>
+                    <td>${S.escape(product.sku || '-')}</td>
+                    <td>${S.escape(product.categoryName || '-')}</td>
+                    <td>${S.escape(product.unit)}</td>
+                    <td>${S.formatBRL(product.costPrice)}</td>
+                    <td>${S.formatBRL(product.salePrice)}</td>
+                    <td>${Number(product.margin || 0).toFixed(1)}%</td>
+                    <td>${S.formatQty(product.stockQuantity)}</td>
+                    <td>${S.situationBadge(product.situation)}</td>
+                    <td>${S.statusBadge(product.status)}</td>
+                    <td>
+                      <button type="button" class="secondary finance-pill-sm" data-status="${product.id}">Status</button>
+                      <button type="button" class="icon-button edit" data-edit="${product.id}" title="Editar">${S.editIcon}</button>
+                      <button type="button" class="icon-button" data-delete="${product.id}" title="Excluir">${S.trashIcon}</button>
+                    </td>
+                  </tr>
+                `).join('')}
+            </tbody>
+          </table>
         </div>
-      `;
-      document.body.appendChild(overlay);
-      overlay.addEventListener('click', (event) => { if (event.target === overlay) closeEditModal(); });
-      document.getElementById('stockEditCancel')?.addEventListener('click', closeEditModal);
-      document.getElementById('stockEditForm')?.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const submitBtn = event.target.querySelector('button[type="submit"]');
-        if (submitBtn.disabled) return;
-        submitBtn.disabled = true;
-        const formData = new FormData(event.target);
+      </div>
+    `;
+
+    document.getElementById('stockNewProduct')?.addEventListener('click', () => {
+      state.stockEditProductId = null;
+      state.activeSub = 'new_product';
+      loadModule('stock');
+    });
+
+    document.getElementById('stockProductFilters')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      Object.keys(filters).forEach((key) => { filters[key] = formData.get(key) || ''; });
+      render();
+    });
+
+    document.getElementById('stockProductClear')?.addEventListener('click', () => {
+      Object.keys(filters).forEach((key) => { filters[key] = ''; });
+      render();
+    });
+
+    content.querySelectorAll('[data-status]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.stockStatusProductId = btn.dataset.status;
+        state.activeSub = 'product_status';
+        loadModule('stock');
+      });
+    });
+
+    content.querySelectorAll('[data-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.stockEditProductId = btn.dataset.edit;
+        state.activeSub = 'new_product';
+        loadModule('stock');
+      });
+    });
+
+    content.querySelectorAll('[data-delete]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const product = products.find((p) => p.id === btn.dataset.delete);
+        const confirmed = await confirmModal(`Excluir o produto "${product ? product.name : ''}"? Produtos com movimentações não podem ser excluídos.`);
+        if (!confirmed) return;
         try {
-          await api('/api/stock', {
-            method: 'POST',
-            body: JSON.stringify({
-              id: product.id,
-              name: formData.get('name'),
-              sku: formData.get('sku'),
-              stockQuantity: Number(formData.get('stockQuantity')),
-              costPrice: Number(formData.get('costPrice')),
-              salePrice: Number(formData.get('salePrice'))
-            })
-          });
-          showToast('Produto atualizado com sucesso.', 'success');
-          closeEditModal();
-          loadModule('stock');
+          await api(`/api/stock/products/${btn.dataset.delete}`, { method: 'DELETE' });
+          showToast('Produto excluído.', 'success');
+          render();
         } catch (error) {
-          showToast(error.message || 'Erro ao atualizar produto.', 'error');
-          submitBtn.disabled = false;
+          showToast(error.message || 'Erro ao excluir produto.', 'error');
         }
       });
     });
-  });
+  }
 
-  document.querySelectorAll('[data-delete]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const product = data.products.find((item) => item.id === btn.dataset.delete);
-      const confirmed = await confirmModal(`Confirma excluir o produto "${product ? product.name : btn.dataset.delete}"? Essa ação não pode ser desfeita.`);
-      if (!confirmed) return;
-      try {
-        await api(`/api/stock/${btn.dataset.delete}`, { method: 'DELETE' });
-        showToast('Produto excluído com sucesso.', 'success');
-        loadModule('stock');
-      } catch (error) {
-        showToast(error.message || 'Erro ao excluir produto.', 'error');
-      }
-    });
-  });
+  await render();
 };

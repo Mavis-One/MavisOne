@@ -674,7 +674,26 @@ const moduleSubItems = {
   ],
 
   // ABA: Estoque
-  stock: [ { key: 'products', label: 'Produtos' }, { key: 'movements', label: 'Movimentos' } ],
+  stock: [
+    { key: 'price_manager', label: 'Gestor de Preços' },
+    { key: 'movements', label: 'Movimentações' },
+    { key: 'new_movement', label: 'Nova Movimentação' },
+    { key: 'transfers', label: 'Entre Depósitos' },
+    { key: 'new_transfer', label: 'Nova Entre Depósitos' },
+    { key: 'products', label: 'Produtos' },
+    { key: 'new_product', label: 'Novo Produto' },
+    { key: 'product_status', label: 'Status do Produto' },
+    { key: 'deposits', label: 'Depósitos' },
+    { key: 'new_deposit', label: 'Novo Depósito' },
+    { key: 'price_tables', label: 'Tabelas de Preços' },
+    { key: 'new_price_table', label: 'Nova Tabela de Preços' },
+    { key: 'catalogs', label: 'Catálogos de Produtos' },
+    { key: 'new_catalog', label: 'Novo Catálogo de Produtos' },
+    { key: 'product_categories', label: 'Categorias de Produtos' },
+    { key: 'new_product_category', label: 'Nova Categoria de Produtos' },
+    { key: 'movement_categories', label: 'Categorias de Movimentações' },
+    { key: 'new_movement_category', label: 'Nova Categoria de Movimentações' }
+  ],
 
   // ABA: Financeiro
   finance: [
@@ -693,7 +712,23 @@ const moduleSubItems = {
 
   // ABA: Cadastros
   cadastros: [
-    { key: 'list', label: 'Cadastros' },
+    { key: 'consulta_cnpj', label: 'Consulta CNPJ SEFAZ' },
+    { key: 'list', label: 'Pessoas' },
+    { key: 'contatos', label: 'Contatos' },
+    { key: 'register', label: 'Nova Pessoa' },
+    { key: 'produtos', label: 'Produtos' },
+    { key: 'novo_produto', label: 'Novo Produto' },
+    { key: 'cashback', label: 'CashBack por Produto' },
+    { key: 'agenda', label: 'Agenda de Tarefas' },
+    { key: 'agendamentos', label: 'Agendamentos' },
+    { key: 'empresas', label: 'Empresas' },
+    { key: 'nova_empresa', label: 'Nova Empresa' },
+    { key: 'equipamentos', label: 'Equipamentos' },
+    { key: 'contas_bancarias', label: 'Contas Bancárias' },
+    { key: 'nova_conta_bancaria', label: 'Nova Conta Bancária' },
+    { key: 'formas_pagamento', label: 'Formas de Pagamento' },
+    { key: 'nova_forma_pagamento', label: 'Nova Forma de Pagamento' },
+    { key: 'status_venda', label: 'Status de Venda' },
     { key: 'deposits', label: 'Depósitos' }
   ]
 };
