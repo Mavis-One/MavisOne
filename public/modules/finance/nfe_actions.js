@@ -113,10 +113,11 @@ window.MavisNfeActions = (function () {
       id: 'status_servico', label: 'Status Serviço', icon: ICONS.check, scope: 'any',
       needsApi: true
     },
-    {
-      id: 'excluir', label: 'Excluir', icon: ICONS.trash, scope: 'batch', tone: 'danger',
-      enabled: () => 'Exclusão de NF-e ainda não implementada no servidor.'
-    },
+    // NÃO existe ação de excluir NF-e, por decisão de projeto. Documento fiscal
+    // não se apaga: uma nota autorizada é cancelada (evento registrado na
+    // SEFAZ) e permanece no histórico. Apagar o registro local quebraria a
+    // trilha de auditoria e a conciliação com o que a SEFAZ tem. Se o ERP de
+    // referência oferece "Excluir", não copiar isso é intencional.
     {
       id: 'cancelar_selecao', label: 'Cancelar Seleção', icon: ICONS.close, scope: 'any',
       run: (ctx) => ctx.limparSelecao()

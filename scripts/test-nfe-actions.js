@@ -24,7 +24,16 @@ function motivo(id, ctx) {
 
 console.log(`catálogo: ${A.CATALOG.length} ações\n`);
 
-console.log('--- nada selecionado ---');
+// Trava de projeto, não detalhe de UI: NF-e não pode ser excluída em hipótese
+// alguma. Uma nota autorizada é cancelada (evento registrado na SEFAZ) e
+// permanece no histórico — apagar o registro quebraria a auditoria e a
+// conciliação com a SEFAZ. Este teste falha se alguém reintroduzir a ação.
+console.log('--- trava: exclusão de NF-e não pode existir ---');
+const proibidas = A.CATALOG.filter((a) => /excluir|deletar|remover|apagar/i.test(a.id + ' ' + a.label));
+check('nenhuma ação de exclusão no catálogo', proibidas.length === 0,
+  proibidas.length ? 'ENCONTRADA: ' + proibidas.map((a) => a.id).join(', ') : 'ok');
+
+console.log('\n--- nada selecionado ---');
 const vazio = liberadas({ selecionadas: [], apiFiscalConfigurada: true });
 check('só Cancelar Seleção (as demais de escopo any ainda não têm run)', JSON.stringify(vazio) === JSON.stringify(['cancelar_selecao']), vazio.join(', '));
 check('Status Serviço bloqueado como NAO IMPLEMENTADA, não como falta de API', /não implementada/.test(motivo('status_servico', { selecionadas: [], apiFiscalConfigurada: true })), motivo('status_servico', { selecionadas: [], apiFiscalConfigurada: true }));
