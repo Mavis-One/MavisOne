@@ -1284,6 +1284,12 @@ async function loadModule(moduleName) {
         let discountAmount = Number(origem?.discountAmount || 0);
         let discountPercent = Number(origem?.discountPercent || 0);
         let freight = Number(origem?.freight || 0);
+        let generalExpenses = Number(origem?.generalExpenses || 0);
+        let assemblyFee = Number(origem?.assemblyFee || 0);
+        let freightFixed = Boolean(origem?.freightFixed);
+        // Padrão é cobrar o frete do comprador; só fica desligado se o registro
+        // salvo disser explicitamente que não.
+        let chargeFreightToBuyer = origem ? origem.chargeFreightToBuyer !== false : true;
 
         // O formulário inteiro é redesenhado a cada produto adicionado/removido (mais simples
         // que atualizar só a tabela). Isso apagaria os campos de cabeçalho já preenchidos, então
@@ -1312,12 +1318,20 @@ async function loadModule(moduleName) {
           formState.note = form.querySelector('[name="note"]')?.value || '';
         };
 
-        const computeTotals = () => {
-          const itemsTotal = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0);
-          const percentOff = itemsTotal * (Number(discountPercent || 0) / 100);
-          const totalAmount = Math.max(0, itemsTotal - Number(discountAmount || 0) - percentOff + Number(freight || 0));
-          return { itemsTotal, totalAmount };
-        };
+        // Mesmo módulo que o servidor usa — a tela não pode mostrar um total e o
+        // servidor gravar outro.
+        const computeTotals = () => window.MavisSalesTotals.computeSalesTotals({
+          items,
+          discountAmount,
+          discountPercent,
+          freight,
+          chargeFreightToBuyer,
+          generalExpenses,
+          assemblyFee,
+          servicesAmount: 0,
+          sellerCommissionPercent: Number(origem?.sellerCommissionPercent || 0),
+          agentCommissionPercent: Number(origem?.agentCommissionPercent || 0)
+        });
 
         // Monta o payload a partir do que está na tela agora. Usado tanto pelo
         // submit quanto pelas ações do menu — o PUT exige o registro inteiro,
@@ -1339,6 +1353,10 @@ async function loadModule(moduleName) {
             discountAmount,
             discountPercent,
             freight,
+            freightFixed,
+            chargeFreightToBuyer,
+            generalExpenses,
+            assemblyFee,
             status: formData.get('status') || '',
             note: formData.get('note') || '',
             ...overrides
@@ -1456,7 +1474,8 @@ async function loadModule(moduleName) {
         });
 
         const renderForm = () => {
-          const { itemsTotal, totalAmount } = computeTotals();
+          const totais = computeTotals();
+          const { valorProdutos: itemsTotal, totalAmount } = totais;
 
           content.innerHTML = `
             <div class="cadastro-page-head">
@@ -1536,14 +1555,73 @@ async function loadModule(moduleName) {
                   </div>
                 </div>
 
-                <div class="row">
-                  <label>Desconto (R$)<input name="discountAmount" type="number" min="0" step="0.01" value="${discountAmount}" /></label>
-                  <label>Desconto (%)<input name="discountPercent" type="number" min="0" max="100" step="0.01" value="${discountPercent}" /></label>
-                  <label>Frete (R$)<input name="freight" type="number" min="0" step="0.01" value="${freight}" /></label>
+                <div class="sales-totals-panel">
+                  <div class="sales-totals-grid">
+                <label class="sales-total-field">Descontos (R$)
+                  <input name="discountAmount" type="number" min="0" step="0.01" value="${discountAmount}" />
+                </label>
+                <label class="sales-total-field">Descontos (%)
+                  <input name="discountPercent" type="number" min="0" max="100" step="0.01" value="${discountPercent}" />
+                </label>
+                <label class="sales-total-field">Frete (R$)
+                  <input name="freight" type="number" min="0" step="0.01" value="${freight}" ${freightFixed ? 'readonly' : ''} />
+                </label>
+                <div class="sales-total-toggle">
+                  <button type="button" role="switch" aria-checked="${freightFixed}" class="switch ${freightFixed ? 'is-on' : ''}" data-toggle="freightFixed"
+                          title="Trava o valor do frete para não ser alterado sem querer."><span></span></button>
+                  <span>Fixar Frete</span>
                 </div>
-                <div class="row">
-                  <label>Subtotal dos produtos<input value="${salesFormatBRL(itemsTotal)}" disabled /></label>
-                  <label><strong>Total do ${title.toLowerCase()}</strong><input value="${salesFormatBRL(totalAmount)}" disabled style="font-weight: 700;" /></label>
+                <div class="sales-total-toggle">
+                  <button type="button" role="switch" aria-checked="${chargeFreightToBuyer}" class="switch ${chargeFreightToBuyer ? 'is-on' : ''}" data-toggle="chargeFreightToBuyer"
+                          title="Desligado, o frete é custo do vendedor e não soma no total da venda."><span></span></button>
+                  <span>Cobrar Frete do Comprador</span>
+                </div>
+                <label class="sales-total-field">Desp. Gerais (R$)
+                  <input name="generalExpenses" type="number" min="0" step="0.01" value="${generalExpenses}" />
+                </label>
+
+                <label class="sales-total-field is-readonly" title="Percentual de comissão de representação ainda não configurável no cadastro.">Comissão por Representação (R$)
+                  <input value="${salesFormatBRL(totais.comissaoRepresentacao)}" disabled />
+                </label>
+                <label class="sales-total-field is-readonly" title="Percentual de comissão do vendedor ainda não configurável no cadastro.">Comissão do Vendedor (R$)
+                  <input value="${salesFormatBRL(totais.comissaoVendedor)}" disabled />
+                </label>
+                <label class="sales-total-field is-readonly">Valor dos Produtos (R$)
+                  <input value="${salesFormatBRL(totais.valorProdutos)}" disabled />
+                </label>
+                <label class="sales-total-field is-readonly" title="Itens de serviço ainda não existem no cadastro de produtos.">Valor dos Serviços (R$)
+                  <input value="${salesFormatBRL(totais.valorServicos)}" disabled />
+                </label>
+                <label class="sales-total-field">Taxa de Montagem (R$)
+                  <input name="assemblyFee" type="number" min="0" step="0.01" value="${assemblyFee}" />
+                </label>
+                <label class="sales-total-field is-readonly" title="O cadastro de produtos ainda não tem campo de peso.">Peso Total dos Produtos (KG)
+                  <input value="${totais.pesoTotal}" disabled />
+                </label>
+              </div>
+
+              ${totais.descontoAparado ? `
+                <p class="sales-totals-alerta">
+                  O desconto pedido (${salesFormatBRL(totais.descontoPercentual + totais.descontoValor)}) passa do valor da venda
+                  (${salesFormatBRL(totais.base)}). Foi aplicado ${salesFormatBRL(totais.descontoTotal)} — o total não fica negativo.
+                </p>` : ''}
+              ${!totais.cobrarFreteDoComprador && totais.frete > 0 ? `
+                <p class="sales-totals-nota">
+                  Frete de ${salesFormatBRL(totais.frete)} não está sendo cobrado do comprador — é custo do vendedor e não soma no total.
+                </p>` : ''}
+
+              <div class="sales-totals-resumo">
+                <div class="sales-totals-linhas">
+                  <div><span>Produtos + Serviços</span><span>${salesFormatBRL(totais.base)}</span></div>
+                  ${totais.descontoTotal ? `<div class="negativo"><span>Descontos${totais.percentualAplicado ? ` (${totais.percentualAplicado}% + ${salesFormatBRL(totais.descontoValor)})` : ''}</span><span>-${salesFormatBRL(totais.descontoTotal)}</span></div>` : ''}
+                  ${totais.freteCobrado ? `<div><span>Frete</span><span>${salesFormatBRL(totais.freteCobrado)}</span></div>` : ''}
+                  ${totais.despesasGerais ? `<div><span>Desp. gerais</span><span>${salesFormatBRL(totais.despesasGerais)}</span></div>` : ''}
+                  ${totais.taxaMontagem ? `<div><span>Taxa de montagem</span><span>${salesFormatBRL(totais.taxaMontagem)}</span></div>` : ''}
+                </div>
+                    <label class="sales-total-field sales-total-final">Total da Venda (R$)
+                      <input value="${salesFormatBRL(totais.totalAmount)}" disabled />
+                    </label>
+                  </div>
                 </div>
 
                 <div class="row">
@@ -1652,9 +1730,32 @@ async function loadModule(moduleName) {
           });
 
           const form = document.getElementById('salesRecordForm');
-          form.querySelector('[name="discountAmount"]').addEventListener('change', (e) => { discountAmount = Number(e.target.value || 0); syncFormState(); renderForm(); });
-          form.querySelector('[name="discountPercent"]').addEventListener('change', (e) => { discountPercent = Number(e.target.value || 0); syncFormState(); renderForm(); });
-          form.querySelector('[name="freight"]').addEventListener('change', (e) => { freight = Number(e.target.value || 0); syncFormState(); renderForm(); });
+          // Um handler para todos os campos numéricos do painel de totais. O
+          // clamp acontece no módulo de cálculo; aqui só barra o negativo, que
+          // o usuário digitaria sem querer.
+          const camposNumericos = {
+            discountAmount: (v) => { discountAmount = v; },
+            discountPercent: (v) => { discountPercent = Math.min(100, v); },
+            freight: (v) => { freight = v; },
+            generalExpenses: (v) => { generalExpenses = v; },
+            assemblyFee: (v) => { assemblyFee = v; }
+          };
+          Object.entries(camposNumericos).forEach(([nome, aplicar]) => {
+            form.querySelector(`[name="${nome}"]`)?.addEventListener('change', (e) => {
+              aplicar(Math.max(0, Number(e.target.value || 0)));
+              syncFormState();
+              renderForm();
+            });
+          });
+
+          form.querySelectorAll('[data-toggle]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              if (btn.dataset.toggle === 'freightFixed') freightFixed = !freightFixed;
+              else chargeFreightToBuyer = !chargeFreightToBuyer;
+              syncFormState();
+              renderForm();
+            });
+          });
 
           form.addEventListener('submit', async (event) => {
             event.preventDefault();
@@ -1662,24 +1763,9 @@ async function loadModule(moduleName) {
               showToast('Adicione ao menos um produto.', 'warning');
               return;
             }
-            const formData = new FormData(form);
-            const clientEntry = meta.directory.find((entry) => entry.id === formData.get('clientSupplierId'));
-            const payload = {
-              type: recordType,
-              clientSupplierId: formData.get('clientSupplierId') || '',
-              clientSupplierName: clientEntry ? clientEntry.name : '',
-              companyId: formData.get('companyId') || '',
-              sellerId: formData.get('sellerId') || '',
-              depositId: formData.get('depositId') || '',
-              date: formData.get('date') || '',
-              dueDate: formData.get('dueDate') || '',
-              items: items.map((item) => ({ productId: item.productId, name: item.name, sku: item.sku, quantity: item.quantity, unitPrice: item.unitPrice })),
-              discountAmount,
-              discountPercent,
-              freight,
-              status: formData.get('status') || '',
-              note: formData.get('note') || ''
-            };
+            // Mesmo construtor usado pelas ações do menu — evita que um campo
+            // novo entre num caminho e falte no outro.
+            const payload = buildPayload();
             try {
               if (isEditing) {
                 await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(payload) });

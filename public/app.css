@@ -1374,3 +1374,94 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   .actions-save, .actions-back { flex: 1; }
   .actions-menu { left: auto; right: 0; }
 }
+
+/* ---------------------------------------------------------------------------
+   Painel de totais do Pedido/Orçamento
+   --------------------------------------------------------------------------- */
+.sales-totals-panel {
+  background: color-mix(in srgb, var(--primary) 6%, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  margin: 8px 0;
+}
+:root[data-theme="dark"] .sales-totals-panel {
+  background: color-mix(in srgb, var(--primary) 12%, var(--panel));
+}
+
+.sales-totals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px 18px;
+  align-items: end;
+}
+
+.sales-total-field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; }
+.sales-total-field input { width: 100%; }
+.sales-total-field.is-readonly input,
+.sales-total-field input:disabled,
+.sales-total-field input[readonly] {
+  background: var(--panel-alt);
+  color: var(--muted);
+  cursor: default;
+}
+.sales-total-field.is-readonly { cursor: help; }
+
+.sales-total-toggle { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; padding-bottom: 8px; }
+
+/* Switch reaproveitável — o ERP não tinha um. */
+.switch {
+  position: relative; flex-shrink: 0;
+  width: 46px; height: 26px; padding: 0;
+  border: 0; border-radius: 999px;
+  background: var(--switch-off);
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+.switch span {
+  position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  transition: transform 160ms ease;
+}
+.switch.is-on { background: var(--success); }
+.switch.is-on span { transform: translateX(20px); }
+.switch:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.sales-totals-alerta, .sales-totals-nota {
+  margin: 14px 0 0; padding: 10px 12px;
+  border-radius: 8px; font-size: 12.5px; line-height: 1.5;
+}
+.sales-totals-alerta {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  color: var(--warning-text);
+}
+.sales-totals-nota {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.sales-totals-resumo {
+  display: flex; justify-content: space-between; align-items: flex-end;
+  gap: 20px; flex-wrap: wrap;
+  margin-top: 16px; padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.sales-totals-linhas { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 240px; }
+.sales-totals-linhas > div { display: flex; justify-content: space-between; gap: 24px; }
+.sales-totals-linhas .negativo { color: var(--danger-text); }
+:root[data-theme="dark"] .sales-totals-linhas .negativo { color: var(--danger); }
+
+.sales-total-final { min-width: 220px; }
+.sales-total-final input {
+  font-size: 18px; font-weight: 700;
+  color: var(--text) !important;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .sales-totals-grid { grid-template-columns: 1fr 1fr; }
+  .sales-totals-resumo { flex-direction: column; align-items: stretch; }
+}

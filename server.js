@@ -12,6 +12,9 @@ const openFinanceSync = require('./lib/openfinance/sync');
 const openFinanceDb = require('./lib/db/openfinance');
 const stockCore = require('./lib/stock-core');
 const cadastrosCore = require('./lib/cadastros-core');
+// Mora em public/ porque o navegador também carrega este arquivo por <script>.
+// Fonte única do cálculo de totais — ver o comentário no topo do módulo.
+const salesTotals = require('./public/modules/shared/sales_totals');
 
 const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PORT = Number(process.env.PORT) || 3000;
@@ -698,14 +701,46 @@ function normalizeSalesItems(rawItems) {
     .filter((item) => item.name && item.quantity > 0);
 }
 
-function computeSalesTotals(items, discountAmount, discountPercent, freight) {
-  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.total || 0), 0);
-  const percentDiscount = itemsTotal * (Number(discountPercent || 0) / 100);
-  const totalAmount = Math.max(0, itemsTotal - Number(discountAmount || 0) - percentDiscount + Number(freight || 0));
+// Delega para o módulo compartilhado com o navegador (ver o porquê lá). O
+// servidor NUNCA confia no total que veio no body: recalcula a partir dos itens
+// e dos parâmetros, senão bastaria adulterar o JSON para gravar o total que
+// quisesse.
+// Campos financeiros gravados no registro. Os parâmetros vêm do body; os
+// totais SEMPRE do cálculo do servidor, nunca do que o cliente mandou.
+function salesFinanceFields(body, totais) {
   return {
-    itemsTotal: Math.round(itemsTotal * 100) / 100,
-    totalAmount: Math.round(totalAmount * 100) / 100
+    discountAmount: Math.max(0, Number(body.discountAmount || 0)),
+    discountPercent: Math.min(100, Math.max(0, Number(body.discountPercent || 0))),
+    freight: Math.max(0, Number(body.freight || 0)),
+    freightFixed: Boolean(body.freightFixed),
+    chargeFreightToBuyer: body.chargeFreightToBuyer !== false,
+    generalExpenses: Math.max(0, Number(body.generalExpenses || 0)),
+    assemblyFee: Math.max(0, Number(body.assemblyFee || 0)),
+    servicesAmount: Math.max(0, Number(body.servicesAmount || 0)),
+    sellerCommissionPercent: Math.max(0, Number(body.sellerCommissionPercent || 0)),
+    agentCommissionPercent: Math.max(0, Number(body.agentCommissionPercent || 0)),
+    itemsTotal: totais.itemsTotal,
+    totalAmount: totais.totalAmount,
+    discountTotal: totais.descontoTotal,
+    sellerCommission: totais.comissaoVendedor,
+    agentCommission: totais.comissaoRepresentacao,
+    totalWeight: totais.pesoTotal
   };
+}
+
+function computeSalesTotals(items, body = {}) {
+  return salesTotals.computeSalesTotals({
+    items,
+    discountAmount: body.discountAmount,
+    discountPercent: body.discountPercent,
+    freight: body.freight,
+    chargeFreightToBuyer: body.chargeFreightToBuyer,
+    generalExpenses: body.generalExpenses,
+    assemblyFee: body.assemblyFee,
+    servicesAmount: body.servicesAmount,
+    sellerCommissionPercent: body.sellerCommissionPercent,
+    agentCommissionPercent: body.agentCommissionPercent
+  });
 }
 
 // Registro de ledger — nunca sobrescreve, só insere (mesmo espírito de
@@ -856,6 +891,19 @@ function serializeSalesRecord(record, data) {
     discountAmount: Number(record.discountAmount || 0),
     discountPercent: Number(record.discountPercent || 0),
     freight: Number(record.freight || 0),
+    // Sem estes campos aqui, reabrir o pedido para editar zerava frete fixo,
+    // despesas gerais e taxa de montagem — a tela lê deste serializer.
+    freightFixed: Boolean(record.freightFixed),
+    chargeFreightToBuyer: record.chargeFreightToBuyer !== false,
+    generalExpenses: Number(record.generalExpenses || 0),
+    assemblyFee: Number(record.assemblyFee || 0),
+    servicesAmount: Number(record.servicesAmount || 0),
+    sellerCommissionPercent: Number(record.sellerCommissionPercent || 0),
+    agentCommissionPercent: Number(record.agentCommissionPercent || 0),
+    discountTotal: Number(record.discountTotal || 0),
+    sellerCommission: Number(record.sellerCommission || 0),
+    agentCommission: Number(record.agentCommission || 0),
+    totalWeight: Number(record.totalWeight || 0),
     itemsTotal: Math.round(itemsTotal * 100) / 100,
     amount: totalAmount,
     note: record.note || '',
@@ -2347,7 +2395,7 @@ const server = http.createServer(async (req, res) => {
         if (!items.length) {
           return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
         }
-        const { itemsTotal, totalAmount } = computeSalesTotals(items, body.discountAmount, body.discountPercent, body.freight);
+        const totais = computeSalesTotals(items, body);
         record = {
           id: createId(type === 'order' ? 'ord' : 'qte'),
           type,
@@ -2360,11 +2408,7 @@ const server = http.createServer(async (req, res) => {
           date: body.date || new Date().toISOString().slice(0, 10),
           dueDate: body.dueDate || '',
           items,
-          discountAmount: Number(body.discountAmount || 0),
-          discountPercent: Number(body.discountPercent || 0),
-          freight: Number(body.freight || 0),
-          itemsTotal,
-          totalAmount,
+          ...salesFinanceFields(body, totais),
           note: body.note || '',
           status: body.status || (type === 'order' ? 'pendente' : 'em aberto'),
           stockApplied: false,
@@ -2421,7 +2465,7 @@ const server = http.createServer(async (req, res) => {
       if (!items.length) {
         return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
       }
-      const { itemsTotal, totalAmount } = computeSalesTotals(items, body.discountAmount, body.discountPercent, body.freight);
+      const totais = computeSalesTotals(items, body);
       let updated = {
         ...current,
         clientSupplierId: body.clientSupplierId || '',
@@ -2432,11 +2476,7 @@ const server = http.createServer(async (req, res) => {
         date: body.date || current.date,
         dueDate: body.dueDate || '',
         items,
-        discountAmount: Number(body.discountAmount || 0),
-        discountPercent: Number(body.discountPercent || 0),
-        freight: Number(body.freight || 0),
-        itemsTotal,
-        totalAmount,
+        ...salesFinanceFields(body, totais),
         note: body.note || '',
         status: body.status || current.status,
         updatedAt: new Date().toISOString()
