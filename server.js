@@ -1461,6 +1461,18 @@ async function cancelarNfeFiscal(id, justificativa, user) {
 // ESTOQUE — helpers das rotas
 // ============================================================================
 
+// Paginação: um valor não numérico na query (?page=abc) virava NaN e devolvia
+// lista vazia em vez de cair na primeira página.
+function parsePageParams(searchParams, defaultLimit = 20, maxLimit = 100) {
+  const rawPage = Number(searchParams.get('page'));
+  const rawLimit = Number(searchParams.get('limit'));
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+  const limit = Number.isFinite(rawLimit) && rawLimit >= 1
+    ? Math.min(maxLimit, Math.floor(rawLimit))
+    : defaultLimit;
+  return { page, limit };
+}
+
 function userCanStock(user) {
   return Boolean(user && user.allowedModules.includes('stock'));
 }
@@ -1520,7 +1532,7 @@ function buildMovementRecord(data, { type, productId, depositId, quantity, unitC
 }
 
 // Valida produto/depósito/quantidade e, na saída, o saldo do depósito.
-function assertMovementIsPossible(data, productsById, { productId, depositId, type, quantity }, extraOut = 0) {
+function assertMovementIsPossible(data, productsById, { productId, depositId, type, quantity }) {
   const product = productsById.get(productId);
   if (!product) throw stockCore.stockError('Produto não encontrado.', 404);
   const deposit = (data.deposits || []).find((d) => d.id === depositId);
@@ -1528,7 +1540,7 @@ function assertMovementIsPossible(data, productsById, { productId, depositId, ty
   const qty = stockCore.toNumber(quantity);
   if (!(qty > 0)) throw stockCore.stockError('Informe uma quantidade maior que zero.');
   if (type === 'saida') {
-    const available = stockCore.depositBalance(data, productId, depositId) - extraOut;
+    const available = stockCore.depositBalance(data, productId, depositId);
     if (qty > available) {
       throw stockCore.stockError(`Saldo insuficiente em ${deposit.name}: disponível ${available}, solicitado ${qty}.`);
     }
@@ -1752,8 +1764,7 @@ const server = http.createServer(async (req, res) => {
       const combined = [...data.orders, ...data.quotes];
       const filtered = filterSalesRecords(combined, data, url.searchParams)
         .sort((a, b) => Number(b.code || 0) - Number(a.code || 0) || String(b.date || '').localeCompare(String(a.date || '')));
-      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 15)));
+      const { page, limit } = parsePageParams(url.searchParams, 15);
       const start = (page - 1) * limit;
       const records = filtered.slice(start, start + limit).map((record) => serializeSalesRecord(record, data));
       return sendJson(res, {
@@ -2398,6 +2409,11 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Pessoa não encontrada' }, 404);
     }
 
+    const pessoaEmUso = cadastrosCore.counterpartyInUse(data, id);
+    if (pessoaEmUso) {
+      return sendJson(res, { error: pessoaEmUso }, 409);
+    }
+
     data.people.splice(index, 1);
     saveData(data);
     return sendJson(res, { success: true });
@@ -2559,6 +2575,11 @@ const server = http.createServer(async (req, res) => {
     const index = data.cnpjs.findIndex((entry) => entry.id === id);
     if (index < 0) {
       return sendJson(res, { error: 'CNPJ não encontrado' }, 404);
+    }
+
+    const cnpjEmUso = cadastrosCore.counterpartyInUse(data, id);
+    if (cnpjEmUso) {
+      return sendJson(res, { error: cnpjEmUso }, 409);
     }
 
     data.cnpjs.splice(index, 1);
@@ -2807,6 +2828,10 @@ const server = http.createServer(async (req, res) => {
     const index = data.deposits.findIndex((entry) => entry.id === id);
     if (index < 0) {
       return sendJson(res, { error: 'Depósito não encontrado' }, 404);
+    }
+    const depositoEmUso = cadastrosCore.depositInUse(data, id);
+    if (depositoEmUso) {
+      return sendJson(res, { error: depositoEmUso }, 409);
     }
     data.deposits.splice(index, 1);
     saveData(data);
@@ -3101,8 +3126,7 @@ const server = http.createServer(async (req, res) => {
       const { data, productsById } = await loadStockContext();
       const filtered = filterStockMovements(data, url.searchParams, productsById)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+      const { page, limit } = parsePageParams(url.searchParams, 20);
       const start = (page - 1) * limit;
       return sendJson(res, {
         movements: filtered.slice(start, start + limit).map((m) => stockCore.serializeMovement(m, data, productsById)),
@@ -3567,8 +3591,7 @@ const server = http.createServer(async (req, res) => {
       }
       const filtered = filterFinanceEntries(data, url.searchParams)
         .sort((a, b) => (b.date === a.date ? String(b.id).localeCompare(String(a.id)) : String(b.date).localeCompare(String(a.date))));
-      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+      const { page, limit } = parsePageParams(url.searchParams, 20);
       const start = (page - 1) * limit;
       const pageEntries = filtered.slice(start, start + limit).map((entry) => serializeFinanceEntry(entry, data));
       return sendJson(res, { entries: pageEntries, total: filtered.length, page, limit });
@@ -3819,8 +3842,7 @@ const server = http.createServer(async (req, res) => {
       }
       const filtered = filterNfes(data, url.searchParams)
         .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
-      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 15)));
+      const { page, limit } = parsePageParams(url.searchParams, 15);
       const start = (page - 1) * limit;
       const pageItems = filtered.slice(start, start + limit).map((nfe) => serializeNfe(nfe, data));
       return sendJson(res, { nfes: pageItems, total: filtered.length, page, limit });
@@ -4012,8 +4034,7 @@ const server = http.createServer(async (req, res) => {
       }
       const filtered = filterBankTransactions(data, url.searchParams)
         .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
-      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+      const { page, limit } = parsePageParams(url.searchParams, 20);
       const start = (page - 1) * limit;
       const pageItems = filtered.slice(start, start + limit).map((tx) => serializeBankTransaction(tx, data));
       const summary = {
