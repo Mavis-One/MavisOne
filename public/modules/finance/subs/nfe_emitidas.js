@@ -25,48 +25,114 @@ function nfeFormatDocument(value) {
   return value || '-';
 }
 
-function nfePrint(nfe) {
+// Aviso obrigatório: nenhum destes layouts é DANFE oficial. A DANFE de verdade
+// vem em PDF da Focus NFe (ação "Baixar DANFE"), que exige a API configurada.
+const NFE_AVISO_NAO_FISCAL = 'Documento gerado pelo sistema — registro interno, sem valor fiscal (não é uma DANFE oficial).';
+
+const NFE_PRINT_LAYOUTS = {
+  // A4 completo: o layout que já existia.
+  completo: (nfe, h) => ({
+    css: `
+      body { font-family: Arial, sans-serif; padding: 24px; color: #10213a; }
+      h1 { font-size: 18px; margin-bottom: 4px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+      th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 13px; }
+      .muted { color: #666; }
+      .total { text-align: right; font-weight: bold; margin-top: 10px; }
+    `,
+    body: `
+      <h1>NF-e ${h(nfe.number)} / Série ${h(nfe.series)}</h1>
+      <p class="muted">${NFE_AVISO_NAO_FISCAL}</p>
+      <p><strong>Data de emissão:</strong> ${financeFormatDate(nfe.date)} &nbsp; <strong>Status:</strong> ${h((NFE_STATUS_META[nfe.status] || {}).label || nfe.status)}</p>
+      <p><strong>Cliente:</strong> ${h(nfe.customer)} &nbsp; <strong>CPF/CNPJ:</strong> ${h(nfeFormatDocument(nfe.clientDocument))}</p>
+      <p><strong>Endereço:</strong> ${h(nfe.clientAddress || '-')}, ${h(nfe.clientCity || '-')} - ${h(nfe.clientState || '-')}</p>
+      ${nfe.key ? `<p><strong>Chave:</strong> ${h(nfe.key)}</p>` : ''}
+      <table>
+        <thead><tr><th>Código</th><th>Descrição</th><th>Qtd.</th><th>Valor unit.</th><th>Total</th></tr></thead>
+        <tbody>${(nfe.items || []).map((item) => `
+          <tr>
+            <td>${h(item.code || '-')}</td><td>${h(item.description || '')}</td>
+            <td>${h(String(item.quantity ?? ''))}</td>
+            <td>${financeFormatBRL(item.unitPrice)}</td><td>${financeFormatBRL(item.total)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <p class="total">Valor total: ${financeFormatBRL(nfe.amount)}</p>
+    `
+  }),
+
+  // Bobina de 80mm: uma coluna, fonte pequena, sem bordas de tabela.
+  simplificado: (nfe, h) => ({
+    css: `
+      @page { size: 80mm auto; margin: 3mm; }
+      body { font-family: 'Courier New', monospace; font-size: 11px; color: #000; width: 74mm; margin: 0; }
+      h1 { font-size: 13px; text-align: center; margin: 0 0 2px; }
+      .center { text-align: center; }
+      .sep { border-top: 1px dashed #000; margin: 6px 0; }
+      .linha { display: flex; justify-content: space-between; gap: 6px; }
+      .item { margin-bottom: 3px; }
+      .total { font-size: 13px; font-weight: bold; }
+      .aviso { font-size: 9px; text-align: center; margin-top: 8px; }
+    `,
+    body: `
+      <h1>NF-e ${h(nfe.number)}</h1>
+      <div class="center">Série ${h(nfe.series)} — ${financeFormatDate(nfe.date)}</div>
+      <div class="sep"></div>
+      <div>${h(nfe.customer)}</div>
+      <div>${h(nfeFormatDocument(nfe.clientDocument))}</div>
+      ${nfe.key ? `<div style="word-break:break-all;font-size:9px;">${h(nfe.key)}</div>` : ''}
+      <div class="sep"></div>
+      ${(nfe.items || []).map((item) => `
+        <div class="item">
+          <div>${h(item.description || '')}</div>
+          <div class="linha"><span>${h(String(item.quantity ?? ''))} x ${financeFormatBRL(item.unitPrice)}</span><span>${financeFormatBRL(item.total)}</span></div>
+        </div>`).join('')}
+      <div class="sep"></div>
+      <div class="linha total"><span>TOTAL</span><span>${financeFormatBRL(nfe.amount)}</span></div>
+      <div class="aviso">${NFE_AVISO_NAO_FISCAL}</div>
+    `
+  }),
+
+  // Etiqueta de despacho: destinatário em destaque para colar no volume.
+  etiqueta: (nfe, h) => ({
+    css: `
+      @page { size: 100mm 50mm; margin: 3mm; }
+      body { font-family: Arial, sans-serif; font-size: 11px; color: #000; margin: 0; }
+      .etiqueta { border: 1px solid #000; padding: 6px; height: 44mm; box-sizing: border-box; }
+      .topo { display: flex; justify-content: space-between; font-size: 10px; border-bottom: 1px solid #000; padding-bottom: 3px; }
+      .dest { font-size: 14px; font-weight: bold; margin: 5px 0 2px; }
+      .chave { font-size: 8px; word-break: break-all; margin-top: 4px; }
+    `,
+    body: `
+      <div class="etiqueta">
+        <div class="topo"><span>NF-e ${h(nfe.number)} / Série ${h(nfe.series)}</span><span>${financeFormatDate(nfe.date)}</span></div>
+        <div class="dest">${h(nfe.customer)}</div>
+        <div>${h(nfeFormatDocument(nfe.clientDocument))}</div>
+        <div>${h(nfe.clientAddress || '-')}</div>
+        <div>${h(nfe.clientCity || '-')} - ${h(nfe.clientState || '-')}</div>
+        ${nfe.key ? `<div class="chave">${h(nfe.key)}</div>` : ''}
+      </div>
+    `
+  }),
+
+  // Mesma etiqueta, duas por folha lado a lado (via/contravia).
+  etiqueta2: (nfe, h) => {
+    const uma = NFE_PRINT_LAYOUTS.etiqueta(nfe, h);
+    return {
+      css: uma.css.replace('@page { size: 100mm 50mm; margin: 3mm; }', '@page { size: A4 landscape; margin: 5mm; }') +
+        '.par { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }',
+      body: `<div class="par">${uma.body}${uma.body}</div>`
+    };
+  }
+};
+
+function nfePrint(nfe, layout = 'completo') {
+  const build = NFE_PRINT_LAYOUTS[layout] || NFE_PRINT_LAYOUTS.completo;
+  const { css, body } = build(nfe, escapeHtml);
   const win = window.open('', '_blank', 'noopener,noreferrer');
   if (!win) return;
   win.opener = null;
-  const itemsRows = (nfe.items || []).map((item) => `
-    <tr>
-      <td>${escapeHtml(item.code || '-')}</td>
-      <td>${escapeHtml(item.description || '')}</td>
-      <td>${escapeHtml(String(item.quantity ?? ''))}</td>
-      <td>${financeFormatBRL(item.unitPrice)}</td>
-      <td>${financeFormatBRL(item.total)}</td>
-    </tr>
-  `).join('');
-  win.document.write(`
-    <html>
-      <head>
-        <title>NF-e ${escapeHtml(nfe.number)}</title>
-        <meta charset="utf-8" />
-        <style>
-          body { font-family: Arial, sans-serif; padding: 24px; color: #10213a; }
-          h1 { font-size: 18px; margin-bottom: 4px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-          th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 13px; }
-          .muted { color: #666; }
-          .total { text-align: right; font-weight: bold; margin-top: 10px; }
-        </style>
-      </head>
-      <body>
-        <h1>NF-e ${escapeHtml(nfe.number)} / Série ${escapeHtml(nfe.series)}</h1>
-        <p class="muted">Documento gerado pelo sistema — registro interno, sem valor fiscal (não é uma DANFE oficial).</p>
-        <p><strong>Data de emissão:</strong> ${financeFormatDate(nfe.date)} &nbsp; <strong>Status:</strong> ${escapeHtml((NFE_STATUS_META[nfe.status] || {}).label || nfe.status)}</p>
-        <p><strong>Cliente:</strong> ${escapeHtml(nfe.customer)} &nbsp; <strong>CPF/CNPJ:</strong> ${escapeHtml(nfeFormatDocument(nfe.clientDocument))}</p>
-        <p><strong>Endereço:</strong> ${escapeHtml(nfe.clientAddress || '-')}, ${escapeHtml(nfe.clientCity || '-')} - ${escapeHtml(nfe.clientState || '-')}</p>
-        ${nfe.key ? `<p><strong>Chave:</strong> ${escapeHtml(nfe.key)}</p>` : ''}
-        <table>
-          <thead><tr><th>Código</th><th>Descrição</th><th>Qtd.</th><th>Valor unit.</th><th>Total</th></tr></thead>
-          <tbody>${itemsRows}</tbody>
-        </table>
-        <p class="total">Valor total: ${financeFormatBRL(nfe.amount)}</p>
-      </body>
-    </html>
-  `);
+  win.document.write(`<html><head><title>NF-e ${escapeHtml(nfe.number)}</title><meta charset="utf-8" /><style>${css}</style></head><body>${body}</body></html>`);
   win.document.close();
   win.focus();
   win.print();
@@ -78,6 +144,21 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   const filters = { search: '', status: '', dateFrom: '', dateTo: '' };
   let page = 1;
   const limit = 15;
+
+  // Seleção guardada por id (não por índice) para sobreviver a refiltragem;
+  // `notasDaPagina` guarda os objetos completos, que o painel de ações precisa.
+  const selecionadas = new Set();
+  let notasDaPagina = [];
+  let apiFiscalConfigurada = false;
+
+  // Descobre uma vez se a Focus NFe está configurada — é o que decide se as
+  // ações fiscais aparecem habilitadas ou desabilitadas com o motivo.
+  try {
+    const status = await api('/api/focusnfe/status');
+    apiFiscalConfigurada = Boolean(status.configured && status.connected);
+  } catch {
+    apiFiscalConfigurada = false;
+  }
 
   function buildQuery() {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
@@ -102,8 +183,54 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     return `${paid}/${nfe.financialEntries.length} parcela${nfe.financialEntries.length === 1 ? '' : 's'} paga${paid === 1 ? '' : 's'}`;
   }
 
+  // Contexto entregue ao painel de ações: seleção atual + os callbacks que cada
+  // ação chama. Recalculado a cada render para o painel nunca ver estado velho.
+  function actionsContext() {
+    const lista = notasDaPagina.filter((nfe) => selecionadas.has(nfe.id));
+    return {
+      selecionadas: lista,
+      nfe: lista.length === 1 ? lista[0] : null,
+      apiFiscalConfigurada,
+      escapeHtml,
+      showToast,
+      print: nfePrint,
+      cancelar: cancelNfe,
+      duplicar: duplicarNfe,
+      irParaVenda: irParaVenda,
+      limparSelecao: () => { selecionadas.clear(); load(); }
+    };
+  }
+
+  function renderActionsPanel() {
+    const painel = document.getElementById('nfeActionsPanel');
+    if (painel) window.MavisNfeActions.render(painel, actionsContext());
+  }
+
+  function duplicarNfe(nfe) {
+    // A tela de nova NF-e lê este state para nascer preenchida.
+    state.financeDuplicateNfe = {
+      ...nfe,
+      id: undefined, number: undefined, key: '', status: 'pendente',
+      date: new Date().toISOString().slice(0, 10),
+      financialEntries: []
+    };
+    state.activeSub = 'nova_nfe_avulsa';
+    loadModule('finance');
+  }
+
+  function irParaVenda(nfe) {
+    state.salesOpenRecordId = nfe.orderId;
+    state.activeSub = 'sales_records';
+    loadModule('sales');
+  }
+
   function renderView(result) {
     const totalPages = Math.max(1, Math.ceil(result.total / limit));
+    notasDaPagina = result.nfes || [];
+    // Descarta da seleção o que saiu da página atual (filtro/paginação mudou).
+    const idsVisiveis = new Set(notasDaPagina.map((n) => n.id));
+    [...selecionadas].forEach((id) => { if (!idsVisiveis.has(id)) selecionadas.delete(id); });
+    const todasMarcadas = notasDaPagina.length > 0 && notasDaPagina.every((n) => selecionadas.has(n.id));
 
     content.innerHTML = `
       <div class="cadastro-page-head">
@@ -139,15 +266,21 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
         <div style="align-self: end;"><button type="submit" class="secondary">Filtrar</button></div>
       </form>
 
+      <div id="nfeActionsPanel" class="nfe-actions-panel" hidden></div>
+
       <div class="panel">
         <div class="table-scroll">
           <table class="table table-actions">
             <thead>
-              <tr><th>Número</th><th>Série</th><th>Data</th><th>Cliente</th><th>CPF/CNPJ</th><th>Valor</th><th>Status</th><th>Chave</th><th>Lançamento financeiro</th><th>Ações</th></tr>
+              <tr>
+                <th class="nfe-check-col"><input type="checkbox" id="nfeSelectAll" ${todasMarcadas ? 'checked' : ''} title="Selecionar todas desta página" /></th>
+                <th>Número</th><th>Série</th><th>Data</th><th>Cliente</th><th>CPF/CNPJ</th><th>Valor</th><th>Status</th><th>Chave</th><th>Lançamento financeiro</th><th>Ações</th>
+              </tr>
             </thead>
             <tbody>
               ${result.nfes.length ? result.nfes.map((nfe) => `
-                <tr class="cadastro-row-clickable finance-entry-row" data-id="${escapeHtml(nfe.id)}">
+                <tr class="cadastro-row-clickable finance-entry-row ${selecionadas.has(nfe.id) ? 'is-selected' : ''}" data-id="${escapeHtml(nfe.id)}">
+                  <td class="nfe-check-col"><input type="checkbox" data-select="${escapeHtml(nfe.id)}" ${selecionadas.has(nfe.id) ? 'checked' : ''} /></td>
                   <td>${escapeHtml(nfe.number)}</td>
                   <td>${escapeHtml(nfe.series)}</td>
                   <td>${financeFormatDate(nfe.date)}</td>
@@ -159,7 +292,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
                   <td>${financialSummary(nfe)}</td>
                   <td>${nfe.status === 'autorizada' ? `<button type="button" class="secondary" data-quick-cancel="${nfe.id}">Cancelar</button>` : ''}</td>
                 </tr>
-              `).join('') : `<tr><td colspan="10" class="muted">Nenhuma NF-e encontrada.</td></tr>`}
+              `).join('') : `<tr><td colspan="11" class="muted">Nenhuma NF-e encontrada.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -188,8 +321,45 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     });
 
     content.querySelectorAll('.finance-entry-row').forEach((row) => {
-      row.addEventListener('click', () => openNfeModal(row.dataset.id));
+      row.addEventListener('click', (event) => {
+        // Clicar no checkbox seleciona; clicar no resto da linha abre a nota.
+        if (event.target.closest('.nfe-check-col')) return;
+        openNfeModal(row.dataset.id);
+      });
     });
+
+    // Só o painel e as linhas são redesenhados na seleção — não recarrega a
+    // lista, senão o clique no checkbox ficaria lento e perderia o scroll.
+    function aplicarSelecaoNaTela() {
+      content.querySelectorAll('[data-select]').forEach((cb) => {
+        cb.checked = selecionadas.has(cb.dataset.select);
+        cb.closest('tr')?.classList.toggle('is-selected', cb.checked);
+      });
+      const todas = notasDaPagina.length > 0 && notasDaPagina.every((n) => selecionadas.has(n.id));
+      const selectAll = document.getElementById('nfeSelectAll');
+      if (selectAll) {
+        selectAll.checked = todas;
+        selectAll.indeterminate = !todas && selecionadas.size > 0;
+      }
+      renderActionsPanel();
+    }
+
+    content.querySelectorAll('[data-select]').forEach((cb) => {
+      cb.addEventListener('click', (event) => event.stopPropagation());
+      cb.addEventListener('change', () => {
+        if (cb.checked) selecionadas.add(cb.dataset.select);
+        else selecionadas.delete(cb.dataset.select);
+        aplicarSelecaoNaTela();
+      });
+    });
+
+    document.getElementById('nfeSelectAll')?.addEventListener('change', (event) => {
+      if (event.target.checked) notasDaPagina.forEach((n) => selecionadas.add(n.id));
+      else selecionadas.clear();
+      aplicarSelecaoNaTela();
+    });
+
+    renderActionsPanel();
     content.querySelectorAll('[data-quick-cancel]').forEach((btn) => {
       btn.addEventListener('click', async (event) => {
         event.stopPropagation();
