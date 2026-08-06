@@ -1272,23 +1272,32 @@ async function loadModule(moduleName) {
           showToast('Não foi possível carregar clientes/empresas/produtos para o formulário.', 'warning');
         }
 
-        let items = isEditing ? (editRecord.items || []).map((item) => ({ ...item })) : [];
-        let discountAmount = isEditing ? Number(editRecord.discountAmount || 0) : 0;
-        let discountPercent = isEditing ? Number(editRecord.discountPercent || 0) : 0;
-        let freight = isEditing ? Number(editRecord.freight || 0) : 0;
+        // "Duplicar Venda" deixa a cópia aqui. É consumida uma única vez: sem o
+        // delete, voltar para a tela depois de salvar reabriria a duplicata.
+        const duplicado = state.salesDraft?.duplicateFrom?.type === recordType
+          ? state.salesDraft.duplicateFrom
+          : null;
+        if (duplicado) delete state.salesDraft.duplicateFrom;
+
+        const origem = editRecord || duplicado;
+        let items = origem ? (origem.items || []).map((item) => ({ ...item })) : [];
+        let discountAmount = Number(origem?.discountAmount || 0);
+        let discountPercent = Number(origem?.discountPercent || 0);
+        let freight = Number(origem?.freight || 0);
 
         // O formulário inteiro é redesenhado a cada produto adicionado/removido (mais simples
         // que atualizar só a tabela). Isso apagaria os campos de cabeçalho já preenchidos, então
         // o valor atual é salvo aqui antes de cada redesenho e usado para repopular o HTML novo.
         const formState = {
-          clientSupplierId: editRecord?.clientSupplierId || '',
-          companyId: editRecord?.companyId || '',
-          sellerId: editRecord?.sellerId || '',
-          depositId: editRecord?.depositId || '',
-          status: editRecord?.status || statusOptions[0].value,
+          clientSupplierId: origem?.clientSupplierId || '',
+          companyId: origem?.companyId || '',
+          sellerId: origem?.sellerId || '',
+          depositId: origem?.depositId || '',
+          status: origem?.status || statusOptions[0].value,
+          // A duplicata nasce com a data de hoje, não a do original.
           date: editRecord?.date || new Date().toISOString().slice(0, 10),
           dueDate: editRecord?.dueDate || '',
-          note: editRecord?.note || ''
+          note: origem?.note || ''
         };
         const syncFormState = () => {
           const form = document.getElementById('salesRecordForm');
@@ -1310,6 +1319,142 @@ async function loadModule(moduleName) {
           return { itemsTotal, totalAmount };
         };
 
+        // Monta o payload a partir do que está na tela agora. Usado tanto pelo
+        // submit quanto pelas ações do menu — o PUT exige o registro inteiro,
+        // não aceita atualização só do status.
+        const buildPayload = (overrides = {}) => {
+          const form = document.getElementById('salesRecordForm');
+          const formData = new FormData(form);
+          const clientEntry = meta.directory.find((entry) => entry.id === formData.get('clientSupplierId'));
+          return {
+            type: recordType,
+            clientSupplierId: formData.get('clientSupplierId') || '',
+            clientSupplierName: clientEntry ? clientEntry.name : '',
+            companyId: formData.get('companyId') || '',
+            sellerId: formData.get('sellerId') || '',
+            depositId: formData.get('depositId') || '',
+            date: formData.get('date') || '',
+            dueDate: formData.get('dueDate') || '',
+            items: items.map((item) => ({ productId: item.productId, name: item.name, sku: item.sku, quantity: item.quantity, unitPrice: item.unitPrice })),
+            discountAmount,
+            discountPercent,
+            freight,
+            status: formData.get('status') || '',
+            note: formData.get('note') || '',
+            ...overrides
+          };
+        };
+
+        const salesRecordPrint = ({ direta }) => {
+          const { itemsTotal, totalAmount } = computeTotals();
+          const cliente = meta.directory.find((e) => e.id === formState.clientSupplierId);
+          const empresa = meta.companies.find((c) => c.id === formState.companyId);
+          const vendedor = meta.sellers.find((s) => s.id === formState.sellerId);
+          const win = window.open('', '_blank', 'noopener,noreferrer');
+          if (!win) { showToast('O navegador bloqueou a janela de impressão.', 'warning'); return; }
+          win.opener = null;
+          win.document.write(`
+            <html><head><meta charset="utf-8" /><title>${title} ${escapeHtml(String(editRecord?.code || ''))}</title><style>
+              body { font-family: Arial, sans-serif; padding: 24px; color: #10213a; }
+              h1 { font-size: 18px; margin: 0 0 2px; }
+              .muted { color: #666; font-size: 12px; }
+              .info { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 18px; margin: 14px 0; font-size: 13px; }
+              table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+              th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 12px; }
+              .num { text-align: right; }
+              .tot { text-align: right; margin-top: 10px; font-size: 13px; }
+              .tot strong { font-size: 15px; }
+            </style></head><body>
+              <h1>${title} ${editRecord?.code ? '#' + escapeHtml(String(editRecord.code)) : ''}</h1>
+              <p class="muted">Documento interno, sem valor fiscal.</p>
+              <div class="info">
+                <div><strong>Cliente:</strong> ${escapeHtml(cliente?.name || '-')}</div>
+                <div><strong>Data:</strong> ${escapeHtml(formState.date || '-')}</div>
+                <div><strong>Empresa:</strong> ${escapeHtml(empresa?.name || '-')}</div>
+                <div><strong>Vendedor:</strong> ${escapeHtml(vendedor?.name || '-')}</div>
+                <div><strong>Status:</strong> ${escapeHtml(formState.status || '-')}</div>
+                ${formState.dueDate ? `<div><strong>Validade:</strong> ${escapeHtml(formState.dueDate)}</div>` : ''}
+              </div>
+              <table>
+                <thead><tr><th>Produto</th><th>SKU</th><th class="num">Qtd.</th><th class="num">Valor unit.</th><th class="num">Total</th></tr></thead>
+                <tbody>${items.map((i) => `<tr>
+                  <td>${escapeHtml(i.name || '')}</td><td>${escapeHtml(i.sku || '-')}</td>
+                  <td class="num">${i.quantity}</td>
+                  <td class="num">${salesFormatBRL(i.unitPrice)}</td>
+                  <td class="num">${salesFormatBRL(Number(i.quantity) * Number(i.unitPrice))}</td>
+                </tr>`).join('')}</tbody>
+              </table>
+              <div class="tot">
+                <div>Produtos: ${salesFormatBRL(itemsTotal)}</div>
+                ${discountAmount ? `<div>Desconto: -${salesFormatBRL(discountAmount)}</div>` : ''}
+                ${discountPercent ? `<div>Desconto: -${discountPercent}%</div>` : ''}
+                ${freight ? `<div>Frete: ${salesFormatBRL(freight)}</div>` : ''}
+                <div><strong>Total: ${salesFormatBRL(totalAmount)}</strong></div>
+              </div>
+              ${formState.note ? `<p class="muted" style="margin-top:14px;"><strong>Observações:</strong> ${escapeHtml(formState.note)}</p>` : ''}
+            </body></html>`);
+          win.document.close();
+          win.focus();
+          // "Impressão direta" manda para a impressora sem passar pela
+          // pré-visualização; o diálogo do navegador ainda aparece, não há como
+          // um site imprimir sem confirmação do usuário.
+          if (direta) win.print();
+        };
+
+        // Contexto entregue ao menu de ações. Lê formState/status atuais, então
+        // é recriado a cada render — o menu nunca decide com estado velho.
+        const salesRecordActionsContext = () => ({
+          recordType,
+          isEditing,
+          status: formState.status,
+          escapeHtml,
+          showToast,
+          imprimir: salesRecordPrint,
+          focarObservacoes: () => {
+            const campo = document.querySelector('#salesRecordForm [name="note"]');
+            campo?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            campo?.focus();
+          },
+          duplicar: () => {
+            // Cópia vira rascunho novo: sem id e sem código, para nascer como
+            // registro independente em vez de sobrescrever o original.
+            state.salesDraft.editRecord = null;
+            state.salesDraft.duplicateFrom = {
+              ...buildPayload(),
+              id: undefined,
+              code: undefined,
+              status: recordType === 'order' ? 'pendente' : 'em aberto'
+            };
+            showToast('Venda duplicada — revise e salve o novo registro.', 'success');
+            renderApp();
+            loadModule('sales');
+          },
+          baixar: () => {
+            const payload = { ...buildPayload(), code: editRecord?.code, totals: computeTotals() };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${recordType === 'order' ? 'pedido' : 'orcamento'}-${editRecord?.code || 'rascunho'}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+          },
+          mudarStatus: async (novoStatus, pergunta) => {
+            const ok = await confirmModal(pergunta);
+            if (!ok) return;
+            try {
+              await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(buildPayload({ status: novoStatus })) });
+              showToast(`${title} atualizado para "${novoStatus}".`, 'success');
+              state.salesDraft.editRecord = null;
+              state.activeSub = 'orders_quotes';
+              renderApp();
+              loadModule('sales');
+            } catch (error) {
+              showToast(error.message || 'Erro ao atualizar o status.', 'error');
+            }
+          }
+        });
+
         const renderForm = () => {
           const { itemsTotal, totalAmount } = computeTotals();
 
@@ -1319,6 +1464,10 @@ async function loadModule(moduleName) {
                 <h3>${isEditing ? `Editar ${title} #${escapeHtml(String(editRecord.code))}` : `Novo ${title}`}</h3>
                 <p class="muted">${isEditing ? 'Código gerado automaticamente na criação.' : 'O código é gerado automaticamente ao salvar.'}</p>
               </div>
+              ${window.MavisActionsMenu.barHtml(
+                { id: 'salesRecordActions', actions: window.MavisSalesRecordActions.CATALOG, saveLabel: isEditing ? 'Salvar' : `Salvar ${title.toLowerCase()}` },
+                salesRecordActionsContext()
+              )}
             </div>
 
             <div class="panel">
@@ -1405,10 +1554,25 @@ async function loadModule(moduleName) {
                   <label style="flex: 1;">Observações<textarea name="note" rows="3">${escapeHtml(formState.note)}</textarea></label>
                 </div>
 
-                <button type="submit">${isEditing ? `Salvar alterações` : `Salvar ${title.toLowerCase()}`}</button>
+                <!-- Salvar/Voltar vivem na barra do topo (MavisActionsMenu).
+                     Este submit fica escondido só para o Enter no formulário
+                     continuar salvando, como o usuário espera. -->
+                <button type="submit" class="visually-hidden" tabindex="-1" aria-hidden="true">Salvar</button>
               </form>
             </div>
           `;
+
+          window.MavisActionsMenu.attach({
+            id: 'salesRecordActions',
+            actions: window.MavisSalesRecordActions.CATALOG,
+            onSave: () => document.getElementById('salesRecordForm')?.requestSubmit(),
+            onBack: () => {
+              state.salesDraft.editRecord = null;
+              state.activeSub = 'orders_quotes';
+              renderApp();
+              loadModule('sales');
+            }
+          }, salesRecordActionsContext());
 
           attachSearchableSelect({ id: 'salesClientSupplier', options: meta.directory.map((entry) => ({ value: entry.id, label: entry.name })) });
           attachSearchableSelect({ id: 'salesCompany', options: meta.companies.map((c) => ({ value: c.id, label: c.name })) });
