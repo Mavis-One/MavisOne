@@ -7,6 +7,8 @@ const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
 const { buildNfePayload } = require('./lib/nfePayloadBuilder');
+const stockCore = require('./lib/stock-core');
+const cadastrosCore = require('./lib/cadastros-core');
 
 const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PORT = Number(process.env.PORT) || 3000;
@@ -50,6 +52,20 @@ const initialData = {
   people: [],
   cnpjs: [],
   deposits: [],
+  productCategories: [],
+  movementCategories: [],
+  stockMovements: [],
+  stockTransfers: [],
+  priceTables: [],
+  productCatalogs: [],
+  productMeta: {},
+  contacts: [],
+  equipments: [],
+  paymentMethods: [],
+  saleStatuses: [],
+  productCashbacks: [],
+  tasks: [],
+  appointments: [],
   importLogs: [],
   auditLogs: [],
   settings: {
@@ -106,6 +122,8 @@ function normalizeData(data) {
   data.people = Array.isArray(data.people) ? data.people : [];
   data.cnpjs = Array.isArray(data.cnpjs) ? data.cnpjs : [];
   data.deposits = Array.isArray(data.deposits) ? data.deposits : [];
+  stockCore.ensureStockCollections(data);
+  cadastrosCore.ensureCadastroCollections(data);
   data.finance = Array.isArray(data.finance) ? data.finance : [];
   data.financialPayments = Array.isArray(data.financialPayments) ? data.financialPayments : [];
   data.financialCategories = Array.isArray(data.financialCategories) ? data.financialCategories : [];
@@ -1439,6 +1457,113 @@ async function cancelarNfeFiscal(id, justificativa, user) {
   return updated;
 }
 
+// ============================================================================
+// ESTOQUE — helpers das rotas
+// ============================================================================
+
+function userCanStock(user) {
+  return Boolean(user && user.allowedModules.includes('stock'));
+}
+
+// Produtos vêm do Supabase; o resto do estoque, do db.json. Quase toda rota
+// precisa dos dois lados, então carrega junto.
+async function loadStockContext() {
+  const data = loadData();
+  const products = await db.getProducts();
+  return { data, products, productsById: new Map(products.map((p) => [p.id, p])) };
+}
+
+function sendStockError(res, error, fallback) {
+  return sendJson(res, { error: error && error.status ? error.message : fallback }, (error && error.status) || 400);
+}
+
+// Registra a movimentação no db.json e reflete o novo saldo total no Supabase.
+// As duas escritas não são atômicas: se o Supabase falhar, nada é gravado
+// localmente (por isso o saldo remoto é atualizado ANTES do saveData).
+async function commitStockMovements(data, movements, productsById) {
+  const deltaByProduct = new Map();
+  movements.forEach((movement) => {
+    const delta = stockCore.movementSignedQuantity(movement);
+    deltaByProduct.set(movement.productId, (deltaByProduct.get(movement.productId) || 0) + delta);
+  });
+
+  for (const [productId, delta] of deltaByProduct.entries()) {
+    if (delta === 0) continue;
+    const product = productsById.get(productId);
+    const newTotal = stockCore.toNumber(product.stockQuantity) + delta;
+    await db.updateProductStock(productId, newTotal);
+  }
+
+  movements.forEach((movement) => data.stockMovements.push(movement));
+  saveData(data);
+}
+
+function buildMovementRecord(data, { type, productId, depositId, quantity, unitCost, categoryId, date, document, note, transferId, origin }, user) {
+  return {
+    id: stockCore.createId('mov'),
+    code: stockCore.nextSequentialCode(data.stockMovements, 'MOV'),
+    type,
+    date: date || stockCore.todayStr(),
+    productId,
+    depositId,
+    quantity: stockCore.toNumber(quantity),
+    unitCost: stockCore.toNumber(unitCost),
+    categoryId: categoryId || '',
+    document: document || '',
+    note: note || '',
+    transferId: transferId || '',
+    origin: origin || 'manual',
+    createdBy: user.id,
+    createdByName: user.name,
+    createdAt: new Date().toISOString()
+  };
+}
+
+// Valida produto/depósito/quantidade e, na saída, o saldo do depósito.
+function assertMovementIsPossible(data, productsById, { productId, depositId, type, quantity }, extraOut = 0) {
+  const product = productsById.get(productId);
+  if (!product) throw stockCore.stockError('Produto não encontrado.', 404);
+  const deposit = (data.deposits || []).find((d) => d.id === depositId);
+  if (!deposit) throw stockCore.stockError('Depósito não encontrado.', 404);
+  const qty = stockCore.toNumber(quantity);
+  if (!(qty > 0)) throw stockCore.stockError('Informe uma quantidade maior que zero.');
+  if (type === 'saida') {
+    const available = stockCore.depositBalance(data, productId, depositId) - extraOut;
+    if (qty > available) {
+      throw stockCore.stockError(`Saldo insuficiente em ${deposit.name}: disponível ${available}, solicitado ${qty}.`);
+    }
+  }
+  return { product, deposit, quantity: qty };
+}
+
+function filterStockMovements(data, params, productsById) {
+  const search = String(params.get('search') || '').trim().toLowerCase();
+  const type = params.get('type') || '';
+  const productId = params.get('productId') || '';
+  const depositId = params.get('depositId') || '';
+  const categoryId = params.get('categoryId') || '';
+  const dateFrom = params.get('dateFrom') || '';
+  const dateTo = params.get('dateTo') || '';
+
+  return (data.stockMovements || []).filter((movement) => {
+    if (type && movement.type !== type) return false;
+    if (productId && movement.productId !== productId) return false;
+    if (depositId && movement.depositId !== depositId) return false;
+    if (categoryId && movement.categoryId !== categoryId) return false;
+    if (dateFrom && movement.date < dateFrom) return false;
+    if (dateTo && movement.date > dateTo) return false;
+    if (search) {
+      const product = productsById.get(movement.productId);
+      const haystack = [
+        movement.code, movement.document, movement.note,
+        product ? product.name : '', product ? product.sku : ''
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const { pathname } = url;
@@ -2441,6 +2566,151 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, { success: true });
   }
 
+  // Metadados dos cadastros: diretório de pessoas/empresas, produtos, contas,
+  // usuários — usados pelos selects das telas do módulo.
+  if (pathname === '/api/cadastros/meta' && req.method === 'GET') {
+    try {
+      const data = loadData();
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      let products = [];
+      try {
+        products = (await db.getProducts()).map((p) => ({ id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice }));
+      } catch (error) {
+        products = [];
+      }
+      return sendJson(res, {
+        directory: cadastrosCore.directory(data),
+        products,
+        deposits: data.deposits,
+        bankAccounts: data.bankAccounts,
+        paymentMethods: data.paymentMethods,
+        saleStatuses: data.saleStatuses,
+        companies: data.companies,
+        users: (data.users || []).map((u) => ({ id: u.id, name: u.name }))
+      });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao carregar dados dos cadastros' }, 500);
+    }
+  }
+
+  // Cashback precisa do nome do produto, que vem do Supabase — por isso tem
+  // listagem própria, fora do CRUD genérico abaixo.
+  if (pathname === '/api/cadastros/product-cashbacks' && req.method === 'GET') {
+    try {
+      const data = loadData();
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      let productsById = new Map();
+      try {
+        productsById = new Map((await db.getProducts()).map((p) => [p.id, p]));
+      } catch (error) {
+        productsById = new Map();
+      }
+      const cashbacks = (data.productCashbacks || [])
+        .map((item) => {
+          const product = productsById.get(item.productId);
+          return {
+            ...item,
+            productName: product ? product.name : '(produto removido)',
+            productSku: product ? product.sku : '',
+            salePrice: product ? product.salePrice : 0,
+            estimatedReturn: item.type === 'percentual'
+              ? (Number(product ? product.salePrice : 0) * Number(item.value || 0)) / 100
+              : Number(item.value || 0)
+          };
+        })
+        .sort((a, b) => String(a.productName).localeCompare(String(b.productName)));
+      return sendJson(res, { cashbacks });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao listar cashback' }, 500);
+    }
+  }
+
+  // CRUD genérico dos cadastros auxiliares (contatos, equipamentos, formas de
+  // pagamento, status de venda, cashback, agenda, agendamentos, contas e
+  // empresas). Pessoas/CNPJs continuam com as rotas próprias.
+  const cadastroCollectionMatch = pathname.match(/^\/api\/cadastros\/(contacts|equipments|payment-methods|sale-statuses|product-cashbacks|tasks|appointments|bank-accounts|companies)(?:\/([^/]+))?$/);
+  if (cadastroCollectionMatch) {
+    try {
+      const data = loadData();
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const config = cadastrosCore.CADASTRO_COLLECTIONS[cadastroCollectionMatch[1]];
+      const id = cadastroCollectionMatch[2] ? decodeURIComponent(cadastroCollectionMatch[2]) : '';
+      const list = data[config.key];
+      const helpers = { sanitizeDigits, isValidCnpj, isValidCpf, isValidDocument };
+      const serialize = (item) => (config.serialize ? config.serialize(item, data) : item);
+
+      if (req.method === 'GET' && !id) {
+        const ordered = list.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        return sendJson(res, { [config.listKey]: ordered.map(serialize) });
+      }
+
+      if (req.method === 'GET') {
+        const item = list.find((entry) => entry.id === id);
+        if (!item) return sendJson(res, { error: config.notFound }, 404);
+        return sendJson(res, { [config.itemKey]: serialize(item) });
+      }
+
+      if (req.method === 'POST' && !id) {
+        const body = await readBody(req);
+        const built = config.build(body, null, data, helpers);
+        if (built.code && list.some((entry) => String(entry.code || '').toLowerCase() === String(built.code).toLowerCase())) {
+          return sendJson(res, { error: 'Já existe um registro com este código.' }, 409);
+        }
+        const duplicated = config.duplicate ? config.duplicate(built, data, null) : null;
+        if (duplicated) return sendJson(res, { error: duplicated }, 409);
+        const item = {
+          id: cadastrosCore.createId(config.prefix),
+          ...built,
+          createdBy: user.id,
+          createdByName: user.name,
+          createdAt: new Date().toISOString()
+        };
+        list.push(item);
+        if (config.afterSave) config.afterSave(item, data);
+        saveData(data);
+        return sendJson(res, { success: true, [config.itemKey]: serialize(item) });
+      }
+
+      if (req.method === 'PUT' && id) {
+        const index = list.findIndex((entry) => entry.id === id);
+        if (index < 0) return sendJson(res, { error: config.notFound }, 404);
+        const body = await readBody(req);
+        const built = config.build(body, list[index], data, helpers);
+        if (built.code && list.some((entry) => entry.id !== id && String(entry.code || '').toLowerCase() === String(built.code).toLowerCase())) {
+          return sendJson(res, { error: 'Já existe um registro com este código.' }, 409);
+        }
+        const duplicated = config.duplicate ? config.duplicate(built, data, id) : null;
+        if (duplicated) return sendJson(res, { error: duplicated }, 409);
+        const item = { ...list[index], ...built, updatedAt: new Date().toISOString() };
+        list[index] = item;
+        if (config.afterSave) config.afterSave(item, data);
+        saveData(data);
+        return sendJson(res, { success: true, [config.itemKey]: serialize(item) });
+      }
+
+      if (req.method === 'DELETE' && id) {
+        const index = list.findIndex((entry) => entry.id === id);
+        if (index < 0) return sendJson(res, { error: config.notFound }, 404);
+        const blocked = config.inUse(id, data);
+        if (blocked) return sendJson(res, { error: blocked }, 409);
+        list.splice(index, 1);
+        saveData(data);
+        return sendJson(res, { success: true });
+      }
+    } catch (error) {
+      return sendJson(res, { error: error.status ? error.message : 'Erro ao salvar cadastro' }, error.status || 400);
+    }
+  }
+
   if (pathname === '/api/cadastros/deposits' && req.method === 'GET') {
     const data = loadData();
     const user = await getCurrentUser(req);
@@ -2658,6 +2928,494 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { success: true, purchase, financeEntry });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao criar compra' }, 400);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // ESTOQUE
+  // --------------------------------------------------------------------------
+
+  // Metadados para preencher selects das telas do módulo.
+  if (pathname === '/api/stock/meta' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const { data, products } = await loadStockContext();
+      return sendJson(res, {
+        deposits: data.deposits,
+        productCategories: data.productCategories,
+        movementCategories: data.movementCategories,
+        priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type, markupPercent: t.markupPercent })),
+        catalogs: (data.productCatalogs || []).map((c) => ({ id: c.id, name: c.name })),
+        products: products.map((p) => ({ id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice, salePrice: p.salePrice, stockQuantity: p.stockQuantity }))
+      });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao carregar dados do estoque' }, 500);
+    }
+  }
+
+  if (pathname === '/api/stock/products' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const { data, products } = await loadStockContext();
+      const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
+      const categoryId = url.searchParams.get('categoryId') || '';
+      const status = url.searchParams.get('status') || '';
+      const situation = url.searchParams.get('situation') || '';
+      const depositId = url.searchParams.get('depositId') || '';
+
+      let list = products.map((product) => stockCore.serializeProduct(product, data));
+      if (search) {
+        list = list.filter((p) => `${p.name} ${p.sku} ${p.ean}`.toLowerCase().includes(search));
+      }
+      if (categoryId) list = list.filter((p) => p.categoryId === categoryId);
+      if (status) list = list.filter((p) => p.status === status);
+      if (situation) list = list.filter((p) => p.situation === situation);
+      if (depositId) {
+        list = list.filter((p) => (p.balances.find((b) => b.depositId === depositId) || {}).quantity > 0);
+      }
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      return sendJson(res, { products: list });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao listar produtos' }, 500);
+    }
+  }
+
+  // Status do Produto: posição por depósito + histórico recente.
+  if (/^\/api\/stock\/products\/[^/]+$/.test(pathname) && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/products/', ''));
+      const { data, products, productsById } = await loadStockContext();
+      const product = productsById.get(id);
+      if (!product) return sendJson(res, { error: 'Produto não encontrado' }, 404);
+      const movements = (data.stockMovements || [])
+        .filter((m) => m.productId === id)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+        .slice(0, 50)
+        .map((m) => stockCore.serializeMovement(m, data, productsById));
+      return sendJson(res, { product: stockCore.serializeProduct(product, data), movements });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao carregar produto' }, 500);
+    }
+  }
+
+  if (pathname === '/api/stock/products' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const body = await readBody(req);
+      const { data, products, productsById } = await loadStockContext();
+
+      const name = String(body.name || '').trim();
+      if (!name) return sendJson(res, { error: 'Informe o nome do produto.' }, 400);
+      const sku = String(body.sku || '').trim();
+      if (!sku) return sendJson(res, { error: 'Informe o SKU do produto.' }, 400);
+      const duplicated = products.some((p) => p.id !== body.id && String(p.sku || '').toLowerCase() === sku.toLowerCase());
+      if (duplicated) return sendJson(res, { error: 'Já existe um produto com este SKU.' }, 409);
+
+      const existing = body.id ? productsById.get(body.id) : null;
+      if (body.id && !existing) return sendJson(res, { error: 'Produto não encontrado' }, 404);
+
+      // Estoque inicial só vale na criação e vira uma movimentação de entrada,
+      // para o saldo do depósito nascer coerente com o saldo total. Valida antes
+      // de gravar: senão um erro aqui deixaria o produto criado pela metade.
+      const initialQuantity = existing ? stockCore.toNumber(existing.stockQuantity) : stockCore.toNumber(body.stockQuantity);
+      const initialDepositId = String(body.defaultDepositId || '').trim();
+      if (!existing && initialQuantity > 0) {
+        if (!initialDepositId) {
+          return sendJson(res, { error: 'Para lançar estoque inicial, selecione o depósito padrão.' }, 400);
+        }
+        if (!(data.deposits || []).some((d) => d.id === initialDepositId)) {
+          return sendJson(res, { error: 'Depósito não encontrado.' }, 404);
+        }
+      }
+
+      const product = await db.upsertProduct({
+        id: body.id || undefined,
+        name,
+        sku,
+        stockQuantity: existing ? stockCore.toNumber(existing.stockQuantity) : 0,
+        costPrice: stockCore.toNumber(body.costPrice),
+        salePrice: stockCore.toNumber(body.salePrice)
+      });
+
+      data.productMeta[product.id] = stockCore.buildProductMeta(body, stockCore.productMeta(data, product.id));
+
+      if (!existing && initialQuantity > 0) {
+        const movement = buildMovementRecord(data, {
+          type: 'entrada',
+          productId: product.id,
+          depositId: initialDepositId,
+          quantity: initialQuantity,
+          unitCost: stockCore.toNumber(body.costPrice),
+          categoryId: body.movementCategoryId || '',
+          note: 'Estoque inicial do cadastro do produto',
+          origin: 'saldo-inicial'
+        }, user);
+        productsById.set(product.id, { ...product, stockQuantity: 0 });
+        await commitStockMovements(data, [movement], productsById);
+      } else {
+        saveData(data);
+      }
+
+      const refreshed = await db.getProductById(product.id);
+      return sendJson(res, { success: true, product: stockCore.serializeProduct(refreshed, loadData()) });
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao salvar produto');
+    }
+  }
+
+  if (/^\/api\/stock\/products\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/products/', ''));
+      const { data, productsById } = await loadStockContext();
+      if (!productsById.get(id)) return sendJson(res, { error: 'Produto não encontrado' }, 404);
+      if ((data.stockMovements || []).some((m) => m.productId === id)) {
+        return sendJson(res, { error: 'Produto com movimentações não pode ser excluído. Zere o estoque e mantenha o cadastro inativo.' }, 409);
+      }
+      if ((data.productCatalogs || []).some((c) => (c.productIds || []).includes(id))) {
+        return sendJson(res, { error: 'Produto vinculado a um catálogo. Remova-o do catálogo antes de excluir.' }, 409);
+      }
+      await db.deleteProduct(id);
+      delete data.productMeta[id];
+      data.priceTables = (data.priceTables || []).map((table) => ({
+        ...table,
+        items: (table.items || []).filter((item) => item.productId !== id)
+      }));
+      saveData(data);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao excluir produto');
+    }
+  }
+
+  if (pathname === '/api/stock/movements' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const { data, productsById } = await loadStockContext();
+      const filtered = filterStockMovements(data, url.searchParams, productsById)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+      const start = (page - 1) * limit;
+      return sendJson(res, {
+        movements: filtered.slice(start, start + limit).map((m) => stockCore.serializeMovement(m, data, productsById)),
+        total: filtered.length,
+        page,
+        limit
+      });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao listar movimentações' }, 500);
+    }
+  }
+
+  if (pathname === '/api/stock/movements' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const body = await readBody(req);
+      const { data, productsById } = await loadStockContext();
+      const type = String(body.type || '').trim().toLowerCase();
+      if (!['entrada', 'saida'].includes(type)) {
+        return sendJson(res, { error: 'Tipo de movimentação inválido. Use entrada ou saída.' }, 400);
+      }
+      assertMovementIsPossible(data, productsById, {
+        productId: body.productId,
+        depositId: body.depositId,
+        type,
+        quantity: body.quantity
+      });
+      const movement = buildMovementRecord(data, { ...body, type }, user);
+      await commitStockMovements(data, [movement], productsById);
+      return sendJson(res, { success: true, movement: stockCore.serializeMovement(movement, data, productsById) });
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao registrar movimentação');
+    }
+  }
+
+  if (/^\/api\/stock\/movements\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/movements/', ''));
+      const { data, productsById } = await loadStockContext();
+      const movement = (data.stockMovements || []).find((m) => m.id === id);
+      if (!movement) return sendJson(res, { error: 'Movimentação não encontrada' }, 404);
+      if (movement.transferId) {
+        return sendJson(res, { error: 'Esta movimentação faz parte de uma transferência. Estorne pela tela Entre Depósitos.' }, 409);
+      }
+      // Estornar uma entrada não pode deixar o depósito negativo.
+      if (movement.type === 'entrada') {
+        const available = stockCore.depositBalance(data, movement.productId, movement.depositId);
+        if (stockCore.toNumber(movement.quantity) > available) {
+          return sendJson(res, { error: `Não é possível estornar: o depósito ficaria negativo (disponível ${available}).` }, 409);
+        }
+      }
+      const reversal = { ...movement, type: movement.type === 'entrada' ? 'saida' : 'entrada' };
+      const product = productsById.get(movement.productId);
+      if (product) {
+        await db.updateProductStock(movement.productId, stockCore.toNumber(product.stockQuantity) + stockCore.movementSignedQuantity(reversal));
+      }
+      data.stockMovements = data.stockMovements.filter((m) => m.id !== id);
+      saveData(data);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao estornar movimentação');
+    }
+  }
+
+  if (pathname === '/api/stock/transfers' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const { data, productsById } = await loadStockContext();
+      const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
+      const productId = url.searchParams.get('productId') || '';
+      const depositId = url.searchParams.get('depositId') || '';
+      let list = (data.stockTransfers || []).slice();
+      if (productId) list = list.filter((t) => t.productId === productId);
+      if (depositId) list = list.filter((t) => t.originDepositId === depositId || t.destinationDepositId === depositId);
+      if (search) {
+        list = list.filter((t) => {
+          const product = productsById.get(t.productId);
+          return [t.code, t.note, product ? product.name : '', product ? product.sku : '']
+            .join(' ').toLowerCase().includes(search);
+        });
+      }
+      list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      return sendJson(res, { transfers: list.map((t) => stockCore.serializeTransfer(t, data, productsById)) });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao listar transferências' }, 500);
+    }
+  }
+
+  if (pathname === '/api/stock/transfers' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const body = await readBody(req);
+      const { data, productsById } = await loadStockContext();
+      const originDepositId = String(body.originDepositId || '').trim();
+      const destinationDepositId = String(body.destinationDepositId || '').trim();
+      if (!originDepositId || !destinationDepositId) {
+        return sendJson(res, { error: 'Selecione o depósito de origem e o de destino.' }, 400);
+      }
+      if (originDepositId === destinationDepositId) {
+        return sendJson(res, { error: 'Origem e destino não podem ser o mesmo depósito.' }, 400);
+      }
+      const { quantity } = assertMovementIsPossible(data, productsById, {
+        productId: body.productId,
+        depositId: originDepositId,
+        type: 'saida',
+        quantity: body.quantity
+      });
+      if (!(data.deposits || []).some((d) => d.id === destinationDepositId)) {
+        return sendJson(res, { error: 'Depósito de destino não encontrado.' }, 404);
+      }
+
+      const transferId = stockCore.createId('tra');
+      const date = body.date || stockCore.todayStr();
+      const shared = {
+        productId: body.productId,
+        quantity,
+        unitCost: body.unitCost,
+        categoryId: body.categoryId || '',
+        document: body.document || '',
+        date,
+        transferId,
+        origin: 'transferencia'
+      };
+      const out = buildMovementRecord(data, {
+        ...shared, type: 'saida', depositId: originDepositId,
+        note: body.note || 'Transferência entre depósitos (saída)'
+      }, user);
+      // O código do segundo lançamento precisa considerar o primeiro, que ainda
+      // não está na lista — por isso o cálculo manual aqui.
+      const into = buildMovementRecord(data, {
+        ...shared, type: 'entrada', depositId: destinationDepositId,
+        note: body.note || 'Transferência entre depósitos (entrada)'
+      }, user);
+      into.code = stockCore.nextSequentialCode([...data.stockMovements, out], 'MOV');
+
+      const transfer = {
+        id: transferId,
+        code: stockCore.nextSequentialCode(data.stockTransfers, 'TRA'),
+        date,
+        productId: body.productId,
+        originDepositId,
+        destinationDepositId,
+        quantity,
+        note: body.note || '',
+        movementOutId: out.id,
+        movementInId: into.id,
+        createdBy: user.id,
+        createdByName: user.name,
+        createdAt: new Date().toISOString()
+      };
+      data.stockTransfers.push(transfer);
+      // Saída + entrada de mesma quantidade: o saldo total não muda, só a
+      // distribuição entre depósitos.
+      await commitStockMovements(data, [out, into], productsById);
+      return sendJson(res, { success: true, transfer: stockCore.serializeTransfer(transfer, data, productsById) });
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao transferir entre depósitos');
+    }
+  }
+
+  if (/^\/api\/stock\/transfers\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/transfers/', ''));
+      const { data } = await loadStockContext();
+      const transfer = (data.stockTransfers || []).find((t) => t.id === id);
+      if (!transfer) return sendJson(res, { error: 'Transferência não encontrada' }, 404);
+      const available = stockCore.depositBalance(data, transfer.productId, transfer.destinationDepositId);
+      if (stockCore.toNumber(transfer.quantity) > available) {
+        return sendJson(res, { error: `Não é possível estornar: o depósito de destino ficaria negativo (disponível ${available}).` }, 409);
+      }
+      data.stockMovements = data.stockMovements.filter((m) => m.transferId !== id);
+      data.stockTransfers = data.stockTransfers.filter((t) => t.id !== id);
+      saveData(data);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao estornar transferência');
+    }
+  }
+
+  // Gestor de Preços: custo, venda e margem de todos os produtos, com o preço
+  // resultante da tabela selecionada, e gravação em lote.
+  if (pathname === '/api/stock/price-manager' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const { data, products } = await loadStockContext();
+      const priceTableId = url.searchParams.get('priceTableId') || '';
+      const priceTable = (data.priceTables || []).find((t) => t.id === priceTableId) || null;
+      const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
+      let list = products.map((product) => {
+        const serialized = stockCore.serializeProduct(product, data);
+        return { ...serialized, tablePrice: stockCore.priceForProduct(priceTable, product) };
+      });
+      if (search) list = list.filter((p) => `${p.name} ${p.sku}`.toLowerCase().includes(search));
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      return sendJson(res, { products: list, priceTables: data.priceTables, priceTableId });
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao carregar gestor de preços' }, 500);
+    }
+  }
+
+  if (pathname === '/api/stock/price-manager' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const body = await readBody(req);
+      const updates = Array.isArray(body.updates) ? body.updates : [];
+      if (!updates.length) return sendJson(res, { error: 'Nenhuma alteração para salvar.' }, 400);
+      const { data, productsById } = await loadStockContext();
+
+      for (const update of updates) {
+        const product = productsById.get(update.productId);
+        if (!product) throw stockCore.stockError(`Produto ${update.productId} não encontrado.`, 404);
+        const costPrice = stockCore.toNumber(update.costPrice, product.costPrice);
+        const salePrice = stockCore.toNumber(update.salePrice, product.salePrice);
+        if (costPrice < 0 || salePrice < 0) throw stockCore.stockError('Preços não podem ser negativos.');
+        await db.upsertProduct({
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          stockQuantity: product.stockQuantity,
+          costPrice,
+          salePrice
+        });
+      }
+
+      // Preço fixo digitado na tabela é gravado como item dela.
+      const priceTable = (data.priceTables || []).find((t) => t.id === body.priceTableId);
+      if (priceTable && priceTable.type === 'fixo') {
+        updates.forEach((update) => {
+          if (update.tablePrice === undefined || update.tablePrice === null || update.tablePrice === '') return;
+          const items = priceTable.items || [];
+          const index = items.findIndex((item) => item.productId === update.productId);
+          const item = { productId: update.productId, price: stockCore.toNumber(update.tablePrice) };
+          if (index >= 0) items[index] = item; else items.push(item);
+          priceTable.items = items;
+        });
+        saveData(data);
+      }
+
+      return sendJson(res, { success: true, updated: updates.length });
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao salvar preços');
+    }
+  }
+
+  // CRUD genérico dos cadastros auxiliares do estoque.
+  const stockCollectionMatch = pathname.match(/^\/api\/stock\/(product-categories|movement-categories|deposits|price-tables|catalogs)(?:\/([^/]+))?$/);
+  if (stockCollectionMatch) {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const config = stockCore.STOCK_COLLECTIONS[stockCollectionMatch[1]];
+      const id = stockCollectionMatch[2] ? decodeURIComponent(stockCollectionMatch[2]) : '';
+      const data = loadData();
+      const list = data[config.key];
+      const serialize = (item) => (config.serialize ? config.serialize(item, data) : item);
+
+      if (req.method === 'GET' && !id) {
+        const ordered = list.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        return sendJson(res, { [config.listKey]: ordered.map(serialize) });
+      }
+
+      if (req.method === 'GET') {
+        const item = list.find((entry) => entry.id === id);
+        if (!item) return sendJson(res, { error: config.notFound }, 404);
+        return sendJson(res, { [config.itemKey]: serialize(item) });
+      }
+
+      if (req.method === 'POST' && !id) {
+        const body = await readBody(req);
+        const built = config.build(body, null, data);
+        if (built.code && list.some((entry) => String(entry.code || '').toLowerCase() === built.code.toLowerCase())) {
+          return sendJson(res, { error: 'Já existe um registro com este código.' }, 409);
+        }
+        const item = { id: stockCore.createId(config.prefix), ...built, createdAt: new Date().toISOString() };
+        list.push(item);
+        saveData(data);
+        return sendJson(res, { success: true, [config.itemKey]: serialize(item) });
+      }
+
+      if (req.method === 'PUT' && id) {
+        const index = list.findIndex((entry) => entry.id === id);
+        if (index < 0) return sendJson(res, { error: config.notFound }, 404);
+        const body = await readBody(req);
+        const built = config.build(body, list[index], data);
+        if (built.code && list.some((entry) => entry.id !== id && String(entry.code || '').toLowerCase() === built.code.toLowerCase())) {
+          return sendJson(res, { error: 'Já existe um registro com este código.' }, 409);
+        }
+        const item = { ...list[index], ...built, updatedAt: new Date().toISOString() };
+        list[index] = item;
+        saveData(data);
+        return sendJson(res, { success: true, [config.itemKey]: serialize(item) });
+      }
+
+      if (req.method === 'DELETE' && id) {
+        const index = list.findIndex((entry) => entry.id === id);
+        if (index < 0) return sendJson(res, { error: config.notFound }, 404);
+        const blocked = config.inUse(id, data);
+        if (blocked) return sendJson(res, { error: blocked }, 409);
+        list.splice(index, 1);
+        saveData(data);
+        return sendJson(res, { success: true });
+      }
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao salvar cadastro do estoque');
     }
   }
 
