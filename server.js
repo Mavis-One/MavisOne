@@ -12,6 +12,8 @@ const openFinanceSync = require('./lib/openfinance/sync');
 const openFinanceDb = require('./lib/db/openfinance');
 const stockCore = require('./lib/stock-core');
 const cadastrosCore = require('./lib/cadastros-core');
+const permissoes = require('./lib/permissoes');
+const { parcelasDoPedido } = require('./lib/vendas-financeiro');
 // Mora em public/ porque o navegador também carrega este arquivo por <script>.
 // Fonte única do cálculo de totais — ver o comentário no topo do módulo.
 const salesTotals = require('./public/modules/shared/sales_totals');
@@ -391,7 +393,53 @@ async function getCurrentUser(req) {
     return null;
   }
   const userId = sessions[token];
-  return db.getUserById(userId);
+  const user = await db.getUserById(userId);
+  // Bloqueado é como se não estivesse logado — inclusive para quem já tinha
+  // sessão aberta quando o acesso foi suspenso.
+  if (!user || user.active === false) return null;
+  return user;
+}
+
+function ipDaRequisicao(req) {
+  const encaminhado = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const bruto = encaminhado || req.socket?.remoteAddress || '';
+  // O Node entrega IPv4 embrulhado em IPv6 (::ffff:1.2.3.4); a coluna `inet`
+  // aceita, mas guardar o IPv4 puro deixa o log legível.
+  return bruto.replace(/^::ffff:/, '') || null;
+}
+
+/**
+ * Verificação de acesso executada ANTES de cada ação, num lugar só.
+ *
+ * Antes disto, cada rota checava `user.allowedModules.includes('x')` na mão —
+ * 80 pontos, todos com o mesmo poder de esquecer. Aqueles checks continuam onde
+ * estão (defesa em profundidade); este aqui é o portão que enxerga a ação
+ * (criar/ler/editar/excluir), aplica NEGAR explícito e alimenta a auditoria.
+ *
+ * Devolve { permitido, permissao, usuario }. Rota não mapeada passa direto —
+ * ver o porquê em lib/permissoes.js/resolverPermissao.
+ */
+async function verificarAcesso(req, pathname) {
+  const permissao = permissoes.resolverPermissao(pathname, req.method);
+  if (!permissao) return { permitido: true, permissao: null, usuario: null };
+
+  const usuario = await getCurrentUser(req);
+  if (!usuario) return { permitido: false, permissao, usuario: null };
+
+  const acesso = await db.rbac.carregarAcessoDoUsuario(usuario.id);
+  // Sem RBAC no banco (migração pendente), decide pelo modelo antigo.
+  const permitido = acesso
+    ? permissoes.usuarioPode({ ...usuario, roles: acesso.roles }, permissao, acesso)
+    : permissoes.podePeloModulo(usuario, permissao);
+
+  return { permitido, permissao, usuario };
+}
+
+// Leitura é o que mais acontece e o que menos diz numa investigação: registrar
+// todo GET encheria a tabela e esconderia o que importa. Grava-se toda ação de
+// escrita e TODA tentativa negada, inclusive de leitura.
+function deveRegistrar(metodo, permitido) {
+  return !permitido || !['GET', 'HEAD'].includes(String(metodo || '').toUpperCase());
 }
 
 function sendJson(res, payload, statusCode = 200) {
@@ -434,7 +482,7 @@ function normalizeDashboardPins(pins) {
   return uniquePins;
 }
 
-function serializeUserForClient(user) {
+function serializeUserForClient(user, acesso = null) {
   return {
     id: user.id,
     username: user.username,
@@ -442,7 +490,12 @@ function serializeUserForClient(user) {
     role: user.role,
     allowedModules: user.allowedModules,
     theme: user.theme,
-    dashboardPins: normalizeDashboardPins(user.dashboardPins)
+    dashboardPins: normalizeDashboardPins(user.dashboardPins),
+    active: user.active !== false,
+    // A tela usa isto só para esconder botão que o usuário não pode usar. Quem
+    // decide de verdade é o servidor: esconder não é bloquear.
+    roles: acesso?.roles || [],
+    permissions: acesso ? [...acesso.efetivas] : []
   };
 }
 
@@ -660,6 +713,14 @@ function getSellersDirectory(data) {
     .map((person) => ({ id: person.id, name: person.name }));
 }
 
+// Transportadora pode ser pessoa física (motorista autônomo) ou empresa, por
+// isso varre as duas listas — diferente de vendedor, que só é pessoa.
+function getCarriersDirectory(data) {
+  return [...(data.people || []), ...(data.cnpjs || [])]
+    .filter((entry) => Array.isArray(entry.roles) && entry.roles.includes('Transportadora'))
+    .map((entry) => ({ id: entry.id, name: entry.name }));
+}
+
 // orders/quotes são Supabase de verdade a partir desta fase — mesma
 // estratégia de syncCadastroData(): popula data.orders/data.quotes com o
 // conteúdo atual do Supabase logo após loadData(), pra buildSalesDashboardSummary/
@@ -681,6 +742,41 @@ async function syncSalesData(data) {
 // db.createPurchase/updatePurchase direto nas rotas de Compras.
 async function syncPurchasesData(data) {
   data.purchases = await db.getPurchases();
+}
+
+// Financeiro no Supabase (Fase M). Mesmo padrão dos syncs acima: popula as
+// coleções logo depois de loadData() para TODA a leitura existente — filtros,
+// resumo, dashboard, conciliação — continuar lendo data.finance como sempre leu.
+// Escrita não passa por aqui: vai direto em db.createFinancialEntry e afins.
+//
+// As cinco vêm juntas de propósito: financial_entries tem FK para categoria,
+// centro de custo e conta bancária, então ler lançamento sem ter as três em mãos
+// mostraria "categoria: -" em tudo.
+//
+// Enquanto uma rota do Financeiro não chamar isto, ela lê a cópia velha que
+// ficou no db.json — por isso o sync entra em TODA rota que toca essas
+// coleções, e não só nas que gravam.
+// NF-e no Supabase (Fase N). Separado de syncFinanceData porque a nota traz os
+// itens junto (duas consultas): rota que só mexe em lançamento não paga por isso.
+async function syncNfeData(data) {
+  data.nfes = await db.getNfes();
+}
+
+async function syncFinanceData(data) {
+  const [entries, categories, costCenters, bankAccounts] = await Promise.all([
+    db.getFinancialEntries(),
+    db.getFinancialCategories(),
+    db.getCostCenters(),
+    db.getBankAccounts()
+  ]);
+  data.finance = entries;
+  data.financialCategories = categories;
+  data.costCenters = costCenters;
+  data.bankAccounts = bankAccounts;
+  // As baixas são lidas por lançamento (getFinanceEntryPayments filtra
+  // data.financialPayments), então precisam estar todas em memória. Uma
+  // consulta por lançamento seria uma viagem de rede por linha da lista.
+  data.financialPayments = entries.length ? await db.getAllFinancialPayments() : [];
 }
 
 function normalizeSalesItems(rawItems) {
@@ -725,6 +821,98 @@ function salesFinanceFields(body, totais) {
     sellerCommission: totais.comissaoVendedor,
     agentCommission: totais.comissaoRepresentacao,
     totalWeight: totais.pesoTotal
+  };
+}
+
+// Seção "Informações Gerais" do formulário — dados de acompanhamento, sem
+// efeito sobre totais nem estoque. Só normaliza (trim/limite) o que veio da
+// tela; "Alterado por"/"Data Alteração" NÃO saem daqui: são preenchidos na
+// rota com o usuário autenticado, não com o que o cliente mandou.
+function salesInfoFields(body) {
+  const texto = (v) => String(v || '').trim().slice(0, 200);
+  return {
+    // Cabeçalho (aba Dados). saleOrigin é obrigatório na tela; aqui cai no
+    // padrão em vez de recusar, pra não travar importação de registro antigo.
+    saleOrigin: texto(body.saleOrigin) || 'Venda Direta',
+    category: texto(body.category),
+    priceTable: texto(body.priceTable),
+    registrationTime: texto(body.registrationTime),
+    clientStatus: texto(body.clientStatus),
+    clientContact: texto(body.clientContact),
+    customerPoCode: texto(body.customerPoCode),
+    recipientEmail: texto(body.recipientEmail),
+    billingRecipientEmail: texto(body.billingRecipientEmail),
+    commercialRecipientEmail: texto(body.commercialRecipientEmail),
+    approvalDate: texto(body.approvalDate),
+    relatedOrderCode: Math.max(0, Number(body.relatedOrderCode || 0)),
+    revisionNumber: Math.max(0, Number(body.revisionNumber || 0)),
+    generateServiceOrder: Boolean(body.generateServiceOrder)
+  };
+}
+
+// Abas Pagamentos e Entrega. Ficam em JSONB (um objeto por aba) em vez de ~30
+// colunas soltas: são dados de formulário, ninguém filtra pedido por "bairro de
+// entrega". Mas a chave é copiada UMA A UMA de propósito — gravar o objeto que
+// veio do navegador direto deixaria qualquer campo extra entrar no banco.
+const texto200 = (v) => String(v || '').trim().slice(0, 200);
+
+function salesPaymentInfo(body) {
+  const info = body.paymentInfo || {};
+  return {
+    accountPlan: texto200(info.accountPlan),
+    paymentMethodId: texto200(info.paymentMethodId),
+    entryGroup: texto200(info.entryGroup),
+    ignoreCreditLimit: Boolean(info.ignoreCreditLimit),
+    nfeNumber: texto200(info.nfeNumber),
+    nfseNumber: texto200(info.nfseNumber),
+    nfeBillingDate: texto200(info.nfeBillingDate),
+    printDocument: texto200(info.printDocument) || 'Nenhum',
+    billingDetails: texto200(info.billingDetails),
+    cardTransaction: texto200(info.cardTransaction),
+    // À vista x à prazo é escolha única: os dois interruptores da tela gravam
+    // aqui, então não existe pedido marcado como as duas coisas.
+    paymentTerm: info.paymentTerm === 'aprazo' ? 'aprazo' : 'avista',
+    cashbackAmount: Math.max(0, Number(info.cashbackAmount || 0))
+  };
+}
+
+// Parcelas/formas informadas na aba Pagamentos. O total NÃO é validado contra o
+// valor da venda: pagamento parcial e entrada existem, e travar aqui impediria
+// registrar o pedido. A tela avisa quando a soma não fecha.
+function salesPaymentLines(body) {
+  return (Array.isArray(body.payments) ? body.payments : [])
+    .map((linha) => ({
+      methodId: texto200(linha.methodId),
+      methodName: texto200(linha.methodName),
+      dueDate: texto200(linha.dueDate),
+      amount: Math.max(0, Number(linha.amount || 0)),
+      note: texto200(linha.note)
+    }))
+    .filter((linha) => linha.amount > 0 || linha.methodName)
+    .slice(0, 120);
+}
+
+function salesDelivery(body) {
+  const entrega = body.delivery || {};
+  return {
+    addressType: texto200(entrega.addressType) || 'Endereço Pessoa',
+    shippingMethod: texto200(entrega.shippingMethod) || 'Outro',
+    carrierId: texto200(entrega.carrierId),
+    trackingCode: texto200(entrega.trackingCode),
+    shippingDate: texto200(entrega.shippingDate),
+    showCteOptions: Boolean(entrega.showCteOptions),
+    deliveryForecast: texto200(entrega.deliveryForecast),
+    onlineDeliveryType: texto200(entrega.onlineDeliveryType),
+    zipCode: texto200(entrega.zipCode),
+    city: texto200(entrega.city),
+    state: texto200(entrega.state),
+    district: texto200(entrega.district),
+    street: texto200(entrega.street),
+    number: texto200(entrega.number),
+    complement: texto200(entrega.complement),
+    country: texto200(entrega.country) || 'Brasil',
+    cityCode: texto200(entrega.cityCode),
+    stateCode: texto200(entrega.stateCode)
   };
 }
 
@@ -859,6 +1047,59 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
   }
 }
 
+// Faturar um pedido gera as contas a receber; deixar de faturar cancela o que
+// ainda não foi recebido. Mesmo desenho de transitionOrderStockEffect (os 4
+// casos: nasce faturado, fatura depois, deixa de ser faturado, continua
+// faturado) — e pelo mesmo motivo: é o único jeito de o financeiro nunca ficar
+// contando dinheiro de pedido cancelado.
+//
+// A diferença importante para o estoque: quando o pedido CONTINUA faturado,
+// aqui não se refaz nada. O estoque pode devolver e descontar de novo sem
+// perder informação; conta a receber, não — apagar e recriar jogaria fora as
+// baixas já registradas. Editar um pedido já faturado, portanto, não mexe nas
+// parcelas: quem precisar corrigir valor estorna a baixa e edita o lançamento.
+async function transitionOrderFinanceEffect(data, { record, wasApplied, willApply, user }) {
+  if (wasApplied === willApply) return { criadas: 0, canceladas: 0, mantidas: 0 };
+
+  if (!willApply) {
+    const vinculadas = (data.finance || []).filter((entry) => entry.referenceId === record.id && entry.type === 'RECEITA');
+    let canceladas = 0;
+    for (const entry of vinculadas) {
+      // Parcela já recebida (ou parcialmente) não é cancelada em silêncio: o
+      // dinheiro entrou de verdade. Fica para alguém decidir o que fazer.
+      if (entry.status === 'pending') {
+        entry.status = 'cancelado';
+        entry.updatedAt = new Date().toISOString();
+        await db.updateFinancialEntry(entry.id, { status: 'cancelado' });
+        canceladas += 1;
+      }
+    }
+    return { criadas: 0, canceladas, mantidas: vinculadas.length - canceladas };
+  }
+
+  const parcelas = parcelasDoPedido(record);
+  for (const parcela of parcelas) {
+    const entry = await db.createFinancialEntry({
+      type: 'RECEITA',
+      date: record.date,
+      dueDate: parcela.dueDate,
+      amount: parcela.amount,
+      description: parcela.description,
+      document: String(record.code || ''),
+      clientSupplierId: record.clientSupplierId || '',
+      clientSupplierName: record.clientSupplierName || '',
+      // referenceId é o que amarra a parcela ao pedido — é por ele que o
+      // cancelamento acima encontra o que desfazer.
+      referenceId: record.id,
+      status: 'pending',
+      createdBy: user?.id,
+      createdByName: user?.name
+    });
+    data.finance.push(entry);
+  }
+  return { criadas: parcelas.length, canceladas: 0, mantidas: 0 };
+}
+
 // Pedidos/orçamentos antigos (importados via CSV ou criados antes desta fase) não têm
 // items[]/totalAmount — o serializer cai no campo "amount" achatado que eles já tinham,
 // pra continuar aparecendo na lista sem quebrar.
@@ -904,10 +1145,38 @@ function serializeSalesRecord(record, data) {
     sellerCommission: Number(record.sellerCommission || 0),
     agentCommission: Number(record.agentCommission || 0),
     totalWeight: Number(record.totalWeight || 0),
+    // Cabeçalho e Informações Gerais — sem estes campos aqui, reabrir o pedido
+    // para editar apagaria classificação, contatos, e-mails e datas de
+    // acompanhamento (a tela lê daqui).
+    saleOrigin: record.saleOrigin || 'Venda Direta',
+    category: record.category || '',
+    priceTable: record.priceTable || '',
+    registrationTime: record.registrationTime || '',
+    clientStatus: record.clientStatus || '',
+    clientContact: record.clientContact || '',
+    customerPoCode: record.customerPoCode || '',
+    recipientEmail: record.recipientEmail || '',
+    billingRecipientEmail: record.billingRecipientEmail || '',
+    commercialRecipientEmail: record.commercialRecipientEmail || '',
+    approvalDate: record.approvalDate || '',
+    relatedOrderCode: Number(record.relatedOrderCode || 0),
+    revisionNumber: Number(record.revisionNumber || 0),
+    generateServiceOrder: Boolean(record.generateServiceOrder),
+    updatedByName: record.updatedByName || '',
+    // Abas Pagamentos, Entrega e Termos. Passam pelas mesmas funções da
+    // gravação para o registro antigo (que não tem nada disso) chegar na tela
+    // com os padrões preenchidos em vez de undefined.
+    paymentInfo: salesPaymentInfo(record),
+    payments: salesPaymentLines(record),
+    delivery: salesDelivery(record),
+    salesTerms: record.salesTerms || '',
     itemsTotal: Math.round(itemsTotal * 100) / 100,
     amount: totalAmount,
     note: record.note || '',
     status: record.status || (record.type === 'quote' ? 'em aberto' : 'pendente'),
+    // A tela precisa saber que o pedido já gerou as contas a receber — é o que
+    // explica por que refaturar não cobra de novo.
+    financeApplied: Boolean(record.financeApplied),
     createdByName: record.createdByName || '',
     createdAt: record.createdAt || '',
     updatedAt: record.updatedAt || ''
@@ -1330,40 +1599,41 @@ function findBankTransactionMatches(tx, data) {
 // usado em toda rota HTTP deste arquivo) evita essa janela de corrida.
 function buildOpenFinanceSyncDeps() {
   return {
-    getExistingAccounts: async (connectionId) => loadData().bankAccounts.filter((acc) => acc.connectionId === connectionId),
+    // Contas bancárias saíram do db.json na Fase M: leitura e escrita vão
+    // direto ao Supabase, o que elimina de vez a janela de corrida que o
+    // comentário acima descreve para este fluxo.
+    getExistingAccounts: async (connectionId) => (await db.getBankAccounts()).filter((acc) => acc.connectionId === connectionId),
     persistAccount: async ({ connectionId, estabelecimentoId, account }) => {
-      const data = loadData();
-      const bankAccount = {
-        id: createId('bank'),
+      const criada = await db.createBankAccount({
         name: account.name || 'Conta sincronizada',
         bank: account.institutionName || '',
         agency: '',
         number: '',
-        createdAt: new Date().toISOString(),
         estabelecimentoId: estabelecimentoId || '',
         connectionId,
         provider: account.provider || '',
         providerAccountId: account.providerAccountId,
         accountType: account.accountType || '',
         currency: account.currency || 'BRL',
+        status: 'ativa'
+      });
+      // createBankAccount não grava saldo (quem cuida disso é o update, que a
+      // sincronização usa nas rodadas seguintes) — mas a conta precisa nascer
+      // já com o saldo que veio do banco, senão aparece zerada até o próximo ciclo.
+      return db.updateBankAccount(criada.id, {
         currentBalance: account.currentBalance ?? null,
         availableBalance: account.availableBalance ?? null,
         status: 'ativa',
         lastSyncAt: new Date().toISOString()
-      };
-      data.bankAccounts.push(bankAccount);
-      saveData(data);
-      return bankAccount;
+      });
     },
     updateAccount: async (localId, account) => {
-      const data = loadData();
-      const existing = data.bankAccounts.find((acc) => acc.id === localId);
-      if (!existing) return;
-      if (account.currentBalance !== undefined) existing.currentBalance = account.currentBalance;
-      if (account.availableBalance !== undefined) existing.availableBalance = account.availableBalance;
-      existing.status = 'ativa';
-      existing.lastSyncAt = new Date().toISOString();
-      saveData(data);
+      await db.updateBankAccount(localId, {
+        currentBalance: account.currentBalance,
+        availableBalance: account.availableBalance,
+        status: 'ativa',
+        lastSyncAt: new Date().toISOString()
+      });
     },
     recordBalance: async (localId, balance) => {
       await openFinanceDb.recordAccountBalance({
@@ -2154,14 +2424,58 @@ const server = http.createServer(async (req, res) => {
       const user = await db.authenticateUser(body.username, body.password);
 
       if (!user) {
+        // Senha errada não diz se o usuário existe — só o login inteiro falha.
+        await db.rbac.registrarAcesso({
+          action: 'login', resourceType: 'sessao', result: 'NEGADO', ip: ipDaRequisicao(req),
+          detail: { motivo: 'credenciais inválidas', usuarioInformado: String(body.username || '').slice(0, 80) }
+        });
         return sendJson(res, { error: 'Credenciais inválidas' }, 401);
+      }
+
+      if (user.active === false) {
+        await db.rbac.registrarAcesso({
+          userId: user.id, userName: user.name, action: 'login', resourceType: 'sessao',
+          result: 'NEGADO', ip: ipDaRequisicao(req), detail: { motivo: 'usuário bloqueado' }
+        });
+        return sendJson(res, { error: 'Usuário bloqueado. Procure um administrador.' }, 403);
       }
 
       const token = createId('token');
       sessions[token] = user.id;
-      return sendJson(res, { token, user: serializeUserForClient(user) });
+      await db.registrarLogin(user.id);
+      await db.rbac.registrarAcesso({
+        userId: user.id, userName: user.name, action: 'login', resourceType: 'sessao',
+        result: 'PERMITIDO', ip: ipDaRequisicao(req)
+      });
+      const acesso = await db.rbac.carregarAcessoDoUsuario(user.id);
+      return sendJson(res, { token, user: serializeUserForClient(user, acesso) });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao autenticar' }, 400);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Portão de acesso. Fica ANTES de todas as rotas de API (menos login) para
+  // que nenhuma rota nova nasça sem verificação — era exatamente esse o furo
+  // do modelo anterior, em que cada rota lembrava (ou não) de checar sozinha.
+  // ---------------------------------------------------------------------
+  if (pathname.startsWith('/api/')) {
+    const { permitido, permissao, usuario } = await verificarAcesso(req, pathname);
+    if (permissao && deveRegistrar(req.method, permitido)) {
+      await db.rbac.registrarAcesso({
+        userId: usuario?.id,
+        userName: usuario?.name,
+        action: permissao,
+        resourceType: permissao.split('.')[0],
+        result: permitido ? 'PERMITIDO' : 'NEGADO',
+        ip: ipDaRequisicao(req),
+        detail: { metodo: req.method, rota: pathname }
+      });
+    }
+    if (!permitido) {
+      return sendJson(res, {
+        error: usuario ? `Sem permissão para "${permissao}".` : 'Não autenticado'
+      }, usuario ? 403 : 401);
     }
   }
 
@@ -2170,7 +2484,7 @@ const server = http.createServer(async (req, res) => {
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
     }
-    return sendJson(res, { user: serializeUserForClient(user) });
+    return sendJson(res, { user: serializeUserForClient(user, await db.rbac.carregarAcessoDoUsuario(user.id)) });
   }
 
   if (pathname === '/api/me/theme' && req.method === 'PUT') {
@@ -2245,6 +2559,7 @@ const server = http.createServer(async (req, res) => {
     // Supabase. Sem estes syncs o painel somava arrays sempre vazios e exibia R$ 0.
     if (canSales) await syncSalesData(data);
     if (canPurchases) await syncPurchasesData(data);
+ await syncFinanceData(data);
 
     const products = canStock ? await db.getProducts() : [];
 
@@ -2288,6 +2603,7 @@ const server = http.createServer(async (req, res) => {
   // dashboards de cada módulo, só filtrados pelo que o usuário tem permissão de ver.
   if (pathname === '/api/dashboard/charts' && req.method === 'GET') {
     const data = loadData();
+    await syncFinanceData(data);
     const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
@@ -2322,7 +2638,11 @@ const server = http.createServer(async (req, res) => {
       sellers: getSellersDirectory(data),
       deposits: data.deposits,
       directory: getCadastroDirectory(data),
-      products
+      products,
+      // Abas Pagamentos e Entrega: formas de pagamento e transportadoras vêm do
+      // Cadastro, não de lista fixa no formulário.
+      paymentMethods: (data.paymentMethods || []).filter((forma) => forma.status !== 'inativo'),
+      carriers: getCarriersDirectory(data)
     });
   }
 
@@ -2341,6 +2661,7 @@ const server = http.createServer(async (req, res) => {
     const data = loadData();
     await syncCadastroData(data);
     await syncSalesData(data);
+    await syncNfeData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2383,6 +2704,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncNfeData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2394,6 +2717,11 @@ const server = http.createServer(async (req, res) => {
         const items = normalizeSalesItems(body.items);
         if (!items.length) {
           return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
+        }
+        // Aceita id OU nome: a tela sempre manda o id, mas registros importados
+        // (CSV) só têm o nome. Sem nenhum dos dois o pedido nascia sem cliente.
+        if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
+          return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
         }
         const totais = computeSalesTotals(items, body);
         record = {
@@ -2409,11 +2737,17 @@ const server = http.createServer(async (req, res) => {
           dueDate: body.dueDate || '',
           items,
           ...salesFinanceFields(body, totais),
+          ...salesInfoFields(body),
+          paymentInfo: salesPaymentInfo(body),
+          payments: salesPaymentLines(body),
+          delivery: salesDelivery(body),
+          salesTerms: String(body.salesTerms || '').trim().slice(0, 5000),
           note: body.note || '',
           status: body.status || (type === 'order' ? 'pendente' : 'em aberto'),
           stockApplied: false,
           createdBy: user.id,
           createdByName: user.name,
+          updatedByName: user.name,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
@@ -2424,10 +2758,26 @@ const server = http.createServer(async (req, res) => {
         if (type === 'order' && record.status === 'faturado') {
           await transitionOrderStockEffect(data, { oldItems: [], newItems: items, wasApplied: false, willApply: true, record, user });
           record.stockApplied = true;
+          record.financeApplied = true;
         }
         record = type === 'order' ? await db.createOrder(record) : await db.createQuote(record);
+        // As contas a receber vêm DEPOIS de gravar o pedido: elas apontam para
+        // o id dele, e um lançamento apontando para pedido que falhou ao salvar
+        // seria dinheiro no financeiro sem venda por trás.
+        if (record.financeApplied) {
+          await transitionOrderFinanceEffect(data, { record, wasApplied: false, willApply: true, user });
+        }
       } else if (type === 'nfe') {
-        record = { id: createId('nfe'), type: 'nfe', number: body.number || createId('nfe-num'), customer: body.customer || 'Cliente', date: body.date || new Date().toISOString().slice(0, 10), amount: Number(body.amount || 0), status: body.status || 'emitida', key: body.key || '' };
+        record = await db.createNfe({
+          number: body.number || createId('nfe-num'),
+          customer: body.customer || 'Cliente',
+          date: body.date || new Date().toISOString().slice(0, 10),
+          amount: Number(body.amount || 0),
+          status: body.status || 'emitida',
+          key: body.key || '',
+          createdBy: user.id,
+          createdByName: user.name
+        }, []);
         data.nfes.push(record);
       } else {
         return sendJson(res, { error: 'Tipo inválido' }, 400);
@@ -2449,6 +2799,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncCadastroData(data);
       await syncSalesData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2465,6 +2816,9 @@ const server = http.createServer(async (req, res) => {
       if (!items.length) {
         return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
       }
+      if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
+        return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
+      }
       const totais = computeSalesTotals(items, body);
       let updated = {
         ...current,
@@ -2477,19 +2831,33 @@ const server = http.createServer(async (req, res) => {
         dueDate: body.dueDate || '',
         items,
         ...salesFinanceFields(body, totais),
+        ...salesInfoFields(body),
+        paymentInfo: salesPaymentInfo(body),
+        payments: salesPaymentLines(body),
+        delivery: salesDelivery(body),
+        salesTerms: String(body.salesTerms || '').trim().slice(0, 5000),
         note: body.note || '',
         status: body.status || current.status,
+        // "Alterado por" na tela — quem salvou por último, não quem criou.
+        updatedByName: user.name,
         updatedAt: new Date().toISOString()
       };
 
+      const eraFaturado = Boolean(current.financeApplied);
+      const seraFaturado = updated.status === 'faturado';
       if (current.type === 'order') {
         const wasApplied = Boolean(current.stockApplied);
-        const willApply = updated.status === 'faturado';
-        await transitionOrderStockEffect(data, { oldItems: current.items || [], newItems: items, wasApplied, willApply, record: updated, user });
-        updated.stockApplied = willApply;
+        await transitionOrderStockEffect(data, { oldItems: current.items || [], newItems: items, wasApplied, willApply: seraFaturado, record: updated, user });
+        updated.stockApplied = seraFaturado;
+        updated.financeApplied = seraFaturado;
       }
 
       updated = isOrder ? await db.updateOrder(id, updated) : await db.updateQuote(id, updated);
+      if (current.type === 'order') {
+        // Depois de gravar, pelo mesmo motivo da criação. O registro atualizado
+        // é que carrega o total e as parcelas atuais.
+        await transitionOrderFinanceEffect(data, { record: updated, wasApplied: eraFaturado, willApply: seraFaturado, user });
+      }
       // updateOrder/updateQuote não tocam data.orders/data.quotes (já
       // gravaram no Supabase direto) — saveData aqui é só pra persistir
       // data.stockMovements, que transitionOrderStockEffect pode ter alterado.
@@ -2533,6 +2901,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/import' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncNfeData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2563,7 +2932,11 @@ const server = http.createServer(async (req, res) => {
           });
           created.push(record);
         } else if (type === 'nfe') {
-          const record = { id: createId('nfe'), type: 'nfe', number: row.number || row.numero || createId('nfe-num'), customer, date, amount, status, key: row.key || '' };
+          const record = await db.createNfe({
+            number: row.number || row.numero || createId('nfe-num'),
+            customer, date, amount, status, key: row.key || '',
+            createdBy: user.id, createdByName: user.name
+          }, []);
           data.nfes.push(record);
           created.push(record);
         }
@@ -2589,6 +2962,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -2617,16 +2991,20 @@ const server = http.createServer(async (req, res) => {
       data.sales.push(sale);
       await db.upsertProduct({ ...product, stockQuantity: Number(product.stockQuantity || 0) - Number(body.quantity || 0) });
 
-      const financeEntry = {
-        id: createId('fin'),
+      // `method` saiu junto com a migração para o Supabase: era um rótulo fixo
+      // ('Pix'/'Boleto') que nunca foi lido por tela nenhuma nem existe na
+      // tabela — mantê-lo só criaria um campo que mente sobre a forma de
+      // pagamento real.
+      const financeEntry = await db.createFinancialEntry({
         type: 'sale',
         referenceId: sale.id,
         date: sale.date,
         description: `Venda ${sale.id}`,
         amount: sale.total,
         status: 'paid',
-        method: 'Pix'
-      };
+        createdBy: user?.id,
+        createdByName: user?.name
+      });
       data.finance.push(financeEntry);
 
       saveData(data);
@@ -2689,7 +3067,9 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       const user = await getCurrentUser(req);
-      if (!user || !(user.allowedModules.includes('cadastros') || user.allowedModules.includes('finance'))) {
+      // 'sales' entrou aqui junto com o endereço de entrega do Pedido/Orçamento:
+      // sem isso, quem só tem acesso a Vendas tomava 403 ao buscar o CEP.
+      if (!user || !['cadastros', 'finance', 'sales'].some((modulo) => user.allowedModules.includes(modulo))) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
 
@@ -2805,10 +3185,28 @@ const server = http.createServer(async (req, res) => {
     const method = req.method;
     const requiredPermission = resolveFiscalPermission(pathname, method);
     const temAcessoAoModulo = user.allowedModules.includes('finance') || user.allowedModules.includes('settings');
+    // O RBAC entra como caminho ADICIONAL, nunca como restrição nova: quem já
+    // podia emitir por fiscal_permissions continua podendo, e agora também
+    // passa quem recebeu fiscal.<ação> por papel. A migração para um modelo só
+    // é o passo seguinte, não este.
+    const acessoRbac = await db.rbac.carregarAcessoDoUsuario(user.id);
     const hasPermission = user.role === 'admin'
-      || (temAcessoAoModulo && (user.fiscalPermissions || []).includes(requiredPermission));
+      || (temAcessoAoModulo && (user.fiscalPermissions || []).includes(requiredPermission))
+      || (acessoRbac && permissoes.usuarioPode({ ...user, roles: acessoRbac.roles }, `fiscal.${requiredPermission}`, acessoRbac));
     if (!hasPermission) {
+      await db.rbac.registrarAcesso({
+        userId: user.id, userName: user.name, action: `fiscal.${requiredPermission}`,
+        resourceType: 'fiscal', result: 'NEGADO', ip: ipDaRequisicao(req),
+        detail: { metodo: method, rota: pathname }
+      });
       return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    if (method !== 'GET') {
+      await db.rbac.registrarAcesso({
+        userId: user.id, userName: user.name, action: `fiscal.${requiredPermission}`,
+        resourceType: 'fiscal', result: 'PERMITIDO', ip: ipDaRequisicao(req),
+        detail: { metodo: method, rota: pathname }
+      });
     }
 
     try {
@@ -3320,6 +3718,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/cadastros/meta' && req.method === 'GET') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3627,6 +4026,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = loadData();
       await syncCadastroData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('purchases')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -3673,16 +4073,16 @@ const server = http.createServer(async (req, res) => {
         note: `Compra de ${purchase.supplier}`, user
       });
 
-      const financeEntry = {
-        id: createId('fin'),
+      const financeEntry = await db.createFinancialEntry({
         type: 'purchase',
         referenceId: purchase.id,
         date: purchase.date,
         description: `Compra ${purchase.id}`,
         amount: purchase.total,
         status: 'pending',
-        method: 'Boleto'
-      };
+        createdBy: user?.id,
+        createdByName: user?.name
+      });
       data.finance.push(financeEntry);
 
       saveData(data);
@@ -3695,6 +4095,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/purchases/') && req.method === 'PUT') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('purchases')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4278,6 +4679,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncSalesData(data);
       await syncPurchasesData(data);
+      await syncFinanceData(data);
       const emUsoEmVendas = [...data.orders, ...data.quotes].some((record) =>
         (record.items || []).some((item) => item.productId === id));
       const emUsoEmCompras = (data.purchases || []).some((purchase) => purchase.productId === id);
@@ -4300,6 +4702,7 @@ const server = http.createServer(async (req, res) => {
     }
     // data.purchases só é populado pelo sync com o Supabase; sem isto vinha vazio.
     await syncPurchasesData(data);
+    await syncFinanceData(data);
     return sendJson(res, { finance: data.finance, sales: data.sales, purchases: data.purchases });
   }
 
@@ -4320,6 +4723,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/meta' && req.method === 'GET') {
     const data = loadData();
     await syncCadastroData(data);
+    await syncFinanceData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4335,6 +4739,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/categories' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4344,9 +4749,7 @@ const server = http.createServer(async (req, res) => {
       if (!name) {
         return sendJson(res, { error: 'Informe o nome da categoria' }, 400);
       }
-      const category = { id: createId('cat'), name, type: body.type || 'ambos', createdAt: new Date().toISOString() };
-      data.financialCategories.push(category);
-      saveData(data);
+      const category = await db.createFinancialCategory({ name, type: body.type || 'ambos' });
       return sendJson(res, { success: true, category });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao criar categoria' }, 400);
@@ -4356,6 +4759,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/cost-centers' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4365,9 +4769,7 @@ const server = http.createServer(async (req, res) => {
       if (!name) {
         return sendJson(res, { error: 'Informe o nome do centro de custo' }, 400);
       }
-      const costCenter = { id: createId('cc'), name, createdAt: new Date().toISOString() };
-      data.costCenters.push(costCenter);
-      saveData(data);
+      const costCenter = await db.createCostCenter({ name });
       return sendJson(res, { success: true, costCenter });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao criar centro de custo' }, 400);
@@ -4377,6 +4779,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/bank-accounts' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4386,16 +4789,12 @@ const server = http.createServer(async (req, res) => {
       if (!name) {
         return sendJson(res, { error: 'Informe o nome da conta bancária' }, 400);
       }
-      const bankAccount = {
-        id: createId('bank'),
+      const bankAccount = await db.createBankAccount({
         name,
         bank: body.bank || '',
         agency: body.agency || '',
-        number: body.number || '',
-        createdAt: new Date().toISOString()
-      };
-      data.bankAccounts.push(bankAccount);
-      saveData(data);
+        number: body.number || ''
+      });
       return sendJson(res, { success: true, bankAccount });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao criar conta bancária' }, 400);
@@ -4407,6 +4806,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncCadastroData(data);
       await syncPurchasesData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4427,6 +4827,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncCadastroData(data);
       await syncPurchasesData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4447,8 +4848,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'A conta de origem e a conta de destino da transferência não podem ser a mesma.' }, 400);
       }
       const today = new Date().toISOString().slice(0, 10);
-      const entry = {
-        id: createId('fin'),
+      const entry = await db.createFinancialEntry({
         type,
         date: body.date || today,
         dueDate: body.dueDate || body.date || today,
@@ -4465,10 +4865,11 @@ const server = http.createServer(async (req, res) => {
         referenceId: '',
         status: 'pending',
         createdBy: user.id,
-        createdByName: user.name,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+        createdByName: user.name
+      });
+      // O lançamento acabou de nascer no Supabase; a lista em memória ainda é a
+      // de antes da gravação, e serializeFinanceEntry lê dela para resolver
+      // categoria/conta. Sem isto, a resposta sairia sem o registro novo.
       data.finance.push(entry);
       addFinanceAuditLog(data, { action: 'criarLancamento', entry, byId: user.id, byName: user.name });
       saveData(data);
@@ -4483,6 +4884,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncCadastroData(data);
       await syncPurchasesData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4516,8 +4918,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: `Valor do pagamento (${amount.toFixed(2)}) é maior que o saldo em aberto (${Math.max(0, maxAllowedAmount).toFixed(2)}).` }, 400);
       }
 
-      const payment = {
-        id: createId('pay'),
+      const payment = await db.createFinancialPayment({
         entryId: entry.id,
         amount,
         date: body.date || new Date().toISOString().slice(0, 10),
@@ -4527,12 +4928,14 @@ const server = http.createServer(async (req, res) => {
         discount,
         note: body.note || '',
         createdBy: user.id,
-        createdByName: user.name,
-        createdAt: new Date().toISOString()
-      };
+        createdByName: user.name
+      });
+      // A baixa entra na lista em memória ANTES de recalcular o status: é ela
+      // que decide se o lançamento virou parcial ou pago.
       data.financialPayments.push(payment);
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
+      await db.updateFinancialEntry(entry.id, { status: entry.status });
       addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount } });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
@@ -4546,6 +4949,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncCadastroData(data);
       await syncPurchasesData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4565,9 +4969,11 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Não há baixa para estornar neste lançamento.' }, 400);
       }
 
+      await db.deleteFinancialPayment(last.id);
       data.financialPayments = data.financialPayments.filter((p) => p.id !== last.id);
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
+      await db.updateFinancialEntry(entry.id, { status: entry.status });
       addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: last.id, amount: last.amount } });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
@@ -4581,6 +4987,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncCadastroData(data);
       await syncPurchasesData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4596,6 +5003,7 @@ const server = http.createServer(async (req, res) => {
 
       entry.status = 'cancelado';
       entry.updatedAt = new Date().toISOString();
+      await db.updateFinancialEntry(entry.id, { status: 'cancelado' });
       addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
@@ -4609,6 +5017,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncCadastroData(data);
       await syncPurchasesData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4643,6 +5052,9 @@ const server = http.createServer(async (req, res) => {
       if (body.clientSupplierName !== undefined) entry.clientSupplierName = body.clientSupplierName;
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
+      // Manda o registro inteiro: a edição pode ter mexido em qualquer campo, e
+      // updateFinancialEntry só grava o que vier definido.
+      await db.updateFinancialEntry(entry.id, entry);
       addFinanceAuditLog(data, { action: 'editarLancamento', entry, byId: user.id, byName: user.name });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
@@ -4655,6 +5067,7 @@ const server = http.createServer(async (req, res) => {
     const data = loadData();
     await syncCadastroData(data);
     await syncPurchasesData(data);
+    await syncFinanceData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4670,6 +5083,8 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/nfe' && req.method === 'GET') {
     try {
       const data = loadData();
+      await syncNfeData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4688,6 +5103,8 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/nfe' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
+      await syncNfeData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4725,9 +5142,10 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'O valor total da NF-e deve ser maior que zero' }, 400);
       }
 
-      const nfe = {
-        id: createId('nfe'),
-        type: 'nfe',
+      // A NOTA É GRAVADA PRIMEIRO, e as parcelas depois: financial_entries.nfe_id
+      // referencia nfes(id), então parcela de nota inexistente é recusada pelo
+      // banco. O id também sai daqui — quem gera é createNfe.
+      const nfe = await db.createNfe({
         number: body.number || String(Date.now()).slice(-8),
         series: body.series || '1',
         date: body.date || new Date().toISOString().slice(0, 10),
@@ -4741,46 +5159,38 @@ const server = http.createServer(async (req, res) => {
         clientCity: body.clientCity || '',
         clientState: body.clientState || '',
         clientStateRegistration: body.clientStateRegistration || '',
-        items,
         taxNotes: body.taxNotes || '',
         paymentType: body.paymentType === 'parcelado' ? 'parcelado' : 'avista',
         installmentsCount: body.paymentType === 'parcelado' ? Math.min(60, Math.max(2, Math.round(Number(body.installmentsCount || 2)))) : 1,
         installmentIntervalDays: Math.max(1, Number(body.installmentIntervalDays || 30)),
         createdBy: user.id,
-        createdByName: user.name,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+        createdByName: user.name
+      }, items);
+      data.nfes.push(nfe);
 
       const installments = buildNfeInstallments(nfe);
-      installments.forEach((inst) => {
-        const entry = {
-          id: createId('fin'),
+      // for..of, e não forEach: cada parcela é uma gravação no Supabase e
+      // forEach não espera promessa — as parcelas seriam respondidas antes de
+      // existirem.
+      for (const inst of installments) {
+        const entry = await db.createFinancialEntry({
           type: 'RECEITA',
           date: nfe.date,
           dueDate: inst.dueDate,
           amount: inst.amount,
           description: installments.length > 1 ? `NF-e ${nfe.number} · Parcela ${inst.number}/${installments.length}` : `NF-e ${nfe.number}`,
           document: nfe.number,
-          note: '',
-          category: '',
-          costCenter: '',
-          bankAccountId: '',
-          targetBankAccountId: '',
           clientSupplierId: nfe.clientSupplierId || '',
           clientSupplierName: nfe.customer,
           referenceId: '',
           nfeId: nfe.id,
           status: 'pending',
           createdBy: user.id,
-          createdByName: user.name,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
+          createdByName: user.name
+        });
         data.finance.push(entry);
-      });
+      }
 
-      data.nfes.push(nfe);
       addFinanceAuditLog(data, {
         action: 'emitirNfe',
         entry: { id: nfe.id, description: `NF-e ${nfe.number} · ${nfe.customer}` },
@@ -4798,6 +5208,8 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/nfe\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncNfeData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4811,15 +5223,19 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'NF-e já está cancelada' }, 400);
       }
 
+      // Cancelar é mudar o status — a nota NUNCA é apagada. É documento fiscal.
       nfe.status = 'cancelada';
       nfe.updatedAt = new Date().toISOString();
+      await db.updateNfe(nfe.id, { status: 'cancelada' });
 
       const linkedEntries = (data.finance || []).filter((entry) => entry.nfeId === nfe.id);
       let cancelledCount = 0;
-      linkedEntries.forEach((entry) => {
+      // for..of: cada cancelamento de parcela é uma gravação, e forEach não espera.
+      for (const entry of linkedEntries) {
         if (entry.status === 'pending' || entry.status === 'parcial') {
           entry.status = 'cancelado';
           entry.updatedAt = new Date().toISOString();
+          await db.updateFinancialEntry(entry.id, { status: 'cancelado' });
           addFinanceAuditLog(data, {
             action: 'cancelarLancamento',
             entry,
@@ -4829,7 +5245,7 @@ const server = http.createServer(async (req, res) => {
           });
           cancelledCount += 1;
         }
-      });
+      }
 
       addFinanceAuditLog(data, {
         action: 'cancelarNfe',
@@ -4847,6 +5263,8 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/finance/nfe/') && req.method === 'GET') {
     const data = loadData();
+    await syncNfeData(data);
+    await syncFinanceData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4960,6 +5378,7 @@ const server = http.createServer(async (req, res) => {
     const data = loadData();
     await syncCadastroData(data);
     await syncPurchasesData(data);
+    await syncFinanceData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -4977,6 +5396,7 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       await syncCadastroData(data);
       await syncPurchasesData(data);
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -5011,8 +5431,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: `O valor da transação (${tx.amount.toFixed(2)}) é maior que o saldo em aberto do lançamento (${Math.max(0, maxAllowed).toFixed(2)}).` }, 400);
       }
 
-      const payment = {
-        id: createId('pay'),
+      const payment = await db.createFinancialPayment({
         entryId: entry.id,
         amount: tx.amount,
         date: tx.date,
@@ -5022,12 +5441,12 @@ const server = http.createServer(async (req, res) => {
         discount: 0,
         note: `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)})`,
         createdBy: user.id,
-        createdByName: user.name,
-        createdAt: new Date().toISOString()
-      };
+        createdByName: user.name
+      });
       data.financialPayments.push(payment);
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
+      await db.updateFinancialEntry(entry.id, { status: entry.status });
 
       tx.status = 'conciliado';
       tx.matchedEntryId = entry.id;
@@ -5047,6 +5466,7 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/desconciliar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -5062,9 +5482,11 @@ const server = http.createServer(async (req, res) => {
 
       const entry = data.finance.find((item) => item.id === tx.matchedEntryId);
       if (entry && tx.matchedPaymentId) {
+        await db.deleteFinancialPayment(tx.matchedPaymentId);
         data.financialPayments = data.financialPayments.filter((p) => p.id !== tx.matchedPaymentId);
         entry.status = recomputeFinanceEntryStatus(entry, data);
         entry.updatedAt = new Date().toISOString();
+        await db.updateFinancialEntry(entry.id, { status: entry.status });
         addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: tx.matchedPaymentId, motivo: 'Desconciliação de transação bancária' } });
       }
 
@@ -5230,6 +5652,7 @@ const server = http.createServer(async (req, res) => {
       if (/^\/api\/open-finance\/connections\/[^/]+\/accounts$/.test(pathname) && req.method === 'GET') {
         const id = decodeURIComponent(pathname.split('/')[4]);
         const data = loadData();
+        await syncFinanceData(data);
         const accounts = data.bankAccounts.filter((acc) => acc.connectionId === id);
         return sendJson(res, { accounts });
       }
@@ -5247,24 +5670,23 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
 
       const body = await readBody(req);
-      const entry = {
-        id: createId('fin'),
+      const entry = await db.createFinancialEntry({
         type: body.type || 'sale',
         referenceId: body.referenceId || '',
         date: body.date || new Date().toISOString().slice(0, 10),
         description: body.description || 'Lançamento',
         amount: Number(body.amount || 0),
         status: body.status || 'pending',
-        method: body.method || 'Dinheiro'
-      };
-      data.finance.push(entry);
-      saveData(data);
+        createdBy: user.id,
+        createdByName: user.name
+      });
       return sendJson(res, { success: true, entry });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao salvar financeiro' }, 400);
@@ -5283,6 +5705,7 @@ const server = http.createServer(async (req, res) => {
     // Mesmas coleções legadas vazias do /api/dashboard: precisam vir do Supabase.
     if (canSeeSales) await syncSalesData(data);
     if (canSeePurchases) await syncPurchasesData(data);
+ await syncFinanceData(data);
     const [settings, allUsers, products] = await Promise.all([
       db.getSettings(),
       canManageUsers ? db.getUsers() : Promise.resolve([]),
@@ -5351,6 +5774,113 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Tipo de configuração inválido' }, 400);
     } catch (error) {
       return sendJson(res, { error: 'Erro ao salvar configurações' }, 400);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Controle de acesso: papéis, permissões e trilha de auditoria.
+  // O portão lá em cima já exigiu 'usuarios.gerenciar' / 'auditoria.ler' para
+  // chegar aqui — estas rotas não repetem a checagem de permissão, só a de
+  // consistência (não se deve desmontar o próprio acesso, por exemplo).
+  // ---------------------------------------------------------------------
+  if (pathname === '/api/access-control' && req.method === 'GET') {
+    try {
+      const [papeis, permissoesCatalogo, papelPermissao, usuarios] = await Promise.all([
+        db.rbac.listarPapeis(),
+        db.rbac.listarPermissoes(),
+        db.rbac.listarPermissoesDePapeis(),
+        db.getUsers()
+      ]);
+      const acessoPorUsuario = {};
+      for (const usuario of usuarios) {
+        const acesso = await db.rbac.carregarAcessoDoUsuario(usuario.id);
+        acessoPorUsuario[usuario.id] = {
+          roles: acesso?.roles || [],
+          permitidas: acesso ? [...acesso.efetivas] : [],
+          negadas: acesso ? [...acesso.negadas] : []
+        };
+      }
+      return sendJson(res, {
+        disponivel: db.rbac.rbacEstaDisponivel(),
+        roles: papeis,
+        permissions: permissoesCatalogo,
+        rolePermissions: papelPermissao,
+        users: usuarios.map((u) => ({ id: u.id, name: u.name, username: u.username, role: u.role, active: u.active !== false, lastLoginAt: u.lastLoginAt })),
+        userAccess: acessoPorUsuario
+      });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao carregar o controle de acesso' }, 500);
+    }
+  }
+
+  if (pathname.startsWith('/api/access-control/roles/') && req.method === 'PUT') {
+    try {
+      const requester = await getCurrentUser(req);
+      const slug = decodeURIComponent(pathname.replace('/api/access-control/roles/', ''));
+      if (slug === 'admin') {
+        return sendJson(res, { error: 'O papel de administrador tem acesso total por definição e não recebe lista de permissões.' }, 400);
+      }
+      const body = await readBody(req);
+      await db.rbac.definirPermissoesDoPapel(slug, Array.isArray(body.permissions) ? body.permissions : []);
+      await db.rbac.registrarAcesso({
+        userId: requester.id, userName: requester.name, action: 'usuarios.gerenciar',
+        resourceType: 'papel', resourceId: slug, result: 'PERMITIDO', ip: ipDaRequisicao(req),
+        detail: { permissoes: body.permissions || [] }
+      });
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao salvar as permissões do papel' }, 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/access-control/users/') && req.method === 'PUT') {
+    try {
+      const requester = await getCurrentUser(req);
+      const id = decodeURIComponent(pathname.replace('/api/access-control/users/', ''));
+      const alvo = await db.getUserById(id);
+      if (!alvo) return sendJson(res, { error: 'Usuário não encontrado' }, 404);
+
+      const body = await readBody(req);
+      const papeis = Array.isArray(body.roles) ? body.roles : [];
+
+      // Trava de segurança: ninguém tira o próprio acesso de administrador nem
+      // se bloqueia sozinho — seria preciso outro admin para desfazer, e se for
+      // o único admin do sistema não haveria volta.
+      if (requester.id === id) {
+        if (permissoes.ehAdministrador(requester) && !papeis.includes('admin')) {
+          return sendJson(res, { error: 'Não é permitido remover o próprio papel de administrador.' }, 400);
+        }
+        if (body.active === false) {
+          return sendJson(res, { error: 'Não é permitido bloquear o próprio usuário.' }, 400);
+        }
+      }
+
+      await db.rbac.definirPapeisDoUsuario(id, papeis, requester.id);
+      await db.rbac.definirPermissoesDoUsuario(id, Array.isArray(body.exceptions) ? body.exceptions : []);
+      if (body.active !== undefined) await db.definirUsuarioAtivo(id, body.active);
+
+      await db.rbac.registrarAcesso({
+        userId: requester.id, userName: requester.name, action: 'usuarios.gerenciar',
+        resourceType: 'usuario', resourceId: id, result: 'PERMITIDO', ip: ipDaRequisicao(req),
+        detail: { alvo: alvo.username, papeis, excecoes: body.exceptions || [], ativo: body.active }
+      });
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao salvar o acesso do usuário' }, 400);
+    }
+  }
+
+  if (pathname === '/api/access-logs' && req.method === 'GET') {
+    try {
+      const logs = await db.rbac.listarAcessos({
+        limite: Number(url.searchParams.get('limit') || 100),
+        usuario: url.searchParams.get('user') || '',
+        resultado: url.searchParams.get('result') || '',
+        acao: url.searchParams.get('action') || ''
+      });
+      return sendJson(res, { logs, disponivel: db.rbac.rbacEstaDisponivel() });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao ler a trilha de auditoria' }, 500);
     }
   }
 

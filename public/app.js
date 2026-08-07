@@ -708,7 +708,12 @@ const moduleSubItems = {
   ],
 
   // ABA: Configurações
-  settings: [ { key: 'users', label: 'Usuários' }, { key: 'company', label: 'Empresa' } ],
+  settings: [
+    { key: 'users', label: 'Usuários' },
+    { key: 'access_control', label: 'Papéis e Permissões' },
+    { key: 'access_logs', label: 'Auditoria de Acesso' },
+    { key: 'company', label: 'Empresa' }
+  ],
 
   // ABA: Cadastros
   cadastros: [
@@ -1265,9 +1270,11 @@ async function loadModule(moduleName) {
           ? [{ value: 'pendente', label: 'Pendente' }, { value: 'faturado', label: 'Faturado' }, { value: 'cancelado', label: 'Cancelado' }]
           : [{ value: 'em aberto', label: 'Em aberto' }, { value: 'aprovado', label: 'Aprovado' }, { value: 'reprovado', label: 'Reprovado' }];
 
-        let meta = { companies: [], sellers: [], deposits: [], directory: [], products: [] };
+        // Se /api/sales/meta falhar, o formulário ainda abre — mas cada lista
+        // precisa existir vazia aqui, senão o .map() do select derruba a tela.
+        let meta = { companies: [], sellers: [], deposits: [], directory: [], products: [], paymentMethods: [], carriers: [] };
         try {
-          meta = await api('/api/sales/meta');
+          meta = { ...meta, ...(await api('/api/sales/meta')) };
         } catch (error) {
           showToast('Não foi possível carregar clientes/empresas/produtos para o formulário.', 'warning');
         }
@@ -1290,6 +1297,59 @@ async function loadModule(moduleName) {
         // Padrão é cobrar o frete do comprador; só fica desligado se o registro
         // salvo disser explicitamente que não.
         let chargeFreightToBuyer = origem ? origem.chargeFreightToBuyer !== false : true;
+        let generateServiceOrder = Boolean(origem?.generateServiceOrder);
+
+        // Opções de "Origem da Venda". Lista fixa: não existe cadastro de origens
+        // no sistema ainda. Quando existir, vira meta como empresas/vendedores.
+        const ORIGENS_VENDA = ['Venda Direta', 'Televendas', 'E-commerce', 'Marketplace', 'Representante', 'Balcão'];
+
+        // Campos do cabeçalho (Dados) e da seção "Informações Gerais". Nenhum
+        // deles entra no cálculo de totais nem mexe em estoque — são
+        // classificação e acompanhamento.
+        const CAMPOS_DADOS = ['saleOrigin', 'category', 'priceTable'];
+        const CAMPOS_INFO = [
+          'registrationTime', 'clientStatus', 'clientContact', 'customerPoCode',
+          'recipientEmail', 'billingRecipientEmail', 'commercialRecipientEmail',
+          'approvalDate', 'relatedOrderCode', 'revisionNumber'
+        ];
+        const CAMPOS_EXTRA = [...CAMPOS_DADOS, ...CAMPOS_INFO];
+
+        // --- Abas Pagamentos / Entrega / Termos ---------------------------------
+        // Estes dois viram objetos únicos no registro (paymentInfo e delivery),
+        // mas na tela são campos soltos: o nome do input é a chave abaixo.
+        const infoPagamento = origem?.paymentInfo || {};
+        const infoEntrega = origem?.delivery || {};
+        const CAMPOS_PAGAMENTO = [
+          'accountPlan', 'paymentMethodId', 'entryGroup', 'printDocument',
+          'nfeNumber', 'nfseNumber', 'nfeBillingDate', 'billingDetails', 'cardTransaction'
+        ];
+        // Campo na tela -> chave gravada. Os de endereço levam o prefixo
+        // "delivery" para não colidirem com nome genérico ("number", "city").
+        const MAPA_ENTREGA = {
+          addressType: 'addressType', shippingMethod: 'shippingMethod', carrierId: 'carrierId',
+          trackingCode: 'trackingCode', shippingDate: 'shippingDate', deliveryForecast: 'deliveryForecast',
+          deliveryZip: 'zipCode', deliveryCity: 'city', deliveryState: 'state', deliveryDistrict: 'district',
+          deliveryStreet: 'street', deliveryNumber: 'number', deliveryComplement: 'complement',
+          deliveryCountry: 'country', deliveryCityCode: 'cityCode', deliveryStateCode: 'stateCode'
+        };
+        const CAMPOS_ENTREGA = Object.keys(MAPA_ENTREGA);
+        const CAMPOS_FORM = [...CAMPOS_EXTRA, ...CAMPOS_PAGAMENTO, ...CAMPOS_ENTREGA, 'salesTerms'];
+
+        const TIPOS_ENDERECO = ['Endereço Pessoa', 'Outro Endereço'];
+        const MEIOS_ENVIO = ['Outro', 'Correios', 'Transportadora', 'Retirada no Balcão', 'Entrega Própria'];
+        const DOCUMENTOS_IMPRESSAO = ['Nenhum', 'Boleto', 'Carnê', 'Recibo', 'Duplicata'];
+
+        let payments = (origem?.payments || []).map((linha) => ({ ...linha }));
+        let ignoreCreditLimit = Boolean(infoPagamento.ignoreCreditLimit);
+        let showCteOptions = Boolean(infoEntrega.showCteOptions);
+        // À vista e à prazo são exclusivos: um único valor, dois interruptores.
+        let paymentTerm = infoPagamento.paymentTerm === 'aprazo' ? 'aprazo' : 'avista';
+        // Aba aberta. Não é campo do registro — é só onde o usuário estava
+        // quando a tela foi redesenhada (ao adicionar um produto, por exemplo).
+        let abaAtiva = 'dados';
+        // Hora de agora só para registro novo — editar não pode carimbar a hora
+        // por cima da que o pedido já tinha.
+        const horaAgora = new Date().toTimeString().slice(0, 5);
 
         // O formulário inteiro é redesenhado a cada produto adicionado/removido (mais simples
         // que atualizar só a tabela). Isso apagaria os campos de cabeçalho já preenchidos, então
@@ -1303,7 +1363,22 @@ async function loadModule(moduleName) {
           // A duplicata nasce com a data de hoje, não a do original.
           date: editRecord?.date || new Date().toISOString().slice(0, 10),
           dueDate: editRecord?.dueDate || '',
-          note: origem?.note || ''
+          note: origem?.note || '',
+          // Os campos de Dados e de Informações Gerais entram aqui pelo mesmo
+          // motivo dos de cabeçalho: o redesenho abaixo os apagaria da tela.
+          ...Object.fromEntries(CAMPOS_EXTRA.map((campo) => [campo, origem?.[campo] ?? ''])),
+          ...Object.fromEntries(CAMPOS_PAGAMENTO.map((campo) => [campo, infoPagamento[campo] ?? ''])),
+          ...Object.fromEntries(CAMPOS_ENTREGA.map((campo) => [campo, infoEntrega[MAPA_ENTREGA[campo]] ?? ''])),
+          salesTerms: origem?.salesTerms || '',
+          saleOrigin: origem?.saleOrigin || ORIGENS_VENDA[0],
+          printDocument: infoPagamento.printDocument || DOCUMENTOS_IMPRESSAO[0],
+          addressType: infoEntrega.addressType || TIPOS_ENDERECO[0],
+          shippingMethod: infoEntrega.shippingMethod || MEIOS_ENVIO[0],
+          deliveryCountry: infoEntrega.country || 'Brasil',
+          // Datas não seguem na duplicata — ela é documento novo, mesma regra da
+          // Data de Cadastro logo acima.
+          registrationTime: editRecord?.registrationTime || horaAgora,
+          approvalDate: editRecord?.approvalDate || ''
         };
         const syncFormState = () => {
           const form = document.getElementById('salesRecordForm');
@@ -1316,6 +1391,9 @@ async function loadModule(moduleName) {
           formState.date = form.querySelector('[name="date"]')?.value || formState.date;
           formState.dueDate = form.querySelector('[name="dueDate"]')?.value || formState.dueDate;
           formState.note = form.querySelector('[name="note"]')?.value || '';
+          CAMPOS_FORM.forEach((campo) => {
+            formState[campo] = form.querySelector(`[name="${campo}"]`)?.value ?? formState[campo];
+          });
         };
 
         // Mesmo módulo que o servidor usa — a tela não pode mostrar um total e o
@@ -1357,6 +1435,22 @@ async function loadModule(moduleName) {
             chargeFreightToBuyer,
             generalExpenses,
             assemblyFee,
+            ...Object.fromEntries(CAMPOS_EXTRA.map((campo) => [campo, formData.get(campo) || ''])),
+            generateServiceOrder,
+            // Abas Pagamentos e Entrega: os campos soltos da tela viram um objeto
+            // só, no formato que o servidor grava.
+            paymentInfo: {
+              ...Object.fromEntries(CAMPOS_PAGAMENTO.map((campo) => [campo, formData.get(campo) || ''])),
+              ignoreCreditLimit,
+              paymentTerm,
+              cashbackAmount: 0
+            },
+            payments: payments.map((linha) => ({ ...linha })),
+            delivery: {
+              ...Object.fromEntries(CAMPOS_ENTREGA.map((campo) => [MAPA_ENTREGA[campo], formData.get(campo) || ''])),
+              showCteOptions
+            },
+            salesTerms: formData.get('salesTerms') || '',
             status: formData.get('status') || '',
             note: formData.get('note') || '',
             ...overrides
@@ -1364,7 +1458,11 @@ async function loadModule(moduleName) {
         };
 
         const salesRecordPrint = ({ direta }) => {
-          const { itemsTotal, totalAmount } = computeTotals();
+          // formState só é atualizado nos redesenhos. Sem isto, imprimir logo
+          // depois de digitar (sem tocar em item/total) sairia com cliente, data
+          // e status antigos — o que o usuário vê na tela não é o que imprime.
+          syncFormState();
+          const totais = computeTotals();
           const cliente = meta.directory.find((e) => e.id === formState.clientSupplierId);
           const empresa = meta.companies.find((c) => c.id === formState.companyId);
           const vendedor = meta.sellers.find((s) => s.id === formState.sellerId);
@@ -1391,7 +1489,9 @@ async function loadModule(moduleName) {
                 <div><strong>Empresa:</strong> ${escapeHtml(empresa?.name || '-')}</div>
                 <div><strong>Vendedor:</strong> ${escapeHtml(vendedor?.name || '-')}</div>
                 <div><strong>Status:</strong> ${escapeHtml(formState.status || '-')}</div>
+                <div><strong>Origem da venda:</strong> ${escapeHtml(formState.saleOrigin || '-')}</div>
                 ${formState.dueDate ? `<div><strong>Validade:</strong> ${escapeHtml(formState.dueDate)}</div>` : ''}
+                ${formState.customerPoCode ? `<div><strong>Ordem de compra do cliente:</strong> ${escapeHtml(formState.customerPoCode)}</div>` : ''}
               </div>
               <table>
                 <thead><tr><th>Produto</th><th>SKU</th><th class="num">Qtd.</th><th class="num">Valor unit.</th><th class="num">Total</th></tr></thead>
@@ -1402,12 +1502,17 @@ async function loadModule(moduleName) {
                   <td class="num">${salesFormatBRL(Number(i.quantity) * Number(i.unitPrice))}</td>
                 </tr>`).join('')}</tbody>
               </table>
+              <!-- Mesmas linhas do resumo da tela, e pela mesma fonte de cálculo:
+                   antes o documento listava desconto em % e R$ separados e omitia
+                   despesas gerais e taxa de montagem, então as parcelas impressas
+                   não fechavam com o total. -->
               <div class="tot">
-                <div>Produtos: ${salesFormatBRL(itemsTotal)}</div>
-                ${discountAmount ? `<div>Desconto: -${salesFormatBRL(discountAmount)}</div>` : ''}
-                ${discountPercent ? `<div>Desconto: -${discountPercent}%</div>` : ''}
-                ${freight ? `<div>Frete: ${salesFormatBRL(freight)}</div>` : ''}
-                <div><strong>Total: ${salesFormatBRL(totalAmount)}</strong></div>
+                <div>Produtos + Serviços: ${salesFormatBRL(totais.base)}</div>
+                ${totais.descontoTotal ? `<div>Descontos${totais.percentualAplicado ? ` (${totais.percentualAplicado}% + ${salesFormatBRL(totais.descontoValor)})` : ''}: -${salesFormatBRL(totais.descontoTotal)}</div>` : ''}
+                ${totais.freteCobrado ? `<div>Frete: ${salesFormatBRL(totais.freteCobrado)}</div>` : ''}
+                ${totais.despesasGerais ? `<div>Desp. gerais: ${salesFormatBRL(totais.despesasGerais)}</div>` : ''}
+                ${totais.taxaMontagem ? `<div>Taxa de montagem: ${salesFormatBRL(totais.taxaMontagem)}</div>` : ''}
+                <div><strong>Total: ${salesFormatBRL(totais.totalAmount)}</strong></div>
               </div>
               ${formState.note ? `<p class="muted" style="margin-top:14px;"><strong>Observações:</strong> ${escapeHtml(formState.note)}</p>` : ''}
             </body></html>`);
@@ -1417,6 +1522,20 @@ async function loadModule(moduleName) {
           // pré-visualização; o diálogo do navegador ainda aparece, não há como
           // um site imprimir sem confirmação do usuário.
           if (direta) win.print();
+        };
+
+        // Troca de aba mexe só nas classes/`hidden`: sem redesenhar, o que já
+        // foi digitado nas outras abas continua no lugar (e no FormData).
+        const abrirAba = (id) => {
+          abaAtiva = id;
+          content.querySelectorAll('.sales-tab').forEach((botao) => {
+            const ativa = botao.dataset.aba === id;
+            botao.classList.toggle('is-active', ativa);
+            botao.setAttribute('aria-selected', String(ativa));
+          });
+          content.querySelectorAll('.sales-tab-panel').forEach((painel) => {
+            painel.hidden = painel.dataset.aba !== id;
+          });
         };
 
         // Contexto entregue ao menu de ações. Lê formState/status atuais, então
@@ -1429,6 +1548,8 @@ async function loadModule(moduleName) {
           showToast,
           imprimir: salesRecordPrint,
           focarObservacoes: () => {
+            // O campo mora na última aba: focar sem abri-la não mostraria nada.
+            abrirAba('observacoes');
             const campo = document.querySelector('#salesRecordForm [name="note"]');
             campo?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             campo?.focus();
@@ -1436,6 +1557,7 @@ async function loadModule(moduleName) {
           duplicar: () => {
             // Cópia vira rascunho novo: sem id e sem código, para nascer como
             // registro independente em vez de sobrescrever o original.
+            syncFormState();
             state.salesDraft.editRecord = null;
             state.salesDraft.duplicateFrom = {
               ...buildPayload(),
@@ -1448,6 +1570,7 @@ async function loadModule(moduleName) {
             loadModule('sales');
           },
           baixar: () => {
+            syncFormState();
             const payload = { ...buildPayload(), code: editRecord?.code, totals: computeTotals() };
             const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -1473,9 +1596,59 @@ async function loadModule(moduleName) {
           }
         });
 
+        // "06/08/2026 - 14:40" — formato da linha "Data Alteração".
+        const formatarDataHora = (iso) => {
+          if (!iso) return '';
+          const d = new Date(iso);
+          if (Number.isNaN(d.getTime())) return '';
+          return `${d.toLocaleDateString('pt-BR')} - ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+        };
+
+        const ABAS = [
+          { id: 'dados', label: 'Dados' },
+          { id: 'pagamentos', label: 'Pagamentos' },
+          { id: 'entrega', label: 'Entrega' },
+          { id: 'impostos', label: 'Impostos' },
+          { id: 'observacoes', label: 'Observações / Termos e Condições' }
+        ];
+
         const renderForm = () => {
           const totais = computeTotals();
-          const { valorProdutos: itemsTotal, totalAmount } = totais;
+          const somaPagamentos = payments.reduce((soma, linha) => soma + Number(linha.amount || 0), 0);
+
+          // Aba Impostos: painel só de leitura. Os tributos são apurados na
+          // emissão da NF-e (módulo Fiscal) e o pedido não guarda cálculo
+          // fiscal nenhum — por isso zerados aqui, com a nota explicando.
+          const faturado = formState.status === 'faturado';
+          const zeros = (...rotulos) => rotulos.map((rotulo) => [rotulo, 0]);
+          const GRUPOS_IMPOSTOS = [
+            { titulo: 'Valores da Nota', tom: 'azul', linhas: [
+              ['Valor Total da Nota', totais.totalAmount],
+              ['Valor Faturado na Nota', faturado ? totais.totalAmount : 0]
+            ] },
+            { titulo: 'ICMS', tom: 'vermelho', linhas: zeros(
+              'Base Calc. ICMS Destacado', 'Valor ICMS Destacado', 'Desconto Zona Franca',
+              'Valor do Diferencial da Alíquota', 'Base de Cálc. Subst. Tributária',
+              'Valor Subst. Tributária', 'Valor ICMS Desonerado') },
+            { titulo: 'FCP', tom: 'marrom', linhas: zeros(
+              'Base Calc. FCP', 'Valor FCP', 'Base de Cálc. FCP Subst. Tributária',
+              'Valor FCP Subst. Tributária', 'Base de Cálc. FCP ST Retido Anteriormente',
+              'Valor FCP ST Retido Anteriormente') },
+            { titulo: 'PIS', tom: 'verde', linhas: zeros(
+              'Base Calc.', 'Valor', 'Desconto Zona Franca',
+              'Base de Cálc. Subst. Tributária', 'Valor Subst. Tributária') },
+            { titulo: 'COFINS', tom: 'amarelo', linhas: zeros(
+              'Base Calc.', 'Valor', 'Base de Cálc. Subst. Tributária', 'Valor Subst. Tributária') },
+            { titulo: 'ISSQN', tom: 'ciano', linhas: zeros('Base', 'Valor', 'ISS Por Subst. Tributária') },
+            { titulo: 'Outros', tom: 'roxo', linhas: zeros(
+              'Valor IRRF', 'Valor CSLL Retido', 'Valor INSS Retido', 'Base de Cálc IPI', 'Valor IPI') },
+            { titulo: 'IBS/CBS', tom: 'azul', linhas: zeros('Base de Cálculo IBS/CBS', 'Valor IBS', 'Valor CBS') }
+          ];
+
+          // Em registro novo mostra quem está preenchendo — é quem vai constar
+          // como autor assim que salvar.
+          const alteradoPor = editRecord?.updatedByName || editRecord?.createdByName || state.user?.name || '';
+          const dataAlteracao = formatarDataHora(editRecord?.updatedAt || editRecord?.createdAt);
 
           content.innerHTML = `
             <div class="cadastro-page-head">
@@ -1489,8 +1662,20 @@ async function loadModule(moduleName) {
               )}
             </div>
 
+            <div class="sales-tabs" role="tablist">
+              ${ABAS.map((aba) => `
+                <button type="button" class="sales-tab ${abaAtiva === aba.id ? 'is-active' : ''}" role="tab"
+                        aria-selected="${abaAtiva === aba.id}" data-aba="${aba.id}">${aba.label}</button>
+              `).join('')}
+            </div>
+
             <div class="panel">
               <form id="salesRecordForm" class="form-grid">
+                <!-- As abas inativas ficam ocultas, não fora do DOM: assim
+                     continuam entrando no FormData na hora de salvar (campo com
+                     display:none é enviado; só o desabilitado fica de fora) e
+                     trocar de aba não precisa redesenhar o formulário. -->
+                <div class="sales-tab-panel" data-aba="dados" ${abaAtiva === 'dados' ? '' : 'hidden'}>
                 <div class="row">
                   <label>Cliente/Fornecedor *
                     ${renderSearchableSelect({ id: 'salesClientSupplier', name: 'clientSupplierId', options: meta.directory.map((entry) => ({ value: entry.id, label: entry.name })), selectedValue: formState.clientSupplierId, placeholder: 'Buscar por nome...', required: true })}
@@ -1499,6 +1684,14 @@ async function loadModule(moduleName) {
                     ${renderSearchableSelect({ id: 'salesCompany', name: 'companyId', options: meta.companies.map((c) => ({ value: c.id, label: c.name })), selectedValue: formState.companyId, placeholder: 'Buscar empresa...' })}
                   </label>
                   <button type="button" class="icon-button edit" id="salesQuickAddCompany" title="Nova empresa">+</button>
+                  <label>Origem da Venda *
+                    <select name="saleOrigin">
+                      ${ORIGENS_VENDA.map((origemVenda) => `<option value="${escapeHtml(origemVenda)}" ${formState.saleOrigin === origemVenda ? 'selected' : ''}>${escapeHtml(origemVenda)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <label>Categoria
+                    <input name="category" value="${escapeHtml(formState.category)}" placeholder="Ex.: Revenda, Consumo" />
+                  </label>
                 </div>
                 <div id="salesInlineAddCompanyRow" class="row hidden" style="margin-top: -8px;">
                   <label>Nome da empresa<input id="salesNewCompanyName" placeholder="Razão social" /></label>
@@ -1507,11 +1700,17 @@ async function loadModule(moduleName) {
                 </div>
 
                 <div class="row">
-                  <label>Vendedor
-                    ${renderSearchableSelect({ id: 'salesSeller', name: 'sellerId', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })), selectedValue: formState.sellerId, placeholder: 'Buscar vendedor...' })}
+                  <label>Tabela de Preços
+                    <input name="priceTable" value="${escapeHtml(formState.priceTable)}" placeholder="Padrão" />
                   </label>
                   <label>Depósito
                     ${renderSearchableSelect({ id: 'salesDeposit', name: 'depositId', options: meta.deposits.map((d) => ({ value: d.id, label: d.name })), selectedValue: formState.depositId, placeholder: 'Buscar depósito...' })}
+                  </label>
+                  <label>Vendedor
+                    ${renderSearchableSelect({ id: 'salesSeller', name: 'sellerId', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })), selectedValue: formState.sellerId, placeholder: 'Buscar vendedor...' })}
+                  </label>
+                  <label class="campo-somente-leitura" title="Sequencial gerado pelo sistema — não é editável.">Código
+                    <input value="${isEditing ? escapeHtml(String(editRecord.code)) : 'Gerado ao salvar'}" disabled />
                   </label>
                   <label>Status
                     <select name="status">
@@ -1624,13 +1823,304 @@ async function loadModule(moduleName) {
                   </div>
                 </div>
 
-                <div class="row">
-                  <label>Data<input name="date" type="date" value="${formState.date}" /></label>
-                  ${recordType === 'quote' ? `<label>Validade<input name="dueDate" type="date" value="${formState.dueDate}" /></label>` : ''}
+                <div class="cadastro-section">
+                  <div class="cadastro-section-header">
+                    <h4>Informações Gerais</h4>
+                    <p>Acompanhamento do ${title.toLowerCase()}: datas, contato do cliente e e-mails de envio.</p>
+                  </div>
+                  <div class="cadastro-section-body">
+                    <!-- Ordem dos campos = leitura em linha (data | cliente | e-mails | aprovação).
+                         Data de Cadastro e Validade são os mesmos campos que ficavam soltos no
+                         rodapé do formulário — foram movidos para cá, não duplicados: dois inputs
+                         com o mesmo name gravariam um por cima do outro. -->
+                    <div class="sales-info-grid">
+                      <label class="sales-total-field">Data de Cadastro
+                        <div class="sales-info-datahora">
+                          <input name="date" type="date" value="${formState.date}" />
+                          <input name="registrationTime" type="time" value="${escapeHtml(formState.registrationTime)}" />
+                        </div>
+                      </label>
+                      <label class="sales-total-field">Status Cliente
+                        <input name="clientStatus" value="${escapeHtml(formState.clientStatus)}" />
+                      </label>
+                      <label class="sales-total-field">E-mail Destinatário
+                        <input name="recipientEmail" type="email" value="${escapeHtml(formState.recipientEmail)}" />
+                      </label>
+                      <label class="sales-total-field">Aprovação do ${title}
+                        <input name="approvalDate" type="date" value="${escapeHtml(formState.approvalDate)}" />
+                      </label>
+
+                      ${recordType === 'quote' ? `
+                      <label class="sales-total-field">Validade
+                        <input name="dueDate" type="date" value="${formState.dueDate}" />
+                      </label>`
+                      // Pedido não tem validade; a célula vazia mantém as colunas
+                      // alinhadas (datas | cliente | e-mails | números).
+                      : '<div aria-hidden="true"></div>'}
+                      <label class="sales-total-field">Contato do Cliente
+                        <input name="clientContact" value="${escapeHtml(formState.clientContact)}" placeholder="Telefone ou responsável" />
+                      </label>
+                      <label class="sales-total-field">E-mail Faturamento Destinatário
+                        <input name="billingRecipientEmail" type="email" value="${escapeHtml(formState.billingRecipientEmail)}" />
+                      </label>
+                      <label class="sales-total-field">Relacionado com Pedido
+                        <input name="relatedOrderCode" type="number" min="0" step="1" value="${Number(formState.relatedOrderCode || 0)}" />
+                      </label>
+
+                      <label class="sales-total-field is-readonly">Alterado por
+                        <input value="${escapeHtml(alteradoPor)}" disabled />
+                      </label>
+                      <label class="sales-total-field is-readonly" title="Preenchido pelo módulo de Oportunidades, que ainda não existe no sistema.">Código da Oportunidade
+                        <input value="0" disabled />
+                      </label>
+                      <label class="sales-total-field">E-mail Comercial Destinatário
+                        <input name="commercialRecipientEmail" type="email" value="${escapeHtml(formState.commercialRecipientEmail)}" />
+                      </label>
+                      <label class="sales-total-field">Número da Revisão
+                        <input name="revisionNumber" type="number" min="0" step="1" value="${Number(formState.revisionNumber || 0)}" />
+                      </label>
+
+                      <label class="sales-total-field is-readonly">Data Alteração
+                        <input value="${escapeHtml(dataAlteracao)}" disabled />
+                      </label>
+                      <label class="sales-total-field">Código Pedido/Ordem Compra do Cliente
+                        <input name="customerPoCode" value="${escapeHtml(formState.customerPoCode)}" />
+                      </label>
+                      <label class="sales-total-field is-readonly" title="Preenchido pelo envio de e-mail ao cliente, que ainda não existe no sistema.">Data Recebimento E-mail
+                        <input value="" disabled />
+                      </label>
+                    </div>
+
+                    <div class="sales-total-toggle sales-info-toggle">
+                      <button type="button" role="switch" aria-checked="${generateServiceOrder}" class="switch ${generateServiceOrder ? 'is-on' : ''}" data-toggle="generateServiceOrder"
+                              title="Marca este ${title.toLowerCase()} para gerar uma Ordem de Serviço."><span></span></button>
+                      <span>Gerar Ordem de Serviço</span>
+                    </div>
+                  </div>
                 </div>
-                <div class="row">
-                  <label style="flex: 1;">Observações<textarea name="note" rows="3">${escapeHtml(formState.note)}</textarea></label>
-                </div>
+
+                </div><!-- /aba Dados -->
+
+                <div class="sales-tab-panel" data-aba="pagamentos" ${abaAtiva === 'pagamentos' ? '' : 'hidden'}>
+                  <div class="sales-info-grid">
+                    <label class="sales-total-field">Plano de Conta - Receita
+                      <input name="accountPlan" value="${escapeHtml(formState.accountPlan)}" placeholder="Ex.: Revenda de mercadorias" />
+                    </label>
+                    <label class="sales-total-field">Forma de Pagamento
+                      <select name="paymentMethodId">
+                        <option value="">Nenhuma</option>
+                        ${meta.paymentMethods.map((forma) => `<option value="${escapeHtml(forma.id)}" ${formState.paymentMethodId === forma.id ? 'selected' : ''}>${escapeHtml(forma.name)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="sales-total-field">Grupo de Lançamentos
+                      <input name="entryGroup" value="${escapeHtml(formState.entryGroup)}" />
+                    </label>
+                    <label class="sales-total-field">Documento de Impressão
+                      <select name="printDocument">
+                        ${DOCUMENTOS_IMPRESSAO.map((doc) => `<option value="${escapeHtml(doc)}" ${formState.printDocument === doc ? 'selected' : ''}>${escapeHtml(doc)}</option>`).join('')}
+                      </select>
+                    </label>
+
+                    <label class="sales-total-field">Número NF-e
+                      <input name="nfeNumber" value="${escapeHtml(formState.nfeNumber)}" />
+                    </label>
+                    <label class="sales-total-field">Número NFS-e
+                      <input name="nfseNumber" value="${escapeHtml(formState.nfseNumber)}" />
+                    </label>
+                    <label class="sales-total-field">Data Faturamento NF-e
+                      <input name="nfeBillingDate" type="date" value="${escapeHtml(formState.nfeBillingDate)}" />
+                    </label>
+                    <label class="sales-total-field">Detalhes do Faturamento
+                      <input name="billingDetails" value="${escapeHtml(formState.billingDetails)}" />
+                    </label>
+
+                    <label class="sales-total-field">Transação Cartão
+                      <input name="cardTransaction" value="${escapeHtml(formState.cardTransaction)}" />
+                    </label>
+                    <label class="sales-total-field is-readonly" title="O cashback do cliente ainda não é abatido automaticamente no pedido.">Pagamento com Cashback (R$)
+                      <input value="${salesFormatBRL(0)}" disabled />
+                    </label>
+                  </div>
+
+                  <div class="sales-toggle-linha">
+                    <div class="sales-total-toggle">
+                      <button type="button" role="switch" aria-checked="${ignoreCreditLimit}" class="switch ${ignoreCreditLimit ? 'is-on' : ''}" data-toggle="ignoreCreditLimit"
+                              title="Deixa o pedido seguir mesmo que o cliente esteja acima do limite de crédito."><span></span></button>
+                      <span>Ignorar Limite de Crédito</span>
+                    </div>
+                    <div class="sales-total-toggle">
+                      <button type="button" role="switch" aria-checked="${paymentTerm === 'avista'}" class="switch ${paymentTerm === 'avista' ? 'is-on' : ''}" data-toggle="termAvista"
+                              title="Pagamento à vista."><span></span></button>
+                      <span>À Vista</span>
+                    </div>
+                    <div class="sales-total-toggle">
+                      <button type="button" role="switch" aria-checked="${paymentTerm === 'aprazo'}" class="switch ${paymentTerm === 'aprazo' ? 'is-on' : ''}" data-toggle="termAprazo"
+                              title="Pagamento a prazo, em uma ou mais parcelas."><span></span></button>
+                      <span>À Prazo</span>
+                    </div>
+                  </div>
+
+                  <div class="cadastro-section">
+                    <div class="cadastro-section-header">
+                      <h4>Pagamentos (Informação para NF-e/NFC-e)</h4>
+                      <p>Formas e vencimentos que acompanham a nota. A soma precisa fechar com o total da venda.</p>
+                    </div>
+                    <div class="cadastro-section-body">
+                      <div class="table-scroll">
+                        <table class="table table-actions">
+                          <thead><tr><th>Forma de pagamento</th><th>Vencimento</th><th>Valor</th><th>Observação</th><th>Ações</th></tr></thead>
+                          <tbody>
+                            ${payments.length ? payments.map((linha, index) => `
+                              <tr>
+                                <td>
+                                  <select class="sales-payment-method" data-index="${index}">
+                                    <option value="">Nenhuma</option>
+                                    ${meta.paymentMethods.map((forma) => `<option value="${escapeHtml(forma.id)}" ${linha.methodId === forma.id ? 'selected' : ''}>${escapeHtml(forma.name)}</option>`).join('')}
+                                  </select>
+                                </td>
+                                <td><input type="date" class="sales-payment-due" data-index="${index}" value="${escapeHtml(linha.dueDate || '')}" /></td>
+                                <td><input type="number" min="0" step="0.01" class="sales-payment-amount" data-index="${index}" value="${Number(linha.amount || 0)}" style="width: 120px;" /></td>
+                                <td><input class="sales-payment-note" data-index="${index}" value="${escapeHtml(linha.note || '')}" /></td>
+                                <td><button type="button" class="icon-button sales-remove-payment" data-index="${index}" title="Remover">×</button></td>
+                              </tr>
+                            `).join('') : '<tr><td colspan="5" class="muted">Nenhum pagamento adicionado</td></tr>'}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      ${payments.length && Math.abs(somaPagamentos - totais.totalAmount) >= 0.01 ? `
+                        <p class="sales-totals-alerta">
+                          A soma dos pagamentos (${salesFormatBRL(somaPagamentos)}) não fecha com o total da venda
+                          (${salesFormatBRL(totais.totalAmount)}). Diferença de ${salesFormatBRL(Math.abs(somaPagamentos - totais.totalAmount))}.
+                        </p>` : ''}
+
+                      <div class="cadastro-list-actions" style="margin-top: 12px;">
+                        <button type="button" class="secondary" id="salesAddPaymentBtn">+ Adicionar Pagamento</button>
+                      </div>
+                    </div>
+                  </div>
+                </div><!-- /aba Pagamentos -->
+
+                <div class="sales-tab-panel" data-aba="entrega" ${abaAtiva === 'entrega' ? '' : 'hidden'}>
+                  <div class="sales-info-grid">
+                    <label class="sales-total-field">Tipo de Endereço
+                      <select name="addressType">
+                        ${TIPOS_ENDERECO.map((tipo) => `<option value="${escapeHtml(tipo)}" ${formState.addressType === tipo ? 'selected' : ''}>${escapeHtml(tipo)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="sales-total-field">Meio de Envio
+                      <select name="shippingMethod">
+                        ${MEIOS_ENVIO.map((meio) => `<option value="${escapeHtml(meio)}" ${formState.shippingMethod === meio ? 'selected' : ''}>${escapeHtml(meio)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="sales-total-field">Transportadora
+                      <select name="carrierId">
+                        <option value="">Nenhuma</option>
+                        ${meta.carriers.map((t) => `<option value="${escapeHtml(t.id)}" ${formState.carrierId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="sales-total-field is-readonly" title="Vem do campo Frete, no painel de descontos e despesas da aba Dados.">Total Frete (R$)
+                      <input value="${salesFormatBRL(totais.frete)}" disabled />
+                    </label>
+
+                    <label class="sales-total-field">Código Rastreio
+                      <input name="trackingCode" value="${escapeHtml(formState.trackingCode)}" />
+                    </label>
+                    <label class="sales-total-field">Data Envio
+                      <input name="shippingDate" type="date" value="${escapeHtml(formState.shippingDate)}" />
+                    </label>
+                    <label class="sales-total-field">Previsão de Entrega
+                      <input name="deliveryForecast" type="date" value="${escapeHtml(formState.deliveryForecast)}" />
+                    </label>
+                    <label class="sales-total-field is-readonly" title="Preenchido pela integração com loja online, que ainda não existe no sistema.">Tipo de Entrega Loja Online
+                      <input value="" disabled />
+                    </label>
+                  </div>
+
+                  <div class="cadastro-section">
+                    <div class="cadastro-section-header">
+                      <h4>Endereço de Entrega</h4>
+                      <p>Buscar pelo CEP preenche município, bairro, logradouro e o código do IBGE.</p>
+                    </div>
+                    <div class="cadastro-section-body">
+                      <div class="sales-info-grid">
+                        <!-- Div e não label: clicar num botão dentro de label
+                             dispara também o foco do campo associado. -->
+                        <div class="sales-total-field">
+                          <span>CEP</span>
+                          <div class="sales-info-datahora">
+                            <input name="deliveryZip" value="${escapeHtml(formState.deliveryZip)}" placeholder="Somente números" />
+                            <button type="button" class="secondary" id="salesDeliveryCepBtn">Buscar</button>
+                          </div>
+                        </div>
+                        <label class="sales-total-field">Município
+                          <input name="deliveryCity" value="${escapeHtml(formState.deliveryCity)}" />
+                        </label>
+                        <label class="sales-total-field">UF
+                          <input name="deliveryState" value="${escapeHtml(formState.deliveryState)}" maxlength="2" />
+                        </label>
+                        <label class="sales-total-field">Bairro
+                          <input name="deliveryDistrict" value="${escapeHtml(formState.deliveryDistrict)}" />
+                        </label>
+
+                        <label class="sales-total-field">Logradouro
+                          <input name="deliveryStreet" value="${escapeHtml(formState.deliveryStreet)}" />
+                        </label>
+                        <label class="sales-total-field">Número
+                          <input name="deliveryNumber" value="${escapeHtml(formState.deliveryNumber)}" />
+                        </label>
+                        <label class="sales-total-field">Complemento
+                          <input name="deliveryComplement" value="${escapeHtml(formState.deliveryComplement)}" />
+                        </label>
+                        <label class="sales-total-field">País
+                          <input name="deliveryCountry" value="${escapeHtml(formState.deliveryCountry)}" />
+                        </label>
+
+                        <label class="sales-total-field">Cód. Munic. (IBGE)
+                          <input name="deliveryCityCode" value="${escapeHtml(formState.deliveryCityCode)}" />
+                        </label>
+                        <label class="sales-total-field">Código UF
+                          <input name="deliveryStateCode" value="${escapeHtml(formState.deliveryStateCode)}" />
+                        </label>
+                      </div>
+
+                      <div class="sales-total-toggle sales-info-toggle">
+                        <button type="button" role="switch" aria-checked="${showCteOptions}" class="switch ${showCteOptions ? 'is-on' : ''}" data-toggle="showCteOptions"
+                                title="Marca o pedido para emissão de CT-e pela transportadora."><span></span></button>
+                        <span>Exibir Opções CTe</span>
+                      </div>
+                    </div>
+                  </div>
+                </div><!-- /aba Entrega -->
+
+                <div class="sales-tab-panel" data-aba="impostos" ${abaAtiva === 'impostos' ? '' : 'hidden'}>
+                  <p class="sales-totals-nota">
+                    Os impostos são apurados na emissão da NF-e, no módulo Fiscal — enquanto o
+                    ${title.toLowerCase()} não é faturado, os tributos ficam zerados. "Valores da Nota"
+                    já reflete o total desta venda.
+                  </p>
+                  <div class="sales-impostos-grid">
+                    ${GRUPOS_IMPOSTOS.map((grupo) => `
+                      <section class="sales-imposto-card">
+                        <h4 class="sales-imposto-titulo sales-imposto-${grupo.tom}">${grupo.titulo}</h4>
+                        <dl>
+                          ${grupo.linhas.map(([rotulo, valor]) => `
+                            <div><dt>${rotulo}</dt><dd>${salesFormatBRL(valor)}</dd></div>
+                          `).join('')}
+                        </dl>
+                      </section>
+                    `).join('')}
+                  </div>
+                </div><!-- /aba Impostos -->
+
+                <div class="sales-tab-panel" data-aba="observacoes" ${abaAtiva === 'observacoes' ? '' : 'hidden'}>
+                  <label class="sales-campo-longo">Observações
+                    <textarea name="note" rows="6" placeholder="Observações sobre o ${title.toLowerCase()}">${escapeHtml(formState.note)}</textarea>
+                  </label>
+                  <label class="sales-campo-longo">Termos e Condições de Venda
+                    <textarea name="salesTerms" rows="8" placeholder="Termos e condições do ${title.toLowerCase()}">${escapeHtml(formState.salesTerms)}</textarea>
+                  </label>
+                </div><!-- /aba Observações -->
 
                 <!-- Salvar/Voltar vivem na barra do topo (MavisActionsMenu).
                      Este submit fica escondido só para o Enter no formulário
@@ -1748,17 +2238,121 @@ async function loadModule(moduleName) {
             });
           });
 
+          const chaves = {
+            freightFixed: () => { freightFixed = !freightFixed; },
+            chargeFreightToBuyer: () => { chargeFreightToBuyer = !chargeFreightToBuyer; },
+            generateServiceOrder: () => { generateServiceOrder = !generateServiceOrder; },
+            ignoreCreditLimit: () => { ignoreCreditLimit = !ignoreCreditLimit; },
+            showCteOptions: () => { showCteOptions = !showCteOptions; },
+            // À vista e à prazo são o mesmo dado: ligar um desliga o outro.
+            termAvista: () => { paymentTerm = 'avista'; },
+            termAprazo: () => { paymentTerm = 'aprazo'; }
+          };
           form.querySelectorAll('[data-toggle]').forEach((btn) => {
             btn.addEventListener('click', () => {
-              if (btn.dataset.toggle === 'freightFixed') freightFixed = !freightFixed;
-              else chargeFreightToBuyer = !chargeFreightToBuyer;
+              chaves[btn.dataset.toggle]?.();
               syncFormState();
               renderForm();
             });
           });
 
+          content.querySelectorAll('.sales-tab').forEach((botao) => {
+            botao.addEventListener('click', () => abrirAba(botao.dataset.aba));
+          });
+
+          // --- Aba Pagamentos: linhas de pagamento ------------------------------
+          document.getElementById('salesAddPaymentBtn')?.addEventListener('click', () => {
+            syncFormState();
+            const forma = meta.paymentMethods.find((f) => f.id === formState.paymentMethodId);
+            const jaLancado = payments.reduce((soma, linha) => soma + Number(linha.amount || 0), 0);
+            const restante = Math.max(0, Math.round((computeTotals().totalAmount - jaLancado) * 100) / 100);
+            // Vencimento sugerido = data do pedido + prazo de recebimento da
+            // forma escolhida (0 dias na forma "à vista" dá a própria data).
+            const vencimento = new Date(`${formState.date || new Date().toISOString().slice(0, 10)}T00:00:00`);
+            vencimento.setDate(vencimento.getDate() + Number(forma?.daysToReceive || 0));
+            payments.push({
+              methodId: forma?.id || '',
+              methodName: forma?.name || '',
+              dueDate: vencimento.toISOString().slice(0, 10),
+              amount: restante,
+              note: ''
+            });
+            renderForm();
+          });
+
+          content.querySelectorAll('.sales-remove-payment').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              payments.splice(Number(btn.dataset.index), 1);
+              syncFormState();
+              renderForm();
+            });
+          });
+          content.querySelectorAll('.sales-payment-method').forEach((campo) => {
+            campo.addEventListener('change', () => {
+              const linha = payments[Number(campo.dataset.index)];
+              const forma = meta.paymentMethods.find((f) => f.id === campo.value);
+              linha.methodId = campo.value;
+              // O nome vai junto: se a forma for renomeada ou excluída do
+              // cadastro depois, o pedido antigo ainda mostra o que foi usado.
+              linha.methodName = forma?.name || '';
+              syncFormState();
+              renderForm();
+            });
+          });
+          const camposLinhaPagamento = [
+            ['.sales-payment-due', (linha, valor) => { linha.dueDate = valor; }],
+            ['.sales-payment-amount', (linha, valor) => { linha.amount = Math.max(0, Number(valor || 0)); }],
+            ['.sales-payment-note', (linha, valor) => { linha.note = valor; }]
+          ];
+          camposLinhaPagamento.forEach(([seletor, aplicar]) => {
+            content.querySelectorAll(seletor).forEach((campo) => {
+              campo.addEventListener('change', () => {
+                aplicar(payments[Number(campo.dataset.index)], campo.value);
+                syncFormState();
+                renderForm();
+              });
+            });
+          });
+
+          // --- Aba Entrega: CEP preenche o endereço -----------------------------
+          document.getElementById('salesDeliveryCepBtn')?.addEventListener('click', async () => {
+            const cep = (form.querySelector('[name="deliveryZip"]')?.value || '').replace(/\D/g, '');
+            if (cep.length !== 8) {
+              showToast('Informe um CEP com 8 dígitos.', 'warning');
+              return;
+            }
+            try {
+              const resposta = await api(`/api/cep/${cep}`);
+              const endereco = resposta.address || {};
+              // Só sobrescreve o que veio preenchido da consulta: complemento e
+              // número digitados à mão não são apagados.
+              const preencher = (nome, valor) => {
+                const campo = form.querySelector(`[name="${nome}"]`);
+                if (campo && valor) campo.value = valor;
+              };
+              preencher('deliveryZip', endereco.zipCode);
+              preencher('deliveryStreet', endereco.street);
+              preencher('deliveryDistrict', endereco.neighborhood);
+              preencher('deliveryCity', endereco.city);
+              preencher('deliveryState', endereco.state);
+              preencher('deliveryCityCode', endereco.ibgeCityCode);
+              syncFormState();
+              showToast('Endereço preenchido pelo CEP.', 'success');
+            } catch (error) {
+              showToast(error.message || 'Erro ao consultar o CEP.', 'error');
+            }
+          });
+
           form.addEventListener('submit', async (event) => {
             event.preventDefault();
+            // O `required` do campo de busca só garante que existe TEXTO digitado.
+            // Digitar sem escolher na lista deixa o id vazio e o registro nascia
+            // sem cliente ("-" na listagem) — por isso a checagem é no id.
+            if (!form.querySelector('[name="clientSupplierId"]')?.value) {
+              showToast('Selecione o cliente/fornecedor na lista de busca.', 'warning');
+              document.getElementById('salesClientSupplierInput')?.focus();
+              return;
+            }
             if (!items.length) {
               showToast('Adicione ao menos um produto.', 'warning');
               return;

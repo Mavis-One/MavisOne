@@ -4,7 +4,9 @@
   "description": "Base leve de ERP com login, módulos básicos e conciliação financeira",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "migracoes": "node scripts/verificar-migracoes.js",
+    "test": "node scripts/test-permissoes.js && node scripts/test-vendas-financeiro.js && node scripts/test-sales-totals.js && node scripts/test-sales-record-fields.js && node scripts/test-sales-actions.js && node scripts/test-nfe-actions.js"
   },
   "engines": {
     "node": ">=18"
@@ -15,3 +17,4 @@
     "dotenv": "^17.4.2"
   }
 }
+

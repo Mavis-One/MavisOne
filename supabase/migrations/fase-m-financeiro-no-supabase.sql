@@ -1,0 +1,36 @@
+-- ---------------------------------------------------------------------------
+-- Fase M — Financeiro sai do data/db.json e passa a viver no Supabase
+--
+-- >>> SUPERADA PELA FASE N: a única instrução deste arquivo (derrubar a FK de
+-- >>> nfe_id) foi desfeita quando a NF-e também foi para o Supabase e a nota
+-- >>> passou a ser gravada antes das parcelas. Rode fase-n-nfe-no-supabase.sql;
+-- >>> este arquivo fica como registro do porquê a FK chegou a ser derrubada.
+--
+-- As tabelas (financial_entries, financial_payments, financial_categories,
+-- cost_centers, bank_accounts) já existiam no schema desde a Fase A, mas nenhuma
+-- rota as usava: o módulo inteiro lia e gravava no arquivo local. Esta fase é a
+-- ligação — e o SQL abaixo é o único ajuste de estrutura que ela precisa.
+--
+-- POR QUE DERRUBAR A FK DE nfe_id:
+--
+-- financial_entries.nfe_id referencia nfes(id). Só que a NF-e ainda mora no
+-- db.json: emitir uma nota grava a nota no arquivo e as parcelas no Supabase.
+-- Com a FK no lugar, o Postgres recusaria as parcelas — a nota que elas
+-- apontam não existe na tabela dele — e a emissão quebraria.
+--
+-- O vínculo continua existindo e sendo usado (cancelar a NF-e cancela as
+-- parcelas, por nfe_id); o que se perde é a checagem do banco, exatamente como
+-- já acontece com client_supplier_id, que aponta ora para people, ora para
+-- cnpjs e por isso também não tem FK.
+--
+-- Quando a NF-e for para o Supabase (próxima fase), a FK volta com:
+--   alter table financial_entries
+--     add constraint financial_entries_nfe_id_fkey
+--     foreign key (nfe_id) references nfes(id);
+-- ---------------------------------------------------------------------------
+alter table if exists financial_entries drop constraint if exists financial_entries_nfe_id_fkey;
+
+-- O modelo antigo do arquivo gravava lançamento de venda/compra sem vencimento
+-- (só `date`). A coluna é not null, então esses casos passam a repetir a data —
+-- é o que createFinancialEntry já faz (`due_date: payload.dueDate || payload.date`).
+-- Nada a alterar aqui: fica registrado para quem for ler os dados depois.

@@ -13,6 +13,7 @@ const estoque = require('./lib/db/estoque');
 const vendasCompras = require('./lib/db/vendas-compras');
 const cadastros = require('./lib/db/cadastros');
 const financeiro = require('./lib/db/financeiro');
+const rbac = require('./lib/db/rbac');
 
 module.exports = {
   ...auth,
@@ -20,5 +21,9 @@ module.exports = {
   ...estoque,
   ...vendasCompras,
   ...cadastros,
-  ...financeiro
+  ...financeiro,
+  // Namespace próprio: são funções de controle de acesso, não de um módulo do
+  // ERP — misturar com o resto convidaria a chamar db.registrarAcesso() achando
+  // que é log de negócio.
+  rbac
 };

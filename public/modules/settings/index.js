@@ -7,7 +7,7 @@ window.MavisModuleRegistry.settings = async function renderSettings(ctx) {
   const sub = state.activeSub || 'company';
 
   const registry = window.MavisSubscreenRegistry.settings || {};
-  const allowedSubs = ['company', 'users', 'users_register', 'users_edit', 'fiscal'];
+  const allowedSubs = ['company', 'users', 'users_register', 'users_edit', 'fiscal', 'access_control', 'access_logs'];
   const targetSub = allowedSubs.includes(sub) ? sub : 'company';
   const renderer = registry[targetSub] || registry.company;
   if (targetSub !== sub) {

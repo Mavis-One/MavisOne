@@ -1396,6 +1396,135 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   align-items: end;
 }
 
+/* ---------------------------------------------------------------------------
+   Abas do formulário de Pedido/Orçamento
+   --------------------------------------------------------------------------- */
+.sales-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 12px 0 -1px;
+  border-bottom: 1px solid var(--border);
+}
+.sales-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sales-tab:hover { color: var(--text); background: var(--panel-alt); }
+.sales-tab.is-active {
+  color: var(--primary);
+  background: var(--panel);
+  border-color: var(--border);
+  /* Cobre a linha do container, emendando a aba ativa com o painel de baixo. */
+  margin-bottom: -1px;
+  padding-bottom: 11px;
+}
+.sales-tabs + .panel { border-top-left-radius: 0; border-top-right-radius: 0; }
+
+.sales-toggle-linha { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-top: 16px; }
+.sales-campo-longo { display: grid; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+.sales-campo-longo textarea { width: 100%; }
+
+/* Aba Impostos — cartões só de leitura, um por tributo. */
+.sales-impostos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.sales-imposto-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.sales-imposto-titulo {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.sales-imposto-card dl { margin: 0; }
+.sales-imposto-card dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 14px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+.sales-imposto-card dl > div:first-child { border-top: none; }
+.sales-imposto-card dt { color: var(--muted); }
+.sales-imposto-card dd { margin: 0; font-weight: 600; white-space: nowrap; }
+
+.sales-imposto-azul { background: #2b7a9b; }
+.sales-imposto-vermelho { background: #d9534f; }
+.sales-imposto-marrom { background: #8a5a44; }
+.sales-imposto-verde { background: #3f9c86; }
+.sales-imposto-amarelo { background: #c9a227; }
+.sales-imposto-ciano { background: #2ba3c7; }
+.sales-imposto-roxo { background: #7d5ba6; }
+
+/* ---------------------------------------------------------------------------
+   Papéis e Permissões (controle de acesso)
+   --------------------------------------------------------------------------- */
+.rbac-recursos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+.rbac-recurso {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.rbac-recurso h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.rbac-permissao {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 5px 0;
+  font-weight: 500;
+}
+.rbac-permissao small { grid-column: 2 / -1; color: var(--muted); font-weight: 400; }
+.rbac-origem { font-size: 11px; color: var(--primary); font-style: normal; }
+
+/* Campo travado dentro das linhas normais do formulário (ex.: Código do pedido,
+   gerado pelo sistema). Mesmo cinza dos campos travados do painel de totais,
+   sem herdar o tamanho de fonte menor daquele painel. */
+.campo-somente-leitura { cursor: help; }
+.campo-somente-leitura input:disabled {
+  background: var(--panel-alt);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Seção "Informações Gerais" — grade de 4 colunas na largura cheia, logo abaixo
+   do painel de descontos e despesas. Colunas um pouco mais largas que as dos
+   totais porque os rótulos são frases ("E-mail Faturamento Destinatário"). */
+.sales-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 14px 18px;
+  align-items: end;
+}
+.sales-info-datahora { display: flex; gap: 8px; }
+.sales-info-datahora input[type="date"] { flex: 1 1 auto; min-width: 0; }
+.sales-info-datahora input[type="time"] { flex: 0 0 auto; width: 92px; }
+.sales-info-toggle { margin-top: 16px; padding-bottom: 0; }
+
+/* Rótulo + campo do painel de totais e da seção Informações Gerais. */
 .sales-total-field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; }
 .sales-total-field input { width: 100%; }
 .sales-total-field.is-readonly input,
@@ -1462,6 +1591,9 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 }
 
 @media (max-width: 640px) {
-  .sales-totals-grid { grid-template-columns: 1fr 1fr; }
+  .sales-totals-grid,
+  .sales-info-grid { grid-template-columns: 1fr 1fr; }
+  .sales-impostos-grid { grid-template-columns: 1fr; }
+  .sales-tab { padding: 8px 10px; font-size: 12px; }
   .sales-totals-resumo { flex-direction: column; align-items: stretch; }
 }
