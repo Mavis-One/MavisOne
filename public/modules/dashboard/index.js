@@ -5,14 +5,12 @@ window.MavisModuleRegistry = window.MavisModuleRegistry || {};
 // que sidebar e dashboard nunca fiquem dessincronizados.
 const DASHBOARD_MODULE_ORDER = ['dashboard', 'sales', 'purchases', 'stock', 'finance', 'cadastros'];
 
-// Sub-aba padrão ao abrir cada módulo pelo balão do dashboard.
-const DASHBOARD_DEFAULT_SUB = {
-  sales: 'orders_quotes',
-  cadastros: 'list',
-  purchases: 'new_purchase',
-  finance: 'dashboard',
-  stock: 'products'
-};
+// Abrir um módulo pelo balão do dashboard não escolhe sub-aba: sem sub-aba o
+// módulo cai na sua Área de Trabalho, igual a clicar nele no menu lateral.
+// Antes havia aqui um mapa apontando cada módulo para uma tela fixa
+// (Vendas -> Pedidos, Estoque -> Produtos), o que dava dois destinos diferentes
+// para o mesmo clique dependendo de onde ele partia.
+const DASHBOARD_DEFAULT_SUB = {};
 
 function buildPinKey(moduleKey, subKey) {
   return subKey ? `${moduleKey}::${subKey}` : moduleKey;
@@ -180,8 +178,11 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
     <section class="panel finance-panel-stripe-chart">
       <h3>Fluxo de Vendas</h3>
       <div class="finance-chart-legend">
-        <span><i class="finance-legend-dot" style="background:#2563eb;"></i> Pedidos</span>
-        <span><i class="finance-legend-dot" style="background:#8b5cf6;"></i> Orçamentos</span>
+        <!-- Cor por classe, não por style inline: inline vence o CSS, e a
+             legenda ficava presa no azul/roxo do tema claro enquanto a linha
+             do gráfico acendia no escuro. -->
+        <span><i class="finance-legend-dot finance-legend-pedidos"></i> Pedidos</span>
+        <span><i class="finance-legend-dot finance-legend-orcamentos"></i> Orçamentos</span>
       </div>
       <div class="finance-chart-wrap">
         ${financeBuildChartSvg(charts.salesChartSeries || [], escapeHtml, [

@@ -154,23 +154,14 @@ function goBackToPreviousRoute() {
   loadModule(previousRoute.module);
 }
 
+// Todo módulo com sub-telas ganha o submenu lateral. Antes havia um `if` por
+// módulo repetindo a mesma linha, e cada módulo novo exigia mais um bloco —
+// esquecer dele deixava o módulo sem submenu, sem erro nenhum aparecer.
+// Dashboard fica de fora porque não tem sub-telas.
 function getSecondarySidebarConfig(moduleName) {
-  if (moduleName === 'sales') {
-    return { module: 'sales', title: 'Vendas', subtitle: 'Fluxos', items: moduleSubItems.sales };
-  }
-  if (moduleName === 'cadastros') {
-    return { module: 'cadastros', title: 'Cadastros', subtitle: 'Fluxos', items: moduleSubItems.cadastros };
-  }
-  if (moduleName === 'purchases') {
-    return { module: 'purchases', title: 'Compras', subtitle: 'Fluxos', items: moduleSubItems.purchases };
-  }
-  if (moduleName === 'finance') {
-    return { module: 'finance', title: 'Financeiro', subtitle: 'Fluxos', items: moduleSubItems.finance };
-  }
-  if (moduleName === 'stock') {
-    return { module: 'stock', title: 'Estoque', subtitle: 'Fluxos', items: moduleSubItems.stock };
-  }
-  return null;
+  const itens = moduleSubItems[moduleName];
+  if (!moduleName || moduleName === 'dashboard' || !itens || !itens.length) return null;
+  return { module: moduleName, title: moduleLabels[moduleName] || moduleName, subtitle: 'Fluxos', items: itens };
 }
 
 function shouldShowSecondarySidebar() {
@@ -197,7 +188,9 @@ function renderSecondarySidebar() {
     return;
   }
 
-  const activeKey = state.activeSub || (secondaryConfig.module === 'sales' ? 'orders_quotes' : secondaryConfig.module === 'cadastros' ? 'list' : secondaryConfig.module === 'purchases' ? 'new_purchase' : secondaryConfig.module === 'finance' ? 'dashboard' : secondaryConfig.module === 'stock' ? 'products' : null);
+  // Mesma regra do título (ver renderApp): na Área de Trabalho nenhum item do
+  // submenu fica destacado, porque nenhuma das telas está aberta.
+  const activeKey = state.activeSub;
 
   sidebar.innerHTML = `
     <div class="secondary-header">
@@ -391,12 +384,62 @@ function confirmModal(message) {
   });
 }
 
+// Abertura que toca DEPOIS do login e ANTES do sistema aparecer: o logo vem de
+// longe e passa pela câmera. Resolve quando a animação termina — ou antes, se
+// o usuário pular.
+//
+// Só roda no login de verdade. Recarregar a página restaura a sessão por outro
+// caminho (ver o bootstrap no fim do arquivo) e ali a abertura NÃO toca: quem
+// dá F5 dez vezes por dia não quer ver a animação dez vezes.
+function animarEntrada() {
+  return new Promise((resolve) => {
+    const movimentoReduzido = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+    const overlay = document.createElement('div');
+    overlay.className = `intro-abertura${movimentoReduzido ? ' is-reduzida' : ''}`;
+    overlay.setAttribute('role', 'presentation');
+    overlay.innerHTML = `
+      <div class="intro-brilho"></div>
+      <span class="logo-marca intro-logo" role="presentation"></span>
+    `;
+    document.body.appendChild(overlay);
+
+    let encerrada = false;
+    const encerrar = () => {
+      if (encerrada) return;
+      encerrada = true;
+      window.removeEventListener('keydown', encerrar);
+      overlay.remove();
+      resolve();
+    };
+
+    // Pular com clique ou qualquer tecla — a abertura é enfeite, não pedágio.
+    overlay.addEventListener('click', encerrar);
+    window.addEventListener('keydown', encerrar);
+    // O fim da cortina é o fim da abertura (o logo termina antes dela).
+    overlay.addEventListener('animationend', (evento) => {
+      if (evento.target === overlay) encerrar();
+    });
+    // Rede de segurança: em aba de segundo plano o navegador não dispara
+    // animação, e o sistema não pode ficar preso atrás de uma tela escura.
+    setTimeout(encerrar, movimentoReduzido ? 900 : 2400);
+  });
+}
+
+// A abertura só toca no login de verdade, então conferir uma alteração nela
+// exigiria sair e entrar a cada tentativa. Com isto basta digitar verIntro()
+// no console do navegador (F12) para assistir de novo, de qualquer tela.
+window.verIntro = animarEntrada;
+
 function renderAuth(error = '') {
   app.innerHTML = `
     <div class="auth-screen">
       <div class="auth-card">
-        <img src="/assets/logo.png" alt="SAL Logo" class="logo-auth" />
-        <h1 class="brand"><span class="brand-full">MavisONE</span><span class="brand-short">MO</span></h1>
+        <span class="logo-marca logo-auth" role="img" aria-label="MavisONE"></span>
+        <h1 class="brand">
+          <span class="brand-full"><span class="brand-mavis">Mavis</span><span class="brand-one">ONE</span></span>
+          <span class="brand-short"><span class="brand-mavis">M</span><span class="brand-one">O</span></span>
+        </h1>
         <p class="muted">Faça login com suas credenciais</p>
         <form id="loginForm" class="form-grid">
           <label>Usuário
@@ -428,9 +471,14 @@ function renderAuth(error = '') {
       ]);
       persistStoredDashboardPins(state.user.id, state.user.dashboardPins);
       applyTheme(state.user.theme);
-      showToast('Login realizado com sucesso.', 'success');
+      // A abertura começa ANTES de montar a tela e roda por cima: o dashboard
+      // carrega atrás dela, então a animação ocupa um tempo que já existia.
+      const abertura = animarEntrada();
       renderApp();
       await loadModule('dashboard');
+      await abertura;
+      // O aviso vem depois — atrás da cortina ninguém o veria.
+      showToast('Login realizado com sucesso.', 'success');
     } catch (error) {
       showToast(error.message || 'Falha ao autenticar.', 'error');
       renderAuth(error.message);
@@ -439,7 +487,11 @@ function renderAuth(error = '') {
 }
 
 function renderApp() {
-  const activeSubKey = state.activeSub || (state.activeModule === 'sales' ? 'orders_quotes' : state.activeModule === 'cadastros' ? 'list' : state.activeModule === 'purchases' ? 'new_purchase' : state.activeModule === 'finance' ? 'dashboard' : state.activeModule === 'stock' ? 'products' : null);
+  // Sem sub-tela escolhida NÃO existe sub-tela ativa: o módulo está na sua Área
+  // de Trabalho, e o título mostra só o nome do módulo. Aqui havia um "ou a tela
+  // padrão do módulo", de quando abrir Vendas caía direto em Pedidos — o título
+  // anunciava "Vendas > Pedidos e Orçamentos" com essa tela fechada.
+  const activeSubKey = state.activeSub;
   const activeSubLabel = (state.activeModule === 'cadastros' && activeSubKey === 'edit')
     ? 'Edição'
     : (state.activeModule === 'cadastros' && activeSubKey === 'register')
@@ -459,8 +511,11 @@ function renderApp() {
     <div class="layout">
       <aside class="sidebar">
         <div class="sidebar-header">
-          <img src="/assets/logo.png" alt="SAL Logo" class="logo-sidebar" />
-          <h2 class="brand"><span class="brand-full">MavisONE</span><span class="brand-short">MO</span></h2>
+          <span class="logo-marca logo-sidebar" role="img" aria-label="MavisONE"></span>
+          <h2 class="brand">
+            <span class="brand-full"><span class="brand-mavis">Mavis</span><span class="brand-one">ONE</span></span>
+            <span class="brand-short"><span class="brand-mavis">M</span><span class="brand-one">O</span></span>
+          </h2>
         </div>
         <p class="muted">${state.user?.name || 'Usuário'}</p>
         <div class="nav-list">
@@ -623,6 +678,13 @@ const moduleLabels = {
   purchases: 'Compras',
   stock: 'Estoque',
   finance: 'Financeiro',
+  fiscal: 'Fiscal',
+  reports: 'Relatórios',
+  fleet: 'Frota de Veículos',
+  crm: 'CRM',
+  hr: 'RH',
+  pcp: 'PCP',
+  contracts: 'Contratos',
   settings: 'Configurações',
   cadastros: 'Cadastros'
 };
@@ -634,13 +696,26 @@ const moduleIcons = {
   stock: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline><polyline points="7.5 19.79 7.5 14.6 3 12"></polyline><polyline points="21 12 16.5 14.6 16.5 19.79"></polyline><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>',
   finance: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>',
   settings: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 6v6"></path><path d="M4.22 4.22l4.24 4.24m3.08 3.08l4.24 4.24"></path><path d="M1 12h6m6 0h6"></path><path d="M4.22 19.78l4.24-4.24m3.08-3.08l4.24-4.24"></path></svg>',
-  cadastros: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>'
+  cadastros: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>',
+  fiscal: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2h14v20l-3-2-2 2-2-2-2 2-2-2-3 2Z"></path><line x1="9" y1="8" x2="15" y2="8"></line><line x1="9" y1="12" x2="15" y2="12"></line></svg>',
+  reports: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10Z"></path></svg>',
+  fleet: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="6" width="13" height="10" rx="1.5"></rect><path d="M14 9h4l3 3.5V16h-7Z"></path><circle cx="5.5" cy="18" r="2"></circle><circle cx="17.5" cy="18" r="2"></circle></svg>',
+  crm: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><polyline points="17 11 19 13 23 9"></polyline></svg>',
+  hr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><circle cx="8.5" cy="11" r="2.5"></circle><path d="M4.5 17a4 4 0 0 1 8 0"></path><line x1="16" y1="10" x2="19" y2="10"></line><line x1="16" y1="14" x2="19" y2="14"></line></svg>',
+  pcp: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20V9l6 4V9l6 4V9l6 4v7Z"></path><line x1="2" y1="20" x2="22" y2="20"></line><line x1="18" y1="9" x2="18" y2="4"></line></svg>',
+  contracts: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M8 17c1.5-2 2.5 1 4-1s2.5 1 4-1"></path></svg>'
 };
 
 // ============================================================================
 // CONFIGURAÇÃO DAS ABAS (menu principal + submenus da sidebar)
 // Cada chave de nível 1 é uma ABA principal; os arrays são as SUB-ABAS
 // exibidas no submenu daquela aba.
+//
+// O campo `desc` é a frase que aparece no bloco de cada tela na Área de
+// Trabalho do módulo (modules/shared/module_workspace.js). Esta lista é a
+// ÚNICA fonte da verdade: menu lateral, submenu, favoritos do Dashboard Geral
+// e Área de Trabalho leem todos daqui, então tela nova cadastrada aqui aparece
+// nos quatro lugares sozinha.
 // ============================================================================
 const moduleSubItems = {
   // ABA: Dashboard Geral — sem sub-abas
@@ -648,93 +723,149 @@ const moduleSubItems = {
 
   // ABA: Vendas
   sales: [
-    { key: 'orders_quotes', label: 'Pedidos e Orçamentos' },
-    { key: 'new_quote', label: 'Novo Orçamento' },
-    { key: 'new_order', label: 'Novo Pedido' },
-    { key: 'order_groups', label: 'Agrupamento de Pedidos' },
-    { key: 'new_order_group', label: 'Novo Agrupamento de Pedidos' },
-    { key: 'nfes', label: 'NF-e Emitidas' },
-    { key: 'new_nfe', label: 'Nova NF-e Avulsa' },
-    { key: 'returns', label: 'Devoluções' },
-    { key: 'sales_dashboard', label: 'Painel Vendas' },
-    { key: 'seller_dashboard', label: 'Painel Vendedor' },
-    { key: 'credits', label: 'Vales de Crédito' },
-    { key: 'integrations', label: 'Central de Integrações' },
-    { key: 'import_logs', label: "Log's Vendas Importadas" },
-    { key: 'import_sales', label: 'Importar Vendas' },
-    { key: 'configure_promotions', label: 'Configurar Promoções' },
-    { key: 'new_promotion', label: 'Nova Promoção' }
+    { key: 'orders_quotes', label: 'Pedidos e Orçamentos', desc: 'Lista de pedidos e orçamentos, com filtros, aprovação e faturamento.' },
+    { key: 'new_quote', label: 'Novo Orçamento', desc: 'Monta um orçamento para enviar ao cliente.' },
+    { key: 'new_order', label: 'Novo Pedido', desc: 'Registra um pedido de venda do zero.' },
+    { key: 'nfes', label: 'NF-e Emitidas', desc: 'Notas já emitidas, com DANFE, XML e cancelamento.' },
+    { key: 'new_nfe', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
+    { key: 'sales_dashboard', label: 'Painel Vendas', desc: 'Totais, faturados, pendentes e ticket médio.' },
+    { key: 'seller_dashboard', label: 'Painel Vendedor', desc: 'Desempenho de cada vendedor.' },
+    { key: 'import_logs', label: "Log's Vendas Importadas", desc: 'Histórico das importações já processadas.' },
+    { key: 'import_sales', label: 'Importar Vendas', desc: 'Carrega vendas em lote a partir de um CSV.' }
   ],
 
   // ABA: Compras
   purchases: [
-    { key: 'new_purchase', label: 'Nova compra' },
-    { key: 'purchase_history', label: 'Histórico de compras' },
-    { key: 'suppliers', label: 'Fornecedores' }
+    { key: 'new_purchase', label: 'Nova compra', desc: 'Lança uma compra e dá entrada no estoque.' },
+    { key: 'purchase_history', label: 'Histórico de compras', desc: 'Compras registradas, por período e fornecedor.' },
+    { key: 'suppliers', label: 'Fornecedores', desc: 'Fornecedores cadastrados e seus dados.' }
   ],
 
   // ABA: Estoque
   stock: [
-    { key: 'price_manager', label: 'Gestor de Preços' },
-    { key: 'movements', label: 'Movimentações' },
-    { key: 'new_movement', label: 'Nova Movimentação' },
-    { key: 'transfers', label: 'Entre Depósitos' },
-    { key: 'new_transfer', label: 'Nova Entre Depósitos' },
-    { key: 'products', label: 'Produtos' },
-    { key: 'new_product', label: 'Novo Produto' },
-    { key: 'product_status', label: 'Status do Produto' },
-    { key: 'deposits', label: 'Depósitos' },
-    { key: 'new_deposit', label: 'Novo Depósito' },
-    { key: 'price_tables', label: 'Tabelas de Preços' },
-    { key: 'new_price_table', label: 'Nova Tabela de Preços' },
-    { key: 'catalogs', label: 'Catálogos de Produtos' },
-    { key: 'new_catalog', label: 'Novo Catálogo de Produtos' },
-    { key: 'product_categories', label: 'Categorias de Produtos' },
-    { key: 'new_product_category', label: 'Nova Categoria de Produtos' },
-    { key: 'movement_categories', label: 'Categorias de Movimentações' },
-    { key: 'new_movement_category', label: 'Nova Categoria de Movimentações' }
+    { key: 'price_manager', label: 'Gestor de Preços', desc: 'Ajusta preços de venda em lote, por margem ou valor.' },
+    { key: 'movements', label: 'Movimentações', desc: 'Entradas, saídas e ajustes já lançados.' },
+    { key: 'new_movement', label: 'Nova Movimentação', desc: 'Lança entrada, saída ou ajuste de estoque.' },
+    { key: 'transfers', label: 'Entre Depósitos', desc: 'Transferências de produtos entre depósitos.' },
+    { key: 'new_transfer', label: 'Nova Entre Depósitos', desc: 'Move produtos de um depósito para outro.' },
+    { key: 'products', label: 'Produtos', desc: 'Produtos com saldo, custo e preço de venda.' },
+    { key: 'new_product', label: 'Novo Produto', desc: 'Cadastra um produto novo.' },
+    { key: 'product_status', label: 'Status do Produto', desc: 'Situações que um produto pode assumir.' },
+    { key: 'deposits', label: 'Depósitos', desc: 'Depósitos e locais de armazenagem.' },
+    { key: 'new_deposit', label: 'Novo Depósito', desc: 'Cadastra um depósito novo.' },
+    { key: 'price_tables', label: 'Tabelas de Preços', desc: 'Preços por cliente ou canal de venda.' },
+    { key: 'new_price_table', label: 'Nova Tabela de Preços', desc: 'Cria uma tabela de preços.' },
+    { key: 'catalogs', label: 'Catálogos de Produtos', desc: 'Agrupa produtos por finalidade.' },
+    { key: 'new_catalog', label: 'Novo Catálogo de Produtos', desc: 'Cria um catálogo de produtos.' },
+    { key: 'product_categories', label: 'Categorias de Produtos', desc: 'Classificação usada nos produtos.' },
+    { key: 'new_product_category', label: 'Nova Categoria de Produtos', desc: 'Cria uma categoria de produtos.' },
+    { key: 'movement_categories', label: 'Categorias de Movimentações', desc: 'Classificação usada nas movimentações.' },
+    { key: 'new_movement_category', label: 'Nova Categoria de Movimentações', desc: 'Cria uma categoria de movimentação.' }
   ],
 
   // ABA: Financeiro
   finance: [
-    { key: 'dashboard', label: 'Dashboard' },
-    { key: 'lancamentos', label: 'Lançamentos' },
-    { key: 'novo_lancamento', label: 'Novo Lançamento' },
-    { key: 'nfe_emitidas', label: 'NF-e Emitidas' },
-    { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa' },
-    { key: 'emitir_nfe_focus', label: 'Emitir NF-e (Focus)' },
-    { key: 'extrato_open_finance', label: 'Extrato Open Finance' },
-    { key: 'bancos_conectados', label: 'Bancos Conectados' }
+    { key: 'dashboard', label: 'Dashboard', desc: 'Receitas, despesas e saldo do período.' },
+    { key: 'lancamentos', label: 'Lançamentos', desc: 'Contas a pagar e a receber, com baixa.' },
+    { key: 'novo_lancamento', label: 'Novo Lançamento', desc: 'Registra uma receita ou uma despesa.' },
+    { key: 'nfe_emitidas', label: 'NF-e Emitidas', desc: 'Notas emitidas, com DANFE e XML.' },
+    { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e, com pré-visualização antes de enviar.' },
+    { key: 'emitir_nfe_focus', label: 'Emitir NF-e (Focus)', desc: 'Emissão pela integração Focus NFe.' },
+    { key: 'extrato_open_finance', label: 'Extrato Open Finance', desc: 'Extrato bancário puxado via Open Finance.' },
+    { key: 'bancos_conectados', label: 'Bancos Conectados', desc: 'Bancos ligados e situação de cada conexão.' }
+  ],
+
+  // ABA: Fiscal
+  // As tabelas de referência já existem no banco (Fase Q), então esta tela é
+  // real. "Regras Fiscais" é a parte que decide QUAL código se aplica — isso
+  // depende de tabela própria, ainda não criada.
+  fiscal: [
+    { key: 'tabelas', label: 'Tabelas Fiscais', desc: 'Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.' },
+    { key: 'regras', label: 'Regras Fiscais', desc: 'Define qual CFOP e tributação se aplica a cada operação.', pendente: true }
+  ],
+
+  // ABA: Relatórios
+  // Montados sobre dados que já existem — nenhum depende de tabela nova.
+  reports: [
+    { key: 'vendas', label: 'Relatório de Vendas', desc: 'Pedidos, orçamentos, faturamento e ticket médio.' },
+    { key: 'financeiro', label: 'Relatório Financeiro', desc: 'Receitas, despesas e saldo ao longo do período.' },
+    { key: 'estoque', label: 'Relatório de Estoque', desc: 'Saldo, custo e valor parado por produto.' },
+    { key: 'vendedores', label: 'Relatório por Vendedor', desc: 'Quanto cada vendedor fechou no período.' }
+  ],
+
+  // ABA: Frota de Veículos
+  fleet: [
+    { key: 'veiculos', label: 'Veículos', desc: 'Frota cadastrada, com placa, situação e quilometragem.', pendente: true },
+    { key: 'novo_veiculo', label: 'Novo Veículo', desc: 'Cadastra um veículo na frota.', pendente: true },
+    { key: 'manutencoes', label: 'Manutenções', desc: 'Preventivas e corretivas, com custo e oficina.', pendente: true },
+    { key: 'nova_manutencao', label: 'Nova Manutenção', desc: 'Registra uma manutenção de veículo.', pendente: true },
+    { key: 'abastecimentos', label: 'Abastecimentos', desc: 'Litros, valor e consumo médio por veículo.', pendente: true },
+    { key: 'novo_abastecimento', label: 'Novo Abastecimento', desc: 'Lança um abastecimento.', pendente: true }
+  ],
+
+  // ABA: CRM
+  // Por decisão de projeto este módulo NÃO guarda cadastro próprio: ele lê do
+  // CRM externo. Evita duas fontes da verdade divergindo — em troca, depende
+  // da API do outro sistema estar no ar.
+  crm: [
+    { key: 'conexao', label: 'Conexão', desc: 'Endereço e credencial do CRM externo, com teste de conexão.', pendente: true },
+    { key: 'oportunidades', label: 'Oportunidades', desc: 'Funil de vendas, lido do CRM externo.', pendente: true },
+    { key: 'contas', label: 'Contas', desc: 'Clientes e prospects, lidos do CRM externo.', pendente: true }
+  ],
+
+  // ABA: RH
+  hr: [
+    { key: 'colaboradores', label: 'Colaboradores', desc: 'Quadro de pessoal, com cargo e admissão.', pendente: true },
+    { key: 'novo_colaborador', label: 'Novo Colaborador', desc: 'Cadastra um colaborador.', pendente: true },
+    { key: 'cargos', label: 'Cargos', desc: 'Cargos, faixas salariais e requisitos.', pendente: true },
+    { key: 'ferias', label: 'Férias e Afastamentos', desc: 'Períodos aquisitivos, férias e licenças.', pendente: true },
+    { key: 'ponto', label: 'Registro de Ponto', desc: 'Marcações, horas extras e banco de horas.', pendente: true }
+  ],
+
+  // ABA: PCP
+  pcp: [
+    { key: 'ordens', label: 'Ordens de Produção', desc: 'Ordens abertas, em curso e concluídas.', pendente: true },
+    { key: 'nova_ordem', label: 'Nova Ordem de Produção', desc: 'Abre uma ordem a partir de um produto.', pendente: true },
+    { key: 'estrutura', label: 'Estrutura de Produto', desc: 'Ficha técnica: o que cada produto consome.', pendente: true },
+    { key: 'apontamentos', label: 'Apontamentos', desc: 'Produção realizada e consumo de material.', pendente: true }
+  ],
+
+  // ABA: Contratos
+  contracts: [
+    { key: 'contratos', label: 'Contratos', desc: 'Contratos ativos, encerrados e seus valores.', pendente: true },
+    { key: 'novo_contrato', label: 'Novo Contrato', desc: 'Registra um contrato com cliente ou fornecedor.', pendente: true },
+    { key: 'vencimentos', label: 'Vencimentos e Renovações', desc: 'O que vence ou renova nos próximos meses.', pendente: true },
+    { key: 'modelos', label: 'Modelos de Contrato', desc: 'Textos-padrão reutilizados na emissão.', pendente: true }
   ],
 
   // ABA: Configurações
   settings: [
-    { key: 'users', label: 'Usuários' },
-    { key: 'access_control', label: 'Papéis e Permissões' },
-    { key: 'access_logs', label: 'Auditoria de Acesso' },
-    { key: 'company', label: 'Empresa' }
+    { key: 'users', label: 'Usuários', desc: 'Usuários do sistema e seus acessos.' },
+    { key: 'access_control', label: 'Papéis e Permissões', desc: 'O que cada papel pode ver e fazer.' },
+    { key: 'access_logs', label: 'Auditoria de Acesso', desc: 'Quem acessou o quê, e quando.' },
+    { key: 'company', label: 'Empresa', desc: 'Dados da empresa, certificado e configuração fiscal.' }
   ],
 
   // ABA: Cadastros
   cadastros: [
-    { key: 'consulta_cnpj', label: 'Consulta CNPJ SEFAZ' },
-    { key: 'list', label: 'Pessoas' },
-    { key: 'contatos', label: 'Contatos' },
-    { key: 'register', label: 'Nova Pessoa' },
-    { key: 'produtos', label: 'Produtos' },
-    { key: 'novo_produto', label: 'Novo Produto' },
-    { key: 'cashback', label: 'CashBack por Produto' },
-    { key: 'agenda', label: 'Agenda de Tarefas' },
-    { key: 'agendamentos', label: 'Agendamentos' },
-    { key: 'empresas', label: 'Empresas' },
-    { key: 'nova_empresa', label: 'Nova Empresa' },
-    { key: 'equipamentos', label: 'Equipamentos' },
-    { key: 'contas_bancarias', label: 'Contas Bancárias' },
-    { key: 'nova_conta_bancaria', label: 'Nova Conta Bancária' },
-    { key: 'formas_pagamento', label: 'Formas de Pagamento' },
-    { key: 'nova_forma_pagamento', label: 'Nova Forma de Pagamento' },
-    { key: 'status_venda', label: 'Status de Venda' },
-    { key: 'deposits', label: 'Depósitos' }
+    { key: 'consulta_cnpj', label: 'Consulta CNPJ SEFAZ', desc: 'Busca um CNPJ e traz os dados oficiais.' },
+    { key: 'list', label: 'Pessoas', desc: 'Clientes, fornecedores e demais pessoas.' },
+    { key: 'contatos', label: 'Contatos', desc: 'Contatos vinculados às pessoas cadastradas.' },
+    { key: 'register', label: 'Nova Pessoa', desc: 'Cadastra pessoa física ou jurídica.' },
+    { key: 'produtos', label: 'Produtos', desc: 'Produtos com dados comerciais e fiscais.' },
+    { key: 'novo_produto', label: 'Novo Produto', desc: 'Cadastra um produto novo.' },
+    { key: 'cashback', label: 'CashBack por Produto', desc: 'Percentual de cashback de cada produto.' },
+    { key: 'agenda', label: 'Agenda de Tarefas', desc: 'Tarefas abertas e concluídas.' },
+    { key: 'agendamentos', label: 'Agendamentos', desc: 'Compromissos marcados na agenda.' },
+    { key: 'empresas', label: 'Empresas', desc: 'Empresas do grupo, cada uma com seu CNPJ.' },
+    { key: 'nova_empresa', label: 'Nova Empresa', desc: 'Cadastra uma empresa nova.' },
+    { key: 'equipamentos', label: 'Equipamentos', desc: 'Equipamentos e seus vínculos com clientes.' },
+    { key: 'contas_bancarias', label: 'Contas Bancárias', desc: 'Contas usadas em recebimentos e pagamentos.' },
+    { key: 'nova_conta_bancaria', label: 'Nova Conta Bancária', desc: 'Cadastra uma conta bancária.' },
+    { key: 'formas_pagamento', label: 'Formas de Pagamento', desc: 'Formas aceitas e suas condições.' },
+    { key: 'nova_forma_pagamento', label: 'Nova Forma de Pagamento', desc: 'Cadastra uma forma de pagamento.' },
+    { key: 'status_venda', label: 'Status de Venda', desc: 'Situações que um pedido pode assumir.' },
+    { key: 'deposits', label: 'Depósitos', desc: 'Depósitos cadastrados, os mesmos do Estoque.' }
   ]
 };
 
@@ -1044,10 +1175,21 @@ async function loadModule(moduleName) {
     }
 
     // ========================================================================
-    // ABA: VENDAS (16 sub-abas — ver comentários abaixo de cada `sub ===`)
+    // ABA: VENDAS (9 sub-abas — ver comentários abaixo de cada `sub ===`)
     // ========================================================================
     if (moduleName === 'sales') {
-      const sub = state.activeSub || 'orders_quotes';
+      const rawSub = state.activeSub || 'orders_quotes';
+      // A última rota fica salva no navegador, então ela pode apontar para uma
+      // tela que não existe mais (saíram daqui agrupamento de pedidos,
+      // devoluções, vales de crédito, integrações e promoções). Sem esta
+      // checagem nenhum `if` abaixo casaria e o módulo terminaria sem escrever
+      // nada — tela branca que voltaria a cada recarregamento, porque a rota
+      // inválida continuaria sendo salva. A lista válida é o próprio menu,
+      // para não existir uma segunda lista para manter em dia.
+      const sub = moduleSubItems.sales.some((item) => item.key === rawSub) ? rawSub : 'orders_quotes';
+      // Corrige o estado, não só a variável: senão o menu lateral segue sem
+      // destacar nada e a rota morta continua sendo gravada.
+      if (sub !== rawSub) state.activeSub = sub;
 
       const SALES_STATUS_BADGE_META = {
         'pendente': { label: 'Pendente', tone: 'warning' },
@@ -1584,8 +1726,33 @@ async function loadModule(moduleName) {
             const ok = await confirmModal(pergunta);
             if (!ok) return;
             try {
-              await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(buildPayload({ status: novoStatus })) });
+              const resposta = await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(buildPayload({ status: novoStatus })) });
               showToast(`${title} atualizado para "${novoStatus}".`, 'success');
+
+              // Faturou: o lançamento já nasceu junto (ver transitionOrderFinanceEffect
+              // no servidor). Em vez de largar o usuário na lista, leva direto ao
+              // financeiro gerado para ele ajustar forma de pagamento e vencimento —
+              // que é o passo seguinte do fluxo, e o que mais se esquece de fazer.
+              const gerados = resposta?.financeiro?.entryIds || [];
+              if (novoStatus === 'faturado' && gerados.length) {
+                state.salesDraft.editRecord = null;
+                // De onde vim: o Financeiro usa isto para devolver ao pedido.
+                state.financeReturnTo = { module: 'sales', sub: 'new_order', recordId: editRecord.id };
+                if (gerados.length === 1) {
+                  state.financeEditEntryId = gerados[0];
+                  state.activeSub = 'novo_lancamento';
+                } else {
+                  // Várias parcelas: mostra a lista filtrada pelo pedido em vez
+                  // de escolher uma por conta própria.
+                  state.financeFilters = { ...(state.financeFilters || {}), search: String(editRecord.code || '') };
+                  state.activeSub = 'lancamentos';
+                }
+                state.activeModule = 'finance';
+                renderApp();
+                loadModule('finance');
+                return;
+              }
+
               state.salesDraft.editRecord = null;
               state.activeSub = 'orders_quotes';
               renderApp();
@@ -1593,6 +1760,37 @@ async function loadModule(moduleName) {
             } catch (error) {
               showToast(error.message || 'Erro ao atualizar o status.', 'error');
             }
+          },
+
+          nfeId: editRecord?.nfeId || '',
+          gerarNfe: async () => {
+            syncFormState();
+            // A pergunta do fluxo: as observações do pedido acompanham a nota?
+            // Nem toda observação interna deve ir para um documento fiscal.
+            const copiarObservacoes = formState.note
+              ? await confirmModal(`Copiar as observações do ${title.toLowerCase()} para a NF-e?\n\n"${formState.note.slice(0, 180)}${formState.note.length > 180 ? '…' : ''}"`)
+              : false;
+
+            // A tela de emissão lê isto e nasce preenchida com o pedido.
+            state.nfeFromOrder = {
+              orderId: editRecord.id,
+              code: editRecord.code,
+              clientSupplierId: formState.clientSupplierId,
+              clientName: meta.directory.find((e) => e.id === formState.clientSupplierId)?.name || '',
+              items: items.map((item) => ({
+                code: item.sku || '',
+                description: item.name,
+                quantity: Number(item.quantity || 0),
+                unitPrice: Number(item.unitPrice || 0)
+              })),
+              taxNotes: copiarObservacoes ? formState.note : '',
+              payments: payments.map((linha) => ({ ...linha })),
+              totalAmount: computeTotals().totalAmount
+            };
+            state.activeModule = 'finance';
+            state.activeSub = 'nova_nfe_avulsa';
+            renderApp();
+            loadModule('finance');
           }
         });
 
@@ -2498,85 +2696,6 @@ async function loadModule(moduleName) {
         return;
       }
 
-      // Sub-aba: Agrupamento de Pedidos
-      if (sub === 'order_groups') {
-        content.innerHTML = `
-          <div class="cadastro-page-head">
-            <div>
-              <h3>Agrupamento de Pedidos</h3>
-              <p class="muted">Visualize e gerencie grupos de pedidos.</p>
-            </div>
-            <div class="cadastro-list-actions">
-              <button type="button" onclick="state.activeSub='new_order_group'; renderApp(); loadModule('sales');">+ Novo Agrupamento</button>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="table-scroll">
-              <table class="table">
-                <thead><tr><th>ID Grupo</th><th>Qtd. Pedidos</th><th>Valor Total</th><th>Status</th></tr></thead>
-                <tbody>
-                  <tr><td colspan="4" class="muted">Nenhum agrupamento salvo</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        `;
-        return;
-      }
-
-      // Sub-aba: Novo Agrupamento de Pedidos
-      if (sub === 'new_order_group') {
-        content.innerHTML = `
-          <div class="panel">
-            <h3>Novo Agrupamento de Pedidos</h3>
-            <form id="orderGroupForm" class="form-grid">
-              <div class="row">
-                <label>Nome do agrupamento<input name="groupName" required /></label>
-                <label>Descrição<input name="description" /></label>
-              </div>
-              <div class="row">
-                <label>Pedidos (IDs separados por vírgula)<textarea name="orderIds" rows="4" placeholder="ord-1, ord-2, ord-3"></textarea></label>
-              </div>
-              <button type="submit">Salvar agrupamento</button>
-            </form>
-          </div>
-        `;
-        document.getElementById('orderGroupForm').addEventListener('submit', async (event) => {
-          event.preventDefault();
-          showToast('Funcionalidade de agrupamento será implementada em breve.', 'warning');
-          state.activeSub = 'order_groups';
-          renderApp();
-          loadModule('sales');
-        });
-        return;
-      }
-
-      // Sub-aba: Devoluções
-      if (sub === 'returns') {
-        content.innerHTML = `
-          <div class="cadastro-page-head">
-            <div>
-              <h3>Devoluções</h3>
-              <p class="muted">Gerencie devoluções de produtos.</p>
-            </div>
-            <div class="cadastro-list-actions">
-              <button type="button" class="secondary" onclick="window.notifyToast('Registrar devolução será implementado em breve.', 'warning')">+ Registrar Devolução</button>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="table-scroll">
-              <table class="table">
-                <thead><tr><th>ID Devolução</th><th>Pedido Original</th><th>Cliente</th><th>Data</th><th>Status</th></tr></thead>
-                <tbody>
-                  <tr><td colspan="5" class="muted">Nenhuma devolução registrada</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        `;
-        return;
-      }
-
       // Sub-aba: Painel Vendas
       if (sub === 'sales_dashboard') {
         const { overview } = await api('/api/sales/dashboard');
@@ -2654,106 +2773,6 @@ async function loadModule(moduleName) {
 
         document.getElementById('sellerDashboardSelect')?.addEventListener('change', (event) => {
           state.salesDraft = { ...state.salesDraft, sellerDashboardId: event.target.value };
-          loadModule('sales');
-        });
-        return;
-      }
-
-      // Sub-aba: Vales de Crédito
-      if (sub === 'credits') {
-        content.innerHTML = `
-          <div class="cadastro-page-head">
-            <div>
-              <h3>Vales de Crédito</h3>
-              <p class="muted">Gerencie vales de crédito de clientes.</p>
-            </div>
-            <div class="cadastro-list-actions">
-              <button type="button" class="secondary" onclick="window.notifyToast('Emitir novo vale será implementado em breve.', 'warning')">+ Emitir Vale</button>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="table-scroll">
-              <table class="table">
-                <thead><tr><th>Cliente</th><th>Saldo Vale</th><th>Data Emissão</th><th>Status</th></tr></thead>
-                <tbody>
-                  <tr><td colspan="4" class="muted">Nenhum vale registrado</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        `;
-        return;
-      }
-
-      // Sub-aba: Central de Integrações
-      if (sub === 'integrations') {
-        content.innerHTML = `
-          <div class="panel">
-            <h3>Central de Integrações</h3>
-            <p class="muted">Configure integrações com marketplaces e plataformas de vendas.</p>
-            <div class="checkbox-grid" style="margin-top: 12px;">
-              <label><input type="checkbox" disabled /> Shopify</label>
-              <label><input type="checkbox" disabled /> WooCommerce</label>
-              <label><input type="checkbox" disabled /> Mercado Livre</label>
-              <label><input type="checkbox" disabled /> OLX</label>
-              <label><input type="checkbox" disabled /> Amazon</label>
-            </div>
-            <p class="muted" style="margin-top: 12px;">Integrações em desenvolvimento.</p>
-          </div>
-        `;
-        return;
-      }
-
-      // Sub-aba: Configurar Promoções
-      if (sub === 'configure_promotions') {
-        content.innerHTML = `
-          <div class="panel">
-            <h3>Configurar Promoções</h3>
-            <p class="muted">Gerenciador de promoções e descontos.</p>
-            <table class="table">
-              <thead><tr><th>ID Promoção</th><th>Descrição</th><th>Desconto</th><th>Validade</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr><td colspan="5" class="muted">Nenhuma promoção configurada</td></tr>
-              </tbody>
-            </table>
-            <div style="margin-top: 16px;">
-              <button class="secondary" onclick="state.activeSub='new_promotion'; renderApp(); loadModule('sales');">+ Nova Promoção</button>
-            </div>
-          </div>
-        `;
-        return;
-      }
-
-      // Sub-aba: Nova Promoção
-      if (sub === 'new_promotion') {
-        content.innerHTML = `
-          <div class="panel">
-            <h3>Nova Promoção</h3>
-            <form id="promotionForm" class="form-grid">
-              <div class="row">
-                <label>Nome da promoção<input name="promoName" required /></label>
-                <label>Código<input name="promoCode" required /></label>
-              </div>
-              <div class="row">
-                <label>Tipo<select name="promoType"><option value="desconto-percentual">Desconto percentual</option><option value="desconto-fixo">Desconto fixo</option><option value="frete-gratis">Frete grátis</option></select></label>
-                <label>Valor<input name="promoValue" type="number" step="0.01" required /></label>
-              </div>
-              <div class="row">
-                <label>Data inicial<input name="startDate" type="date" required /></label>
-                <label>Data final<input name="endDate" type="date" required /></label>
-              </div>
-              <div class="row">
-                <label>Descrição<textarea name="description" rows="3" placeholder="Descrição da promoção..."></textarea></label>
-              </div>
-              <button type="submit">Salvar promoção</button>
-            </form>
-          </div>
-        `;
-        document.getElementById('promotionForm').addEventListener('submit', async (event) => {
-          event.preventDefault();
-          showToast('Cadastro de promoções será implementado em breve. Nada foi salvo.', 'warning');
-          state.activeSub = 'configure_promotions';
-          renderApp();
           loadModule('sales');
         });
         return;

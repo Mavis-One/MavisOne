@@ -10,6 +10,7 @@
   <body>
     <div id="app"></div>
     <script src="/modules/router.js"></script>
+    <script src="/modules/shared/module_workspace.js"></script>
     <script src="/modules/dashboard/index.js"></script>
     <script src="/modules/purchases/index.js"></script>
     <script src="/modules/purchases/subs/new_purchase.js"></script>
@@ -48,6 +49,12 @@
     <script src="/modules/finance/subs/emitir_nfe_focus.js"></script>
     <script src="/modules/finance/subs/extrato_open_finance.js"></script>
     <script src="/modules/finance/subs/bancos_conectados.js"></script>
+    <!-- Fiscal e Relatórios vêm DEPOIS de finance/subs/dashboard.js: é de lá que
+         saem financeStatCard, financeBuildChartSvg e financeFormatBRL. -->
+    <script src="/modules/fiscal/index.js"></script>
+    <script src="/modules/fiscal/subs/tabelas.js"></script>
+    <script src="/modules/reports/index.js"></script>
+    <script src="/modules/reports/subs/relatorios.js"></script>
     <script src="/modules/cadastros/shared.js"></script>
     <script src="/modules/cadastros/index.js"></script>
     <script src="/modules/cadastros/subs/consulta_cnpj.js"></script>

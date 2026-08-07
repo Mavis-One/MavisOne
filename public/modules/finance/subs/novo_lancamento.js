@@ -153,11 +153,29 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         <h3>Lançamento salvo com sucesso</h3>
         <p class="muted">${escapeHtml(entry.description || '')} — ${financeFormatBRL(entry.amountPrevisto)}</p>
         <div class="finance-actions-row">
-          <button type="button" id="financeSuccessView">Ver Lançamento</button>
+          ${state.financeReturnTo ? '<button type="button" id="financeSuccessBack">Voltar ao pedido</button>' : ''}
+          <button type="button" ${state.financeReturnTo ? 'class="secondary"' : ''} id="financeSuccessView">Ver Lançamento</button>
           <button type="button" class="secondary" id="financeSuccessNew">Novo Lançamento</button>
         </div>
       </div>
     `;
+    // Fecha o ciclo do fluxo: quem veio de "Aprovar Pedido" volta para o pedido,
+    // que é onde está a próxima etapa (Gerar NF-e). Sem isto o usuário teria que
+    // navegar de volta na mão, e é aí que se perde o fio.
+    document.getElementById('financeSuccessBack')?.addEventListener('click', async () => {
+      const volta = state.financeReturnTo;
+      state.financeReturnTo = null;
+      try {
+        const res = await api(`/api/sales/records/${volta.recordId}`);
+        if (res.record) state.salesDraft = { ...state.salesDraft, editRecord: res.record };
+      } catch (error) {
+        showToast('Não foi possível reabrir o pedido — abra pela lista de Pedidos e Orçamentos.', 'warning');
+      }
+      state.activeModule = volta.module;
+      state.activeSub = volta.sub;
+      loadModule(volta.module);
+    });
+
     document.getElementById('financeSuccessView')?.addEventListener('click', () => {
       state.financeOpenEntryId = entry.id;
       state.activeSub = 'lancamentos';

@@ -29,7 +29,11 @@ function lerMigracoes() {
         .map((m) => ({ tabela: m[1], coluna: m[2] }));
       const tabelas = [...sql.matchAll(/create\s+table\s+if\s+not\s+exists\s+(\w+)/gi)].map((m) => m[1]);
       const superada = /SUPERADA PELA/i.test(sql);
-      return { nome, colunas, tabelas, superada };
+      // Arquivo que só junta outras migrações para colar de uma vez no SQL
+      // Editor. Contá-lo somaria as mesmas colunas duas vezes e mandaria rodar
+      // o pacote E as partes — foi o que aconteceu na primeira versão disto.
+      const consolidado = /^--\s*CONSOLIDADO/im.test(sql);
+      return { nome, colunas, tabelas, superada, consolidado };
     });
 }
 
@@ -56,6 +60,10 @@ async function existeTabela(tabela) {
   console.log('\n=== MIGRAÇÕES vs. SUPABASE ===\n');
 
   for (const migracao of migracoes) {
+    if (migracao.consolidado) {
+      console.log(`  ${'pacote (não conta)'.padEnd(34)} ${migracao.nome}`);
+      continue;
+    }
     const faltando = [];
 
     for (const tabela of [...new Set(migracao.tabelas)]) {

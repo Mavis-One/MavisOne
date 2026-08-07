@@ -50,8 +50,22 @@ window.MavisSalesRecordActions = (function () {
         return true;
       },
       run: (ctx) => ehPedido(ctx)
-        ? ctx.mudarStatus('faturado', 'Faturar este pedido? O estoque será baixado.')
+        ? ctx.mudarStatus('faturado', 'Faturar este pedido? O estoque será baixado e as contas a receber serão geradas.')
         : ctx.mudarStatus('aprovado', 'Aprovar este orçamento?')
+    },
+    {
+      // Só aparece habilitada depois de faturar: NF-e é documento fiscal, e
+      // emitir a de um pedido que ainda pode mudar é pedir para cancelar nota.
+      id: 'gerar_nfe', label: 'Gerar NF-e', icon: I.note, tone: 'success',
+      enabled: (ctx) => {
+        if (!ctx.isEditing) return SALVE_ANTES;
+        if (!ehPedido(ctx)) return 'Só pedido gera NF-e — aprove o orçamento e fature o pedido primeiro.';
+        if (ctx.status === 'cancelado') return 'Pedido cancelado não emite NF-e.';
+        if (ctx.status !== 'faturado') return 'Fature o pedido antes de emitir a NF-e.';
+        if (ctx.nfeId) return 'Este pedido já tem NF-e emitida.';
+        return true;
+      },
+      run: (ctx) => ctx.gerarNfe()
     },
     {
       id: 'imprimir', label: 'Imprimir Pedido', icon: I.printer,

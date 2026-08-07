@@ -1,4 +1,6 @@
 -- =============================================================================
+-- CONSOLIDADO — este arquivo só junta as migrações abaixo para colar de uma
+--  vez; quem manda são os arquivos de fase, e o verificador ignora este aqui.
 --  MIGRAÇÕES PENDENTES — gerado por scripts/verificar-migracoes.js
 --
 --  Cole tudo de uma vez no SQL Editor do Supabase e execute.

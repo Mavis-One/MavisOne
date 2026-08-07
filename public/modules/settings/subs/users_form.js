@@ -1,7 +1,12 @@
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.settings = window.MavisSubscreenRegistry.settings || {};
 
-const SETTINGS_USER_MODULES = ['dashboard', 'sales', 'purchases', 'stock', 'finance', 'settings', 'cadastros'];
+// Módulos que um usuário pode receber acesso. Módulo novo tem que entrar aqui,
+// senão ele existe no menu mas nenhum admin consegue liberá-lo para ninguém.
+const SETTINGS_USER_MODULES = [
+  'dashboard', 'sales', 'purchases', 'stock', 'finance', 'fiscal', 'reports',
+  'fleet', 'crm', 'hr', 'pcp', 'contracts', 'cadastros', 'settings'
+];
 
 const SETTINGS_FISCAL_PERMISSIONS = [
   { value: 'visualizar', label: 'Visualizar' },

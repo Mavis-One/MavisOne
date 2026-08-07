@@ -1177,6 +1177,8 @@ function serializeSalesRecord(record, data) {
     // A tela precisa saber que o pedido já gerou as contas a receber — é o que
     // explica por que refaturar não cobra de novo.
     financeApplied: Boolean(record.financeApplied),
+    // Qual NF-e saiu deste pedido; vazio enquanto não houver emissão.
+    nfeId: record.nfeId || '',
     createdByName: record.createdByName || '',
     createdAt: record.createdAt || '',
     updatedAt: record.updatedAt || ''
@@ -1931,6 +1933,10 @@ function mapFocusStatusToNfeStatus(focusStatus) {
 // antes do prefixo genérico "/api/fiscal/nfe/" + GET, mesma ordem em que as
 // próprias rotas abaixo fazem o match.
 function resolveFiscalPermission(pathname, method) {
+  // Tabelas de referência: código oficial de CFOP/CST não é dado sensível da
+  // empresa, e quem emite nota precisa consultá-las.
+  if (pathname === '/api/fiscal/tabelas') return 'visualizar';
+
   if (pathname === '/api/fiscal/empresas') return method === 'GET' ? 'visualizar' : 'configurar';
   if (pathname.startsWith('/api/fiscal/empresas/')) return 'configurar';
 
@@ -2625,6 +2631,74 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // Módulo Relatórios — uma rota só, com os números de vendas, financeiro e
+  // estoque juntos.
+  //
+  // Rota PRÓPRIA, e não as de cada módulo, por causa da permissão: as rotas de
+  // Vendas e Estoque exigem acesso àqueles módulos, então um usuário que só
+  // deve ver relatórios ficaria trancado do lado de fora do próprio relatório.
+  // Aqui quem manda é o acesso a `reports`.
+  //
+  // Os cálculos são os MESMOS construtores dos painéis de cada módulo. Refazer
+  // a conta aqui daria dois números diferentes para a mesma pergunta — e o
+  // relatório seria o que perderia a confiança.
+  if (pathname === '/api/reports/overview' && req.method === 'GET') {
+    const data = loadData();
+    const user = await getCurrentUser(req);
+    if (!user) {
+      return sendJson(res, { error: 'Não autenticado' }, 401);
+    }
+    if (!user.allowedModules.includes('reports')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+
+    const granularity = url.searchParams.get('granularity') || 'month';
+    await syncCadastroData(data);
+    await syncSalesData(data);
+    await syncFinanceData(data);
+    const products = await db.getProducts();
+
+    const vendas = buildSalesDashboardSummary(data);
+    const financeiro = buildFinanceDashboardSummary(data, url.searchParams);
+    const lancamentos = (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry));
+
+    const comSaldo = products.map((produto) => {
+      const quantidade = Number(produto.stockQuantity || 0);
+      const custo = Number(produto.costPrice || 0);
+      return {
+        id: produto.id,
+        name: produto.name,
+        sku: produto.sku || '',
+        quantidade,
+        custo,
+        valor: Math.round(quantidade * custo * 100) / 100
+      };
+    });
+
+    return sendJson(res, {
+      granularity,
+      vendas: vendas.overview,
+      // O relatório mostra o total de cada vendedor; a lista de pedidos de cada
+      // um fica no Painel Vendedor, e mandá-la aqui inflaria a resposta à toa.
+      vendedores: vendas.bySeller.map(({ sellerId, sellerName, totalPedidos, valorTotal, ticketMedio }) => ({
+        sellerId, sellerName, totalPedidos, valorTotal, ticketMedio
+      })),
+      serieVendas: buildSalesChartSeries(data, granularity),
+      serieFinanceiro: buildFinanceChartSeries(lancamentos, granularity),
+      financeiro: {
+        contasAPagar: financeiro.contasAPagar,
+        contasAReceber: financeiro.contasAReceber
+      },
+      estoque: {
+        totalProdutos: comSaldo.length,
+        semSaldo: comSaldo.filter((p) => p.quantidade <= 0).length,
+        valorTotal: Math.round(comSaldo.reduce((soma, p) => soma + p.valor, 0) * 100) / 100,
+        // Os que mais prendem dinheiro: é a pergunta que o relatório responde.
+        maiores: comSaldo.filter((p) => p.valor > 0).sort((a, b) => b.valor - a.valor).slice(0, 15)
+      }
+    });
+  }
+
   if (pathname === '/api/sales/meta' && req.method === 'GET') {
     const data = loadData();
     await syncCadastroData(data);
@@ -2794,6 +2868,27 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Um pedido/orçamento pelo id. Existe para o fluxo Aprovar -> Financeiro ->
+  // voltar ao pedido: sem isto, a volta teria que baixar a lista inteira e
+  // procurar o registro nela.
+  if (pathname.startsWith('/api/sales/records/') && req.method === 'GET') {
+    try {
+      const data = loadData();
+      await syncCadastroData(data);
+      await syncSalesData(data);
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
+      const registro = [...(data.orders || []), ...(data.quotes || [])].find((entrada) => entrada.id === id);
+      if (!registro) return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      return sendJson(res, { record: serializeSalesRecord(registro, data) });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao carregar o registro' }, 500);
+    }
+  }
+
   if (pathname.startsWith('/api/sales/records/') && req.method === 'PUT') {
     try {
       const data = loadData();
@@ -2853,16 +2948,27 @@ const server = http.createServer(async (req, res) => {
       }
 
       updated = isOrder ? await db.updateOrder(id, updated) : await db.updateQuote(id, updated);
+      let efeitoFinanceiro = { criadas: 0, canceladas: 0, mantidas: 0 };
       if (current.type === 'order') {
         // Depois de gravar, pelo mesmo motivo da criação. O registro atualizado
         // é que carrega o total e as parcelas atuais.
-        await transitionOrderFinanceEffect(data, { record: updated, wasApplied: eraFaturado, willApply: seraFaturado, user });
+        efeitoFinanceiro = await transitionOrderFinanceEffect(data, { record: updated, wasApplied: eraFaturado, willApply: seraFaturado, user });
       }
       // updateOrder/updateQuote não tocam data.orders/data.quotes (já
       // gravaram no Supabase direto) — saveData aqui é só pra persistir
       // data.stockMovements, que transitionOrderStockEffect pode ter alterado.
       saveData(data);
-      return sendJson(res, { success: true, record: serializeSalesRecord(updated, data) });
+      // `financeiro` diz o que aconteceu com as contas a receber nesta gravação
+      // — é o que permite à tela levar o usuário direto ao lançamento gerado
+      // depois de aprovar, em vez de mandá-lo procurar no Financeiro.
+      const lancamentosDoPedido = (data.finance || [])
+        .filter((entry) => entry.referenceId === updated.id && entry.status !== 'cancelado')
+        .map((entry) => entry.id);
+      return sendJson(res, {
+        success: true,
+        record: serializeSalesRecord(updated, data),
+        financeiro: { ...efeitoFinanceiro, entryIds: lancamentosDoPedido }
+      });
     } catch (error) {
       return sendJson(res, { error: error.message || 'Erro ao atualizar pedido/orçamento' }, error.status || 400);
     }
@@ -3210,6 +3316,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
+      // Tabelas de referência (CFOP, CST, CSOSN, origem). São códigos oficiais,
+      // iguais para qualquer empresa — só leitura, sem parâmetro.
+      if (pathname === '/api/fiscal/tabelas' && req.method === 'GET') {
+        return sendJson(res, await fiscalDb.getTabelasFiscais());
+      }
+
       if (pathname === '/api/fiscal/empresas' && req.method === 'GET') {
         const empresas = await fiscalDb.getEmpresas();
         return sendJson(res, { empresas });
@@ -5145,7 +5257,24 @@ const server = http.createServer(async (req, res) => {
       // A NOTA É GRAVADA PRIMEIRO, e as parcelas depois: financial_entries.nfe_id
       // referencia nfes(id), então parcela de nota inexistente é recusada pelo
       // banco. O id também sai daqui — quem gera é createNfe.
+      // Nota gerada a partir de um pedido (fluxo Pedido -> Gerar NF-e). O
+      // pedido precisa existir e ainda não ter nota: emitir a segunda para o
+      // mesmo pedido duplicaria documento fiscal, que não se apaga depois.
+      const pedidoOrigem = body.orderId
+        ? (data.orders || []).find((entrada) => entrada.id === body.orderId)
+        : null;
+      if (body.orderId && !pedidoOrigem) {
+        return sendJson(res, { error: 'Pedido de origem não encontrado' }, 404);
+      }
+      if (pedidoOrigem?.nfeId) {
+        const jaEmitida = (data.nfes || []).find((n) => n.id === pedidoOrigem.nfeId);
+        if (jaEmitida && normalizeNfeStatus(jaEmitida.status) !== 'cancelada') {
+          return sendJson(res, { error: `Este pedido já tem a NF-e ${jaEmitida.number} emitida.` }, 409);
+        }
+      }
+
       const nfe = await db.createNfe({
+        orderId: body.orderId || '',
         number: body.number || String(Date.now()).slice(-8),
         series: body.series || '1',
         date: body.date || new Date().toISOString().slice(0, 10),
@@ -5189,6 +5318,14 @@ const server = http.createServer(async (req, res) => {
           createdByName: user.name
         });
         data.finance.push(entry);
+      }
+
+      // Fecha o vínculo do outro lado: o pedido passa a saber qual nota saiu
+      // dele. É isso que impede a segunda emissão e o que a tela usa para
+      // mostrar a NF-e sem varrer a tabela.
+      if (pedidoOrigem) {
+        pedidoOrigem.nfeId = nfe.id;
+        await db.updateOrder(pedidoOrigem.id, { ...pedidoOrigem, nfeId: nfe.id });
       }
 
       addFinanceAuditLog(data, {

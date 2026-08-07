@@ -33,8 +33,60 @@ window.MavisSubscreenRegistry.finance.nova_nfe_avulsa = async function renderNov
     showToast('Não foi possível carregar o diretório de clientes/fornecedores para busca.', 'warning');
   }
 
-  let selectedClientSupplierId = '';
-  let items = [{ code: '', description: '', quantity: 1, unitPrice: 0, cfop: '', ncm: '' }];
+  // CFOP da tabela oficial (Fase Q). Só as SAÍDAS: esta tela emite nota de
+  // venda, e oferecer CFOP de entrada aqui só criaria chance de errar.
+  // Sem a migração aplicada, a lista vem vazia e o campo segue como texto livre.
+  // A categoria vem embutida na descrição ("Vendas · Venda de ..."): a tabela
+  // não tem coluna para isso. Aqui ela volta a ser um campo, para virar o
+  // cabeçalho do grupo no select e deixar a opção só com o texto da lei.
+  function separarCategoria(descricao) {
+    const corte = String(descricao || '').indexOf(' · ');
+    if (corte === -1) return { categoria: '', texto: String(descricao || '') };
+    return { categoria: descricao.slice(0, corte), texto: descricao.slice(corte + 3) };
+  }
+
+  let cfopSaida = [];
+  try {
+    const tabelas = await api('/api/fiscal/tabelas');
+    cfopSaida = (tabelas.cfop || [])
+      .filter((c) => c.tipo === 'SAIDA')
+      // codigo é char(4) no banco: normaliza para o `selected` comparar direito.
+      .map((c) => ({ ...c, codigo: String(c.codigo).trim(), ...separarCategoria(c.descricao) }));
+  } catch (error) {
+    // Sem permissão fiscal ou tabela ausente: segue sem a lista.
+  }
+
+  // Da venda para o resto: a ordem que a pessoa provavelmente procura.
+  const ORDEM_CATEGORIA = ['Vendas', 'Devolução', 'Transferência', 'Remessas', 'Estoque', 'Outros'];
+
+  function cfopOptions(escolhido) {
+    const grupos = new Map();
+    cfopSaida.forEach((c) => {
+      if (!grupos.has(c.categoria)) grupos.set(c.categoria, []);
+      grupos.get(c.categoria).push(c);
+    });
+    const posicao = (nome) => {
+      const i = ORDEM_CATEGORIA.indexOf(nome);
+      return i === -1 ? ORDEM_CATEGORIA.length : i; // categoria nova cai no fim
+    };
+    return [...grupos.keys()].sort((a, b) => posicao(a) - posicao(b)).map((nome) => {
+      const opcoes = grupos.get(nome).map((c) => `
+        <option value="${escapeHtml(c.codigo)}" title="${escapeHtml(c.texto)}" ${escolhido === c.codigo ? 'selected' : ''}>${escapeHtml(c.codigo)} — ${escapeHtml(c.texto.slice(0, 55))}${c.texto.length > 55 ? '…' : ''}</option>`).join('');
+      // Sem categoria (banco antigo, antes do prefixo) as opções vão soltas.
+      return nome ? `<optgroup label="${escapeHtml(nome)}">${opcoes}</optgroup>` : opcoes;
+    }).join('');
+  }
+
+  // Chegou pelo fluxo Pedido -> Gerar NF-e: a tela nasce preenchida com o
+  // pedido em vez de em branco. Consumido UMA vez — sem o delete, voltar aqui
+  // depois reabriria a nota do pedido antigo.
+  const doPedido = state.nfeFromOrder || null;
+  if (doPedido) delete state.nfeFromOrder;
+
+  let selectedClientSupplierId = doPedido?.clientSupplierId || '';
+  let items = doPedido?.items?.length
+    ? doPedido.items.map((item) => ({ cfop: '', ncm: '', ...item }))
+    : [{ code: '', description: '', quantity: 1, unitPrice: 0, cfop: '', ncm: '' }];
   let paymentType = 'avista';
 
   function directoryOptions(filterText) {
@@ -60,7 +112,13 @@ window.MavisSubscreenRegistry.finance.nova_nfe_avulsa = async function renderNov
         <td><input data-field="description" data-index="${index}" value="${escapeHtml(item.description)}" required style="min-width:160px;" /></td>
         <td><input type="number" step="0.01" min="0" data-field="quantity" data-index="${index}" value="${item.quantity}" style="width:80px;" /></td>
         <td><input type="number" step="0.01" min="0" data-field="unitPrice" data-index="${index}" value="${item.unitPrice}" style="width:100px;" /></td>
-        <td><input data-field="cfop" data-index="${index}" value="${escapeHtml(item.cfop)}" placeholder="CFOP" style="width:80px;" /></td>
+        <td>${cfopSaida.length ? `
+          <select data-field="cfop" data-index="${index}" style="width:230px;" title="Código Fiscal de Operações e Prestações">
+            <option value="">CFOP…</option>
+            ${cfopOptions(item.cfop)}
+          </select>`
+          // Sem a tabela fiscal no banco, continua o campo livre que já existia.
+          : `<input data-field="cfop" data-index="${index}" value="${escapeHtml(item.cfop)}" placeholder="CFOP" style="width:80px;" />`}</td>
         <td><input data-field="ncm" data-index="${index}" value="${escapeHtml(item.ncm)}" placeholder="NCM" style="width:90px;" /></td>
         <td class="nfe-item-total" data-row-total="${index}">${financeFormatBRL(itemTotal(item))}</td>
         <td><button type="button" class="icon-button" data-remove-item="${index}" title="Remover item" ${items.length <= 1 ? 'disabled' : ''}>
@@ -84,8 +142,11 @@ window.MavisSubscreenRegistry.finance.nova_nfe_avulsa = async function renderNov
   }
 
   function attachItemsHandlers() {
-    document.querySelectorAll('#nfeItemsBody input').forEach((input) => {
-      input.addEventListener('input', () => {
+    // `select` entrou aqui junto com o CFOP da tabela oficial: caixa de texto
+    // avisa por 'input', lista de seleção por 'change'. Escutar só 'input'
+    // deixaria o CFOP escolhido sem chegar ao item.
+    document.querySelectorAll('#nfeItemsBody input, #nfeItemsBody select').forEach((input) => {
+      input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', () => {
         const index = Number(input.dataset.index);
         const field = input.dataset.field;
         items[index][field] = field === 'quantity' || field === 'unitPrice' ? Number(input.value || 0) : input.value;
@@ -189,10 +250,13 @@ window.MavisSubscreenRegistry.finance.nova_nfe_avulsa = async function renderNov
             <div id="nfeInstallmentsPreview" class="finance-due-list" style="margin-top: 10px;"></div>
 
             <label style="margin-top: 16px;">Chave de acesso (opcional)<input name="key" placeholder="Se houver emissão externa" /></label>
-            <label>Observações fiscais<textarea name="taxNotes" rows="3" placeholder="CFOP geral, natureza da operação, etc. (sem cálculo automático de tributos)"></textarea></label>
+            <label>Observações fiscais<textarea name="taxNotes" rows="3" placeholder="CFOP geral, natureza da operação, etc. (sem cálculo automático de tributos)">${escapeHtml(doPedido?.taxNotes || '')}</textarea></label>
           </div>
 
-          <button type="submit">Emitir NF-e</button>
+          <div class="finance-actions-row">
+            <button type="button" class="secondary" id="nfePreviewBtn">Pré Visualizar</button>
+            <button type="submit">Emitir NF-e</button>
+          </div>
         </form>
       </div>
     `;
@@ -264,6 +328,88 @@ window.MavisSubscreenRegistry.finance.nova_nfe_avulsa = async function renderNov
 
     attachItemsHandlers();
 
+    // Pré Visualizar — espelho da DANFE montado com o que está na tela, ANTES
+    // de emitir. Não consulta a SEFAZ (lá a DANFE só existe depois de
+    // autorizada) e por isso sai marcado como SEM VALOR FISCAL: serve para
+    // conferir forma e conteúdo, não para circular com a mercadoria.
+    document.getElementById('nfePreviewBtn')?.addEventListener('click', () => {
+      const form = document.getElementById('nfeForm');
+      if (!form) return;
+      const dados = new FormData(form);
+      const linhas = items.filter((item) => item.description);
+      if (!linhas.length) {
+        showToast('Adicione ao menos um item para pré-visualizar.', 'warning');
+        return;
+      }
+      const janela = window.open('', '_blank', 'noopener,noreferrer');
+      if (!janela) {
+        showToast('O navegador bloqueou a janela de pré-visualização.', 'warning');
+        return;
+      }
+      janela.opener = null;
+      const campo = (nome) => escapeHtml(String(dados.get(nome) || '-'));
+      const dinheiro = (v) => financeFormatBRL(Number(v || 0));
+      janela.document.write(`
+        <html><head><meta charset="utf-8" /><title>Espelho da NF-e</title><style>
+          body { font-family: Arial, sans-serif; padding: 20px; color: #10213a; }
+          .tarja { border: 2px dashed #b91c1c; color: #b91c1c; text-align: center;
+                   font-weight: 700; letter-spacing: .08em; padding: 8px; margin-bottom: 14px; }
+          .caixa { border: 1px solid #333; padding: 10px 12px; margin-bottom: 10px; }
+          .caixa h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+                      margin: 0 0 8px; color: #555; }
+          .grade { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 16px; font-size: 12px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+          th, td { border: 1px solid #999; padding: 5px 7px; font-size: 11px; text-align: left; }
+          th { background: #eee; }
+          .num { text-align: right; }
+          .totais { display: flex; justify-content: flex-end; gap: 28px; font-size: 13px; margin-top: 10px; }
+          .totais strong { font-size: 16px; }
+          @media print { .tarja { -webkit-print-color-adjust: exact; } }
+        </style></head><body>
+          <div class="tarja">ESPELHO — SEM VALOR FISCAL — CONFERÊNCIA ANTES DA EMISSÃO</div>
+
+          <div class="caixa">
+            <h2>Destinatário / Remetente</h2>
+            <div class="grade">
+              <div><strong>Nome:</strong> ${campo('clientName')}</div>
+              <div><strong>CPF/CNPJ:</strong> ${campo('clientDocument')}</div>
+              <div><strong>Inscrição estadual:</strong> ${campo('clientStateRegistration')}</div>
+              <div><strong>Endereço:</strong> ${campo('clientAddress')}</div>
+              <div><strong>Município:</strong> ${campo('clientCity')}</div>
+              <div><strong>UF:</strong> ${campo('clientState')}</div>
+            </div>
+          </div>
+
+          <div class="caixa">
+            <h2>Dados dos produtos / serviços</h2>
+            <table>
+              <thead><tr><th>Código</th><th>Descrição</th><th>CFOP</th><th>NCM</th>
+                <th class="num">Qtd.</th><th class="num">Valor unit.</th><th class="num">Valor total</th></tr></thead>
+              <tbody>${linhas.map((item) => `<tr>
+                <td>${escapeHtml(item.code || '-')}</td>
+                <td>${escapeHtml(item.description)}</td>
+                <td>${escapeHtml(item.cfop || '-')}</td>
+                <td>${escapeHtml(item.ncm || '-')}</td>
+                <td class="num">${Number(item.quantity || 0)}</td>
+                <td class="num">${dinheiro(item.unitPrice)}</td>
+                <td class="num">${dinheiro(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</td>
+              </tr>`).join('')}</tbody>
+            </table>
+            <div class="totais">
+              <div>Itens: ${linhas.length}</div>
+              <div><strong>Total: ${dinheiro(grandTotal())}</strong></div>
+            </div>
+          </div>
+
+          <div class="caixa">
+            <h2>Dados adicionais</h2>
+            <div style="font-size:12px; white-space: pre-wrap;">${campo('taxNotes')}</div>
+          </div>
+        </body></html>`);
+      janela.document.close();
+      janela.focus();
+    });
+
     document.getElementById('nfeAddItemBtn')?.addEventListener('click', () => {
       items.push({ code: '', description: '', quantity: 1, unitPrice: 0, cfop: '', ncm: '' });
       refreshItemsTable();
@@ -307,6 +453,9 @@ window.MavisSubscreenRegistry.finance.nova_nfe_avulsa = async function renderNov
           cfop: item.cfop,
           ncm: item.ncm
         })),
+        // Amarra a nota ao pedido que a originou (e o servidor fecha o outro
+        // lado, gravando a nota no pedido).
+        orderId: doPedido?.orderId || '',
         taxNotes: formData.get('taxNotes'),
         key: formData.get('key'),
         paymentType,

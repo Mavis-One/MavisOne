@@ -1,14 +1,18 @@
 :root {
   color-scheme: light;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --bg: #f5f7fb;
+  --bg: #f2f7f4;
   --panel: #ffffff;
-  --panel-alt: #f8fafc;
-  --panel-alt-hover: #e2e8f0;
-  --border: #dfe4ee;
-  --primary: #2563eb;
+  --panel-alt: #f4faf6;
+  --panel-alt-hover: #dcece2;
+  --border: #d3e6da;
+  /* Verde mais aberto que ainda aceita texto branco em cima (4.9:1) E aparece
+     como borda no fundo claro (4.5:1). Neon puro não faz nem um nem outro:
+     #00d95f com texto branco dá 2.2:1. Por isso o brilho do tema claro vem das
+     variáveis --neon-* abaixo, usadas só onde não há texto. */
+  --primary: #00833c;
   --text: #10213a;
-  --muted: #64748b;
+  --muted: #5c7386;
   --input-bg: #ffffff;
   --shadow: rgba(15, 23, 42, 0.06);
   --danger-text: #b91c1c;
@@ -20,24 +24,68 @@
   --warning: #f59e0b;
   --warning-text: #b45309;
   --text-rgb: 16, 33, 58;
+  /* Cor do texto/ícone que fica EM CIMA do --primary. No claro o primário é
+     escuro, então branco; no escuro ele é neon e exige texto quase preto. */
+  --on-primary: #ffffff;
+
+  /* ---- Cores da marca ---------------------------------------------------
+     São do logo, não do tema: o verde e o rosa continuam os mesmos no claro e
+     no escuro, porque marca não muda de cor conforme a preferência do usuário.
+     As versões "escrita" existem só para quando o nome cai sobre fundo CLARO
+     (o card de login usa --panel, que é branco no tema claro): o verde neon
+     puro sobre branco dá 1,8:1 e vira um borrão. */
+  --marca-verde: #76ea00;
+  --marca-rosa: #ff0a78;
+  --marca-verde-escrita: #308800;
+  --marca-rosa-escrita: #c10062;
+
+  /* Acentos neon do tema CLARO — só decoração: borda, faixa e halo. Nunca
+     recebem texto, então podem ser saturados sem quebrar legibilidade.
+     São versões mais fundas que as do tema escuro: contra o branco, o verde
+     elétrico simplesmente some. */
+  --neon-rgb: 0, 190, 83;
+  --neon-ciano: #00a8bd;
+  --neon-azul: #2f7dfa;
+  --neon-roxo: #8b3df5;
+  --neon-magenta: #d81ecf;
 }
 
+/* ============================================================================
+   TEMA ESCURO — NEON
+   Fundo quase preto para as cores saturadas "acenderem": num cinza-azulado
+   claro o mesmo verde vira pastel. Os halos usam --neon-rgb, então trocar o
+   verde de acento aqui repinta brilho, foco e bordas do sistema inteiro.
+   ============================================================================ */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0b1220;
-  --panel: #141b2d;
-  --panel-alt: #1a2338;
-  --panel-alt-hover: #232c42;
-  --border: #29334a;
-  --primary: #3b82f6;
-  --text: #e5e9f0;
-  --muted: #94a3b8;
-  --input-bg: #101828;
-  --shadow: rgba(0, 0, 0, 0.35);
-  --danger-text: #f87171;
-  --switch-off: #475569;
-  --warning-text: #fbbf24;
-  --text-rgb: 229, 233, 240;
+  --bg: #04070a;
+  --panel: #0a1016;
+  --panel-alt: #0f1720;
+  --panel-alt-hover: #18242f;
+  --border: #1d2b33;
+  --primary: #3bff6d;
+  --on-primary: #04140a;
+  --text: #e8f7ee;
+  --muted: #7f97a5;
+  --input-bg: #080e13;
+  --shadow: rgba(0, 0, 0, 0.55);
+  --success: #3bff6d;
+  --success-hover: #24e457;
+  --danger: #ff3b5c;
+  --danger-hover: #e62348;
+  --danger-text: #ff6b83;
+  --switch-off: #33454f;
+  --warning: #ffb020;
+  --warning-text: #ffc857;
+  --text-rgb: 232, 247, 238;
+
+  /* Paleta de acentos. Cada série de gráfico e cada faixa de painel sai daqui,
+     para nenhuma tela inventar um roxo ou ciano próprio. */
+  --neon-rgb: 59, 255, 109;
+  --neon-ciano: #22e9ff;
+  --neon-azul: #3b9dff;
+  --neon-roxo: #a855f7;
+  --neon-magenta: #ff3df0;
 }
 
 * { box-sizing: border-box; }
@@ -70,14 +118,112 @@ button, input, select { font: inherit; }
   padding: 28px;
 }
 
-.logo-auth {
-  width: 152px;
-  height: auto;
-  max-height: 152px;
+/* ---------------------------------------------------------------------------
+   Abertura pós-login — o logo vem de longe e passa pela câmera.
+   Roda POR CIMA enquanto o dashboard carrega atrás: cobre o tempo de carga em
+   vez de somar tempo. z-index acima do toast (2000), que é o maior do app.
+   --------------------------------------------------------------------------- */
+.intro-abertura {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  cursor: pointer;
+  /* Fundo escuro nos dois temas, de propósito: a abertura é um momento à
+     parte, e o logo tem mais presença contra o escuro. */
+  background: radial-gradient(circle at 50% 45%, #13203a 0%, #070d1a 55%, #02040a 100%);
+  animation: intro-cortina 1750ms ease-in forwards;
+}
+
+.intro-logo {
+  position: relative;
+  /* Mais larga que a arte antiga: sem o "SAL INFINITY" embaixo, a marca é um
+     raio deitado, e num quadrado ela apareceria pequena demais. */
+  width: min(560px, 78vw);
+  transform-origin: center;
+  animation: intro-aproxima 1750ms cubic-bezier(0.22, 0.68, 0.24, 1) forwards;
+}
+
+/* Brilho que nasce atrás do logo e se abre junto — dá a sensação de luz
+   chegando com ele, sem precisar de imagem extra. */
+.intro-brilho {
+  position: absolute;
+  width: min(520px, 90vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  /* Verde neon fixo, não var(--primary): a cortina é escura NOS DOIS temas
+     (ver .intro-abertura acima), então aqui vale sempre o verde do tema
+     escuro. Amarrado ao primário, o brilho ficaria fraco no tema claro, onde
+     o acento é um verde fechado feito para ler sobre branco.
+     Também evita color-mix: se o navegador não suportasse, a declaração
+     inteira seria descartada e o brilho sumiria. */
+  background: radial-gradient(circle,
+    rgba(59, 255, 109, 0.55) 0%,
+    rgba(59, 255, 109, 0.18) 40%,
+    transparent 70%);
+  animation: intro-brilho 1750ms ease-out forwards;
+}
+
+@keyframes intro-aproxima {
+  0%   { transform: scale(0.24); opacity: 0; filter: blur(16px); }
+  40%  { transform: scale(1);    opacity: 1; filter: blur(0); }
+  56%  { transform: scale(0.95); }
+  72%  { transform: scale(1.06); opacity: 1; filter: blur(0); }
+  100% { transform: scale(2.9);  opacity: 0; filter: blur(4px); }
+}
+
+@keyframes intro-brilho {
+  0%   { transform: scale(0.2); opacity: 0; }
+  45%  { opacity: 0.6; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* A cortina só some no fim: até lá o logo faz todo o percurso sobre ela. */
+@keyframes intro-cortina {
+  0%, 76% { opacity: 1; }
+  100%    { opacity: 0; }
+}
+
+/* Quem pediu menos movimento no sistema recebe só um clarão curto — nada de
+   zoom, que é justamente o que incomoda em enjoo de movimento. */
+.intro-abertura.is-reduzida { animation: intro-cortina-curta 500ms ease-out forwards; }
+.intro-abertura.is-reduzida .intro-logo { animation: intro-surge 500ms ease-out forwards; }
+.intro-abertura.is-reduzida .intro-brilho { animation: none; opacity: 0.35; }
+
+@keyframes intro-cortina-curta { 0%, 55% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes intro-surge { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------------------------------------------------------------------------
+   MARCA (o raio duplo rosa/verde)
+   O arquivo assets/logo.png é a arte completa: o raio EM CIMA e "SAL INFINITY"
+   embaixo, num quadrado de 1563x1563 com muita margem. A marca sozinha é só a
+   parte de cima, então em vez de pedir um arquivo novo o recorte é feito aqui,
+   por background-position — a arte usada é a original, sem redesenho.
+
+   Os quatro números saem da caixa do raio dentro do PNG (x 395..1170,
+   y 530..805). Se o recorte cortar o raio ou deixar aparecer um traço do
+   texto, é só mexer em --marca-x / --marca-y, sem tocar em mais nada.
+   --------------------------------------------------------------------------- */
+.logo-marca {
+  --marca-zoom: 201.7%;
+  --marca-x: 50.13%;
+  --marca-y: 41.15%;
   display: block;
+  aspect-ratio: 775 / 275;
+  background-image: url('/assets/logo.png');
+  background-repeat: no-repeat;
+  background-size: var(--marca-zoom) auto;
+  background-position: var(--marca-x) var(--marca-y);
+  /* A arte original é mais apagada que o neon do sistema; a saturação puxa o
+     rosa e o verde para o mesmo tom vivo do resto da interface. */
+  filter: saturate(1.55);
+}
+
+.logo-auth {
+  width: min(260px, 70%);
   margin: 0 auto 24px;
-  object-fit: contain;
-  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.08));
 }
 
 .auth-card h1 { margin-top: 0; }
@@ -146,11 +292,11 @@ button {
   border: none;
   border-radius: 10px;
   background: var(--primary);
-  color: white;
+  color: var(--on-primary);
   cursor: pointer;
 }
 button.secondary { background: var(--panel-alt-hover); color: var(--text); }
-button.success { background: var(--success); color: #fff; }
+button.success { background: var(--success); color: var(--on-primary); }
 button.success:hover { background: var(--success-hover); }
 
 #logoutBtn {
@@ -191,23 +337,43 @@ button.success:hover { background: var(--success-hover); }
 .sidebar:hover .sidebar-header, .sidebar.expanded .sidebar-header { border-bottom-color: rgba(255, 255, 255, 0.15); }
 
 .logo-sidebar {
-  width: 58px;
-  height: auto;
-  max-height: 58px;
-  object-fit: contain;
-  transition: width 350ms cubic-bezier(0.4, 0, 0.2, 1), height 350ms cubic-bezier(0.4, 0, 0.2, 1), filter 350ms cubic-bezier(0.4, 0, 0.2, 1);
-  filter: brightness(1) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.2));
+  width: 56px;
+  transition: width 350ms cubic-bezier(0.4, 0, 0.2, 1), filter 350ms cubic-bezier(0.4, 0, 0.2, 1);
+  filter: saturate(1.55) drop-shadow(0 0 8px rgba(118, 234, 0, 0.28));
 }
-.sidebar:hover .logo-sidebar, .sidebar.expanded .logo-sidebar { 
-  width: 72px;
-  max-height: 72px;
-  filter: brightness(1.05) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
+.sidebar:hover .logo-sidebar, .sidebar.expanded .logo-sidebar {
+  width: 132px;
+  filter: saturate(1.65) drop-shadow(0 0 12px rgba(118, 234, 0, 0.4));
 }
 
 .sidebar h2 { margin-top: 0; white-space: nowrap; overflow: hidden; }
 .brand { display:inline-flex; align-items:center; gap:8px; }
 .brand .brand-full { display: none; }
 .brand .brand-short { display: inline-block; font-weight:700; }
+
+/* "Mavis" verde + "ONE" rosa, as duas cores do raio. O brilho é text-shadow na
+   própria cor: dá o aceso do neon sem precisar de imagem.
+   A cor vem de --brand-verde/--brand-rosa com fallback na cor de marca, para
+   um contexto de fundo claro poder trocar só a variável (ver o card de login
+   no tema claro, mais abaixo). */
+.brand-mavis {
+  color: var(--brand-verde, var(--marca-verde));
+  text-shadow: 0 0 14px color-mix(in srgb, var(--brand-verde, var(--marca-verde)) 55%, transparent);
+}
+.brand-one {
+  color: var(--brand-rosa, var(--marca-rosa));
+  text-shadow: 0 0 14px color-mix(in srgb, var(--brand-rosa, var(--marca-rosa)) 55%, transparent);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+/* O card de login usa --panel, que é BRANCO no tema claro. Só ali a marca
+   troca para as versões fechadas; a barra lateral e a abertura são escuras nos
+   dois temas e ficam sempre com o neon. */
+:root:not([data-theme="dark"]) .auth-card {
+  --brand-verde: var(--marca-verde-escrita);
+  --brand-rosa: var(--marca-rosa-escrita);
+}
 .sidebar:hover .brand .brand-full, .sidebar.expanded .brand .brand-full { display: inline-block; }
 .sidebar:hover .brand .brand-short, .sidebar.expanded .brand .brand-short { display: none; }
 
@@ -232,7 +398,7 @@ button.success:hover { background: var(--success-hover); }
 .nav-item .icon { display:inline-flex; width:36px; height:36px; align-items:center; justify-content:center; border-radius:8px; background: rgba(255,255,255,0.06); font-weight:700; }
 .nav-item .text { white-space: nowrap; overflow: hidden; transition: opacity 200ms ease, transform 350ms ease; opacity: 0; transform: translateX(-6px); }
 .sidebar:hover .nav-item .text, .sidebar.expanded .nav-item .text { opacity: 1; transform: none; }
-.nav-item.active .icon { background: var(--primary); }
+.nav-item.active .icon { background: var(--primary); color: var(--on-primary); }
 .submenu { margin-left: 48px; margin-top: 6px; display: none; flex-direction: column; gap: 6px; }
 .sub-item { background: transparent; color: #cbd5e1; padding: 8px 10px; border-radius: 8px; text-align: left; cursor: pointer; flex: 1; }
 .sub-item.active { background: rgba(255,255,255,0.06); color: #fff; }
@@ -313,8 +479,8 @@ button.success:hover { background: var(--success-hover); }
   flex: 1;
 }
 .secondary-nav-item.active {
-  background: rgba(37, 99, 235, 0.2);
-  border-color: rgba(37, 99, 235, 0.35);
+  background: color-mix(in srgb, var(--primary) 20%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 35%, transparent);
   color: #fff;
 }
 .secondary-nav-item-row .sidebar-pin-btn {
@@ -341,8 +507,8 @@ button.success:hover { background: var(--success-hover); }
 
 .cadastro-switch.active {
   background: var(--primary);
-  color: #fff;
-  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--on-primary);
+  border-color: var(--primary);
 }
 
 .cadastros-shell {
@@ -783,7 +949,7 @@ button.success:hover { background: var(--success-hover); }
   transition: box-shadow 150ms ease;
 }
 .dashboard-module-balloon.active {
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 15%, transparent);
 }
 .dashboard-module-title {
   display: flex;
@@ -841,7 +1007,7 @@ button.success:hover { background: var(--success-hover); }
   transition: border-color 150ms ease, background 150ms ease;
 }
 .dashboard-tab-open:hover { border-color: var(--primary); background: var(--panel-alt-hover); }
-.dashboard-tab-row.active .dashboard-tab-open { border-color: var(--primary); background: rgba(37, 99, 235, 0.08); }
+.dashboard-tab-row.active .dashboard-tab-open { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, transparent); }
 
 .dashboard-pin-btn {
   display: inline-flex;
@@ -887,7 +1053,7 @@ button.success:hover { background: var(--success-hover); }
 .table-actions th:last-child, .table-actions td:last-child { text-align: right; width: 120px; }
 .cadastro-row-clickable { cursor: pointer; }
 .cadastro-row-clickable:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.08)); }
-.active-row { background: var(--hover-bg, rgba(59, 130, 246, 0.08)); }
+.active-row { background: var(--hover-bg, color-mix(in srgb, var(--primary) 10%, transparent)); }
 .delete-user { background: transparent; border: 1px solid rgba(239,68,68,0.18); color: var(--danger); padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 .delete-user:hover { background: rgba(239,68,68,0.06); }
 .muted { color: var(--muted); }
@@ -1040,7 +1206,7 @@ button.success:hover { background: var(--success-hover); }
   font-size: 0.88rem;
 }
 .finance-pill:hover { background: var(--panel-alt-hover); }
-.finance-pill.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.finance-pill.active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .finance-pill-sm { padding: 6px 12px; font-size: 0.82rem; }
 
 .finance-custom-range { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
@@ -1154,6 +1320,10 @@ button.success:hover { background: var(--success-hover); }
 .finance-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
 .finance-legend-receita { background: var(--success); }
 .finance-legend-despesa { background: var(--danger); }
+/* Mesmas cores das linhas .finance-chart-line-blue / -purple, para legenda e
+   gráfico nunca discordarem — inclusive quando o tema escuro as acende. */
+.finance-legend-pedidos { background: #2563eb; }
+.finance-legend-orcamentos { background: #8b5cf6; }
 .finance-legend-line { display: inline-block; width: 16px; height: 2px; background: var(--primary); margin-right: 6px; vertical-align: middle; border-top: 2px dashed var(--primary); background: none; }
 
 .finance-chart-wrap { width: 100%; overflow-x: auto; }
@@ -1197,7 +1367,7 @@ button.success:hover { background: var(--success-hover); }
 .finance-badge-success { background: rgba(22, 163, 74, 0.14); color: var(--success); border-color: rgba(22, 163, 74, 0.3); }
 .finance-badge-warning { background: rgba(245, 158, 11, 0.16); color: var(--warning-text); border-color: rgba(245, 158, 11, 0.34); }
 .finance-badge-danger { background: rgba(239, 68, 68, 0.14); color: var(--danger-text); border-color: rgba(239, 68, 68, 0.3); }
-.finance-badge-info { background: rgba(59, 130, 246, 0.16); color: var(--primary); border-color: rgba(59, 130, 246, 0.32); }
+.finance-badge-info { background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary); border-color: color-mix(in srgb, var(--primary) 32%, transparent); }
 .finance-badge-muted { background: var(--panel-alt-hover); color: var(--muted); border-color: var(--border); }
 
 .finance-coming-soon { text-align: center; padding: 48px 20px; display: grid; justify-items: center; gap: 10px; }
@@ -1323,7 +1493,7 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 .actions-menu-toggle { display: inline-flex; align-items: center; gap: 6px; }
 
 .actions-save {
-  background: var(--success); color: #fff; border: 0;
+  background: var(--success); color: var(--on-primary); border: 0;
   padding: 10px 22px; border-radius: 8px; font-weight: 600; cursor: pointer;
 }
 .actions-save:hover { background: var(--success-hover); }
@@ -1596,4 +1766,448 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   .sales-impostos-grid { grid-template-columns: 1fr; }
   .sales-tab { padding: 8px 10px; font-size: 12px; }
   .sales-totals-resumo { flex-direction: column; align-items: stretch; }
+}
+
+/* ============================================================================
+   ÁREA DE TRABALHO DO MÓDULO (modules/shared/module_workspace.js)
+   Blocos clicáveis com todas as telas do módulo. Herdam as variáveis de tema,
+   então acompanham claro e escuro sem regra própria para cada um.
+   ============================================================================ */
+.workspace { display: grid; gap: 16px; }
+
+.workspace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+.workspace-head h3 { margin: 0 0 4px; }
+.workspace-head p { margin: 0; }
+
+.workspace-filter {
+  flex: 0 1 280px;
+  min-width: 200px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+.workspace-filter:focus { outline: none; border-color: var(--primary); }
+
+.workspace-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+/* É um <button> — as regras abaixo derrubam o estilo global de botão
+   (fundo azul, texto branco, sem borda), que aqui não serve. */
+.workspace-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  text-align: left;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.workspace-tile:hover {
+  border-color: var(--primary);
+  box-shadow: 0 6px 18px var(--shadow);
+  transform: translateY(-2px);
+}
+.workspace-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.workspace-tile-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--panel-alt);
+  color: var(--muted);
+}
+.workspace-tile-text { display: grid; gap: 3px; min-width: 0; }
+.workspace-tile-text strong { font-size: 0.95rem; font-weight: 600; }
+.workspace-tile-text span { font-size: 0.8rem; color: var(--muted); line-height: 1.35; }
+
+/* Cor do ícone pela natureza da tela: quem cria registro se destaca de quem
+   só consulta, para a diferença aparecer antes da leitura do rótulo. */
+.workspace-tile-criar .workspace-tile-icon { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
+.workspace-tile-painel .workspace-tile-icon { background: rgba(22, 163, 74, 0.12); color: var(--success); }
+.workspace-tile-documento .workspace-tile-icon { background: rgba(139, 92, 246, 0.14); color: #8b5cf6; }
+.workspace-tile-importar .workspace-tile-icon { background: rgba(245, 158, 11, 0.14); color: var(--warning-text); }
+
+.workspace-empty { margin: 4px 2px; }
+
+@media (max-width: 640px) {
+  .workspace-grid { grid-template-columns: 1fr; }
+  .workspace-filter { flex: 1 1 100%; }
+}
+
+/* Movimento só para quem não pediu para reduzi-lo. */
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tile { transition: none; }
+  .workspace-tile:hover { transform: none; }
+}
+
+/* ============================================================================
+   CAMADA NEON — só no tema escuro
+   ============================================================================
+   Tudo aqui é aparência: cor, brilho e borda. Nenhuma regra mexe em layout,
+   tamanho ou posição, então o comportamento das telas não muda.
+
+   Fica num bloco separado, e não espalhado nas regras originais, por dois
+   motivos: o tema claro nunca é alcançado por engano, e desligar o visual
+   inteiro é apagar este trecho.
+
+   Os halos saem de --neon-rgb: trocar o verde de acento lá em cima repinta
+   foco, borda e brilho do sistema todo.
+   ============================================================================ */
+
+/* Brilho de fundo: dois focos de luz bem fracos tiram o preto chapado.
+   `fixed` para a luz não escorrer junto com a rolagem. */
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(1100px 560px at 12% -12%, rgba(var(--neon-rgb), 0.07), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(168, 85, 247, 0.06), transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* --- Menu lateral ------------------------------------------------------- */
+:root[data-theme="dark"] .sidebar {
+  background: linear-gradient(180deg, #070d11 0%, #04070a 100%);
+  border-right: 1px solid var(--border);
+}
+:root[data-theme="dark"] .nav-item:hover .icon {
+  background: rgba(var(--neon-rgb), 0.10);
+  color: var(--primary);
+}
+:root[data-theme="dark"] .nav-item.active { color: var(--primary); }
+:root[data-theme="dark"] .nav-item.active .icon {
+  box-shadow: 0 0 14px rgba(var(--neon-rgb), 0.5);
+}
+:root[data-theme="dark"] .sub-item.active,
+:root[data-theme="dark"] .secondary-nav-item.active {
+  background: rgba(var(--neon-rgb), 0.12);
+  color: var(--primary);
+}
+
+/* --- Superfícies -------------------------------------------------------- */
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] .main-card,
+:root[data-theme="dark"] .auth-card {
+  box-shadow: 0 0 0 1px rgba(var(--neon-rgb), 0.05), 0 12px 34px rgba(0, 0, 0, 0.5);
+}
+
+/* Os balões do Dashboard Geral: contorno neon, que é a marca visual da tela. */
+:root[data-theme="dark"] .dashboard-favorites-hero,
+:root[data-theme="dark"] .dashboard-module-balloon,
+:root[data-theme="dark"] .dashboard-tabs-balloon {
+  border-color: rgba(var(--neon-rgb), 0.42);
+  box-shadow: 0 0 20px rgba(var(--neon-rgb), 0.10), inset 0 0 26px rgba(var(--neon-rgb), 0.04);
+}
+:root[data-theme="dark"] .dashboard-favorites-hero h3 {
+  color: var(--primary);
+  text-shadow: 0 0 14px rgba(var(--neon-rgb), 0.45);
+}
+:root[data-theme="dark"] .dashboard-module-avatar {
+  border-color: rgba(var(--neon-rgb), 0.5);
+  color: var(--primary);
+  box-shadow: 0 0 12px rgba(var(--neon-rgb), 0.18);
+}
+:root[data-theme="dark"] .dashboard-module-balloon:hover {
+  border-color: rgba(var(--neon-rgb), 0.8);
+  box-shadow: 0 0 26px rgba(var(--neon-rgb), 0.2);
+}
+:root[data-theme="dark"] .dashboard-module-balloon.active {
+  box-shadow: 0 0 0 1px var(--primary), 0 0 28px rgba(var(--neon-rgb), 0.26);
+}
+
+/* --- Gráficos ----------------------------------------------------------- */
+/* A faixa superior atravessa o espectro (verde, azul, roxo, magenta).
+   `background-image` + `background-color` separados de propósito: o atalho
+   `background` apagaria a cor do painel e deixaria o card transparente. */
+:root[data-theme="dark"] .finance-panel-stripe-chart {
+  background-image: linear-gradient(90deg, var(--primary), var(--neon-azul) 35%, var(--neon-roxo) 70%, var(--neon-magenta));
+  background-color: var(--panel);
+  box-shadow: 0 -1px 20px rgba(var(--neon-rgb), 0.10), 0 12px 34px rgba(0, 0, 0, 0.5);
+}
+:root[data-theme="dark"] .finance-panel-stripe-due {
+  background-image: linear-gradient(90deg, var(--warning), var(--neon-magenta));
+  background-color: var(--panel);
+}
+:root[data-theme="dark"] .finance-panel-stripe-entries {
+  background-image: linear-gradient(90deg, var(--neon-roxo), var(--neon-ciano));
+  background-color: var(--panel);
+}
+
+/* Linha acesa: o traço fino sozinho some no fundo preto. */
+:root[data-theme="dark"] .finance-chart-line-receita { filter: drop-shadow(0 0 6px rgba(var(--neon-rgb), 0.55)); }
+:root[data-theme="dark"] .finance-chart-line-despesa { filter: drop-shadow(0 0 6px rgba(255, 59, 92, 0.5)); }
+/* Saldo era --primary. Com o primário virando verde ele ficaria idêntico à
+   linha de receitas: duas séries da mesma cor no mesmo gráfico. Vai para o
+   ciano, o único acento ainda não usado ali. */
+:root[data-theme="dark"] .finance-chart-line-saldo {
+  stroke: var(--neon-ciano);
+  filter: drop-shadow(0 0 6px rgba(34, 233, 255, 0.45));
+}
+:root[data-theme="dark"] .finance-legend-line { border-top-color: var(--neon-ciano); }
+:root[data-theme="dark"] .finance-chart-line-blue {
+  stroke: var(--neon-azul);
+  filter: drop-shadow(0 0 6px rgba(59, 157, 255, 0.5));
+}
+:root[data-theme="dark"] .finance-chart-line-purple {
+  stroke: var(--neon-roxo);
+  filter: drop-shadow(0 0 6px rgba(168, 85, 247, 0.5));
+}
+:root[data-theme="dark"] .finance-legend-dot { box-shadow: 0 0 8px currentColor; }
+:root[data-theme="dark"] .finance-chart-dot { fill: var(--bg); }
+
+/* --- Controles ---------------------------------------------------------- */
+:root[data-theme="dark"] .finance-pill.active {
+  box-shadow: 0 0 18px rgba(var(--neon-rgb), 0.35);
+}
+:root[data-theme="dark"] input:focus,
+:root[data-theme="dark"] textarea:focus,
+:root[data-theme="dark"] select:focus,
+:root[data-theme="dark"] .workspace-filter:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(var(--neon-rgb), 0.14);
+  outline: none;
+}
+:root[data-theme="dark"] .icon-btn {
+  border: 1px solid var(--border);
+  transition: border-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
+}
+:root[data-theme="dark"] .icon-btn:hover {
+  border-color: rgba(var(--neon-rgb), 0.6);
+  color: var(--primary);
+  box-shadow: 0 0 16px rgba(var(--neon-rgb), 0.2);
+}
+
+/* --- Área de trabalho dos módulos --------------------------------------- */
+:root[data-theme="dark"] .workspace-tile {
+  border-color: rgba(var(--neon-rgb), 0.16);
+  background-image: linear-gradient(180deg, rgba(var(--neon-rgb), 0.035), transparent 60%);
+}
+:root[data-theme="dark"] .workspace-tile:hover {
+  border-color: rgba(var(--neon-rgb), 0.75);
+  box-shadow: 0 0 26px rgba(var(--neon-rgb), 0.18);
+}
+/* Uma cor por natureza de tela, agora saindo da paleta neon. Criar é verde
+   (a cor de ação do sistema); as demais se distinguem à distância. */
+:root[data-theme="dark"] .workspace-tile-criar .workspace-tile-icon {
+  background: rgba(var(--neon-rgb), 0.14);
+  color: var(--primary);
+  box-shadow: 0 0 14px rgba(var(--neon-rgb), 0.25);
+}
+:root[data-theme="dark"] .workspace-tile-painel .workspace-tile-icon {
+  background: rgba(34, 233, 255, 0.13);
+  color: var(--neon-ciano);
+  box-shadow: 0 0 14px rgba(34, 233, 255, 0.2);
+}
+:root[data-theme="dark"] .workspace-tile-documento .workspace-tile-icon {
+  background: rgba(168, 85, 247, 0.15);
+  color: var(--neon-roxo);
+  box-shadow: 0 0 14px rgba(168, 85, 247, 0.22);
+}
+:root[data-theme="dark"] .workspace-tile-importar .workspace-tile-icon {
+  background: rgba(255, 176, 32, 0.14);
+  color: var(--warning);
+  box-shadow: 0 0 14px rgba(255, 176, 32, 0.2);
+}
+:root[data-theme="dark"] .workspace-tile-lista .workspace-tile-icon {
+  background: rgba(var(--text-rgb), 0.06);
+  color: var(--muted);
+}
+
+/* --- Tabelas ------------------------------------------------------------ */
+:root[data-theme="dark"] .table th {
+  color: var(--muted);
+  border-bottom-color: rgba(var(--neon-rgb), 0.18);
+}
+:root[data-theme="dark"] .cadastro-row-clickable:hover {
+  background: rgba(var(--neon-rgb), 0.05);
+}
+:root[data-theme="dark"] .finance-legend-pedidos { background: var(--neon-azul); }
+:root[data-theme="dark"] .finance-legend-orcamentos { background: var(--neon-roxo); }
+
+/* ============================================================================
+   CAMADA NEON — TEMA CLARO
+   ============================================================================
+   Mesma ideia da camada escura, com uma diferença que a física impõe: sobre o
+   branco, o verde elétrico do tema escuro praticamente desaparece (1,75:1).
+   Então aqui "neon" é cor saturada + halo colorido, não o mesmo verde aceso.
+
+   O escopo é :not([data-theme="dark"]) e não [data-theme="light"] de propósito:
+   entre o carregamento da página e o applyTheme() o atributo ainda não existe,
+   e com "light" fixo a tela abriria alguns quadros sem estilo nenhum.
+
+   Igual à camada escura: só cor, borda e brilho. Nada de layout.
+   ============================================================================ */
+
+:root:not([data-theme="dark"]) body {
+  background:
+    radial-gradient(1100px 560px at 12% -12%, rgba(var(--neon-rgb), 0.10), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(139, 61, 245, 0.07), transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* --- Menu lateral -------------------------------------------------------
+   A barra lateral é escura nos dois temas, então aqui o neon pode ser o verde
+   aceso mesmo — ele está sobre preto, não sobre branco. */
+:root:not([data-theme="dark"]) .nav-item:hover .icon {
+  background: rgba(0, 217, 95, 0.16);
+  color: #3bff6d;
+}
+:root:not([data-theme="dark"]) .nav-item.active .icon {
+  box-shadow: 0 0 14px rgba(0, 217, 95, 0.45);
+}
+
+/* --- Superfícies -------------------------------------------------------- */
+:root:not([data-theme="dark"]) .panel,
+:root:not([data-theme="dark"]) .card,
+:root:not([data-theme="dark"]) .main-card {
+  border: 1px solid rgba(var(--neon-rgb), 0.16);
+  box-shadow: 0 1px 2px rgba(16, 33, 58, 0.04), 0 8px 24px rgba(var(--neon-rgb), 0.07);
+}
+
+/* Balões do Dashboard Geral: o contorno verde é a assinatura da tela, e no
+   claro ele precisa de mais opacidade para ler tão forte quanto no escuro. */
+:root:not([data-theme="dark"]) .dashboard-favorites-hero,
+:root:not([data-theme="dark"]) .dashboard-module-balloon,
+:root:not([data-theme="dark"]) .dashboard-tabs-balloon {
+  border-color: rgba(var(--neon-rgb), 0.55);
+  box-shadow: 0 0 18px rgba(var(--neon-rgb), 0.14), inset 0 0 24px rgba(var(--neon-rgb), 0.05);
+}
+:root:not([data-theme="dark"]) .dashboard-favorites-hero h3 { color: var(--primary); }
+:root:not([data-theme="dark"]) .dashboard-module-avatar {
+  border-color: rgba(var(--neon-rgb), 0.6);
+  color: var(--primary);
+  background: rgba(var(--neon-rgb), 0.07);
+}
+:root:not([data-theme="dark"]) .dashboard-module-balloon:hover {
+  border-color: rgba(var(--neon-rgb), 0.9);
+  box-shadow: 0 0 24px rgba(var(--neon-rgb), 0.22);
+}
+
+/* --- Gráficos ----------------------------------------------------------- */
+:root:not([data-theme="dark"]) .finance-panel-stripe-chart {
+  background-image: linear-gradient(90deg, rgb(var(--neon-rgb)), var(--neon-azul) 35%, var(--neon-roxo) 70%, var(--neon-magenta));
+  background-color: var(--panel);
+}
+:root:not([data-theme="dark"]) .finance-panel-stripe-due {
+  background-image: linear-gradient(90deg, var(--warning), var(--neon-magenta));
+  background-color: var(--panel);
+}
+:root:not([data-theme="dark"]) .finance-panel-stripe-entries {
+  background-image: linear-gradient(90deg, var(--neon-roxo), var(--neon-ciano));
+  background-color: var(--panel);
+}
+
+/* Mesmo choque de cor do tema escuro: a linha de Saldo usava --primary, que
+   agora é verde e ficaria igual à de Receitas. Vai para o ciano nos dois temas. */
+:root:not([data-theme="dark"]) .finance-chart-line-saldo { stroke: var(--neon-ciano); }
+:root:not([data-theme="dark"]) .finance-legend-line { border-top-color: var(--neon-ciano); }
+:root:not([data-theme="dark"]) .finance-chart-line-receita { filter: drop-shadow(0 1px 3px rgba(var(--neon-rgb), 0.4)); }
+:root:not([data-theme="dark"]) .finance-chart-line-despesa { filter: drop-shadow(0 1px 3px rgba(239, 68, 68, 0.35)); }
+:root:not([data-theme="dark"]) .finance-chart-line-purple { stroke: var(--neon-roxo); }
+
+/* --- Controles ---------------------------------------------------------- */
+:root:not([data-theme="dark"]) .finance-pill.active {
+  box-shadow: 0 0 14px rgba(var(--neon-rgb), 0.3);
+}
+:root:not([data-theme="dark"]) input:focus,
+:root:not([data-theme="dark"]) textarea:focus,
+:root:not([data-theme="dark"]) select:focus,
+:root:not([data-theme="dark"]) .workspace-filter:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(var(--neon-rgb), 0.18);
+  outline: none;
+}
+:root:not([data-theme="dark"]) .icon-btn:hover {
+  box-shadow: 0 0 14px rgba(var(--neon-rgb), 0.22);
+}
+
+/* --- Área de trabalho dos módulos --------------------------------------- */
+:root:not([data-theme="dark"]) .workspace-tile {
+  border-color: rgba(var(--neon-rgb), 0.22);
+  background-image: linear-gradient(180deg, rgba(var(--neon-rgb), 0.045), transparent 60%);
+}
+:root:not([data-theme="dark"]) .workspace-tile:hover {
+  border-color: rgba(var(--neon-rgb), 0.85);
+  box-shadow: 0 0 22px rgba(var(--neon-rgb), 0.2);
+}
+:root:not([data-theme="dark"]) .workspace-tile-painel .workspace-tile-icon {
+  background: rgba(0, 168, 189, 0.13);
+  color: var(--neon-ciano);
+}
+:root:not([data-theme="dark"]) .workspace-tile-documento .workspace-tile-icon {
+  background: rgba(139, 61, 245, 0.13);
+  color: var(--neon-roxo);
+}
+
+/* --- Tabelas ------------------------------------------------------------ */
+:root:not([data-theme="dark"]) .table th {
+  border-bottom-color: rgba(var(--neon-rgb), 0.3);
+}
+:root:not([data-theme="dark"]) .cadastro-row-clickable:hover {
+  background: rgba(var(--neon-rgb), 0.06);
+}
+
+/* ---------------------------------------------------------------------------
+   TELAS AINDA NÃO CONSTRUÍDAS
+   Bloco apagado e etiqueta "em preparo": a diferença tem que ser visível ANTES
+   do clique, senão a pessoa entra esperando um cadastro e encontra um aviso.
+   --------------------------------------------------------------------------- */
+.workspace-tile.is-pendente { opacity: 0.62; }
+.workspace-tile.is-pendente:hover { opacity: 1; }
+
+.workspace-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+.workspace-pendente { display: grid; gap: 10px; justify-items: start; max-width: 640px; }
+.workspace-pendente h3 { margin: 0; }
+.workspace-pendente p { margin: 0; line-height: 1.5; }
+.workspace-pendente code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  font-size: 0.85em;
+}
+.workspace-pendente-icone { color: var(--muted); }
+.workspace-pendente button { margin-top: 6px; }
+
+:root[data-theme="dark"] .workspace-tile-pendente .workspace-tile-icon {
+  background: rgba(var(--text-rgb), 0.06);
+  color: var(--muted);
+}
+:root:not([data-theme="dark"]) .workspace-tile-pendente .workspace-tile-icon {
+  background: rgba(16, 33, 58, 0.05);
+  color: var(--muted);
 }
