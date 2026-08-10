@@ -14,6 +14,9 @@
   --text: #10213a;
   --muted: #5c7386;
   --input-bg: #ffffff;
+  /* Fundo das opções de status que o sistema atribui (select da Nova Venda) */
+  --status-sistema-bg: #ccd9e2;
+  --status-sistema-text: #2c4152;
   --shadow: rgba(15, 23, 42, 0.06);
   --danger-text: #b91c1c;
   --success: #16a34a;
@@ -68,6 +71,10 @@
   --text: #e8f7ee;
   --muted: #7f97a5;
   --input-bg: #080e13;
+  /* No escuro o "sombreamento" é para cima: o fundo do select já é quase preto,
+     então destacar significa clarear a faixa, não escurecê-la. */
+  --status-sistema-bg: #1b2a35;
+  --status-sistema-text: #b9cddb;
   --shadow: rgba(0, 0, 0, 0.55);
   --success: #3bff6d;
   --success-hover: #24e457;
@@ -840,7 +847,10 @@ button.success:hover { background: var(--success-hover); }
     width: 100%;
     justify-content: flex-start;
   }
-  .dashboard-pin-btn {
+  /* Só o alfinete do balão do MÓDULO, que aqui vira coluna e precisa do
+     alfinete embaixo. Sem o escopo, esta regra alcançava também o alfinete das
+     linhas de tela, desfazendo a centralização em tela estreita. */
+  .dashboard-module-balloon > .dashboard-pin-btn {
     align-self: flex-end;
   }
 }
@@ -988,8 +998,11 @@ button.success:hover { background: var(--success-hover); }
   background: var(--panel);
   overflow: hidden;
 }
-.dashboard-tabs-column { display: grid; gap: 10px; padding: 14px 16px 16px; }
-.dashboard-tab-row { display: flex; align-items: stretch; gap: 10px; }
+.dashboard-tabs-column { display: grid; gap: 10px; padding: 16px; }
+/* `center`, não `stretch`: o alfinete tem altura fixa (32px) e a linha tem 52px.
+   Com `stretch` o navegador não estica quem já declarou altura — ele encosta o
+   item no topo, e o alfinete ficava 10px acima do centro do rótulo. */
+.dashboard-tab-row { display: flex; align-items: center; gap: 10px; }
 .dashboard-tab-open {
   flex: 1;
   min-height: 52px;
@@ -1058,6 +1071,24 @@ button.success:hover { background: var(--success-hover); }
 .delete-user:hover { background: rgba(239,68,68,0.06); }
 .muted { color: var(--muted); }
 .row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+/* Campo Status da tela Nova Venda.
+   O <select> pede, por conta própria, a largura da MAIOR opção — e
+   "Pedido Aprovado Sem Faturamento" é larga o bastante para estourar a coluna
+   de 1fr da .row e empurrar a grade inteira para fora do painel. Item de grid
+   nasce com min-width:auto (= min-content), então limitar a largura sozinho não
+   basta: o min-width:0 é o que autoriza a coluna a encolher. */
+.sales-status-field { min-width: 0; }
+.sales-status-field > select { width: 100%; min-width: 0; }
+
+/* As opções que o sistema atribui (todas menos Pedido e Orçamento) vêm
+   desabilitadas. O cinza-claro padrão do navegador quase some no fundo branco
+   da lista; este sombreamento mais escuro é o que as deixa legíveis e, ao mesmo
+   tempo, separadas das duas que se escolhe à mão. */
+.sales-status-select option:disabled {
+  background-color: var(--status-sistema-bg);
+  color: var(--status-sistema-text);
+}
 .checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
 .checkbox-grid label { display: flex; gap: 6px; align-items: center; font-weight: 400; }
 
@@ -1381,6 +1412,19 @@ button.success:hover { background: var(--success-hover); }
 
 .modal-lg { width: min(94%, 720px); max-height: 88vh; overflow-y: auto; }
 
+/* Escopo (somente leitura) de uma movimentação de estoque */
+tr[data-detail] { cursor: pointer; }
+.stock-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 16px;
+}
+.stock-detail-grid > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.stock-detail-grid .muted { font-size: 12px; }
+.stock-detail-grid strong { font-weight: 600; word-break: break-word; }
+.modal textarea[readonly] { background: var(--bg); cursor: default; resize: vertical; }
+
 .finance-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .finance-modal-head h3 { margin: 0 0 4px; }
 .finance-modal-info-grid {
@@ -1545,6 +1589,182 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   .actions-menu { left: auto; right: 0; }
 }
 
+/* Primeira linha da aba Dados. Colunas explícitas em vez do auto-fit padrão da
+   .row: Cliente/Fornecedor e Empresa guardam razão social, que é texto longo, e
+   ficam com o dobro da largura de Origem da Venda e Categoria — assim os dois
+   ocupam a faixa que sobrou quando o botão "+ nova empresa" saiu da linha, em
+   vez de deixá-la em branco. Abaixo de 900px vira uma coluna só. */
+.sales-row-cliente { grid-template-columns: 2fr 2fr 1fr 1fr; }
+@media (max-width: 900px) {
+  .sales-row-cliente { grid-template-columns: 1fr; }
+}
+
+/* Respiro entre a linha de campos e o bloco seguinte (Produtos). O espaçamento
+   vinha por acidente das legendas que ficavam no meio; sem elas os dois
+   encostavam. Escopado ao formulário de venda para não mexer nas telas de
+   Cadastros, que usam a mesma .cadastro-section com outro ritmo. */
+#salesRecordForm .cadastro-section { margin-top: 18px; }
+
+/* ---------------------------------------------------------------------------
+   Atalhos da barra superior
+   ---------------------------------------------------------------------------
+   Botão + menu suspenso. O menu é `position: absolute` sobre a barra, e não um
+   painel empurrando o conteúdo: abrir e fechar não pode mexer no layout da
+   tela que está atrás — é justamente ela que o usuário não quer perder.       */
+.atalhos-wrap { position: relative; }
+
+.atalhos-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.atalhos-btn:hover { background: var(--panel-alt-hover); }
+.atalhos-btn[aria-expanded="true"] { border-color: var(--primary); }
+
+.atalhos-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1100;
+  min-width: 260px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 14px 34px var(--shadow);
+}
+
+/* SEM ISTO O MENU NUNCA FECHA.
+   O atributo `hidden` só esconde porque a folha de estilo do navegador diz
+   `[hidden] { display: none }` — e QUALQUER regra de autor com `display`
+   vence essa, por vir de uma folha de maior precedência. Como .atalhos-menu
+   declara `display: flex`, o `hidden` do HTML virava enfeite: o menu ficava
+   aberto em cima de todas as telas, e `menu.hidden = true` no JS não mudava
+   nada na tela.
+   Vale para todo elemento que troca de estado por `hidden` e tem `display`
+   próprio. */
+.atalhos-menu[hidden] { display: none; }
+
+.atalho-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font-size: 14px;
+}
+.atalho-item:hover { background: var(--panel-alt-hover); }
+
+/* Criar é destacado; ir para uma lista é texto simples. A diferença de peso é
+   o que diz, sem legenda, qual abre janela e qual troca de tela. */
+.atalho-item-criar { font-weight: 700; }
+.atalho-item-criar .atalho-item-icone { color: var(--primary); display: inline-flex; }
+.atalho-item-ir { color: var(--muted); font-weight: 400; padding-left: 12px; }
+.atalho-item-ir:hover { color: var(--text); }
+
+.atalhos-separador {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+/* --- janela flutuante ------------------------------------------------------ */
+.atalho-modal { width: min(94%, 640px); }
+.atalho-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.atalho-modal-head h3 { margin: 0; }
+.atalho-modal-head p { margin: 0; font-size: 11px; letter-spacing: 0.08em; }
+.atalho-modal-icone { color: var(--primary); display: inline-flex; }
+.atalho-fechar { margin-left: auto; }
+
+.atalho-form { display: flex; flex-direction: column; gap: 14px; }
+.atalho-linha {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.atalho-campo { display: grid; gap: 5px; font-size: 12px; font-weight: 600; }
+.atalho-campo input, .atalho-campo select, .atalho-campo textarea { font-weight: 400; }
+.atalho-campo small { font-weight: 400; }
+
+.atalho-acoes { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+
+.atalho-erro {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel));
+  color: var(--danger-text);
+  font-size: 13px;
+}
+:root[data-theme="dark"] .atalho-erro { color: var(--text); }
+
+@media (max-width: 720px) {
+  /* Em tela estreita o rótulo some e sobra a seta — a barra superior já está
+     disputada por tema, configurações e sair. */
+  .atalhos-btn { font-size: 0; gap: 0; padding: 8px 10px; }
+  .atalhos-btn svg { width: 16px; height: 16px; }
+  .atalhos-menu { min-width: 220px; }
+}
+
+/* ---------------------------------------------------------------------------
+   Tabela de produtos do Pedido/Orçamento
+   ---------------------------------------------------------------------------
+   Quatro números por linha: saldo e preço cadastrado (vêm do Estoque, só
+   leitura) e quantidade e valor unitário (editáveis). O fundo acinzentado é o
+   que diz, sem legenda, quais células o usuário pode mexer e quais não.       */
+.sales-items-table .sales-item-readonly {
+  background: var(--panel-alt);
+  color: var(--text);
+  white-space: nowrap;
+  text-align: right;
+}
+.sales-items-table th:nth-child(2),
+.sales-items-table th:nth-child(3),
+.sales-items-table th:nth-child(6) { text-align: right; }
+
+/* Saldo que não cobre a quantidade pedida. Não bloqueia nada — o pedido pode
+   ser salvo assim — mas faturar vai ser recusado pelo servidor, e descobrir
+   isso só na hora de aprovar é o que faz perder a venda. */
+.sales-items-table .sales-item-readonly.is-alerta {
+  background: color-mix(in srgb, var(--danger) 16%, var(--panel));
+  color: var(--danger-text);
+  font-weight: 700;
+}
+.sales-itens-alerta {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel));
+  color: var(--danger-text);
+  font-size: 13px;
+}
+:root[data-theme="dark"] .sales-itens-alerta { color: var(--text); }
+
 /* ---------------------------------------------------------------------------
    Painel de totais do Pedido/Orçamento
    --------------------------------------------------------------------------- */
@@ -1658,6 +1878,16 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
+}
+/* O nome do módulo é o que o admin reconhece; o slug fica junto, discreto,
+   porque é ele que aparece na Auditoria de Acesso e nas mensagens de erro —
+   sem isso não dá para ligar "fleet.excluir" do log a esta tela. */
+.rbac-recurso-slug {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  opacity: 0.55;
+  font-size: 11px;
 }
 .rbac-permissao {
   display: grid;
@@ -2210,4 +2440,223 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 :root:not([data-theme="dark"]) .workspace-tile-pendente .workspace-tile-icon {
   background: rgba(16, 33, 58, 0.05);
   color: var(--muted);
+}
+
+/* ---------------------------------------------------------------------------
+   FIXAR NO BLOCO + FAIXA "MAIS USADAS"
+   O alfinete some até o mouse passar (ou o teclado focar) — 18 blocos com 18
+   alfinetes acesos viram ruído. Fixado fica sempre visível, senão o usuário
+   não teria como saber o que já marcou.
+   --------------------------------------------------------------------------- */
+.workspace-tile { position: relative; }
+
+.workspace-fixar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease, color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.workspace-tile:hover .workspace-fixar,
+.workspace-fixar:focus-visible,
+.workspace-fixar.active { opacity: 1; }
+.workspace-fixar:hover {
+  color: var(--primary);
+  border-color: var(--border);
+  background: var(--panel-alt);
+}
+.workspace-fixar.active { color: var(--warning); }
+.workspace-fixar:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* Espaço para o alfinete não cair em cima do texto do bloco. */
+.workspace-tile-text { padding-right: 24px; }
+
+.workspace-favoritos { display: grid; gap: 10px; margin-bottom: 0; }
+.workspace-favoritos h4 { margin: 0; font-size: 0.9rem; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }
+.workspace-favoritos-lista { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.workspace-atalho {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+.workspace-atalho:hover { border-color: var(--primary); transform: translateY(-1px); }
+.workspace-atalho:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.workspace-atalho-icone { display: inline-flex; color: var(--primary); }
+
+:root[data-theme="dark"] .workspace-favoritos {
+  border: 1px solid rgba(var(--neon-rgb), 0.28);
+  box-shadow: 0 0 18px rgba(var(--neon-rgb), 0.08);
+}
+:root[data-theme="dark"] .workspace-atalho:hover { box-shadow: 0 0 16px rgba(var(--neon-rgb), 0.22); }
+:root:not([data-theme="dark"]) .workspace-favoritos { border-color: rgba(var(--neon-rgb), 0.35); }
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-atalho, .workspace-fixar { transition: none; }
+  .workspace-atalho:hover { transform: none; }
+}
+
+/* ==========================================================================
+   TELAS DE DOCUMENTO FISCAL (eventos, inutilização, logs)
+   Só tokens de tema — nada de cor fixa, senão o tema claro quebra.
+   ========================================================================== */
+
+/* Seletor de estabelecimento no cabeçalho: só aparece com mais de um. */
+.fiscal-estab-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 260px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* Aviso de ação irreversível. Tom de alerta, não de erro: nada deu errado
+   ainda — é o que vai acontecer que precisa ser lido. */
+.fiscal-aviso {
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning) 10%, var(--panel));
+  border-left-width: 3px;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0 16px;
+}
+.fiscal-aviso p { margin: 0; line-height: 1.5; }
+
+/* Resumo do que a confirmação vai fazer, montado enquanto a pessoa digita.
+   Repetir a faixa em número é o que faz alguém notar o dígito errado. */
+.fiscal-resumo {
+  border: 1px dashed color-mix(in srgb, var(--primary) 50%, var(--border));
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 4px 0 0;
+  background: color-mix(in srgb, var(--primary) 7%, var(--panel));
+}
+
+/* Texto longo em célula (justificativa, mensagem da SEFAZ): corta na tabela
+   e mostra inteiro no title, em vez de esticar a coluna. */
+.fiscal-justificativa {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Linha de detalhe aberta abaixo do registro. */
+.fiscal-detalhe {
+  display: grid;
+  gap: 12px;
+  padding: 12px 4px 4px;
+}
+@media (min-width: 900px) {
+  .fiscal-detalhe { grid-template-columns: 1fr 1fr; }
+  .fiscal-detalhe > .muted:first-child { grid-column: 1 / -1; }
+}
+
+.fiscal-json-bloco h5 {
+  margin: 0 0 6px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* JSON cru: o que resolve uma rejeição da SEFAZ. Rolagem própria para um
+   payload grande não empurrar a página inteira para o lado. */
+.fiscal-json {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-alt);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* --------------------------------------------------------------------------
+   Regras Fiscais
+   -------------------------------------------------------------------------- */
+
+/* Simulador: fica recolhido porque não é o uso principal da tela — abre quando
+   alguém precisa entender por que a emissão escolheu (ou não achou) uma regra. */
+.fiscal-simulador > summary {
+  cursor: pointer;
+  padding: 2px 0;
+  font-size: 0.95rem;
+}
+.fiscal-simulador[open] > summary { margin-bottom: 10px; }
+
+/* Resultado da simulação: verde quando achou regra, âmbar quando não achou.
+   Não achar não é erro do sistema — é a informação de que falta cadastro. */
+.fiscal-simulacao {
+  border-left: 4px solid var(--success);
+}
+.fiscal-simulacao.is-vazia {
+  border-left-color: var(--warning);
+}
+.fiscal-simulacao h4 { margin: 0 0 10px; }
+.fiscal-simulacao-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 18px;
+  margin: 0;
+}
+.fiscal-simulacao-grid dt { color: var(--muted); font-size: 12px; }
+.fiscal-simulacao-grid dd { margin: 2px 0 0; font-weight: 600; }
+
+/* Regra fora da vigência continua na lista (reemitir nota antiga depende
+   dela), mas recuada para não ser confundida com regra em uso. */
+.fiscal-regra-vencida > td { opacity: 0.55; }
+
+.fiscal-regra-erro {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel));
+  color: var(--danger-text);
+  font-size: 13px;
+}
+:root[data-theme="dark"] .fiscal-regra-erro { color: var(--text); }
+
+@media (max-width: 720px) {
+  .fiscal-estab-select { min-width: 0; width: 100%; }
+  .fiscal-justificativa { max-width: 160px; }
+}
+
+/* Aviso de ambiente de homologação. Fica no fluxo da tela, não como toast:
+   é uma condição permanente do sistema, e um toast some antes de alguém
+   emitir a nota. */
+.fiscal-aviso-homologacao {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
 }

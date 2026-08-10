@@ -10,6 +10,62 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
   let page = 1;
   const limit = 20;
 
+  const eyeIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+
+  // Escopo da movimentação: só leitura. Movimentação registrada não se edita,
+  // se estiver errada o caminho é estornar e lançar de novo.
+  function closeDetailModal() {
+    document.getElementById('movDetailModal')?.remove();
+    document.removeEventListener('keydown', onDetailKeydown);
+  }
+
+  function onDetailKeydown(event) {
+    if (event.key === 'Escape') closeDetailModal();
+  }
+
+  function detailItem(label, value) {
+    return `<div><span class="muted">${S.escape(label)}</span><strong>${value}</strong></div>`;
+  }
+
+  function openDetailModal(movement) {
+    if (!movement) return;
+    closeDetailModal();
+    const overlay = document.createElement('div');
+    overlay.id = 'movDetailModal';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal modal-lg">
+        <h3>Escopo da movimentação ${S.escape(movement.code)}</h3>
+        <div class="modal-body">
+          <div class="stock-detail-grid">
+            ${detailItem('Data', S.formatDate(movement.date))}
+            ${detailItem('Tipo', S.badge(movement.type === 'entrada' ? 'Entrada' : 'Saída', movement.type === 'entrada' ? 'success' : 'danger'))}
+            ${detailItem('Produto', `${S.escape(movement.productName)}${movement.productSku ? ` <span class="muted">(${S.escape(movement.productSku)})</span>` : ''}`)}
+            ${detailItem('Depósito', S.escape(movement.depositName || '-'))}
+            ${detailItem('Quantidade', `${movement.type === 'entrada' ? '+' : '-'}${S.formatQty(movement.quantity)}`)}
+            ${detailItem('Custo unitário', S.formatBRL(movement.unitCost))}
+            ${detailItem('Custo total', S.formatBRL(movement.totalCost))}
+            ${detailItem('Categoria', S.escape(movement.categoryName || '-'))}
+            ${detailItem('Documento', S.escape(movement.document || '-'))}
+            ${detailItem('Origem', movement.transferId ? S.badge('Transferência', 'info') : S.badge(movement.origin === 'saldo-inicial' ? 'Saldo inicial' : 'Manual', 'muted'))}
+            ${detailItem('Registrado por', S.escape(movement.createdByName || '-'))}
+          </div>
+          <label>Observação
+            <textarea rows="4" readonly placeholder="Sem observação registrada.">${S.escape(movement.note || '')}</textarea>
+          </label>
+          <p class="muted" style="margin:8px 0 0;">Somente leitura. Para corrigir, estorne a movimentação e lance novamente.</p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-muted" id="movDetailClose">Fechar</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (event) => { if (event.target === overlay) closeDetailModal(); });
+    document.getElementById('movDetailClose')?.addEventListener('click', closeDetailModal);
+    document.addEventListener('keydown', onDetailKeydown);
+  }
+
   async function fetchMovements() {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
     Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
@@ -22,6 +78,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
   }
 
   async function render() {
+    closeDetailModal();
     const result = await fetchMovements();
     const movements = result.movements || [];
     const totalPages = Math.max(1, Math.ceil((result.total || 0) / limit));
@@ -70,7 +127,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
             </thead>
             <tbody>
               ${movements.length === 0 ? S.emptyRow(11, 'Nenhuma movimentação encontrada.') : movements.map((movement) => `
-                <tr>
+                <tr data-detail="${movement.id}" title="Ver detalhes da movimentação">
                   <td>${S.escape(movement.code)}</td>
                   <td>${S.formatDate(movement.date)}</td>
                   <td>${S.badge(movement.type === 'entrada' ? 'Entrada' : 'Saída', movement.type === 'entrada' ? 'success' : 'danger')}</td>
@@ -82,6 +139,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
                   <td>${S.escape(movement.document || '-')}</td>
                   <td>${movement.transferId ? S.badge('Transferência', 'info') : S.badge(movement.origin === 'saldo-inicial' ? 'Saldo inicial' : 'Manual', 'muted')}</td>
                   <td>
+                    <button type="button" class="icon-button" data-detail-btn="${movement.id}" title="Ver observação">${eyeIcon}</button>
                     <button type="button" class="icon-button" data-delete="${movement.id}" title="Estornar" ${movement.transferId ? 'disabled' : ''}>${S.trashIcon}</button>
                   </td>
                 </tr>
@@ -118,6 +176,19 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
 
     document.getElementById('movPrev')?.addEventListener('click', () => { page = Math.max(1, page - 1); render(); });
     document.getElementById('movNext')?.addEventListener('click', () => { page = Math.min(totalPages, page + 1); render(); });
+
+    content.querySelectorAll('[data-detail]').forEach((row) => {
+      row.addEventListener('click', (event) => {
+        if (event.target.closest('button')) return; // deixa os botões de ação passarem
+        openDetailModal(movements.find((m) => m.id === row.dataset.detail));
+      });
+    });
+
+    content.querySelectorAll('[data-detail-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openDetailModal(movements.find((m) => m.id === btn.dataset.detailBtn));
+      });
+    });
 
     content.querySelectorAll('[data-delete]').forEach((btn) => {
       btn.addEventListener('click', async () => {

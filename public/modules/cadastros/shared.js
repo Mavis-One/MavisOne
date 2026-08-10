@@ -138,12 +138,19 @@ window.MavisCadastros = window.MavisCadastros || {};
     `).join('');
   };
 
-  C.loadMeta = async function loadMeta(api, showToast) {
+  const META_VAZIA = { directory: [], products: [], deposits: [], bankAccounts: [], paymentMethods: [], saleStatuses: [], companies: [], users: [] };
+
+  // `endpoint` null pula a busca: as telas dos módulos novos (Frota, RH, PCP,
+  // Contratos) não precisam dos dados de apoio de Cadastros, e pedi-los faria
+  // quem tem acesso só àquele módulo tomar um aviso de erro na cara — a rota
+  // /api/cadastros/meta exige permissão de Cadastros.
+  C.loadMeta = async function loadMeta(api, showToast, endpoint = '/api/cadastros/meta') {
+    if (!endpoint) return { ...META_VAZIA };
     try {
-      return await api('/api/cadastros/meta');
+      return await api(endpoint);
     } catch (error) {
       if (showToast) showToast('Não foi possível carregar os dados de apoio dos cadastros.', 'warning');
-      return { directory: [], products: [], deposits: [], bankAccounts: [], paymentMethods: [], saleStatuses: [], companies: [], users: [] };
+      return { ...META_VAZIA };
     }
   };
 
@@ -160,12 +167,17 @@ window.MavisCadastros = window.MavisCadastros || {};
   // Fábrica: tela de LISTA
   // --------------------------------------------------------------------------
   // config: { title, subtitle, endpoint, listKey, newSub, newLabel, editStateKey,
-  //           columns: [{label, render(item, meta)}],
-  //           filters: [{name, label, type, options}], searchFields }
+  //           columns: [{label, render(item, meta, todosOsItens)}],
+  //           filters: [{name, label, type, options}], searchFields,
+  //           rowActions: [{icon, title, tone, run(item, ctx)}] }
   C.makeListScreen = function makeListScreen(config) {
     return async function renderList(ctx) {
       const { content, api, showToast, state, loadModule, confirmModal } = ctx;
-      const meta = await C.loadMeta(api, showToast);
+      // As fábricas nasceram dentro de Cadastros, mas hoje Frota, RH, PCP e
+      // Contratos usam as mesmas. Sem isto, salvar um veículo devolvia o
+      // usuário para a tela de Cadastros.
+      const modulo = config.module || 'cadastros';
+      const meta = await C.loadMeta(api, showToast, config.metaEndpoint === undefined ? '/api/cadastros/meta' : config.metaEndpoint);
 
       state.cadastroDraft = state.cadastroDraft || {};
       const filterKey = `${config.listKey}Filters`;
@@ -200,6 +212,10 @@ window.MavisCadastros = window.MavisCadastros || {};
       function render() {
         const list = visibleItems();
         const colCount = config.columns.length + 1;
+        // O render de coluna recebe a lista INTEIRA (`items`), não a filtrada:
+        // há coluna derivada que depende das outras linhas — consumo entre dois
+        // abastecimentos, por exemplo. Com a filtrada, o número mudaria ao
+        // filtrar, o que seria simplesmente errado.
         content.innerHTML = `
           <div class="panel cadastros-shell">
             ${C.pageHead(config.title, config.subtitle, '', `
@@ -246,8 +262,11 @@ window.MavisCadastros = window.MavisCadastros || {};
                         ? `<tr><td colspan="${colCount}" class="muted" style="text-align:center; padding:24px;">${items.length === 0 ? 'Nenhum registro cadastrado ainda.' : 'Nenhum registro para este filtro.'}</td></tr>`
                         : list.map((item) => `
                           <tr>
-                            ${config.columns.map((c) => `<td>${c.render(item, meta)}</td>`).join('')}
+                            ${config.columns.map((c) => `<td>${c.render(item, meta, items)}</td>`).join('')}
                             <td>
+                              ${(config.rowActions || []).map((acao, indice) => `
+                                <button type="button" class="icon-button ${acao.tone || 'edit'}" data-acao="${indice}" data-acao-id="${C.escape(item.id)}" title="${C.escape(acao.title)}">${acao.icon}</button>
+                              `).join('')}
                               <button type="button" class="icon-button edit" data-edit="${item.id}" title="Editar">${C.editIcon}</button>
                               <button type="button" class="icon-button" data-delete="${item.id}" title="Excluir">${C.trashIcon}</button>
                             </td>
@@ -286,14 +305,31 @@ window.MavisCadastros = window.MavisCadastros || {};
         document.getElementById('cadastroListNew')?.addEventListener('click', () => {
           state[config.editStateKey] = null;
           state.activeSub = config.newSub;
-          loadModule('cadastros');
+          loadModule(modulo);
+        });
+
+        // Ações próprias da linha, antes de editar/excluir. Recebem o item e o
+        // ctx inteiro, então podem chamar API, confirmar e navegar. `recarregar`
+        // redesenha a lista sem sair da tela.
+        content.querySelectorAll('[data-acao]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const acao = (config.rowActions || [])[Number(btn.dataset.acao)];
+            const item = items.find((entry) => entry.id === btn.dataset.acaoId);
+            if (!acao || !item) return;
+            btn.disabled = true;
+            try {
+              await acao.run(item, { ...ctx, meta, recarregar: () => loadModule(modulo) });
+            } finally {
+              btn.disabled = false;
+            }
+          });
         });
 
         content.querySelectorAll('[data-edit]').forEach((btn) => {
           btn.addEventListener('click', () => {
             state[config.editStateKey] = btn.dataset.edit;
             state.activeSub = config.newSub;
-            loadModule('cadastros');
+            loadModule(modulo);
           });
         });
 
@@ -306,7 +342,7 @@ window.MavisCadastros = window.MavisCadastros || {};
             try {
               await api(`${config.endpoint}/${btn.dataset.delete}`, { method: 'DELETE' });
               showToast('Registro excluído.', 'success');
-              loadModule('cadastros');
+              loadModule(modulo);
             } catch (error) {
               showToast(error.message || 'Erro ao excluir.', 'error');
             }
@@ -314,6 +350,246 @@ window.MavisCadastros = window.MavisCadastros || {};
         });
       }
 
+      render();
+    };
+  };
+
+  // --------------------------------------------------------------------------
+  // Fábrica: CADASTRO SIMPLES (lista + formulário na MESMA tela)
+  // --------------------------------------------------------------------------
+  // Para as tabelas de apoio — departamento, tipo, categoria, profissão. São
+  // três ou quatro campos, e mandar o usuário para outra tela só para digitar
+  // um nome custa dois cliques e o contexto da lista que ele acabou de ver.
+  //
+  // Também é o que permite essas telas existirem SOZINHAS no menu: uma tela de
+  // lista com `newSub` precisa do par "Novo X" cadastrado ao lado dela, e o
+  // menu de RH ficaria com o dobro de itens só de formulários de duas linhas.
+  //
+  // config: { module, metaEndpoint, title, subtitle, tableTitle, entityLabel,
+  //           endpoint, listKey, itemKey, searchFields, searchPlaceholder,
+  //           columns: [{label, render(item, meta)}],
+  //           filters: [{name, label, type:'select', options}],
+  //           fields: [...], formColumns }
+  C.makeInlineRegisterScreen = function makeInlineRegisterScreen(config) {
+    return async function renderInlineRegister(ctx) {
+      const { content, api, showToast, confirmModal } = ctx;
+      const meta = await C.loadMeta(api, showToast, config.metaEndpoint === undefined ? '/api/cadastros/meta' : config.metaEndpoint);
+      const campos = config.fields || [];
+      const definicoesFiltro = config.filters || [];
+      const filtros = {};
+      definicoesFiltro.forEach((def) => { filtros[def.name] = ''; });
+
+      let itens = [];
+      let editando = null;   // registro em edição, ou null para "novo"
+      let valores = {};
+      let erros = {};
+      let erroForm = '';
+      let busca = '';
+
+      const zerar = () => {
+        editando = null;
+        valores = {};
+        campos.forEach((def) => { valores[def.name] = def.default ?? ''; });
+        erros = {};
+        erroForm = '';
+      };
+      zerar();
+
+      async function carregar() {
+        try {
+          const res = await api(config.endpoint);
+          itens = res[config.listKey] || [];
+        } catch (error) {
+          showToast(error.message || 'Erro ao carregar a lista.', 'error');
+          itens = [];
+        }
+      }
+
+      function visiveis() {
+        const termo = normalizeText(busca);
+        return itens.filter((item) => {
+          const passaFiltros = definicoesFiltro.every((def) => {
+            const valor = filtros[def.name];
+            return !valor || String(item[def.name] ?? '') === valor;
+          });
+          if (!passaFiltros) return false;
+          if (!termo) return true;
+          return (config.searchFields || ['name'])
+            .some((chave) => normalizeText(item[chave]).includes(termo));
+        });
+      }
+
+      function render() {
+        const lista = visiveis();
+        const colunas = config.columns.length + 1;
+        content.innerHTML = `
+          <div class="panel cadastros-shell">
+            ${C.pageHead(config.title, config.subtitle, '', `
+              ${definicoesFiltro.map((def) => `
+                <label class="cadastro-inline-filtro">
+                  <span>${C.escape(def.label)}</span>
+                  <select data-filtro="${def.name}">${C.options(typeof def.options === 'function' ? def.options(meta) : def.options, filtros[def.name], { empty: 'Todos' })}</select>
+                </label>
+              `).join('')}
+              <input type="search" id="cadastroInlineBusca" class="cadastro-inline-busca"
+                     value="${C.escape(busca)}" placeholder="${C.escape(config.searchPlaceholder || 'Buscar')}"
+                     aria-label="Buscar em ${C.escape(config.title)}" />
+            `)}
+
+            <section class="cadastro-section">
+              <div class="cadastro-section-header">
+                <div>
+                  <h4>${C.escape(config.tableTitle || config.title)}</h4>
+                  <p>${lista.length} de ${itens.length} registro(s).</p>
+                </div>
+              </div>
+              <div class="cadastro-section-body">
+                <div class="table-scroll">
+                  <table class="table table-actions">
+                    <thead><tr>${config.columns.map((c) => `<th>${C.escape(c.label)}</th>`).join('')}<th>Ações</th></tr></thead>
+                    <tbody>
+                      ${lista.length === 0
+                        ? `<tr><td colspan="${colunas}" class="muted" style="text-align:center; padding:24px;">${itens.length === 0 ? 'Nenhum registro cadastrado ainda.' : 'Nenhum registro para esta busca.'}</td></tr>`
+                        : lista.map((item) => `
+                          <tr class="${editando && editando.id === item.id ? 'active-row' : ''}">
+                            ${config.columns.map((c) => `<td>${c.render(item, meta, itens)}</td>`).join('')}
+                            <td>
+                              <button type="button" class="icon-button edit" data-edit="${C.escape(item.id)}" title="Editar">${C.editIcon}</button>
+                              <button type="button" class="icon-button" data-delete="${C.escape(item.id)}" title="Excluir">${C.trashIcon}</button>
+                            </td>
+                          </tr>
+                        `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <form id="cadastroInlineForm" class="cadastro-form">
+              ${C.section(
+                editando ? `Editar ${config.entityLabel || 'registro'}` : `Novo ${config.entityLabel || 'registro'}`,
+                C.fieldGrid(campos, valores, meta, erros, config.formColumns || 3),
+                editando ? 'Alterando um registro que já existe.' : 'Preencha e salve — a lista acima atualiza na hora.'
+              )}
+              ${erroForm ? `<p class="form-error">${C.escape(erroForm)}</p>` : ''}
+              <div class="cadastro-actions">
+                ${editando ? '<button type="button" class="secondary" id="cadastroInlineCancel">Cancelar edição</button>' : ''}
+                <button type="submit">${editando ? 'Salvar alterações' : `Adicionar ${C.escape(config.entityLabel || 'registro')}`}</button>
+              </div>
+            </form>
+          </div>
+        `;
+        ligar();
+      }
+
+      function lerValores() {
+        const form = document.getElementById('cadastroInlineForm');
+        if (!form) return;
+        const dados = new FormData(form);
+        campos.forEach((def) => {
+          if (def.type === 'checkbox') {
+            valores[def.name] = form.querySelector(`[name="${def.name}"]`)?.checked || false;
+          } else if (def.type === 'number') {
+            const bruto = dados.get(def.name);
+            valores[def.name] = bruto === '' || bruto === null ? '' : Number(bruto);
+          } else {
+            valores[def.name] = dados.get(def.name) ?? '';
+          }
+        });
+      }
+
+      function ligar() {
+        const campoBusca = content.querySelector('#cadastroInlineBusca');
+        campoBusca?.addEventListener('input', () => {
+          busca = campoBusca.value;
+          const cursor = campoBusca.selectionStart;
+          render();
+          const novo = content.querySelector('#cadastroInlineBusca');
+          novo?.focus();
+          novo?.setSelectionRange(cursor, cursor);
+        });
+
+        content.querySelectorAll('[data-filtro]').forEach((seletor) => {
+          seletor.addEventListener('change', () => {
+            filtros[seletor.dataset.filtro] = seletor.value;
+            render();
+          });
+        });
+
+        content.querySelectorAll('[data-edit]').forEach((botao) => {
+          botao.addEventListener('click', () => {
+            const item = itens.find((entrada) => entrada.id === botao.dataset.edit);
+            if (!item) return;
+            editando = item;
+            erros = {};
+            erroForm = '';
+            campos.forEach((def) => { valores[def.name] = item[def.name] ?? (def.default ?? ''); });
+            render();
+            content.querySelector('#cadastroInlineForm')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+        });
+
+        content.querySelector('#cadastroInlineCancel')?.addEventListener('click', () => {
+          zerar();
+          render();
+        });
+
+        content.querySelectorAll('[data-delete]').forEach((botao) => {
+          botao.addEventListener('click', async () => {
+            const item = itens.find((entrada) => entrada.id === botao.dataset.delete);
+            const rotulo = item ? (item.name || 'registro') : 'registro';
+            const ok = await confirmModal(`Excluir "${rotulo}"? Esta ação não pode ser desfeita.`);
+            if (!ok) return;
+            try {
+              await api(`${config.endpoint}/${encodeURIComponent(botao.dataset.delete)}`, { method: 'DELETE' });
+              showToast('Registro excluído.', 'success');
+              // Apagou justo o que estava aberto no formulário: volta para novo,
+              // senão o próximo "Salvar alterações" iria para um id que sumiu.
+              if (editando && editando.id === botao.dataset.delete) zerar();
+              await carregar();
+              render();
+            } catch (error) {
+              showToast(error.message || 'Erro ao excluir.', 'error');
+            }
+          });
+        });
+
+        content.querySelector('#cadastroInlineForm')?.addEventListener('submit', async (evento) => {
+          evento.preventDefault();
+          const botao = evento.target.querySelector('button[type="submit"]');
+          if (botao?.disabled) return;
+
+          lerValores();
+          erros = {};
+          campos.filter((def) => def.required).forEach((def) => {
+            const valor = valores[def.name];
+            if (valor === '' || valor === null || valor === undefined) erros[def.name] = true;
+          });
+          if (Object.keys(erros).length) {
+            erroForm = 'Preencha os campos obrigatórios destacados.';
+            render();
+            return;
+          }
+
+          if (botao) botao.disabled = true;
+          try {
+            if (editando) {
+              await api(`${config.endpoint}/${encodeURIComponent(editando.id)}`, { method: 'PUT', body: JSON.stringify(valores) });
+            } else {
+              await api(config.endpoint, { method: 'POST', body: JSON.stringify(valores) });
+            }
+            showToast(editando ? 'Registro atualizado.' : 'Registro criado.', 'success');
+            zerar();
+            await carregar();
+            render();
+          } catch (error) {
+            erroForm = error.message || 'Erro ao salvar.';
+            render();
+          }
+        });
+      }
+
+      await carregar();
       render();
     };
   };
@@ -327,7 +603,8 @@ window.MavisCadastros = window.MavisCadastros || {};
   C.makeFormScreen = function makeFormScreen(config) {
     return async function renderForm(ctx) {
       const { content, api, showToast, state, loadModule } = ctx;
-      const meta = await C.loadMeta(api, showToast);
+      const modulo = config.module || 'cadastros';
+      const meta = await C.loadMeta(api, showToast, config.metaEndpoint === undefined ? '/api/cadastros/meta' : config.metaEndpoint);
 
       const editId = state[config.editStateKey] || null;
       state[config.editStateKey] = null;
@@ -433,7 +710,7 @@ window.MavisCadastros = window.MavisCadastros || {};
 
         document.getElementById('cadastroFormCancel')?.addEventListener('click', () => {
           state.activeSub = config.listSub;
-          loadModule('cadastros');
+          loadModule(modulo);
         });
 
         document.getElementById('cadastroEntityForm')?.addEventListener('submit', async (event) => {
@@ -462,7 +739,7 @@ window.MavisCadastros = window.MavisCadastros || {};
             }
             showToast(current ? 'Registro atualizado.' : 'Registro criado.', 'success');
             state.activeSub = config.listSub;
-            loadModule('cadastros');
+            loadModule(modulo);
           } catch (error) {
             formError = error.message || 'Erro ao salvar.';
             render();

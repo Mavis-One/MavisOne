@@ -37,11 +37,45 @@ window.MavisSubscreenRegistry.settings.access_control = async function renderAcc
   const papelSelecionado = state.settingsDraft?.accessRole || dados.roles.find((p) => p.slug !== 'admin')?.slug || '';
   const usuarioSelecionado = state.settingsDraft?.accessUser || dados.users[0]?.id || '';
 
-  // Permissões agrupadas por recurso — a lista corrida de 40 slugs é ilegível.
+  // Permissões agrupadas por recurso — a lista corrida de 60 slugs é ilegível.
   const porRecurso = dados.permissions.reduce((mapa, permissao) => {
     (mapa[permissao.resource] = mapa[permissao.resource] || []).push(permissao);
     return mapa;
   }, {});
+
+  // O recurso é um slug técnico ("fleet", "pcp"). Quem administra acesso
+  // conhece o módulo pelo nome do menu, então o título sai de moduleLabels —
+  // assim módulo novo já aparece nomeado aqui, sem lista para atualizar.
+  // Só "usuarios" e "auditoria" não são módulos do menu e precisam de nome.
+  const NOME_FORA_DO_MENU = { usuarios: 'Usuários e acessos', auditoria: 'Auditoria de acesso' };
+  const nomeDoRecurso = (recurso) =>
+    (typeof moduleLabels !== 'undefined' && moduleLabels[recurso]) || NOME_FORA_DO_MENU[recurso] || recurso;
+
+  // Ordem do menu, com o que não é módulo no fim. O banco devolve em ordem
+  // alfabética de slug, e "contracts" antes de "sales" não diz nada a ninguém.
+  const ORDEM_RECURSOS = [
+    ...(typeof MENU_MODULOS !== 'undefined' ? MENU_MODULOS : []),
+    'settings', 'usuarios', 'auditoria'
+  ];
+  const posicaoRecurso = (recurso) => {
+    const i = ORDEM_RECURSOS.indexOf(recurso);
+    return i === -1 ? ORDEM_RECURSOS.length : i; // recurso novo cai no fim
+  };
+
+  // Dentro do recurso: do menos para o mais poderoso. Alfabético colocava
+  // "excluir" antes de "ler", e a leitura da linha ficava sem sentido.
+  const ORDEM_ACOES = ['ler', 'visualizar', 'criar', 'editar', 'excluir', 'gerenciar'];
+  const posicaoAcao = (acao) => {
+    const i = ORDEM_ACOES.indexOf(acao);
+    return i === -1 ? ORDEM_ACOES.length : i;
+  };
+
+  const recursosOrdenados = Object.entries(porRecurso)
+    .sort(([a], [b]) => posicaoRecurso(a) - posicaoRecurso(b) || a.localeCompare(b))
+    .map(([recurso, lista]) => [
+      recurso,
+      [...lista].sort((x, y) => posicaoAcao(x.action) - posicaoAcao(y.action) || x.action.localeCompare(y.action))
+    ]);
 
   const doPapel = new Set(dados.rolePermissions.filter((rp) => rp.role_slug === papelSelecionado).map((rp) => rp.permission_slug));
   const acessoDoUsuario = dados.userAccess[usuarioSelecionado] || { roles: [], permitidas: [], negadas: [] };
@@ -57,9 +91,9 @@ window.MavisSubscreenRegistry.settings.access_control = async function renderAcc
 
   const gradeDePermissoes = (marcadas, nomeCampo, extraPorPermissao = () => '') => `
     <div class="rbac-recursos">
-      ${Object.entries(porRecurso).map(([recurso, lista]) => `
+      ${recursosOrdenados.map(([recurso, lista]) => `
         <section class="rbac-recurso">
-          <h4>${escapeHtml(recurso)}</h4>
+          <h4>${escapeHtml(nomeDoRecurso(recurso))} <small class="rbac-recurso-slug">${escapeHtml(recurso)}</small></h4>
           ${lista.map((permissao) => `
             <label class="rbac-permissao">
               <input type="checkbox" name="${nomeCampo}" value="${escapeHtml(permissao.slug)}" ${marcadas.has(permissao.slug) ? 'checked' : ''} />

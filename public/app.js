@@ -71,6 +71,11 @@ function restoreLastRoute() {
 function hasModuleAccess(moduleName) {
   if (!state.user) return false;
   if (moduleName === 'dashboard') return true;
+  // Administrador vê tudo — é o que o servidor já decide (usuarioPode passa
+  // direto para admin). Sem esta linha os dois discordavam: a API liberava e o
+  // menu escondia, então cada módulo novo nascia invisível até alguém marcá-lo
+  // à mão em Configurações > Usuários, para cada admin, um por um.
+  if (state.user.role === 'admin' || (Array.isArray(state.user.roles) && state.user.roles.includes('admin'))) return true;
   return Array.isArray(state.user.allowedModules) && state.user.allowedModules.includes(moduleName);
 }
 
@@ -164,11 +169,17 @@ function getSecondarySidebarConfig(moduleName) {
   return { module: moduleName, title: moduleLabels[moduleName] || moduleName, subtitle: 'Fluxos', items: itens };
 }
 
+// A barra secundária ("Fluxos") foi desligada: ela listava exatamente as mesmas
+// telas que a Área de Trabalho já mostra em blocos — em Estoque eram 18 itens
+// repetidos lado a lado, e o fixar ficava escondido num alfinete miúdo da lista.
+// Fixar passou para o próprio bloco, e os fixados viram uma faixa no topo do
+// módulo (ver modules/shared/module_workspace.js).
+//
+// A função continua existindo, e devolvendo false, porque renderApp e o
+// histórico de navegação ainda a consultam; tirar as chamadas seria mexer em
+// pontos que não têm nada a ver com esta mudança.
 function shouldShowSecondarySidebar() {
-  if (state.activeModule === 'cadastros') {
-    return !state.activeSub;
-  }
-  return Boolean(getSecondarySidebarConfig(state.activeModule) && !state.activeSub);
+  return false;
 }
 
 function getActiveSecondaryModule() {
@@ -311,10 +322,83 @@ async function api(path, options = {}) {
 
   const response = await fetch(path, { ...options, headers });
   const data = await response.json().catch(() => ({}));
+
+  // Sessão encerrada pelo servidor — login em outra máquina ('outro-dispositivo')
+  // ou virada do dia ('fim-do-dia'). O token está morto, então deixar a tela
+  // aberta só produziria erro a cada clique. Volta para o login já explicando.
+  //
+  // Qualquer motivo serve: a lista de motivos é do servidor, e travar esta
+  // checagem num valor específico faria o próximo motivo criado lá cair aqui
+  // como "Erro inesperado" até alguém lembrar de vir mexer neste `if`.
+  //
+  // Tratado aqui, e não em cada chamada, porque `api` é o único caminho até o
+  // servidor — qualquer outro lugar seria um a mais para alguém esquecer.
+  if (response.status === 401 && data.motivo) {
+    encerrarSessaoLocal(data.error || 'Sua sessão foi encerrada.');
+    // Interrompe quem chamou: sem isto a tela seguiria montando com dados que
+    // nunca vieram.
+    throw new Error(data.error || 'Sessão encerrada.');
+  }
+
   if (!response.ok) {
     throw new Error(data.error || 'Erro inesperado');
   }
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// SAÍDA NA VIRADA DO DIA
+//
+// O servidor derruba a sessão à meia-noite (ver lib/sessao.js), mas ele só
+// consegue avisar quando a tela fala com ele. Uma tela parada a noite toda
+// continuaria mostrando o sistema como se estivesse logada, e o usuário só
+// descobriria no primeiro clique da manhã seguinte. Este timer fecha a tela na
+// hora certa, sozinho.
+//
+// O instante vem do servidor (`sessaoExpiraEm`), não do relógio local: máquina
+// com hora errada sairia cedo demais ou passaria direto pelo corte. Se o timer
+// falhar (máquina suspensa, aba congelada), o servidor ainda barra a próxima
+// requisição — este agendamento antecipa o aviso, não substitui a regra.
+// ---------------------------------------------------------------------------
+let timerViradaDoDia = null;
+
+function cancelarSaidaDaVirada() {
+  if (timerViradaDoDia) clearTimeout(timerViradaDoDia);
+  timerViradaDoDia = null;
+}
+
+function agendarSaidaDaVirada(expiraEm) {
+  cancelarSaidaDaVirada();
+  if (!expiraEm) return;
+  // +2s de folga: disparar no milissegundo exato deixaria a tela e o servidor
+  // discordando por um instante sobre a sessão ainda valer.
+  const falta = Number(expiraEm) - Date.now() + 2000;
+  // Sessão que já venceu (aba restaurada depois da meia-noite) cai na hora.
+  if (falta <= 0) {
+    encerrarSessaoLocal('O dia virou — as sessões são encerradas à meia-noite. Faça login novamente para continuar.');
+    return;
+  }
+  timerViradaDoDia = setTimeout(() => {
+    encerrarSessaoLocal('O dia virou — as sessões são encerradas à meia-noite. Faça login novamente para continuar.');
+  }, falta);
+}
+
+// Derrubado do outro lado: limpa o que é local e volta ao login. Não chama o
+// servidor — a sessão já não existe lá, e um logout daria 401 de novo.
+let sessaoEncerradaAvisada = false;
+function encerrarSessaoLocal(mensagem) {
+  // Várias chamadas podem falhar juntas (a tela dispara mais de uma). Sem esta
+  // trava, o usuário levaria um aviso para cada uma.
+  if (sessaoEncerradaAvisada) return;
+  sessaoEncerradaAvisada = true;
+
+  cancelarSaidaDaVirada();
+  clearSessionToken();
+  state.user = null;
+  state.activeModule = 'dashboard';
+  state.activeSub = null;
+  renderAuth(mensagem);
+  showToast(mensagem, 'warning', 9000);
 }
 
 function showToast(message, type = 'info', timeout = 4200) {
@@ -464,6 +548,10 @@ function renderAuth(error = '') {
         body: JSON.stringify({ username: formData.get('username'), password: formData.get('password') })
       });
       setSessionToken(response.token);
+      // Libera o aviso de "derrubado" para a sessão nova: sem isto, quem já foi
+      // derrubado uma vez e entrou de novo cairia em silêncio na segunda.
+      sessaoEncerradaAvisada = false;
+      agendarSaidaDaVirada(response.sessaoExpiraEm);
       state.user = response.user;
       state.user.dashboardPins = normalizeDashboardPins([
         ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
@@ -519,7 +607,7 @@ function renderApp() {
         </div>
         <p class="muted">${state.user?.name || 'Usuário'}</p>
         <div class="nav-list">
-          ${['dashboard', 'sales', 'purchases', 'stock', 'finance', 'cadastros']
+          ${MENU_MODULOS
             .filter((module) => state.user?.allowedModules?.includes(module))
             .map((module) => `
               <div class="nav-block">
@@ -536,9 +624,6 @@ function renderApp() {
                   ${ (moduleSubItems[module] || []).map((sub) => `
                     <div class="sub-item-row">
                       <button type="button" class="sub-item sub-open-item ${state.activeModule === module && state.activeSub === sub.key ? 'active' : ''}" data-module="${module}" data-sub="${sub.key}">${sub.label}</button>
-                      <button type="button" class="sidebar-pin-btn ${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'active' : ''}" data-pin-key="${module}::${sub.key}" title="${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'Desfixar' : 'Fixar'} ${sub.label}" aria-pressed="${getDashboardPinSet().has(`${module}::${sub.key}`) ? 'true' : 'false'}">
-                        ${favoriteIconSvg(getDashboardPinSet().has(`${module}::${sub.key}`))}
-                      </button>
                     </div>
                   `).join('') }
                 </div>
@@ -558,6 +643,7 @@ function renderApp() {
             <h1>${moduleLabels[state.activeModule]}${activeSubLabel ? ' > ' + activeSubLabel : ''}</h1>
           </div>
           <div class="topbar-actions">
+            ${window.MavisAtalhos ? window.MavisAtalhos.barraHtml(escapeHtml, hasModuleAccess) : ''}
             <button class="icon-btn" id="themeToggleBtn" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro">
               ${themeIconSvg(getTheme())}
             </button>
@@ -578,6 +664,21 @@ function renderApp() {
   `;
 
   renderSecondarySidebar();
+
+  // Atalhos da barra superior. `api` e `showToast` são os mesmos que as telas
+  // usam, então a janela flutuante trata erro e sessão encerrada igual ao resto.
+  window.MavisAtalhos?.ligar({
+    api,
+    showToast,
+    escapeHtml,
+    temAcesso: hasModuleAccess,
+    irPara: (modulo, sub) => {
+      state.activeModule = modulo;
+      state.activeSub = sub;
+      renderApp();
+      loadModule(modulo);
+    }
+  });
 
   document.getElementById('backBtn')?.addEventListener('click', () => {
     goBackToPreviousRoute();
@@ -659,6 +760,9 @@ function renderApp() {
     } catch (_) {
       // Ignore API logout errors and always clear local session.
     }
+    // Saiu por vontade própria: o timer da virada não tem mais o que derrubar,
+    // e deixá-lo vivo jogaria um aviso de "o dia virou" na tela de login.
+    cancelarSaidaDaVirada();
     clearSessionToken();
     localStorage.removeItem(LAST_ROUTE_KEY);
     state.user = null;
@@ -688,6 +792,12 @@ const moduleLabels = {
   settings: 'Configurações',
   cadastros: 'Cadastros'
 };
+
+// Ordem do menu lateral. Sai de moduleLabels, então módulo novo cadastrado lá
+// aparece no menu sozinho — antes esta lista era fixa com 6 nomes, e os módulos
+// criados depois ficavam sem entrada no menu, sem erro nenhum aparecer.
+// Configurações fica de fora: ela é aberta pela engrenagem do topo.
+const MENU_MODULOS = Object.keys(moduleLabels).filter((chave) => chave !== 'settings');
 
 const moduleIcons = {
   dashboard: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>',
@@ -724,20 +834,21 @@ const moduleSubItems = {
   // ABA: Vendas
   sales: [
     { key: 'orders_quotes', label: 'Pedidos e Orçamentos', desc: 'Lista de pedidos e orçamentos, com filtros, aprovação e faturamento.' },
-    { key: 'new_quote', label: 'Novo Orçamento', desc: 'Monta um orçamento para enviar ao cliente.' },
-    { key: 'new_order', label: 'Novo Pedido', desc: 'Registra um pedido de venda do zero.' },
+    // Tela única: eram duas ("Novo Pedido" e "Novo Orçamento") com o mesmo
+    // formulário e só o tipo mudando. Agora quem decide é o campo Status.
+    { key: 'new_sale', label: 'Nova Venda', desc: 'Pedido e orçamento na mesma tela — o campo Status define qual dos dois é.' },
     { key: 'nfes', label: 'NF-e Emitidas', desc: 'Notas já emitidas, com DANFE, XML e cancelamento.' },
     { key: 'new_nfe', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     { key: 'sales_dashboard', label: 'Painel Vendas', desc: 'Totais, faturados, pendentes e ticket médio.' },
     { key: 'seller_dashboard', label: 'Painel Vendedor', desc: 'Desempenho de cada vendedor.' },
-    { key: 'import_logs', label: "Log's Vendas Importadas", desc: 'Histórico das importações já processadas.' },
+    { key: 'import_logs', label: 'Logs de Vendas Importadas', desc: 'Histórico das importações já processadas.' },
     { key: 'import_sales', label: 'Importar Vendas', desc: 'Carrega vendas em lote a partir de um CSV.' }
   ],
 
   // ABA: Compras
   purchases: [
-    { key: 'new_purchase', label: 'Nova compra', desc: 'Lança uma compra e dá entrada no estoque.' },
-    { key: 'purchase_history', label: 'Histórico de compras', desc: 'Compras registradas, por período e fornecedor.' },
+    { key: 'new_purchase', label: 'Nova Compra', desc: 'Lança uma compra e dá entrada no estoque.' },
+    { key: 'purchase_history', label: 'Histórico de Compras', desc: 'Compras registradas, por período e fornecedor.' },
     { key: 'suppliers', label: 'Fornecedores', desc: 'Fornecedores cadastrados e seus dados.' }
   ],
 
@@ -776,12 +887,22 @@ const moduleSubItems = {
   ],
 
   // ABA: Fiscal
-  // As tabelas de referência já existem no banco (Fase Q), então esta tela é
-  // real. "Regras Fiscais" é a parte que decide QUAL código se aplica — isso
-  // depende de tabela própria, ainda não criada.
+  // "Tabelas Fiscais" é a consulta dos códigos oficiais (Fase Q); "Regras
+  // Fiscais" é quem decide QUAL desses códigos se aplica a cada operação, e é
+  // de onde a emissão de NF-e tira CFOP e tributação de cada item.
   fiscal: [
+    // NF-e Emitidas e Nova NF-e Avulsa são as MESMAS telas do Financeiro,
+    // espelhadas aqui (modules/fiscal/subs/nfe_espelho.js) — não uma segunda
+    // versão para manter.
+    { key: 'nfe_emitidas', label: 'NF-e Emitidas', desc: 'Notas emitidas, com DANFE, XML e cancelamento.' },
+    { key: 'emitir_nfe_focus', label: 'Emitir NF-e (SEFAZ)', desc: 'Transmite a nota à SEFAZ usando a regra fiscal e o cadastro do produto.' },
+    { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
+    { key: 'inutilizadas', label: 'NF-e Inutilizadas', desc: 'Faixas de numeração queimadas na SEFAZ.' },
+    { key: 'inutilizar', label: 'Inutilizar NF-e', desc: 'Declara que uma faixa de números não virará nota.' },
+    { key: 'eventos', label: 'Eventos NF-e', desc: 'Cartas de correção, cancelamentos e inutilizações.' },
+    { key: 'logs', label: 'Logs NF-e', desc: 'O que foi enviado à SEFAZ e o que ela respondeu.' },
     { key: 'tabelas', label: 'Tabelas Fiscais', desc: 'Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.' },
-    { key: 'regras', label: 'Regras Fiscais', desc: 'Define qual CFOP e tributação se aplica a cada operação.', pendente: true }
+    { key: 'regras', label: 'Regras Fiscais', desc: 'Define qual CFOP e qual tributação se aplicam a cada operação.' }
   ],
 
   // ABA: Relatórios
@@ -795,12 +916,12 @@ const moduleSubItems = {
 
   // ABA: Frota de Veículos
   fleet: [
-    { key: 'veiculos', label: 'Veículos', desc: 'Frota cadastrada, com placa, situação e quilometragem.', pendente: true },
-    { key: 'novo_veiculo', label: 'Novo Veículo', desc: 'Cadastra um veículo na frota.', pendente: true },
-    { key: 'manutencoes', label: 'Manutenções', desc: 'Preventivas e corretivas, com custo e oficina.', pendente: true },
-    { key: 'nova_manutencao', label: 'Nova Manutenção', desc: 'Registra uma manutenção de veículo.', pendente: true },
-    { key: 'abastecimentos', label: 'Abastecimentos', desc: 'Litros, valor e consumo médio por veículo.', pendente: true },
-    { key: 'novo_abastecimento', label: 'Novo Abastecimento', desc: 'Lança um abastecimento.', pendente: true }
+    { key: 'veiculos', label: 'Veículos', desc: 'Frota cadastrada, com placa, situação e quilometragem.' },
+    { key: 'novo_veiculo', label: 'Novo Veículo', desc: 'Cadastra um veículo na frota.' },
+    { key: 'manutencoes', label: 'Manutenções', desc: 'Preventivas e corretivas, com custo e oficina.' },
+    { key: 'nova_manutencao', label: 'Nova Manutenção', desc: 'Registra uma manutenção de veículo.' },
+    { key: 'abastecimentos', label: 'Abastecimentos', desc: 'Litros, valor e gasto por veículo.' },
+    { key: 'novo_abastecimento', label: 'Novo Abastecimento', desc: 'Lança um abastecimento.' }
   ],
 
   // ABA: CRM
@@ -808,34 +929,58 @@ const moduleSubItems = {
   // CRM externo. Evita duas fontes da verdade divergindo — em troca, depende
   // da API do outro sistema estar no ar.
   crm: [
-    { key: 'conexao', label: 'Conexão', desc: 'Endereço e credencial do CRM externo, com teste de conexão.', pendente: true },
-    { key: 'oportunidades', label: 'Oportunidades', desc: 'Funil de vendas, lido do CRM externo.', pendente: true },
-    { key: 'contas', label: 'Contas', desc: 'Clientes e prospects, lidos do CRM externo.', pendente: true }
+    { key: 'conexao', label: 'Conexão', desc: 'Endereço e credencial do CRM externo, com teste de conexão.' },
+    { key: 'oportunidades', label: 'Oportunidades', desc: 'Funil de vendas, lido do CRM externo.' },
+    { key: 'contas', label: 'Contas', desc: 'Clientes e prospects, lidos do CRM externo.' }
   ],
 
   // ABA: RH
+  // Departamentos, Tipo, Categoria e Profissões são cadastros de APOIO: lista e
+  // formulário na mesma tela (makeInlineRegisterScreen), por isso não têm o par
+  // "Novo X" no menu. Colaborador e Expediente têm campo demais para caber
+  // embaixo da lista, e ficam com tela de formulário própria.
   hr: [
-    { key: 'colaboradores', label: 'Colaboradores', desc: 'Quadro de pessoal, com cargo e admissão.', pendente: true },
-    { key: 'novo_colaborador', label: 'Novo Colaborador', desc: 'Cadastra um colaborador.', pendente: true },
-    { key: 'cargos', label: 'Cargos', desc: 'Cargos, faixas salariais e requisitos.', pendente: true },
-    { key: 'ferias', label: 'Férias e Afastamentos', desc: 'Períodos aquisitivos, férias e licenças.', pendente: true },
-    { key: 'ponto', label: 'Registro de Ponto', desc: 'Marcações, horas extras e banco de horas.', pendente: true }
+    { key: 'colaboradores', label: 'Colaboradores', desc: 'Quadro de pessoal, com profissão, departamento e admissão.' },
+    { key: 'novo_colaborador', label: 'Novo Colaborador', desc: 'Cadastra um colaborador com vínculo, expediente e contrato.' },
+    { key: 'departamentos', label: 'Departamentos', desc: 'Setores da empresa, com responsável e centro de custo.' },
+    { key: 'expedientes', label: 'Expedientes', desc: 'Jornadas contratadas: horário, carga semanal e tolerância.' },
+    { key: 'novo_expediente', label: 'Novo Expediente', desc: 'Cadastra uma jornada de trabalho.' },
+    { key: 'tipos_colaborador', label: 'Tipo Colaboradores', desc: 'Vínculo: CLT, PJ, estágio, aprendiz, temporário.' },
+    { key: 'categorias_colaborador', label: 'Categoria Colaboradores', desc: 'Forma de remuneração: mensalista, horista, comissionado.' },
+    { key: 'profissoes', label: 'Profissões', desc: 'Profissões e faixas salariais, com o código CBO.' },
+    { key: 'ferias', label: 'Férias e Afastamentos', desc: 'Férias, licenças e faltas registradas.' },
+    { key: 'nova_ausencia', label: 'Nova Ausência', desc: 'Registra férias, licença ou afastamento.' },
+    { key: 'ponto', label: 'Registro de Ponto', desc: 'Marcações de entrada, almoço e saída.' },
+    { key: 'novo_ponto', label: 'Novo Registro de Ponto', desc: 'Lança as marcações de um dia.' }
   ],
 
   // ABA: PCP
+  // Status PCP e Controle de Qualidade têm o formulário embutido na lista
+  // (makeInlineRegisterScreen), por isso não têm o par "Novo X" no menu.
   pcp: [
-    { key: 'ordens', label: 'Ordens de Produção', desc: 'Ordens abertas, em curso e concluídas.', pendente: true },
-    { key: 'nova_ordem', label: 'Nova Ordem de Produção', desc: 'Abre uma ordem a partir de um produto.', pendente: true },
-    { key: 'estrutura', label: 'Estrutura de Produto', desc: 'Ficha técnica: o que cada produto consome.', pendente: true },
-    { key: 'apontamentos', label: 'Apontamentos', desc: 'Produção realizada e consumo de material.', pendente: true }
+    { key: 'ordens', label: 'Ordens de Produção', desc: 'Ordens abertas, em curso e concluídas, com setor e status.' },
+    { key: 'nova_ordem', label: 'Nova Ordem Produção', desc: 'Abre uma ordem a partir de um produto.' },
+    { key: 'setores', label: 'Setores PCP', desc: 'Centros de trabalho, na ordem em que a peça caminha.' },
+    { key: 'novo_setor', label: 'Novo Setor PCP', desc: 'Cadastra um setor com responsável e capacidade.' },
+    { key: 'status_pcp', label: 'Status PCP', desc: 'Os status que a empresa usa dentro de cada etapa da produção.' },
+    { key: 'qualidade', label: 'Controle Qualidade', desc: 'Inspeção por ordem: quanto foi aprovado e o que reprovou.' },
+    { key: 'estrutura', label: 'Estrutura de Produto', desc: 'Ficha técnica: o que cada produto consome.' },
+    { key: 'nova_estrutura', label: 'Novo Item de Estrutura', desc: 'Vincula um componente a um produto.' },
+    { key: 'apontamentos', label: 'Apontamentos', desc: 'Produção realizada por ordem.' },
+    { key: 'novo_apontamento', label: 'Novo Apontamento', desc: 'Registra o que foi produzido.' }
   ],
 
   // ABA: Contratos
+  // TIPO é a classificação do contrato; MODELO é o texto que se reaproveita ao
+  // emitir. São coisas diferentes e por isso são duas telas.
   contracts: [
-    { key: 'contratos', label: 'Contratos', desc: 'Contratos ativos, encerrados e seus valores.', pendente: true },
-    { key: 'novo_contrato', label: 'Novo Contrato', desc: 'Registra um contrato com cliente ou fornecedor.', pendente: true },
-    { key: 'vencimentos', label: 'Vencimentos e Renovações', desc: 'O que vence ou renova nos próximos meses.', pendente: true },
-    { key: 'modelos', label: 'Modelos de Contrato', desc: 'Textos-padrão reutilizados na emissão.', pendente: true }
+    { key: 'contratos', label: 'Contratos', desc: 'Contratos ativos, encerrados e seus valores, com aviso de prazo.' },
+    { key: 'novo_contrato', label: 'Novo Contrato', desc: 'Registra um contrato com cliente ou fornecedor.' },
+    { key: 'tipos', label: 'Tipos de Contratos', desc: 'Classificação do contrato e o prazo de aviso prévio de cada uma.' },
+    { key: 'novo_tipo', label: 'Novo Tipo de Contrato', desc: 'Cadastra um tipo com natureza e prazo de aviso.' },
+    { key: 'vencimentos', label: 'Vencimentos e Renovações', desc: 'O que vence ou renova nos próximos meses.' },
+    { key: 'modelos', label: 'Modelos de Contrato', desc: 'Textos-padrão reutilizados na emissão.' },
+    { key: 'novo_modelo', label: 'Novo Modelo', desc: 'Cria um modelo de contrato.' }
   ],
 
   // ABA: Configurações
@@ -1186,25 +1331,33 @@ async function loadModule(moduleName) {
       // nada — tela branca que voltaria a cada recarregamento, porque a rota
       // inválida continuaria sendo salva. A lista válida é o próprio menu,
       // para não existir uma segunda lista para manter em dia.
-      const sub = moduleSubItems.sales.some((item) => item.key === rawSub) ? rawSub : 'orders_quotes';
+      // "Novo Pedido" e "Novo Orçamento" viraram uma tela só. Rota antiga salva
+      // no navegador (ou link antigo em favorito) aterrissa na tela nova em vez
+      // de cair na lista — a segunda entrada leva o status já escolhido.
+      const ROTAS_ANTIGAS = { new_order: 'new_sale', new_quote: 'new_sale' };
+      if (ROTAS_ANTIGAS[rawSub] && !state.salesDraft?.novoStatus && !state.salesDraft?.editRecord) {
+        state.salesDraft = state.salesDraft || {};
+        state.salesDraft.novoStatus = rawSub === 'new_quote' ? 'orcamento' : 'pedido';
+      }
+      const subAlvo = ROTAS_ANTIGAS[rawSub] || rawSub;
+      const sub = moduleSubItems.sales.some((item) => item.key === subAlvo) ? subAlvo : 'orders_quotes';
       // Corrige o estado, não só a variável: senão o menu lateral segue sem
       // destacar nada e a rota morta continua sendo gravada.
       if (sub !== rawSub) state.activeSub = sub;
 
-      const SALES_STATUS_BADGE_META = {
-        'pendente': { label: 'Pendente', tone: 'warning' },
-        'faturado': { label: 'Faturado', tone: 'success' },
-        'cancelado': { label: 'Cancelado', tone: 'danger' },
-        'em aberto': { label: 'Em aberto', tone: 'info' },
-        'aprovado': { label: 'Aprovado', tone: 'success' },
-        'reprovado': { label: 'Reprovado', tone: 'danger' },
+      const SalesStatus = window.MavisSalesStatus;
+      // NF-e tem status próprio (documento fiscal, não venda) e usa o mesmo
+      // helper de badge — por isso as duas chaves ficam fora do catálogo.
+      const STATUS_NFE = {
         'emitida': { label: 'Emitida', tone: 'success' },
         'cancelada': { label: 'Cancelada', tone: 'danger' }
       };
       const salesStatusBadge = (status) => {
         const key = String(status || '').toLowerCase();
-        const meta = SALES_STATUS_BADGE_META[key] || { label: status || '-', tone: 'muted' };
-        return `<span class="finance-badge finance-badge-${meta.tone}">${meta.label}</span>`;
+        const nfe = STATUS_NFE[key];
+        if (nfe) return `<span class="finance-badge finance-badge-${nfe.tone}">${nfe.label}</span>`;
+        const meta = SalesStatus.meta(status);
+        return `<span class="finance-badge finance-badge-${meta.tom}">${escapeHtml(meta.label)}</span>`;
       };
       const salesFormatDate = (value) => {
         if (!value) return '-';
@@ -1213,11 +1366,17 @@ async function loadModule(moduleName) {
         return `${d}/${m}/${y}`;
       };
       const salesFormatBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      // Saldo de estoque aceita fracionário (produto vendido por kg/metro), mas
+      // a esmagadora maioria é inteira — mostrar "38" e não "38,000".
+      const salesFormatQty = (value) => {
+        const n = Number(value || 0);
+        return Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/\.?0+$/, '');
+      };
 
       // Sub-aba: Pedidos e Orçamentos
       if (sub === 'orders_quotes') {
         const draft = state.salesDraft || (state.salesDraft = {});
-        const filters = draft.ordersFilters || (draft.ordersFilters = { search: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
+        const filters = draft.ordersFilters || (draft.ordersFilters = { search: '', type: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
         const showFilters = Boolean(draft.showOrdersFilters);
         const page = draft.ordersPage || 1;
         const limit = 15;
@@ -1243,8 +1402,9 @@ async function loadModule(moduleName) {
               <p class="muted">${data.total || 0} registro${data.total === 1 ? '' : 's'} encontrado${data.total === 1 ? '' : 's'}</p>
             </div>
             <div class="cadastro-list-actions">
-              <button type="button" onclick="state.salesDraft.editRecord=null; state.activeSub='new_order'; renderApp(); loadModule('sales');">+ Novo Pedido</button>
-              <button type="button" class="secondary" onclick="state.salesDraft.editRecord=null; state.activeSub='new_quote'; renderApp(); loadModule('sales');">+ Novo Orçamento</button>
+              <!-- Um botão só, como a tela: pedido ou orçamento é escolha do
+                   campo Status lá dentro, não de qual botão foi clicado. -->
+              <button type="button" onclick="state.salesDraft.editRecord=null; state.salesDraft.novoStatus=''; state.activeSub='new_sale'; renderApp(); loadModule('sales');">+ Nova Venda</button>
               <button type="button" class="secondary" id="salesFilterToggleBtn">${showFilters ? 'Ocultar filtros' : 'Busca avançada'}</button>
             </div>
           </div>
@@ -1260,11 +1420,24 @@ async function loadModule(moduleName) {
           ${showFilters ? `
             <form id="salesFilterForm" class="cadastro-filter-panel">
               <div class="cadastro-filter-grid-5">
+                <!-- Tipo e Status são filtros distintos de propósito: o status
+                     já implica o tipo, mas "todos os pedidos, em qualquer
+                     etapa" é a pergunta mais comum da lista. -->
+                <label class="cadastro-field">
+                  <span>Tipo</span>
+                  <select name="type">
+                    <option value="">Todos</option>
+                    <option value="order" ${filters.type === 'order' ? 'selected' : ''}>Pedido</option>
+                    <option value="quote" ${filters.type === 'quote' ? 'selected' : ''}>Orçamento</option>
+                  </select>
+                </label>
                 <label class="cadastro-field">
                   <span>Status</span>
                   <select name="status">
                     <option value="">Todos</option>
-                    ${['pendente', 'faturado', 'cancelado', 'em aberto', 'aprovado', 'reprovado'].map((value) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${value.charAt(0).toUpperCase() + value.slice(1)}</option>`).join('')}
+                    <!-- Aqui o catálogo inteiro é selecionável: filtrar por um
+                         status que o sistema atribui é justamente o uso deles. -->
+                    ${SalesStatus.CATALOGO.map((item) => `<option value="${item.value}" ${filters.status === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
                   </select>
                 </label>
                 <label class="cadastro-field">
@@ -1353,6 +1526,7 @@ async function loadModule(moduleName) {
         document.getElementById('salesFilterForm')?.addEventListener('submit', (event) => {
           event.preventDefault();
           const formData = new FormData(event.target);
+          filters.type = formData.get('type') || '';
           filters.status = formData.get('status') || '';
           filters.companyId = formData.get('companyId') || '';
           filters.sellerId = formData.get('sellerId') || '';
@@ -1363,7 +1537,7 @@ async function loadModule(moduleName) {
           loadModule('sales');
         });
         document.getElementById('salesFilterClearBtn')?.addEventListener('click', () => {
-          Object.assign(filters, { search: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
+          Object.assign(filters, { search: '', type: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
           state.salesDraft.ordersPage = 1;
           loadModule('sales');
         });
@@ -1378,7 +1552,8 @@ async function loadModule(moduleName) {
             const record = records.find((entry) => entry.id === btn.dataset.id);
             if (!record) return;
             state.salesDraft.editRecord = record;
-            state.activeSub = record.type === 'quote' ? 'new_quote' : 'new_order';
+            state.salesDraft.novoStatus = '';
+            state.activeSub = 'new_sale';
             renderApp();
             loadModule('sales');
           });
@@ -1399,18 +1574,16 @@ async function loadModule(moduleName) {
         return;
       }
 
-      // Sub-abas: Novo Pedido / Novo Orçamento — mesmo formulário, só muda o tipo
-      // (evita duplicar a lógica de itens/totais entre as duas telas).
-      if (sub === 'new_order' || sub === 'new_quote') {
-        const recordType = sub === 'new_order' ? 'order' : 'quote';
-        const editRecord = state.salesDraft?.editRecord && state.salesDraft.editRecord.type === recordType
-          ? state.salesDraft.editRecord
-          : null;
+      // Sub-aba: Nova Venda — tela ÚNICA de pedido e orçamento.
+      //
+      // Eram duas rotas ('new_order' e 'new_quote') rodando este mesmo bloco, e
+      // o tipo do documento vinha de qual botão você tinha clicado. Agora vem do
+      // campo Status: quem está em "Orçamento" é orçamento, todo o resto é
+      // pedido. Trocar o status na tela troca o tipo — inclusive de um registro
+      // já salvo, que o servidor move de tabela (ver PUT /api/sales/records).
+      if (sub === 'new_sale') {
+        const editRecord = state.salesDraft?.editRecord || null;
         const isEditing = Boolean(editRecord);
-        const title = recordType === 'order' ? 'Pedido' : 'Orçamento';
-        const statusOptions = recordType === 'order'
-          ? [{ value: 'pendente', label: 'Pendente' }, { value: 'faturado', label: 'Faturado' }, { value: 'cancelado', label: 'Cancelado' }]
-          : [{ value: 'em aberto', label: 'Em aberto' }, { value: 'aprovado', label: 'Aprovado' }, { value: 'reprovado', label: 'Reprovado' }];
 
         // Se /api/sales/meta falhar, o formulário ainda abre — mas cada lista
         // precisa existir vazia aqui, senão o .map() do select derruba a tela.
@@ -1423,13 +1596,37 @@ async function loadModule(moduleName) {
 
         // "Duplicar Venda" deixa a cópia aqui. É consumida uma única vez: sem o
         // delete, voltar para a tela depois de salvar reabriria a duplicata.
-        const duplicado = state.salesDraft?.duplicateFrom?.type === recordType
-          ? state.salesDraft.duplicateFrom
-          : null;
+        const duplicado = state.salesDraft?.duplicateFrom || null;
         if (duplicado) delete state.salesDraft.duplicateFrom;
+
+        // Status com que um registro NOVO nasce. Hoje só as rotas antigas
+        // (`new_quote`, de link ou favorito salvo) deixam uma escolha aqui —
+        // pelo botão da lista o registro nasce pedido e o usuário troca no
+        // campo Status. Consumido uma vez, como a duplicata.
+        const statusInicial = SalesStatus.normalizar(state.salesDraft?.novoStatus || 'pedido');
+        if (state.salesDraft?.novoStatus) delete state.salesDraft.novoStatus;
 
         const origem = editRecord || duplicado;
         let items = origem ? (origem.items || []).map((item) => ({ ...item })) : [];
+
+        // Saldo e preço de cadastro NÃO são copiados para dentro do item: o
+        // item guarda o que foi vendido (quantidade e preço praticados), e o
+        // saldo é do produto, muda a toda hora e é sempre lido do cadastro
+        // atual. Congelá-los no item faria a tela mostrar estoque de ontem.
+        const produtoDoItem = (item) => meta.products.find((p) => p.id === item.productId);
+        // O rótulo da busca já traz preço e saldo — escolher o produto sem ver
+        // que ele está zerado é o erro que a coluna Saldo Estoque só pega
+        // depois de adicionado. Renderização e attach usam o MESMO rótulo,
+        // senão a lista aberta mostra um texto e o campo preenche outro.
+        const rotuloProduto = (p) => `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)} · saldo ${salesFormatQty(p.stockQuantity)}`;
+        // O servidor recusa faturar sem saldo (transitionOrderStockEffect) —
+        // avisar aqui evita descobrir isso só na hora de aprovar. Vale só para
+        // pedido: orçamento não reserva nada.
+        const itensSemSaldo = () => (recordType !== 'order' ? [] : items.filter((item) => {
+          const produto = produtoDoItem(item);
+          return produto && Number(item.quantity || 0) > Number(produto.stockQuantity || 0);
+        }));
+
         let discountAmount = Number(origem?.discountAmount || 0);
         let discountPercent = Number(origem?.discountPercent || 0);
         let freight = Number(origem?.freight || 0);
@@ -1501,7 +1698,10 @@ async function loadModule(moduleName) {
           companyId: origem?.companyId || '',
           sellerId: origem?.sellerId || '',
           depositId: origem?.depositId || '',
-          status: origem?.status || statusOptions[0].value,
+          // Registro antigo chega com o status legado ('pendente', 'em aberto',
+          // …); normalizar aqui evita que ele apareça como opção órfã no select
+          // e faz o próximo salvamento já gravar no formato novo.
+          status: origem ? SalesStatus.normalizar(origem.status, origem.type) : statusInicial,
           // A duplicata nasce com a data de hoje, não a do original.
           date: editRecord?.date || new Date().toISOString().slice(0, 10),
           dueDate: editRecord?.dueDate || '',
@@ -1522,6 +1722,16 @@ async function loadModule(moduleName) {
           registrationTime: editRecord?.registrationTime || horaAgora,
           approvalDate: editRecord?.approvalDate || ''
         };
+        // Tipo e título são DERIVADOS do status, nunca guardados. Ficam em
+        // `let` porque a tela inteira (cabeçalho, rótulos, campo Validade,
+        // payload) muda quando o usuário troca Pedido <-> Orçamento no select.
+        let recordType = SalesStatus.tipoDoStatus(formState.status);
+        let title = recordType === 'order' ? 'Pedido' : 'Orçamento';
+        const derivarTipo = () => {
+          recordType = SalesStatus.tipoDoStatus(formState.status);
+          title = recordType === 'order' ? 'Pedido' : 'Orçamento';
+        };
+
         const syncFormState = () => {
           const form = document.getElementById('salesRecordForm');
           if (!form) return;
@@ -1529,7 +1739,8 @@ async function loadModule(moduleName) {
           formState.companyId = form.querySelector('[name="companyId"]')?.value || '';
           formState.sellerId = form.querySelector('[name="sellerId"]')?.value || '';
           formState.depositId = form.querySelector('[name="depositId"]')?.value || '';
-          formState.status = form.querySelector('[name="status"]')?.value || formState.status;
+          formState.status = SalesStatus.normalizar(form.querySelector('[name="status"]')?.value || formState.status);
+          derivarTipo();
           formState.date = form.querySelector('[name="date"]')?.value || formState.date;
           formState.dueDate = form.querySelector('[name="dueDate"]')?.value || formState.dueDate;
           formState.note = form.querySelector('[name="note"]')?.value || '';
@@ -1560,8 +1771,12 @@ async function loadModule(moduleName) {
           const form = document.getElementById('salesRecordForm');
           const formData = new FormData(form);
           const clientEntry = meta.directory.find((entry) => entry.id === formData.get('clientSupplierId'));
+          // `overrides.status` (as ações do menu) tem precedência sobre o select.
+          const status = SalesStatus.normalizar(overrides.status || formData.get('status') || formState.status);
           return {
-            type: recordType,
+            // O tipo acompanha o status — mandar os dois evita que o servidor
+            // tenha que adivinhar, e o servidor confere de novo do lado de lá.
+            type: SalesStatus.tipoDoStatus(status),
             clientSupplierId: formData.get('clientSupplierId') || '',
             clientSupplierName: clientEntry ? clientEntry.name : '',
             companyId: formData.get('companyId') || '',
@@ -1593,9 +1808,11 @@ async function loadModule(moduleName) {
               showCteOptions
             },
             salesTerms: formData.get('salesTerms') || '',
-            status: formData.get('status') || '',
             note: formData.get('note') || '',
-            ...overrides
+            ...overrides,
+            // Depois do spread: `status` já foi normalizado acima levando o
+            // override em conta, e não pode voltar ao valor cru.
+            status
           };
         };
 
@@ -1630,7 +1847,7 @@ async function loadModule(moduleName) {
                 <div><strong>Data:</strong> ${escapeHtml(formState.date || '-')}</div>
                 <div><strong>Empresa:</strong> ${escapeHtml(empresa?.name || '-')}</div>
                 <div><strong>Vendedor:</strong> ${escapeHtml(vendedor?.name || '-')}</div>
-                <div><strong>Status:</strong> ${escapeHtml(formState.status || '-')}</div>
+                <div><strong>Status:</strong> ${escapeHtml(SalesStatus.rotulo(formState.status))}</div>
                 <div><strong>Origem da venda:</strong> ${escapeHtml(formState.saleOrigin || '-')}</div>
                 ${formState.dueDate ? `<div><strong>Validade:</strong> ${escapeHtml(formState.dueDate)}</div>` : ''}
                 ${formState.customerPoCode ? `<div><strong>Ordem de compra do cliente:</strong> ${escapeHtml(formState.customerPoCode)}</div>` : ''}
@@ -1705,7 +1922,9 @@ async function loadModule(moduleName) {
               ...buildPayload(),
               id: undefined,
               code: undefined,
-              status: recordType === 'order' ? 'pendente' : 'em aberto'
+              // A cópia volta ao começo do fluxo: duplicar um pedido faturado
+              // não pode nascer faturado (baixaria estoque de novo).
+              status: SalesStatus.padraoDoTipo(recordType)
             };
             showToast('Venda duplicada — revise e salve o novo registro.', 'success');
             renderApp();
@@ -1727,17 +1946,20 @@ async function loadModule(moduleName) {
             if (!ok) return;
             try {
               const resposta = await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(buildPayload({ status: novoStatus })) });
-              showToast(`${title} atualizado para "${novoStatus}".`, 'success');
+              showToast(`Registro atualizado para "${SalesStatus.rotulo(novoStatus)}".`, 'success');
 
               // Faturou: o lançamento já nasceu junto (ver transitionOrderFinanceEffect
               // no servidor). Em vez de largar o usuário na lista, leva direto ao
               // financeiro gerado para ele ajustar forma de pagamento e vencimento —
               // que é o passo seguinte do fluxo, e o que mais se esquece de fazer.
               const gerados = resposta?.financeiro?.entryIds || [];
-              if (novoStatus === 'faturado' && gerados.length) {
+              // Só desvia quando o status realmente gerou financeiro. "Aprovado
+              // Sem Faturamento" baixa estoque e não cria nada a receber — levar
+              // o usuário ao Financeiro ali seria mandá-lo para uma tela vazia.
+              if (SalesStatus.geraFinanceiro(novoStatus) && gerados.length) {
                 state.salesDraft.editRecord = null;
                 // De onde vim: o Financeiro usa isto para devolver ao pedido.
-                state.financeReturnTo = { module: 'sales', sub: 'new_order', recordId: editRecord.id };
+                state.financeReturnTo = { module: 'sales', sub: 'new_sale', recordId: editRecord.id };
                 if (gerados.length === 1) {
                   state.financeEditEntryId = gerados[0];
                   state.activeSub = 'novo_lancamento';
@@ -1759,6 +1981,39 @@ async function loadModule(moduleName) {
               loadModule('sales');
             } catch (error) {
               showToast(error.message || 'Erro ao atualizar o status.', 'error');
+            }
+          },
+
+          gerarOrdemProducao: async () => {
+            const ok = await confirmModal(
+              'Gerar ordens de produção para este pedido?\n\n' +
+              'Sai uma ordem por item que tenha ficha técnica cadastrada. Item sem ficha é revenda e não gera ordem.'
+            );
+            if (!ok) return;
+            try {
+              const res = await api('/api/pcp/orders/from-sale', {
+                method: 'POST',
+                body: JSON.stringify({ recordId: editRecord.id })
+              });
+              const quantas = (res.criadas || []).length;
+              if (!quantas) {
+                // Diferenciar "já existiam" de "nenhum item tem ficha" evita o
+                // usuário clicar de novo achando que não funcionou.
+                showToast(res.jaExistiam
+                  ? 'Este pedido já tem ordem de produção — nada foi duplicado.'
+                  : 'Nenhum item deste pedido tem ficha técnica cadastrada (Estrutura de Produto, no PCP).', 'warning', 7000);
+                return;
+              }
+              showToast(`${quantas} ordem${quantas === 1 ? '' : 'ns'} de produção criada${quantas === 1 ? '' : 's'}.`, 'success');
+              if ((res.ignorados || []).length) {
+                showToast(`Sem ficha técnica, não geraram ordem: ${res.ignorados.join(', ')}.`, 'info', 7000);
+              }
+              state.activeModule = 'pcp';
+              state.activeSub = 'ordens';
+              renderApp();
+              loadModule('pcp');
+            } catch (error) {
+              showToast(error.message || 'Erro ao gerar ordens de produção.', 'error');
             }
           },
 
@@ -1811,13 +2066,16 @@ async function loadModule(moduleName) {
         ];
 
         const renderForm = () => {
+          // O status pode ter mudado desde o último desenho (troca no select,
+          // ação do menu): tipo e título são recalculados antes de montar o HTML.
+          derivarTipo();
           const totais = computeTotals();
           const somaPagamentos = payments.reduce((soma, linha) => soma + Number(linha.amount || 0), 0);
 
           // Aba Impostos: painel só de leitura. Os tributos são apurados na
           // emissão da NF-e (módulo Fiscal) e o pedido não guarda cálculo
           // fiscal nenhum — por isso zerados aqui, com a nota explicando.
-          const faturado = formState.status === 'faturado';
+          const faturado = SalesStatus.geraFinanceiro(formState.status);
           const zeros = (...rotulos) => rotulos.map((rotulo) => [rotulo, 0]);
           const GRUPOS_IMPOSTOS = [
             { titulo: 'Valores da Nota', tom: 'azul', linhas: [
@@ -1874,14 +2132,13 @@ async function loadModule(moduleName) {
                      display:none é enviado; só o desabilitado fica de fora) e
                      trocar de aba não precisa redesenhar o formulário. -->
                 <div class="sales-tab-panel" data-aba="dados" ${abaAtiva === 'dados' ? '' : 'hidden'}>
-                <div class="row">
+                <div class="row sales-row-cliente">
                   <label>Cliente/Fornecedor *
                     ${renderSearchableSelect({ id: 'salesClientSupplier', name: 'clientSupplierId', options: meta.directory.map((entry) => ({ value: entry.id, label: entry.name })), selectedValue: formState.clientSupplierId, placeholder: 'Buscar por nome...', required: true })}
                   </label>
                   <label>Empresa
                     ${renderSearchableSelect({ id: 'salesCompany', name: 'companyId', options: meta.companies.map((c) => ({ value: c.id, label: c.name })), selectedValue: formState.companyId, placeholder: 'Buscar empresa...' })}
                   </label>
-                  <button type="button" class="icon-button edit" id="salesQuickAddCompany" title="Nova empresa">+</button>
                   <label>Origem da Venda *
                     <select name="saleOrigin">
                       ${ORIGENS_VENDA.map((origemVenda) => `<option value="${escapeHtml(origemVenda)}" ${formState.saleOrigin === origemVenda ? 'selected' : ''}>${escapeHtml(origemVenda)}</option>`).join('')}
@@ -1890,11 +2147,6 @@ async function loadModule(moduleName) {
                   <label>Categoria
                     <input name="category" value="${escapeHtml(formState.category)}" placeholder="Ex.: Revenda, Consumo" />
                   </label>
-                </div>
-                <div id="salesInlineAddCompanyRow" class="row hidden" style="margin-top: -8px;">
-                  <label>Nome da empresa<input id="salesNewCompanyName" placeholder="Razão social" /></label>
-                  <label>CNPJ<input id="salesNewCompanyDocument" placeholder="Somente números" /></label>
-                  <div style="align-self: end;"><button type="button" class="secondary" id="salesSaveNewCompany">Salvar empresa</button></div>
                 </div>
 
                 <div class="row">
@@ -1910,14 +2162,18 @@ async function loadModule(moduleName) {
                   <label class="campo-somente-leitura" title="Sequencial gerado pelo sistema — não é editável.">Código
                     <input value="${isEditing ? escapeHtml(String(editRecord.code)) : 'Gerado ao salvar'}" disabled />
                   </label>
-                  <label>Status
-                    <select name="status">
-                      ${statusOptions.map((opt) => `<option value="${opt.value}" ${formState.status === opt.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
+                  <!-- É este campo que decide se o documento é pedido ou
+                       orçamento. Só os dois primeiros são escolhidos à mão; os
+                       demais aparecem desabilitados porque quem os atribui é o
+                       sistema (Aprovar, Faturar, Cancelar) ou a conciliação —
+                       mas ficam à vista para o usuário saber que existem e para
+                       onde o documento pode caminhar. -->
+                  <label class="sales-status-field">Status
+                    <select name="status" id="salesStatusSelect" class="sales-status-select">
+                      ${SalesStatus.opcoesSelect(formState.status).map((opt) => `<option value="${opt.value}" ${opt.selected ? 'selected' : ''} ${opt.disabled ? 'disabled' : ''}>${escapeHtml(opt.label)}</option>`).join('')}
                     </select>
                   </label>
                 </div>
-
-                ${meta.sellers.length === 0 ? '<p class="muted">Nenhum vendedor cadastrado — em Cadastros, marque uma pessoa com o papel "Vendedor" para que ela apareça aqui.</p>' : ''}
 
                 <div class="cadastro-section">
                   <div class="cadastro-section-header">
@@ -1927,28 +2183,65 @@ async function loadModule(moduleName) {
                   <div class="cadastro-section-body">
                     <div class="row">
                       <label style="flex: 2;">Produto
-                        ${renderSearchableSelect({ id: 'salesProduct', name: 'productPick', options: meta.products.map((p) => ({ value: p.id, label: `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)}` })), selectedValue: '', placeholder: 'Buscar produto...' })}
+                        ${renderSearchableSelect({ id: 'salesProduct', name: 'productPick', options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p) })), selectedValue: '', placeholder: 'Buscar produto...' })}
                       </label>
                       <label>Quantidade<input id="salesProductQty" type="number" min="1" step="1" value="1" /></label>
                       <div style="align-self: end;"><button type="button" class="secondary" id="salesAddItemBtn">+ Adicionar</button></div>
                     </div>
 
+                    <!-- Cada linha mostra, lado a lado, os quatro números que
+                         decidem a venda: o que existe em estoque, quanto o
+                         cadastro diz que o produto vale, quanto está saindo e
+                         por quanto está saindo. Os dois primeiros são só
+                         leitura (quem os muda é o módulo Estoque); os dois
+                         últimos são os editáveis, e o Total é a conta deles. -->
                     <div class="table-scroll" style="margin-top: 12px;">
-                      <table class="table table-actions">
-                        <thead><tr><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th><th>Ações</th></tr></thead>
+                      <table class="table table-actions sales-items-table">
+                        <thead><tr>
+                          <th>Produto</th>
+                          <th>Saldo Estoque</th>
+                          <th>Preço cadastrado</th>
+                          <th>Qtd.</th>
+                          <th>Valor unit.</th>
+                          <th>Total</th>
+                          <th>Ações</th>
+                        </tr></thead>
                         <tbody>
-                          ${items.length ? items.map((item, index) => `
+                          ${items.length ? items.map((item, index) => {
+                            const produto = produtoDoItem(item);
+                            // Produto excluído do cadastro depois da venda: o
+                            // item continua válido no pedido, só não há mais
+                            // saldo nem preço de referência para mostrar.
+                            const semCadastro = !produto;
+                            const saldo = Number(produto?.stockQuantity || 0);
+                            // Só pedido reserva estoque — em orçamento o alerta
+                            // seria barulho, nada vai ser baixado.
+                            const faltaSaldo = !semCadastro && recordType === 'order' && Number(item.quantity || 0) > saldo;
+                            return `
                             <tr>
-                              <td>${escapeHtml(item.name)}</td>
+                              <td>${escapeHtml(item.name)}${item.sku ? ` <span class="muted">(${escapeHtml(item.sku)})</span>` : ''}</td>
+                              <td class="sales-item-readonly ${faltaSaldo ? 'is-alerta' : ''}"
+                                  title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (faltaSaldo ? `Saldo insuficiente: faltam ${salesFormatQty(Number(item.quantity || 0) - saldo)}. O faturamento será recusado.` : 'Saldo atual no Estoque.')}">
+                                ${semCadastro ? '-' : salesFormatQty(saldo)}
+                              </td>
+                              <td class="sales-item-readonly" title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : 'Preço de venda cadastrado no Estoque — referência, não é o que será cobrado.'}">
+                                ${semCadastro ? '-' : salesFormatBRL(produto.salePrice)}
+                              </td>
                               <td><input type="number" min="1" step="1" class="sales-item-qty" data-index="${index}" value="${item.quantity}" style="width: 80px;" /></td>
                               <td><input type="number" min="0" step="0.01" class="sales-item-price" data-index="${index}" value="${item.unitPrice}" style="width: 110px;" /></td>
-                              <td>${salesFormatBRL(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</td>
+                              <td class="sales-item-readonly"><strong>${salesFormatBRL(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</strong></td>
                               <td><button type="button" class="icon-button sales-remove-item" data-index="${index}" title="Remover">×</button></td>
                             </tr>
-                          `).join('') : '<tr><td colspan="5" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
+                          `; }).join('') : '<tr><td colspan="7" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
                         </tbody>
                       </table>
                     </div>
+                    ${itensSemSaldo().length ? `
+                      <p class="sales-itens-alerta">
+                        Saldo insuficiente em ${itensSemSaldo().length === 1 ? '1 produto' : `${itensSemSaldo().length} produtos`}:
+                        ${escapeHtml(itensSemSaldo().map((item) => item.name).join(', '))}.
+                        Dá para salvar o pedido, mas faturar será recusado enquanto o estoque não cobrir.
+                      </p>` : ''}
                   </div>
                 </div>
 
@@ -2053,7 +2346,9 @@ async function loadModule(moduleName) {
                         <input name="dueDate" type="date" value="${formState.dueDate}" />
                       </label>`
                       // Pedido não tem validade; a célula vazia mantém as colunas
-                      // alinhadas (datas | cliente | e-mails | números).
+                      // alinhadas (datas | cliente | e-mails | números). O campo
+                      // aparece e some quando o Status troca entre os dois tipos,
+                      // porque o formulário é redesenhado a cada troca.
                       : '<div aria-hidden="true"></div>'}
                       <label class="sales-total-field">Contato do Cliente
                         <input name="clientContact" value="${escapeHtml(formState.clientContact)}" placeholder="Telefone ou responsável" />
@@ -2346,33 +2641,15 @@ async function loadModule(moduleName) {
           attachSearchableSelect({ id: 'salesDeposit', options: meta.deposits.map((d) => ({ value: d.id, label: d.name })) });
           attachSearchableSelect({
             id: 'salesProduct',
-            options: meta.products.map((p) => ({ value: p.id, label: `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)}`, product: p }))
+            options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p), product: p }))
           });
 
-          document.getElementById('salesQuickAddCompany')?.addEventListener('click', () => {
-            document.getElementById('salesInlineAddCompanyRow')?.classList.toggle('hidden');
-          });
-          document.getElementById('salesSaveNewCompany')?.addEventListener('click', async () => {
-            const name = document.getElementById('salesNewCompanyName')?.value.trim();
-            if (!name) {
-              showToast('Informe o nome da empresa.', 'warning');
-              return;
-            }
-            try {
-              const res = await api('/api/cadastros/empresas', {
-                method: 'POST',
-                body: JSON.stringify({ name, document: document.getElementById('salesNewCompanyDocument')?.value.trim() || '' })
-              });
-              meta.companies.push(res.company);
-              showToast('Empresa cadastrada com sucesso.', 'success');
-              const hidden = document.getElementById('salesCompanyValue');
-              const input = document.getElementById('salesCompanyInput');
-              if (hidden) hidden.value = res.company.id;
-              if (input) input.value = res.company.name;
-              document.getElementById('salesInlineAddCompanyRow')?.classList.add('hidden');
-            } catch (error) {
-              showToast(error.message || 'Erro ao cadastrar empresa.', 'error');
-            }
+          // Trocar Pedido <-> Orçamento muda o título, os rótulos e o campo
+          // Validade — redesenha a tela inteira, como já acontece ao mexer nos
+          // itens. syncFormState() antes para não perder o que foi digitado.
+          document.getElementById('salesStatusSelect')?.addEventListener('change', () => {
+            syncFormState();
+            renderForm();
           });
 
           document.getElementById('salesAddItemBtn')?.addEventListener('click', () => {
@@ -2662,13 +2939,13 @@ async function loadModule(moduleName) {
         return;
       }
 
-      // Sub-aba: Log's Vendas Importadas
+      // Sub-aba: Logs de Vendas Importadas
       if (sub === 'import_logs') {
         const data = await api('/api/sales/records?view=import_logs');
         content.innerHTML = `
           <div class="cadastro-page-head">
             <div>
-              <h3>Log's Vendas Importadas</h3>
+              <h3>Logs de Vendas Importadas</h3>
               <p class="muted">${data.importLogs.length} importação${data.importLogs.length === 1 ? '' : 'ões'} registrada${data.importLogs.length === 1 ? '' : 's'}</p>
             </div>
             <div class="cadastro-list-actions">
@@ -3019,7 +3296,7 @@ async function loadModule(moduleName) {
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
                     ${field('E-mail secundários', 'secondaryEmails', peopleDraft.secondaryEmails || '')}
-                    ${field('Whatsapp', 'whatsapp', peopleDraft.whatsapp || '')}
+                    ${field('WhatsApp', 'whatsapp', peopleDraft.whatsapp || '')}
                     ${field('Telefone celular', 'mobilePhone', peopleDraft.mobilePhone || '')}
                   </div>
                   <div class="cadastro-grid cadastro-grid-2">
@@ -3195,7 +3472,7 @@ async function loadModule(moduleName) {
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
                   ${field('E-mail secundários', 'secondaryEmails', cnpjDraft.secondaryEmails || '')}
-                  ${field('Whatsapp', 'whatsapp', cnpjDraft.whatsapp || '')}
+                  ${field('WhatsApp', 'whatsapp', cnpjDraft.whatsapp || '')}
                   ${field('Telefone celular', 'mobilePhone', cnpjDraft.mobilePhone || '')}
                 </div>
                 <div class="cadastro-grid cadastro-grid-2">
@@ -3476,7 +3753,7 @@ async function loadModule(moduleName) {
             kind: 'people',
             id: person.id,
             code: person.code || '',
-            cadastroTipo: person.type === 'pessoa-juridica' ? 'Pessoa juridica' : 'Pessoa fisica',
+            cadastroTipo: person.type === 'pessoa-juridica' ? 'Pessoa jurídica' : 'Pessoa física',
             name: person.name || '',
             tradeName: person.tradeName || '',
             document: person.document || '',
@@ -3680,7 +3957,7 @@ async function loadModule(moduleName) {
 
                 <label class="cadastro-field cadastro-field-full">
                   <span>Busca</span>
-                  <input name="query" value="${escapeHtml(listFilters.query)}" placeholder="Nome, documento, email ou telefone" />
+                  <input name="query" value="${escapeHtml(listFilters.query)}" placeholder="Nome, documento, e-mail ou telefone" />
                 </label>
                 <div class="cadastro-filter-actions">
                   <button type="submit" id="cadastroFilterApplyBtn">Buscar</button>
@@ -4162,7 +4439,7 @@ async function loadModule(moduleName) {
             }
           };
           if (!officialEmail || !officialPhone) {
-            showToast('A API retornou CNPJ válido, mas sem email e/ou telefone para este cadastro.', 'warning');
+            showToast('A API retornou CNPJ válido, mas sem e-mail e/ou telefone para este cadastro.', 'warning');
           }
           showToast('CNPJ consultado com sucesso!', 'success');
           renderApp();
@@ -4399,7 +4676,7 @@ async function loadModule(moduleName) {
             }
           };
           if (!officialEmail || !officialPhone) {
-            showToast('A API retornou CNPJ válido, mas sem email e/ou telefone para este cadastro.', 'warning');
+            showToast('A API retornou CNPJ válido, mas sem e-mail e/ou telefone para este cadastro.', 'warning');
           }
           showToast('CNPJ consultado com sucesso!', 'success');
           renderApp();
@@ -4619,18 +4896,18 @@ async function loadModule(moduleName) {
     }
 
     // ========================================================================
-    // ABA: COMPRAS (sub-abas: Nova compra, Histórico de compras, Fornecedores)
+    // ABA: COMPRAS (sub-abas: Nova Compra, Histórico de Compras, Fornecedores)
     // ========================================================================
     if (moduleName === 'purchases') {
       const data = await api('/api/purchases');
       const sub = state.activeSub || 'new_purchase';
 
       const renderPage = () => {
-        // Sub-aba: Histórico de compras
+        // Sub-aba: Histórico de Compras
         if (sub === 'purchase_history') {
           return `
             <div class="panel">
-              <h3>Histórico de compras</h3>
+              <h3>Histórico de Compras</h3>
               <table class="table">
                 <thead><tr><th>ID</th><th>Fornecedor</th><th>Data</th><th>Total</th><th>Status</th></tr></thead>
                 <tbody>
@@ -4991,6 +5268,9 @@ async function loadModule(moduleName) {
 
   try {
     const response = await api('/api/me');
+    // Recarregar a página recria o timer da virada: ele vive na memória da
+    // aba, então some a cada F5.
+    agendarSaidaDaVirada(response.sessaoExpiraEm);
     state.user = response.user;
     state.user.dashboardPins = normalizeDashboardPins([
       ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),

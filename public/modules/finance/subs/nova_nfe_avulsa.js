@@ -25,6 +25,10 @@ function nfeComputeInstallmentsPreview(total, count, intervalDays) {
 window.MavisSubscreenRegistry.finance.nova_nfe_avulsa = async function renderNovaNfeAvulsa(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml } = ctx;
 
+  // Espelhada no Fiscal: depois de salvar, volta para a lista do módulo por
+  // onde a pessoa entrou, e não para o Financeiro fixo.
+  const moduloAtual = () => (state.activeModule === 'fiscal' ? 'fiscal' : 'finance');
+
   let meta = { directory: [] };
   try {
     meta = await api('/api/finance/meta');
@@ -281,7 +285,7 @@ window.MavisSubscreenRegistry.finance.nova_nfe_avulsa = async function renderNov
     `;
     document.getElementById('nfeSuccessView')?.addEventListener('click', () => {
       state.activeSub = 'nfe_emitidas';
-      loadModule('finance');
+      loadModule(moduloAtual());
     });
     document.getElementById('nfeSuccessNew')?.addEventListener('click', () => {
       selectedClientSupplierId = '';

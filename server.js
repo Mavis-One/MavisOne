@@ -6,6 +6,8 @@ const path = require('path');
 const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
+const modulosDb = require('./lib/db/modulos');
+const crmDb = require('./lib/db/crm');
 const { buildNfePayload } = require('./lib/nfePayloadBuilder');
 const openFinanceService = require('./lib/openfinance/service');
 const openFinanceSync = require('./lib/openfinance/sync');
@@ -17,6 +19,11 @@ const { parcelasDoPedido } = require('./lib/vendas-financeiro');
 // Mora em public/ porque o navegador também carrega este arquivo por <script>.
 // Fonte única do cálculo de totais — ver o comentário no topo do módulo.
 const salesTotals = require('./public/modules/shared/sales_totals');
+// Idem: catálogo de status de pedido/orçamento. É ele que diz, para cada
+// status, se o registro é pedido ou orçamento e se baixa estoque / gera
+// financeiro — as três decisões que antes eram `=== 'faturado'` espalhado.
+const salesStatus = require('./public/modules/shared/sales_status');
+const sessaoUtil = require('./lib/sessao');
 
 const HOST = process.env.HOST || '0.0.0.0';
 const BASE_PORT = Number(process.env.PORT) || 3000;
@@ -76,7 +83,76 @@ const initialData = {
   }
 };
 
+// Cada sessão é { userId, criadaEm, expiraEm }. Guardar o `expiraEm` calculado
+// na criação, em vez de recalcular a cada requisição, é o que faz a sessão
+// morrer na virada do dia em que NASCEU — recalcular daria sempre "a próxima
+// meia-noite a partir de agora", e a sessão nunca expiraria.
 let sessions = {};
+
+// ---------------------------------------------------------------------------
+// SESSÃO ÚNICA POR USUÁRIO
+//
+// Entrar numa máquina derruba a sessão aberta em outra. É a regra pedida, e ela
+// só funciona se a máquina derrubada souber POR QUE caiu: sem isso o usuário vê
+// erros aleatórios em cada clique e acha que o sistema quebrou.
+//
+// Por isso o token derrubado não é simplesmente esquecido — ele fica aqui com o
+// motivo, e a próxima requisição dele recebe uma resposta que a tela sabe
+// explicar. É a diferença entre "Erro inesperado" e "sua conta entrou em outro
+// dispositivo".
+//
+// Guarda só o token e o instante. O token já é um identificador opaco e a
+// sessão dele acabou, então não há o que vazar aqui.
+const sessoesEncerradas = new Map();
+const LEMBRAR_ENCERRADA_MS = 12 * 60 * 60 * 1000; // 12h
+
+function limparEncerradasAntigas() {
+  const limite = Date.now() - LEMBRAR_ENCERRADA_MS;
+  for (const [token, registro] of sessoesEncerradas) {
+    if (registro.em < limite) sessoesEncerradas.delete(token);
+  }
+}
+
+/**
+ * Derruba as sessões abertas do usuário e devolve quantas caíram.
+ * `exceto` protege o token recém-criado de derrubar a si mesmo.
+ */
+function encerrarSessoesDoUsuario(userId, motivo, exceto = null) {
+  const derrubados = Object.keys(sessions).filter((t) => sessions[t].userId === userId && t !== exceto);
+  if (derrubados.length) limparEncerradasAntigas();
+  for (const token of derrubados) {
+    delete sessions[token];
+    sessoesEncerradas.set(token, { motivo, em: Date.now() });
+  }
+  return derrubados.length;
+}
+
+// ---------------------------------------------------------------------------
+// EXPIRAÇÃO NA VIRADA DO DIA
+//
+// A regra e o porquê estão em lib/sessao.js. Aqui só a aplicação: derrubar o
+// token quando ele vence, e varrer periodicamente os que venceram e cujo dono
+// nunca mais voltou — sem a varredura, o mapa de sessões só cresceria, que é
+// exatamente o peso que esta regra existe para tirar.
+// ---------------------------------------------------------------------------
+const VARRER_SESSOES_MS = 10 * 60 * 1000;
+
+/** Encerra o token se ele já passou da virada. Devolve true se derrubou. */
+function derrubarSeExpirou(token) {
+  const sessao = sessions[token];
+  if (!sessao || !sessaoUtil.sessaoExpirou(sessao)) return false;
+  delete sessions[token];
+  sessoesEncerradas.set(token, { motivo: 'fim-do-dia', em: Date.now() });
+  return true;
+}
+
+function varrerSessoesExpiradas() {
+  for (const token of Object.keys(sessions)) derrubarSeExpirou(token);
+  limparEncerradasAntigas();
+}
+
+// unref: a varredura não é motivo para o processo continuar de pé.
+setInterval(varrerSessoesExpiradas, VARRER_SESSOES_MS).unref();
 
 function ensureDataFile() {
   if (!fs.existsSync(DATA_FILE)) {
@@ -389,15 +465,40 @@ async function fetchCepData(cep) {
 
 async function getCurrentUser(req) {
   const token = req.headers['x-auth-token'];
-  if (!token || !sessions[token]) {
+  // Confere a virada aqui também, e não só no portão da requisição: qualquer
+  // caminho que chegue a um usuário autenticado passa por esta função, então é
+  // o último ponto em que uma sessão vencida ainda poderia passar.
+  if (!token || derrubarSeExpirou(token) || !sessions[token]) {
     return null;
   }
-  const userId = sessions[token];
+  const { userId } = sessions[token];
   const user = await db.getUserById(userId);
   // Bloqueado é como se não estivesse logado — inclusive para quem já tinha
   // sessão aberta quando o acesso foi suspenso.
   if (!user || user.active === false) return null;
   return user;
+}
+
+/**
+ * Admin de verdade: pelo papel novo (user_roles) OU pela coluna antiga
+ * users.role.
+ *
+ * `getCurrentUser` lê só a tabela `users`, então quem foi promovido a
+ * administrador na tela de Papéis e Permissões — que grava em `user_roles` e
+ * NÃO mexe em `users.role` — chegava aqui com role='user' e levava "Permissão
+ * negada" ao abrir Auditoria ou ao gerenciar usuários. O portão central já
+ * usava a regra certa (permissoes.ehAdministrador com os papéis carregados);
+ * as rotas que checavam `role === 'admin'` na mão, não. Promover alguém pela
+ * tela tinha efeito parcial, que é o pior dos casos: parece que funcionou.
+ *
+ * carregarAcessoDoUsuario tem cache de 5 minutos, então isto não custa uma
+ * viagem ao banco por requisição.
+ */
+async function ehAdmin(usuario) {
+  if (!usuario) return false;
+  if (permissoes.ehAdministrador(usuario)) return true;
+  const acesso = await db.rbac.carregarAcessoDoUsuario(usuario.id);
+  return Boolean(acesso && permissoes.ehAdministrador({ ...usuario, roles: acesso.roles }));
 }
 
 function ipDaRequisicao(req) {
@@ -1173,7 +1274,10 @@ function serializeSalesRecord(record, data) {
     itemsTotal: Math.round(itemsTotal * 100) / 100,
     amount: totalAmount,
     note: record.note || '',
-    status: record.status || (record.type === 'quote' ? 'em aberto' : 'pendente'),
+    // Registro gravado antes do catálogo único ('pendente', 'faturado', 'em
+    // aberto', …) é traduzido aqui na leitura — nada de migração SQL. O valor
+    // novo só chega ao banco no próximo salvamento do registro.
+    status: salesStatus.normalizar(record.status, record.type),
     // A tela precisa saber que o pedido já gerou as contas a receber — é o que
     // explica por que refaturar não cobra de novo.
     financeApplied: Boolean(record.financeApplied),
@@ -1198,8 +1302,16 @@ function filterSalesRecords(records, data, query) {
     });
   }
 
+  // Compara normalizado dos dois lados: o filtro manda o valor do catálogo e o
+  // banco ainda pode ter o legado ('faturado' casa com 'pedido-faturado').
   const status = query.get('status');
-  if (status) result = result.filter((record) => (record.status || '') === status);
+  if (status) {
+    const alvo = salesStatus.normalizar(status);
+    result = result.filter((record) => salesStatus.normalizar(record.status, record.type) === alvo);
+  }
+
+  const type = query.get('type');
+  if (type) result = result.filter((record) => record.type === type);
 
   const companyId = query.get('companyId');
   if (companyId) result = result.filter((record) => record.companyId === companyId);
@@ -1224,8 +1336,14 @@ function buildSalesDashboardSummary(data) {
 
   const valorPedidos = Math.round(orders.reduce((sum, o) => sum + Number(o.amount || 0), 0) * 100) / 100;
   const valorOrcamentos = Math.round(quotes.reduce((sum, q) => sum + Number(q.amount || 0), 0) * 100) / 100;
-  const pedidosFaturados = orders.filter((o) => o.status === 'faturado').length;
-  const pedidosPendentes = orders.filter((o) => o.status === 'pendente').length;
+  // "Faturados" é receita: conta quem gera financeiro. Uma saída aprovada sem
+  // faturamento (transferência, remessa) mexeu no estoque mas não é venda, e
+  // entrar aqui inflaria o painel com dinheiro que não existe.
+  const pedidosFaturados = orders.filter((o) => salesStatus.geraFinanceiro(o.status)).length;
+  // "Pendentes" é o que ainda não se resolveu: nada saiu do estoque e não foi
+  // cancelado. Uma remessa aprovada sem faturamento já se resolveu, mesmo sem
+  // ter virado receita.
+  const pedidosPendentes = orders.filter((o) => !salesStatus.baixaEstoque(o.status) && !salesStatus.ehCancelado(o.status)).length;
 
   const overview = {
     totalPedidos: orders.length,
@@ -1277,17 +1395,55 @@ function recomputeFinanceEntryStatus(entry, data) {
   return 'parcial';
 }
 
-function addFinanceAuditLog(data, { action, entry, byId, byName, details }) {
-  data.auditLogs = data.auditLogs || [];
-  data.auditLogs.push({
-    id: createId('audit'),
+/**
+ * PONTO ÚNICO da trilha de auditoria.
+ *
+ * Ela vivia em `data/db.json` — arquivo no disco local do servidor. Para
+ * emissão, cancelamento, carta de correção e inutilização de NF-e isso é o
+ * pior lugar possível: é a única prova de QUEM fez o quê num documento
+ * fiscal, e some junto com a máquina.
+ *
+ * Agora grava em `audit_logs` (Supabase). A tabela e as funções já existiam
+ * desde o começo — nunca tinham sido ligadas.
+ *
+ * NÃO propaga o erro: a nota já foi transmitida à SEFAZ quando este código
+ * roda. Falhar aqui não desfaz a emissão, só perderia o registro — por isso
+ * há a queda para o arquivo local, que deixa o rastro em algum lugar em vez
+ * de em nenhum.
+ */
+async function registrarAuditoria({ action, targetId, targetUsername, byId, byName, details }) {
+  const registro = {
+    action,
+    targetId: targetId || '',
+    targetUsername: targetUsername || '',
+    byId: byId || '',
+    byName: byName || '',
+    details: details || null
+  };
+  try {
+    return await db.addAuditLog(registro);
+  } catch (error) {
+    console.error('Falha ao gravar auditoria no Supabase:', action, error.message);
+    try {
+      const data = loadData();
+      data.auditLogs = data.auditLogs || [];
+      data.auditLogs.push({ id: createId('audit'), ...registro, at: new Date().toISOString(), pendenteDeSincronia: true });
+      saveData(data);
+    } catch (erroLocal) {
+      console.error('E também falhou o registro local:', erroLocal.message);
+    }
+    return null;
+  }
+}
+
+async function addFinanceAuditLog(_data, { action, entry, byId, byName, details }) {
+  return registrarAuditoria({
     action,
     targetId: entry.id,
     targetUsername: `Lançamento ${String(entry.id).slice(-8)} · ${entry.description || ''}`.trim(),
     byId,
     byName,
-    at: new Date().toISOString(),
-    details: details || null
+    details
   });
 }
 
@@ -1388,11 +1544,30 @@ function filterFinanceEntries(data, query) {
   return entries;
 }
 
+// Vocabulário único de status para a tela, vindo dos DOIS mundos: o registro
+// manual do Financeiro (minúsculas, 'emitida'/'cancelada') e a nota real da
+// SEFAZ (maiúsculas, 'AUTORIZADO'/'ERRO'/'RASCUNHO'...).
+const NFE_STATUS_FISCAL = {
+  RASCUNHO: 'rascunho',
+  PROCESSANDO: 'processando',
+  AUTORIZADO: 'autorizada',
+  ERRO: 'erro',
+  CANCELADO: 'cancelada',
+  DENEGADO: 'denegada',
+  INUTILIZADO: 'inutilizada'
+};
+
 function normalizeNfeStatus(raw) {
-  const s = String(raw || '').toLowerCase();
+  const bruto = String(raw || '').trim();
+  const fiscal = NFE_STATUS_FISCAL[bruto.toUpperCase()];
+  if (fiscal) return fiscal;
+  const s = bruto.toLowerCase();
   if (s === 'emitida' || s === 'autorizada') return 'autorizada';
-  if (['cancelada', 'denegada', 'rejeitada', 'pendente'].includes(s)) return s;
-  return 'autorizada';
+  if (['cancelada', 'denegada', 'rejeitada', 'pendente', 'rascunho', 'processando', 'erro', 'inutilizada'].includes(s)) return s;
+  // NUNCA cair em 'autorizada'. O default anterior fazia isso, e transformava
+  // qualquer status desconhecido — inclusive um ERRO de SEFAZ — numa nota que
+  // a tela mostrava como autorizada, com botão de cancelar e tudo.
+  return 'pendente';
 }
 
 function parseDateOnly(value) {
@@ -1457,8 +1632,42 @@ function serializeNfe(nfe, data) {
   };
 }
 
-function filterNfes(data, query) {
-  let list = (data.nfes || []).slice();
+/**
+ * A nota REAL (tabela `nfe`, transmitida à SEFAZ) no formato que a tela de
+ * NF-e Emitidas já desenha.
+ *
+ * Traduzir aqui, e não reescrever a tela, é o que permite as duas origens
+ * conviverem numa lista só enquanto as notas antigas existirem. O campo
+ * `origem` é o que diz a cada linha quais ações ela suporta: uma nota manual
+ * do Financeiro não tem chave, nem XML, nem o que consultar na SEFAZ.
+ */
+function fiscalNfeParaLista(nfe) {
+  return {
+    id: nfe.id,
+    origem: 'fiscal',
+    number: nfe.numero || '',
+    series: nfe.serie || '',
+    date: String(nfe.dataEmissao || nfe.criadoEm || '').slice(0, 10),
+    status: normalizeNfeStatus(nfe.status),
+    statusFiscal: nfe.status,
+    key: nfe.chaveAcesso || '',
+    amount: Number(nfe.valorTotal || 0),
+    customer: nfe.destinatarioNome || '',
+    clientDocument: nfe.destinatarioDocumento || '',
+    orderId: nfe.orderId || '',
+    referencia: nfe.referencia || '',
+    mensagemSefaz: nfe.mensagemSefaz || '',
+    protocolo: nfe.protocolo || '',
+    temXml: Boolean(nfe.urlXml),
+    temDanfe: Boolean(nfe.urlDanfe),
+    // A nota fiscal não gera parcela por si: o financeiro vem do pedido.
+    financialEntries: [],
+    items: []
+  };
+}
+
+function filterNfes(data, query, listaBase) {
+  let list = listaBase ? listaBase.slice() : (data.nfes || []).slice();
 
   const search = String(query.get('search') || '').trim().toLowerCase();
   if (search) {
@@ -1932,6 +2141,209 @@ function mapFocusStatusToNfeStatus(focusStatus) {
 // Ordem importa: sufixos específicos (/cancelar, /cce, /eventos...) checados
 // antes do prefixo genérico "/api/fiscal/nfe/" + GET, mesma ordem em que as
 // próprias rotas abaixo fazem o match.
+// Quantidade produzida de uma ordem = SOMA dos apontamentos dela.
+//
+// Recalcula do zero em vez de somar/subtrair o que mudou. Incremento erra
+// sozinho: editar um apontamento de 10 para 8, ou excluir um, deixaria o total
+// permanentemente inflado, e nada na tela denunciaria — "Produzido" e "Falta"
+// continuariam parecendo números certos. Recalcular é mais caro e se conserta
+// sozinho na gravação seguinte.
+//
+// Antes disto, `quantity_done` simplesmente nunca era escrito por ninguém: a
+// tela prometia "o produzido é atualizado pelos apontamentos" e o campo ficava
+// em zero para sempre.
+async function recalcularProduzidoDaOrdem(ordemId) {
+  if (!ordemId) return;
+  const apontamentos = await modulosDb.listar('pcp/entries');
+  const total = apontamentos
+    .filter((a) => a.orderId === ordemId)
+    .reduce((soma, a) => soma + Number(a.quantity || 0), 0);
+  // 4 casas: é a precisão da coluna (numeric(14,4)). Sem o arredondamento, a
+  // soma de frações vira dízima e o Postgres arredonda por conta própria.
+  await modulosDb.atualizar('pcp/orders', ordemId, { quantityDone: Math.round(total * 10000) / 10000 });
+}
+
+// Apontar produção mexe no estoque dos DOIS lados: entra produto acabado e
+// saem os componentes da ficha técnica (pcp_bom), já com a perda do processo.
+//
+// `delta` é a variação da quantidade apontada — positivo produz, negativo
+// estorna. Editar um apontamento de 10 para 8 chama com -2; excluir chama com
+// o negativo da quantidade inteira. É por isso que a função é uma só: o
+// estorno é a mesma conta com o sinal trocado, e duas funções separadas
+// divergiriam na primeira correção feita só numa delas.
+//
+// A ficha técnica usada é a ATUAL, não a da data do apontamento. O sistema não
+// versiona BOM; estornar um apontamento antigo depois de alterar a ficha
+// devolve pelas quantidades novas. Fica registrado aqui porque é uma limitação
+// real, não um descuido.
+async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
+  const quantidade = Number(delta || 0);
+  if (!quantidade || !ordem || !ordem.productId) return { consumidos: [], produzido: 0 };
+
+  const ficha = (await modulosDb.listar('pcp/bom')).filter((linha) => linha.productId === ordem.productId);
+
+  // Monta o efeito de cada produto antes de gravar qualquer coisa: se faltar
+  // componente, nada é aplicado e a ordem não fica pela metade.
+  const efeitos = new Map();
+  const somar = (produtoId, valor) => {
+    efeitos.set(produtoId, (efeitos.get(produtoId) || 0) + valor);
+  };
+  somar(ordem.productId, quantidade);
+  for (const linha of ficha) {
+    if (!linha.componentId) continue;
+    const porUnidade = Number(linha.quantity || 0) * (1 + Number(linha.lossPercent || 0) / 100);
+    somar(linha.componentId, -quantidade * porUnidade);
+  }
+
+  const produtos = new Map();
+  for (const produtoId of efeitos.keys()) {
+    produtos.set(produtoId, await db.getProductById(produtoId));
+  }
+
+  for (const [produtoId, variacao] of efeitos) {
+    const produto = produtos.get(produtoId);
+    if (!produto) continue;
+    const projetado = Number(produto.stockQuantity || 0) + variacao;
+    if (projetado < 0) {
+      const err = new Error(
+        `Estoque insuficiente de "${produto.name}" para apontar esta produção: ` +
+        `disponível ${Number(produto.stockQuantity || 0)}, necessário ${Math.abs(Math.round(variacao * 10000) / 10000)}. ` +
+        'Dê entrada no componente antes de apontar.'
+      );
+      err.status = 400;
+      throw err;
+    }
+  }
+
+  const consumidos = [];
+  for (const [produtoId, variacao] of efeitos) {
+    const produto = produtos.get(produtoId);
+    if (!produto || !variacao) continue;
+    const arredondado = Math.round(variacao * 10000) / 10000;
+    await db.upsertProduct({ ...produto, stockQuantity: Number(produto.stockQuantity || 0) + arredondado });
+    registrarMovimentoEstoque(data, {
+      productId: produtoId,
+      productName: produto.name,
+      type: arredondado > 0 ? 'entrada' : 'saida',
+      quantityDelta: arredondado,
+      referenceType: 'producao',
+      referenceId: ordem.id,
+      note: produtoId === ordem.productId
+        ? `Produção da OP ${ordem.code || ordem.id.slice(-6)}`
+        : `Consumo na OP ${ordem.code || ordem.id.slice(-6)}`,
+      user
+    });
+    if (produtoId !== ordem.productId) consumidos.push({ productId: produtoId, name: produto.name, quantidade: -arredondado });
+  }
+
+  return { consumidos, produzido: quantidade };
+}
+
+// Casca de gravação do efeito acima: carrega a ordem, aplica e persiste o
+// ledger local (data.stockMovements). Sai calada quando não há o que fazer —
+// delta zero, ordem inexistente — para o chamador não precisar se defender.
+async function mexerNoEstoqueDaProducao(ordemId, delta, user) {
+  if (!ordemId || !Number(delta)) return null;
+  const ordem = await modulosDb.obter('pcp/orders', ordemId);
+  if (!ordem) return null;
+  const data = loadData();
+  const efeito = await aplicarConsumoDeProducao(data, { ordem, delta: Number(delta), user });
+  saveData(data);
+  return efeito;
+}
+
+// Odômetro do veículo = a MAIOR leitura já registrada.
+//
+// A migração da Fase R dizia que "os abastecimentos e as manutenções escrevem
+// aqui", e nenhuma linha escrevia: o odômetro ficava no número digitado no
+// cadastro para sempre, e a coluna "Odômetro" da lista de Veículos mentia
+// desde o primeiro abastecimento.
+//
+// AVANÇA, NÃO RECALCULA — e a diferença é proposital. O produzido de uma ordem
+// de produção é uma SOMA (recalcular do zero é o certo, ver
+// recalcularProduzidoDaOrdem). Odômetro não é soma: é uma leitura, e leitura de
+// odômetro não anda para trás. Por isso:
+//   - leitura maior que a atual: o veículo avança;
+//   - leitura menor: ignorada, sem recusar o registro. Um abastecimento é fato
+//     passado; recusá-lo por causa de um número digitado errado apagaria a
+//     despesa junto. A tela marca a leitura suspeita, e alguém corrige.
+//   - excluir um abastecimento NÃO faz o odômetro voltar: o quilômetro foi
+//     rodado de verdade.
+async function avancarOdometroDoVeiculo(vehicleId, leitura) {
+  const km = Number(leitura || 0);
+  if (!vehicleId || !(km > 0)) return;
+  const veiculo = await modulosDb.obter('fleet/vehicles', vehicleId);
+  if (!veiculo || km <= Number(veiculo.odometer || 0)) return;
+  await modulosDb.atualizar('fleet/vehicles', vehicleId, { odometer: km });
+}
+
+// Contrato -> contas a receber/pagar, pelo ciclo de cobrança.
+//
+// O contrato guarda valor, ciclo e vigência; até aqui nada transformava isso em
+// dinheiro previsto. O resultado era um Financeiro que não enxergava a receita
+// recorrente já contratada — o número que mais importa para o fluxo de caixa,
+// justamente porque é o mais previsível.
+//
+// DECISÕES QUE ESTA FUNÇÃO TOMA
+//
+// 1. Uma parcela por período, com vencimento no dia do início do contrato
+//    dentro de cada mês. Data 31 em mês de 30 cai no último dia do mês, e não
+//    escorrega para o dia 1º do mês seguinte (é o que `new Date(ano, mes+1, 0)`
+//    resolve) — vencimento pulando de mês bagunça a competência.
+//
+// 2. Cliente gera RECEITA, fornecedor gera DESPESA. É o que `partyKind` já
+//    dizia e que nada lia.
+//
+// 3. Contrato sem data de término não gera parcela infinita: para no horizonte
+//    pedido (12 períodos por padrão). Contrato de prazo indeterminado é comum,
+//    e gerar até o fim dos tempos encheria o Financeiro.
+//
+// 4. Não duplica: parcela que já existe para aquele vencimento é pulada. Assim
+//    rodar de novo para estender o horizonte só acrescenta o que falta, em vez
+//    de dobrar tudo o que já estava lá.
+const MESES_POR_CICLO = { mensal: 1, trimestral: 3, semestral: 6, anual: 12 };
+
+function vencimentoDoPeriodo(inicio, mesesAFrente) {
+  const base = new Date(`${String(inicio).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return null;
+  const diaDesejado = base.getDate();
+  const alvo = new Date(base.getFullYear(), base.getMonth() + mesesAFrente, 1);
+  // Dia 0 do mês seguinte = último dia deste mês.
+  const ultimoDia = new Date(alvo.getFullYear(), alvo.getMonth() + 1, 0).getDate();
+  alvo.setDate(Math.min(diaDesejado, ultimoDia));
+  const iso = new Date(alvo.getTime() - alvo.getTimezoneOffset() * 60000).toISOString();
+  return iso.slice(0, 10);
+}
+
+function parcelasDoContrato(contrato, { periodos = 12 } = {}) {
+  const valor = Number(contrato.value || 0);
+  if (!(valor > 0) || !contrato.startDate) return [];
+
+  const ciclo = String(contrato.billingCycle || 'mensal');
+  const rotulo = contrato.title || `Contrato ${contrato.code || contrato.id}`;
+
+  if (ciclo === 'unico') {
+    return [{ dueDate: String(contrato.startDate).slice(0, 10), amount: valor, description: `${rotulo} — parcela única` }];
+  }
+
+  const passo = MESES_POR_CICLO[ciclo] || 1;
+  const fim = contrato.endDate ? String(contrato.endDate).slice(0, 10) : null;
+  const linhas = [];
+  for (let i = 0; i < periodos * 12; i += 1) {
+    const vencimento = vencimentoDoPeriodo(contrato.startDate, i * passo);
+    if (!vencimento) break;
+    if (fim && vencimento > fim) break;
+    linhas.push({
+      dueDate: vencimento,
+      amount: valor,
+      description: `${rotulo} — ${vencimento.slice(0, 7)}`
+    });
+    // Sem data de término, o horizonte é o que segura a geração.
+    if (!fim && linhas.length >= periodos) break;
+  }
+  return linhas;
+}
+
 function resolveFiscalPermission(pathname, method) {
   // Tabelas de referência: código oficial de CFOP/CST não é dado sensível da
   // empresa, e quem emite nota precisa consultá-las.
@@ -1949,12 +2361,21 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname.startsWith('/api/fiscal/certificados/')) return 'certificado';
 
   if (pathname === '/api/fiscal/regras') return method === 'GET' ? 'visualizar' : 'regras';
+  // Simular é leitura: responde "qual regra se aplicaria", sem gravar nada.
+  // Explícito antes do startsWith abaixo, senão cairia em 'regras' e quem só
+  // consulta não conseguiria descobrir por que uma emissão foi recusada.
+  if (pathname === '/api/fiscal/regras/simular') return 'visualizar';
   if (pathname.startsWith('/api/fiscal/regras/')) return 'regras';
 
   if (pathname === '/api/fiscal/nfe') return 'visualizar';
   if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
   if (pathname.endsWith('/cancelar')) return 'cancelar';
   if (pathname.endsWith('/cce')) return 'cce';
+  // Trilha de eventos do estabelecimento (CCE, cancelamento, inutilização).
+  // Explícito antes do endsWith('/eventos') logo abaixo: os dois dão no mesmo
+  // resultado hoje, mas depender do sufixo deixaria a regra desta rota
+  // dependendo do nome escolhido para outra.
+  if (pathname === '/api/fiscal/eventos') return 'visualizar';
   if (pathname.endsWith('/eventos')) return 'visualizar';
   if (pathname === '/api/fiscal/inutilizar') return 'inutilizar';
   if (pathname.endsWith('/xml')) return 'xml';
@@ -1994,6 +2415,17 @@ async function encontrarNfeIdempotente(estabelecimentoId, payloadFocus) {
     if (!nfeExistente.payloadEnviado) return false;
     return buildNfeConteudoKey(nfeExistente.payloadEnviado) === chave;
   });
+}
+
+// Condição de pagamento da NF-e avulsa, saneada. Sem isto, "60 parcelas de
+// R$ 0,01" ou intervalo zero entrariam do jeito que viessem.
+function condicaoPagamentoDoBody(body) {
+  const parcelado = body.paymentType === 'parcelado';
+  return {
+    tipo: parcelado ? 'parcelado' : 'avista',
+    parcelas: parcelado ? Math.min(60, Math.max(2, Math.round(Number(body.installmentsCount || 2)))) : 1,
+    intervaloDias: Math.max(1, Number(body.installmentIntervalDays || 30))
+  };
 }
 
 async function emitirNfeFiscal(body, user) {
@@ -2037,7 +2469,38 @@ async function emitirNfeFiscal(body, user) {
 
   const itens = [];
   for (let index = 0; index < itensBody.length; index += 1) {
-    const item = itensBody[index];
+    const bruto = itensBody[index];
+    // Quando o item aponta para um produto cadastrado, a classificação fiscal
+    // vem do CADASTRO, não do que foi digitado na tela: NCM, CEST e origem são
+    // atributos da mercadoria, e deixá-los editáveis na emissão significa que
+    // duas notas do mesmo produto podem sair com classificações diferentes.
+    // O digitado só preenche o que o cadastro não tem (item avulso, serviço).
+    const produto = bruto.produtoId ? await db.getProductById(bruto.produtoId) : null;
+    const item = produto
+      ? {
+        ...bruto,
+        descricao: bruto.descricao || produto.name,
+        codigoProduto: bruto.codigoProduto || produto.sku || '',
+        ncm: produto.ncm || bruto.ncm,
+        cest: produto.cest || bruto.cest,
+        ean: produto.ean || bruto.ean,
+        origem: produto.origem === null || produto.origem === undefined ? (bruto.origem || 0) : produto.origem,
+        unidadeComercial: produto.unidadeComercial || bruto.unidadeComercial || 'UN',
+        unidadeTributavel: produto.unidadeTributavel || bruto.unidadeTributavel || produto.unidadeComercial || bruto.unidadeComercial || 'UN'
+      }
+      : bruto;
+
+    if (!item.ncm) {
+      const err = new Error(
+        `Item ${index + 1} (${item.descricao || 'sem descrição'}) está sem NCM. ` +
+        (produto
+          ? 'Preencha o NCM no cadastro do produto, em Estoque → Produtos.'
+          : 'Informe o NCM do item.')
+      );
+      err.status = 400;
+      throw err;
+    }
+
     const regra = await fiscalDb.resolverRegraFiscal({
       empresaId: empresa.id,
       ncm: item.ncm,
@@ -2053,7 +2516,17 @@ async function emitirNfeFiscal(body, user) {
       err.status = 400;
       throw err;
     }
-    itens.push({ ...item, regraFiscal: regra });
+    itens.push({
+      ...item,
+      regraFiscal: regra,
+      // DIFAL só existe em venda interestadual para quem NÃO é contribuinte.
+      // Contribuinte recolhe por conta própria; operação interna não tem
+      // diferencial nenhum a partilhar.
+      difal: !dentroDoEstado && !destinatario.contribuinte,
+      // Percentual de crédito do Simples: é da EMPRESA (faixa do SN), não do
+      // item. Só sai na nota quando o CSOSN é 101 ou 201.
+      aliquotaCreditoSn: empresa.aliquotaCreditoIcmsSn
+    });
   }
 
   const valorTotal = itens.reduce((sum, item) => sum + Math.round(Number(item.quantidade || 0) * Number(item.valorUnitario || 0) * 100) / 100, 0);
@@ -2070,7 +2543,21 @@ async function emitirNfeFiscal(body, user) {
     naturezaOperacao,
     tipoDocumento,
     finalidadeEmissao,
-    dataEmissao
+    dataEmissao,
+    // Grupo de pagamento é obrigatório no layout 4.0 da NF-e. Sem nada
+    // informado, o builder monta uma parcela única "Outros" — a nota passa,
+    // e fica visível na tela que ninguém escolheu a forma.
+    pagamentos: Array.isArray(body.pagamentos) ? body.pagamentos : null,
+    frete: body.frete,
+    seguro: body.seguro,
+    desconto: body.desconto,
+    outrasDespesas: body.outrasDespesas,
+    modalidadeFrete: body.modalidadeFrete,
+    informacoesAdicionais: body.informacoesAdicionais,
+    // Quem manda é o ambiente EFETIVO (já considerando a trava de
+    // homologação), não o que está salvo no estabelecimento: é ele que decide
+    // se o nome do destinatário vai ser o texto obrigatório de teste.
+    ambiente: focusNfe.ambienteEfetivo(estabelecimento.focusAmbiente).efetivo
   });
 
   const nfeExistente = await encontrarNfeIdempotente(estabelecimento.id, payload);
@@ -2086,16 +2573,25 @@ async function emitirNfeFiscal(body, user) {
     finalidadeEmissao,
     valorTotal,
     dataEmissao,
+    // O destinatário REAL, não o que foi para a SEFAZ: em homologação o nome
+    // enviado é o texto fixo exigido por ela, e a lista mostraria a mesma
+    // frase em toda linha. Sem isto, também não há como filtrar por cliente.
+    destinatarioNome: destinatario.nome || '',
+    destinatarioDocumento: String(destinatario.documento || '').replace(/\D/g, ''),
+    orderId: body.orderId || body.saleId || '',
+    // Só na nota AVULSA. Vinda de pedido, o financeiro é dele — gravar a
+    // condição aqui faria a nota gerar um segundo recebível pelo mesmo valor.
+    condicaoPagamento: (body.orderId || body.saleId) ? null : condicaoPagamentoDoBody(body),
     payloadEnviado: payload
   });
 
   try {
     const client = await focusNfe.forEstabelecimento(estabelecimento.id);
     const resposta = await client.emitirNfe(referencia, payload);
-    nfe = await aplicarRespostaFocusNaNfe(nfe, resposta);
+    nfe = await aplicarRespostaFocusNaNfe(nfe, resposta, user);
     const data = loadData();
     data.auditLogs = data.auditLogs || [];
-    data.auditLogs.push({ id: createId('audit'), action: 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referencia, byId: user.id, byName: user.name, at: new Date().toISOString() });
+    await registrarAuditoria({ action: 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referencia, byId: user.id, byName: user.name });
     saveData(data);
     return nfe;
   } catch (error) {
@@ -2112,7 +2608,59 @@ async function emitirNfeFiscal(body, user) {
 // único lugar que decide o novo status de uma NF-e a partir da Focus NFe.
 // Idempotente: se o status recebido já é o mesmo que já estava salvo, não
 // faz nada (evita reprocessar o mesmo evento duas vezes).
-async function aplicarRespostaFocusNaNfe(nfe, resposta) {
+/**
+ * Contas a receber de uma NF-e AVULSA (emitida sem pedido).
+ *
+ * Quando a nota nasce de um pedido, quem gera o financeiro é o pedido —
+ * gerar de novo aqui duplicaria o recebível, e ninguém percebe até a
+ * conciliação não fechar. Por isso a condição só existe na nota avulsa.
+ *
+ * Roda no momento em que a nota é AUTORIZADA, e não na emissão: nota que a
+ * SEFAZ rejeitou não pode deixar recebível para trás. Como a autorização pode
+ * chegar por webhook, minutos depois e sem usuário na tela, isto precisa ser
+ * idempotente — a checagem de lançamento já existente é o que garante.
+ */
+async function gerarFinanceiroDaNfeAvulsa(nfe, user) {
+  if (!nfe || nfe.orderId) return 0;
+  const condicao = nfe.condicaoPagamento;
+  if (!condicao) return 0;
+
+  const data = loadData();
+  await syncFinanceData(data);
+  // Idempotência: o webhook pode chegar duas vezes, e a Focus reenvia.
+  if ((data.finance || []).some((entry) => entry.nfeId === nfe.id)) return 0;
+
+  const emissao = String(nfe.dataEmissao || '').slice(0, 10) || getTodayLocal().toISOString().slice(0, 10);
+  const parcelas = buildNfeInstallments({
+    amount: Number(nfe.valorTotal || 0),
+    date: emissao,
+    installmentsCount: condicao.tipo === 'parcelado' ? condicao.parcelas : 1,
+    installmentIntervalDays: condicao.intervaloDias
+  });
+
+  const rotulo = nfe.numero ? `NF-e ${nfe.numero}` : `NF-e ${nfe.referencia}`;
+  for (const parcela of parcelas) {
+    await db.createFinancialEntry({
+      type: 'RECEITA',
+      date: emissao,
+      dueDate: parcela.dueDate,
+      amount: parcela.amount,
+      description: parcelas.length > 1 ? `${rotulo} · Parcela ${parcela.number}/${parcelas.length}` : rotulo,
+      document: String(nfe.numero || ''),
+      clientSupplierId: '',
+      clientSupplierName: nfe.destinatarioNome || '',
+      referenceId: '',
+      nfeId: nfe.id,
+      status: 'pending',
+      // Autorização por webhook não tem usuário na tela.
+      createdBy: user?.id || '',
+      createdByName: user?.name || 'Sistema (webhook fiscal)'
+    });
+  }
+  return parcelas.length;
+}
+
+async function aplicarRespostaFocusNaNfe(nfe, resposta, user) {
   const novoStatus = mapFocusStatusToNfeStatus(resposta.status);
   if (novoStatus === nfe.status) {
     return nfe;
@@ -2138,6 +2686,17 @@ async function aplicarRespostaFocusNaNfe(nfe, resposta) {
     baixarEGuardarArquivosNfe(atualizada).catch((error) => {
       console.error('Falha ao baixar XML/DANFE da NF-e', atualizada.id, error.message);
     });
+
+    // Nota avulsa (sem pedido) vira contas a receber agora, não na emissão:
+    // recebível de nota rejeitada é pior do que recebível atrasado. Falhar
+    // aqui NÃO desautoriza a nota — ela já existe para a SEFAZ, e o erro
+    // precisa aparecer no log, não virar exceção que engole a autorização.
+    try {
+      const criadas = await gerarFinanceiroDaNfeAvulsa(atualizada, user);
+      if (criadas) console.log(`NF-e avulsa ${atualizada.id}: ${criadas} parcela(s) em contas a receber.`);
+    } catch (error) {
+      console.error('Falha ao gerar o financeiro da NF-e avulsa', atualizada.id, error.message);
+    }
   }
 
   return atualizada;
@@ -2173,13 +2732,55 @@ async function registrarWebhookFiscal(estabelecimentoId) {
     throw err;
   }
   const client = await focusNfe.forEstabelecimento(estabelecimentoId);
-  return client.criarWebhook({
+
+  // A Focus ACUMULA webhooks: registrar de novo com outra URL não substitui,
+  // adiciona. A URL velha continua sendo chamada e gerando retentativa para
+  // sempre. Por isso, antes de criar, remove os hooks do MESMO CNPJ e MESMO
+  // evento que apontam para outro lugar — trocar de domínio é o caso comum.
+  //
+  // O filtro é estreito de propósito: hook de outro CNPJ ou de outro evento
+  // não é nosso para apagar.
+  const cnpjLimpo = String(estabelecimento.cnpj || '').replace(/\D/g, '');
+  const removidos = [];
+  let jaRegistrado = false;
+  try {
+    const existentes = await client.listarWebhooks();
+    const lista = Array.isArray(existentes) ? existentes : (existentes && Array.isArray(existentes.hooks) ? existentes.hooks : []);
+    for (const hook of lista) {
+      if (!hook || !hook.id) continue;
+      if (String(hook.event || '') !== 'nfe') continue;
+      if (String(hook.cnpj || '').replace(/\D/g, '') !== cnpjLimpo) continue;
+      if (String(hook.url || '') === webhookUrl) {
+        jaRegistrado = true;
+        continue;
+      }
+      try {
+        await client.excluirWebhook(hook.id);
+        removidos.push(hook.url);
+      } catch (error) {
+        // Não aborta: falhar em limpar o antigo não é motivo para deixar o
+        // novo sem registrar. O retorno conta o que ficou para trás.
+        removidos.push(`${hook.url} (falha ao remover: ${error.message})`);
+      }
+    }
+  } catch (error) {
+    // Listar pode falhar sem que o registro precise falhar junto.
+    removidos.push(`(não foi possível listar os webhooks existentes: ${error.message})`);
+  }
+
+  // Recriar um hook idêntico duplicaria a chamada para a mesma URL.
+  if (jaRegistrado) {
+    return { jaRegistrado: true, url: webhookUrl, removidos };
+  }
+
+  const webhook = await client.criarWebhook({
     event: 'nfe',
     cnpj: estabelecimento.cnpj,
     url: webhookUrl,
     secret: webhookSecret,
     secretHeader: 'X-Fiscal-Webhook-Secret'
   });
+  return { ...webhook, url: webhookUrl, removidos };
 }
 
 async function cancelarNfeFiscal(id, justificativa, user) {
@@ -2211,7 +2812,7 @@ async function cancelarNfeFiscal(id, justificativa, user) {
   });
   const data = loadData();
   data.auditLogs = data.auditLogs || [];
-  data.auditLogs.push({ id: createId('audit'), action: 'cancelarNfeFiscal', targetId: nfe.id, targetUsername: nfe.referencia, byId: user.id, byName: user.name, at: new Date().toISOString() });
+  await registrarAuditoria({ action: 'cancelarNfeFiscal', targetId: nfe.id, targetUsername: nfe.referencia, byId: user.id, byName: user.name, details: { justificativa } });
   saveData(data);
   return updated;
 }
@@ -2245,7 +2846,7 @@ async function emitirCartaCorrecaoFiscal(id, correcao, user) {
   });
   const data = loadData();
   data.auditLogs = data.auditLogs || [];
-  data.auditLogs.push({ id: createId('audit'), action: 'emitirCartaCorrecaoFiscal', targetId: nfe.id, targetUsername: nfe.referencia, byId: user.id, byName: user.name, at: new Date().toISOString() });
+  await registrarAuditoria({ action: 'emitirCartaCorrecaoFiscal', targetId: nfe.id, targetUsername: nfe.referencia, byId: user.id, byName: user.name, details: { correcao } });
   saveData(data);
   return evento;
 }
@@ -2287,10 +2888,16 @@ async function inutilizarNumeracaoFiscal(body, user) {
     respostaFocus: resposta,
     status: resposta.status
   });
-  const data = loadData();
-  data.auditLogs = data.auditLogs || [];
-  data.auditLogs.push({ id: createId('audit'), action: 'inutilizarNumeracaoFiscal', targetId: estabelecimento.id, targetUsername: `${body.serie}: ${numeroInicial}-${numeroFinal}`, byId: user.id, byName: user.name, at: new Date().toISOString() });
-  saveData(data);
+  // A faixa inutilizada e a justificativa ficam nos detalhes: é o que o fisco
+  // pergunta depois, e sem isso o registro só diz que alguém inutilizou algo.
+  await registrarAuditoria({
+    action: 'inutilizarNumeracaoFiscal',
+    targetId: estabelecimento.id,
+    targetUsername: `${body.serie}: ${numeroInicial}-${numeroFinal}`,
+    byId: user.id,
+    byName: user.name,
+    details: { serie: body.serie, numeroInicial, numeroFinal, justificativa: body.justificativa }
+  });
   return evento;
 }
 
@@ -2424,6 +3031,19 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const { pathname } = url;
 
+  // Sessão encerrada — por login em outra máquina ou pela virada do dia. Vem
+  // ANTES de qualquer rota: o token está morto, então nada adiante vai
+  // funcionar mesmo, e responder aqui garante a MESMA explicação em todas as
+  // telas. Se cada rota tratasse por conta própria, uma delas esqueceria e
+  // mostraria "Erro inesperado".
+  const tokenRecebido = req.headers['x-auth-token'];
+  // Vence agora, se for o caso, para cair no `if` de baixo já com o motivo.
+  if (tokenRecebido) derrubarSeExpirou(tokenRecebido);
+  if (tokenRecebido && !sessions[tokenRecebido] && sessoesEncerradas.has(tokenRecebido)) {
+    const { motivo } = sessoesEncerradas.get(tokenRecebido);
+    return sendJson(res, { error: sessaoUtil.mensagemDoMotivo(motivo), motivo }, 401);
+  }
+
   if (pathname === '/api/login' && req.method === 'POST') {
     try {
       const body = await readBody(req);
@@ -2447,14 +3067,34 @@ const server = http.createServer(async (req, res) => {
       }
 
       const token = createId('token');
-      sessions[token] = user.id;
+      // Derruba ANTES de registrar a nova: se a ordem fosse inversa, a sessão
+      // que acabou de nascer entraria na varredura e se derrubaria sozinha.
+      const derrubadas = encerrarSessoesDoUsuario(user.id, 'outro-dispositivo', token);
+      const agora = new Date();
+      sessions[token] = {
+        userId: user.id,
+        criadaEm: agora.getTime(),
+        // Vale até a virada do dia, sempre — mesmo que faltem minutos.
+        expiraEm: sessaoUtil.proximaViradaDeDia(agora)
+      };
+
       await db.registrarLogin(user.id);
       await db.rbac.registrarAcesso({
         userId: user.id, userName: user.name, action: 'login', resourceType: 'sessao',
-        result: 'PERMITIDO', ip: ipDaRequisicao(req)
+        result: 'PERMITIDO', ip: ipDaRequisicao(req),
+        // Fica na auditoria: sessão derrubada é o rastro de alguém entrando com
+        // a conta de outro, e sem registro ninguém consegue investigar depois.
+        detail: derrubadas ? { sessoesDerrubadas: derrubadas } : undefined
       });
       const acesso = await db.rbac.carregarAcessoDoUsuario(user.id);
-      return sendJson(res, { token, user: serializeUserForClient(user, acesso) });
+      // `sessaoExpiraEm` é o relógio do SERVIDOR. A tela agenda a própria saída
+      // por ele, e não pela meia-noite do computador do usuário — máquina com
+      // hora errada sairia cedo demais ou continuaria aberta depois do corte.
+      return sendJson(res, {
+        token,
+        sessaoExpiraEm: sessions[token].expiraEm,
+        user: serializeUserForClient(user, acesso)
+      });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao autenticar' }, 400);
     }
@@ -2490,7 +3130,12 @@ const server = http.createServer(async (req, res) => {
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
     }
-    return sendJson(res, { user: serializeUserForClient(user, await db.rbac.carregarAcessoDoUsuario(user.id)) });
+    // Recarregar a página (F5) passa por aqui, não pelo login — sem devolver o
+    // vencimento a tela reaberta ficaria sem o agendamento da saída.
+    return sendJson(res, {
+      sessaoExpiraEm: sessions[req.headers['x-auth-token']]?.expiraEm || null,
+      user: serializeUserForClient(user, await db.rbac.carregarAcessoDoUsuario(user.id))
+    });
   }
 
   if (pathname === '/api/me/theme' && req.method === 'PUT') {
@@ -2631,6 +3276,350 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // ==========================================================================
+  // CRM — ponte para o CRM externo.
+  //
+  // Este módulo NÃO guarda oportunidade nem conta: por decisão de projeto quem
+  // guarda isso é o outro sistema, e duplicar aqui criaria duas fontes da
+  // verdade divergindo. O que mora no banco é só a CONEXÃO (uma linha).
+  //
+  // O token NUNCA volta para a tela: a resposta diz se existe um token salvo,
+  // não qual é. Enviar o segredo de volta a cada carregamento o deixaria no
+  // histórico do navegador e em qualquer log de rede pelo caminho.
+  // ==========================================================================
+  if (pathname === '/api/crm/connection') {
+    try {
+      if (req.method === 'GET') return sendJson(res, { connection: await crmDb.getConexao() });
+      if (req.method === 'PUT') return sendJson(res, { connection: await crmDb.salvarConexao(await readBody(req)) });
+      return sendJson(res, { error: 'Método não suportado' }, 405);
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro na conexão do CRM' }, 400);
+    }
+  }
+
+  if (pathname === '/api/crm/test' && req.method === 'POST') {
+    return sendJson(res, await crmDb.testarConexao());
+  }
+
+  // ==========================================================================
+  // Frota, RH, PCP e Contratos — CRUD dos 11 recursos numa rota só.
+  //
+  //   GET    /api/<modulo>/<recurso>        lista
+  //   GET    /api/<modulo>/<recurso>/:id    um registro
+  //   POST   /api/<modulo>/<recurso>        cria
+  //   PUT    /api/<modulo>/<recurso>/:id    edita
+  //   DELETE /api/<modulo>/<recurso>/:id    exclui
+  //
+  // Permissão: o portão central (verificarAcesso, lá em cima) já traduziu o
+  // caminho para fleet.criar, hr.editar e assim por diante antes de chegar
+  // aqui — por isso este bloco não repete a checagem.
+  //
+  // O 404 quando o recurso não existe é deliberado: assim uma rota digitada
+  // errado falha na hora, em vez de cair silenciosamente no `next` e devolver
+  // a página inicial.
+  // ==========================================================================
+  //
+  // A única regra de negócio deste bloco é o recálculo do produzido da ordem
+  // de produção (recalcularProduzidoDaOrdem, definida acima) — e ela fica aqui,
+  // na rota, e não no lib/db/modulos.js, que é só tradução camelCase/snake_case.
+  // Contrato -> parcelas no Financeiro.
+  //
+  // ANTES do bloco genérico pelo mesmo motivo da rota de produção: o regex
+  // leria "billing" como um recurso e devolveria 404.
+  if (pathname === '/api/contracts/billing' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      // A permissão de contratos já passou no portão central, mas quem cria
+      // lançamento é o Financeiro — e quem não tem o módulo não pode escrever
+      // lá por uma porta lateral.
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Gerar o financeiro do contrato exige acesso ao módulo Financeiro.' }, 403);
+      }
+      const body = await readBody(req);
+      const contrato = await modulosDb.obter('contracts/contracts', body.contractId);
+      if (!contrato) return sendJson(res, { error: 'Contrato não encontrado' }, 404);
+      if (contrato.status === 'encerrado' || contrato.status === 'rascunho') {
+        return sendJson(res, { error: `Contrato ${contrato.status} não gera financeiro.` }, 400);
+      }
+
+      const periodos = Math.min(60, Math.max(1, Number(body.periodos || 12)));
+      const linhas = parcelasDoContrato(contrato, { periodos });
+      if (!linhas.length) {
+        return sendJson(res, { error: 'O contrato precisa de valor maior que zero e data de início para gerar parcelas.' }, 400);
+      }
+
+      const dados = loadData();
+      await syncFinanceData(dados);
+      // Canceladas não contam como existentes: quem cancelou uma parcela e
+      // mandou gerar de novo quer a parcela de volta.
+      const jaExistem = new Set((dados.finance || [])
+        .filter((e) => e.referenceId === contrato.id && e.status !== 'cancelado')
+        .map((e) => String(e.dueDate || '').slice(0, 10)));
+
+      const tipo = contrato.partyKind === 'fornecedor' ? 'DESPESA' : 'RECEITA';
+      const criadas = [];
+      for (const linha of linhas) {
+        if (jaExistem.has(linha.dueDate)) continue;
+        const entry = await db.createFinancialEntry({
+          type: tipo,
+          date: String(contrato.startDate).slice(0, 10),
+          dueDate: linha.dueDate,
+          amount: linha.amount,
+          description: linha.description,
+          document: String(contrato.code || ''),
+          clientSupplierId: contrato.partyId || '',
+          clientSupplierName: contrato.partyName || '',
+          // É por aqui que a próxima geração sabe o que já existe.
+          referenceId: contrato.id,
+          status: 'pending',
+          createdBy: user.id,
+          createdByName: user.name
+        });
+        dados.finance.push(entry);
+        criadas.push(entry);
+      }
+      saveData(dados);
+
+      await db.rbac.registrarAcesso({
+        userId: user.id, userName: user.name, action: 'contracts.criar', resourceType: 'contracts',
+        result: 'PERMITIDO', ip: ipDaRequisicao(req),
+        detail: { contrato: contrato.code || contrato.id, tipo, parcelasCriadas: criadas.length }
+      });
+      return sendJson(res, {
+        success: true, tipo, criadas: criadas.length,
+        jaExistiam: linhas.length - criadas.length,
+        previstas: linhas.length
+      });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao gerar o financeiro do contrato' }, erro.status || 400);
+    }
+  }
+
+  // Pedido de venda -> ordens de produção.
+  //
+  // Fica ANTES do bloco genérico de propósito: o regex abaixo leria
+  // "orders/from-sale" como o recurso "orders" com id "from-sale" e devolveria
+  // 405. E fica sob /api/pcp/ para a permissão exigida ser pcp.criar — quem
+  // abre ordem de produção é o PCP, mesmo que o gatilho venha de Vendas.
+  //
+  // Uma OP por ITEM do pedido, e só para item que TEM ficha técnica: produto
+  // revendido não se fabrica, e abrir ordem para ele encheria o chão de
+  // fábrica de ordens que ninguém vai produzir.
+  if (pathname === '/api/pcp/orders/from-sale' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      const body = await readBody(req);
+      const dados = loadData();
+      await syncSalesData(dados);
+      const pedido = [...(dados.orders || []), ...(dados.quotes || [])].find((r) => r.id === body.recordId);
+      if (!pedido) return sendJson(res, { error: 'Pedido não encontrado' }, 404);
+      if (pedido.type !== 'order') {
+        return sendJson(res, { error: 'Só pedido gera ordem de produção — aprove o orçamento primeiro.' }, 400);
+      }
+
+      const fichas = await modulosDb.listar('pcp/bom');
+      const temFicha = new Set(fichas.map((linha) => linha.productId));
+      const existentes = (await modulosDb.listar('pcp/orders')).filter((o) => o.orderId === pedido.id);
+
+      const criadas = [];
+      const ignorados = [];
+      for (const item of (pedido.items || [])) {
+        if (!item.productId || !temFicha.has(item.productId)) {
+          ignorados.push(item.name || item.productId || 'item sem produto');
+          continue;
+        }
+        // Não duplica: chamar duas vezes não pode abrir a mesma OP de novo.
+        if (existentes.some((o) => o.productId === item.productId)) continue;
+        criadas.push(await modulosDb.criar('pcp/orders', {
+          productId: item.productId,
+          quantity: Number(item.quantity || 0),
+          status: 'aberta',
+          dueDate: pedido.dueDate || null,
+          orderId: pedido.id,
+          notes: `Gerada do pedido ${pedido.code || pedido.id} — ${pedido.clientSupplierName || ''}`.trim()
+        }));
+      }
+
+      await db.rbac.registrarAcesso({
+        userId: user?.id, userName: user?.name, action: 'pcp.criar', resourceType: 'pcp',
+        result: 'PERMITIDO', ip: ipDaRequisicao(req),
+        detail: { origem: 'pedido', pedido: pedido.code || pedido.id, ordensCriadas: criadas.length }
+      });
+      return sendJson(res, { success: true, criadas, ignorados, jaExistiam: existentes.length });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao gerar ordens de produção' }, erro.status || 400);
+    }
+  }
+
+  const rotaModulo = pathname.match(/^\/api\/(fleet|hr|pcp|contracts)\/([a-z-]+)(?:\/([^/?]+))?$/);
+  if (rotaModulo) {
+    const [, modulo, nomeRecurso, idBruto] = rotaModulo;
+
+    // /api/<modulo>/meta — as listas que os SELECTS dos formulários precisam
+    // (o veículo da manutenção, o cargo do colaborador, o produto da ordem).
+    // Cada módulo devolve só o que é seu: pedir tudo faria a tela de Frota
+    // carregar produtos e pessoas que ela nunca usa.
+    //
+    // `name` é montado aqui, e não na tela, porque o <select> genérico exibe
+    // sempre o campo `name` — um veículo tem placa e descrição, e quem decide
+    // como isso vira um rótulo é quem conhece o dado.
+    if (nomeRecurso === 'meta') {
+      if (req.method !== 'GET') return sendJson(res, { error: 'Método não suportado' }, 405);
+      try {
+        const apoio = {};
+        if (modulo === 'fleet') {
+          // `odometer` vai junto para as telas de abastecimento e manutenção
+          // marcarem leitura menor que a atual do veículo — sinal de dígito
+          // trocado, que sem isso passaria despercebido.
+          apoio.vehicles = (await modulosDb.listar('fleet/vehicles')).map((v) => ({
+            id: v.id,
+            name: [v.plate, v.description].filter(Boolean).join(' — '),
+            odometer: v.odometer
+          }));
+        }
+        if (modulo === 'hr') {
+          // Só o que os selects precisam (id + nome). As listas de apoio
+          // inativas continuam vindo: um colaborador antigo pode estar
+          // classificado num departamento já desativado, e omiti-lo faria a
+          // ficha dele abrir com o campo em branco e perder o vínculo ao salvar.
+          const nomes = (lista) => lista.map((i) => ({ id: i.id, name: i.name }));
+          const [positions, employees, departments, workSchedules, employeeTypes, employeeCategories] = await Promise.all([
+            modulosDb.listar('hr/positions'),
+            modulosDb.listar('hr/employees'),
+            modulosDb.listar('hr/departments'),
+            modulosDb.listar('hr/work-schedules'),
+            modulosDb.listar('hr/employee-types'),
+            modulosDb.listar('hr/employee-categories')
+          ]);
+          apoio.positions = nomes(positions);
+          apoio.employees = nomes(employees);
+          apoio.departments = nomes(departments);
+          apoio.workSchedules = nomes(workSchedules);
+          apoio.employeeTypes = nomes(employeeTypes);
+          apoio.employeeCategories = nomes(employeeCategories);
+        }
+        if (modulo === 'pcp') {
+          const [produtos, ordens, setores, statuses, pessoal] = await Promise.all([
+            db.getProducts(),
+            modulosDb.listar('pcp/orders'),
+            modulosDb.listar('pcp/sectors'),
+            modulosDb.listar('pcp/statuses'),
+            // Encarregado de setor e inspetor de qualidade são colaboradores.
+            // Vem do RH porque é lá que o quadro de pessoal mora — duplicar a
+            // lista aqui criaria duas fontes divergindo.
+            modulosDb.listar('hr/employees')
+          ]);
+          apoio.products = produtos.map((p) => ({ id: p.id, name: p.name }));
+          apoio.orders = ordens.map((o) => ({ id: o.id, name: `OP ${o.code || o.id.slice(-6)}` }));
+          apoio.sectors = setores.map((s) => ({ id: s.id, name: s.name }));
+          apoio.statuses = statuses.map((s) => ({ id: s.id, name: s.name }));
+          apoio.employees = pessoal.map((e) => ({ id: e.id, name: e.name }));
+        }
+        if (modulo === 'contracts') {
+          const [modelos, tipos] = await Promise.all([
+            modulosDb.listar('contracts/templates'),
+            modulosDb.listar('contracts/types')
+          ]);
+          apoio.templates = modelos.map((t) => ({ id: t.id, name: t.name }));
+          // `types` leva o prazo de aviso prévio junto: é a tela de Contratos
+          // que calcula "faltam N dias para avisar", e sem o prazo aqui ela
+          // teria que buscar o tipo de cada contrato uma requisição por linha.
+          apoio.types = tipos.map((t) => ({
+            id: t.id, name: t.name, natureza: t.natureza, avisoPreviaDias: t.avisoPreviaDias
+          }));
+          const dados = loadData();
+          await syncCadastroData(dados);
+          apoio.directory = getCadastroDirectory(dados);
+        }
+        return sendJson(res, apoio);
+      } catch (erro) {
+        return sendJson(res, { error: erro.message || 'Erro ao carregar dados de apoio' }, 400);
+      }
+    }
+
+    const recurso = `${modulo}/${nomeRecurso}`;
+    if (!modulosDb.RECURSOS[recurso]) {
+      return sendJson(res, { error: `Recurso desconhecido: ${recurso}` }, 404);
+    }
+
+    const def = modulosDb.descritor(recurso);
+    const id = idBruto ? decodeURIComponent(idBruto) : null;
+    // O portão central já autorizou; aqui o usuário serve só para assinar as
+    // movimentações de estoque geradas pelo apontamento de produção.
+    const usuarioDaRequisicao = await getCurrentUser(req);
+
+    try {
+      if (req.method === 'GET' && !id) {
+        return sendJson(res, { [def.lista]: await modulosDb.listar(recurso) });
+      }
+      if (req.method === 'GET') {
+        const registro = await modulosDb.obter(recurso, id);
+        if (!registro) return sendJson(res, { error: 'Registro não encontrado' }, 404);
+        return sendJson(res, { [def.item]: registro });
+      }
+      if (req.method === 'POST') {
+        const corpo = await readBody(req);
+        // Estoque ANTES de gravar o apontamento: faltando componente, nada é
+        // criado, em vez de sobrar um apontamento que não baixou nada.
+        const efeito = recurso === 'pcp/entries'
+          ? await mexerNoEstoqueDaProducao(corpo.orderId, Number(corpo.quantity || 0), usuarioDaRequisicao)
+          : null;
+        const criado = await modulosDb.criar(recurso, corpo);
+        if (recurso === 'pcp/entries') await recalcularProduzidoDaOrdem(criado.orderId);
+        if (recurso === 'fleet/refuels' || recurso === 'fleet/maintenances') {
+          await avancarOdometroDoVeiculo(criado.vehicleId, criado.odometer);
+        }
+        return sendJson(res, { [def.item]: criado, estoque: efeito || undefined }, 201);
+      }
+      if (req.method === 'PUT' && id) {
+        // O apontamento pode ter MUDADO de ordem na edição: as duas precisam
+        // ser recalculadas, senão a de origem fica contando o que saiu dela.
+        const anterior = recurso === 'pcp/entries' ? await modulosDb.obter(recurso, id) : null;
+        const corpo = await readBody(req);
+        if (anterior) {
+          const novaOrdem = corpo.orderId ?? anterior.orderId;
+          const novaQtd = corpo.quantity === undefined ? Number(anterior.quantity || 0) : Number(corpo.quantity || 0);
+          if (novaOrdem === anterior.orderId) {
+            // Mesma ordem: aplica só a diferença.
+            await mexerNoEstoqueDaProducao(novaOrdem, novaQtd - Number(anterior.quantity || 0), usuarioDaRequisicao);
+          } else {
+            // Trocou de ordem: desfaz inteiro na antiga e aplica inteiro na nova.
+            await mexerNoEstoqueDaProducao(anterior.orderId, -Number(anterior.quantity || 0), usuarioDaRequisicao);
+            await mexerNoEstoqueDaProducao(novaOrdem, novaQtd, usuarioDaRequisicao);
+          }
+        }
+        const registro = await modulosDb.atualizar(recurso, id, corpo);
+        if (!registro) return sendJson(res, { error: 'Registro não encontrado' }, 404);
+        if (recurso === 'pcp/entries') {
+          await recalcularProduzidoDaOrdem(registro.orderId);
+          if (anterior && anterior.orderId !== registro.orderId) {
+            await recalcularProduzidoDaOrdem(anterior.orderId);
+          }
+        }
+        if (recurso === 'fleet/refuels' || recurso === 'fleet/maintenances') {
+          await avancarOdometroDoVeiculo(registro.vehicleId, registro.odometer);
+        }
+        return sendJson(res, { [def.item]: registro });
+      }
+      if (req.method === 'DELETE' && id) {
+        // Lê ANTES de apagar: depois não há como saber de que ordem era.
+        const removido = recurso === 'pcp/entries' ? await modulosDb.obter(recurso, id) : null;
+        if (removido) {
+          await mexerNoEstoqueDaProducao(removido.orderId, -Number(removido.quantity || 0), usuarioDaRequisicao);
+        }
+        const resposta = await modulosDb.remover(recurso, id);
+        if (removido) await recalcularProduzidoDaOrdem(removido.orderId);
+        return sendJson(res, resposta);
+      }
+      return sendJson(res, { error: 'Método não suportado' }, 405);
+    } catch (erro) {
+      // A mensagem do Postgres é o que explica a recusa (placa repetida, status
+      // fora da lista, vínculo obrigatório). Engolir isso deixaria a tela com
+      // "erro ao salvar" e ninguém saberia o quê.
+      return sendJson(res, { error: erro.message || 'Erro ao processar a requisição' }, 400);
+    }
+  }
+
   // Módulo Relatórios — uma rota só, com os números de vendas, financeiro e
   // estoque juntos.
   //
@@ -2644,12 +3633,12 @@ const server = http.createServer(async (req, res) => {
   // relatório seria o que perderia a confiança.
   if (pathname === '/api/reports/overview' && req.method === 'GET') {
     const data = loadData();
+    // Sem checagem de permissão aqui: o portão central já traduziu esta rota
+    // para reports.ler e decidiu. Repetir com allowedModules seria MAIS
+    // restrito que o portão — administrador passa por lá e era barrado aqui.
     const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
-    }
-    if (!user.allowedModules.includes('reports')) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
     }
 
     const granularity = url.searchParams.get('granularity') || 'month';
@@ -2785,7 +3774,15 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const body = await readBody(req);
-      const type = body.type || 'order';
+      const tipoPedido = body.type || 'order';
+      // Quem manda no tipo é o STATUS, não o campo `type` — a tela é uma só e
+      // o usuário escolhe "Orçamento" ou "Pedido" no campo Status. `type` só
+      // decide quando não vem status (importação, integração antiga) e para
+      // separar o ramo de NF-e, que não é pedido nem orçamento.
+      const status = tipoPedido === 'nfe'
+        ? ''
+        : salesStatus.normalizar(body.status || salesStatus.padraoDoTipo(tipoPedido === 'quote' ? 'quote' : 'order'));
+      const type = tipoPedido === 'nfe' ? 'nfe' : salesStatus.tipoDoStatus(status);
       let record;
       if (type === 'order' || type === 'quote') {
         const items = normalizeSalesItems(body.items);
@@ -2817,7 +3814,7 @@ const server = http.createServer(async (req, res) => {
           delivery: salesDelivery(body),
           salesTerms: String(body.salesTerms || '').trim().slice(0, 5000),
           note: body.note || '',
-          status: body.status || (type === 'order' ? 'pendente' : 'em aberto'),
+          status,
           stockApplied: false,
           createdBy: user.id,
           createdByName: user.name,
@@ -2825,15 +3822,18 @@ const server = http.createServer(async (req, res) => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
-        // Orçamento nunca mexe em estoque (é só proposta). Pedido só desconta
-        // se já nasce "faturado" — o caminho normal é criar "pendente" e
+        // Orçamento nunca mexe em estoque (é só proposta). Pedido desconta se o
+        // status já nasce com baixa — o caminho normal é criar "Pedido" e
         // faturar depois via PUT (ver rota de atualização, mais abaixo). Roda
         // ANTES de gravar no Supabase: se faltar estoque, nada é criado.
-        if (type === 'order' && record.status === 'faturado') {
+        //
+        // Os dois efeitos são decididos SEPARADAMENTE pelo catálogo: "Pedido
+        // Aprovado Sem Faturamento" baixa estoque e não gera financeiro.
+        if (type === 'order' && salesStatus.baixaEstoque(status)) {
           await transitionOrderStockEffect(data, { oldItems: [], newItems: items, wasApplied: false, willApply: true, record, user });
           record.stockApplied = true;
-          record.financeApplied = true;
         }
+        record.financeApplied = type === 'order' && salesStatus.geraFinanceiro(status);
         record = type === 'order' ? await db.createOrder(record) : await db.createQuote(record);
         // As contas a receber vêm DEPOIS de gravar o pedido: elas apontam para
         // o id dele, e um lançamento apontando para pedido que falhou ao salvar
@@ -2914,9 +3914,16 @@ const server = http.createServer(async (req, res) => {
       if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
         return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
       }
+      // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
+      // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo
+      // faria a troca ser revertida para o padrão do tipo antigo.
+      const statusNovo = salesStatus.normalizar(body.status || current.status, undefined);
+      const tipoNovo = salesStatus.tipoDoStatus(statusNovo);
+
       const totais = computeSalesTotals(items, body);
       let updated = {
         ...current,
+        type: tipoNovo,
         clientSupplierId: body.clientSupplierId || '',
         clientSupplierName: body.clientSupplierName || '',
         companyId: body.companyId || '',
@@ -2932,28 +3939,60 @@ const server = http.createServer(async (req, res) => {
         delivery: salesDelivery(body),
         salesTerms: String(body.salesTerms || '').trim().slice(0, 5000),
         note: body.note || '',
-        status: body.status || current.status,
+        status: statusNovo,
         // "Alterado por" na tela — quem salvou por último, não quem criou.
         updatedByName: user.name,
         updatedAt: new Date().toISOString()
       };
 
+      // Os dois efeitos são independentes: cada status do catálogo declara se
+      // baixa estoque e se gera financeiro, e "Pedido Aprovado Sem Faturamento"
+      // é justamente o que faz um sem o outro (transferência, remessa,
+      // bonificação). Orçamento nunca faz nenhum dos dois.
       const eraFaturado = Boolean(current.financeApplied);
-      const seraFaturado = updated.status === 'faturado';
-      if (current.type === 'order') {
-        const wasApplied = Boolean(current.stockApplied);
-        await transitionOrderStockEffect(data, { oldItems: current.items || [], newItems: items, wasApplied, willApply: seraFaturado, record: updated, user });
-        updated.stockApplied = seraFaturado;
-        updated.financeApplied = seraFaturado;
+      const vaiBaixarEstoque = tipoNovo === 'order' && salesStatus.baixaEstoque(statusNovo);
+      const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.geraFinanceiro(statusNovo);
+
+      // Roda sempre — inclusive quando o registro DEIXA de ser pedido: virar
+      // orçamento tem que devolver ao estoque o que o pedido reservava. A
+      // função sai na hora se não havia nem passa a haver reserva.
+      await transitionOrderStockEffect(data, {
+        oldItems: current.items || [],
+        newItems: items,
+        wasApplied: Boolean(current.stockApplied),
+        willApply: vaiBaixarEstoque,
+        record: updated,
+        user
+      });
+      updated.stockApplied = vaiBaixarEstoque;
+      updated.financeApplied = vaiGerarFinanceiro;
+
+      // Trocar o status pode mudar o tipo, e pedido e orçamento moram em
+      // tabelas diferentes. Grava na tabela nova ANTES de apagar da antiga,
+      // mantendo id e código: se a gravação falhar, o registro original
+      // continua de pé em vez de sumir. Referências por id (NF-e, contas a
+      // receber) seguem válidas porque o id não muda.
+      const mudouDeTabela = isOrder !== (tipoNovo === 'order');
+      if (!mudouDeTabela) {
+        updated = isOrder ? await db.updateOrder(id, updated) : await db.updateQuote(id, updated);
+      } else {
+        updated = tipoNovo === 'order' ? await db.createOrder(updated) : await db.createQuote(updated);
+        if (isOrder) await db.deleteOrder(id); else await db.deleteQuote(id);
+        // Espelha a troca nas listas em memória desta requisição — sem isso o
+        // saveData() abaixo gravaria o registro nas duas listas ao mesmo tempo.
+        const origemLista = isOrder ? data.orders : data.quotes;
+        const destinoLista = tipoNovo === 'order' ? data.orders : data.quotes;
+        const posicao = origemLista.findIndex((entry) => entry.id === id);
+        if (posicao >= 0) origemLista.splice(posicao, 1);
+        destinoLista.push(updated);
       }
 
-      updated = isOrder ? await db.updateOrder(id, updated) : await db.updateQuote(id, updated);
-      let efeitoFinanceiro = { criadas: 0, canceladas: 0, mantidas: 0 };
-      if (current.type === 'order') {
-        // Depois de gravar, pelo mesmo motivo da criação. O registro atualizado
-        // é que carrega o total e as parcelas atuais.
-        efeitoFinanceiro = await transitionOrderFinanceEffect(data, { record: updated, wasApplied: eraFaturado, willApply: seraFaturado, user });
-      }
+      // Depois de gravar, pelo mesmo motivo da criação: o registro atualizado é
+      // que carrega o total e as parcelas atuais. Também roda sempre — um
+      // pedido faturado que vira orçamento precisa ter as parcelas canceladas.
+      const efeitoFinanceiro = await transitionOrderFinanceEffect(data, {
+        record: updated, wasApplied: eraFaturado, willApply: vaiGerarFinanceiro, user
+      });
       // updateOrder/updateQuote não tocam data.orders/data.quotes (já
       // gravaram no Supabase direto) — saveData aqui é só pra persistir
       // data.stockMovements, que transitionOrderStockEffect pode ter alterado.
@@ -3024,7 +4063,14 @@ const server = http.createServer(async (req, res) => {
         const customer = row.customer || row.cliente || row.Cliente || '';
         const amount = Number(row.amount || row.valor || row.total || 0);
         const date = row.date || row.data || new Date().toISOString().slice(0, 10);
-        const status = row.status || row.statusPedido || 'pendente';
+        const statusBruto = row.status || row.statusPedido || '';
+        // Planilha traz o status escrito à mão ("faturado", "Em aberto"…) —
+        // normaliza contra o tipo escolhido na importação para não entrar valor
+        // fora do catálogo nem status de orçamento num pedido. NF-e tem catálogo
+        // próprio e fica de fora.
+        const status = type === 'nfe'
+          ? (statusBruto || 'emitida')
+          : salesStatus.normalizar(statusBruto, type === 'quote' ? 'quote' : 'order');
         if (type === 'order') {
           const record = await db.createOrder({
             clientSupplierName: customer, date, totalAmount: amount, itemsTotal: amount, status, note: row.note || '',
@@ -3290,7 +4336,14 @@ const server = http.createServer(async (req, res) => {
     }
     const method = req.method;
     const requiredPermission = resolveFiscalPermission(pathname, method);
-    const temAcessoAoModulo = user.allowedModules.includes('finance') || user.allowedModules.includes('settings');
+    // 'fiscal' precisa estar aqui: é um módulo que o usuário pode receber na
+    // tela de Usuários, e sem ele quem tinha o módulo Fiscal marcado (com as
+    // permissões fiscais marcadas junto) não passava por este caminho — só
+    // entrava por papel do RBAC ou sendo admin, o que fazia a tela de Usuários
+    // parecer ter funcionado sem ter.
+    const temAcessoAoModulo = user.allowedModules.includes('fiscal')
+      || user.allowedModules.includes('finance')
+      || user.allowedModules.includes('settings');
     // O RBAC entra como caminho ADICIONAL, nunca como restrição nova: quem já
     // podia emitir por fiscal_permissions continua podendo, e agora também
     // passa quem recebeu fiscal.<ação> por papel. A migração para um modelo só
@@ -3349,7 +4402,9 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/fiscal/estabelecimentos' && req.method === 'GET') {
         const empresaId = url.searchParams.get('empresaId') || undefined;
         const estabelecimentos = await fiscalDb.getEstabelecimentos(empresaId);
-        return sendJson(res, { estabelecimentos });
+        // A tela precisa saber da trava para não oferecer "Produção" num
+        // sistema que vai recusar produção na hora de emitir.
+        return sendJson(res, { estabelecimentos, travadoEmHomologacao: focusNfe.somenteHomologacao() });
       }
 
       if (pathname === '/api/fiscal/estabelecimentos' && req.method === 'POST') {
@@ -3405,6 +4460,39 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { success: true });
       }
 
+      // "Qual regra se aplicaria a este item?" — mesma função que a emissão
+      // usa (resolverRegraFiscal), então a resposta aqui é literalmente o que
+      // vai acontecer na hora de emitir. Existe porque a falha mais comum da
+      // emissão é "Nenhuma regra fiscal encontrada", e sem isto não há como
+      // descobrir o porquê: a escolha passa por coringa (NULL), especificidade,
+      // prioridade e vigência, que ninguém acerta de cabeça olhando a lista.
+      if (pathname === '/api/fiscal/regras/simular' && req.method === 'GET') {
+        const q = url.searchParams;
+        const empresaId = q.get('empresaId') || '';
+        const tipoOperacao = q.get('tipoOperacao') || '';
+        if (!empresaId || !tipoOperacao) {
+          return sendJson(res, { error: 'Informe a empresa e o tipo de operação.' }, 400);
+        }
+        // Tri-estado: ausente/'' = "não informado" (a regra coringa passa),
+        // 'true'/'false' = critério de verdade. Boolean('false') seria true.
+        const booleano = (chave) => {
+          const bruto = q.get(chave);
+          if (bruto === null || bruto === '') return undefined;
+          return bruto === 'true' || bruto === '1';
+        };
+        const regra = await fiscalDb.resolverRegraFiscal({
+          empresaId,
+          tipoOperacao,
+          ncm: q.get('ncm') || undefined,
+          origem: q.get('origem') === null || q.get('origem') === '' ? undefined : Number(q.get('origem')),
+          ufDestino: q.get('ufDestino') || undefined,
+          dentroDoEstado: booleano('dentroDoEstado'),
+          destinatarioContribuinte: booleano('destinatarioContribuinte'),
+          data: q.get('data') || undefined
+        });
+        return sendJson(res, { encontrou: Boolean(regra), regra: regra || null });
+      }
+
       if (pathname === '/api/fiscal/regras' && req.method === 'GET') {
         const empresaId = url.searchParams.get('empresaId') || undefined;
         const regras = await fiscalDb.getRegrasFiscais(empresaId);
@@ -3434,6 +4522,17 @@ const server = http.createServer(async (req, res) => {
         const estabelecimentoId = url.searchParams.get('estabelecimentoId') || undefined;
         const records = await fiscalDb.getNfeRecords(estabelecimentoId);
         return sendJson(res, { records });
+      }
+
+      // Eventos do estabelecimento inteiro. A inutilização de numeração só
+      // aparece por aqui: ela não pertence a nenhuma nota (nfe_id nulo), então
+      // a consulta por nota nunca a encontrava.
+      if (pathname === '/api/fiscal/eventos' && req.method === 'GET') {
+        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || undefined;
+        const tipoBruto = String(url.searchParams.get('tipo') || '').toUpperCase();
+        const tipo = ['CCE', 'CANCELAMENTO', 'INUTILIZACAO'].includes(tipoBruto) ? tipoBruto : undefined;
+        const eventos = await fiscalDb.getEventosFiscais({ estabelecimentoId, tipo });
+        return sendJson(res, { eventos });
       }
 
       if (pathname === '/api/fiscal/nfe/emitir' && req.method === 'POST') {
@@ -4366,7 +5465,20 @@ const server = http.createServer(async (req, res) => {
         sku,
         stockQuantity: existing ? stockCore.toNumber(existing.stockQuantity) : 0,
         costPrice: stockCore.toNumber(body.costPrice),
-        salePrice: stockCore.toNumber(body.salePrice)
+        salePrice: stockCore.toNumber(body.salePrice),
+        // Campos fiscais vão para as COLUNAS de products, não para o db.json:
+        // a emissão de NF-e lê o Supabase direto e não enxerga o arquivo local.
+        // Sem NCM na coluna, resolverRegraFiscal não acha regra e a nota é
+        // recusada — era esse o furo entre cadastrar o produto e emitir.
+        ncm: String(body.ncm ?? '').replace(/\D/g, ''),
+        cest: String(body.cest ?? '').replace(/\D/g, ''),
+        ean: String(body.ean ?? '').trim(),
+        origem: body.origem === '' || body.origem === undefined || body.origem === null ? null : Number(body.origem),
+        // A NF-e pede unidade comercial e tributável separadas; o cadastro tem
+        // um campo só ("Unidade"), que serve de padrão para as duas.
+        unidadeComercial: String(body.unit ?? 'UN').trim() || 'UN',
+        unidadeTributavel: String(body.unidadeTributavel || body.unit || 'UN').trim() || 'UN',
+        numeroFci: String(body.numeroFci ?? '').trim()
       });
 
       data.productMeta[product.id] = stockCore.buildProductMeta(body, stockCore.productMeta(data, product.id));
@@ -4844,7 +5956,15 @@ const server = http.createServer(async (req, res) => {
       categories: data.financialCategories,
       costCenters: data.costCenters,
       bankAccounts: data.bankAccounts,
-      directory: getCadastroDirectory(data)
+      directory: getCadastroDirectory(data),
+      // Produtos com a classificação fiscal: é o que permite montar o item da
+      // NF-e a partir do cadastro em vez de digitar NCM e origem a cada
+      // emissão — digitado à mão, o NCM erra e a regra fiscal não casa.
+      produtos: (await db.getProducts()).map((p) => ({
+        id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice,
+        ncm: p.ncm, cest: p.cest, ean: p.ean, origem: p.origem,
+        unidadeComercial: p.unidadeComercial, unidadeTributavel: p.unidadeTributavel
+      }))
     });
   }
 
@@ -4983,7 +6103,7 @@ const server = http.createServer(async (req, res) => {
       // de antes da gravação, e serializeFinanceEntry lê dela para resolver
       // categoria/conta. Sem isto, a resposta sairia sem o registro novo.
       data.finance.push(entry);
-      addFinanceAuditLog(data, { action: 'criarLancamento', entry, byId: user.id, byName: user.name });
+      await addFinanceAuditLog(data, { action: 'criarLancamento', entry, byId: user.id, byName: user.name });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
@@ -5048,7 +6168,7 @@ const server = http.createServer(async (req, res) => {
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
       await db.updateFinancialEntry(entry.id, { status: entry.status });
-      addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount } });
+      await addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount } });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
@@ -5086,7 +6206,7 @@ const server = http.createServer(async (req, res) => {
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
       await db.updateFinancialEntry(entry.id, { status: entry.status });
-      addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: last.id, amount: last.amount } });
+      await addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: last.id, amount: last.amount } });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
@@ -5116,7 +6236,7 @@ const server = http.createServer(async (req, res) => {
       entry.status = 'cancelado';
       entry.updatedAt = new Date().toISOString();
       await db.updateFinancialEntry(entry.id, { status: 'cancelado' });
-      addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name });
+      await addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
@@ -5167,7 +6287,7 @@ const server = http.createServer(async (req, res) => {
       // Manda o registro inteiro: a edição pode ter mexido em qualquer campo, e
       // updateFinancialEntry só grava o que vier definido.
       await db.updateFinancialEntry(entry.id, entry);
-      addFinanceAuditLog(data, { action: 'editarLancamento', entry, byId: user.id, byName: user.name });
+      await addFinanceAuditLog(data, { action: 'editarLancamento', entry, byId: user.id, byName: user.name });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
@@ -5201,11 +6321,28 @@ const server = http.createServer(async (req, res) => {
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
-      const filtered = filterNfes(data, url.searchParams)
+      // A LISTA É UMA SÓ. Antes esta rota mostrava apenas `data.nfes` — o
+      // registro manual do Financeiro — e a nota realmente transmitida à
+      // SEFAZ não aparecia em lugar nenhum que o usuário fosse olhar.
+      //
+      // As notas fiscais vêm primeiro na ordenação por serem as que valem;
+      // as manuais continuam visíveis para o histórico não sumir da tela.
+      // Se a tabela fiscal não responder (migração pendente, por exemplo), a
+      // lista degrada para as manuais em vez de a tela não abrir.
+      let fiscais = [];
+      try {
+        fiscais = (await fiscalDb.getNfeRecords()).map(fiscalNfeParaLista);
+      } catch (erroFiscal) {
+        fiscais = [];
+      }
+      const manuais = (data.nfes || []).map((nfe) => ({ ...serializeNfe(nfe, data), origem: 'financeiro' }));
+      const todas = fiscais.concat(manuais);
+
+      const filtered = filterNfes(data, url.searchParams, todas)
         .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
       const { page, limit } = parsePageParams(url.searchParams, 15);
       const start = (page - 1) * limit;
-      const pageItems = filtered.slice(start, start + limit).map((nfe) => serializeNfe(nfe, data));
+      const pageItems = filtered.slice(start, start + limit);
       return sendJson(res, { nfes: pageItems, total: filtered.length, page, limit });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao listar NF-e' }, 500);
@@ -5328,7 +6465,7 @@ const server = http.createServer(async (req, res) => {
         await db.updateOrder(pedidoOrigem.id, { ...pedidoOrigem, nfeId: nfe.id });
       }
 
-      addFinanceAuditLog(data, {
+      await addFinanceAuditLog(data, {
         action: 'emitirNfe',
         entry: { id: nfe.id, description: `NF-e ${nfe.number} · ${nfe.customer}` },
         byId: user.id,
@@ -5373,7 +6510,7 @@ const server = http.createServer(async (req, res) => {
           entry.status = 'cancelado';
           entry.updatedAt = new Date().toISOString();
           await db.updateFinancialEntry(entry.id, { status: 'cancelado' });
-          addFinanceAuditLog(data, {
+          await addFinanceAuditLog(data, {
             action: 'cancelarLancamento',
             entry,
             byId: user.id,
@@ -5384,7 +6521,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      addFinanceAuditLog(data, {
+      await addFinanceAuditLog(data, {
         action: 'cancelarNfe',
         entry: { id: nfe.id, description: `NF-e ${nfe.number} · ${nfe.customer}` },
         byId: user.id,
@@ -5590,8 +6727,8 @@ const server = http.createServer(async (req, res) => {
       tx.matchedPaymentId = payment.id;
       tx.updatedAt = new Date().toISOString();
 
-      addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount: tx.amount, origem: 'conciliacao', transacaoId: tx.id } });
-      addFinanceAuditLog(data, { action: 'conciliarTransacao', entry: { id: tx.id, description: `Transação ${String(tx.id).slice(-8)} · ${tx.description}` }, byId: user.id, byName: user.name, details: { entryId: entry.id } });
+      await addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount: tx.amount, origem: 'conciliacao', transacaoId: tx.id } });
+      await addFinanceAuditLog(data, { action: 'conciliarTransacao', entry: { id: tx.id, description: `Transação ${String(tx.id).slice(-8)} · ${tx.description}` }, byId: user.id, byName: user.name, details: { entryId: entry.id } });
 
       saveData(data);
       return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data), entry: serializeFinanceEntry(entry, data) });
@@ -5624,7 +6761,7 @@ const server = http.createServer(async (req, res) => {
         entry.status = recomputeFinanceEntryStatus(entry, data);
         entry.updatedAt = new Date().toISOString();
         await db.updateFinancialEntry(entry.id, { status: entry.status });
-        addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: tx.matchedPaymentId, motivo: 'Desconciliação de transação bancária' } });
+        await addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: tx.matchedPaymentId, motivo: 'Desconciliação de transação bancária' } });
       }
 
       tx.status = 'nao_conciliado';
@@ -5836,7 +6973,7 @@ const server = http.createServer(async (req, res) => {
     if (!user || !user.allowedModules.includes('settings')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    const canManageUsers = user.role === 'admin';
+    const canManageUsers = await ehAdmin(user);
     const canSeeSales = user.allowedModules.includes('sales');
     const canSeePurchases = user.allowedModules.includes('purchases');
     // Mesmas coleções legadas vazias do /api/dashboard: precisam vir do Supabase.
@@ -5890,7 +7027,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (body.type === 'user') {
-        if (user.role !== 'admin') {
+        if (!(await ehAdmin(user))) {
           return sendJson(res, { error: 'Sem permissão para gerenciar usuários' }, 403);
         }
         const newUser = await db.createUser({
@@ -5903,7 +7040,7 @@ const server = http.createServer(async (req, res) => {
         });
         const data = loadData();
         data.auditLogs = data.auditLogs || [];
-        data.auditLogs.push({ id: createId('audit'), action: 'createUser', targetId: newUser.id, targetUsername: newUser.username, byId: user.id, byName: user.name, at: new Date().toISOString() });
+        await registrarAuditoria({ action: 'createUser', targetId: newUser.id, targetUsername: newUser.username, byId: user.id, byName: user.name });
         saveData(data);
         return sendJson(res, { success: true, user: newUser });
       }
@@ -6025,7 +7162,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/users' && req.method === 'GET') {
     const requester = await getCurrentUser(req);
     if (!requester) return sendJson(res, { error: 'Não autenticado' }, 401);
-    if (requester.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
+    if (!(await ehAdmin(requester))) return sendJson(res, { error: 'Permissão negada' }, 403);
     const users = await db.getUsers();
     return sendJson(res, { users });
   }
@@ -6036,12 +7173,26 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       const requester = await getCurrentUser(req);
       if (!requester) return sendJson(res, { error: 'Não autenticado' }, 401);
-      if (requester.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
+      if (!(await ehAdmin(requester))) return sendJson(res, { error: 'Permissão negada' }, 403);
       const limit = Math.min(200, Number(url.searchParams.get('limit') || 50));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
-      const logs = (data.auditLogs || []).slice().reverse(); // newest first
-      const page = logs.slice(offset, offset + limit);
-      return sendJson(res, { auditLogs: page, total: logs.length });
+
+      // Supabase é a fonte. O arquivo local só guarda o que falhou de gravar
+      // lá (pendenteDeSincronia) — some da tela se for ignorado, e é
+      // justamente o registro que mais interessa não perder.
+      let doBanco = { auditLogs: [], total: 0 };
+      try {
+        doBanco = await db.getAuditLogs({ limit, offset });
+      } catch (erroBanco) {
+        console.error('Falha ao ler auditoria do Supabase:', erroBanco.message);
+      }
+      const pendentes = (data.auditLogs || []).filter((log) => log.pendenteDeSincronia).reverse();
+
+      return sendJson(res, {
+        auditLogs: pendentes.concat(doBanco.auditLogs || []),
+        total: (doBanco.total || 0) + pendentes.length,
+        pendentesDeSincronia: pendentes.length
+      });
     } catch (err) {
       return sendJson(res, { error: 'Erro ao ler logs' }, 500);
     }
@@ -6052,7 +7203,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const requester = await getCurrentUser(req);
       if (!requester) return sendJson(res, { error: 'Não autenticado' }, 401);
-      if (requester.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
+      if (!(await ehAdmin(requester))) return sendJson(res, { error: 'Permissão negada' }, 403);
       const body = await readBody(req);
       const id = body && body.id;
       if (!id) return sendJson(res, { error: 'ID ausente' }, 400);
@@ -6063,7 +7214,7 @@ const server = http.createServer(async (req, res) => {
       // audit log
       const data = loadData();
       data.auditLogs = data.auditLogs || [];
-      data.auditLogs.push({ id: createId('audit'), action: 'deleteUser', targetId: deletedUser.id, targetUsername: deletedUser.username, byId: requester.id, byName: requester.name, at: new Date().toISOString() });
+      await registrarAuditoria({ action: 'deleteUser', targetId: deletedUser.id, targetUsername: deletedUser.username, byId: requester.id, byName: requester.name });
       saveData(data);
       return sendJson(res, { success: true });
     } catch (err) {
@@ -6076,7 +7227,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const requester = await getCurrentUser(req);
       if (!requester) return sendJson(res, { error: 'Não autenticado' }, 401);
-      if (requester.role !== 'admin') return sendJson(res, { error: 'Permissão negada' }, 403);
+      if (!(await ehAdmin(requester))) return sendJson(res, { error: 'Permissão negada' }, 403);
       const id = decodeURIComponent(pathname.replace('/api/users/', ''));
       const target = await db.getUserById(id);
       if (!target) return sendJson(res, { error: 'Usuário não encontrado' }, 404);
@@ -6096,7 +7247,7 @@ const server = http.createServer(async (req, res) => {
       });
       const data = loadData();
       data.auditLogs = data.auditLogs || [];
-      data.auditLogs.push({ id: createId('audit'), action: 'updateUser', targetId: id, targetUsername: target.username, byId: requester.id, byName: requester.name, at: new Date().toISOString() });
+      await registrarAuditoria({ action: 'updateUser', targetId: id, targetUsername: target.username, byId: requester.id, byName: requester.name });
       saveData(data);
       return sendJson(res, { success: true, user: updated });
     } catch (err) {

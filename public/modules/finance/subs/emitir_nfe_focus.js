@@ -1,6 +1,23 @@
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.finance = window.MavisSubscreenRegistry.finance || {};
 
+// Formas de pagamento do layout 4.0 da NF-e. Os códigos são os oficiais — o
+// mesmo conjunto que lib/nfePayloadBuilder.js aceita; qualquer outro vira '99'
+// lá, então oferecer só estes evita a nota sair com "Outros" sem ninguém saber.
+const NFE_FORMAS_PAGAMENTO = [
+  { value: '01', label: '01 — Dinheiro' },
+  { value: '02', label: '02 — Cheque' },
+  { value: '03', label: '03 — Cartão de crédito' },
+  { value: '04', label: '04 — Cartão de débito' },
+  { value: '05', label: '05 — Crédito loja' },
+  { value: '15', label: '15 — Boleto bancário' },
+  { value: '16', label: '16 — Depósito bancário' },
+  { value: '17', label: '17 — PIX' },
+  { value: '18', label: '18 — Transferência bancária' },
+  { value: '90', label: '90 — Sem pagamento' },
+  { value: '99', label: '99 — Outros' }
+];
+
 const NFE_FOCUS_TIPO_OPERACAO_OPTIONS = [
   { value: 'VENDA', label: 'Venda' },
   { value: 'TRANSFERENCIA', label: 'Transferência' },
@@ -27,11 +44,21 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   let selectedEstabelecimentoId = '';
   let meta = { directory: [] };
   let selectedClienteId = '';
-  let itens = [{ descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0 }];
+  let itens = [{ produtoId: '', descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0 }];
   let notasRecentes = [];
   let ultimoResultado = null;
 
   const destinatario = { nome: '', documento: '', contribuinte: false, inscricaoEstadual: '', cep: '', logradouro: '', numero: '', complemento: '', bairro: '', municipio: '', uf: '', codigoMunicipio: '' };
+
+  // "Gerar NF-e" a partir de um pedido cai aqui. Antes caía na tela de
+  // registro manual, que nunca chegava à SEFAZ — o pedido aparecia faturado e
+  // a nota não existia para o fisco.
+  //
+  // O pedido é consumido (delete) para não reaparecer na próxima abertura da
+  // tela: seria a nota errada, com os itens de um pedido antigo.
+  const doPedido = state.nfeFromOrder || null;
+  if (doPedido) delete state.nfeFromOrder;
+  let orderIdOrigem = doPedido ? doPedido.orderId || '' : '';
 
   try {
     const res = await api('/api/fiscal/estabelecimentos');
@@ -44,6 +71,36 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     meta = await api('/api/finance/meta');
   } catch {
     // segue com diretório vazio — busca de cliente cadastrado fica indisponível
+  }
+
+  // Preenche a tela com o pedido. Feito DEPOIS do meta: é dele que sai o
+  // endereço do cliente, e sem ele o destinatário sairia só com o nome.
+  if (doPedido) {
+    selectedClienteId = doPedido.clientSupplierId || '';
+    const cliente = meta.directory.find((c) => c.id === selectedClienteId);
+    destinatario.nome = cliente?.name || doPedido.clientName || '';
+    destinatario.documento = cliente?.document || '';
+    destinatario.inscricaoEstadual = cliente?.stateRegistration || '';
+    destinatario.uf = cliente?.state || '';
+    destinatario.municipio = cliente?.city || '';
+    // Contribuinte se tem inscrição estadual: é o que decide indicador_ie e,
+    // com ele, se a operação tem DIFAL.
+    destinatario.contribuinte = Boolean(cliente?.stateRegistration);
+    if (Array.isArray(doPedido.items) && doPedido.items.length) {
+      itens = doPedido.items.map((item) => ({
+        produtoId: item.produtoId || item.productId || '',
+        descricao: item.description || '',
+        codigoProduto: item.code || '',
+        // NCM e origem vêm do CADASTRO do produto, no servidor. Deixar em
+        // branco aqui é intencional: preencher com palpite faria a nota sair
+        // com classificação diferente da do produto.
+        ncm: '',
+        quantidade: Number(item.quantity || 0),
+        valorUnitario: Number(item.unitPrice || 0),
+        unidadeComercial: item.unit || 'UN',
+        origem: 0
+      }));
+    }
   }
 
   function itemTotal(item) {
@@ -72,12 +129,28 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     return list.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.document ? ` (${escapeHtml(c.document)})` : ''}</option>`).join('');
   }
 
+  // Um produto cadastrado traz a própria classificação fiscal. Escolher pela
+  // lista preenche a linha e trava NCM e origem: são atributos da mercadoria,
+  // e digitá-los por emissão faria o mesmo produto sair com classificações
+  // diferentes em notas diferentes. "Item avulso" continua liberando os campos
+  // — serviço e mercadoria sem cadastro ainda precisam ser digitados.
+  function opcoesProduto(item) {
+    const lista = meta.produtos || [];
+    return `<option value="">Item avulso</option>` + lista.map((p) => `
+      <option value="${escapeHtml(p.id)}" ${item.produtoId === p.id ? 'selected' : ''}>
+        ${escapeHtml(p.name)}${p.sku ? ` (${escapeHtml(p.sku)})` : ''}${p.ncm ? '' : ' — SEM NCM'}
+      </option>`).join('');
+  }
+
   function renderItemsRows() {
     return itens.map((item, index) => `
       <tr data-row="${index}">
+        <td>
+          <select data-field="produtoId" data-index="${index}" style="min-width:170px;">${opcoesProduto(item)}</select>
+        </td>
         <td><input data-field="descricao" data-index="${index}" value="${escapeHtml(item.descricao)}" required placeholder="Descrição" style="min-width:160px;" /></td>
         <td><input data-field="codigoProduto" data-index="${index}" value="${escapeHtml(item.codigoProduto)}" placeholder="Código" style="width:90px;" /></td>
-        <td><input data-field="ncm" data-index="${index}" value="${escapeHtml(item.ncm)}" required maxlength="8" inputmode="numeric" placeholder="8 dígitos" style="width:90px;" /></td>
+        <td><input data-field="ncm" data-index="${index}" value="${escapeHtml(item.ncm)}" required maxlength="8" inputmode="numeric" placeholder="8 dígitos" style="width:90px;" ${item.produtoId ? 'readonly title="Vem do cadastro do produto — altere em Estoque → Produtos."' : ''} /></td>
         <td><input type="number" step="0.01" min="0" data-field="quantidade" data-index="${index}" value="${item.quantidade}" style="width:80px;" /></td>
         <td><input type="number" step="0.01" min="0" data-field="valorUnitario" data-index="${index}" value="${item.valorUnitario}" style="width:100px;" /></td>
         <td><input data-field="unidadeComercial" data-index="${index}" value="${escapeHtml(item.unidadeComercial)}" style="width:70px;" /></td>
@@ -149,6 +222,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <button type="button" class="cadastro-tab active" data-tab="emitente" role="tab" aria-selected="true"><span>1. Emitente</span></button>
             <button type="button" class="cadastro-tab" data-tab="destinatario" role="tab" aria-selected="false"><span>2. Destinatário</span></button>
             <button type="button" class="cadastro-tab" data-tab="itens" role="tab" aria-selected="false"><span>3. Itens</span></button>
+            <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>4. Pagamento</span></button>
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="emitente">
@@ -201,12 +275,49 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           <div class="cadastro-tab-panel" data-tab-panel="itens" hidden>
             <div class="table-scroll">
               <table class="table">
-                <thead><tr><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th>Total</th><th></th></tr></thead>
+                <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th>Total</th><th></th></tr></thead>
                 <tbody id="nfeFocusItemsBody">${renderItemsRows()}</tbody>
               </table>
             </div>
             <div style="margin: 10px 0;"><button type="button" class="secondary" id="nfeFocusAddItemBtn">+ Adicionar item</button></div>
             <p class="finance-negative" style="font-size: 1.1rem;">Valor total: <strong id="nfeFocusGrandTotal">${financeFormatBRL(grandTotal())}</strong></p>
+          </div>
+
+          <div class="cadastro-tab-panel" data-tab-panel="pagamento" hidden>
+            <p class="muted">
+              O grupo de pagamento é <strong>obrigatório no layout 4.0</strong> — nota sem ele é
+              rejeitada pela SEFAZ.
+            </p>
+            ${orderIdOrigem ? `
+              <p class="muted">
+                Esta nota vem de um pedido, e <strong>o contas a receber já é dele</strong> —
+                as parcelas abaixo não serão criadas de novo. A forma de pagamento continua
+                valendo: ela vai na nota.
+              </p>
+            ` : `
+              <p class="muted">
+                Sem pedido de origem, é daqui que sai o contas a receber: as parcelas são
+                criadas em Lançamentos <strong>quando a SEFAZ autorizar</strong> a nota — não na
+                hora de enviar, para uma nota rejeitada não deixar recebível para trás.
+              </p>
+            `}
+            <div class="row">
+              <label>Forma de pagamento
+                <select name="formaPagamento">
+                  ${NFE_FORMAS_PAGAMENTO.map((f) => `<option value="${f.value}" ${f.value === '99' ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
+                </select>
+              </label>
+              <label>Condição
+                <select name="paymentType" id="nfeFocusPaymentType">
+                  <option value="avista" selected>À vista</option>
+                  <option value="parcelado">Parcelado</option>
+                </select>
+              </label>
+            </div>
+            <div class="row hidden" id="nfeFocusInstallmentFields">
+              <label>Número de parcelas<input type="number" name="installmentsCount" min="2" max="60" step="1" value="2" /></label>
+              <label>Intervalo entre parcelas (dias)<input type="number" name="installmentIntervalDays" min="1" value="30" /></label>
+            </div>
           </div>
 
           <button type="submit" id="nfeFocusSubmitBtn">Emitir NF-e</button>
@@ -244,6 +355,37 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         refreshGrandTotal();
       });
     });
+    // Escolher o produto preenche a linha a partir do cadastro. Redesenha a
+    // tabela porque o NCM passa a ser somente-leitura — e volta a ser editável
+    // se a linha virar item avulso.
+    document.querySelectorAll('#nfeFocusItemsBody select[data-field="produtoId"]').forEach((select) => {
+      select.addEventListener('change', () => {
+        const index = Number(select.dataset.index);
+        const produto = (meta.produtos || []).find((p) => p.id === select.value);
+        if (!produto) {
+          itens[index] = { ...itens[index], produtoId: '' };
+          refreshItemsTable();
+          return;
+        }
+        itens[index] = {
+          ...itens[index],
+          produtoId: produto.id,
+          descricao: produto.name,
+          codigoProduto: produto.sku || '',
+          ncm: produto.ncm || '',
+          // Preço do cadastro é ponto de partida: desconto e negociação
+          // mudam por venda, então o campo continua editável.
+          valorUnitario: Number(produto.salePrice || itens[index].valorUnitario || 0),
+          unidadeComercial: produto.unidadeComercial || 'UN',
+          origem: produto.origem === null || produto.origem === undefined ? 0 : Number(produto.origem)
+        };
+        if (!produto.ncm) {
+          showToast(`"${produto.name}" está sem NCM no cadastro — preencha em Estoque → Produtos, senão a emissão será recusada.`, 'warning', 7000);
+        }
+        refreshItemsTable();
+      });
+    });
+
     document.querySelectorAll('[data-remove-item]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const index = Number(btn.dataset.removeItem);
@@ -319,8 +461,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     attachItemsHandlers();
 
     document.getElementById('nfeFocusAddItemBtn')?.addEventListener('click', () => {
-      itens.push({ descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0 });
+      itens.push({ produtoId: '', descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0 });
       refreshItemsTable();
+    });
+
+    // Os campos de parcela só existem quando "Parcelado" está escolhido —
+    // pedir número de parcelas para uma venda à vista é ruído.
+    document.getElementById('nfeFocusPaymentType')?.addEventListener('change', (evento) => {
+      document.getElementById('nfeFocusInstallmentFields')
+        ?.classList.toggle('hidden', evento.target.value !== 'parcelado');
     });
 
     document.getElementById('nfeFocusForm')?.addEventListener('submit', async (event) => {
@@ -354,14 +503,30 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           codigoMunicipio: formData.get('destCodigoMunicipio')
         },
         itens: itens.map((item) => ({
+          // O servidor relê a classificação fiscal pelo produtoId e ignora o
+          // que veio digitado — o que vai aqui é só o ponto de partida da tela.
+          produtoId: item.produtoId || '',
           descricao: item.descricao,
           codigoProduto: item.codigoProduto,
-          ncm: item.ncm.replace(/\D/g, ''),
+          ncm: String(item.ncm || '').replace(/\D/g, ''),
           quantidade: Number(item.quantidade || 0),
           valorUnitario: Number(item.valorUnitario || 0),
           unidadeComercial: item.unidadeComercial || 'UN',
           origem: Number(item.origem || 0)
-        }))
+        })),
+        // Grupo obrigatório do layout 4.0 — nota sem ele é rejeitada. Uma
+        // parcela única com o total: o parcelamento é condição comercial e
+        // vira contas a receber, não N formas de pagamento na nota.
+        pagamentos: [{ forma: formData.get('formaPagamento') || '99', valor: grandTotal() }],
+        // Com pedido de origem, o servidor NÃO gera contas a receber: quem
+        // gerou foi o pedido, e um segundo recebível pelo mesmo valor só
+        // apareceria quando a conciliação não fechasse.
+        orderId: orderIdOrigem || undefined,
+        // Sem pedido de origem, é isto que manda o servidor gerar o contas a
+        // receber quando a SEFAZ autorizar.
+        paymentType: formData.get('paymentType') || 'avista',
+        installmentsCount: Number(formData.get('installmentsCount') || 1),
+        installmentIntervalDays: Number(formData.get('installmentIntervalDays') || 30)
       };
 
       try {
@@ -381,6 +546,19 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 
   renderForm();
 };
+
+// "Nova NF-e Avulsa" É ESTA TELA.
+//
+// Avulsa quer dizer nota emitida SEM pedido de origem — e é exatamente o que
+// esta tela faz: destinatário e itens preenchidos na hora, sem depender de
+// venda nenhuma. Existia uma segunda tela com esse nome que gravava um
+// registro local e nunca chegava à SEFAZ; quem a usasse acharia que emitiu.
+// Duas telas com o mesmo propósito, e a do nome certo era a que não emitia.
+//
+// Registrada aqui como apelido, e não copiada: uma cópia divergiria na
+// primeira correção feita só de um lado.
+window.MavisSubscreenRegistry.finance.nova_nfe_avulsa =
+  window.MavisSubscreenRegistry.finance.emitir_nfe_focus;
 
 function fiscalFormatCnpjSimples(digits) {
   const clean = String(digits || '').replace(/\D/g, '');

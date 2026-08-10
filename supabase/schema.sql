@@ -93,13 +93,19 @@ create table if not exists purchases (
   created_at timestamptz not null default now()
 );
 
+-- O `status` é text sem CHECK de propósito: o catálogo de status vive em
+-- public/modules/shared/sales_status.js (fonte única, lida pela tela E pelo
+-- server.js) e status novo não pode depender de migração de banco. Os valores
+-- antigos ('pendente', 'faturado', 'em aberto', 'aprovado', 'reprovado') ainda
+-- gravados continuam sendo traduzidos na leitura pelo catálogo — nenhuma
+-- linha precisa ser alterada.
 create table if not exists orders (
   id text primary key,
   type text not null default 'order',
   customer text not null,
   date date not null,
   amount numeric not null default 0,
-  status text not null default 'pendente',
+  status text not null default 'pedido',
   note text,
   created_at timestamptz not null default now()
 );
@@ -110,7 +116,7 @@ create table if not exists quotes (
   customer text not null,
   date date not null,
   amount numeric not null default 0,
-  status text not null default 'em aberto',
+  status text not null default 'orcamento',
   note text,
   created_at timestamptz not null default now()
 );
@@ -1577,6 +1583,7 @@ insert into cst_icms (codigo, descricao) values
   ('50', 'Suspensão'),
   ('51', 'Diferimento'),
   ('60', 'ICMS cobrado anteriormente por substituição tributária'),
+  ('61', 'Tributação monofásica sobre combustíveis cobrada anteriormente'),
   ('70', 'Com redução de base de cálculo e cobrança do ICMS por substituição tributária'),
   ('90', 'Outras')
 on conflict (codigo) do update set descricao = excluded.descricao;
@@ -1613,8 +1620,21 @@ insert into cst_pis_cofins (codigo, descricao, grupo) values
   ('49', 'Outras operações de saída', 'SAIDA'),
   ('50', 'Operação com direito a crédito — vinculada exclusivamente a receita tributada no mercado interno', 'ENTRADA'),
   ('51', 'Operação com direito a crédito — vinculada exclusivamente a receita não tributada no mercado interno', 'ENTRADA'),
+  ('52', 'Operação com direito a crédito — vinculada exclusivamente a receita de exportação', 'ENTRADA'),
   ('53', 'Operação com direito a crédito — vinculada a receitas tributadas e não tributadas no mercado interno', 'ENTRADA'),
+  ('54', 'Operação com direito a crédito — vinculada a receitas tributadas no mercado interno e de exportação', 'ENTRADA'),
+  ('55', 'Operação com direito a crédito — vinculada a receitas não-tributadas no mercado interno e de exportação', 'ENTRADA'),
   ('56', 'Operação com direito a crédito — vinculada a receitas tributadas e não tributadas no mercado interno e de exportação', 'ENTRADA'),
+  -- Faixa 60–67: crédito PRESUMIDO. É de regime não-cumulativo (Lucro Real).
+  -- No Presumido (cumulativo) a saída é CST 01 e não há crédito; no Simples, 49.
+  ('60', 'Crédito presumido — operação de aquisição vinculada exclusivamente a receita tributada no mercado interno', 'ENTRADA'),
+  ('61', 'Crédito presumido — operação de aquisição vinculada exclusivamente a receita não-tributada no mercado interno', 'ENTRADA'),
+  ('62', 'Crédito presumido — operação de aquisição vinculada exclusivamente a receita de exportação', 'ENTRADA'),
+  ('63', 'Crédito presumido — operação de aquisição vinculada a receitas tributadas e não-tributadas no mercado interno', 'ENTRADA'),
+  ('64', 'Crédito presumido — operação de aquisição vinculada a receitas tributadas no mercado interno e de exportação', 'ENTRADA'),
+  ('65', 'Crédito presumido — operação de aquisição vinculada a receitas não-tributadas no mercado interno e de exportação', 'ENTRADA'),
+  ('66', 'Crédito presumido — operação de aquisição vinculada a receitas tributadas e não-tributadas no mercado interno e de exportação', 'ENTRADA'),
+  ('67', 'Crédito presumido — outras operações', 'ENTRADA'),
   ('70', 'Operação de aquisição sem direito a crédito', 'ENTRADA'),
   ('71', 'Operação de aquisição com isenção', 'ENTRADA'),
   ('72', 'Operação de aquisição com suspensão', 'ENTRADA'),

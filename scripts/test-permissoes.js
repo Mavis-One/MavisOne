@@ -8,7 +8,7 @@
 // Não precisa de servidor nem de banco: as funções são puras.
 const P = require('../lib/permissoes');
 
-let falhas = 0;
+let falhas = 0; 
 const check = (nome, cond, det) => { console.log(`${cond ? '  OK ' : '  XX '} ${nome}${det ? ' -> ' + det : ''}`); if (!cond) falhas++; };
 
 const acesso = (permitidas = [], negadas = []) => ({ efetivas: new Set(permitidas), negadas: new Set(negadas) });
@@ -82,6 +82,53 @@ console.log('\n--- não pode ficar mais restritivo que antes da migração ---')
   const todas = ['ler', 'criar', 'editar', 'excluir'].every((acao) => P.podePeloModulo(comModulo, `${recurso}.${acao}`));
   check(`${recurso}: mantém as 4 ações`, todas);
 });
+
+console.log('\n--- toda regra casa com uma rota que existe de verdade ---');
+// O erro que isto pega: a regra dizia '/api/openfinance' mas a rota é
+// '/api/open-finance'. O prefixo não casava com nada, então o Open Finance
+// passava direto pelo portão central — sem checagem de ação, sem NEGAR e sem
+// auditoria — enquanto a lista de ROTAS dava a entender que estava protegido.
+// Uma regra que não casa não falha barulhentamente; ela simplesmente não
+// protege. Só um teste que confronta a regra com o server.js percebe.
+const fs = require('fs');
+const path = require('path');
+const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+P.ROTAS.forEach((rota) => {
+  // A rota existe se o server.js menciona o prefixo como caminho literal.
+  const usada = serverSrc.includes(`'${rota.prefixo}'`)
+    || serverSrc.includes(`'${rota.prefixo}/`)
+    || serverSrc.includes(`"${rota.prefixo}`)
+    || serverSrc.includes(`\`${rota.prefixo}`)
+    || new RegExp(`\\\\/api\\\\/\\(?[a-z|-]*${rota.prefixo.replace('/api/', '')}`).test(serverSrc);
+  check(`${rota.prefixo} -> rota existe no server.js`, usada, usada ? '' : 'NENHUMA ROTA CASA COM ESTE PREFIXO');
+});
+
+console.log('\n--- ninguém checa admin na mão pela coluna antiga ---');
+// Promover alguém a administrador na tela de Papéis e Permissões grava em
+// `user_roles` e NÃO mexe em `users.role`. Rotas que testavam
+// `requester.role !== 'admin'` na mão respondiam "Permissão negada" para esse
+// admin — a promoção parecia ter funcionado e não tinha. Quem decide isso é
+// o helper `ehAdmin()` do server.js, que olha os dois lugares.
+const gateCru = [...serverSrc.matchAll(/^.*\b(?:requester|user)\.role\s*!==\s*'admin'.*$/gm)].map((m) => m[0].trim());
+check('nenhum gate por `role !== admin`', gateCru.length === 0, gateCru[0] || 'nenhum');
+const atribCru = [...serverSrc.matchAll(/^\s*const \w+ = (?:requester|user)\.role === 'admin';\s*$/gm)].map((m) => m[0].trim());
+check('nenhuma decisão por `= role === admin`', atribCru.length === 0, atribCru[0] || 'nenhuma');
+// A forma composta é legítima: lá o `role === 'admin'` é só o primeiro de
+// vários caminhos, e o RBAC vem logo em seguida no mesmo `||`.
+check('o helper ehAdmin existe e consulta os papéis',
+  /async function ehAdmin\(/.test(serverSrc) && /carregarAcessoDoUsuario/.test(serverSrc));
+
+console.log('\n--- e o Open Finance exige a ação certa ---');
+// Regressão direta do bug acima: se o prefixo voltar a ficar errado, estes
+// dois viram null e o teste acusa.
+check('GET  /api/open-finance/connections exige finance.ler',
+  P.resolverPermissao('/api/open-finance/connections', 'GET') === 'finance.ler',
+  String(P.resolverPermissao('/api/open-finance/connections', 'GET')));
+check('DELETE /api/open-finance/connections/x exige finance.excluir',
+  P.resolverPermissao('/api/open-finance/connections/x', 'DELETE') === 'finance.excluir',
+  String(P.resolverPermissao('/api/open-finance/connections/x', 'DELETE')));
+// Webhook do provider é chamado de fora, sem sessão: continua livre.
+check('webhook do provider segue livre', P.rotaLivre('/api/webhooks/focusnfe') === true);
 
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
 process.exit(falhas === 0 ? 0 : 1);

@@ -6,7 +6,13 @@
   "scripts": {
     "start": "node server.js",
     "migracoes": "node scripts/verificar-migracoes.js",
-    "test": "node scripts/test-permissoes.js && node scripts/test-vendas-financeiro.js && node scripts/test-sales-totals.js && node scripts/test-sales-record-fields.js && node scripts/test-sales-actions.js && node scripts/test-nfe-actions.js && node scripts/test-module-workspace.js"
+    "modulos": "node scripts/test-modulos-crud.js",
+    "e2e": "node scripts/test-modulos-e2e.js",
+    "permissoes-tela": "node scripts/test-permissoes-tela.js",
+    "sessao": "node scripts/test-sessao-unica.js",
+    "test": "node scripts/test-permissoes.js && node scripts/test-sessao-expira.js && node scripts/test-vendas-financeiro.js && node scripts/test-contrato-financeiro.js && node scripts/test-sales-totals.js && node scripts/test-sales-record-fields.js && node scripts/test-sales-status.js && node scripts/test-sales-actions.js && node scripts/test-nfe-actions.js && node scripts/test-nfe-unificada.js && node scripts/test-nfe-avulsa.js && node scripts/test-auditoria-fiscal.js && node scripts/test-nfe-payload.js && node scripts/test-focus-homologacao.js && node scripts/test-regras-fiscais.js && node scripts/test-module-workspace.js && node scripts/test-modulos-telas.js && node scripts/test-atalhos.js && node scripts/test-fiscal-telas.js && node scripts/test-ibs-cbs.js",
+    "gate": "node scripts/test-gate-openfinance.js",
+    "admin-papel": "node scripts/test-admin-por-papel.js"
   },
   "engines": {
     "node": ">=18"
@@ -17,4 +23,3 @@
     "dotenv": "^17.4.2"
   }
 }
-

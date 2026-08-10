@@ -27,6 +27,10 @@ window.MavisNfeActions = (function () {
   };
 
   const AGUARDA_API = 'Requer a API fiscal (Focus NFe) configurada em Configurações › Fiscal.';
+  // Uma nota lançada à mão no Financeiro não existe na SEFAZ: não tem chave,
+  // XML, DANFE nem protocolo para consultar. Dizer isso é melhor do que
+  // oferecer o botão e devolver um erro de servidor.
+  const SO_FISCAL = 'Esta NF-e é um registro manual do Financeiro — não foi transmitida à SEFAZ, então não tem XML, DANFE nem status a consultar.';
   const AGUARDA_INTEGRACAO = 'Requer integração de envio ainda não configurada.';
   // Distinto de AGUARDA_API de propósito: dizer "configure a API" para quem já
   // configurou manda a pessoa procurar problema onde não tem.
@@ -40,7 +44,7 @@ window.MavisNfeActions = (function () {
       run: (ctx) => ctx.print(ctx.nfe, 'completo')
     },
     {
-      id: 'imprimir_80mm', label: 'Imprimir NFe Simplificada (80mm)', icon: ICONS.printer, scope: 'single',
+      id: 'imprimir_80mm', label: 'Imprimir NF-e Simplificada (80mm)', icon: ICONS.printer, scope: 'single',
       run: (ctx) => ctx.print(ctx.nfe, 'simplificado')
     },
     {
@@ -53,22 +57,28 @@ window.MavisNfeActions = (function () {
     },
     {
       id: 'baixar_xml', label: 'Baixar XML', icon: ICONS.download, scope: 'single',
-      needsApi: true, needsAuthorized: true
+      needsApi: true, needsAuthorized: true, soFiscal: true,
+      run: (ctx) => ctx.baixarArquivo(ctx.nfe, 'xml')
     },
     {
       id: 'baixar_danfe', label: 'Baixar DANFE', icon: ICONS.download, scope: 'single',
-      needsApi: true, needsAuthorized: true
+      needsApi: true, needsAuthorized: true, soFiscal: true,
+      run: (ctx) => ctx.baixarArquivo(ctx.nfe, 'danfe')
     },
     {
+      // A DANFE com unidade tributável é a mesma DANFE: a diferença é de
+      // layout de impressão, e a Focus só entrega um. Sem endpoint próprio,
+      // baixa a mesma e diz isso, em vez de fingir uma segunda versão.
       id: 'baixar_danfe_untrib', label: 'Baixar DANFE com UN. TRIB.', icon: ICONS.download, scope: 'single',
-      needsApi: true, needsAuthorized: true
+      needsApi: true, needsAuthorized: true, soFiscal: true,
+      run: (ctx) => ctx.baixarArquivo(ctx.nfe, 'danfe')
     },
     {
-      id: 'enviar_email', label: 'Enviar por Email', icon: ICONS.mail, scope: 'single',
+      id: 'enviar_email', label: 'Enviar por E-mail', icon: ICONS.mail, scope: 'single',
       enabled: () => AGUARDA_INTEGRACAO
     },
     {
-      id: 'duplicar', label: 'Duplicar NFe', icon: ICONS.copy, scope: 'single', tone: 'success',
+      id: 'duplicar', label: 'Duplicar NF-e', icon: ICONS.copy, scope: 'single', tone: 'success',
       run: (ctx) => ctx.duplicar(ctx.nfe)
     },
     {
@@ -76,21 +86,26 @@ window.MavisNfeActions = (function () {
       enabled: () => AGUARDA_INTEGRACAO
     },
     {
-      id: 'danfe_whatsapp', label: 'Enviar Danfe via WhatsApp', icon: ICONS.whatsapp, scope: 'single', tone: 'success',
+      id: 'danfe_whatsapp', label: 'Enviar DANFE via WhatsApp', icon: ICONS.whatsapp, scope: 'single', tone: 'success',
       enabled: () => AGUARDA_INTEGRACAO
     },
     {
-      id: 'cancelamento_extemporaneo', label: 'Cancelamento Extemporaneo NFe', icon: ICONS.close, scope: 'single',
-      needsApi: true, needsAuthorized: true
+      // Fora do prazo normal (24h em SC), a SEFAZ só aceita o cancelamento com
+      // autorização específica. A chamada é a mesma; o que muda é o prazo, e
+      // quem decide isso é a SEFAZ, não o sistema. Por isso avisa antes.
+      id: 'cancelamento_extemporaneo', label: 'Cancelamento Extemporâneo de NF-e', icon: ICONS.close, scope: 'single',
+      needsApi: true, needsAuthorized: true, soFiscal: true,
+      run: (ctx) => ctx.cancelar(ctx.nfe.id, { extemporaneo: true })
     },
     {
-      id: 'cancelar', label: 'Cancelar NFe', icon: ICONS.close, scope: 'single',
+      id: 'cancelar', label: 'Cancelar NF-e', icon: ICONS.close, scope: 'single',
       enabled: (ctx) => ctx.nfe.status === 'autorizada' ? true : 'Só é possível cancelar uma NF-e autorizada.',
       run: (ctx) => ctx.cancelar(ctx.nfe.id)
     },
     {
       id: 'carta_correcao', label: 'Carta de Correção', icon: ICONS.file, scope: 'single',
-      needsApi: true, needsAuthorized: true
+      needsApi: true, needsAuthorized: true, soFiscal: true,
+      run: (ctx) => ctx.cartaCorrecao(ctx.nfe)
     },
     {
       id: 'ir_para_venda', label: 'Ir Para a Venda', icon: ICONS.arrow, scope: 'single',
@@ -98,20 +113,29 @@ window.MavisNfeActions = (function () {
       run: (ctx) => ctx.irParaVenda(ctx.nfe)
     },
     {
+      // Em lote a Focus não tem um endpoint só: são N downloads. Baixar um a
+      // um é o que existe — o navegador cuida de cada arquivo.
       id: 'xml_lote', label: 'Baixar XML em Lote', icon: ICONS.download, scope: 'batch',
-      needsApi: true
+      needsApi: true, soFiscal: true,
+      run: (ctx) => ctx.baixarLote(ctx.selecionadas, 'xml')
     },
     {
       id: 'danfe_lote', label: 'Baixar DANFE em Lote', icon: ICONS.download, scope: 'batch',
-      needsApi: true
+      needsApi: true, soFiscal: true,
+      run: (ctx) => ctx.baixarLote(ctx.selecionadas, 'danfe')
     },
     {
+      // Reconsulta a SEFAZ e atualiza o status gravado. É o que resolve nota
+      // parada em PROCESSANDO quando o webhook não chegou.
       id: 'consultar_status', label: 'Consultar Status', icon: ICONS.check, scope: 'batch',
-      needsApi: true
+      needsApi: true, soFiscal: true,
+      run: (ctx) => ctx.consultarStatus(ctx.selecionadas)
     },
     {
+      // Do serviço da SEFAZ, não da nota: por isso não exige seleção.
       id: 'status_servico', label: 'Status Serviço', icon: ICONS.check, scope: 'any',
-      needsApi: true
+      needsApi: true,
+      run: (ctx) => ctx.statusServico()
     },
     // NÃO existe ação de excluir NF-e, por decisão de projeto. Documento fiscal
     // não se apaga: uma nota autorizada é cancelada (evento registrado na
@@ -132,6 +156,13 @@ window.MavisNfeActions = (function () {
     }
     if (action.scope === 'batch' && n === 0) return 'Selecione ao menos uma NF-e.';
     if (action.needsApi && !ctx.apiFiscalConfigurada) return AGUARDA_API;
+    // Antes de needsAuthorized: uma nota manual nunca chega a "autorizada" na
+    // SEFAZ, e dizer "só para autorizada" mandaria o usuário tentar autorizar
+    // um registro que não é uma nota.
+    if (action.soFiscal) {
+      const naoFiscais = ctx.selecionadas.filter((n) => n.origem !== 'fiscal');
+      if (naoFiscais.length) return SO_FISCAL;
+    }
     if (action.needsAuthorized && ctx.nfe && ctx.nfe.status !== 'autorizada') {
       return 'Disponível apenas para NF-e autorizada.';
     }

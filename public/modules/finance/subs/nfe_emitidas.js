@@ -1,11 +1,20 @@
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.finance = window.MavisSubscreenRegistry.finance || {};
 
+// A lista mostra as duas origens: a nota transmitida à SEFAZ (tabela `nfe`) e
+// o registro manual do Financeiro (tabela `nfes`). Por isso o vocabulário
+// cobre os estados dos dois — sem rascunho/processando/erro, uma nota que
+// falhou na SEFAZ apareceria com o rótulo cru em maiúsculas, ou pior, como
+// autorizada (era o que o normalizador do servidor fazia por padrão).
 const NFE_STATUS_META = {
   autorizada: { label: 'Autorizada', tone: 'success' },
   cancelada: { label: 'Cancelada', tone: 'muted' },
   denegada: { label: 'Denegada', tone: 'danger' },
   rejeitada: { label: 'Rejeitada', tone: 'danger' },
+  erro: { label: 'Erro', tone: 'danger' },
+  inutilizada: { label: 'Inutilizada', tone: 'muted' },
+  processando: { label: 'Processando', tone: 'warning' },
+  rascunho: { label: 'Rascunho', tone: 'muted' },
   pendente: { label: 'Pendente', tone: 'warning' }
 };
 
@@ -141,6 +150,13 @@ function nfePrint(nfe, layout = 'completo') {
 window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanceNfeEmitidas(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml, confirmModal } = ctx;
 
+  // Esta tela é espelhada: aparece no Financeiro e no Fiscal. A navegação entre
+  // ela e "Nova NF-e Avulsa" tem que ficar no módulo por onde a pessoa entrou —
+  // 'finance' fixo mandava para o Financeiro quem estava no Fiscal.
+  // Só vale para as irmãs: ir para a venda ou para o lançamento continua
+  // atravessando de módulo, porque essas telas existem em um lugar só.
+  const moduloAtual = () => (state.activeModule === 'fiscal' ? 'fiscal' : 'finance');
+
   const filters = { search: '', status: '', dateFrom: '', dateTo: '' };
   let page = 1;
   const limit = 15;
@@ -197,8 +213,88 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       cancelar: cancelNfe,
       duplicar: duplicarNfe,
       irParaVenda: irParaVenda,
+      baixarArquivo: baixarArquivoFiscal,
+      baixarLote: baixarLoteFiscal,
+      cartaCorrecao: abrirCartaCorrecao,
+      consultarStatus: consultarStatusFiscal,
+      statusServico: consultarStatusServico,
       limparSelecao: () => { selecionadas.clear(); load(); }
     };
+  }
+
+  // ---------------------------------------------------------------- fiscais
+  // Estas ações só chegam aqui para notas de origem 'fiscal' — o painel bloqueia
+  // as manuais antes, porque elas não existem na SEFAZ.
+
+  // Abre numa aba, em vez de fetch + blob: a rota devolve o arquivo com
+  // Content-Disposition, e deixar o navegador baixar preserva o nome e não
+  // segura o XML inteiro na memória da página.
+  function baixarArquivoFiscal(nfe, tipo) {
+    window.open(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}/${tipo}`, '_blank');
+  }
+
+  function baixarLoteFiscal(notas, tipo) {
+    // Uma aba por nota: a Focus não tem endpoint de lote. Abrir todas de uma
+    // vez faz o navegador bloquear como popup, então vai espaçado.
+    notas.forEach((nfe, i) => setTimeout(() => baixarArquivoFiscal(nfe, tipo), i * 400));
+    showToast(`Baixando ${notas.length} arquivo(s)…`, 'success');
+  }
+
+  async function consultarStatusFiscal(notas) {
+    let atualizadas = 0;
+    for (const nfe of notas) {
+      try {
+        // GET da nota reconsulta a SEFAZ e regrava o status — é o que resolve
+        // nota parada em "Processando" quando o webhook não chegou.
+        const res = await api(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}`);
+        if (res.nfe && res.nfe.status !== nfe.statusFiscal) atualizadas += 1;
+      } catch (error) {
+        showToast(`NF-e ${nfe.number || nfe.referencia}: ${error.message || 'erro ao consultar'}`, 'error');
+      }
+    }
+    showToast(atualizadas ? `${atualizadas} nota(s) mudaram de status.` : 'Nenhuma mudança de status.', 'success');
+    await load();
+  }
+
+  async function consultarStatusServico() {
+    try {
+      const status = await api('/api/focusnfe/status');
+      showToast(
+        status.connected
+          ? `Focus NFe respondendo — ambiente de ${status.ambiente}.${status.travadoEmHomologacao ? ' Notas daqui NÃO têm valor fiscal.' : ''}`
+          : `Focus NFe não respondeu: ${status.message || 'sem detalhe'}`,
+        status.connected ? 'success' : 'error'
+      );
+    } catch (error) {
+      showToast(error.message || 'Erro ao consultar o serviço.', 'error');
+    }
+  }
+
+  async function abrirCartaCorrecao(nfe) {
+    // A SEFAZ exige de 15 a 1000 caracteres, e a CC-e NÃO pode corrigir valor,
+    // data, destinatário nem itens — só dados que não alterem o cálculo do
+    // imposto. Dizer isso aqui evita a rejeição depois de digitar tudo.
+    const texto = window.prompt(
+      'Carta de Correção (15 a 1000 caracteres).\n\n'
+      + 'Não serve para corrigir valores, datas, destinatário ou itens — só dados que não mudam o cálculo do imposto.\n\n'
+      + 'Descreva a correção:'
+    );
+    if (texto === null) return;
+    const limpo = String(texto).trim();
+    if (limpo.length < 15) {
+      showToast('A correção precisa ter ao menos 15 caracteres (exigência da SEFAZ).', 'error');
+      return;
+    }
+    try {
+      await api(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}/cce`, {
+        method: 'POST',
+        body: JSON.stringify({ correcao: limpo })
+      });
+      showToast('Carta de Correção enviada.', 'success');
+      await load();
+    } catch (error) {
+      showToast(error.message || 'Erro ao enviar a Carta de Correção.', 'error');
+    }
   }
 
   function renderActionsPanel() {
@@ -206,16 +302,45 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     if (painel) window.MavisNfeActions.render(painel, actionsContext());
   }
 
-  function duplicarNfe(nfe) {
-    // A tela de nova NF-e lê este state para nascer preenchida.
-    state.financeDuplicateNfe = {
-      ...nfe,
-      id: undefined, number: undefined, key: '', status: 'pendente',
-      date: new Date().toISOString().slice(0, 10),
-      financialEntries: []
+  async function duplicarNfe(nfe) {
+    // `state.financeDuplicateNfe` era gravado aqui e NÃO era lido por tela
+    // nenhuma — duplicar só abria um formulário em branco. Agora usa o mesmo
+    // canal de pré-preenchimento da emissão (`state.nfeFromOrder`), sem
+    // orderId: uma duplicata é uma nota NOVA e avulsa, e herdar o pedido da
+    // original faria a cópia não gerar contas a receber.
+    let itens = [];
+    if (nfe.origem === 'fiscal') {
+      try {
+        // Os itens da nota fiscal estão no payload que foi para a SEFAZ — é a
+        // única cópia fiel do que foi transmitido.
+        const res = await api(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}`);
+        itens = ((res.nfe?.payloadEnviado || {}).items || []).map((item) => ({
+          code: item.codigo_produto || '',
+          description: item.descricao || '',
+          quantity: Number(item.quantidade_comercial || 0),
+          unitPrice: Number(item.valor_unitario_comercial || 0)
+        }));
+      } catch (error) {
+        showToast('Não foi possível ler os itens da nota original: ' + (error.message || error), 'error');
+        return;
+      }
+    } else {
+      itens = (nfe.items || []).map((item) => ({
+        code: item.code || '', description: item.description || '',
+        quantity: Number(item.quantity || 0), unitPrice: Number(item.unitPrice || 0)
+      }));
+    }
+    state.nfeFromOrder = {
+      orderId: '',
+      clientSupplierId: nfe.clientSupplierId || '',
+      clientName: nfe.customer || '',
+      items: itens
     };
     state.activeSub = 'nova_nfe_avulsa';
-    loadModule('finance');
+    // Módulo atual, não 'finance' fixo: esta tela é espelhada no Fiscal, e
+    // fixar o destino jogaria para o Financeiro quem entrou pelo Fiscal.
+    // Irmã da mesma dupla (Emitidas <-> Nova) fica sempre no módulo de origem.
+    loadModule(moduloAtual());
   }
 
   function irParaVenda(nfe) {
@@ -306,7 +431,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
 
     document.getElementById('nfeNewBtn')?.addEventListener('click', () => {
       state.activeSub = 'nova_nfe_avulsa';
-      loadModule('finance');
+      loadModule(moduloAtual());
     });
 
     document.getElementById('nfeFilterForm')?.addEventListener('submit', (event) => {
@@ -373,12 +498,48 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     });
   }
 
-  async function cancelNfe(id) {
-    const confirmed = await confirmModal('Confirma o cancelamento desta NF-e? Parcelas ainda pendentes serão canceladas; parcelas já pagas permanecem no histórico.');
-    if (!confirmed) return;
+  async function cancelNfe(id, opcoes = {}) {
+    // Cancelar uma nota que está na SEFAZ é um EVENTO fiscal: exige
+    // justificativa de 15 caracteres e fica registrado lá para sempre.
+    // Cancelar um registro manual é só apagar uma linha do Financeiro. São
+    // operações diferentes, em rotas diferentes — descobrir isso pela origem
+    // evita mandar uma para a outra.
+    const nota = notasDaPagina.find((n) => n.id === id);
+    const ehFiscal = nota ? nota.origem === 'fiscal' : false;
+
+    if (!ehFiscal) {
+      const confirmed = await confirmModal('Confirma o cancelamento desta NF-e? Parcelas ainda pendentes serão canceladas; parcelas já pagas permanecem no histórico.');
+      if (!confirmed) return;
+      try {
+        await api(`/api/finance/nfe/${id}/cancelar`, { method: 'POST' });
+        showToast('NF-e cancelada com sucesso.', 'success');
+        closeNfeModal();
+        await load();
+      } catch (error) {
+        showToast(error.message || 'Erro ao cancelar NF-e.', 'error');
+      }
+      return;
+    }
+
+    const aviso = opcoes.extemporaneo
+      ? 'CANCELAMENTO EXTEMPORÂNEO — fora do prazo normal (24h em SC).\n\n'
+        + 'A SEFAZ pode recusar, e a recusa não é do sistema: depende de autorização específica dela.\n\n'
+      : '';
+    const justificativa = window.prompt(
+      `${aviso}Justificativa do cancelamento (mínimo 15 caracteres, exigência da SEFAZ):`
+    );
+    if (justificativa === null) return;
+    const limpo = String(justificativa).trim();
+    if (limpo.length < 15) {
+      showToast('A justificativa precisa ter ao menos 15 caracteres.', 'error');
+      return;
+    }
     try {
-      await api(`/api/finance/nfe/${id}/cancelar`, { method: 'POST' });
-      showToast('NF-e cancelada com sucesso.', 'success');
+      await api(`/api/fiscal/nfe/${encodeURIComponent(id)}/cancelar`, {
+        method: 'POST',
+        body: JSON.stringify({ justificativa: limpo })
+      });
+      showToast('NF-e cancelada na SEFAZ.', 'success');
       closeNfeModal();
       await load();
     } catch (error) {
@@ -391,15 +552,62 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   }
 
   async function openNfeModal(id) {
+    const naLista = notasDaPagina.find((n) => n.id === id);
     let nfe;
     try {
-      const res = await api(`/api/finance/nfe/${id}`);
-      nfe = res.nfe;
+      if (naLista && naLista.origem === 'fiscal') {
+        // A nota fiscal vive em outra rota e em outro formato. Os itens estão
+        // dentro do payload que foi para a SEFAZ — é a única cópia fiel do que
+        // foi transmitido, e é ela que deve ser mostrada, não uma remontagem.
+        const res = await api(`/api/fiscal/nfe/${encodeURIComponent(id)}`);
+        nfe = fiscalParaModal(res.nfe, naLista);
+      } else {
+        const res = await api(`/api/finance/nfe/${id}`);
+        nfe = res.nfe;
+      }
     } catch (error) {
       showToast(error.message || 'Erro ao carregar NF-e.', 'error');
       return;
     }
     renderNfeModal(nfe);
+  }
+
+  // Traduz a nota fiscal para o formato que o modal já desenha, lendo os itens
+  // do payload enviado à SEFAZ.
+  function fiscalParaModal(fiscal, daLista) {
+    const payload = (fiscal && fiscal.payloadEnviado) || {};
+    return {
+      ...daLista,
+      ...(fiscal || {}),
+      id: daLista.id,
+      origem: 'fiscal',
+      number: fiscal?.numero || daLista.number || '',
+      series: fiscal?.serie || daLista.series || '',
+      date: daLista.date,
+      status: daLista.status,
+      key: fiscal?.chaveAcesso || '',
+      amount: Number(fiscal?.valorTotal || daLista.amount || 0),
+      // O nome REAL, não o que foi para a SEFAZ: em homologação o enviado é o
+      // texto fixo exigido por ela.
+      customer: daLista.customer || '',
+      clientDocument: daLista.clientDocument || '',
+      clientAddress: payload.logradouro_destinatario || '',
+      clientCity: payload.municipio_destinatario || '',
+      clientState: payload.uf_destinatario || '',
+      clientStateRegistration: payload.inscricao_estadual_destinatario || '',
+      taxNotes: payload.informacoes_adicionais_contribuinte || '',
+      paymentType: 'avista',
+      installmentsCount: 1,
+      installmentIntervalDays: 30,
+      financialEntries: [],
+      items: (payload.items || []).map((item) => ({
+        code: item.codigo_produto || '',
+        description: item.descricao || '',
+        quantity: Number(item.quantidade_comercial || 0),
+        unitPrice: Number(item.valor_unitario_comercial || 0),
+        total: Number(item.valor_bruto || 0)
+      }))
+    };
   }
 
   function renderNfeModal(nfe) {

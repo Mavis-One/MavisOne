@@ -111,9 +111,28 @@ window.MavisWorkspace = {
   },
 
   render(ctx, moduleName) {
-    const { content, state, escapeHtml, renderApp, loadModule } = ctx;
+    const { content, state, escapeHtml, renderApp, loadModule, showToast } = ctx;
     const itens = telasDoModulo(moduleName);
     const titulo = (typeof moduleLabels !== 'undefined' && moduleLabels[moduleName]) || moduleName;
+
+    // Favoritos deste módulo. A chave é a mesma do Dashboard Geral
+    // ("modulo::tela"), então fixar aqui também alimenta os favoritos de lá —
+    // é uma lista só, não duas.
+    const fixados = typeof getDashboardPinSet === 'function' ? getDashboardPinSet() : new Set();
+    const chaveFixar = (item) => `${moduleName}::${item.key}`;
+    const favoritos = itens.filter((item) => fixados.has(chaveFixar(item)));
+
+    const botaoFixar = (item) => {
+      const fixado = fixados.has(chaveFixar(item));
+      return `
+        <span class="workspace-fixar ${fixado ? 'active' : ''}" role="button" tabindex="0"
+          data-fixar="${escapeHtml(chaveFixar(item))}"
+          aria-pressed="${fixado ? 'true' : 'false'}"
+          title="${fixado ? 'Desfixar' : 'Fixar'} ${escapeHtml(item.label)}">
+          ${typeof favoriteIconSvg === 'function' ? favoriteIconSvg(fixado) : '★'}
+        </span>
+      `;
+    };
 
     content.innerHTML = `
       <div class="workspace">
@@ -126,11 +145,29 @@ window.MavisWorkspace = {
             aria-label="Filtrar telas de ${escapeHtml(titulo)}" />
         </section>
 
+        ${favoritos.length ? `
+          <section class="panel workspace-favoritos">
+            <h4>Mais usadas</h4>
+            <div class="workspace-favoritos-lista">
+              ${favoritos.map((item) => `
+                <button type="button" class="workspace-atalho" data-open-sub="${escapeHtml(item.key)}">
+                  <span class="workspace-atalho-icone">${svgDoTipo(item.pendente ? 'pendente' : tipoDaTela(item))}</span>
+                  ${escapeHtml(item.label)}
+                </button>
+              `).join('')}
+            </div>
+          </section>
+        ` : ''}
+
         <div class="workspace-grid" id="workspaceGrid">
           ${itens.map((item) => {
             const tipo = item.pendente ? 'pendente' : tipoDaTela(item);
+            // O bloco é <div>, não <button>: o fixar mora dentro dele, e botão
+            // dentro de botão é HTML inválido — o navegador desmonta a marcação
+            // e o clique passa a cair no lugar errado.
             return `
-              <button type="button" class="workspace-tile workspace-tile-${tipo}${item.pendente ? ' is-pendente' : ''}"
+              <div class="workspace-tile workspace-tile-${tipo}${item.pendente ? ' is-pendente' : ''}"
+                role="button" tabindex="0"
                 data-open-sub="${escapeHtml(item.key)}"
                 data-busca="${escapeHtml(semAcento(`${item.label} ${item.desc || ''}`))}">
                 <span class="workspace-tile-icon">${svgDoTipo(tipo)}</span>
@@ -138,7 +175,8 @@ window.MavisWorkspace = {
                   <strong>${escapeHtml(item.label)}${item.pendente ? '<em class="workspace-tag">em preparo</em>' : ''}</strong>
                   <span>${escapeHtml(item.desc || '')}</span>
                 </span>
-              </button>
+                ${botaoFixar(item)}
+              </div>
             `;
           }).join('')}
         </div>
@@ -147,11 +185,57 @@ window.MavisWorkspace = {
       </div>
     `;
 
-    content.querySelectorAll('[data-open-sub]').forEach((botao) => {
-      botao.addEventListener('click', () => {
-        state.activeSub = botao.dataset.openSub;
+    const abrir = (chave) => {
+      state.activeSub = chave;
+      renderApp();
+      loadModule(moduleName);
+    };
+
+    content.querySelectorAll('[data-open-sub]').forEach((alvo) => {
+      alvo.addEventListener('click', (evento) => {
+        // Clique no alfinete não abre a tela: são duas ações no mesmo bloco.
+        if (evento.target.closest('[data-fixar]')) return;
+        abrir(alvo.dataset.openSub);
+      });
+      // O bloco virou <div role="button">, então teclado precisa ser ligado na
+      // mão — <button> fazia isso sozinho.
+      alvo.addEventListener('keydown', (evento) => {
+        if (evento.key !== 'Enter' && evento.key !== ' ') return;
+        if (evento.target.closest('[data-fixar]')) return;
+        evento.preventDefault();
+        abrir(alvo.dataset.openSub);
+      });
+    });
+
+    const alternarFixado = async (chave) => {
+      const estava = fixados.has(chave);
+      const proximos = estava
+        ? [...fixados].filter((k) => k !== chave)
+        : [...fixados, chave];
+      try {
+        // saveDashboardPins é global do app.js e recebe UM argumento. O módulo
+        // do Dashboard Geral documenta uma colisão de nomes que já zerou todos
+        // os favoritos aqui — por isso a chamada é explícita em window.
+        if (typeof window.saveDashboardPins === 'function') await window.saveDashboardPins(proximos);
+        else if (state.user) state.user.dashboardPins = proximos;
+        if (showToast) showToast(estava ? 'Removido das mais usadas.' : 'Fixado nas mais usadas.', 'success');
         renderApp();
         loadModule(moduleName);
+      } catch (erro) {
+        if (showToast) showToast(erro.message || 'Não foi possível salvar o favorito.', 'error');
+      }
+    };
+
+    content.querySelectorAll('[data-fixar]').forEach((alvo) => {
+      alvo.addEventListener('click', (evento) => {
+        evento.stopPropagation();
+        alternarFixado(alvo.dataset.fixar);
+      });
+      alvo.addEventListener('keydown', (evento) => {
+        if (evento.key !== 'Enter' && evento.key !== ' ') return;
+        evento.preventDefault();
+        evento.stopPropagation();
+        alternarFixado(alvo.dataset.fixar);
       });
     });
 

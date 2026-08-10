@@ -54,6 +54,9 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   let empresaForm = null; // null | {} (nova) | objeto empresa (edição)
   let estabForm = null; // null | {} (novo) | objeto estabelecimento (edição)
   let estabStatusById = {};
+  // Começa travado: se a resposta do servidor não disser nada, o mais seguro é
+  // a tela se comportar como ambiente de teste.
+  let travadoEmHomologacao = true;
   let regrasFiscais = [];
   let regraForm = null; // null | {} (nova) | objeto regra (edição)
   let certificados = [];
@@ -67,6 +70,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   async function loadEstabelecimentos(empresaId) {
     const res = await api(`/api/fiscal/estabelecimentos?empresaId=${encodeURIComponent(empresaId)}`);
     estabelecimentos = res.estabelecimentos || [];
+    travadoEmHomologacao = res.travadoEmHomologacao !== false;
   }
 
   async function loadRegrasFiscais(empresaId) {
@@ -244,6 +248,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
           <div>
             <h3>Estabelecimentos — ${escapeHtml(empresa.razaoSocial)}</h3>
             <p class="muted">Matriz e filiais desta empresa. Cada uma tem IE, endereço e token da Focus NFe próprios.</p>
+            ${travadoEmHomologacao ? '<p class="fiscal-aviso-homologacao"><strong>Ambiente de testes.</strong> Todas as emissões vão para a homologação da Focus NFe e <strong>não têm valor fiscal</strong> — não geram obrigação, não vão para a apuração e não servem para acompanhar mercadoria.</p>' : ''}
           </div>
           <div class="cadastro-list-actions">
             <button type="button" id="fiscalNewEstabBtn">+ Novo estabelecimento</button>
@@ -260,7 +265,11 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
                   <td>${escapeHtml((FISCAL_ESTAB_TIPO_OPTIONS.find((o) => o.value === estab.tipo) || {}).label || estab.tipo)}</td>
                   <td>${escapeHtml(estab.razaoSocial)}</td>
                   <td>${escapeHtml(estab.uf)}</td>
-                  <td>${estab.focusTokenConfigured ? `<span class="finance-badge finance-badge-info">${escapeHtml(estab.focusAmbiente === 'producao' ? 'Produção' : 'Homologação')}</span>` : '<span class="finance-badge finance-badge-muted">Sem token</span>'}</td>
+                  <td>${estab.focusTokenConfigured
+                    ? (travadoEmHomologacao && estab.focusAmbiente === 'producao'
+                      ? '<span class="finance-badge finance-badge-danger" title="Marcado como Produção, mas o sistema está travado em homologação: a emissão vai ser recusada.">Produção bloqueada</span>'
+                      : `<span class="finance-badge finance-badge-info">${escapeHtml(estab.focusAmbiente === 'producao' ? 'Produção' : 'Homologação')}</span>`)
+                    : '<span class="finance-badge finance-badge-muted">Sem token</span>'}</td>
                   <td data-estab-status="${estab.id}">${estabStatusById[estab.id] || ''}</td>
                   <td>
                     <button type="button" class="secondary fiscal-test-estab" data-id="${estab.id}">Testar conexão</button>
@@ -424,8 +433,9 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             <label>Ambiente Focus
               <select name="focusAmbiente">
                 <option value="homologacao" ${(estabForm.focusAmbiente || 'homologacao') === 'homologacao' ? 'selected' : ''}>Homologação</option>
-                <option value="producao" ${estabForm.focusAmbiente === 'producao' ? 'selected' : ''}>Produção</option>
+                <option value="producao" ${estabForm.focusAmbiente === 'producao' ? 'selected' : ''} ${travadoEmHomologacao ? 'disabled' : ''}>Produção${travadoEmHomologacao ? ' — bloqueado' : ''}</option>
               </select>
+              ${travadoEmHomologacao ? '<small class="muted">O sistema está travado em homologação (FOCUS_NFE_SOMENTE_HOMOLOGACAO no .env). Use o token de homologação da Focus NFe.</small>' : ''}
             </label>
           </div>
           <div class="checkbox-grid">
@@ -688,8 +698,19 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         try {
-          await api(`/api/fiscal/estabelecimentos/${btn.dataset.id}/webhook`, { method: 'POST' });
-          showToast('Webhook registrado com sucesso na Focus NFe.', 'success');
+          const res = await api(`/api/fiscal/estabelecimentos/${btn.dataset.id}/webhook`, { method: 'POST' });
+          const info = res.webhook || {};
+          // Registrar de novo o mesmo endereço não é erro nem novidade — dizer
+          // "registrado com sucesso" faria parecer que algo mudou.
+          const removidos = (info.removidos || []).length
+            ? ` ${info.removidos.length} endereço(s) antigo(s) removido(s).`
+            : '';
+          showToast(
+            (info.jaRegistrado
+              ? 'Este webhook já estava registrado na Focus NFe.'
+              : 'Webhook registrado com sucesso na Focus NFe.') + removidos,
+            'success'
+          );
         } catch (error) {
           showToast(error.message || 'Erro ao registrar webhook.', 'error');
         } finally {

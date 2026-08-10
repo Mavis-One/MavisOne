@@ -1,6 +1,22 @@
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
+// Tabela oficial de origem da mercadoria — é o primeiro dígito do CST/CSOSN na
+// NF-e. Fica escrita aqui, e não vem de /api/fiscal/tabelas, para o cadastro de
+// produto não depender do módulo Fiscal estar acessível ao usuário: quem cria
+// produto costuma ser do estoque, sem permissão fiscal nenhuma.
+const ORIGENS_MERCADORIA = [
+  { value: '0', label: '0 — Nacional' },
+  { value: '1', label: '1 — Estrangeira, importação direta' },
+  { value: '2', label: '2 — Estrangeira, adquirida no mercado interno' },
+  { value: '3', label: '3 — Nacional, conteúdo de importação > 40% e <= 70%' },
+  { value: '4', label: '4 — Nacional, produção conforme processos básicos' },
+  { value: '5', label: '5 — Nacional, conteúdo de importação <= 40%' },
+  { value: '6', label: '6 — Estrangeira, importação direta, sem similar nacional' },
+  { value: '7', label: '7 — Estrangeira, mercado interno, sem similar nacional' },
+  { value: '8', label: '8 — Nacional, conteúdo de importação > 70%' }
+];
+
 window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduct(ctx) {
   const { content, api, showToast, state, loadModule } = ctx;
   const S = window.MavisStock;
@@ -46,8 +62,37 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
         <div class="row">
           <label>Custo<input type="number" step="0.01" min="0" name="costPrice" required value="${current ? Number(current.costPrice || 0) : 0}" /></label>
           <label>Preço de venda<input type="number" step="0.01" min="0" name="salePrice" required value="${current ? Number(current.salePrice || 0) : 0}" /></label>
-          <label>NCM<input name="ncm" value="${value('ncm')}" /></label>
         </div>
+
+        <!-- Sem NCM e origem preenchidos, a emissão de NF-e não acha a regra
+             fiscal do item e a nota é recusada. É o motivo de estes campos
+             ficarem no cadastro do produto e não na hora de emitir: quem emite
+             não tem como saber a classificação de cada produto. -->
+        <div class="cadastro-section">
+          <div class="cadastro-section-header">
+            <h4>Fiscal</h4>
+            <p>Usado na emissão de NF-e — o NCM e a origem são o que casam o item com a regra fiscal.</p>
+          </div>
+          <div class="cadastro-section-body">
+            <div class="row">
+              <label>NCM
+                <input name="ncm" maxlength="8" inputmode="numeric" value="${value('ncm')}" placeholder="8 dígitos" />
+              </label>
+              <label>Origem
+                <select name="origem">
+                  ${ORIGENS_MERCADORIA.map((o) => `<option value="${o.value}" ${String(current?.origem ?? '0') === o.value ? 'selected' : ''}>${S.escape(o.label)}</option>`).join('')}
+                </select>
+              </label>
+              <label>CEST
+                <input name="cest" maxlength="7" inputmode="numeric" value="${value('cest')}" placeholder="só com ST" />
+              </label>
+              <label>Unidade tributável
+                <input name="unidadeTributavel" value="${value('unidadeTributavel', current ? '' : 'UN')}" placeholder="igual à unidade" />
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="row">
           <label>Estoque mínimo<input type="number" step="0.001" min="0" name="minStock" value="${current ? Number(current.minStock || 0) : 0}" /></label>
           <label>Estoque máximo<input type="number" step="0.001" min="0" name="maxStock" value="${current ? Number(current.maxStock || 0) : 0}" /></label>
@@ -97,6 +142,9 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       costPrice: Number(formData.get('costPrice') || 0),
       salePrice: Number(formData.get('salePrice') || 0),
       ncm: formData.get('ncm'),
+      cest: formData.get('cest'),
+      origem: formData.get('origem'),
+      unidadeTributavel: formData.get('unidadeTributavel'),
       minStock: Number(formData.get('minStock') || 0),
       maxStock: Number(formData.get('maxStock') || 0),
       defaultDepositId: formData.get('defaultDepositId'),

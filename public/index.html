@@ -36,7 +36,9 @@
     <script src="/modules/stock/subs/new_product_category.js"></script>
     <script src="/modules/stock/subs/movement_categories.js"></script>
     <script src="/modules/stock/subs/new_movement_category.js"></script>
+    <script src="/modules/shared/atalhos.js"></script>
     <script src="/modules/shared/sales_totals.js"></script>
+    <script src="/modules/shared/sales_status.js"></script>
     <script src="/modules/shared/actions_menu.js"></script>
     <script src="/modules/shared/sales_record_actions.js"></script>
     <script src="/modules/finance/nfe_actions.js"></script>
@@ -52,10 +54,28 @@
     <!-- Fiscal e Relatórios vêm DEPOIS de finance/subs/dashboard.js: é de lá que
          saem financeStatCard, financeBuildChartSvg e financeFormatBRL. -->
     <script src="/modules/fiscal/index.js"></script>
+    <script src="/modules/fiscal/shared.js"></script>
     <script src="/modules/fiscal/subs/tabelas.js"></script>
+    <script src="/modules/fiscal/subs/eventos.js"></script>
+    <script src="/modules/fiscal/subs/inutilizar.js"></script>
+    <script src="/modules/fiscal/subs/logs.js"></script>
+    <script src="/modules/fiscal/subs/regras.js"></script>
+    <script src="/modules/fiscal/subs/nfe_espelho.js"></script>
     <script src="/modules/reports/index.js"></script>
     <script src="/modules/reports/subs/relatorios.js"></script>
     <script src="/modules/cadastros/shared.js"></script>
+    <!-- Frota, RH, PCP, Contratos e CRM usam as fábricas de lista/formulário de
+         cadastros/shared.js, então vêm DEPOIS dele. -->
+    <script src="/modules/fleet/index.js"></script>
+    <script src="/modules/fleet/subs/frota.js"></script>
+    <script src="/modules/hr/index.js"></script>
+    <script src="/modules/hr/subs/rh.js"></script>
+    <script src="/modules/pcp/index.js"></script>
+    <script src="/modules/pcp/subs/pcp.js"></script>
+    <script src="/modules/contracts/index.js"></script>
+    <script src="/modules/contracts/subs/contratos.js"></script>
+    <script src="/modules/crm/index.js"></script>
+    <script src="/modules/crm/subs/crm.js"></script>
     <script src="/modules/cadastros/index.js"></script>
     <script src="/modules/cadastros/subs/consulta_cnpj.js"></script>
     <script src="/modules/cadastros/subs/contatos.js"></script>
