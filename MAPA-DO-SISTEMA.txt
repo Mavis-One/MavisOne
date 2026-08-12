@@ -1,0 +1,601 @@
+MAVISONE — MAPA DO SISTEMA
+Gerado em 2026-08-12 21:32 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
+
+Como ler:
+  [ok]  a tela tem renderizador próprio (public/modules/<mod>/subs/)
+  [app] a tela é desenhada direto no app.js — das mais antigas do sistema
+  [--]  a tela está no menu e NADA a implementa (isso é um defeito)
+  [+]   existe renderizador, mas a tela não está no menu: só se chega a ela
+        por navegação interna (um botão de outra tela)
+
+==============================================================================
+1. MÓDULOS E TELAS
+==============================================================================
+
+Dashboard Geral  (dashboard)  —  0 tela(s) no menu
+--------------------------------------------------
+  (sem sub-telas: o módulo é uma tela única)
+
+Vendas  (sales)  —  8 tela(s) no menu
+-------------------------------------
+  [app] Pedidos e Orçamentos               Lista de pedidos e orçamentos, com filtros, aprovação e faturamento.
+  [app] Nova Venda                         Pedido e orçamento na mesma tela — o campo Status define qual dos dois é.
+  [app] NF-e Emitidas                      Notas já emitidas, com DANFE, XML e cancelamento.
+  [app] Nova NF-e Avulsa                   Emite uma NF-e sem partir de um pedido.
+  [app] Painel Vendas                      Totais, faturados, pendentes e ticket médio.
+  [app] Painel Vendedor                    Desempenho de cada vendedor.
+  [app] Logs de Vendas Importadas          Histórico das importações já processadas.
+  [app] Importar Vendas                    Carrega vendas em lote a partir de um CSV.
+
+Compras  (purchases)  —  4 tela(s) no menu
+------------------------------------------
+  [ok]  Painel de Compras                  Quanto entrou, de quem e a que preço.
+  [ok]  Nova Compra                        Lança uma compra e dá entrada no estoque.
+  [ok]  Histórico de Compras               Compras registradas, por período e fornecedor.
+  [ok]  Fornecedores                       Fornecedores cadastrados e seus dados.
+
+Estoque  (stock)  —  20 tela(s) no menu
+---------------------------------------
+  [ok]  Painel de Estoque                  Valor parado, giro do período e o que está para faltar.
+  [ok]  Gestor de Preços                   Ajusta preços de venda em lote, por margem ou valor.
+  [ok]  Movimentações                      Entradas, saídas e ajustes já lançados.
+  [ok]  Nova Movimentação                  Lança entrada, saída ou ajuste de estoque.
+  [ok]  Entre Depósitos                    Transferências de produtos entre depósitos.
+  [ok]  Nova Entre Depósitos               Move produtos de um depósito para outro.
+  [ok]  Produtos                           Produtos com saldo, custo e preço de venda.
+  [ok]  Novo Produto                       Cadastra um produto novo.
+  [ok]  Status do Produto                  Situações que um produto pode assumir.
+  [ok]  Depósitos                          Depósitos e locais de armazenagem.
+  [ok]  Novo Depósito                      Cadastra um depósito novo.
+  [ok]  Tabelas de Preços                  Preços por cliente ou canal de venda.
+  [ok]  Nova Tabela de Preços              Cria uma tabela de preços.
+  [ok]  Catálogos de Produtos              Agrupa produtos por finalidade.
+  [ok]  Novo Catálogo de Produtos          Cria um catálogo de produtos.
+  [ok]  Classes de Produto                 Cor, voltagem e afins — cada valor com saldo de estoque próprio.
+  [ok]  Categorias de Produtos             Classificação usada nos produtos.
+  [ok]  Nova Categoria de Produtos         Cria uma categoria de produtos.
+  [ok]  Categorias de Movimentações        Classificação usada nas movimentações.
+  [ok]  Nova Categoria de Movimentações    Cria uma categoria de movimentação.
+
+Financeiro  (finance)  —  8 tela(s) no menu
+-------------------------------------------
+  [ok]  Dashboard                          Receitas, despesas e saldo do período.
+  [ok]  Lançamentos                        Contas a pagar e a receber, com baixa.
+  [ok]  Novo Lançamento                    Registra uma receita ou uma despesa.
+  [ok]  NF-e Emitidas                      Notas emitidas, com DANFE e XML.
+  [ok]  Nova NF-e Avulsa                   Emite uma NF-e, com pré-visualização antes de enviar.
+  [ok]  Emitir NF-e (Focus)                Emissão pela integração Focus NFe.
+  [ok]  Extrato Open Finance               Extrato bancário puxado via Open Finance.
+  [ok]  Bancos Conectados                  Bancos ligados e situação de cada conexão.
+
+Fiscal  (fiscal)  —  10 tela(s) no menu
+---------------------------------------
+  [ok]  Painel Fiscal                      Notas transmitidas, autorizadas e o que a SEFAZ recusou.
+  [ok]  NF-e Emitidas                      Notas emitidas, com DANFE, XML e cancelamento.
+  [ok]  Emitir NF-e (SEFAZ)                Transmite a nota à SEFAZ usando a regra fiscal e o cadastro do produto.
+  [ok]  Nova NF-e Avulsa                   Emite uma NF-e sem partir de um pedido.
+  [ok]  NF-e Inutilizadas                  Faixas de numeração queimadas na SEFAZ.
+  [ok]  Inutilizar NF-e                    Declara que uma faixa de números não virará nota.
+  [ok]  Eventos NF-e                       Cartas de correção, cancelamentos e inutilizações.
+  [ok]  Logs NF-e                          O que foi enviado à SEFAZ e o que ela respondeu.
+  [ok]  Tabelas Fiscais                    Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.
+  [ok]  Regras Fiscais                     Define qual CFOP e qual tributação se aplicam a cada operação.
+
+Relatórios  (reports)  —  4 tela(s) no menu
+-------------------------------------------
+  [ok]  Relatório de Vendas                Pedidos, orçamentos, faturamento e ticket médio.
+  [ok]  Relatório Financeiro               Receitas, despesas e saldo ao longo do período.
+  [ok]  Relatório de Estoque               Saldo, custo e valor parado por produto.
+  [ok]  Relatório por Vendedor             Quanto cada vendedor fechou no período.
+
+Frota de Veículos  (fleet)  —  7 tela(s) no menu
+------------------------------------------------
+  [ok]  Painel de Frota                    Custo por veículo, combustível e manutenção.
+  [ok]  Veículos                           Frota cadastrada, com placa, situação e quilometragem.
+  [ok]  Novo Veículo                       Cadastra um veículo na frota.
+  [ok]  Manutenções                        Preventivas e corretivas, com custo e oficina.
+  [ok]  Nova Manutenção                    Registra uma manutenção de veículo.
+  [ok]  Abastecimentos                     Litros, valor e gasto por veículo.
+  [ok]  Novo Abastecimento                 Lança um abastecimento.
+
+CRM  (crm)  —  3 tela(s) no menu
+--------------------------------
+  [ok]  Conexão                            Endereço e credencial do CRM externo, com teste de conexão.
+  [ok]  Oportunidades                      Funil de vendas, lido do CRM externo.
+  [ok]  Contas                             Clientes e prospects, lidos do CRM externo.
+
+RH  (hr)  —  13 tela(s) no menu
+-------------------------------
+  [ok]  Painel de RH                       Quadro atual, admissões, desligamentos e afastados.
+  [ok]  Colaboradores                      Quadro de pessoal, com profissão, departamento e admissão.
+  [ok]  Novo Colaborador                   Cadastra um colaborador com vínculo, expediente e contrato.
+  [ok]  Departamentos                      Setores da empresa, com responsável e centro de custo.
+  [ok]  Expedientes                        Jornadas contratadas: horário, carga semanal e tolerância.
+  [ok]  Novo Expediente                    Cadastra uma jornada de trabalho.
+  [ok]  Tipo Colaboradores                 Vínculo: CLT, PJ, estágio, aprendiz, temporário.
+  [ok]  Categoria Colaboradores            Forma de remuneração: mensalista, horista, comissionado.
+  [ok]  Profissões                         Profissões e faixas salariais, com o código CBO.
+  [ok]  Férias e Afastamentos              Férias, licenças e faltas registradas.
+  [ok]  Nova Ausência                      Registra férias, licença ou afastamento.
+  [ok]  Registro de Ponto                  Marcações de entrada, almoço e saída.
+  [ok]  Novo Registro de Ponto             Lança as marcações de um dia.
+
+PCP  (pcp)  —  11 tela(s) no menu
+---------------------------------
+  [ok]  Painel de Produção                 Fila, atrasos, produção apontada e qualidade.
+  [ok]  Ordens de Produção                 Ordens abertas, em curso e concluídas, com setor e status.
+  [ok]  Nova Ordem Produção                Abre uma ordem a partir de um produto.
+  [ok]  Setores PCP                        Centros de trabalho, na ordem em que a peça caminha.
+  [ok]  Novo Setor PCP                     Cadastra um setor com responsável e capacidade.
+  [ok]  Status PCP                         Os status que a empresa usa dentro de cada etapa da produção.
+  [ok]  Controle Qualidade                 Inspeção por ordem: quanto foi aprovado e o que reprovou.
+  [ok]  Estrutura de Produto               Ficha técnica: o que cada produto consome.
+  [ok]  Novo Item de Estrutura             Vincula um componente a um produto.
+  [ok]  Apontamentos                       Produção realizada por ordem.
+  [ok]  Novo Apontamento                   Registra o que foi produzido.
+
+Contratos  (contracts)  —  8 tela(s) no menu
+--------------------------------------------
+  [ok]  Painel de Contratos                Receita recorrente e o que vence à frente.
+  [ok]  Contratos                          Contratos ativos, encerrados e seus valores, com aviso de prazo.
+  [ok]  Novo Contrato                      Registra um contrato com cliente ou fornecedor.
+  [ok]  Tipos de Contratos                 Classificação do contrato e o prazo de aviso prévio de cada uma.
+  [ok]  Novo Tipo de Contrato              Cadastra um tipo com natureza e prazo de aviso.
+  [ok]  Vencimentos e Renovações           O que vence ou renova nos próximos meses.
+  [ok]  Modelos de Contrato                Textos-padrão reutilizados na emissão.
+  [ok]  Novo Modelo                        Cria um modelo de contrato.
+
+Configurações  (settings)  —  5 tela(s) no menu
+-----------------------------------------------
+  [ok]  Usuários                           Usuários do sistema e seus acessos.
+  [ok]  Papéis e Permissões                O que cada papel pode ver e fazer.
+  [ok]  Auditoria de Acesso                Quem acessou o quê, e quando.
+  [ok]  Empresa                            Dados da empresa, certificado e configuração fiscal.
+  [ok]  Empresas e Estabelecimentos        Cadastro fiscal, token da Focus NFe e regras por estabelecimento.
+  [+]  users_edit                         (tela interna, fora do menu)
+  [+]  users_register                     (tela interna, fora do menu)
+
+Cadastros  (cadastros)  —  19 tela(s) no menu
+---------------------------------------------
+  [ok]  Consulta CNPJ SEFAZ                Busca um CNPJ e traz os dados oficiais.
+  [app] Pessoas                            Clientes, fornecedores e demais pessoas.
+  [ok]  Contatos                           Contatos vinculados às pessoas cadastradas.
+  [app] Nova Pessoa                        Cadastra pessoa física ou jurídica.
+  [ok]  Produtos                           Produtos com dados comerciais e fiscais.
+  [ok]  Novo Produto                       Cadastra um produto novo.
+  [ok]  Classes de Produto                 Cor, voltagem e afins — as mesmas do Estoque.
+  [ok]  CashBack por Produto               Percentual de cashback de cada produto.
+  [ok]  Agenda de Tarefas                  Tarefas abertas e concluídas.
+  [ok]  Agendamentos                       Compromissos marcados na agenda.
+  [ok]  Empresas                           Empresas do grupo, cada uma com seu CNPJ.
+  [ok]  Nova Empresa                       Cadastra uma empresa nova.
+  [ok]  Equipamentos                       Equipamentos e seus vínculos com clientes.
+  [ok]  Contas Bancárias                   Contas usadas em recebimentos e pagamentos.
+  [ok]  Nova Conta Bancária                Cadastra uma conta bancária.
+  [ok]  Formas de Pagamento                Formas aceitas e suas condições.
+  [ok]  Nova Forma de Pagamento            Cadastra uma forma de pagamento.
+  [ok]  Status de Venda                    Situações que um pedido pode assumir.
+  [app] Depósitos                          Depósitos cadastrados, os mesmos do Estoque.
+  [+]  nova_tarefa                        (tela interna, fora do menu)
+  [+]  novo_agendamento                   (tela interna, fora do menu)
+  [+]  novo_cashback                      (tela interna, fora do menu)
+  [+]  novo_contato                       (tela interna, fora do menu)
+  [+]  novo_equipamento                   (tela interna, fora do menu)
+  [+]  novo_status_venda                  (tela interna, fora do menu)
+
+TOTAL: 14 módulos, 120 telas no menu.
+Nenhuma tela do menu ficou sem implementação.
+
+==============================================================================
+2. REGRAS DE NEGÓCIO (lib/)
+==============================================================================
+Cada arquivo abaixo concentra uma decisão do sistema. A descrição é a que
+o próprio arquivo dá de si, no comentário de cabeçalho.
+
+  lib/atencao.js
+      Painel "Atenção" do hub.
+  lib/cadastros-core.js
+      Núcleo dos cadastros auxiliares do módulo Cadastros.
+  lib/focusnfe.js
+      Cliente para a API da Focus NFe (https://doc.focusnfe.com.br).
+  lib/kpis.js
+      KPIs do topo do hub.
+  lib/nfePayloadBuilder.js
+      Monta o payload de emissão de NF-e no formato da Focus NFe (https://doc.focusnfe.com.br/reference/emitir_nfe).
+  lib/operacaoFiscal.js
+      Catálogo de OPERAÇÕES FISCAIS.
+  lib/painel-modulos.js
+      Painéis por módulo — a CONTA, separada da tela.
+  lib/permissoes.js
+      Regras de controle de acesso — SEM banco e SEM rede, de propósito.
+  lib/reservas.js
+      Reserva de estoque — o que já foi PROMETIDO e ainda não saiu.
+  lib/secrets.js
+      Criptografia em repouso para segredos guardados em colunas bytea (ex.: estabelecimento.focus_token_cifrado, open_finance_connections.credenciais_cifradas).
+  lib/sessao.js
+      Expiração diária das sessões — a virada do dia derruba todo mundo.
+  lib/stock-core.js
+      Núcleo do módulo Estoque: cadastros auxiliares, movimentações, transferências entre depósitos, tabelas de preço e catálogos.
+  lib/vendas-financeiro.js
+      Quais contas a receber um pedido faturado gera — SEM banco e SEM rede.
+
+Módulos compartilhados entre navegador e servidor (public/modules/shared)
+-------------------------------------------------------------------------
+Carregados por <script> no navegador E por require() no server.js — uma
+regra só, para tela e servidor nunca discordarem.
+
+  actions_menu.js
+      Barra de ações do topo dos formulários: [ Mais Ações ▾ ] [ Salvar ] [ Voltar ] Componente genérico — a tela passa o catálogo de ações dela.
+  atalhos.js
+      Botão "Atalhos" da barra superior.
+  documento.js
+      CPF e CNPJ — implementação ÚNICA, usada por todas as telas.
+  fiscal_permissoes.js   [também no servidor]
+      Permissões do módulo Fiscal — FONTE ÚNICA.
+  module_workspace.js
+      (sem descrição)
+  nfe_texto_padrao.js
+      Texto padrão das observações adicionais da NF-e.
+  painel.js
+      Kit de painel — os blocos que TODO dashboard de módulo usa.
+  sales_record_actions.js
+      Catálogo do "Mais Ações" da tela de Pedidos e Orçamentos.
+  sales_status.js   [também no servidor]
+      Catálogo de Status de Pedido/Orçamento — FONTE ÚNICA.
+  sales_totals.js   [também no servidor]
+      Cálculo dos totais de Pedido/Orçamento — FONTE ÚNICA.
+
+==============================================================================
+3. CAMADA DE DADOS
+==============================================================================
+Produtos, pedidos, notas e cadastros ficam no Supabase (PostgreSQL).
+O razão de estoque, os metadados de produto e a auditoria local ficam em
+data/db.json — arquivo fora do controle de versão.
+
+
+Arquivos de acesso (lib/db)
+---------------------------
+  lib/db/auth.js
+      tabelas: users
+  lib/db/cadastros.js
+      tabelas: cnpjs, deposits, people
+  lib/db/classes.js
+      Classes de produto (COR, e amanhã VOLTAGEM, TAMANHO...).
+      tabelas: product_class_assignments, product_class_value_assignments, product_class_values, product_classes
+  lib/db/client.js
+      (sem descrição e sem tabela própria)
+  lib/db/crm.js
+      Conexão com o CRM externo.
+      tabelas: crm_connection
+  lib/db/estoque.js
+      tabelas: products
+  lib/db/financeiro.js
+      tabelas: bank_accounts, bank_transactions, cost_centers, financial_categories, financial_entries, financial_payments, nfe_items, nfes
+  lib/db/fiscal.js
+      tabelas: certificado_digital, empresa, estabelecimento, nfe, nfe_arquivos, nfe_eventos, regra_fiscal
+  lib/db/modulos.js
+      CRUD dos módulos Frota, RH, PCP e Contratos.
+      tabelas: contract_templates, contract_types, contracts, fleet_maintenances, fleet_refuels, fleet_vehicles, hr_departments, hr_employee_categories, hr_employee_types, hr_employees, hr_leaves, hr_positions, hr_time_entries, hr_work_schedules, pcp_bom, pcp_entries, pcp_orders, pcp_quality_checks, pcp_sectors, pcp_statuses
+  lib/db/openfinance.js
+      Acesso a dados do módulo Open Finance (tabelas da Fase E em supabase/schema.sql).
+      tabelas: account_balances, bank_cards, card_transactions, financial_institutions, open_finance_audit_logs, open_finance_connections, open_finance_webhook_events
+  lib/db/rbac.js
+      tabelas: access_logs, permissions, role_permissions, roles, user_permissions, user_roles
+  lib/db/settings.js
+      tabelas: audit_logs, settings
+  lib/db/vendas-compras.js
+      tabelas: import_logs, orders, purchases, quotes, sales
+
+Tabelas usadas (65)
+-------------------
+  access_logs             account_balances        audit_logs
+  bank_accounts           bank_cards              bank_transactions
+  card_transactions       certificado_digital     cnpjs
+  contract_templates      contract_types          contracts
+  cost_centers            crm_connection          deposits
+  empresa                 estabelecimento         financial_categories
+  financial_entries       financial_institutions  financial_payments
+  fleet_maintenances      fleet_refuels           fleet_vehicles
+  hr_departments          hr_employee_categories  hr_employee_types
+  hr_employees            hr_leaves               hr_positions
+  hr_time_entries         hr_work_schedules       import_logs
+  nfe                     nfe_arquivos            nfe_eventos
+  nfe_items               nfes                    open_finance_audit_logs
+  open_finance_connectionsopen_finance_webhook_eventsorders
+  pcp_bom                 pcp_entries             pcp_orders
+  pcp_quality_checks      pcp_sectors             pcp_statuses
+  people                  permissions             product_class_assignments
+  product_class_value_assignmentsproduct_class_values    product_classes
+  products                purchases               quotes
+  regra_fiscal            role_permissions        roles
+  sales                   settings                user_permissions
+  user_roles              users
+
+==============================================================================
+4. ROTAS DA API (88 encontradas no server.js)
+==============================================================================
+Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
+com reticências. Métodos em branco = a rota trata mais de um verbo.
+
+  /api/…                                               
+  /api/access-control                                  GET
+  /api/access-control/roles/…                          
+  /api/access-control/users/…                          
+  /api/access-logs                                     GET
+  /api/audit                                           GET
+  /api/cadastros                                       GET
+  /api/cadastros/cnpjs                                 GET POST
+  /api/cadastros/cnpjs/…                               
+  /api/cadastros/deposits                              GET POST
+  /api/cadastros/deposits/…                            
+  /api/cadastros/meta                                  GET
+  /api/cadastros/pessoas                               GET POST
+  /api/cadastros/pessoas/…                             
+  /api/cadastros/product-cashbacks                     GET
+  /api/cep/…                                           
+  /api/cnpj/…                                          
+  /api/contracts/billing                               POST
+  /api/crm/connection                                  
+  /api/crm/test                                        POST
+  /api/dashboard                                       
+  /api/dashboard/atencao                               GET
+  /api/dashboard/charts                                GET
+  /api/finance                                         GET POST
+  /api/finance/bank-accounts                           POST
+  /api/finance/bank-transactions                       GET POST
+  /api/finance/bank-transactions/import                POST
+  /api/finance/categories                              POST
+  /api/finance/cost-centers                            POST
+  /api/finance/entries                                 GET POST
+  /api/finance/entries/…                               
+  /api/finance/meta                                    GET
+  /api/finance/nfe                                     GET POST
+  /api/finance/nfe/…                                   
+  /api/finance/summary                                 GET
+  /api/fiscal/…                                        
+  /api/fiscal/certificados                             GET POST
+  /api/fiscal/certificados/…                           
+  /api/fiscal/empresas                                 GET POST
+  /api/fiscal/empresas/…                               
+  /api/fiscal/estabelecimentos                         GET POST
+  /api/fiscal/estabelecimentos/…                       
+  /api/fiscal/eventos                                  GET
+  /api/fiscal/inutilizar                               POST
+  /api/fiscal/nfe                                      GET
+  /api/fiscal/nfe/…                                    
+  /api/fiscal/nfe/emitir                               POST
+  /api/fiscal/regras                                   GET POST
+  /api/fiscal/regras/…                                 
+  /api/fiscal/regras/simular                           GET
+  /api/fiscal/tabelas                                  GET
+  /api/fiscal/webhooks/focus                           POST
+  /api/focusnfe/status                                 GET
+  /api/login                                           POST
+  /api/logout                                          POST
+  /api/me                                              
+  /api/me/dashboard-pins                               
+  /api/me/theme                                        PUT
+  /api/open-finance/…                                  
+  /api/open-finance/connections                        GET POST
+  /api/open-finance/institutions                       GET
+  /api/open-finance/status                             GET
+  /api/pcp/orders/from-sale                            POST
+  /api/purchases                                       GET POST
+  /api/purchases/…                                     
+  /api/reports/overview                                GET
+  /api/sales                                           GET POST
+  /api/sales/dashboard                                 GET
+  /api/sales/import                                    POST
+  /api/sales/meta                                      GET
+  /api/sales/records                                   GET POST
+  /api/sales/records/…                                 
+  /api/settings                                        GET POST
+  /api/stock                                           GET POST
+  /api/stock/…                                         
+  /api/stock/classes                                   GET POST
+  /api/stock/classes…                                  
+  /api/stock/classes/…                                 
+  /api/stock/classes/valores                           POST
+  /api/stock/classes/valores/…                         
+  /api/stock/meta                                      GET
+  /api/stock/movements                                 GET POST
+  /api/stock/price-manager                             GET POST
+  /api/stock/products                                  GET POST
+  /api/stock/transfers                                 GET POST
+  /api/users                                           GET
+  /api/users/…                                         
+  /api/users/delete                                    POST
+
+==============================================================================
+5. MIGRAÇÕES DE BANCO
+==============================================================================
+23 arquivo(s) em supabase/migrations, em ordem de fase:
+
+  PENDENTES-rodar-agora.sql
+  fase-aa-nfe-lista-unificada.sql
+  fase-ab-nfe-complementar-icms.sql
+  fase-ac-classes-de-produto.sql
+  fase-h-campos-financeiros.sql
+  fase-i-informacoes-gerais.sql
+  fase-j-cabecalho-dados.sql
+  fase-k-abas-pagamento-entrega.sql
+  fase-l-controle-de-acesso.sql
+  fase-m-financeiro-no-supabase.sql
+  fase-n-nfe-no-supabase.sql
+  fase-o-pedido-gera-financeiro.sql
+  fase-p-vinculo-pedido-nfe.sql
+  fase-q-tabelas-fiscais.sql
+  fase-r-modulos-novos.sql
+  fase-s-permissoes-modulos-novos.sql
+  fase-t-permissoes-fiscais-gerente.sql
+  fase-u-rh-organizacional.sql
+  fase-v-difal-e-pagamento.sql
+  fase-w-pcp-chao-de-fabrica.sql
+  fase-x-tipos-de-contrato.sql
+  fase-y-cst-faltantes.sql
+  fase-z-ibs-cbs.sql
+
+==============================================================================
+6. TESTES
+==============================================================================
+40 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+e verificam regras puras. "[npm test]" = entra na suíte principal.
+
+  [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
+  [npm test] test-atalhos.js                    Botão "Atalhos" da barra superior — public/modules/shared/atalhos.js O que quebra em silêncio aqui: 1.
+  [npm test] test-atencao.js                    Painel "Atenção" do hub — lib/atencao.js O QUE ELE RESOLVE
+  [npm test] test-auditoria-fiscal.js           Trilha de auditoria — emissão, cancelamento, CC-e e inutilização de NF-e.
+  [npm test] test-campo-busca.js                Campo de busca com sugestão (renderSearchableSelect / attachSearchableSelect).
+  [npm test] test-chassi-item.js                Chassi na linha do item de venda.
+  [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
+  [npm test] test-complemento-icms.js           NF-e COMPLEMENTAR EXCLUSIVA DE ICMS.
+  [npm test] test-contrato-financeiro.js        Geração das parcelas de um contrato — parcelasDoContrato / vencimentoDoPeriodo.
+  [npm test] test-dashboard-hub.js              Desenho do hub — public/modules/dashboard/index.js O que este teste guarda: 1.
+  [npm test] test-documento.js                  CPF e CNPJ — modules/shared/documento.js.
+  [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
+  [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
+  [avulso]  test-gate-openfinance.js           O portão central alcança mesmo o Open Finance? A regra de permissão dizia '/api/openfinance', mas a rota é '/a
+  [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
+  [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
+  [npm test] test-module-workspace.js           Testa a Área de Trabalho dos módulos contra as listas REAIS do app.js.
+  [avulso]  test-modulos-crud.js               CRUD dos módulos Frota, RH, PCP e Contratos contra o Supabase REAL.
+  [avulso]  test-modulos-e2e.js                Fluxo real dos módulos novos pelas rotas HTTP, autenticado.
+  [npm test] test-modulos-telas.js              Telas de Frota, RH, PCP e Contratos x descritores de lib/db/modulos.js.
+  [npm test] test-navegacao.js                  Barra lateral — abertura por CLIQUE, nome por hover.
+  [npm test] test-nfe-actions.js                Testa as regras de habilitação do painel de ações fiscais nos 4 cenários que importam: nada selecionado, 1 not
+  [npm test] test-nfe-avulsa.js                 NF-e AVULSA: nota emitida SEM pedido de origem.
+  [npm test] test-nfe-observacoes.js            Observações adicionais da NF-e — o texto padrão da empresa.
+  [npm test] test-nfe-payload.js                Montagem do payload de NF-e — lib/nfePayloadBuilder.js É conta de imposto: errado aqui não dá erro de tela, dá
+  [npm test] test-nfe-unificada.js              A lista de NF-e passou a mostrar as duas origens.
+  [npm test] test-paineis-modulos.js            Painéis por módulo — a conta de cada indicador, e o que eles se recusam a afirmar.
+  [npm test] test-permissoes-fiscais.js         Permissões do módulo Fiscal — a tela e o portão do servidor têm de falar a mesma língua.
+  [avulso]  test-permissoes-tela.js            A tela de Papéis e Permissões contra as permissões REAIS do banco.
+  [npm test] test-permissoes.js                 Regras de controle de acesso (lib/permissoes.js).
+  [npm test] test-regras-fiscais.js             Modelo de regras fiscais — scripts/seed-regras-fiscais.js Os CFOPs vieram do ERP que o usuário usa hoje: 5102,
+  [npm test] test-reserva-estoque.js            Reserva de estoque — a ponte entre "prometido" e "baixado".
+  [npm test] test-sales-actions.js              Regras do menu "Mais Ações" da tela de Pedidos e Orçamentos.
+  [npm test] test-sales-record-fields.js        Campos do Pedido/Orçamento: ida e volta entre o formulário e o banco.
+  [npm test] test-sales-status.js               Catálogo de status de Pedido/Orçamento — public/modules/shared/sales_status.js O que este teste protege: 1.
+  [avulso]  test-sales-totals-e2e.js           Prova que o total gravado pelo servidor bate com o que a tela calcula, e que o servidor NÃO aceita um total fo
+  [npm test] test-sales-totals.js               Regras de desconto, frete e soma dos totais de Pedido/Orçamento.
+  [npm test] test-sessao-expira.js              Expiração das sessões na virada do dia — lib/sessao.js A conta de "quando esta sessão morre" é fácil de escrev
+  [avulso]  test-sessao-unica.js               Sessão única por usuário: entrar numa máquina derruba a outra.
+  [npm test] test-vendas-financeiro.js          Contas a receber geradas por um pedido faturado (lib/vendas-financeiro.js).
+
+==============================================================================
+7. CARREGAMENTO DO NAVEGADOR
+==============================================================================
+106 arquivos JS carregados por public/index.html, nesta ordem.
+A ordem importa: módulos compartilhados vêm antes de quem os usa.
+
+  /modules/router.js
+  /modules/shared/documento.js
+  /modules/shared/painel.js
+  /modules/shared/module_workspace.js
+  /modules/dashboard/index.js
+  /modules/purchases/index.js
+  /modules/purchases/subs/new_purchase.js
+  /modules/purchases/subs/painel.js
+  /modules/purchases/subs/purchase_history.js
+  /modules/purchases/subs/suppliers.js
+  /modules/stock/shared.js
+  /modules/stock/index.js
+  /modules/stock/subs/price_manager.js
+  /modules/stock/subs/painel.js
+  /modules/stock/subs/products.js
+  /modules/stock/subs/new_product.js
+  /modules/stock/subs/product_status.js
+  /modules/stock/subs/movements.js
+  /modules/stock/subs/new_movement.js
+  /modules/stock/subs/transfers.js
+  /modules/stock/subs/new_transfer.js
+  /modules/stock/subs/deposits.js
+  /modules/stock/subs/new_deposit.js
+  /modules/stock/subs/price_tables.js
+  /modules/stock/subs/new_price_table.js
+  /modules/stock/subs/catalogs.js
+  /modules/stock/subs/new_catalog.js
+  /modules/stock/subs/classes.js
+  /modules/stock/subs/product_categories.js
+  /modules/stock/subs/new_product_category.js
+  /modules/stock/subs/movement_categories.js
+  /modules/stock/subs/new_movement_category.js
+  /modules/shared/atalhos.js
+  /modules/shared/sales_totals.js
+  /modules/shared/sales_status.js
+  /modules/shared/fiscal_permissoes.js
+  /modules/shared/nfe_texto_padrao.js
+  /modules/shared/actions_menu.js
+  /modules/shared/sales_record_actions.js
+  /modules/finance/nfe_actions.js
+  /modules/finance/index.js
+  /modules/finance/subs/dashboard.js
+  /modules/finance/subs/lancamentos.js
+  /modules/finance/subs/novo_lancamento.js
+  /modules/finance/subs/nfe_emitidas.js
+  /modules/finance/subs/nova_nfe_avulsa.js
+  /modules/finance/subs/emitir_nfe_focus.js
+  /modules/finance/subs/extrato_open_finance.js
+  /modules/finance/subs/bancos_conectados.js
+  /modules/fiscal/index.js
+  /modules/fiscal/shared.js
+  /modules/fiscal/subs/tabelas.js
+  /modules/fiscal/subs/painel.js
+  /modules/fiscal/subs/eventos.js
+  /modules/fiscal/subs/inutilizar.js
+  /modules/fiscal/subs/logs.js
+  /modules/fiscal/subs/regras.js
+  /modules/fiscal/subs/nfe_espelho.js
+  /modules/reports/index.js
+  /modules/reports/subs/relatorios.js
+  /modules/cadastros/shared.js
+  /modules/fleet/index.js
+  /modules/fleet/subs/frota.js
+  /modules/fleet/subs/painel.js
+  /modules/hr/index.js
+  /modules/hr/subs/rh.js
+  /modules/hr/subs/painel.js
+  /modules/pcp/index.js
+  /modules/pcp/subs/pcp.js
+  /modules/pcp/subs/painel.js
+  /modules/contracts/index.js
+  /modules/contracts/subs/contratos.js
+  /modules/contracts/subs/painel.js
+  /modules/crm/index.js
+  /modules/crm/subs/crm.js
+  /modules/cadastros/index.js
+  /modules/cadastros/subs/consulta_cnpj.js
+  /modules/cadastros/subs/contatos.js
+  /modules/cadastros/subs/novo_contato.js
+  /modules/cadastros/subs/produtos.js
+  /modules/cadastros/subs/novo_produto.js
+  /modules/cadastros/subs/classes_produto.js
+  /modules/cadastros/subs/cashback.js
+  /modules/cadastros/subs/novo_cashback.js
+  /modules/cadastros/subs/agenda.js
+  /modules/cadastros/subs/nova_tarefa.js
+  /modules/cadastros/subs/agendamentos.js
+  /modules/cadastros/subs/novo_agendamento.js
+  /modules/cadastros/subs/empresas.js
+  /modules/cadastros/subs/nova_empresa.js
+  /modules/cadastros/subs/equipamentos.js
+  /modules/cadastros/subs/novo_equipamento.js
+  /modules/cadastros/subs/contas_bancarias.js
+  /modules/cadastros/subs/nova_conta_bancaria.js
+  /modules/cadastros/subs/formas_pagamento.js
+  /modules/cadastros/subs/nova_forma_pagamento.js
+  /modules/cadastros/subs/status_venda.js
+  /modules/cadastros/subs/novo_status_venda.js
+  /modules/settings/index.js
+  /modules/settings/subs/company.js
+  /modules/settings/subs/users_form.js
+  /modules/settings/subs/users.js
+  /modules/settings/subs/fiscal.js
+  /modules/settings/subs/access_control.js
+  /modules/settings/subs/access_logs.js
+  /app.js
+
+==============================================================================
+FIM DO MAPA
+==============================================================================

@@ -65,6 +65,17 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // Editado à mão? Então parar de sobrescrever com o texto sugerido.
   let informacoesEditadas = false;
 
+  // Observações adicionais da nota comum (infCpl). Nasce com o texto padrão da
+  // empresa — ficha técnica, garantia e cuidados —, que mora em
+  // modules/shared/nfe_texto_padrao.js para ser editável sem mexer nesta tela.
+  //
+  // Guardado aqui fora do HTML porque renderForm() redesenha o formulário
+  // inteiro a cada troca de aba: sem isto, escrever o chassi e ir conferir os
+  // itens apagaria o que foi escrito.
+  const TextoPadrao = window.MavisNfeTextoPadrao;
+  let observacoes = TextoPadrao ? TextoPadrao.PADRAO : '';
+
+
   const destinatario = { nome: '', documento: '', contribuinte: false, inscricaoEstadual: '', cep: '', logradouro: '', numero: '', complemento: '', bairro: '', municipio: '', uf: '', codigoMunicipio: '' };
 
   // "Gerar NF-e" a partir de um pedido cai aqui. Antes caía na tela de
@@ -118,7 +129,18 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         origem: 0
       }));
     }
+    // `taxNotes` é o texto que o vendedor escreveu no pedido e confirmou copiar
+    // para a nota. Ele era perguntado e depois DESCARTADO — esta tela não lia o
+    // campo. Perguntar e ignorar é pior do que não perguntar.
+    if (TextoPadrao) {
+      observacoes = TextoPadrao.montar({ observacaoDoPedido: doPedido.taxNotes || '' });
+    }
   }
+
+  // O que o botão "Restaurar texto padrão" devolve. Vindo de um pedido, é o
+  // texto COM as fichas preenchidas — restaurar o modelo em branco obrigaria a
+  // redigitar chassi e cor que o pedido já tinha.
+  const observacoesIniciais = observacoes;
 
   // Um lugar só para ler o destinatário: a nota comum e a complementar usam os
   // mesmos campos, e duas leituras divergiriam na primeira mudança de rótulo.
@@ -260,7 +282,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             ${ehComplemento()
               ? '<button type="button" class="cadastro-tab" data-tab="complemento" role="tab" aria-selected="false"><span>3. Complemento de ICMS</span></button>'
               : `<button type="button" class="cadastro-tab" data-tab="itens" role="tab" aria-selected="false"><span>3. Itens</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>4. Pagamento</span></button>`}
+                 <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>4. Pagamento</span></button>
+                 <button type="button" class="cadastro-tab" data-tab="observacoes" role="tab" aria-selected="false"><span>5. Observações</span></button>`}
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="emitente">
@@ -411,6 +434,36 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <label>Número de parcelas<input type="number" name="installmentsCount" min="2" max="60" step="1" value="2" /></label>
               <label>Intervalo entre parcelas (dias)<input type="number" name="installmentIntervalDays" min="1" value="30" /></label>
             </div>
+          </div>
+
+          <div class="cadastro-tab-panel" data-tab-panel="observacoes" hidden>
+            <p class="muted">
+              Vai no campo <strong>Informações Complementares</strong> da nota e é impresso no
+              DANFE — é o texto que o cliente lê no papel, e o que vale numa discussão de
+              garantia. Não é campo fiscal: não altera imposto, base de cálculo nem CFOP.
+            </p>
+            <!-- Campo dedicado para o chassi: é o único dado da ficha que muda
+                 a cada nota, e procurá-lo no meio de vinte linhas de texto a
+                 cada emissão é onde o erro de digitação aparece. O que se
+                 escreve aqui vai para a linha "CHASSI:" logo abaixo. -->
+            <label class="nfe-obs-chassi">Chassi
+              <input type="text" id="nfeFocusChassi" maxlength="25" autocomplete="off"
+                     spellcheck="false" placeholder="Digite o chassi do equipamento"
+                     value="${escapeHtml(TextoPadrao ? TextoPadrao.chassiDoTexto(observacoes) : '')}" />
+            </label>
+
+            <label>Observações adicionais
+              <textarea name="observacoesAdicionais" id="nfeFocusObservacoes" rows="18"
+                        spellcheck="false">${escapeHtml(observacoes)}</textarea>
+            </label>
+            <div class="nfe-obs-rodape">
+              <!-- Contador à vista: o limite da SEFAZ para este campo é 5000
+                   caracteres, e estourar não dá erro de digitação — dá rejeição
+                   depois de transmitir. -->
+              <span id="nfeFocusObsContador" class="muted"></span>
+              <button type="button" class="secondary finance-pill-sm" id="nfeFocusObsRestaurar">Restaurar texto padrão</button>
+            </div>
+            <p class="muted" id="nfeFocusObsPendentes"></p>
           </div>
           `}
           <button type="submit" id="nfeFocusSubmitBtn">Emitir NF-e</button>
@@ -664,6 +717,56 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       informacoesEditadas = true;
       complemento.informacoes = evento.target.value;
     });
+
+    // --- Observações adicionais da nota comum -------------------------------
+    // Contador e lista de pendências atualizados a cada tecla: descobrir
+    // "CHASSI:" em branco ou 5001 caracteres só na resposta da SEFAZ é caro —
+    // nota autorizada não se corrige, se cancela dentro do prazo.
+    const campoObs = document.getElementById('nfeFocusObservacoes');
+    const atualizarAvisosObs = () => {
+      if (!campoObs || !TextoPadrao) return;
+      const texto = campoObs.value;
+      const contador = document.getElementById('nfeFocusObsContador');
+      const pendentes = document.getElementById('nfeFocusObsPendentes');
+      if (contador) {
+        contador.textContent = `${texto.length} de ${TextoPadrao.LIMITE_INFCPL} caracteres`;
+        contador.classList.toggle('finance-negative', TextoPadrao.excedeLimite(texto));
+      }
+      if (pendentes) {
+        const vazios = TextoPadrao.camposVazios(texto);
+        pendentes.textContent = vazios.length
+          ? `Ainda em branco: ${vazios.join(', ')}. Dá para emitir assim, mas o DANFE sai com o campo vazio.`
+          : '';
+        pendentes.classList.toggle('finance-negative', vazios.length > 0);
+      }
+    };
+    campoObs?.addEventListener('input', () => {
+      observacoes = campoObs.value;
+      atualizarAvisosObs();
+      // O texto pode ter sido editado à mão: o campo de cima segue o que está
+      // escrito, senão os dois passariam a dizer coisas diferentes.
+      const campoChassi = document.getElementById('nfeFocusChassi');
+      if (campoChassi && TextoPadrao) campoChassi.value = TextoPadrao.chassiDoTexto(observacoes);
+    });
+    atualizarAvisosObs();
+
+    // O campo escreve na linha "CHASSI:" do texto, sem tocar no resto — o
+    // operador pode ter editado as observações antes, e remontar do modelo
+    // apagaria essas edições sem avisar.
+    document.getElementById('nfeFocusChassi')?.addEventListener('input', (evento) => {
+      if (!campoObs || !TextoPadrao) return;
+      observacoes = TextoPadrao.comChassi(campoObs.value, evento.target.value);
+      campoObs.value = observacoes;
+      atualizarAvisosObs();
+    });
+
+    document.getElementById('nfeFocusObsRestaurar')?.addEventListener('click', () => {
+      if (!campoObs) return;
+      observacoes = observacoesIniciais;
+      campoObs.value = observacoes;
+      atualizarAvisosObs();
+      showToast(orderIdOrigem ? 'Texto restaurado com os dados do pedido.' : 'Texto padrão restaurado.', 'success');
+    });
     if (ehComplemento()) atualizarTextoComplemento();
 
     document.getElementById('nfeFocusForm')?.addEventListener('submit', async (event) => {
@@ -732,6 +835,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         return;
       }
 
+      // Estourar o limite de infCpl não dá erro de digitação — dá REJEIÇÃO
+      // depois de transmitir, com a numeração já consumida. Barra aqui.
+      if (TextoPadrao && TextoPadrao.excedeLimite(observacoes)) {
+        showToast(`As observações têm ${observacoes.length} caracteres; a SEFAZ aceita no máximo ${TextoPadrao.LIMITE_INFCPL}.`, 'error');
+        if (submitBtn) submitBtn.disabled = false;
+        return;
+      }
+
       const body = {
         estabelecimentoId: selectedEstabelecimentoId,
         tipoOperacao: formData.get('tipoOperacao'),
@@ -775,7 +886,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         // receber quando a SEFAZ autorizar.
         paymentType: formData.get('paymentType') || 'avista',
         installmentsCount: Number(formData.get('installmentsCount') || 1),
-        installmentIntervalDays: Number(formData.get('installmentIntervalDays') || 30)
+        installmentIntervalDays: Number(formData.get('installmentIntervalDays') || 30),
+        // Vai para infCpl e sai impresso no DANFE. `observacoes` e não
+        // formData: a aba pode estar fechada na hora do envio, e o valor do
+        // campo já está guardado fora do HTML.
+        informacoesAdicionais: observacoes
       };
 
       try {

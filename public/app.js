@@ -234,10 +234,6 @@ function renderSecondarySidebar() {
   });
 }
 
-function syncSecondarySidebar() {
-  renderSecondarySidebar();
-}
-
 function normalizeDashboardPins(pins) {
   if (!Array.isArray(pins)) return [];
   const result = [];
@@ -1332,7 +1328,11 @@ const moduleSubItems = {
     { key: 'users', label: 'Usuários', desc: 'Usuários do sistema e seus acessos.' },
     { key: 'access_control', label: 'Papéis e Permissões', desc: 'O que cada papel pode ver e fazer.' },
     { key: 'access_logs', label: 'Auditoria de Acesso', desc: 'Quem acessou o quê, e quando.' },
-    { key: 'company', label: 'Empresa', desc: 'Dados da empresa, certificado e configuração fiscal.' }
+    { key: 'company', label: 'Empresa', desc: 'Dados da empresa, certificado e configuração fiscal.' },
+    // Estava fora desta lista e só era alcançável pelo botão dentro de
+    // "Empresa". Sem a entrada aqui, o título e o caminho no topo saíam em
+    // branco (o label vem justamente daqui), como se a tela não tivesse nome.
+    { key: 'fiscal', label: 'Empresas e Estabelecimentos', desc: 'Cadastro fiscal, token da Focus NFe e regras por estabelecimento.' }
   ],
 
   // ABA: Cadastros
@@ -2145,7 +2145,15 @@ async function loadModule(moduleName) {
           // A duplicata nasce com a data de hoje, não a do original.
           date: editRecord?.date || new Date().toISOString().slice(0, 10),
           dueDate: editRecord?.dueDate || '',
-          note: origem?.note || '',
+          // Registro NOVO já nasce com o texto padrão da nota fiscal — ficha do
+          // equipamento, garantia e cuidados. O vendedor confere e ajusta na
+          // hora da venda, com o cliente à frente, em vez de o fiscal descobrir
+          // um chassi errado na hora de emitir.
+          //
+          // Só no novo: um registro salvo traz o texto que ALGUÉM escreveu, e
+          // sobrepor o padrão apagaria o ajuste. Duplicata idem — ela copia o
+          // original, inclusive as observações.
+          note: origem ? (origem.note || '') : (window.MavisNfeTextoPadrao?.PADRAO || ''),
           // Os campos de Dados e de Informações Gerais entram aqui pelo mesmo
           // motivo dos de cabeçalho: o redesenho abaixo os apagaria da tela.
           ...Object.fromEntries(CAMPOS_EXTRA.map((campo) => [campo, origem?.[campo] ?? ''])),
@@ -2233,6 +2241,7 @@ async function loadModule(moduleName) {
               classId: item.classId || '',
               classValueId: item.classValueId || '',
               classValueName: item.classValueName || '',
+              chassi: item.chassi || '',
               quantity: item.quantity,
               unitPrice: item.unitPrice
             })),
@@ -2484,6 +2493,7 @@ async function loadModule(moduleName) {
               clientSupplierId: formState.clientSupplierId,
               clientName: meta.directory.find((e) => e.id === formState.clientSupplierId)?.name || '',
               items: items.map((item) => ({
+                productId: item.productId || '',
                 code: item.sku || '',
                 description: item.name,
                 quantity: Number(item.quantity || 0),
@@ -2662,6 +2672,11 @@ async function loadModule(moduleName) {
                                prometido em outros pedidos. Mostrar o saldo
                                físico aqui é o que deixava a mesma unidade ser
                                vendida duas vezes. -->
+                          <!-- Chassi ao lado do produto: ele IDENTIFICA a
+                               unidade vendida, não é um atributo comercial como
+                               preço ou quantidade. É o número que vai para a
+                               nota fiscal e para o registro do equipamento. -->
+                          <th>Chassi</th>
                           <th>Disponível</th>
                           <th>Preço cadastrado</th>
                           <th>Qtd.</th>
@@ -2694,6 +2709,19 @@ async function loadModule(moduleName) {
                                 ${escapeHtml(item.name)}${item.sku ? ` <span class="muted">(${escapeHtml(item.sku)})</span>` : ''}
                                 ${item.classValueId ? `<span class="sales-item-cor">${escapeHtml(item.classValueName || item.classValueId)}</span>` : ''}
                               </td>
+                              <td>
+                                <input type="text" class="sales-item-chassi" data-index="${index}"
+                                       value="${escapeHtml(item.chassi || '')}" maxlength="25"
+                                       placeholder="—" autocomplete="off" spellcheck="false"
+                                       title="Chassi do equipamento. Vai para as observações da NF-e." />
+                                <!-- Um chassi identifica UMA unidade. Com dois
+                                     ou mais na mesma linha, o número serviria
+                                     para um e mentiria sobre os outros — o
+                                     caminho é uma linha por equipamento. -->
+                                ${item.chassi && Number(item.quantity || 0) > 1
+                                  ? '<span class="sales-item-chassi-aviso">1 chassi para ' + salesFormatQty(item.quantity) + ' unidades — separe em linhas.</span>'
+                                  : ''}
+                              </td>
                               <td class="sales-item-readonly ${faltaSaldo ? 'is-alerta' : ''}"
                                   title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (saldoDesconhecido ? 'Saldo desta cor ainda não carregado.' : `Em estoque: ${salesFormatQty(saldo)}. Reservado em outros pedidos: ${salesFormatQty(reservado)}. Livre para este ${title.toLowerCase()}: ${salesFormatQty(livre)}.${faltaSaldo ? ` Faltam ${salesFormatQty(Number(item.quantity || 0) - livre)} — o faturamento será recusado.` : ''}`)}">
                                 ${semCadastro || saldoDesconhecido ? '-' : salesFormatQty(livre)}
@@ -2707,7 +2735,7 @@ async function loadModule(moduleName) {
                               <td class="sales-item-readonly"><strong>${salesFormatBRL(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</strong></td>
                               <td><button type="button" class="icon-button sales-remove-item" data-index="${index}" title="Remover">×</button></td>
                             </tr>
-                          `; }).join('') : '<tr><td colspan="7" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
+                          `; }).join('') : '<tr><td colspan="8" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
                         </tbody>
                       </table>
                     </div>
@@ -3197,6 +3225,10 @@ async function loadModule(moduleName) {
               classValueName: classValueId
                 ? (corSelect.selectedOptions[0]?.dataset.nome || '')
                 : '',
+              // Preenchido na linha, depois de adicionar: o chassi é de cada
+              // equipamento, e digitá-lo antes de escolher o produto seria
+              // preencher na ordem errada.
+              chassi: '',
               quantity,
               unitPrice: Number(product.salePrice || 0)
             });
@@ -3214,6 +3246,24 @@ async function loadModule(moduleName) {
           content.querySelectorAll('.sales-item-qty').forEach((input) => {
             input.addEventListener('change', () => {
               items[Number(input.dataset.index)].quantity = Math.max(1, Number(input.value || 1));
+              syncFormState();
+              renderForm();
+            });
+          });
+          // Chassi: guarda a cada tecla, redesenha só ao sair do campo. Um
+          // renderForm() por tecla reconstruiria a linha e tiraria o foco do
+          // campo no meio da digitação — é por isso que qtd e valor também usam
+          // 'change'. O redesenho no blur é o que faz o aviso de quantidade
+          // aparecer.
+          content.querySelectorAll('.sales-item-chassi').forEach((input) => {
+            input.addEventListener('input', () => {
+              items[Number(input.dataset.index)].chassi = input.value;
+            });
+            input.addEventListener('change', () => {
+              // Maiúsculas no blur, não a cada tecla: trocar o valor durante a
+              // digitação joga o cursor para o fim a cada letra.
+              const limpo = input.value.trim().toUpperCase();
+              items[Number(input.dataset.index)].chassi = limpo;
               syncFormState();
               renderForm();
             });

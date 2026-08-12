@@ -3,6 +3,8 @@ require('dotenv').config();
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
+const crypto = require('crypto');
 const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
@@ -913,6 +915,11 @@ function normalizeSalesItems(rawItems) {
         classId: item.classId || '',
         classValueId: item.classValueId || '',
         classValueName: String(item.classValueName || '').trim(),
+        // Chassi do equipamento vendido nesta linha. Maiúsculas e sem espaços
+        // porque é código de identificação, não texto livre: "9bw 123" e
+        // "9BW123" são o mesmo chassi, e guardar os dois formatos faria a busca
+        // por chassi não achar metade das vendas.
+        chassi: String(item.chassi || '').replace(/\s+/g, '').toUpperCase().slice(0, 25),
         quantity,
         unitPrice,
         total: Math.round(quantity * unitPrice * 100) / 100
@@ -2152,14 +2159,28 @@ function buildFinanceDashboardSummary(data, query) {
   };
 }
 
-function serveStatic(res, filePath) {
+// Tipos servidos. Um mapa só: antes havia este e um segundo, quase igual, no
+// handler de /assets — e só o de lá conhecia imagem.
+const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2'
+};
+
+// Comprimir PNG/JPG/ICO/WOFF gasta CPU para render alguns bytes: já são
+// formatos comprimidos. Só texto entra.
+const EXTENSOES_COMPRIMIVEIS = new Set(['.html', '.css', '.js', '.json', '.svg']);
+
+function serveStatic(res, filePath, req) {
   const ext = path.extname(filePath).toLowerCase();
-  const contentTypeMap = {
-    '.html': 'text/html; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.js': 'application/javascript; charset=utf-8',
-    '.json': 'application/json; charset=utf-8'
-  };
 
   fs.readFile(filePath, (err, content) => {
     if (err) {
@@ -2167,9 +2188,51 @@ function serveStatic(res, filePath) {
       res.end('Arquivo não encontrado');
       return;
     }
-    // Sem cache: HTML/CSS/JS mudam com frequência durante o desenvolvimento e o
-    // navegador não tinha nenhum header para saber que precisa revalidar.
-    res.writeHead(200, { 'Content-Type': contentTypeMap[ext] || 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+
+    // ETag do conteúdo, não do mtime: `git checkout` mexe na data sem mudar o
+    // arquivo, e um deploy que só recopia tudo invalidaria o cache inteiro à toa.
+    const etag = `"${crypto.createHash('sha1').update(content).digest('base64url')}"`;
+
+    // `no-cache` NÃO é "não guarde" — é "guarde, mas confirme antes de usar".
+    // Aqui estava `no-store`, que proibia guardar: cada abertura do sistema
+    // rebaixava ~1,2 MB em 107 arquivos. Com revalidação, o navegador continua
+    // nunca servindo versão velha (a razão do no-store original), só que o
+    // arquivo inalterado custa um 304 sem corpo em vez do download inteiro.
+    const headersBase = {
+      'Content-Type': CONTENT_TYPES[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-cache',
+      ETag: etag
+    };
+
+    if (req && req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headersBase);
+      res.end();
+      return;
+    }
+
+    const aceita = String((req && req.headers['accept-encoding']) || '');
+    if (EXTENSOES_COMPRIMIVEIS.has(ext) && /\bgzip\b/.test(aceita)) {
+      zlib.gzip(content, (erroGzip, comprimido) => {
+        if (erroGzip) {
+          // Falhar em comprimir não é motivo para não entregar o arquivo.
+          res.writeHead(200, { ...headersBase, 'Content-Length': content.length });
+          res.end(content);
+          return;
+        }
+        res.writeHead(200, {
+          ...headersBase,
+          'Content-Encoding': 'gzip',
+          // Sem Vary, um proxy compartilhado poderia entregar o corpo gzipado
+          // para um cliente que não pediu gzip.
+          Vary: 'Accept-Encoding',
+          'Content-Length': comprimido.length
+        });
+        res.end(comprimido);
+      });
+      return;
+    }
+
+    res.writeHead(200, { ...headersBase, 'Content-Length': content.length });
     res.end(content);
   });
 }
@@ -3367,14 +3430,6 @@ const server = http.createServer(async (req, res) => {
       delete sessions[token];
     }
     return sendJson(res, { success: true });
-  }
-
-  if (pathname === '/api/modules') {
-    const user = await getCurrentUser(req);
-    if (!user) {
-      return sendJson(res, { error: 'Não autenticado' }, 401);
-    }
-    return sendJson(res, { modules: user.allowedModules });
   }
 
   if (pathname === '/api/dashboard') {
@@ -5552,62 +5607,11 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, { success: true });
   }
 
-  // Empresas/filiais: cadastro leve (nome + CNPJ) usado só como seletor/etiqueta
-  // nos documentos de Vendas — não isola dados entre empresas.
-  if (pathname === '/api/cadastros/empresas' && req.method === 'GET') {
-    const data = loadData();
-    const user = await getCurrentUser(req);
-    if (!user || !user.allowedModules.includes('cadastros')) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
-    }
-    return sendJson(res, { companies: data.companies });
-  }
-
-  if (pathname === '/api/cadastros/empresas' && req.method === 'POST') {
-    try {
-      const data = loadData();
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('cadastros')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
-      const body = await readBody(req);
-      const name = String(body.name || '').trim();
-      if (!name) {
-        return sendJson(res, { error: 'Informe o nome da empresa' }, 400);
-      }
-      const company = {
-        id: createId('company'),
-        name,
-        tradeName: body.tradeName || '',
-        document: body.document || '',
-        address: body.address || '',
-        city: body.city || '',
-        state: body.state || '',
-        createdAt: new Date().toISOString()
-      };
-      data.companies.push(company);
-      saveData(data);
-      return sendJson(res, { success: true, company });
-    } catch (error) {
-      return sendJson(res, { error: 'Erro ao criar empresa' }, 400);
-    }
-  }
-
-  if (pathname.startsWith('/api/cadastros/empresas/') && req.method === 'DELETE') {
-    const data = loadData();
-    const user = await getCurrentUser(req);
-    if (!user || !user.allowedModules.includes('cadastros')) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
-    }
-    const id = decodeURIComponent(pathname.replace('/api/cadastros/empresas/', ''));
-    const index = data.companies.findIndex((entry) => entry.id === id);
-    if (index < 0) {
-      return sendJson(res, { error: 'Empresa não encontrada' }, 404);
-    }
-    data.companies.splice(index, 1);
-    saveData(data);
-    return sendJson(res, { success: true });
-  }
+  // As rotas /api/cadastros/empresas (GET/POST/DELETE) viviam aqui. Foram
+  // substituídas pelo handler genérico de coleções de cadastro mais acima
+  // (cadastroCollectionMatch), que atende /api/cadastros/companies a partir do
+  // descritor em lib/cadastros-core.js — que é o endpoint que a tela de
+  // Empresas realmente chama. Ninguém chamava a versão em português.
 
   if (pathname === '/api/purchases' && req.method === 'GET') {
     const data = loadData();
@@ -7818,54 +7822,37 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/' || pathname === '/index.html') {
-    serveStatic(res, path.join(PUBLIC_DIR, 'index.html'));
+    serveStatic(res, path.join(PUBLIC_DIR, 'index.html'), req);
     return;
   }
 
   if (pathname === '/app.css') {
-    serveStatic(res, path.join(PUBLIC_DIR, 'app.css'));
+    serveStatic(res, path.join(PUBLIC_DIR, 'app.css'), req);
     return;
   }
 
   if (pathname === '/app.js') {
-    serveStatic(res, path.join(PUBLIC_DIR, 'app.js'));
+    serveStatic(res, path.join(PUBLIC_DIR, 'app.js'), req);
     return;
   }
 
-  // Servir os arquivos JS dos módulos (public/modules/**)
-  if (pathname.startsWith('/modules/') && req.method === 'GET') {
-    const relative = pathname.replace(/^\/modules\//, '');
-    const modulesDir = path.join(PUBLIC_DIR, 'modules');
-    const filePath = path.join(modulesDir, relative);
-    if (!filePath.startsWith(modulesDir)) {
+  // JS dos módulos (public/modules/**) e assets (logo, favicon). Eram dois
+  // blocos com implementações separadas de leitura e Content-Type; o que muda
+  // entre eles é só a pasta-raiz permitida.
+  const raizEstatica = pathname.startsWith('/modules/')
+    ? path.join(PUBLIC_DIR, 'modules')
+    : (pathname.startsWith('/assets/') ? path.join(PUBLIC_DIR, 'assets') : null);
+  if (raizEstatica && req.method === 'GET') {
+    const relativo = pathname.replace(/^\/(modules|assets)\//, '');
+    const filePath = path.join(raizEstatica, relativo);
+    // Contenção de path traversal: path.join já normaliza '..', então basta
+    // exigir que o resultado continue dentro da raiz permitida.
+    if (!filePath.startsWith(raizEstatica)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Acesso negado');
       return;
     }
-    serveStatic(res, filePath);
-    return;
-  }
-
-  // Servir arquivos de assets (logo, favicon, etc)
-  if (pathname.startsWith('/assets/')) {
-    const filePath = path.join(PUBLIC_DIR, pathname);
-    const ext = path.extname(filePath).toLowerCase();
-    const contentTypeMap = {
-      '.svg': 'image/svg+xml; charset=utf-8',
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.ico': 'image/x-icon'
-    };
-    
-    fs.readFile(filePath, (err, content) => {
-      if (err) {
-        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Arquivo não encontrado');
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': contentTypeMap[ext] || 'application/octet-stream' });
-      res.end(content);
-    });
+    serveStatic(res, filePath, req);
     return;
   }
 

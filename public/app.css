@@ -113,7 +113,7 @@ button, input, select { font: inherit; }
   padding: 24px;
 }
 
-.auth-card, .main-card, .panel {
+.auth-card, .panel {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -537,25 +537,6 @@ button.success:hover { background: var(--success-hover); }
   transform: none;
 }
 
-.cadastro-switcher {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 18px;
-}
-
-.cadastro-switch {
-  background: var(--panel-alt-hover);
-  color: var(--text);
-  border: 1px solid transparent;
-}
-
-.cadastro-switch.active {
-  background: var(--primary);
-  color: var(--on-primary);
-  border-color: var(--primary);
-}
-
 .cadastros-shell {
   display: grid;
   gap: 16px;
@@ -729,11 +710,6 @@ button.success:hover { background: var(--success-hover); }
   font-size: 0.92rem;
 }
 
-.cadastro-add-account {
-  display: flex;
-  align-items: end;
-}
-
 .cadastro-actions {
   display: flex;
   justify-content: flex-end;
@@ -835,8 +811,7 @@ button.success:hover { background: var(--success-hover); }
 }
 
 .cadastro-actions button,
-.cadastro-help-row button,
-.cadastro-add-account button {
+.cadastro-help-row button {
   min-width: 180px;
 }
 
@@ -873,9 +848,7 @@ button.success:hover { background: var(--success-hover); }
   .cadastro-filter-actions { justify-content: stretch; }
   .cadastro-filter-actions button { width: 100%; }
   .cadastro-actions button,
-  .cadastro-help-row button,
-  .cadastro-add-account button { width: 100%; min-width: 0; }
-  .dashboard-favorites-hero,
+  .cadastro-help-row button { width: 100%; min-width: 0; }
   .dashboard-module-balloon {
     flex-direction: column;
   }
@@ -956,17 +929,6 @@ button.success:hover { background: var(--success-hover); }
 .card p { margin: 0; font-size: 1.3rem; font-weight: 700; }
 
 .dashboard-shell { display: grid; gap: 16px; }
-.dashboard-favorites-hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  border-width: 1px;
-  border-style: solid;
-  border-color: var(--border);
-  border-radius: 30px;
-}
-
 .dashboard-charts-section { display: grid; gap: 12px; }
 .dashboard-charts-grid {
   display: grid;
@@ -975,8 +937,6 @@ button.success:hover { background: var(--success-hover); }
   align-items: start;
 }
 .dashboard-charts-grid .panel { margin-bottom: 0; }
-.dashboard-favorites-hero h3 { margin: 0 0 6px; font-size: 1.15rem; letter-spacing: 0.04em; }
-.dashboard-favorites-hero p { margin: 0; }
 .dashboard-favorites-grid {
   display: grid;
   gap: 20px;
@@ -1283,8 +1243,6 @@ button.success:hover { background: var(--success-hover); }
 
 .finance-custom-range { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
 .finance-custom-range label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); }
-
-.card-sub { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 0.78rem; color: var(--muted); }
 
 .finance-positive { color: var(--success); }
 .finance-negative { color: var(--danger-text); }
@@ -2237,21 +2195,15 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 /* --- Superfícies -------------------------------------------------------- */
 :root[data-theme="dark"] .panel,
 :root[data-theme="dark"] .card,
-:root[data-theme="dark"] .main-card,
 :root[data-theme="dark"] .auth-card {
   box-shadow: 0 0 0 1px rgba(var(--neon-rgb), 0.05), 0 12px 34px rgba(0, 0, 0, 0.5);
 }
 
 /* Os balões do Dashboard Geral: contorno neon, que é a marca visual da tela. */
-:root[data-theme="dark"] .dashboard-favorites-hero,
 :root[data-theme="dark"] .dashboard-module-balloon,
 :root[data-theme="dark"] .dashboard-tabs-balloon {
   border-color: rgba(var(--neon-rgb), 0.42);
   box-shadow: 0 0 20px rgba(var(--neon-rgb), 0.10), inset 0 0 26px rgba(var(--neon-rgb), 0.04);
-}
-:root[data-theme="dark"] .dashboard-favorites-hero h3 {
-  color: var(--primary);
-  text-shadow: 0 0 14px rgba(var(--neon-rgb), 0.45);
 }
 :root[data-theme="dark"] .dashboard-module-avatar {
   border-color: rgba(var(--neon-rgb), 0.5);
@@ -2409,21 +2361,18 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 
 /* --- Superfícies -------------------------------------------------------- */
 :root:not([data-theme="dark"]) .panel,
-:root:not([data-theme="dark"]) .card,
-:root:not([data-theme="dark"]) .main-card {
+:root:not([data-theme="dark"]) .card {
   border: 1px solid rgba(var(--neon-rgb), 0.16);
   box-shadow: 0 1px 2px rgba(16, 33, 58, 0.04), 0 8px 24px rgba(var(--neon-rgb), 0.07);
 }
 
 /* Balões do Dashboard Geral: o contorno verde é a assinatura da tela, e no
    claro ele precisa de mais opacidade para ler tão forte quanto no escuro. */
-:root:not([data-theme="dark"]) .dashboard-favorites-hero,
 :root:not([data-theme="dark"]) .dashboard-module-balloon,
 :root:not([data-theme="dark"]) .dashboard-tabs-balloon {
   border-color: rgba(var(--neon-rgb), 0.55);
   box-shadow: 0 0 18px rgba(var(--neon-rgb), 0.14), inset 0 0 24px rgba(var(--neon-rgb), 0.05);
 }
-:root:not([data-theme="dark"]) .dashboard-favorites-hero h3 { color: var(--primary); }
 :root:not([data-theme="dark"]) .dashboard-module-avatar {
   border-color: rgba(var(--neon-rgb), 0.6);
   color: var(--primary);
@@ -2751,6 +2700,10 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
    é uma condição permanente do sistema, e um toast some antes de alguém
    emitir a nota. */
 .fiscal-aviso-homologacao {
+  /* Também usado num <small> dentro de <label> (ambiente do estabelecimento):
+     inline, o padding não empurraria a linha e o fundo invadiria o texto de
+     cima. Nos <p> onde já era usado, isto não muda nada. */
+  display: block;
   margin: 8px 0 0;
   padding: 10px 12px;
   border-radius: 8px;
@@ -3413,3 +3366,53 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 /* Cartão de indicador em estado de atenção — mesma linguagem do painel
    Atenção do hub, para os dois quererem dizer a mesma coisa. */
 .kpi-card-alerta { border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+
+/* Rodapé das observações da NF-e: contador de caracteres e o botão de
+   restaurar. O limite da SEFAZ para infCpl é 5000, e estourar não dá erro de
+   digitação — dá rejeição depois de transmitir, com a numeração já consumida. */
+.nfe-obs-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+#nfeFocusObservacoes {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+#nfeFocusObsPendentes:empty { display: none; }
+
+/* Chassi na linha do item. Monoespaçado porque é código de identificação: em
+   fonte proporcional, 0/O e 1/I ficam idênticos, e conferir chassi contra o
+   documento do equipamento é exatamente o caso em que isso importa. */
+.sales-item-chassi {
+  width: 100%;
+  min-width: 130px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.sales-item-chassi-aviso {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--warning-text, var(--muted));
+}
+
+/* Campo de chassi acima das observações da NF-e. Monoespaçado pelo mesmo
+   motivo do campo na venda: 0/O e 1/I são idênticos em fonte proporcional, e
+   conferir chassi contra o documento é onde isso importa. */
+.nfe-obs-chassi input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  max-width: 320px;
+}

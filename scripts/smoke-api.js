@@ -33,7 +33,7 @@ const GETS = [
   '/api/cadastros',
   '/api/cadastros/cnpjs',
   '/api/cadastros/deposits',
-  '/api/cadastros/empresas',
+  '/api/cadastros/companies',
   '/api/cadastros/meta',
   '/api/cadastros/pessoas',
   '/api/cadastros/product-cashbacks',

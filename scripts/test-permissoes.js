@@ -21,7 +21,7 @@ check('PUT em vendas = editar', P.resolverPermissao('/api/sales/records/ord-1', 
 check('DELETE em vendas = excluir', P.resolverPermissao('/api/sales/records/ord-1', 'DELETE') === 'sales.excluir');
 check('PATCH conta como editar', P.resolverPermissao('/api/finance/entries', 'PATCH') === 'finance.editar');
 check('estoque', P.resolverPermissao('/api/stock/movements', 'POST') === 'stock.criar');
-check('cadastros', P.resolverPermissao('/api/cadastros/empresas', 'POST') === 'cadastros.criar');
+check('cadastros', P.resolverPermissao('/api/cadastros/companies', 'POST') === 'cadastros.criar');
 check('compras', P.resolverPermissao('/api/purchases', 'GET') === 'purchases.ler');
 check('configurações', P.resolverPermissao('/api/settings', 'GET') === 'settings.ler');
 check('usuários usam ação fixa', P.resolverPermissao('/api/users/u1', 'PUT') === 'usuarios.gerenciar');

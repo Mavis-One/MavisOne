@@ -387,6 +387,15 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   function renderEstabForm() {
     if (!estabForm) return '';
     const isEditing = Boolean(estabForm.id);
+    const producaoJaSalva = estabForm.focusAmbiente === 'producao';
+    // A trava só impede ENTRAR em produção. Se o estabelecimento já está salvo
+    // assim, a opção continua habilitada: uma <option> desabilitada e
+    // selecionada continua sendo enviada pelo navegador no submit, então
+    // "salvar alterações" não corrigia nada e não havia como entender por quê.
+    // Rebaixar sozinho para homologação seria pior — é exatamente a troca
+    // silenciosa que lib/focusnfe.js recusa fazer, para não mandar token de
+    // produção na URL de homologação e culpar a credencial.
+    const producaoBloqueada = travadoEmHomologacao && !producaoJaSalva;
     return `
       <div class="panel">
         <h3>${isEditing ? 'Editar estabelecimento' : 'Novo estabelecimento'}</h3>
@@ -433,12 +442,19 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             <label>Token Focus NFe${isEditing ? ' (deixe em branco para manter o atual)' : ''}<input name="focusToken" type="password" autocomplete="off" placeholder="${estabForm.focusTokenConfigured ? '••••••••' : 'Gerado no painel da Focus NFe'}" /></label>
             <label>Ambiente Focus
               <select name="focusAmbiente">
-                <option value="homologacao" ${(estabForm.focusAmbiente || 'homologacao') === 'homologacao' ? 'selected' : ''}>Homologação</option>
-                <option value="producao" ${estabForm.focusAmbiente === 'producao' ? 'selected' : ''} ${travadoEmHomologacao ? 'disabled' : ''}>Produção${travadoEmHomologacao ? ' — bloqueado' : ''}</option>
+                <option value="homologacao" ${!producaoJaSalva ? 'selected' : ''}>Homologação</option>
+                <option value="producao" ${producaoJaSalva ? 'selected' : ''} ${producaoBloqueada ? 'disabled' : ''}>Produção${travadoEmHomologacao ? ' — bloqueado pela trava' : ''}</option>
               </select>
-              ${travadoEmHomologacao ? '<small class="muted">O sistema está travado em homologação (FOCUS_NFE_SOMENTE_HOMOLOGACAO no .env). Use o token de homologação da Focus NFe.</small>' : ''}
+              ${travadoEmHomologacao ? (producaoJaSalva
+                ? '<small class="fiscal-aviso-homologacao">Este estabelecimento está salvo como Produção, mas o sistema está travado em homologação: <strong>toda emissão por ele vai ser recusada</strong>. Troque para Homologação e use o token de homologação, ou desligue FOCUS_NFE_SOMENTE_HOMOLOGACAO no .env do servidor.</small>'
+                : '<small class="muted">O sistema está travado em homologação (FOCUS_NFE_SOMENTE_HOMOLOGACAO no .env). Use o token de homologação da Focus NFe.</small>') : ''}
             </label>
           </div>
+          ${isEditing && estabForm.focusTokenConfigured ? `
+            <div class="checkbox-grid">
+              <label><input type="checkbox" name="removerFocusToken" /> Remover o token salvo — o estabelecimento volta para "Sem token" e para de emitir</label>
+            </div>
+          ` : ''}
           <div class="checkbox-grid">
             <label><input type="checkbox" name="emiteNfe" ${estabForm.emiteNfe !== false ? 'checked' : ''} /> Emite NF-e</label>
             <label><input type="checkbox" name="emiteNfce" ${estabForm.emiteNfce ? 'checked' : ''} /> Emite NFC-e</label>
@@ -643,6 +659,18 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
       estabForm = null;
       renderAll();
     });
+
+    // Marcar "remover" desabilita o campo de token, e campo desabilitado não
+    // entra no FormData. Assim o servidor nunca recebe os dois pedidos juntos.
+    const removerTokenCheck = document.querySelector('#fiscalEstabForm [name="removerFocusToken"]');
+    if (removerTokenCheck) {
+      const campoToken = document.querySelector('#fiscalEstabForm [name="focusToken"]');
+      removerTokenCheck.addEventListener('change', () => {
+        if (!campoToken) return;
+        campoToken.disabled = removerTokenCheck.checked;
+        if (removerTokenCheck.checked) campoToken.value = '';
+      });
+    }
     document.getElementById('fiscalEstabForm')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const formData = new FormData(event.target);
@@ -668,11 +696,18 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         uf: String(formData.get('uf') || '').toUpperCase(),
         cep: fiscalDigitsOnly(formData.get('cep')),
         focusToken: formData.get('focusToken') || undefined,
+        removerFocusToken: formData.get('removerFocusToken') === 'on',
         focusAmbiente: formData.get('focusAmbiente'),
         emiteNfe: formData.get('emiteNfe') === 'on',
         emiteNfce: formData.get('emiteNfce') === 'on',
         ativo: formData.get('ativo') === 'on'
       };
+      // Apagar o token não tem desfazer daqui: ele é gravado cifrado e nunca
+      // volta pra tela, então recuperá-lo exige pegar de novo no painel da Focus.
+      if (payload.removerFocusToken) {
+        const confirmado = await confirmModal(`Remover o token da Focus NFe de "${estabForm.razaoSocial || 'este estabelecimento'}"? Ele para de emitir até que um token novo seja cadastrado, e o token atual não pode ser recuperado por aqui.`);
+        if (!confirmado) return;
+      }
       try {
         if (estabForm.id) {
           await api(`/api/fiscal/estabelecimentos/${estabForm.id}`, { method: 'PUT', body: JSON.stringify(payload) });

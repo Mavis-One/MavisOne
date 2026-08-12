@@ -134,7 +134,13 @@ const chamadas = [
 
   console.log('\n--- a tela não oferece o que o servidor vai recusar ---');
   const telaSrc = ler('public/modules/settings/subs/fiscal.js');
-  check('a opção Produção é desabilitada pela trava', /travadoEmHomologacao \? 'disabled' : ''/.test(telaSrc));
+  // A trava impede ENTRAR em produção, não descreve o que já está salvo. Uma
+  // <option> desabilitada E selecionada continua sendo enviada no submit: se a
+  // regra fosse só a trava, um estabelecimento já gravado como produção voltava
+  // gravado como produção a cada "salvar alterações", sem nada explicando.
+  check('a opção Produção é desabilitada quando entrar em produção está bloqueado', /producaoBloqueada \? 'disabled' : ''/.test(telaSrc));
+  check('e "bloqueado" é a trava + ainda não estar em produção', /const producaoBloqueada = travadoEmHomologacao && !producaoJaSalva/.test(telaSrc));
+  check('quem já está em produção sob a trava é avisado, não silenciado', /producaoJaSalva[\s\S]{0,200}toda emissão por ele vai ser recusada/.test(telaSrc));
   check('a tela avisa que não tem valor fiscal', /fiscal-aviso-homologacao/.test(telaSrc));
   check('o aviso tem estilo', /\.fiscal-aviso-homologacao/.test(ler('public/app.css')));
   // Se a resposta não trouxer o campo, a tela deve se comportar como travada.

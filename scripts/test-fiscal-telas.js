@@ -215,5 +215,38 @@ console.log('\n--- o gate do Fiscal aceita quem tem o módulo Fiscal ---');
 // módulo + as permissões não dava acesso nenhum.
 check("o gate considera allowedModules 'fiscal'", /allowedModules\.includes\('fiscal'\)/.test(serverSrc));
 
+console.log('\n--- o cadastro fiscal tem entrada de menu própria ---');
+// Ela existia só como destino de um botão dentro de "Empresa". Fora desta
+// lista, o label do topo vem vazio (é daqui que ele é lido) e a tela abre sem
+// nome nem caminho, como se fosse a mesma tela de onde se veio.
+const chavesSettings = (moduleSubItems.settings || []).map((i) => i.key);
+check('settings tem a subtela fiscal', chavesSettings.includes('fiscal'), chavesSettings.join(', '));
+const itemFiscalSettings = (moduleSubItems.settings || []).find((i) => i.key === 'fiscal');
+check('e ela tem label (senão o título do topo fica em branco)', Boolean(itemFiscalSettings?.label), itemFiscalSettings?.label);
+const settingsIndexSrc = ler('public/modules/settings/index.js');
+check('e o index de Configurações a aceita', /allowedSubs = \[[^\]]*'fiscal'/.test(settingsIndexSrc));
+
+console.log('\n--- o token da Focus tem os três estados: gravar, apagar e não mexer ---');
+const telaFiscalSrc = ler('public/modules/settings/subs/fiscal.js');
+// Só "gravar se veio preenchido" deixava o estabelecimento sem caminho de volta
+// para "sem token": um token errado podia ser sobrescrito, nunca removido.
+check('a tela oferece remover o token salvo', /name="removerFocusToken"/.test(telaFiscalSrc));
+check('só quando existe token para remover', /isEditing && estabForm\.focusTokenConfigured \?/.test(telaFiscalSrc));
+check('e pede confirmação antes (não tem desfazer)', /payload\.removerFocusToken\) \{[\s\S]{0,200}confirmModal/.test(telaFiscalSrc));
+check('o remover entra no payload', /removerFocusToken: formData\.get\('removerFocusToken'\) === 'on'/.test(telaFiscalSrc));
+// Campo desabilitado não entra no FormData: é assim que os dois pedidos nunca
+// chegam juntos ao servidor.
+check('marcar remover desabilita o campo de token', /campoToken\.disabled = removerTokenCheck\.checked/.test(telaFiscalSrc));
+check('o banco apaga token e data de cadastro', /removerFocusToken\) \{\n\s*fields\.focus_token_cifrado = null;\n\s*fields\.focus_cadastrado_em = null;/.test(dbFiscalSrc));
+check('e o apagar tem precedência sobre o gravar', /removerFocusToken\)[\s\S]{0,160}\} else if \(payload\.focusToken\)/.test(dbFiscalSrc));
+
+console.log('\n--- recusa do banco chega legível na tela ---');
+// A trigger estabelecimento_valida_cnpj_raiz já escreve a mensagem pronta;
+// passar pelo assertNoError prefixava com o nome da função interna.
+check('P0001 (raise da trigger) preserva a mensagem', /error\.code === 'P0001'[\s\S]{0,120}new Error\(error\.message\)/.test(dbFiscalSrc));
+check('CNPJ repetido diz que é CNPJ repetido', /23505[\s\S]{0,160}Já existe um estabelecimento cadastrado com este CNPJ/.test(dbFiscalSrc));
+check('e as duas escritas usam esse tratamento', (dbFiscalSrc.match(/assertEstabelecimentoValido\(error, '(create|update)Estabelecimento'\)/g) || []).length === 2);
+check('a trigger que gera o P0001 existe no schema', /estabelecimento_valida_cnpj_raiz/.test(ler('supabase/schema.sql')));
+
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
 process.exit(falhas === 0 ? 0 : 1);
