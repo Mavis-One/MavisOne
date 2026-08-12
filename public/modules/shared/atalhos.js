@@ -36,7 +36,10 @@ window.MavisAtalhos = (function () {
 
   // Campos das janelas. `linha` agrupa os campos numa mesma faixa do formulário.
   const CAMPOS_PESSOA = [
-    { name: 'document', label: 'CPF / CNPJ', required: true, linha: 1, hint: 'Só números' },
+    // documento: true liga a máscara e a validação de CPF/CNPJ na janela,
+    // as mesmas do Cadastro de Pessoas. O "só números" saiu do hint porque o
+    // campo agora formata sozinho.
+    { name: 'document', label: 'CPF / CNPJ', required: true, linha: 1, documento: true },
     { name: 'name', label: 'Nome', required: true, linha: 1 },
     { name: 'email', label: 'E-mail', type: 'email', linha: 2 },
     { name: 'phone', label: 'Telefone', linha: 2 },
@@ -53,6 +56,7 @@ window.MavisAtalhos = (function () {
     {
       id: 'novo_cliente', label: 'Novo Cliente', icone: ICONES.cliente, modulo: 'cadastros',
       titulo: 'Cliente', endpoint: '/api/cadastros/pessoas', campos: CAMPOS_PESSOA,
+      consultaCnpj: true,
       // O papel é o que separa cliente de fornecedor na mesma tabela de pessoas.
       extras: { roles: ['Cliente'], status: 'ativo' },
       sucesso: (r) => `Cliente "${r.person?.name || ''}" cadastrado.`
@@ -60,6 +64,7 @@ window.MavisAtalhos = (function () {
     {
       id: 'novo_fornecedor', label: 'Novo Fornecedor', icone: ICONES.fornecedor, modulo: 'cadastros',
       titulo: 'Fornecedor', endpoint: '/api/cadastros/pessoas', campos: CAMPOS_PESSOA,
+      consultaCnpj: true,
       extras: { roles: ['Fornecedor'], status: 'ativo' },
       sucesso: (r) => `Fornecedor "${r.person?.name || ''}" cadastrado.`
     },
@@ -133,7 +138,8 @@ window.MavisAtalhos = (function () {
     } else {
       const passo = campo.step ? `step="${campo.step}"` : '';
       const min = campo.min !== undefined ? `min="${campo.min}"` : '';
-      controle = `<input type="${campo.type || 'text'}" name="${campo.name}" value="${escapeHtml(valor)}" ${passo} ${min} ${obrigatorio} />`;
+      const doc = campo.documento ? `data-documento="${campo.documento === true ? '' : campo.documento}"` : '';
+      controle = `<input type="${campo.type || 'text'}" name="${campo.name}" value="${escapeHtml(valor)}" ${passo} ${min} ${doc} ${obrigatorio} />`;
     }
     return `
       <label class="atalho-campo">
@@ -196,6 +202,42 @@ window.MavisAtalhos = (function () {
     document.addEventListener('keydown', aoTeclar);
     document.getElementById('atalhoFechar')?.addEventListener('click', fechar);
     document.getElementById('atalhoCancelar')?.addEventListener('click', fechar);
+    window.MavisDocumento?.ligarTodos(overlay);
+
+    // Consulta de CNPJ na Receita, igual à do Cadastro de Pessoas: preenche
+    // razão social, contato e endereço. É o que torna o atalho de fato um
+    // atalho — sem isso, cadastrar uma empresa aqui é digitar tudo à mão.
+    const campoDoc = overlay.querySelector('[data-documento]');
+    if (campoDoc && atalho.consultaCnpj) {
+      const preencher = (nome, valor) => {
+        const campo = overlay.querySelector(`[name="${nome}"]`);
+        // Só preenche o que está vazio: o que a pessoa digitou vale mais do
+        // que o cadastro da Receita, que costuma estar desatualizado.
+        if (campo && !String(campo.value || '').trim() && valor) campo.value = valor;
+      };
+      window.MavisDocumento.ligarConsultaCnpj(campoDoc, {
+        api,
+        showToast,
+        // Só busca sozinho enquanto o formulário está em branco; pela lupa,
+        // busca sempre.
+        devePreencherSozinho: () => !String(overlay.querySelector('[name="name"]')?.value || '').trim(),
+        aoEncontrar: (dados) => {
+          preencher('name', dados.razaoSocial || dados.nomeFantasia);
+          preencher('email', dados.email);
+          preencher('phone', dados.telefone);
+          preencher('zipCode', dados.cep);
+          preencher('address', dados.logradouro);
+          preencher('number', dados.numero);
+          preencher('complement', dados.complemento);
+          preencher('neighborhood', dados.bairro);
+          preencher('city', dados.municipio);
+          const uf = overlay.querySelector('[name="state"]');
+          // O UF é um <select>: só troca se a sigla existir na lista.
+          if (uf && dados.uf && [...uf.options].some((o) => o.value === dados.uf)) uf.value = dados.uf;
+        }
+      });
+    }
+
     overlay.querySelector('input, select')?.focus();
 
     document.getElementById('atalhoForm')?.addEventListener('submit', async (evento) => {

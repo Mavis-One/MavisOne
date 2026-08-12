@@ -8,6 +8,7 @@ window.MavisSubscreenRegistry.stock.transfers = async function renderTransfers(c
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
+  const cores = S.indiceDeCores(meta);
   const filters = { search: '', productId: '', depositId: '' };
 
   async function fetchTransfers() {
@@ -51,7 +52,7 @@ window.MavisSubscreenRegistry.stock.transfers = async function renderTransfers(c
                 <tr>
                   <td>${S.escape(transfer.code)}</td>
                   <td>${S.formatDate(transfer.date)}</td>
-                  <td>${S.escape(transfer.productName)}${transfer.productSku ? ` <span class="muted">(${S.escape(transfer.productSku)})</span>` : ''}</td>
+                  <td>${S.escape(transfer.productName)}${transfer.productSku ? ` <span class="muted">(${S.escape(transfer.productSku)})</span>` : ''}${S.corBadge(cores, transfer.classValueId)}</td>
                   <td>${S.escape(transfer.originDepositName || '-')}</td>
                   <td>${S.escape(transfer.destinationDepositName || '-')}</td>
                   <td>${S.formatQty(transfer.quantity)}</td>

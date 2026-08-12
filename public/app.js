@@ -574,6 +574,222 @@ function renderAuth(error = '') {
   });
 }
 
+// Iniciais para o avatar: primeira e ÚLTIMA palavra. "Eduardo Haas" vira EH,
+// não ED — sobrenome distingue mais do que a segunda letra do nome, e é o que
+// diferencia dois "Eduardo" na mesma empresa.
+function iniciaisDoUsuario(nome) {
+  const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  if (!partes.length) return '?';
+  if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
+  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
+}
+
+/**
+ * Marca do sino. Só o PONTO, sem número.
+ *
+ * O painel Atenção agrupa por tipo ("2 contas vencidas"), então um número aqui
+ * seria a soma de registros, e não de coisas a fazer — 23 produtos abaixo do
+ * mínimo viraria "23" ao lado de duas notas rejeitadas, dando a elas o mesmo
+ * peso. O ponto diz "tem algo"; a lista diz o quê.
+ *
+ * Falha em silêncio de propósito: sino sem marca é o estado normal, e um erro
+ * de rede não pode encher a tela de toast a cada navegação.
+ */
+// Último painel carregado. O sino já busca no render; reaproveitar evita uma
+// segunda ida ao servidor só para abrir a lista — mas ela é atualizada ao
+// abrir, porque pendência resolvida há um minuto não pode continuar listada.
+let ultimoPainelAtencao = null;
+
+const SEVERIDADE_ROTULO = { alta: 'Crítico', media: 'Atenção', baixa: 'Observar' };
+
+function fecharPainelAtencao() {
+  document.getElementById('notifPainel')?.remove();
+  document.getElementById('notifBtn')?.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Lista de pendências ancorada no sino.
+ *
+ * Painel flutuante e não uma tela: conferir o que está pendente não deveria
+ * custar sair do que se está fazendo — mesma razão das janelas de atalho.
+ * Cada linha leva à tela onde o problema se resolve.
+ */
+function desenharPainelAtencao(painel) {
+  fecharPainelAtencao();
+  const botao = document.getElementById('notifBtn');
+  if (!botao) return;
+
+  const itens = painel?.itens || [];
+  const caixa = document.createElement('div');
+  caixa.id = 'notifPainel';
+  caixa.className = 'notif-painel';
+  caixa.setAttribute('role', 'menu');
+  caixa.innerHTML = `
+    <div class="notif-painel-topo">
+      <strong>Pendências</strong>
+      <span class="muted">${itens.length ? `${painel.total} registro(s)` : ''}</span>
+    </div>
+    ${itens.length ? itens.map((item, i) => `
+      <button type="button" class="notif-item" data-idx="${i}" role="menuitem">
+        <span class="notif-sev notif-sev-${escapeHtml(item.severidade)}" title="${escapeHtml(SEVERIDADE_ROTULO[item.severidade] || '')}"></span>
+        <span class="notif-item-texto">
+          <strong>${escapeHtml(item.titulo)}</strong>
+          <span>${escapeHtml(item.detalhe || '')}</span>
+        </span>
+        <span class="notif-item-conta">${escapeHtml(String(item.contagem))}</span>
+      </button>
+    `).join('')
+    // Painel vazio é boa notícia, e precisa dizer isso — sem texto, parece
+    // que a busca falhou.
+    : '<p class="notif-vazio">Nada pendente. Contas em dia, notas autorizadas e estoque acima do mínimo.</p>'}
+  `;
+  document.body.appendChild(caixa);
+
+  // Ancorado por getBoundingClientRect e não por position:absolute no botão:
+  // a topbar é sticky e tem overflow próprio, que cortaria o painel.
+  const r = botao.getBoundingClientRect();
+  caixa.style.top = `${r.bottom + 8}px`;
+  // Alinha pela direita do sino, mas nunca deixa passar da janela.
+  const largura = caixa.offsetWidth;
+  caixa.style.left = `${Math.max(8, Math.min(r.right - largura, window.innerWidth - largura - 8))}px`;
+
+  botao.setAttribute('aria-expanded', 'true');
+
+  caixa.querySelectorAll('[data-idx]').forEach((linha) => {
+    linha.addEventListener('click', () => {
+      const item = itens[Number(linha.dataset.idx)];
+      fecharPainelAtencao();
+      if (!item) return;
+      state.activeModule = item.modulo;
+      state.activeSub = item.sub;
+      renderApp();
+      loadModule(item.modulo);
+    });
+  });
+}
+
+async function alternarPainelAtencao() {
+  if (document.getElementById('notifPainel')) {
+    fecharPainelAtencao();
+    return;
+  }
+  // Desenha com o que já se tem para a lista abrir na hora, e atualiza em
+  // seguida: esperar a rede para mostrar a lista faria o clique parecer morto.
+  const tinhaCache = Boolean(ultimoPainelAtencao);
+  if (tinhaCache) desenharPainelAtencao(ultimoPainelAtencao);
+
+  try {
+    const painel = await api('/api/dashboard/atencao');
+    ultimoPainelAtencao = painel;
+    // Redesenha se ainda estiver aberto, ou se nem chegou a abrir por falta de
+    // cache. Se a pessoa fechou enquanto carregava, NÃO reabre sozinho.
+    if (document.getElementById('notifPainel') || !tinhaCache) desenharPainelAtencao(painel);
+  } catch (erro) {
+    // Com cache na tela, o erro não vale um toast: a lista já está visível,
+    // só não é a mais recente.
+    if (!tinhaCache) showToast('Não foi possível carregar as pendências: ' + (erro.message || erro), 'error');
+  }
+}
+
+async function atualizarSinoDeAtencao() {
+  const marca = document.getElementById('notifDot');
+  const botao = document.getElementById('notifBtn');
+  if (!marca || !botao) return;
+  try {
+    const painel = await api('/api/dashboard/atencao');
+    ultimoPainelAtencao = painel;
+    const criticos = Number(painel.criticos || 0);
+    const total = Number(painel.total || 0);
+    marca.hidden = total === 0;
+    // Vermelho só para o que já causou dano; o resto fica âmbar. Pintar tudo
+    // de vermelho faria a cor parar de significar alguma coisa.
+    marca.classList.toggle('is-critico', criticos > 0);
+    botao.title = total === 0
+      ? 'Nada pendente'
+      : `${total} pendência(s)${criticos ? ` · ${criticos} crítica(s)` : ''}`;
+  } catch (erro) {
+    marca.hidden = true;
+  }
+}
+
+// ---------------------------------------------------------------- sidebar
+// Um balão só, no <body>. Dentro da .sidebar ele seria cortado: ela tem
+// overflow-x: hidden, e o balão precisa aparecer justamente fora dos 72px.
+function dicaDaSidebar() {
+  let dica = document.getElementById('navDica');
+  if (!dica) {
+    dica = document.createElement('div');
+    dica.id = 'navDica';
+    dica.setAttribute('role', 'tooltip');
+    document.body.appendChild(dica);
+  }
+  return dica;
+}
+
+function esconderDicaDaSidebar() {
+  document.getElementById('navDica')?.classList.remove('visivel');
+}
+
+function mostrarDicaDaSidebar(botao) {
+  const dica = dicaDaSidebar();
+  dica.textContent = botao.querySelector('.text')?.textContent?.trim() || '';
+  if (!dica.textContent) return;
+
+  // ANCORA NA BARRA, NÃO NO BOTÃO.
+  //
+  // O botão é mais largo do que a barra: o rótulo tem white-space: nowrap e
+  // estica o elemento até ~200px, e a .sidebar apenas o CORTA com
+  // overflow-x: hidden. Medir a borda direita do botão colocava o balão
+  // duzentos pixels adentro do conteúdo, longe do ícone que ele descreve.
+  const barra = botao.closest('.sidebar');
+  const r = botao.getBoundingClientRect();
+  const borda = barra ? barra.getBoundingClientRect().right : r.right;
+  dica.style.left = `${borda + 8}px`;
+  // Centraliza no ícone só depois de tornar visível — antes de estar na tela
+  // o balão não tem altura, e a conta daria sempre o mesmo deslocamento.
+  dica.classList.add('visivel');
+  dica.style.top = `${r.top + (r.height - dica.offsetHeight) / 2}px`;
+}
+
+// Registrado UMA vez: ligar() roda a cada renderApp(), e são dezenas de
+// chamadas — sem a trava, cada navegação somaria mais um listener no documento.
+let sidebarDocumentoLigado = false;
+
+function ligarSidebar() {
+  const barra = document.querySelector('.sidebar');
+  if (!barra) return;
+
+  barra.querySelectorAll('.nav-open-item').forEach((botao) => {
+    botao.addEventListener('mouseenter', () => mostrarDicaDaSidebar(botao));
+    botao.addEventListener('mouseleave', esconderDicaDaSidebar);
+    // Teclado também precisa saber onde está: navegar por Tab numa barra de
+    // ícones sem rótulo é adivinhação.
+    botao.addEventListener('focus', () => mostrarDicaDaSidebar(botao));
+    botao.addEventListener('blur', esconderDicaDaSidebar);
+  });
+  // Rolar a barra move o ícone e deixaria o balão parado no lugar antigo.
+  barra.addEventListener('scroll', esconderDicaDaSidebar);
+
+  if (sidebarDocumentoLigado) return;
+  sidebarDocumentoLigado = true;
+
+  // A barra NÃO abre — é sempre a faixa de ícones. Não há o que fechar; o
+  // Escape só some com o balão, que pode ficar preso se o mouse sair da
+  // janela sem passar pelo mouseleave.
+  document.addEventListener('keydown', (evento) => {
+    if (evento.key !== 'Escape') return;
+    esconderDicaDaSidebar();
+    fecharPainelAtencao();
+  });
+
+  // Clique fora fecha a lista de pendências. Sem isto ela ficaria por cima do
+  // conteúdo até alguém clicar no sino de novo.
+  document.addEventListener('click', (evento) => {
+    if (evento.target.closest('#notifPainel')) return;
+    fecharPainelAtencao();
+  });
+}
+
 function renderApp() {
   // Sem sub-tela escolhida NÃO existe sub-tela ativa: o módulo está na sua Área
   // de Trabalho, e o título mostra só o nome do módulo. Aqui havia um "ou a tela
@@ -605,7 +821,6 @@ function renderApp() {
             <span class="brand-short"><span class="brand-mavis">M</span><span class="brand-one">O</span></span>
           </h2>
         </div>
-        <p class="muted">${state.user?.name || 'Usuário'}</p>
         <div class="nav-list">
           ${MENU_MODULOS
             .filter((module) => state.user?.allowedModules?.includes(module))
@@ -616,9 +831,10 @@ function renderApp() {
                     <span class="icon">${moduleIcons[module] || ''}</span>
                     <span class="text">${moduleLabels[module]}</span>
                   </button>
-                  <button type="button" class="sidebar-pin-btn ${getDashboardPinSet().has(module) ? 'active' : ''}" data-pin-key="${module}" title="${getDashboardPinSet().has(module) ? 'Desfixar' : 'Fixar'} ${moduleLabels[module]}" aria-pressed="${getDashboardPinSet().has(module) ? 'true' : 'false'}">
-                    ${favoriteIconSvg(getDashboardPinSet().has(module))}
-                  </button>
+                  <!-- Sem botão de fixar aqui: a barra é só de ícones e nunca
+                       abre, então o botão nunca teria onde caber. Fixar módulo
+                       mudou para o cabeçalho da Área de Trabalho, que é onde
+                       se está ao olhar para o módulo. -->
                 </div>
                 <div class="submenu">
                   ${ (moduleSubItems[module] || []).map((sub) => `
@@ -640,22 +856,92 @@ function renderApp() {
                 <path d="M15 18l-6-6 6-6"></path>
               </svg>
             </button>
-            <h1>${moduleLabels[state.activeModule]}${activeSubLabel ? ' > ' + activeSubLabel : ''}</h1>
+            <div class="topbar-heading">
+              <!-- Caminho acima, título embaixo. Antes tudo cabia numa linha só
+                   ("Vendas > Novo Pedido") e o nome da tela competia com o do
+                   módulo pelo mesmo peso visual. O caminho é referência; o
+                   título é onde a pessoa está. -->
+              <p class="topbar-crumb">${escapeHtml(moduleLabels[state.activeModule] || '')}${activeSubLabel ? ' / ' + escapeHtml(activeSubLabel) : ''}</p>
+              <h1>${escapeHtml(activeSubLabel || moduleLabels[state.activeModule] || '')}</h1>
+            </div>
           </div>
           <div class="topbar-actions">
             ${window.MavisAtalhos ? window.MavisAtalhos.barraHtml(escapeHtml, hasModuleAccess) : ''}
-            <button class="icon-btn" id="themeToggleBtn" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro">
-              ${themeIconSvg(getTheme())}
-            </button>
-            ${hasModuleAccess('settings') ? `
-            <button class="icon-btn settings-btn" id="settingsBtn" title="Configurações">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            <!-- Sino ligado ao painel Atenção: é a mesma contagem, então o
+                 número aqui e a lista de lá nunca discordam. -->
+            <button class="icon-btn topbar-sino" id="notifBtn" title="Pendências que precisam de ação" aria-label="Pendências que precisam de ação">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path>
+                <path d="M10.3 21a2 2 0 0 0 3.4 0"></path>
               </svg>
+              <span class="topbar-sino-marca" id="notifDot" hidden></span>
             </button>
-            ` : ''}
-            <button class="secondary" id="logoutBtn">Sair</button>
+            <!-- MENU DA CONTA
+                 =============
+                 Tema, Configurações e Sair eram três controles soltos na barra,
+                 disputando espaço com o sino e os atalhos — e "Sair" ficava a um
+                 clique de distância do resto, do lado de fora, sem confirmação.
+                 Agora são um item só, atrás do nome de quem está logado, que é
+                 onde se procura por eles.
+                 O chip continua mostrando a conta ativa mesmo fechado: num ERP
+                 cuja auditoria registra quem emitiu e quem cancelou nota, não dá
+                 para o usuário não saber com qual conta está. -->
+            <div class="topbar-conta">
+              <button type="button" class="topbar-usuario" id="contaBtn"
+                      aria-haspopup="menu" aria-expanded="false" aria-controls="contaMenu"
+                      title="${escapeHtml(state.user?.name || '')}">
+                <span class="topbar-avatar">${escapeHtml(iniciaisDoUsuario(state.user?.name))}</span>
+                <span class="topbar-usuario-nome">${escapeHtml(state.user?.name || 'Usuário')}</span>
+                <svg class="topbar-conta-seta" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6"></path>
+                </svg>
+              </button>
+              <div class="topbar-conta-menu" id="contaMenu" hidden role="menu">
+                <div class="topbar-conta-cabecalho">
+                  <span class="topbar-avatar topbar-avatar-grande">${escapeHtml(iniciaisDoUsuario(state.user?.name))}</span>
+                  <div>
+                    <strong>${escapeHtml(state.user?.name || 'Usuário')}</strong>
+                    <span class="muted">${escapeHtml(state.user?.username || '')}${state.user?.role === 'admin' ? ' · administrador' : ''}</span>
+                  </div>
+                </div>
+
+                <!-- O tema é um INTERRUPTOR, não uma ação: o ícone sozinho na
+                     barra nunca dizia em qual estado estava, só o que aconteceria
+                     ao clicar. Aqui o estado atual fica escrito. -->
+                <button type="button" class="topbar-conta-item" id="contaTema" role="menuitem">
+                  <span class="topbar-conta-icone">${themeIconSvg(getTheme())}</span>
+                  <span class="topbar-conta-texto">
+                    Tema
+                    <em>${getTheme() === 'dark' ? 'Escuro' : 'Claro'}</em>
+                  </span>
+                  <span class="topbar-conta-switch ${getTheme() === 'dark' ? 'ligado' : ''}" aria-hidden="true"><i></i></span>
+                </button>
+
+                ${hasModuleAccess('settings') ? `
+                <button type="button" class="topbar-conta-item" id="contaConfig" role="menuitem">
+                  <span class="topbar-conta-icone">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="3"></circle>
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                  </span>
+                  <span class="topbar-conta-texto">Configurações<em>Usuários, permissões e empresa</em></span>
+                </button>
+                ` : ''}
+
+                <div class="topbar-conta-divisor"></div>
+
+                <button type="button" class="topbar-conta-item topbar-conta-sair" id="logoutBtn" role="menuitem">
+                  <span class="topbar-conta-icone">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                      <path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path>
+                    </svg>
+                  </span>
+                  <span class="topbar-conta-texto">Sair</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
         <div id="moduleContent"></div>
@@ -688,6 +974,9 @@ function renderApp() {
   document.querySelectorAll('.nav-open-item').forEach((button) => {
     button.onclick = () => {
       const module = button.dataset.module;
+      // O balão some junto: o ícone sai de baixo do cursor quando a tela
+      // troca, e sem isto ele ficaria pendurado sobre o conteúdo novo.
+      esconderDicaDaSidebar();
       state.activeModule = module;
       state.activeSub = null;
       state.selectedModule = getSecondarySidebarConfig(module) ? module : null;
@@ -695,6 +984,19 @@ function renderApp() {
       loadModule(state.activeModule);
     };
   });
+
+  ligarSidebar();
+
+  // O sino ABRE a lista ali mesmo. Levar a uma tela obrigaria a abandonar o
+  // que se estava fazendo só para descobrir se havia algo a fazer.
+  document.getElementById('notifBtn')?.addEventListener('click', (evento) => {
+    evento.stopPropagation();
+    // Fecha o menu da conta: os dois flutuam no mesmo canto, e sobrepostos o
+    // usuário não sabe qual está lendo.
+    fecharMenuDaConta();
+    alternarPainelAtencao();
+  });
+  atualizarSinoDeAtencao();
 
   // submenu handlers
   document.querySelectorAll('.sub-open-item').forEach((btn) => {
@@ -729,12 +1031,46 @@ function renderApp() {
     });
   });
 
-  document.getElementById('themeToggleBtn')?.addEventListener('click', async () => {
+  // Menu da conta. Mesmo comportamento do menu de Atalhos, de propósito: abre
+  // no clique, fecha ao clicar fora, no Esc e ao escolher um item.
+  function fecharMenuDaConta() {
+    const menu = document.getElementById('contaMenu');
+    if (menu) menu.hidden = true;
+    document.getElementById('contaBtn')?.setAttribute('aria-expanded', 'false');
+  }
+
+  document.getElementById('contaBtn')?.addEventListener('click', (evento) => {
+    evento.stopPropagation();
+    const menu = document.getElementById('contaMenu');
+    if (!menu) return;
+    const abrindo = menu.hidden;
+    // Sino e conta não convivem abertos: dois painéis flutuantes sobrepostos no
+    // mesmo canto deixam o usuário sem saber qual está lendo.
+    fecharPainelAtencao();
+    menu.hidden = !abrindo;
+    document.getElementById('contaBtn')?.setAttribute('aria-expanded', String(abrindo));
+  });
+
+  // Uma vez só, e não a cada renderApp(): renderApp roda dezenas de vezes por
+  // sessão, e registrar aqui empilharia um listener por chamada — foi o defeito
+  // que o menu de Atalhos já teve.
+  if (!window.__mavisContaLigada) {
+    window.__mavisContaLigada = true;
+    document.addEventListener('click', (evento) => {
+      if (!evento.target.closest('.topbar-conta')) fecharMenuDaConta();
+    });
+    document.addEventListener('keydown', (evento) => {
+      if (evento.key === 'Escape') fecharMenuDaConta();
+    });
+  }
+
+  document.getElementById('contaTema')?.addEventListener('click', async () => {
     const nextTheme = getTheme() === 'dark' ? 'light' : 'dark';
     applyTheme(nextTheme);
-    const btn = document.getElementById('themeToggleBtn');
-    if (btn) btn.innerHTML = themeIconSvg(nextTheme);
     if (state.user) state.user.theme = nextTheme;
+    // renderApp() redesenha o chip com o ícone, o rótulo e o interruptor no
+    // estado novo — sem isso o menu continuaria dizendo "Claro" no escuro.
+    renderApp();
     try {
       await api('/api/me/theme', { method: 'PUT', body: JSON.stringify({ theme: nextTheme }) });
     } catch (error) {
@@ -742,7 +1078,7 @@ function renderApp() {
     }
   });
 
-  document.getElementById('settingsBtn')?.addEventListener('click', () => {
+  document.getElementById('contaConfig')?.addEventListener('click', () => {
     if (!hasModuleAccess('settings')) {
       showToast('Sem permissão para acessar Configurações.', 'warning');
       return;
@@ -847,6 +1183,7 @@ const moduleSubItems = {
 
   // ABA: Compras
   purchases: [
+    { key: 'painel', label: 'Painel de Compras', desc: 'Quanto entrou, de quem e a que preço.' },
     { key: 'new_purchase', label: 'Nova Compra', desc: 'Lança uma compra e dá entrada no estoque.' },
     { key: 'purchase_history', label: 'Histórico de Compras', desc: 'Compras registradas, por período e fornecedor.' },
     { key: 'suppliers', label: 'Fornecedores', desc: 'Fornecedores cadastrados e seus dados.' }
@@ -854,6 +1191,7 @@ const moduleSubItems = {
 
   // ABA: Estoque
   stock: [
+    { key: 'painel', label: 'Painel de Estoque', desc: 'Valor parado, giro do período e o que está para faltar.' },
     { key: 'price_manager', label: 'Gestor de Preços', desc: 'Ajusta preços de venda em lote, por margem ou valor.' },
     { key: 'movements', label: 'Movimentações', desc: 'Entradas, saídas e ajustes já lançados.' },
     { key: 'new_movement', label: 'Nova Movimentação', desc: 'Lança entrada, saída ou ajuste de estoque.' },
@@ -868,6 +1206,7 @@ const moduleSubItems = {
     { key: 'new_price_table', label: 'Nova Tabela de Preços', desc: 'Cria uma tabela de preços.' },
     { key: 'catalogs', label: 'Catálogos de Produtos', desc: 'Agrupa produtos por finalidade.' },
     { key: 'new_catalog', label: 'Novo Catálogo de Produtos', desc: 'Cria um catálogo de produtos.' },
+    { key: 'classes', label: 'Classes de Produto', desc: 'Cor, voltagem e afins — cada valor com saldo de estoque próprio.' },
     { key: 'product_categories', label: 'Categorias de Produtos', desc: 'Classificação usada nos produtos.' },
     { key: 'new_product_category', label: 'Nova Categoria de Produtos', desc: 'Cria uma categoria de produtos.' },
     { key: 'movement_categories', label: 'Categorias de Movimentações', desc: 'Classificação usada nas movimentações.' },
@@ -891,6 +1230,7 @@ const moduleSubItems = {
   // Fiscais" é quem decide QUAL desses códigos se aplica a cada operação, e é
   // de onde a emissão de NF-e tira CFOP e tributação de cada item.
   fiscal: [
+    { key: 'painel', label: 'Painel Fiscal', desc: 'Notas transmitidas, autorizadas e o que a SEFAZ recusou.' },
     // NF-e Emitidas e Nova NF-e Avulsa são as MESMAS telas do Financeiro,
     // espelhadas aqui (modules/fiscal/subs/nfe_espelho.js) — não uma segunda
     // versão para manter.
@@ -916,6 +1256,7 @@ const moduleSubItems = {
 
   // ABA: Frota de Veículos
   fleet: [
+    { key: 'painel', label: 'Painel de Frota', desc: 'Custo por veículo, combustível e manutenção.' },
     { key: 'veiculos', label: 'Veículos', desc: 'Frota cadastrada, com placa, situação e quilometragem.' },
     { key: 'novo_veiculo', label: 'Novo Veículo', desc: 'Cadastra um veículo na frota.' },
     { key: 'manutencoes', label: 'Manutenções', desc: 'Preventivas e corretivas, com custo e oficina.' },
@@ -940,6 +1281,7 @@ const moduleSubItems = {
   // "Novo X" no menu. Colaborador e Expediente têm campo demais para caber
   // embaixo da lista, e ficam com tela de formulário própria.
   hr: [
+    { key: 'painel', label: 'Painel de RH', desc: 'Quadro atual, admissões, desligamentos e afastados.' },
     { key: 'colaboradores', label: 'Colaboradores', desc: 'Quadro de pessoal, com profissão, departamento e admissão.' },
     { key: 'novo_colaborador', label: 'Novo Colaborador', desc: 'Cadastra um colaborador com vínculo, expediente e contrato.' },
     { key: 'departamentos', label: 'Departamentos', desc: 'Setores da empresa, com responsável e centro de custo.' },
@@ -958,6 +1300,7 @@ const moduleSubItems = {
   // Status PCP e Controle de Qualidade têm o formulário embutido na lista
   // (makeInlineRegisterScreen), por isso não têm o par "Novo X" no menu.
   pcp: [
+    { key: 'painel', label: 'Painel de Produção', desc: 'Fila, atrasos, produção apontada e qualidade.' },
     { key: 'ordens', label: 'Ordens de Produção', desc: 'Ordens abertas, em curso e concluídas, com setor e status.' },
     { key: 'nova_ordem', label: 'Nova Ordem Produção', desc: 'Abre uma ordem a partir de um produto.' },
     { key: 'setores', label: 'Setores PCP', desc: 'Centros de trabalho, na ordem em que a peça caminha.' },
@@ -974,6 +1317,7 @@ const moduleSubItems = {
   // TIPO é a classificação do contrato; MODELO é o texto que se reaproveita ao
   // emitir. São coisas diferentes e por isso são duas telas.
   contracts: [
+    { key: 'painel', label: 'Painel de Contratos', desc: 'Receita recorrente e o que vence à frente.' },
     { key: 'contratos', label: 'Contratos', desc: 'Contratos ativos, encerrados e seus valores, com aviso de prazo.' },
     { key: 'novo_contrato', label: 'Novo Contrato', desc: 'Registra um contrato com cliente ou fornecedor.' },
     { key: 'tipos', label: 'Tipos de Contratos', desc: 'Classificação do contrato e o prazo de aviso prévio de cada uma.' },
@@ -999,6 +1343,7 @@ const moduleSubItems = {
     { key: 'register', label: 'Nova Pessoa', desc: 'Cadastra pessoa física ou jurídica.' },
     { key: 'produtos', label: 'Produtos', desc: 'Produtos com dados comerciais e fiscais.' },
     { key: 'novo_produto', label: 'Novo Produto', desc: 'Cadastra um produto novo.' },
+    { key: 'classes_produto', label: 'Classes de Produto', desc: 'Cor, voltagem e afins — as mesmas do Estoque.' },
     { key: 'cashback', label: 'CashBack por Produto', desc: 'Percentual de cashback de cada produto.' },
     { key: 'agenda', label: 'Agenda de Tarefas', desc: 'Tarefas abertas e concluídas.' },
     { key: 'agendamentos', label: 'Agendamentos', desc: 'Compromissos marcados na agenda.' },
@@ -1028,12 +1373,28 @@ function escapeHtml(value = '') {
 // contêm o termo (não só as que começam com ele, como o <select> nativo faz).
 // Usa um <input type="hidden"> com o mesmo "name" por baixo, então
 // FormData(form) continua funcionando exatamente igual a um <select>.
+const LUPA_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>';
+
+/**
+ * Campo de busca com sugestão.
+ *
+ * NÃO abre a lista inteira ao receber o foco. Abrir despejava todos os
+ * cadastros em cima do formulário só por clicar no campo — com centenas de
+ * clientes, a lista não ajuda a achar ninguém e ainda tapa os campos de baixo.
+ * A sugestão aparece conforme se digita: "gal" traz "Galpão".
+ *
+ * A lupa é a saída para quem não sabe o nome: clicar nela abre a lista toda,
+ * de propósito. É o mesmo comportamento de antes, agora sob demanda — e é ela
+ * que diz, olhando, que o campo é de busca e não um texto qualquer.
+ */
 function renderSearchableSelect({ id, name, options, selectedValue, placeholder, required }) {
   const selected = options.find((o) => String(o.value) === String(selectedValue || ''));
   return `
     <div class="searchable-select" id="${id}Wrapper">
       <input type="text" class="searchable-select-input" id="${id}Input" autocomplete="off"
         placeholder="${escapeHtml(placeholder || 'Buscar...')}" value="${escapeHtml(selected ? selected.label : '')}" ${required ? 'required' : ''} />
+      <button type="button" class="searchable-select-lupa" id="${id}Lupa"
+        title="Ver todas as opções" aria-label="Ver todas as opções">${LUPA_SVG}</button>
       <input type="hidden" name="${name}" id="${id}Value" value="${escapeHtml(selectedValue || '')}" />
       <div class="searchable-select-dropdown" id="${id}Dropdown" hidden></div>
     </div>
@@ -1044,25 +1405,70 @@ function renderSearchableSelect({ id, name, options, selectedValue, placeholder,
 // desta tela, que são reconectados a cada re-render). `onSelect(value, option)`
 // dispara quando o usuário escolhe um item — `option` é o objeto original
 // passado em `options`, útil pra ler outros campos dele (preço, sku etc.).
+// Busca sem acento: quem digita "galpao" tem que achar "Galpão", e quem digita
+// "sao paulo" tem que achar "São Paulo". Sem isto o campo só serve para quem
+// acerta a acentuação de cabeça.
+function textoDeBusca(valor) {
+  return String(valor || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+}
+
 function attachSearchableSelect({ id, options, onSelect }) {
   const input = document.getElementById(`${id}Input`);
   const hidden = document.getElementById(`${id}Value`);
   const dropdown = document.getElementById(`${id}Dropdown`);
+  const lupa = document.getElementById(`${id}Lupa`);
   if (!input || !hidden || !dropdown) return;
 
-  function renderDropdown(filterText) {
-    const term = (filterText || '').trim().toLowerCase();
-    const filtered = term ? options.filter((o) => o.label.toLowerCase().includes(term)) : options;
-    dropdown.innerHTML = filtered.length
-      ? filtered.slice(0, 50).map((o) => `<div class="searchable-select-option" data-value="${escapeHtml(String(o.value))}">${escapeHtml(o.label)}</div>`).join('')
+  // Índice de busca calculado uma vez, não a cada tecla: normalizar centenas
+  // de rótulos a cada letra digitada trava o campo em cadastros grandes.
+  const indice = options.map((o) => ({ opcao: o, busca: textoDeBusca(o.label) }));
+
+  function renderDropdown(filterText, { mostrarTudo = false } = {}) {
+    const term = textoDeBusca(filterText).trim();
+    // Sem termo e sem pedido explícito pela lupa, não abre nada. É a diferença
+    // entre um campo de busca e um select disfarçado.
+    if (!term && !mostrarTudo) {
+      dropdown.hidden = true;
+      return;
+    }
+    const filtrados = term ? indice.filter((i) => i.busca.includes(term)) : indice;
+    // O corte em 50 é o que mantém a lista utilizável; sem avisar, o usuário
+    // procuraria um item que existe e não aparece.
+    const mostrados = filtrados.slice(0, 50);
+    const aviso = filtrados.length > mostrados.length
+      ? `<div class="searchable-select-empty">Mostrando ${mostrados.length} de ${filtrados.length} — digite mais para refinar.</div>`
+      : '';
+    dropdown.innerHTML = mostrados.length
+      ? mostrados.map(({ opcao }) => `<div class="searchable-select-option" data-value="${escapeHtml(String(opcao.value))}">${escapeHtml(opcao.label)}</div>`).join('') + aviso
       : '<div class="searchable-select-empty">Nenhum resultado</div>';
     dropdown.hidden = false;
   }
 
-  input.addEventListener('focus', () => renderDropdown(''));
   input.addEventListener('input', () => {
     hidden.value = '';
     renderDropdown(input.value);
+  });
+  // Digitar e reabrir o que já estava filtrado: se o campo tem texto, o foco
+  // mostra o que combina com ele — não a lista inteira.
+  input.addEventListener('focus', () => {
+    if (input.value.trim()) renderDropdown(input.value);
+  });
+  input.addEventListener('keydown', (evento) => {
+    if (evento.key === 'Escape' && !dropdown.hidden) {
+      evento.stopPropagation();
+      dropdown.hidden = true;
+    }
+  });
+  // A saída para quem não sabe o nome: abre tudo, sob demanda.
+  //
+  // mousedown com preventDefault, e não click: clicar tira o foco do input, e
+  // o blur agenda o fechamento do dropdown para 150ms depois — a lista abriria
+  // e sumiria sozinha. É o mesmo motivo pelo qual o dropdown usa mousedown.
+  lupa?.addEventListener('mousedown', (evento) => {
+    evento.preventDefault();
+    if (!dropdown.hidden) { dropdown.hidden = true; return; }
+    renderDropdown('', { mostrarTudo: true });
+    input.focus();
   });
   input.addEventListener('blur', () => {
     // atraso pra deixar o "mousedown" do clique na opção disparar antes do dropdown fechar
@@ -1086,58 +1492,16 @@ function sanitizeDigits(value) {
 }
 
 function formatCpfCnpj(value) {
-  const digits = sanitizeDigits(value).slice(0, 14);
-  if (digits.length <= 11) {
-    return digits
-      .replace(/(\d{3})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
-  }
-  return digits
-    .replace(/^(\d{2})(\d)/, '$1.$2')
-    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d)/, '.$1/$2')
-    .replace(/(\d{4})(\d)/, '$1-$2');
+  return window.MavisDocumento.formatar(value);
 }
 
-function isValidCpf(cpf) {
-  const cleaned = sanitizeDigits(cpf);
-  if (cleaned.length !== 11 || /^(\d)\1{10}$/.test(cleaned)) {
-    return false;
-  }
-
-  const calcDigit = (base, factor) => {
-    const total = base.split('').reduce((sum, digit) => sum + Number(digit) * factor--, 0);
-    const remainder = total % 11;
-    return remainder < 2 ? 0 : 11 - remainder;
-  };
-
-  const digit1 = calcDigit(cleaned.slice(0, 9), 10);
-  const digit2 = calcDigit(cleaned.slice(0, 10), 11);
-  return cleaned === `${cleaned.slice(0, 9)}${digit1}${digit2}`;
-}
-
-function isValidCnpj(cnpj) {
-  const cleaned = sanitizeDigits(cnpj);
-  if (cleaned.length !== 14 || /^(\d)\1{13}$/.test(cleaned)) {
-    return false;
-  }
-
-  const calcDigit = (base, weights) => {
-    const total = base.split('').reduce((sum, digit, index) => sum + Number(digit) * weights[index], 0);
-    const remainder = total % 11;
-    return remainder < 2 ? 0 : 11 - remainder;
-  };
-
-  const digit1 = calcDigit(cleaned.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
-  const digit2 = calcDigit(cleaned.slice(0, 12) + digit1, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
-  return cleaned === `${cleaned.slice(0, 12)}${digit1}${digit2}`;
-}
-
-function isValidDocument(documentValue) {
-  const digits = sanitizeDigits(documentValue);
-  return digits.length === 11 ? isValidCpf(digits) : digits.length === 14 ? isValidCnpj(digits) : false;
-}
+// CPF/CNPJ mora em modules/shared/documento.js, carregado antes deste arquivo.
+// Estes são apelidos: os nomes antigos continuam valendo nas dezenas de
+// chamadas espalhadas por esta tela, mas a REGRA é uma só — duas cópias
+// divergiriam na primeira correção feita de um lado.
+const isValidCpf = (cpf) => window.MavisDocumento.validoCpf(cpf);
+const isValidCnpj = (cnpj) => window.MavisDocumento.validoCnpj(cnpj);
+const isValidDocument = (documentValue) => window.MavisDocumento.valido(documentValue);
 
 function normalizeRegistrationText(value) {
   return String(value || '')
@@ -1202,20 +1566,8 @@ function findDuplicateRegistrationClient(existingRecords, record, excludeId) {
   return null;
 }
 
-function getDocumentType(documentValue) {
-  const digits = sanitizeDigits(documentValue);
-  if (digits.length === 11) return 'cpf';
-  if (digits.length === 14) return 'cnpj';
-  return '';
-}
-
-function maskDocumentValue(value, type = '') {
-  const digits = sanitizeDigits(value);
-  if (type === 'pessoa-juridica' || digits.length > 11) {
-    return formatCpfCnpj(digits.slice(0, 14));
-  }
-  return formatCpfCnpj(digits.slice(0, 11));
-}
+const getDocumentType = (documentValue) => window.MavisDocumento.tipoDe(documentValue);
+const maskDocumentValue = (value, type = '') => window.MavisDocumento.mascarar(value, type);
 
 function maskCep(value) {
   const digits = sanitizeDigits(value).slice(0, 8);
@@ -1587,7 +1939,7 @@ async function loadModule(moduleName) {
 
         // Se /api/sales/meta falhar, o formulário ainda abre — mas cada lista
         // precisa existir vazia aqui, senão o .map() do select derruba a tela.
-        let meta = { companies: [], sellers: [], deposits: [], directory: [], products: [], paymentMethods: [], carriers: [] };
+        let meta = { companies: [], sellers: [], deposits: [], directory: [], products: [], paymentMethods: [], carriers: [], productCategories: [], priceTables: [] };
         try {
           meta = { ...meta, ...(await api('/api/sales/meta')) };
         } catch (error) {
@@ -1618,13 +1970,101 @@ async function loadModule(moduleName) {
         // que ele está zerado é o erro que a coluna Saldo Estoque só pega
         // depois de adicionado. Renderização e attach usam o MESMO rótulo,
         // senão a lista aberta mostra um texto e o campo preenche outro.
-        const rotuloProduto = (p) => `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)} · saldo ${salesFormatQty(p.stockQuantity)}`;
+        const rotuloProduto = (p) => {
+          const reservado = Number((meta.reservas || {})[`${p.id}|`] || 0)
+            + Object.entries(meta.reservas || {})
+              .filter(([chave]) => chave.startsWith(`${p.id}|`) && chave !== `${p.id}|`)
+              .reduce((soma, [, qtd]) => soma + Number(qtd || 0), 0);
+          const livre = Number(p.stockQuantity || 0) - reservado;
+          // Quando há reserva o rótulo mostra os dois números: só o disponível
+          // faria parecer que o estoque acabou, e só o saldo esconderia que ele
+          // já está comprometido.
+          return `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)} · `
+            + (reservado > 0
+              ? `disponível ${salesFormatQty(livre)} de ${salesFormatQty(p.stockQuantity)}`
+              : `saldo ${salesFormatQty(p.stockQuantity)}`);
+        };
         // O servidor recusa faturar sem saldo (transitionOrderStockEffect) —
         // avisar aqui evita descobrir isso só na hora de aprovar. Vale só para
         // pedido: orçamento não reserva nada.
-        const itensSemSaldo = () => (recordType !== 'order' ? [] : items.filter((item) => {
+        // Cores (classes) por produto, buscadas sob demanda e guardadas aqui.
+        // A lista de produtos da venda não traz classe nenhuma — carregar o
+        // catálogo inteiro de cores para usar as de dois ou três produtos seria
+        // um payload jogado fora, e o saldo por cor muda a cada movimentação.
+        const classesPorProduto = new Map();
+        async function carregarClasses(productId) {
+          if (!productId || classesPorProduto.has(productId)) return classesPorProduto.get(productId) || null;
+          try {
+            const res = await api(`/api/stock/products/${productId}/classes`);
+            const lista = res.classes || [];
+            // Uma classe por item: o razão de estoque guarda um classValueId
+            // por movimento. Um produto com COR e VOLTAGEM usaria a primeira, e
+            // a tela avisa em vez de gravar metade da escolha.
+            const registro = {
+              classe: lista.find((c) => c.required) || lista[0] || null,
+              ignoradas: lista.filter((c) => c !== (lista.find((x) => x.required) || lista[0])),
+              saldos: res.saldos || {}
+            };
+            classesPorProduto.set(productId, registro);
+            return registro;
+          } catch (error) {
+            classesPorProduto.set(productId, null);
+            return null;
+          }
+        }
+        const classeDe = (productId) => classesPorProduto.get(productId)?.classe || null;
+
+        // Saldo que vale para ESTE item: o da cor quando há cor, o do produto
+        // quando não há. Devolve null enquanto as cores não chegaram — melhor
+        // não mostrar número nenhum do que mostrar o saldo geral no lugar do
+        // saldo da cor, que é sempre maior e sempre tranquilizador demais.
+        const saldoDoItem = (item) => {
           const produto = produtoDoItem(item);
-          return produto && Number(item.quantity || 0) > Number(produto.stockQuantity || 0);
+          if (!produto) return null;
+          if (!item.classValueId) return Number(produto.stockQuantity || 0);
+          const registro = classesPorProduto.get(item.productId);
+          if (!registro) return null;
+          return Number(registro.saldos[item.classValueId] || 0);
+        };
+
+        /**
+         * RESERVA — quanto deste produto/cor já foi prometido em OUTROS pedidos
+         * abertos.
+         *
+         * O que este pedido mesmo reserva não conta contra ele: senão aumentar
+         * de 3 para 4 unidades compararia o novo total com um saldo do qual as
+         * 3 antigas já saíram, e o pedido bloquearia a própria edição.
+         *
+         * A subtração só vale se o status SALVO reservava. Um pedido já
+         * faturado não está na conta de reservas — descontá-lo daria crédito
+         * duas vezes pela mesma mercadoria.
+         */
+        const reservasMeta = meta.reservas || {};
+        const itensSalvos = (editRecord && SalesStatus.reservaEstoque(editRecord.status))
+          ? (editRecord.items || [])
+          : [];
+        const reservadoPorOutros = (item) => {
+          const chave = `${item.productId}|${item.classValueId || ''}`;
+          const total = Number(reservasMeta[chave] || 0);
+          const meu = itensSalvos
+            .filter((i) => `${i.productId}|${i.classValueId || ''}` === chave)
+            .reduce((soma, i) => soma + Number(i.quantity || 0), 0);
+          return Math.max(0, total - meu);
+        };
+
+        // O número que decide a venda. Pode ficar negativo, e fica de propósito:
+        // promessa acima do saldo é um fato que alguém precisa ver para
+        // resolver, e cortar em zero o esconderia.
+        const disponivelDoItem = (item) => {
+          const saldo = saldoDoItem(item);
+          return saldo === null ? null : saldo - reservadoPorOutros(item);
+        };
+
+        // O alerta mede o DISPONÍVEL, não o saldo físico: era exatamente aí que
+        // duas vendas prometiam as mesmas unidades sem nada reclamar.
+        const itensSemSaldo = () => (recordType !== 'order' ? [] : items.filter((item) => {
+          const livre = disponivelDoItem(item);
+          return livre !== null && Number(item.quantity || 0) > livre;
         }));
 
         let discountAmount = Number(origem?.discountAmount || 0);
@@ -1784,7 +2224,18 @@ async function loadModule(moduleName) {
             depositId: formData.get('depositId') || '',
             date: formData.get('date') || '',
             dueDate: formData.get('dueDate') || '',
-            items: items.map((item) => ({ productId: item.productId, name: item.name, sku: item.sku, quantity: item.quantity, unitPrice: item.unitPrice })),
+            items: items.map((item) => ({
+              productId: item.productId,
+              name: item.name,
+              sku: item.sku,
+              // Sem a cor aqui, o pedido salvaria a linha certa e o faturamento
+              // baixaria do saldo geral — a quebra por cor nunca fecharia.
+              classId: item.classId || '',
+              classValueId: item.classValueId || '',
+              classValueName: item.classValueName || '',
+              quantity: item.quantity,
+              unitPrice: item.unitPrice
+            })),
             discountAmount,
             discountPercent,
             freight,
@@ -2145,13 +2596,13 @@ async function loadModule(moduleName) {
                     </select>
                   </label>
                   <label>Categoria
-                    <input name="category" value="${escapeHtml(formState.category)}" placeholder="Ex.: Revenda, Consumo" />
+                    ${renderSearchableSelect({ id: 'salesCategory', name: 'category', options: (meta.productCategories || []).map((c) => ({ value: c.name, label: c.name })), selectedValue: formState.category, placeholder: 'Buscar categoria...' })}
                   </label>
                 </div>
 
                 <div class="row">
                   <label>Tabela de Preços
-                    <input name="priceTable" value="${escapeHtml(formState.priceTable)}" placeholder="Padrão" />
+                    ${renderSearchableSelect({ id: 'salesPriceTable', name: 'priceTable', options: (meta.priceTables || []).map((t) => ({ value: t.name, label: t.name })), selectedValue: formState.priceTable, placeholder: 'Buscar tabela...' })}
                   </label>
                   <label>Depósito
                     ${renderSearchableSelect({ id: 'salesDeposit', name: 'depositId', options: meta.deposits.map((d) => ({ value: d.id, label: d.name })), selectedValue: formState.depositId, placeholder: 'Buscar depósito...' })}
@@ -2185,9 +2636,16 @@ async function loadModule(moduleName) {
                       <label style="flex: 2;">Produto
                         ${renderSearchableSelect({ id: 'salesProduct', name: 'productPick', options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p) })), selectedValue: '', placeholder: 'Buscar produto...' })}
                       </label>
+                      <!-- A cor só aparece depois de escolher o produto, e só
+                           para produto que tem cor. Um campo vazio permanente
+                           na tela é ruído para quem vende parafuso. -->
+                      <label id="salesClassField" hidden><span id="salesClassLabel">Cor</span>
+                        <select id="salesClassValue"><option value="">Selecione</option></select>
+                      </label>
                       <label>Quantidade<input id="salesProductQty" type="number" min="1" step="1" value="1" /></label>
                       <div style="align-self: end;"><button type="button" class="secondary" id="salesAddItemBtn">+ Adicionar</button></div>
                     </div>
+                    <p class="muted" id="salesClassAviso" hidden></p>
 
                     <!-- Cada linha mostra, lado a lado, os quatro números que
                          decidem a venda: o que existe em estoque, quanto o
@@ -2199,7 +2657,12 @@ async function loadModule(moduleName) {
                       <table class="table table-actions sales-items-table">
                         <thead><tr>
                           <th>Produto</th>
-                          <th>Saldo Estoque</th>
+                          <!-- "Disponível", não "Saldo": o número que decide a
+                               venda é o que sobra depois do que já foi
+                               prometido em outros pedidos. Mostrar o saldo
+                               físico aqui é o que deixava a mesma unidade ser
+                               vendida duas vezes. -->
+                          <th>Disponível</th>
                           <th>Preço cadastrado</th>
                           <th>Qtd.</th>
                           <th>Valor unit.</th>
@@ -2213,16 +2676,28 @@ async function loadModule(moduleName) {
                             // item continua válido no pedido, só não há mais
                             // saldo nem preço de referência para mostrar.
                             const semCadastro = !produto;
-                            const saldo = Number(produto?.stockQuantity || 0);
+                            // Item com cor mede o saldo DA COR: dizer que há 10
+                            // quando só 2 são pretos é a informação errada, e o
+                            // faturamento recusaria assim mesmo.
+                            const saldo = saldoDoItem(item);
+                            const saldoDesconhecido = saldo === null;
+                            // O que está prometido em outros pedidos e ainda
+                            // não saiu do depósito.
+                            const reservado = saldoDesconhecido ? 0 : reservadoPorOutros(item);
+                            const livre = saldoDesconhecido ? null : saldo - reservado;
                             // Só pedido reserva estoque — em orçamento o alerta
                             // seria barulho, nada vai ser baixado.
-                            const faltaSaldo = !semCadastro && recordType === 'order' && Number(item.quantity || 0) > saldo;
+                            const faltaSaldo = !semCadastro && !saldoDesconhecido && recordType === 'order' && Number(item.quantity || 0) > livre;
                             return `
                             <tr>
-                              <td>${escapeHtml(item.name)}${item.sku ? ` <span class="muted">(${escapeHtml(item.sku)})</span>` : ''}</td>
+                              <td>
+                                ${escapeHtml(item.name)}${item.sku ? ` <span class="muted">(${escapeHtml(item.sku)})</span>` : ''}
+                                ${item.classValueId ? `<span class="sales-item-cor">${escapeHtml(item.classValueName || item.classValueId)}</span>` : ''}
+                              </td>
                               <td class="sales-item-readonly ${faltaSaldo ? 'is-alerta' : ''}"
-                                  title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (faltaSaldo ? `Saldo insuficiente: faltam ${salesFormatQty(Number(item.quantity || 0) - saldo)}. O faturamento será recusado.` : 'Saldo atual no Estoque.')}">
-                                ${semCadastro ? '-' : salesFormatQty(saldo)}
+                                  title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (saldoDesconhecido ? 'Saldo desta cor ainda não carregado.' : `Em estoque: ${salesFormatQty(saldo)}. Reservado em outros pedidos: ${salesFormatQty(reservado)}. Livre para este ${title.toLowerCase()}: ${salesFormatQty(livre)}.${faltaSaldo ? ` Faltam ${salesFormatQty(Number(item.quantity || 0) - livre)} — o faturamento será recusado.` : ''}`)}">
+                                ${semCadastro || saldoDesconhecido ? '-' : salesFormatQty(livre)}
+                                ${!semCadastro && reservado > 0 ? `<span class="sales-item-reservado">de ${salesFormatQty(saldo)}</span>` : ''}
                               </td>
                               <td class="sales-item-readonly" title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : 'Preço de venda cadastrado no Estoque — referência, não é o que será cobrado.'}">
                                 ${semCadastro ? '-' : salesFormatBRL(produto.salePrice)}
@@ -2238,9 +2713,9 @@ async function loadModule(moduleName) {
                     </div>
                     ${itensSemSaldo().length ? `
                       <p class="sales-itens-alerta">
-                        Saldo insuficiente em ${itensSemSaldo().length === 1 ? '1 produto' : `${itensSemSaldo().length} produtos`}:
-                        ${escapeHtml(itensSemSaldo().map((item) => item.name).join(', '))}.
-                        Dá para salvar o pedido, mas faturar será recusado enquanto o estoque não cobrir.
+                        Estoque disponível não cobre ${itensSemSaldo().length === 1 ? '1 produto' : `${itensSemSaldo().length} produtos`}:
+                        ${escapeHtml(itensSemSaldo().map((item) => item.name + (item.classValueName ? ` (${item.classValueName})` : '')).join(', '))}.
+                        Dá para salvar o pedido, mas faturar será recusado enquanto não houver saldo livre — parte do estoque já está reservada em outros pedidos.
                       </p>` : ''}
                   </div>
                 </div>
@@ -2639,9 +3114,48 @@ async function loadModule(moduleName) {
           attachSearchableSelect({ id: 'salesCompany', options: meta.companies.map((c) => ({ value: c.id, label: c.name })) });
           attachSearchableSelect({ id: 'salesSeller', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })) });
           attachSearchableSelect({ id: 'salesDeposit', options: meta.deposits.map((d) => ({ value: d.id, label: d.name })) });
+          // Categoria e Tabela de Preços guardam o NOME, não um id: é o que o
+          // registro da venda sempre gravou, e trocar para id exigiria migrar
+          // as vendas antigas.
+          attachSearchableSelect({ id: 'salesCategory', options: (meta.productCategories || []).map((c) => ({ value: c.name, label: c.name })) });
+          attachSearchableSelect({ id: 'salesPriceTable', options: (meta.priceTables || []).map((t) => ({ value: t.name, label: t.name })) });
+          // Preenche o campo Cor a partir do produto escolhido. O saldo entra
+          // no rótulo pelo mesmo motivo do rótulo do produto: escolher a cor
+          // sem ver que ela está zerada só seria descoberto no faturamento.
+          async function montarCampoCor(productId) {
+            const campo = document.getElementById('salesClassField');
+            const select = document.getElementById('salesClassValue');
+            const aviso = document.getElementById('salesClassAviso');
+            if (!campo || !select) return;
+            const registro = productId ? await carregarClasses(productId) : null;
+            const classe = registro?.classe || null;
+            if (!classe) {
+              campo.hidden = true;
+              select.innerHTML = '<option value="">Selecione</option>';
+              if (aviso) aviso.hidden = true;
+              return;
+            }
+            campo.hidden = false;
+            const rotulo = document.getElementById('salesClassLabel');
+            if (rotulo) rotulo.textContent = classe.name;
+            const obrigatoria = classe.required !== false;
+            select.innerHTML = `<option value="">${obrigatoria ? 'Selecione' : `Sem ${escapeHtml(classe.name.toLowerCase())}`}</option>`
+              + classe.valores.map((valor) => {
+                const saldo = Number(registro.saldos[valor.id] || 0);
+                return `<option value="${escapeHtml(valor.id)}" data-nome="${escapeHtml(valor.name)}">${escapeHtml(`${valor.name} — ${salesFormatQty(saldo)} em estoque`)}</option>`;
+              }).join('');
+            if (aviso) {
+              aviso.hidden = !registro.ignoradas.length;
+              aviso.textContent = registro.ignoradas.length
+                ? `Este produto também usa ${registro.ignoradas.map((c) => c.name).join(', ')}, mas o item da venda registra apenas ${classe.name}.`
+                : '';
+            }
+          }
+
           attachSearchableSelect({
             id: 'salesProduct',
-            options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p), product: p }))
+            options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p), product: p })),
+            onSelect: (value) => { montarCampoCor(value); }
           });
 
           // Trocar Pedido <-> Orçamento muda o título, os rótulos e o campo
@@ -2661,10 +3175,28 @@ async function loadModule(moduleName) {
               return;
             }
             const quantity = Math.max(1, Number(qtyInput?.value || 1));
+            // A cor entra no item, não no produto: é isto que permite o mesmo
+            // produto duas vezes na mesma venda, uma linha por cor, cada uma
+            // baixando do seu próprio saldo.
+            const classe = classeDe(product.id);
+            const corSelect = document.getElementById('salesClassValue');
+            const classValueId = classe ? (corSelect?.value || '') : '';
+            if (classe && classe.required !== false && !classValueId) {
+              showToast(`Selecione ${classe.name.toLowerCase()} para este produto.`, 'warning');
+              return;
+            }
             items.push({
               productId: product.id,
               name: product.name,
               sku: product.sku || '',
+              classId: classValueId ? classe.classId : '',
+              classValueId,
+              // O nome fica gravado no item para a lista não depender do
+              // catálogo — e para o pedido antigo continuar dizendo "Preto"
+              // mesmo se a cor for desativada depois.
+              classValueName: classValueId
+                ? (corSelect.selectedOptions[0]?.dataset.nome || '')
+                : '',
               quantity,
               unitPrice: Number(product.salePrice || 0)
             });
@@ -2854,6 +3386,19 @@ async function loadModule(moduleName) {
         };
 
         renderForm();
+        // Pedido aberto para edição já vem com itens coloridos, e o saldo de
+        // cada cor só existe no servidor. Busca depois do primeiro render para
+        // a tela não ficar em branco esperando a rede, e redesenha quando
+        // chegar — até lá a coluna mostra "-", não um número errado.
+        const produtosDosItens = [...new Set(items.map((item) => item.productId).filter(Boolean))];
+        if (produtosDosItens.length) {
+          Promise.all(produtosDosItens.map((id) => carregarClasses(id)))
+            .then(() => {
+              if (!document.getElementById('salesRecordForm')) return;
+              syncFormState();  // o redesenho é assíncrono: o que já foi digitado não pode se perder
+              renderForm();
+            });
+        }
         return;
       }
 
@@ -4249,10 +4794,10 @@ async function loadModule(moduleName) {
         });
       });
 
+      // Delega para o módulo compartilhado: a máscara é a mesma de todas as
+      // outras telas, e o campo ganha de brinde a validação no blur.
       const bindDocumentMask = (input, typeGetter) => {
-        input?.addEventListener('input', () => {
-          input.value = maskDocumentValue(input.value, typeGetter());
-        });
+        window.MavisDocumento.ligar(input, { tipoGetter: typeGetter });
       };
 
       const markInvalidDocument = (draftTarget, key, message, document) => {

@@ -15,7 +15,7 @@ window.MavisSubscreenRegistry.cadastros.nova_empresa = window.MavisCadastros.mak
       fields: [
         { name: 'name', label: 'Razão social', required: true },
         { name: 'tradeName', label: 'Nome fantasia' },
-        { name: 'document', label: 'CNPJ', attrs: 'inputmode="numeric" maxlength="18"' }
+        { name: 'document', label: 'CNPJ', attrs: 'data-documento="cnpj"' }
       ]
     },
     {

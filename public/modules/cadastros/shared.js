@@ -279,6 +279,10 @@ window.MavisCadastros = window.MavisCadastros || {};
             </section>
           </div>
         `;
+        // Campos marcados com data-documento ganham máscara e validação de
+        // CPF/CNPJ. Seguro chamar a cada render: ligar() ignora input já ligado.
+        window.MavisDocumento?.ligarTodos(content);
+
 
         document.getElementById('cadastroListFilterToggle')?.addEventListener('click', () => {
           filters.show = !filters.show;
@@ -479,6 +483,10 @@ window.MavisCadastros = window.MavisCadastros || {};
             </form>
           </div>
         `;
+        // Campos marcados com data-documento ganham máscara e validação de
+        // CPF/CNPJ. Seguro chamar a cada render: ligar() ignora input já ligado.
+        window.MavisDocumento?.ligarTodos(content);
+
         ligar();
       }
 
@@ -675,6 +683,10 @@ window.MavisCadastros = window.MavisCadastros || {};
             </form>
           </div>
         `;
+        // Campos marcados com data-documento ganham máscara e validação de
+        // CPF/CNPJ. Seguro chamar a cada render: ligar() ignora input já ligado.
+        window.MavisDocumento?.ligarTodos(content);
+
         attachHandlers();
       }
 

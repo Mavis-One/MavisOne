@@ -7,7 +7,7 @@ window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisModuleRegistry.fleet = async function renderFleet(ctx) {
   const { state } = ctx;
   const registry = window.MavisSubscreenRegistry.fleet || {};
-  const sub = registry[state.activeSub] ? state.activeSub : 'veiculos';
+  const sub = registry[state.activeSub] ? state.activeSub : 'painel';
   if (sub !== state.activeSub) state.activeSub = sub;
   if (!registry[sub]) return;
   await registry[sub](ctx);

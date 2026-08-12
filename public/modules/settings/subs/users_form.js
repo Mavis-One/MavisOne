@@ -8,23 +8,12 @@ const SETTINGS_USER_MODULES = [
   'fleet', 'crm', 'hr', 'pcp', 'contracts', 'cadastros', 'settings'
 ];
 
-const SETTINGS_FISCAL_PERMISSIONS = [
-  { value: 'visualizar', label: 'Visualizar' },
-  { value: 'criar', label: 'Criar' },
-  { value: 'editar', label: 'Editar' },
-  { value: 'emitir', label: 'Emitir NF-e' },
-  { value: 'cancelar', label: 'Cancelar NF-e' },
-  { value: 'cce', label: 'Carta de Correção' },
-  { value: 'inutilizar', label: 'Inutilizar numeração' },
-  { value: 'configurar', label: 'Configurar empresa/estabelecimento' },
-  { value: 'regras', label: 'Regras fiscais' },
-  { value: 'certificado', label: 'Certificado digital' },
-  { value: 'documentos_recebidos', label: 'Documentos recebidos' },
-  { value: 'manifestar', label: 'Manifestar documentos' },
-  { value: 'xml', label: 'Baixar XML' },
-  { value: 'danfe', label: 'Baixar DANFE' },
-  { value: 'auditoria', label: 'Auditoria fiscal' }
-];
+// A lista mora em modules/shared/fiscal_permissoes.js, que o server.js também
+// carrega. Enquanto ela vivia aqui, a tela oferecia 15 permissões e o portão do
+// servidor só sabia exigir 10 — as outras 5 podiam ser marcadas e salvas sem
+// controlar nada. Duas listas para a mesma decisão divergem na primeira
+// alteração feita de um lado.
+const SETTINGS_FISCAL_PERMISSIONS = window.MavisFiscalPermissoes.CATALOGO;
 
 // Cadastro e edição de usuário são o mesmo formulário — só muda se o "Usuário"
 // (login) pode ser editado e se a Senha é obrigatória ou opcional.
@@ -74,9 +63,9 @@ function renderSettingsUserForm(ctx, mode) {
         </div>
         <div id="fiscalPermissionsSection" hidden>
           <h4>Permissões fiscais</h4>
-          <p class="muted">Só vale se o usuário tiver acesso ao módulo Financeiro ou Configurações.</p>
+          <p class="muted">Só vale se o usuário tiver acesso a Fiscal, Financeiro ou Configurações — os mesmos módulos que o servidor aceita.</p>
           <div class="checkbox-grid">
-            ${SETTINGS_FISCAL_PERMISSIONS.map((perm) => `<label><input type="checkbox" name="fiscalPermission" value="${perm.value}" ${(editUser?.fiscalPermissions || []).includes(perm.value) ? 'checked' : ''} /> ${perm.label}</label>`).join('')}
+            ${SETTINGS_FISCAL_PERMISSIONS.map((perm) => `<label title="${escapeHtml(perm.descricao || '')}"><input type="checkbox" name="fiscalPermission" value="${perm.value}" ${(editUser?.fiscalPermissions || []).includes(perm.value) ? 'checked' : ''} /> ${perm.label}</label>`).join('')}
           </div>
         </div>
         <div class="row">
@@ -90,7 +79,7 @@ function renderSettingsUserForm(ctx, mode) {
   function atualizarVisibilidadePermissoesFiscais() {
     const marcados = Array.from(document.querySelectorAll('.user-form-module:checked')).map((el) => el.value);
     const secao = document.getElementById('fiscalPermissionsSection');
-    if (secao) secao.hidden = !(marcados.includes('finance') || marcados.includes('settings'));
+    if (secao) secao.hidden = !window.MavisFiscalPermissoes.habilitadoPor(marcados);
   }
   document.querySelectorAll('.user-form-module').forEach((el) => el.addEventListener('change', atualizarVisibilidadePermissoesFiscais));
   atualizarVisibilidadePermissoesFiscais();

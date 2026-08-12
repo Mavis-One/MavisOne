@@ -24,8 +24,16 @@ const NFE_FOCUS_TIPO_OPERACAO_OPTIONS = [
   { value: 'REMESSA', label: 'Remessa' },
   { value: 'RETORNO', label: 'Retorno' },
   { value: 'DEVOLUCAO', label: 'Devolução' },
-  { value: 'BONIFICACAO', label: 'Bonificação' }
+  { value: 'BONIFICACAO', label: 'Bonificação' },
+  // Complemento de ICMS não é venda: não entrega mercadoria, não baixa estoque
+  // e não gera recebível. A tela muda de forma ao escolhê-lo.
+  { value: 'COMPLEMENTO_ICMS', label: 'Complemento de ICMS' }
 ];
+
+// Espelho, no navegador, do catálogo de lib/operacaoFiscal.js. Só o que a TELA
+// precisa saber para se comportar; quem valida de verdade é o servidor — o
+// front some numa aba fechada, o servidor não.
+const NFE_FOCUS_COMPLEMENTO = 'COMPLEMENTO_ICMS';
 
 const NFE_FOCUS_STATUS_BADGE = {
   RASCUNHO: 'finance-badge-muted',
@@ -47,6 +55,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   let itens = [{ produtoId: '', descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0 }];
   let notasRecentes = [];
   let ultimoResultado = null;
+
+  // Operação escolhida. É ela que decide a FORMA da tela: no complemento de
+  // ICMS não há mercadoria a listar nem pagamento a informar — há uma nota
+  // original a referenciar e um imposto a destacar.
+  let tipoOperacao = 'VENDA';
+  const ehComplemento = () => tipoOperacao === NFE_FOCUS_COMPLEMENTO;
+  const complemento = { chave: '', numero: '', serie: '', baseIcms: 0, aliquota: 0, valorIcms: 0, informacoes: '' };
+  // Editado à mão? Então parar de sobrescrever com o texto sugerido.
+  let informacoesEditadas = false;
 
   const destinatario = { nome: '', documento: '', contribuinte: false, inscricaoEstadual: '', cep: '', logradouro: '', numero: '', complemento: '', bairro: '', municipio: '', uf: '', codigoMunicipio: '' };
 
@@ -101,6 +118,25 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         origem: 0
       }));
     }
+  }
+
+  // Um lugar só para ler o destinatário: a nota comum e a complementar usam os
+  // mesmos campos, e duas leituras divergiriam na primeira mudança de rótulo.
+  function lerDestinatario(formData) {
+    return {
+      nome: formData.get('destNome'),
+      documento: formData.get('destDocumento'),
+      contribuinte: formData.get('destContribuinte') === 'on',
+      inscricaoEstadual: formData.get('destIe'),
+      cep: (formData.get('destCep') || '').replace(/\D/g, ''),
+      logradouro: formData.get('destLogradouro'),
+      numero: formData.get('destNumero'),
+      complemento: formData.get('destComplemento'),
+      bairro: formData.get('destBairro'),
+      municipio: formData.get('destMunicipio'),
+      uf: formData.get('destUf'),
+      codigoMunicipio: formData.get('destCodigoMunicipio')
+    };
   }
 
   function itemTotal(item) {
@@ -221,8 +257,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           <div class="cadastro-tabs" role="tablist">
             <button type="button" class="cadastro-tab active" data-tab="emitente" role="tab" aria-selected="true"><span>1. Emitente</span></button>
             <button type="button" class="cadastro-tab" data-tab="destinatario" role="tab" aria-selected="false"><span>2. Destinatário</span></button>
-            <button type="button" class="cadastro-tab" data-tab="itens" role="tab" aria-selected="false"><span>3. Itens</span></button>
-            <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>4. Pagamento</span></button>
+            ${ehComplemento()
+              ? '<button type="button" class="cadastro-tab" data-tab="complemento" role="tab" aria-selected="false"><span>3. Complemento de ICMS</span></button>'
+              : `<button type="button" class="cadastro-tab" data-tab="itens" role="tab" aria-selected="false"><span>3. Itens</span></button>
+                 <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>4. Pagamento</span></button>`}
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="emitente">
@@ -251,7 +289,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             </select>
             <div class="row">
               <label>Nome / Razão social<input name="destNome" required value="${escapeHtml(destinatario.nome)}" /></label>
-              <label>CPF/CNPJ<input name="destDocumento" required value="${escapeHtml(destinatario.documento)}" /></label>
+              <label>CPF/CNPJ<input name="destDocumento" required data-documento value="${escapeHtml(destinatario.documento)}" /></label>
               <label><input type="checkbox" name="destContribuinte" /> Contribuinte de ICMS</label>
             </div>
             <label>Inscrição estadual (se contribuinte)<input name="destIe" value="${escapeHtml(destinatario.inscricaoEstadual)}" /></label>
@@ -272,7 +310,62 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <input type="hidden" name="destCodigoMunicipio" />
           </div>
 
-          <div class="cadastro-tab-panel" data-tab-panel="itens" hidden>
+          ${ehComplemento() ? `
+          <div class="cadastro-tab-panel" data-tab-panel="complemento" hidden>
+            <p class="fiscal-aviso-homologacao">
+              <strong>Nota complementar de ICMS.</strong> Não movimenta estoque, não gera
+              contas a receber e não acrescenta valor de mercadoria — destaca apenas o imposto
+              que faltou na nota original. O item sai como <strong>escritural</strong>
+              (código CFOP5.949), com quantidade e valor zerados, conforme orientação da SEF/SC.
+            </p>
+
+            <div class="cadastro-section">
+              <div class="cadastro-section-header"><h4>NF-e original</h4>
+                <p>Obrigatória: a SEFAZ recusa uma complementar que não diga qual documento ela complementa.</p></div>
+              <div class="cadastro-section-body">
+                <label>Chave de acesso da NF-e original *
+                  <input name="complementoChave" required inputmode="numeric" maxlength="44"
+                    value="${escapeHtml(complemento.chave)}" placeholder="44 dígitos" />
+                </label>
+                <div class="row">
+                  <label>Número<input name="complementoNumero" value="${escapeHtml(complemento.numero)}" /></label>
+                  <label>Série<input name="complementoSerie" value="${escapeHtml(complemento.serie)}" /></label>
+                </div>
+              </div>
+            </div>
+
+            <div class="cadastro-section">
+              <div class="cadastro-section-header"><h4>ICMS a complementar</h4>
+                <p>A base é o valor que ficou de fora da nota original — não o valor do item, que é zero.</p></div>
+              <div class="cadastro-section-body">
+                <div class="row">
+                  <label>Base de cálculo do ICMS (R$) *
+                    <input name="complementoBase" type="number" step="0.01" min="0" required value="${complemento.baseIcms || ''}" />
+                  </label>
+                  <label>Alíquota (%) *
+                    <input name="complementoAliquota" type="number" step="0.0001" min="0" max="100" required value="${complemento.aliquota || ''}" />
+                  </label>
+                  <label>Valor do ICMS (R$) *
+                    <input name="complementoValor" type="number" step="0.01" min="0" required value="${complemento.valorIcms || ''}" />
+                    <small class="muted">Calculado ao preencher base e alíquota. Pode ser ajustado para o valor efetivamente apurado.</small>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="cadastro-section">
+              <div class="cadastro-section-header"><h4>Informações complementares</h4>
+                <p>Vai no corpo da nota. É o que liga este documento à nota original para quem lê o DANFE.</p></div>
+              <div class="cadastro-section-body">
+                <label>Texto *
+                  <textarea name="complementoInformacoes" rows="3" required>${escapeHtml(complemento.informacoes)}</textarea>
+                </label>
+              </div>
+            </div>
+          </div>
+          ` : ''}
+
+          ${ehComplemento() ? '' : `
             <div class="table-scroll">
               <table class="table">
                 <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th>Total</th><th></th></tr></thead>
@@ -319,7 +412,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <label>Intervalo entre parcelas (dias)<input type="number" name="installmentIntervalDays" min="1" value="30" /></label>
             </div>
           </div>
-
+          `}
           <button type="submit" id="nfeFocusSubmitBtn">Emitir NF-e</button>
         </form>
         `}
@@ -330,6 +423,47 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     `;
 
     attachHandlers();
+    // Máscara e validação de CPF/CNPJ, iguais às do Cadastro de Pessoas.
+    window.MavisDocumento?.ligarTodos(content);
+
+    // Consulta do CNPJ do destinatário na Receita. Aqui ela paga mais do que
+    // em qualquer outra tela: endereço errado numa NF-e é rejeição da SEFAZ ou
+    // nota autorizada com dado divergente do cadastro nacional.
+    const campoDoc = content.querySelector('[name="destDocumento"]');
+    if (campoDoc) {
+      const form = () => document.getElementById('nfeFocusForm');
+      const preencher = (nome, valor) => {
+        const campo = form()?.querySelector(`[name="${nome}"]`);
+        // Só o que está vazio: quem escolheu um cliente cadastrado já trouxe
+        // os dados dele, e a Receita costuma estar mais desatualizada.
+        if (campo && !String(campo.value || '').trim() && valor) campo.value = valor;
+      };
+      window.MavisDocumento.ligarConsultaCnpj(campoDoc, {
+        api,
+        showToast,
+        devePreencherSozinho: () => !String(form()?.querySelector('[name="destNome"]')?.value || '').trim(),
+        aoEncontrar: (dados) => {
+          preencher('destNome', dados.razaoSocial || dados.nomeFantasia);
+          preencher('destCep', dados.cep);
+          preencher('destLogradouro', dados.logradouro);
+          preencher('destNumero', dados.numero);
+          preencher('destComplemento', dados.complemento);
+          preencher('destBairro', dados.bairro);
+          preencher('destMunicipio', dados.municipio);
+          preencher('destUf', dados.uf);
+          // O código IBGE do município é campo da nota: preencher errado é
+          // rejeição na hora de transmitir. Só entra quando a Receita mandou
+          // o código IBGE de verdade — o "Buscar CEP" continua sendo a outra
+          // forma de obtê-lo.
+          preencher('destCodigoMunicipio', dados.codigoMunicipioIbge);
+          // Quem tem CNPJ é presumidamente contribuinte; a inscrição estadual
+          // não vem da Receita federal, então o checkbox fica marcado e a IE
+          // continua em branco para ser preenchida à mão.
+          const contribuinte = form()?.querySelector('[name="destContribuinte"]');
+          if (contribuinte && !contribuinte.checked) contribuinte.checked = true;
+        }
+      });
+    }
   }
 
   function refreshItemsTable() {
@@ -472,6 +606,66 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         ?.classList.toggle('hidden', evento.target.value !== 'parcelado');
     });
 
+    // Trocar de operação redesenha a tela: no complemento não há aba de itens
+    // nem de pagamento, e há uma de nota original. Esconder por CSS deixaria
+    // campos `required` invisíveis travando o submit sem dizer onde.
+    document.querySelector('[name="tipoOperacao"]')?.addEventListener('change', (evento) => {
+      tipoOperacao = evento.target.value;
+      renderForm();
+    });
+
+    // ICMS = base × alíquota, recalculado a cada digitação — mas o campo do
+    // valor continua editável: o complemento pode ser uma diferença apurada,
+    // que não sai de uma multiplicação simples.
+    const recalcularIcms = () => {
+      const form = document.getElementById('nfeFocusForm');
+      if (!form) return;
+      const base = Number(form.querySelector('[name="complementoBase"]')?.value || 0);
+      const aliquota = Number(form.querySelector('[name="complementoAliquota"]')?.value || 0);
+      const campoValor = form.querySelector('[name="complementoValor"]');
+      if (!campoValor) return;
+      complemento.baseIcms = base;
+      complemento.aliquota = aliquota;
+      const calculado = Math.round(((base * aliquota) / 100 + Number.EPSILON) * 100) / 100;
+      complemento.valorIcms = calculado;
+      campoValor.value = calculado ? calculado.toFixed(2) : '';
+    };
+    document.querySelector('[name="complementoBase"]')?.addEventListener('input', recalcularIcms);
+    document.querySelector('[name="complementoAliquota"]')?.addEventListener('input', recalcularIcms);
+    document.querySelector('[name="complementoValor"]')?.addEventListener('input', (evento) => {
+      complemento.valorIcms = Number(evento.target.value || 0);
+    });
+
+    // Texto sugerido das informações complementares, montado a partir da nota
+    // original. Para de se atualizar assim que o usuário escreve algo — o que
+    // ele digitou vale mais do que a sugestão.
+    const atualizarTextoComplemento = () => {
+      const form = document.getElementById('nfeFocusForm');
+      const campo = form?.querySelector('[name="complementoInformacoes"]');
+      if (!campo || informacoesEditadas) return;
+      const chave = (form.querySelector('[name="complementoChave"]')?.value || '').replace(/\D/g, '');
+      const numero = form.querySelector('[name="complementoNumero"]')?.value || '';
+      const serie = form.querySelector('[name="complementoSerie"]')?.value || '';
+      const partes = [];
+      if (numero) partes.push(`Nº ${numero}`);
+      if (serie) partes.push(`SÉRIE ${serie}`);
+      if (chave) partes.push(`CHAVE DE ACESSO ${chave}`);
+      campo.value = `NF-E COMPLEMENTAR DE ICMS REFERENTE À NF-E${partes.length ? ' ' + partes.join(', ') : ''}. `
+        + 'COMPLEMENTO DO VALOR DO ICMS NÃO DESTACADO NA NF-E ORIGINAL.';
+      complemento.informacoes = campo.value;
+    };
+    ['complementoChave', 'complementoNumero', 'complementoSerie'].forEach((nome) => {
+      document.querySelector(`[name="${nome}"]`)?.addEventListener('input', (evento) => {
+        complemento[nome.replace('complemento', '').toLowerCase()] = evento.target.value;
+        atualizarTextoComplemento();
+      });
+    });
+    document.querySelector('[name="complementoInformacoes"]')?.addEventListener('input', (evento) => {
+      informacoesEditadas = true;
+      complemento.informacoes = evento.target.value;
+    });
+    if (ehComplemento()) atualizarTextoComplemento();
+
     document.getElementById('nfeFocusForm')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!selectedEstabelecimentoId) {
@@ -483,6 +677,61 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       if (submitBtn) submitBtn.disabled = true;
 
       const formData = new FormData(event.target);
+
+      // A NOTA COMPLEMENTAR TEM OUTRA FORMA.
+      //
+      // Um único item escritural, quantidade e valor zerados, o ICMS carregado
+      // por fora e a chave da original referenciada. Nada de itens da tabela,
+      // nada de pagamento: não há mercadoria nem recebível.
+      if (ehComplemento()) {
+        const chave = String(formData.get('complementoChave') || '').replace(/\D/g, '');
+        const valorIcms = Number(formData.get('complementoValor') || 0);
+        // Barrado aqui só para poupar a viagem: quem realmente valida é o
+        // servidor, que a aba fechada não some.
+        if (chave.length !== 44) {
+          showToast('Informe a chave de acesso da NF-e original (44 dígitos).', 'error');
+          if (submitBtn) submitBtn.disabled = false;
+          return;
+        }
+        if (!(valorIcms > 0)) {
+          showToast('Informe o valor do ICMS a complementar.', 'error');
+          if (submitBtn) submitBtn.disabled = false;
+          return;
+        }
+        const corpo = {
+          estabelecimentoId: selectedEstabelecimentoId,
+          tipoOperacao: NFE_FOCUS_COMPLEMENTO,
+          naturezaOperacao: formData.get('naturezaOperacao') || 'Complemento de ICMS',
+          dataEmissao: formData.get('dataEmissao') ? new Date(formData.get('dataEmissao')).toISOString() : undefined,
+          destinatario: lerDestinatario(formData),
+          referencias: [{ chaveAcesso: chave }],
+          // O servidor resolve o produto escritural pelo SKU e recusa se ele
+          // não for escritural — não dá para mandar uma mercadoria disfarçada.
+          itens: [{
+            produtoEscritural: 'CFOP5.949',
+            quantidade: 0,
+            valorUnitario: 0,
+            baseIcms: Number(formData.get('complementoBase') || 0),
+            aliquotaIcms: Number(formData.get('complementoAliquota') || 0),
+            valorIcms
+          }],
+          informacoesAdicionais: formData.get('complementoInformacoes') || ''
+        };
+        try {
+          const result = await api('/api/fiscal/nfe/emitir', { method: 'POST', body: JSON.stringify(corpo) });
+          ultimoResultado = result.nfe;
+          showToast(`NF-e complementar ${result.nfe.status === 'AUTORIZADO' ? 'autorizada' : String(result.nfe.status).toLowerCase()}.`,
+            result.nfe.status === 'ERRO' ? 'error' : 'success');
+        } catch (error) {
+          showToast(error.message || 'Erro ao emitir a NF-e complementar.', 'error');
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+          await loadNotasRecentes();
+          renderForm();
+        }
+        return;
+      }
+
       const body = {
         estabelecimentoId: selectedEstabelecimentoId,
         tipoOperacao: formData.get('tipoOperacao'),

@@ -57,8 +57,33 @@ window.MavisStock = window.MavisStock || {};
       return await api('/api/stock/meta');
     } catch (error) {
       if (showToast) showToast('Não foi possível carregar os cadastros de apoio do estoque.', 'warning');
-      return { deposits: [], productCategories: [], movementCategories: [], priceTables: [], catalogs: [], products: [] };
+      return { deposits: [], classes: [], productCategories: [], movementCategories: [], priceTables: [], catalogs: [], products: [] };
     }
+  };
+
+  // O razão guarda o classValueId; o nome legível está no catálogo, que vem no
+  // meta. Um índice em vez de um find por linha: a tabela de movimentações tem
+  // 20 linhas por página e o catálogo cresce com o cadastro.
+  Stock.indiceDeCores = function indiceDeCores(meta) {
+    const indice = new Map();
+    for (const classe of (meta?.classes || [])) {
+      for (const valor of (classe.valores || [])) {
+        indice.set(valor.id, { ...valor, className: classe.name });
+      }
+    }
+    return indice;
+  };
+
+  // Selo da cor. Sem nome no catálogo o id aparece cru, de propósito: some da
+  // tela seria pior — o movimento existe e alguém precisa conseguir rastreá-lo.
+  Stock.corBadge = function corBadge(indice, classValueId) {
+    if (!classValueId) return '';
+    const valor = indice.get(classValueId);
+    const hex = valor?.hex || '';
+    const nome = valor?.name || classValueId;
+    return `<span class="stock-cor-selo" title="${Stock.escape(valor?.className || 'Classe')}">`
+      + (hex ? `<span class="stock-cor-bolinha" style="background:${Stock.escape(hex)}"></span>` : '')
+      + `${Stock.escape(nome)}</span>`;
   };
 
   Stock.options = function options(list, selectedId, { labelKey = 'name', valueKey = 'id', empty = 'Selecione' } = {}) {

@@ -6,9 +6,10 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
-  const filters = { search: '', type: '', productId: '', depositId: '', categoryId: '', dateFrom: '', dateTo: '' };
+  const filters = { search: '', type: '', productId: '', depositId: '', categoryId: '', classValueId: '', dateFrom: '', dateTo: '' };
   let page = 1;
   const limit = 20;
+  const cores = S.indiceDeCores(meta);
 
   const eyeIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
 
@@ -42,6 +43,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
             ${detailItem('Tipo', S.badge(movement.type === 'entrada' ? 'Entrada' : 'Saída', movement.type === 'entrada' ? 'success' : 'danger'))}
             ${detailItem('Produto', `${S.escape(movement.productName)}${movement.productSku ? ` <span class="muted">(${S.escape(movement.productSku)})</span>` : ''}`)}
             ${detailItem('Depósito', S.escape(movement.depositName || '-'))}
+            ${movement.classValueId ? detailItem(cores.get(movement.classValueId)?.className || 'Classe', S.corBadge(cores, movement.classValueId)) : ''}
             ${detailItem('Quantidade', `${movement.type === 'entrada' ? '+' : '-'}${S.formatQty(movement.quantity)}`)}
             ${detailItem('Custo unitário', S.formatBRL(movement.unitCost))}
             ${detailItem('Custo total', S.formatBRL(movement.totalCost))}
@@ -64,6 +66,28 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
     overlay.addEventListener('click', (event) => { if (event.target === overlay) closeDetailModal(); });
     document.getElementById('movDetailClose')?.addEventListener('click', closeDetailModal);
     document.addEventListener('keydown', onDetailKeydown);
+  }
+
+  // O filtro só existe se houver catálogo de cores — em quem não usa classe,
+  // um campo permanentemente vazio seria só mais um campo para ignorar.
+  function corFilterField() {
+    if (!cores.size) return '';
+    const grupos = (meta.classes || []).filter((c) => (c.valores || []).length).map((classe) => `
+      <optgroup label="${S.escape(classe.name)}">
+        ${classe.valores.map((valor) => `<option value="${S.escape(valor.id)}" ${filters.classValueId === valor.id ? 'selected' : ''}>${S.escape(valor.name)}</option>`).join('')}
+      </optgroup>
+    `).join('');
+    return `
+      <label>Cor
+        <select name="classValueId">
+          <option value="">Todas</option>
+          ${grupos}
+          <!-- Saldo herdado de antes do controle por cor. É o que precisa ser
+               classificado, e sem esta opção não há como encontrá-lo. -->
+          <option value="_sem" ${filters.classValueId === '_sem' ? 'selected' : ''}>Sem cor</option>
+        </select>
+      </label>
+    `;
   }
 
   async function fetchMovements() {
@@ -103,6 +127,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
           </div>
           <div class="row">
             <label>Categoria<select name="categoryId">${S.options(meta.movementCategories, filters.categoryId, { empty: 'Todas' })}</select></label>
+            ${corFilterField()}
             <label>De<input type="date" name="dateFrom" value="${filters.dateFrom}" /></label>
             <label>Até<input type="date" name="dateTo" value="${filters.dateTo}" /></label>
           </div>
@@ -131,7 +156,10 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
                   <td>${S.escape(movement.code)}</td>
                   <td>${S.formatDate(movement.date)}</td>
                   <td>${S.badge(movement.type === 'entrada' ? 'Entrada' : 'Saída', movement.type === 'entrada' ? 'success' : 'danger')}</td>
-                  <td>${S.escape(movement.productName)}${movement.productSku ? ` <span class="muted">(${S.escape(movement.productSku)})</span>` : ''}</td>
+                  <!-- A cor entra ao lado do produto, não numa coluna própria:
+                       a tabela já tem 11 colunas, e a maioria dos produtos não
+                       tem cor nenhuma para mostrar. -->
+                  <td>${S.escape(movement.productName)}${movement.productSku ? ` <span class="muted">(${S.escape(movement.productSku)})</span>` : ''}${S.corBadge(cores, movement.classValueId)}</td>
                   <td>${S.escape(movement.depositName || '-')}</td>
                   <td>${movement.type === 'entrada' ? '+' : '-'}${S.formatQty(movement.quantity)}</td>
                   <td>${S.formatBRL(movement.unitCost)}</td>

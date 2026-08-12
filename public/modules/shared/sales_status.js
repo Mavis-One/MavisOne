@@ -142,6 +142,25 @@
   const rotulo = (status, tipoRegistro) => meta(status, tipoRegistro).label;
 
   /**
+   * O status SEGURA estoque sem ter baixado?
+   *
+   * É a janela entre prometer e entregar: pedido fechado, mercadoria ainda no
+   * depósito. Quem está aqui reserva (ver lib/reservas.js).
+   *
+   * Derivado dos três campos que já definem cada status, em vez de uma lista
+   * própria: uma lista à parte faria um status novo nascer sem reserva e sem
+   * ninguém notar, que é exatamente como as unidades acabavam prometidas duas
+   * vezes.
+   *   - orçamento não reserva: é proposta, não compromisso;
+   *   - cancelado não reserva: deixou de ser promessa;
+   *   - quem já baixou não reserva: virou movimento, o saldo já caiu.
+   */
+  const reservaEstoque = (status, tipoRegistro) => {
+    const m = meta(status, tipoRegistro);
+    return m.tipo === 'order' && !m.baixaEstoque && !m.cancelado;
+  };
+
+  /**
    * Opções do <select> da tela, na ordem do catálogo.
    *
    * Os não-selecionáveis vêm com `disabled: true` — continuam à vista, mas o
@@ -165,6 +184,7 @@
     meta,
     tipoDoStatus,
     baixaEstoque,
+    reservaEstoque,
     geraFinanceiro,
     ehCancelado,
     rotulo,

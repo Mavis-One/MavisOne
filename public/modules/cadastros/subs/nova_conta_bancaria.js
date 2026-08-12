@@ -51,7 +51,7 @@ window.MavisSubscreenRegistry.cadastros.nova_conta_bancaria = window.MavisCadast
           title: 'Titularidade',
           fields: [
             { name: 'holder', label: 'Titular' },
-            { name: 'document', label: 'CPF/CNPJ do titular', hint: 'Validado ao salvar' },
+            { name: 'document', label: 'CPF/CNPJ do titular', attrs: 'data-documento' },
             { name: 'pixKey', label: 'Chave PIX' }
           ]
         }

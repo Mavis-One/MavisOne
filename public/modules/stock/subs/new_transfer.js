@@ -6,9 +6,16 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
+  const cores = S.indiceDeCores(meta);
   let productDetail = null;
+  let classeDoProduto = null;
+  let classesIgnoradas = [];
+  let classValueId = '';
 
   async function loadProductDetail(productId) {
+    classeDoProduto = null;
+    classesIgnoradas = [];
+    classValueId = '';
     if (!productId) { productDetail = null; return; }
     try {
       const res = await api(`/api/stock/products/${productId}`);
@@ -16,17 +23,55 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
     } catch (error) {
       productDetail = null;
     }
+    try {
+      const res = await api(`/api/stock/products/${productId}/classes`);
+      const classes = res.classes || [];
+      // Uma classe por movimento, como na entrada e na venda: o razão guarda
+      // um classValueId, e a transferência gera dois movimentos.
+      classeDoProduto = classes.find((c) => c.required) || classes[0] || null;
+      classesIgnoradas = classes.filter((c) => c !== classeDoProduto);
+    } catch (error) {
+      classeDoProduto = null;
+    }
+  }
+
+  function classeField() {
+    if (!classeDoProduto) return '';
+    const obrigatoria = classeDoProduto.required !== false;
+    return `
+      <div class="row">
+        <label>${S.escape(classeDoProduto.name)}${obrigatoria ? '' : ' <span class="muted">(opcional)</span>'}
+          <select name="classValueId" id="transferClassValue" ${obrigatoria ? 'required' : ''}>
+            <option value="">${obrigatoria ? 'Selecione' : `Sem ${S.escape(classeDoProduto.name.toLowerCase())}`}</option>
+            ${classeDoProduto.valores.map((valor) => `<option value="${S.escape(valor.id)}" ${valor.id === classValueId ? 'selected' : ''}>${S.escape(valor.name)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      ${classesIgnoradas.length ? `<p class="muted">Este produto também usa ${S.escape(classesIgnoradas.map((c) => c.name).join(', '))}, mas a transferência registra apenas ${S.escape(classeDoProduto.name)}.</p>` : ''}
+    `;
+  }
+
+  // A tabela mostra o saldo DA COR escolhida, não o total do depósito. Saber
+  // que há 12 no Galpão A não diz se algum deles é preto — e transferir do
+  // depósito errado só é recusado no envio, com o formulário já preenchido.
+  function saldoDaLinha(balance) {
+    if (!classValueId) return balance.quantity;
+    const linha = (balance.classes || []).find((c) => c.classValueId === classValueId);
+    return linha ? linha.quantity : 0;
   }
 
   function balanceTable() {
     if (!productDetail) return '<p class="muted">Selecione um produto para ver o saldo de cada depósito.</p>';
+    const cabecalho = classValueId
+      ? `Saldo de ${S.escape(cores.get(classValueId)?.name || classValueId)}`
+      : 'Saldo disponível';
     return `
       <div class="table-scroll">
         <table class="table">
-          <thead><tr><th>Depósito</th><th>Saldo disponível</th></tr></thead>
+          <thead><tr><th>Depósito</th><th>${cabecalho}</th></tr></thead>
           <tbody>
             ${productDetail.balances.length === 0 ? S.emptyRow(2, 'Nenhum depósito cadastrado.') : productDetail.balances.map((b) => `
-              <tr><td>${S.escape(b.depositName)}</td><td>${S.formatQty(b.quantity)}</td></tr>
+              <tr><td>${S.escape(b.depositName)}</td><td>${S.formatQty(saldoDaLinha(b))}</td></tr>
             `).join('')}
           </tbody>
         </table>
@@ -51,6 +96,7 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
             <label>Depósito de destino<select name="destinationDepositId" required>${S.options(meta.deposits, '', { empty: 'Selecione' })}</select></label>
             <label>Documento<input name="document" /></label>
           </div>
+          ${classeField()}
           <label>Observação<textarea name="note" rows="2"></textarea></label>
           <div class="finance-actions-row">
             <button type="submit">Transferir</button>
@@ -61,13 +107,21 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
 
       <div class="panel">
         <h3>Saldo por depósito</h3>
-        ${balanceTable()}
+        <div id="transferBalances">${balanceTable()}</div>
       </div>
     `;
 
     document.getElementById('transferProduct')?.addEventListener('change', async (event) => {
       await loadProductDetail(event.target.value);
       render(event.target.value);
+    });
+
+    // Só a tabela é redesenhada: um render() completo apagaria origem, destino
+    // e quantidade que o usuário já tinha preenchido.
+    document.getElementById('transferClassValue')?.addEventListener('change', (event) => {
+      classValueId = event.target.value;
+      const painel = document.getElementById('transferBalances');
+      if (painel) painel.innerHTML = balanceTable();
     });
 
     document.getElementById('transferCancel')?.addEventListener('click', () => {
@@ -91,6 +145,10 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
         quantity: Number(formData.get('quantity') || 0),
         originDepositId: formData.get('originDepositId'),
         destinationDepositId: formData.get('destinationDepositId'),
+        // §18: os dois movimentos gerados levam a cor. Sem isto, a saída
+        // tiraria 4 pretos da origem e a entrada daria 4 sem cor ao destino.
+        classId: formData.get('classValueId') ? (classeDoProduto?.classId || '') : '',
+        classValueId: formData.get('classValueId') || '',
         document: formData.get('document') || '',
         note: formData.get('note') || ''
       };

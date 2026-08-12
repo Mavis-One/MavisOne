@@ -9,6 +9,19 @@ const fiscalDb = require('./lib/db/fiscal');
 const modulosDb = require('./lib/db/modulos');
 const crmDb = require('./lib/db/crm');
 const { buildNfePayload } = require('./lib/nfePayloadBuilder');
+// Catálogo de operações fiscais: é ele que diz se a nota movimenta estoque,
+// gera financeiro e exige documento referenciado — em vez de `if` de
+// finalidade espalhado pelo código de emissão.
+const operacaoFiscal = require('./lib/operacaoFiscal');
+// Painel "Atenção" do hub: junta o que já está errado e espalhado por seis
+// telas — conta vencida, NF-e rejeitada, pedido faturado sem nota, estoque
+// abaixo do mínimo.
+const atencao = require('./lib/atencao');
+// Cartões do topo do hub: valor + variação contra o período anterior + a
+// proporção que merece alarme.
+const kpis = require('./lib/kpis');
+// Classes de produto (COR e futuras): catálogo global + atribuição por produto.
+const classesDb = require('./lib/db/classes');
 const openFinanceService = require('./lib/openfinance/service');
 const openFinanceSync = require('./lib/openfinance/sync');
 const openFinanceDb = require('./lib/db/openfinance');
@@ -23,6 +36,9 @@ const salesTotals = require('./public/modules/shared/sales_totals');
 // status, se o registro é pedido ou orçamento e se baixa estoque / gera
 // financeiro — as três decisões que antes eram `=== 'faturado'` espalhado.
 const salesStatus = require('./public/modules/shared/sales_status');
+const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
+const reservasLib = require('./lib/reservas');
+const painelModulos = require('./lib/painel-modulos');
 const sessaoUtil = require('./lib/sessao');
 
 const HOST = process.env.HOST || '0.0.0.0';
@@ -890,6 +906,13 @@ function normalizeSalesItems(rawItems) {
         productId: item.productId || '',
         name: String(item.name || '').trim(),
         sku: item.sku || '',
+        // A cor viaja no ITEM, não no produto: o mesmo produto entra duas vezes
+        // na mesma venda em cores diferentes, e cada linha baixa da sua cor.
+        // O nome vem junto porque a lista da venda precisa mostrar "Preto" sem
+        // ter de consultar o catálogo de classes a cada renderização.
+        classId: item.classId || '',
+        classValueId: item.classValueId || '',
+        classValueName: String(item.classValueName || '').trim(),
         quantity,
         unitPrice,
         total: Math.round(quantity * unitPrice * 100) / 100
@@ -1045,7 +1068,7 @@ function computeSalesTotals(items, body = {}) {
 //
 // `motivo` guarda a semântica antiga ('venda'/'compra'/'estorno'), que se
 // perderia no mapeamento para entrada/saída.
-function registrarMovimentoEstoque(data, { productId, productName, type, quantityDelta, referenceType, referenceId, note, user }) {
+function registrarMovimentoEstoque(data, { productId, productName, type, quantityDelta, referenceType, referenceId, note, user, classId, classValueId }) {
   const delta = Number(quantityDelta || 0);
   // Sem depósito informado, usa o padrão do produto; se não houver, fica em
   // branco e productBalances() contabiliza como saldo não alocado.
@@ -1059,6 +1082,10 @@ function registrarMovimentoEstoque(data, { productId, productName, type, quantit
     productId,
     productName: productName || '',
     depositId: defaultDepositId,
+    // Sem isto a venda baixaria do saldo GERAL e a quebra por cor nunca
+    // fecharia: o produto perderia 3 unidades e nenhuma cor perderia nada.
+    classId: classId || '',
+    classValueId: classValueId || '',
     quantity: Math.abs(delta),
     unitCost: 0,
     categoryId: '',
@@ -1095,27 +1122,44 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
     produtos.set(id, await db.getProductById(id));
   }
 
+  // A projeção é por PRODUTO + COR, não só por produto. Vender 3 pretos com 10
+  // no total mas só 2 pretos precisa ser recusado; contra o saldo geral isso
+  // passaria, o pedido seria faturado e a cor ficaria com saldo negativo.
+  //
+  // Item sem cor continua projetando contra o saldo TOTAL do produto — é o caso
+  // de todo produto que não usa classe, e também dos itens gravados antes de
+  // este controle existir.
+  const chaveItem = (item) => `${item.productId}|${item.classValueId || ''}`;
   const projetado = new Map();
-  for (const [id, produto] of produtos) {
-    projetado.set(id, Number(produto?.stockQuantity || 0));
-  }
+  const semear = (item) => {
+    const chave = chaveItem(item);
+    if (!projetado.has(chave)) {
+      projetado.set(chave, item.classValueId
+        ? stockCore.classValueBalance(data, item.productId, item.classValueId)
+        : Number(produtos.get(item.productId)?.stockQuantity || 0));
+    }
+    return chave;
+  };
   if (wasApplied) {
     for (const item of oldItems) {
-      if (!item.productId || !projetado.has(item.productId)) continue;
-      projetado.set(item.productId, projetado.get(item.productId) + Number(item.quantity || 0));
+      if (!item.productId || !produtos.has(item.productId)) continue;
+      const chave = semear(item);
+      projetado.set(chave, projetado.get(chave) + Number(item.quantity || 0));
     }
   }
   if (willApply) {
     for (const item of newItems) {
-      if (!item.productId || !projetado.has(item.productId)) continue;
-      const restante = projetado.get(item.productId) - Number(item.quantity || 0);
+      if (!item.productId || !produtos.has(item.productId)) continue;
+      const chave = semear(item);
+      const disponivel = projetado.get(chave);
+      const restante = disponivel - Number(item.quantity || 0);
       if (restante < 0) {
-        const produto = produtos.get(item.productId);
-        const err = new Error(`Estoque insuficiente para "${item.name}" (disponível: ${produto?.stockQuantity ?? 0}, necessário: ${item.quantity}).`);
+        const cor = item.classValueName || item.classValueId;
+        const err = new Error(`Estoque insuficiente para "${item.name}"${cor ? ` (${cor})` : ''} (disponível: ${disponivel}, necessário: ${item.quantity}).`);
         err.status = 400;
         throw err;
       }
-      projetado.set(item.productId, restante);
+      projetado.set(chave, restante);
     }
   }
 
@@ -1129,6 +1173,9 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
       registrarMovimentoEstoque(data, {
         productId: item.productId, productName: item.name, type: 'estorno',
         quantityDelta: Number(item.quantity || 0), referenceType: 'order', referenceId: record.id,
+        // O estorno devolve para a MESMA cor que a venda tirou. Devolver ao
+        // saldo sem cor deixaria a cor eternamente devendo.
+        classId: item.classId, classValueId: item.classValueId,
         note: `Estorno do pedido ${record.code || record.id}`, user
       });
     }
@@ -1142,6 +1189,7 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
       registrarMovimentoEstoque(data, {
         productId: item.productId, productName: item.name, type: 'venda',
         quantityDelta: -Number(item.quantity || 0), referenceType: 'order', referenceId: record.id,
+        classId: item.classId, classValueId: item.classValueId,
         note: `Pedido ${record.code || record.id}`, user
       });
     }
@@ -2467,6 +2515,16 @@ async function emitirNfeFiscal(body, user) {
   const tipoOperacao = body.tipoOperacao || 'VENDA';
   const dentroDoEstado = destinatario.uf === estabelecimento.uf;
 
+  // A OPERAÇÃO manda na finalidade, não o que veio da tela: uma complementar
+  // com finalidade 1 é recusada pela SEFAZ, e deixar a tela escolher abre
+  // espaço para a divergência.
+  const opFiscal = operacaoFiscal.operacao(tipoOperacao);
+  const referencias = (Array.isArray(body.referencias) ? body.referencias : [])
+    .concat(body.nfeOriginalChave ? [{ chaveAcesso: body.nfeOriginalChave }] : []);
+  const chaveOriginal = referencias
+    .map((r) => String(r?.chaveAcesso || r?.chave || '').replace(/\D/g, ''))
+    .find((c) => c.length === 44) || null;
+
   const itens = [];
   for (let index = 0; index < itensBody.length; index += 1) {
     const bruto = itensBody[index];
@@ -2475,7 +2533,25 @@ async function emitirNfeFiscal(body, user) {
     // atributos da mercadoria, e deixá-los editáveis na emissão significa que
     // duas notas do mesmo produto podem sair com classificações diferentes.
     // O digitado só preenche o que o cadastro não tem (item avulso, serviço).
-    const produto = bruto.produtoId ? await db.getProductById(bruto.produtoId) : null;
+    // O item escritural é pedido pelo SKU, não pelo id: a tela não precisa
+    // conhecer o id gerado pela migração, e o servidor CONFERE que o que veio
+    // é mesmo escritural — sem isso, mandar o SKU de uma mercadoria faria uma
+    // venda real sair sem baixar estoque.
+    let produto = bruto.produtoId ? await db.getProductById(bruto.produtoId) : null;
+    if (!produto && bruto.produtoEscritural) {
+      // O ÚNICO lugar que pede escriturais: eles ficam fora da lista de
+      // mercadorias por padrão, e é aqui que a nota complementar os encontra.
+      const todos = await db.getProducts({ incluirEscriturais: true });
+      produto = todos.find((p) => p.escritural && String(p.sku || '') === String(bruto.produtoEscritural)) || null;
+      if (!produto) {
+        const err = new Error(
+          `Produto escritural "${bruto.produtoEscritural}" não encontrado. `
+          + 'Rode a migração fase-ab-nfe-complementar-icms.sql, que o cadastra.'
+        );
+        err.status = 400;
+        throw err;
+      }
+    }
     const item = produto
       ? {
         ...bruto,
@@ -2486,7 +2562,13 @@ async function emitirNfeFiscal(body, user) {
         ean: produto.ean || bruto.ean,
         origem: produto.origem === null || produto.origem === undefined ? (bruto.origem || 0) : produto.origem,
         unidadeComercial: produto.unidadeComercial || bruto.unidadeComercial || 'UN',
-        unidadeTributavel: produto.unidadeTributavel || bruto.unidadeTributavel || produto.unidadeComercial || bruto.unidadeComercial || 'UN'
+        unidadeTributavel: produto.unidadeTributavel || bruto.unidadeTributavel || produto.unidadeComercial || bruto.unidadeComercial || 'UN',
+        // Escritural vem do CADASTRO, nunca do que a tela mandou: senão
+        // bastaria marcar a flag no corpo da requisição para um produto real
+        // sair de uma nota sem baixar estoque.
+        escritural: produto.escritural === true,
+        movimentaEstoque: produto.movimentaEstoque !== false,
+        geraFinanceiro: produto.geraFinanceiro !== false
       }
       : bruto;
 
@@ -2529,11 +2611,37 @@ async function emitirNfeFiscal(body, user) {
     });
   }
 
-  const valorTotal = itens.reduce((sum, item) => sum + Math.round(Number(item.quantidade || 0) * Number(item.valorUnitario || 0) * 100) / 100, 0);
+  // VALOR COMERCIAL. Item escritural vale zero e não entra: ele carrega
+  // imposto, não mercadoria. Somá-lo faria uma nota complementar aparecer no
+  // faturamento como venda.
+  const valorTotal = itens.reduce((sum, item) => (item.escritural
+    ? sum
+    : sum + Math.round(Number(item.quantidade || 0) * Number(item.valorUnitario || 0) * 100) / 100), 0);
+  // VALOR FISCAL. Separado do comercial de propósito — é o número que a nota
+  // complementar existe para destacar, e ele NÃO é receita.
+  const valorIcmsComplementar = Math.round(itens.reduce(
+    (sum, item) => sum + Number(item.valorIcms || 0), 0) * 100) / 100;
+
   const referencia = createId('nfe');
   const tipoDocumento = body.tipoDocumento !== undefined ? Number(body.tipoDocumento) : 1;
-  const finalidadeEmissao = body.finalidadeEmissao !== undefined ? Number(body.finalidadeEmissao) : 1;
-  const naturezaOperacao = body.naturezaOperacao || 'Venda de mercadoria';
+  const finalidadeEmissao = operacaoFiscal.finalidadeDaOperacao(tipoOperacao, body.finalidadeEmissao);
+  const naturezaOperacao = body.naturezaOperacao
+    || (opFiscal ? opFiscal.rotulo : 'Venda de mercadoria');
+
+  // Trava da operação ANTES de gravar rascunho e de falar com a Focus: erro de
+  // preenchimento não pode virar rascunho órfão nem chamada gasta.
+  const errosOperacao = operacaoFiscal.validarOperacao({
+    tipoOperacao,
+    finalidade: finalidadeEmissao,
+    referencias,
+    itens,
+    valorIcmsComplementar
+  });
+  if (errosOperacao.length) {
+    const err = new Error(errosOperacao.join(' '));
+    err.status = 400;
+    throw err;
+  }
 
   const payload = buildNfePayload({
     estabelecimento,
@@ -2557,7 +2665,10 @@ async function emitirNfeFiscal(body, user) {
     // Quem manda é o ambiente EFETIVO (já considerando a trava de
     // homologação), não o que está salvo no estabelecimento: é ele que decide
     // se o nome do destinatário vai ser o texto obrigatório de teste.
-    ambiente: focusNfe.ambienteEfetivo(estabelecimento.focusAmbiente).efetivo
+    ambiente: focusNfe.ambienteEfetivo(estabelecimento.focusAmbiente).efetivo,
+    // Grupo NFref. Sem ele a SEFAZ recusa a complementar, e a devolução perde
+    // o vínculo com a nota devolvida.
+    referencias
   });
 
   const nfeExistente = await encontrarNfeIdempotente(estabelecimento.id, payload);
@@ -2579,9 +2690,15 @@ async function emitirNfeFiscal(body, user) {
     destinatarioNome: destinatario.nome || '',
     destinatarioDocumento: String(destinatario.documento || '').replace(/\D/g, ''),
     orderId: body.orderId || body.saleId || '',
-    // Só na nota AVULSA. Vinda de pedido, o financeiro é dele — gravar a
-    // condição aqui faria a nota gerar um segundo recebível pelo mesmo valor.
-    condicaoPagamento: (body.orderId || body.saleId) ? null : condicaoPagamentoDoBody(body),
+    // Só na nota AVULSA que gera financeiro. Numa operação que não gera
+    // (complemento, transferência, bonificação), gravar a condição faria o
+    // recebível nascer na autorização — exatamente o que a operação proíbe.
+    condicaoPagamento: (body.orderId || body.saleId) || !operacaoFiscal.deveGerarFinanceiro({ tipoOperacao })
+      ? null
+      : condicaoPagamentoDoBody(body),
+    tipoOperacaoFiscal: tipoOperacao,
+    valorIcmsComplementar,
+    nfeOriginalChave: chaveOriginal,
     payloadEnviado: payload
   });
 
@@ -2929,11 +3046,37 @@ function userCanStock(user) {
 // que stockCore calcula saldo por depósito). Sem o sync, todo depósito criado
 // pela tela de Cadastros era invisível aqui e as rotas respondiam
 // "Depósito não encontrado".
-async function loadStockContext() {
+/**
+ * `comReservas` é opcional porque custa: ler os pedidos é uma consulta a mais
+ * em toda requisição do Estoque. Só as rotas que MOSTRAM a reserva pagam por
+ * ela — registrar movimentação, por exemplo, não precisa saber o que está
+ * prometido, e cobrar a consulta ali seria custo sem uso.
+ */
+async function loadStockContext({ comReservas = false } = {}) {
   const data = loadData();
   await syncCadastroData(data);
-  const products = await db.getProducts();
-  return { data, products, productsById: new Map(products.map((p) => [p.id, p])) };
+  let reservas = null;
+  if (comReservas) {
+    try {
+      reservas = reservasLib.calcularReservas(await db.getOrders());
+    } catch (erroReservas) {
+      // Falha ao ler pedidos não pode derrubar a tela de Estoque: sem reservas
+      // as colunas saem em branco (null, não zero), e o saldo continua certo.
+      reservas = null;
+    }
+  }
+  // Duas coisas diferentes, de propósito:
+  //   products     — o que se MOSTRA como mercadoria (sem escriturais).
+  //   productsById — o que se RESOLVE por id, completo.
+  // Filtrar o índice junto faria qualquer registro histórico que apontasse
+  // para um escritural responder "produto não encontrado".
+  const todos = await db.getProducts({ incluirEscriturais: true });
+  return {
+    data,
+    reservas,
+    products: todos.filter((p) => !p.escritural),
+    productsById: new Map(todos.map((p) => [p.id, p]))
+  };
 }
 
 function sendStockError(res, error, fallback) {
@@ -2961,7 +3104,7 @@ async function commitStockMovements(data, movements, productsById) {
   saveData(data);
 }
 
-function buildMovementRecord(data, { type, productId, depositId, quantity, unitCost, categoryId, date, document, note, transferId, origin }, user) {
+function buildMovementRecord(data, { type, productId, depositId, quantity, unitCost, categoryId, date, document, note, transferId, origin, classId, classValueId }, user) {
   return {
     id: stockCore.createId('mov'),
     code: stockCore.nextSequentialCode(data.stockMovements, 'MOV'),
@@ -2969,6 +3112,11 @@ function buildMovementRecord(data, { type, productId, depositId, quantity, unitC
     date: date || stockCore.todayStr(),
     productId,
     depositId,
+    // A COR VIVE NO MOVIMENTO, e é daqui que sai o saldo por cor. Guardar o
+    // saldo numa tabela à parte criaria um segundo número, atualizado por
+    // outro caminho e livre para discordar deste razão.
+    classId: classId || '',
+    classValueId: classValueId || '',
     quantity: stockCore.toNumber(quantity),
     unitCost: stockCore.toNumber(unitCost),
     categoryId: categoryId || '',
@@ -2983,17 +3131,47 @@ function buildMovementRecord(data, { type, productId, depositId, quantity, unitC
 }
 
 // Valida produto/depósito/quantidade e, na saída, o saldo do depósito.
-function assertMovementIsPossible(data, productsById, { productId, depositId, type, quantity }) {
+function assertMovementIsPossible(data, productsById, { productId, depositId, type, quantity, classValueId, classesDoProduto }) {
   const product = productsById.get(productId);
   if (!product) throw stockCore.stockError('Produto não encontrado.', 404);
   const deposit = (data.deposits || []).find((d) => d.id === depositId);
   if (!deposit) throw stockCore.stockError('Depósito não encontrado.', 404);
   const qty = stockCore.toNumber(quantity);
   if (!(qty > 0)) throw stockCore.stockError('Informe uma quantidade maior que zero.');
+
+  // ---- classe (cor) ------------------------------------------------------
+  const classes = Array.isArray(classesDoProduto) ? classesDoProduto : [];
+  const obrigatoria = classes.find((c) => c.required);
+  if (obrigatoria && !classValueId) {
+    throw stockCore.stockError(
+      `Este produto é controlado por ${obrigatoria.name}. Informe qual ${String(obrigatoria.name).toLowerCase()} está sendo movimentada.`
+    );
+  }
+  if (classValueId) {
+    // O valor tem de ser um dos que ESTE produto oferece. Sem esta checagem,
+    // um id qualquer criaria um saldo de cor que o produto não tem — e o
+    // total continuaria fechando, escondendo o erro.
+    const permitido = classes.some((c) => c.valores.some((v) => v.id === classValueId));
+    if (!permitido) {
+      throw stockCore.stockError('Este valor de classe não está disponível para o produto.');
+    }
+  }
+
   if (type === 'saida') {
-    const available = stockCore.depositBalance(data, productId, depositId);
-    if (qty > available) {
-      throw stockCore.stockError(`Saldo insuficiente em ${deposit.name}: disponível ${available}, solicitado ${qty}.`);
+    // Com cor, o saldo que limita é o DAQUELA cor. Validar só o total deixaria
+    // vender 10 pretos existindo 2 pretos e 8 brancos — o total fecharia e o
+    // saldo do preto ficaria negativo (§21.3 e §21.4).
+    if (classValueId) {
+      const disponivel = stockCore.classValueBalance(data, productId, classValueId, depositId);
+      if (qty > disponivel) {
+        const nome = classes.flatMap((c) => c.valores).find((v) => v.id === classValueId)?.name || 'valor';
+        throw stockCore.stockError(`Saldo insuficiente de ${nome} em ${deposit.name}: disponível ${disponivel}, solicitado ${qty}.`);
+      }
+    } else {
+      const available = stockCore.depositBalance(data, productId, depositId);
+      if (qty > available) {
+        throw stockCore.stockError(`Saldo insuficiente em ${deposit.name}: disponível ${available}, solicitado ${qty}.`);
+      }
     }
   }
   return { product, deposit, quantity: qty };
@@ -3005,6 +3183,10 @@ function filterStockMovements(data, params, productsById) {
   const productId = params.get('productId') || '';
   const depositId = params.get('depositId') || '';
   const categoryId = params.get('categoryId') || '';
+  // §19: "quanto vendi de preto no mês" é uma pergunta que se responde com o
+  // razão filtrado, não com um relatório novo. `_sem` isola o saldo que ficou
+  // sem cor — sem isso não há como listar o que precisa ser classificado.
+  const classValueId = params.get('classValueId') || '';
   const dateFrom = params.get('dateFrom') || '';
   const dateTo = params.get('dateTo') || '';
 
@@ -3013,6 +3195,8 @@ function filterStockMovements(data, params, productsById) {
     if (productId && movement.productId !== productId) return false;
     if (depositId && movement.depositId !== depositId) return false;
     if (categoryId && movement.categoryId !== categoryId) return false;
+    if (classValueId === '_sem' && movement.classValueId) return false;
+    if (classValueId && classValueId !== '_sem' && movement.classValueId !== classValueId) return false;
     if (dateFrom && movement.date < dateFrom) return false;
     if (dateTo && movement.date > dateTo) return false;
     if (search) {
@@ -3231,6 +3415,28 @@ const server = http.createServer(async (req, res) => {
       ? (data.finance || []).filter((entry) => entry.type === 'sale' && entry.status !== 'paid' && !isFinanceEntryCancelled(entry)).length
       : 0;
 
+    // Cartões do topo do hub. Cada um traz o valor, a variação contra o
+    // MESMO intervalo anterior e a proporção que merece alarme — número
+    // sozinho não vira decisão.
+    const intervalo = getPeriodRange(url.searchParams.get('period') || 'month',
+      url.searchParams.get('from'), url.searchParams.get('to'));
+    const entradasClassificadas = (data.finance || [])
+      .filter((e) => !isFinanceEntryCancelled(e))
+      .map((e) => ({ ...e, tipo: classifyFinanceEntry(e) }));
+    const kpiCards = kpis.montarKpis({
+      pedidos: data.orders || [],
+      compras: activePurchases,
+      entradas: entradasClassificadas,
+      // serializeProduct traz `situation` (abaixo-minimo/zerado), que é o que
+      // alimenta a faixa de alerta do cartão de Estoque.
+      produtos: canStock ? products.map((p) => stockCore.serializeProduct(p, data)) : [],
+      depositos: data.deposits || [],
+      intervalo,
+      serieVendas: canSales ? buildSalesChartSeries(data, 'month') : [],
+      permissoes: { sales: canSales, finance: canFinance, stock: canStock, purchases: canPurchases },
+      hoje: toDateStr(getTodayLocal())
+    });
+
     return sendJson(res, {
       salesTotal,
       purchaseTotal,
@@ -3240,6 +3446,8 @@ const server = http.createServer(async (req, res) => {
       totalProducts: canStock ? products.length : 0,
       totalSales: salesSummary ? salesSummary.totalPedidos : 0,
       totalPurchases: activePurchases.length,
+      kpis: kpiCards,
+      periodo: intervalo,
       permissions: {
         sales: canSales,
         purchases: canPurchases,
@@ -3252,6 +3460,63 @@ const server = http.createServer(async (req, res) => {
   // Gráficos do Dashboard Geral (fluxo de Vendas + fluxo do Financeiro), no mesmo
   // recorte de período — reaproveita os construtores de série já usados pelos
   // dashboards de cada módulo, só filtrados pelo que o usuário tem permissão de ver.
+  // Painel "Atenção" do hub. Rota própria, e não um campo de /api/dashboard,
+  // porque ela varre quatro fontes e é a parte cara da tela: assim o painel
+  // carrega depois, sem segurar os KPIs e os gráficos.
+  if (pathname === '/api/dashboard/atencao' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user) return sendJson(res, { error: 'Não autenticado' }, 401);
+
+      const permissoes = {
+        finance: user.allowedModules.includes('finance'),
+        fiscal: user.allowedModules.includes('fiscal'),
+        sales: user.allowedModules.includes('sales'),
+        stock: user.allowedModules.includes('stock')
+      };
+
+      const data = loadData();
+      await syncCadastroData(data);
+      if (permissoes.finance) await syncFinanceData(data);
+      if (permissoes.sales) await syncSalesData(data);
+
+      // A tabela fiscal pode não responder (migração pendente, estabelecimento
+      // ainda não cadastrado). O painel degrada para as outras fontes em vez
+      // de a tela não abrir — um alerta a menos é melhor do que nenhum.
+      let notasFiscais = [];
+      if (permissoes.fiscal) {
+        try {
+          notasFiscais = await fiscalDb.getNfeRecords();
+        } catch (erroFiscal) {
+          notasFiscais = [];
+        }
+      }
+
+      const produtos = permissoes.stock
+        ? (await db.getProducts()).map((p) => stockCore.serializeProduct(p, data))
+        : [];
+
+      // Quais status significam "a venda se concretizou". Vem do catálogo, não
+      // de uma lista escrita aqui: um status novo que gere financeiro entra
+      // sozinho no alerta.
+      const statusQueFaturam = salesStatus.CATALOGO
+        .filter((s) => s.geraFinanceiro)
+        .map((s) => s.value);
+
+      const painel = atencao.montarAtencao({
+        entradas: data.finance || [],
+        notasFiscais,
+        pedidos: data.sales || [],
+        produtos,
+        statusQueFaturam,
+        permissoes
+      });
+      return sendJson(res, painel);
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao montar o painel de atenção' }, 500);
+    }
+  }
+
   if (pathname === '/api/dashboard/charts' && req.method === 'GET') {
     const data = loadData();
     await syncFinanceData(data);
@@ -3448,6 +3713,106 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { success: true, criadas, ignorados, jaExistiam: existentes.length });
     } catch (erro) {
       return sendJson(res, { error: erro.message || 'Erro ao gerar ordens de produção' }, erro.status || 400);
+    }
+  }
+
+  // ==========================================================================
+  // PAINÉIS POR MÓDULO — /api/<modulo>/dashboard
+  //
+  // ANTES do bloco genérico logo abaixo: o regex dele leria "dashboard" como
+  // nome de recurso e responderia 404.
+  //
+  // Uma rota por módulo em vez de uma só com parâmetro: cada painel lê tabelas
+  // diferentes, e uma rota genérica teria de carregar tudo para todo mundo —
+  // quem abre o painel de Contratos pagaria a leitura da frota inteira.
+  //
+  // A CONTA não está aqui: fica em lib/painel-modulos.js, em funções puras que
+  // o teste prova com quatro linhas de dado em vez de um banco. Aqui só se lê
+  // do banco e se entrega o resultado.
+  // ==========================================================================
+  const rotaPainel = pathname.match(/^\/api\/(purchases|stock|fiscal|fleet|hr|pcp|contracts)\/dashboard$/);
+  if (rotaPainel && req.method === 'GET') {
+    const modulo = rotaPainel[1];
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes(modulo)) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const hoje = stockCore.todayStr();
+      const intervalo = painelModulos.intervaloDoPeriodo(url.searchParams.get('periodo') || 'mes', hoje);
+
+      if (modulo === 'purchases') {
+        return sendJson(res, {
+          intervalo,
+          ...painelModulos.painelCompras({ compras: await db.getPurchases(), intervalo })
+        });
+      }
+
+      if (modulo === 'stock') {
+        const { data, products, reservas } = await loadStockContext({ comReservas: true });
+        return sendJson(res, {
+          intervalo,
+          ...painelModulos.painelEstoque({
+            produtos: products.map((p) => stockCore.serializeProduct(p, data, reservas)),
+            movimentos: data.stockMovements || [],
+            depositos: data.deposits || [],
+            reservas,
+            intervalo
+          })
+        });
+      }
+
+      if (modulo === 'fiscal') {
+        return sendJson(res, {
+          intervalo,
+          // db.getNfes() e não fiscalDb: é a mesma lista que a tela "NF-e
+          // Emitidas" mostra, então painel e listagem nunca discordam.
+          ...painelModulos.painelFiscal({ notas: await db.getNfes(), intervalo })
+        });
+      }
+
+      if (modulo === 'fleet') {
+        const [veiculos, manutencoes, abastecimentos] = await Promise.all([
+          modulosDb.listar('fleet/vehicles'),
+          modulosDb.listar('fleet/maintenances'),
+          modulosDb.listar('fleet/refuels')
+        ]);
+        return sendJson(res, { intervalo, ...painelModulos.painelFrota({ veiculos, manutencoes, abastecimentos, intervalo }) });
+      }
+
+      if (modulo === 'hr') {
+        const [colaboradores, afastamentos, departamentos] = await Promise.all([
+          modulosDb.listar('hr/employees'),
+          modulosDb.listar('hr/leaves'),
+          modulosDb.listar('hr/departments')
+        ]);
+        return sendJson(res, { intervalo, ...painelModulos.painelRh({ colaboradores, afastamentos, departamentos, intervalo, hoje }) });
+      }
+
+      if (modulo === 'pcp') {
+        const [ordens, apontamentos, setores, inspecoes] = await Promise.all([
+          modulosDb.listar('pcp/orders'),
+          modulosDb.listar('pcp/entries'),
+          modulosDb.listar('pcp/sectors'),
+          modulosDb.listar('pcp/quality-checks')
+        ]);
+        return sendJson(res, { intervalo, ...painelModulos.painelPcp({ ordens, apontamentos, setores, inspecoes, intervalo, hoje }) });
+      }
+
+      if (modulo === 'contracts') {
+        const [contratos, tipos] = await Promise.all([
+          modulosDb.listar('contracts/contracts'),
+          modulosDb.listar('contracts/types')
+        ]);
+        return sendJson(res, { intervalo, ...painelModulos.painelContratos({ contratos, tipos, intervalo, hoje }) });
+      }
+
+      return sendJson(res, { error: 'Painel não disponível para este módulo' }, 404);
+    } catch (error) {
+      // Mensagem crua do banco não vai para a tela; o painel mostra o aviso de
+      // falha e o resto do módulo continua utilizável.
+      console.error(`Falha ao montar o painel de ${modulo}:`, error.message);
+      return sendJson(res, { error: 'Não foi possível montar o painel deste módulo.' }, 500);
     }
   }
 
@@ -3696,12 +4061,34 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     const products = await db.getProducts();
+    // Reserva: o que outros pedidos abertos já prometeram. Sem este número a
+    // tela mostra o saldo físico, e dois vendedores prometem as mesmas dez
+    // unidades sem que nada reclame até o segundo faturamento.
+    //
+    // Vai como objeto simples chaveado por `produto|cor` — a tela precisa fazer
+    // a conta por linha de item, e um Map não atravessa JSON.
+    let reservas = {};
+    try {
+      const calculadas = reservasLib.calcularReservas(await db.getOrders());
+      reservas = Object.fromEntries(calculadas.porChave);
+    } catch (erroReservas) {
+      // Sem reservas a tela cai no comportamento antigo (saldo físico) em vez
+      // de não abrir. O aviso some; a venda continua possível.
+      reservas = {};
+    }
     return sendJson(res, {
+      reservas,
       companies: data.companies,
       sellers: getSellersDirectory(data),
       deposits: data.deposits,
       directory: getCadastroDirectory(data),
       products,
+      // Categoria e Tabela de Preços eram texto livre na tela de venda, mesmo
+      // existindo cadastro dos dois no Estoque. Digitar à mão gera "Revenda",
+      // "revenda" e "Revensa" como se fossem coisas diferentes, e aí nenhum
+      // relatório por categoria fecha.
+      productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo'),
+      priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type })),
       // Abas Pagamentos e Entrega: formas de pagamento e transportadoras vêm do
       // Cadastro, não de lista fixa no formulário.
       paymentMethods: (data.paymentMethods || []).filter((forma) => forma.status !== 'inativo'),
@@ -4341,9 +4728,7 @@ const server = http.createServer(async (req, res) => {
     // permissões fiscais marcadas junto) não passava por este caminho — só
     // entrava por papel do RBAC ou sendo admin, o que fazia a tela de Usuários
     // parecer ter funcionado sem ter.
-    const temAcessoAoModulo = user.allowedModules.includes('fiscal')
-      || user.allowedModules.includes('finance')
-      || user.allowedModules.includes('settings');
+    const temAcessoAoModulo = fiscalPermissoes.habilitadoPor(user.allowedModules);
     // O RBAC entra como caminho ADICIONAL, nunca como restrição nova: quem já
     // podia emitir por fiscal_permissions continua podendo, e agora também
     // passa quem recebeu fiscal.<ação> por papel. A migração para um modelo só
@@ -4966,7 +5351,9 @@ const server = http.createServer(async (req, res) => {
       }
       let productsById = new Map();
       try {
-        productsById = new Map((await db.getProducts()).map((p) => [p.id, p]));
+        // Índice de RESOLUÇÃO: completo, inclusive escriturais. Quem lê um
+        // registro antigo precisa achar o produto, mesmo o que não é mercadoria.
+        productsById = new Map((await db.getProducts({ incluirEscriturais: true })).map((p) => [p.id, p]));
       } catch (error) {
         productsById = new Map();
       }
@@ -5367,8 +5754,22 @@ const server = http.createServer(async (req, res) => {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const { data, products } = await loadStockContext();
+      // Catálogo de cores no meta: o movimento guarda só o classValueId, e sem
+      // esta lista cada linha da tabela precisaria de uma consulta para virar
+      // "Preto". São poucas dezenas de valores — cabem no meta que a tela já
+      // carrega uma vez. Falha aqui não pode derrubar o módulo inteiro: sem
+      // catálogo a coluna mostra "-", o resto do Estoque continua de pé.
+      let classes = [];
+      try {
+        const catalogo = await classesDb.listarClasses();
+        const valores = await classesDb.listarValores(null);
+        classes = catalogo.map((c) => ({ ...c, valores: valores.filter((v) => v.classId === c.id) }));
+      } catch (erroClasses) {
+        classes = [];
+      }
       return sendJson(res, {
         deposits: data.deposits,
+        classes,
         productCategories: data.productCategories,
         movementCategories: data.movementCategories,
         priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type, markupPercent: t.markupPercent })),
@@ -5380,18 +5781,121 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ---------------------------------------------------- classes de produto
+  // Catálogo (COR e seus valores) e a atribuição por produto. O SALDO por cor
+  // não passa por aqui: ele é derivado do razão de movimentos, como o saldo
+  // por depósito — ver a camada de estoque.
+  if (pathname.startsWith('/api/stock/classes')) {
+    const user = await getCurrentUser(req);
+    // Estoque OU Cadastros: a mesma tela de catálogo aparece nos dois módulos,
+    // e o catálogo é cadastro — quem cadastra produto precisa poder cadastrar a
+    // cor que falta. Aceitar só 'stock' faria a tela existir no menu de
+    // Cadastros e responder "Sem permissão" a quem a abrisse por lá.
+    if (!user || !(user.allowedModules.includes('stock') || user.allowedModules.includes('cadastros'))) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    try {
+      if (pathname === '/api/stock/classes' && req.method === 'GET') {
+        const classes = await classesDb.listarClasses({ incluirInativas: url.searchParams.get('todas') === '1' });
+        // Os valores vêm juntos: a tela sempre precisa dos dois, e duas
+        // chamadas fariam a lista piscar meia preenchida.
+        const valores = await classesDb.listarValores(null, { incluirInativos: url.searchParams.get('todas') === '1' });
+        return sendJson(res, {
+          classes: classes.map((c) => ({ ...c, valores: valores.filter((v) => v.classId === c.id) }))
+        });
+      }
+
+      if (pathname === '/api/stock/classes' && req.method === 'POST') {
+        const body = await readBody(req);
+        const classe = await classesDb.criarClasse({ id: createId('pclass'), ...body });
+        return sendJson(res, { success: true, classe });
+      }
+
+      if (pathname === '/api/stock/classes/valores' && req.method === 'POST') {
+        const body = await readBody(req);
+        if (!body.classId) return sendJson(res, { error: 'Informe a classe do valor.' }, 400);
+        if (!String(body.name || '').trim()) return sendJson(res, { error: 'Informe o nome do valor.' }, 400);
+        const valor = await classesDb.criarValor({ id: createId('pcval'), ...body });
+        return sendJson(res, { success: true, valor });
+      }
+
+      if (pathname.startsWith('/api/stock/classes/valores/')) {
+        const id = decodeURIComponent(pathname.replace('/api/stock/classes/valores/', ''));
+        if (req.method === 'PUT') {
+          const valor = await classesDb.atualizarValor(id, await readBody(req));
+          return sendJson(res, { success: true, valor });
+        }
+        if (req.method === 'DELETE') {
+          await classesDb.excluirValor(id);
+          return sendJson(res, { success: true });
+        }
+      }
+
+      if (pathname.startsWith('/api/stock/classes/')) {
+        const id = decodeURIComponent(pathname.replace('/api/stock/classes/', ''));
+        if (req.method === 'PUT') {
+          const classe = await classesDb.atualizarClasse(id, await readBody(req));
+          return sendJson(res, { success: true, classe });
+        }
+        if (req.method === 'DELETE') {
+          await classesDb.excluirClasse(id);
+          return sendJson(res, { success: true });
+        }
+      }
+
+      return sendJson(res, { error: 'Rota não encontrada' }, 404);
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro nas classes de produto' }, error.status || 500);
+    }
+  }
+
+  // Classes que um produto usa. Rota separada da do produto porque a tela de
+  // Classes salva sozinha, sem exigir que o resto do cadastro seja reenviado.
+  if (/^\/api\/stock\/products\/[^/]+\/classes$/.test(pathname)) {
+    const user = await getCurrentUser(req);
+    // Ler as cores de um produto é necessário para VENDER, não só para mexer no
+    // cadastro: a tela de venda precisa da lista para pedir a cor do item. Quem
+    // ALTERA a atribuição continua sendo só o Estoque.
+    const podeLer = user && (user.allowedModules.includes('stock') || user.allowedModules.includes('sales'));
+    if (!podeLer || (req.method !== 'GET' && !user.allowedModules.includes('stock'))) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const productId = decodeURIComponent(pathname.split('/')[4]);
+    try {
+      if (req.method === 'GET') {
+        const classes = await classesDb.classesDoProduto(productId);
+        // O saldo vem junto porque escolher a cor às cegas é o mesmo erro que
+        // escolher o depósito às cegas. Derivado do razão, como sempre — aqui
+        // não existe tabela de saldo por cor para consultar.
+        const depositId = url.searchParams.get('depositId') || '';
+        const quebra = stockCore.classBalances(loadData(), productId, depositId);
+        const saldos = {};
+        for (const linha of quebra.valores) saldos[linha.classValueId] = linha.quantity;
+        return sendJson(res, { classes, saldos, semClasse: quebra.semClasse });
+      }
+      if (req.method === 'PUT') {
+        const body = await readBody(req);
+        const classes = await classesDb.definirClassesDoProduto(productId, body.classes);
+        return sendJson(res, { success: true, classes });
+      }
+      return sendJson(res, { error: 'Método não suportado' }, 405);
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao salvar as classes do produto' }, error.status || 500);
+    }
+  }
+
   if (pathname === '/api/stock/products' && req.method === 'GET') {
     try {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
-      const { data, products } = await loadStockContext();
+      const { data, products, reservas } = await loadStockContext({ comReservas: true });
       const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
       const categoryId = url.searchParams.get('categoryId') || '';
       const status = url.searchParams.get('status') || '';
       const situation = url.searchParams.get('situation') || '';
       const depositId = url.searchParams.get('depositId') || '';
 
-      let list = products.map((product) => stockCore.serializeProduct(product, data));
+      let list = products.map((product) => stockCore.serializeProduct(product, data, reservas));
       if (search) {
         list = list.filter((p) => `${p.name} ${p.sku} ${p.ean}`.toLowerCase().includes(search));
       }
@@ -5414,7 +5918,7 @@ const server = http.createServer(async (req, res) => {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const id = decodeURIComponent(pathname.replace('/api/stock/products/', ''));
-      const { data, products, productsById } = await loadStockContext();
+      const { data, productsById, reservas } = await loadStockContext({ comReservas: true });
       const product = productsById.get(id);
       if (!product) return sendJson(res, { error: 'Produto não encontrado' }, 404);
       const movements = (data.stockMovements || [])
@@ -5422,7 +5926,19 @@ const server = http.createServer(async (req, res) => {
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
         .slice(0, 50)
         .map((m) => stockCore.serializeMovement(m, data, productsById));
-      return sendJson(res, { product: stockCore.serializeProduct(product, data), movements });
+      // A quebra por cor da reserva vai junto: quem escolhe a cor na venda ou
+      // na saída precisa saber quanto DAQUELA cor já está prometido, não só o
+      // total do produto.
+      const reservasPorCor = reservas
+        ? [...reservas.porChave.entries()]
+          .filter(([chave]) => chave.startsWith(`${id}|`) && !chave.endsWith('|'))
+          .map(([chave, quantity]) => ({ classValueId: chave.slice(id.length + 1), quantity }))
+        : null;
+      return sendJson(res, {
+        product: stockCore.serializeProduct(product, data, reservas),
+        reservasPorCor,
+        movements
+      });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao carregar produto' }, 500);
     }
@@ -5563,11 +6079,21 @@ const server = http.createServer(async (req, res) => {
       if (!['entrada', 'saida'].includes(type)) {
         return sendJson(res, { error: 'Tipo de movimentação inválido. Use entrada ou saída.' }, 400);
       }
+      // Falha de catálogo não pode travar a movimentação de um produto que
+      // não usa classe nenhuma — a lista vazia é o comportamento de sempre.
+      let classesDoProduto = [];
+      try {
+        classesDoProduto = await classesDb.classesDoProduto(body.productId);
+      } catch (erroClasses) {
+        classesDoProduto = [];
+      }
       assertMovementIsPossible(data, productsById, {
         productId: body.productId,
         depositId: body.depositId,
         type,
-        quantity: body.quantity
+        quantity: body.quantity,
+        classValueId: body.classValueId,
+        classesDoProduto
       });
       const movement = buildMovementRecord(data, { ...body, type }, user);
       await commitStockMovements(data, [movement], productsById);
@@ -5588,11 +6114,16 @@ const server = http.createServer(async (req, res) => {
       if (movement.transferId) {
         return sendJson(res, { error: 'Esta movimentação faz parte de uma transferência. Estorne pela tela Entre Depósitos.' }, 409);
       }
-      // Estornar uma entrada não pode deixar o depósito negativo.
+      // Estornar uma entrada não pode deixar o saldo negativo. Com cor, o que
+      // limita é o saldo DAQUELA cor: estornar a entrada de 10 pretos quando
+      // 8 já saíram deixaria o preto em -8, mesmo com o total do produto
+      // ainda positivo por causa das outras cores.
       if (movement.type === 'entrada') {
-        const available = stockCore.depositBalance(data, movement.productId, movement.depositId);
+        const available = movement.classValueId
+          ? stockCore.classValueBalance(data, movement.productId, movement.classValueId, movement.depositId)
+          : stockCore.depositBalance(data, movement.productId, movement.depositId);
         if (stockCore.toNumber(movement.quantity) > available) {
-          return sendJson(res, { error: `Não é possível estornar: o depósito ficaria negativo (disponível ${available}).` }, 409);
+          return sendJson(res, { error: `Não é possível estornar: o saldo ficaria negativo (disponível ${available}).` }, 409);
         }
       }
       const reversal = { ...movement, type: movement.type === 'entrada' ? 'saida' : 'entrada' };
@@ -5647,11 +6178,19 @@ const server = http.createServer(async (req, res) => {
       if (originDepositId === destinationDepositId) {
         return sendJson(res, { error: 'Origem e destino não podem ser o mesmo depósito.' }, 400);
       }
+      let classesDoProduto = [];
+      try {
+        classesDoProduto = await classesDb.classesDoProduto(body.productId);
+      } catch (erroClasses) {
+        classesDoProduto = [];
+      }
       const { quantity } = assertMovementIsPossible(data, productsById, {
         productId: body.productId,
         depositId: originDepositId,
         type: 'saida',
-        quantity: body.quantity
+        quantity: body.quantity,
+        classValueId: body.classValueId,
+        classesDoProduto
       });
       if (!(data.deposits || []).some((d) => d.id === destinationDepositId)) {
         return sendJson(res, { error: 'Depósito de destino não encontrado.' }, 404);
@@ -5667,7 +6206,13 @@ const server = http.createServer(async (req, res) => {
         document: body.document || '',
         date,
         transferId,
-        origin: 'transferencia'
+        origin: 'transferencia',
+        // §18: a cor atravessa a transferência. Sem isto, transferir 4 pretos
+        // tiraria 4 pretos da origem e daria 4 SEM COR ao destino — o total do
+        // produto continuaria certo, e o preto teria sumido de um depósito
+        // sem aparecer no outro.
+        classId: body.classId || '',
+        classValueId: body.classValueId || ''
       };
       const out = buildMovementRecord(data, {
         ...shared, type: 'saida', depositId: originDepositId,
@@ -5688,6 +6233,11 @@ const server = http.createServer(async (req, res) => {
         productId: body.productId,
         originDepositId,
         destinationDepositId,
+        // Repetido no registro da transferência, além dos dois movimentos: a
+        // tela de transferências lista daqui e teria de abrir os movimentos
+        // para descobrir qual cor foi transferida.
+        classId: body.classId || '',
+        classValueId: body.classValueId || '',
         quantity,
         note: body.note || '',
         movementOutId: out.id,
@@ -6999,7 +7549,10 @@ const server = http.createServer(async (req, res) => {
           name: entry.name,
           role: entry.role,
           allowedModules: Array.isArray(entry.allowedModules) ? entry.allowedModules : [],
-          fiscalPermissions: Array.isArray(entry.fiscalPermissions) ? entry.fiscalPermissions : []
+          // Sanitiza na LEITURA também: usuário gravado antes de as permissões
+          // fantasma serem removidas ainda carrega 'manifestar' na coluna, e
+          // devolvê-la faria a tela mostrar um controle que não existe.
+          fiscalPermissions: fiscalPermissoes.sanitizar(entry.fiscalPermissions)
         }))
       : [];
     return sendJson(res, {
@@ -7036,7 +7589,9 @@ const server = http.createServer(async (req, res) => {
           name: body.payload.name,
           role: body.payload.role || 'user',
           allowedModules: body.payload.allowedModules || ['dashboard'],
-          fiscalPermissions: body.payload.fiscalPermissions || []
+          // Gravar só o que o portão sabe exigir. Sem isto, um POST à mão
+          // salvaria 'manifestar' na coluna e ela voltaria a aparecer na tela.
+          fiscalPermissions: fiscalPermissoes.sanitizar(body.payload.fiscalPermissions)
         });
         const data = loadData();
         data.auditLogs = data.auditLogs || [];
@@ -7242,7 +7797,9 @@ const server = http.createServer(async (req, res) => {
         name,
         role,
         allowedModules: Array.isArray(body.allowedModules) ? body.allowedModules : target.allowedModules,
-        fiscalPermissions: Array.isArray(body.fiscalPermissions) ? body.fiscalPermissions : target.fiscalPermissions,
+        fiscalPermissions: fiscalPermissoes.sanitizar(
+          Array.isArray(body.fiscalPermissions) ? body.fiscalPermissions : target.fiscalPermissions
+        ),
         password: body.password ? String(body.password) : undefined
       });
       const data = loadData();

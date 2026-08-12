@@ -79,7 +79,7 @@ MODULOS.forEach((m) => {
   // O nome do módulo já aparece no cabeçalho da página; repeti-lo aqui era
   // ruído. Este check trava a decisão: nada de título dentro da área.
   check(`${m}: sem repetir o nome do módulo`, !/<h[1-6][\s>]/.test(html));
-  check(`${m}: campo de filtro presente`, html.includes('id="workspaceFilter"'));
+  check(`${m}: sem campo de filtro`, !html.includes('workspaceFilter'));
   const faltando = moduleSubItems[m].filter((i) => !html.includes(`data-open-sub="${escapeHtml(i.key)}"`));
   check(`${m}: nenhuma tela ficou de fora`, faltando.length === 0, faltando.map((i) => i.key).join(', '));
 });
@@ -105,17 +105,37 @@ check('Dashboard (financeiro) -> painel', tipoDe(htmlFin, 'dashboard') === 'pain
 check('Papéis e Permissões -> config', tipoDe(htmlCfg, 'access_control') === 'config', tipoDe(htmlCfg, 'access_control'));
 check('Pedidos e Orçamentos -> lista (padrão)', tipoDe(htmlVendas, 'orders_quotes') === 'lista', tipoDe(htmlVendas, 'orders_quotes'));
 
-console.log('\n--- busca do filtro ignora acento ---');
-// "orcamento" tem que achar "Orçamento", senão o filtro só serve para quem
-// digita com acento.
-check('data-busca sem acento e minúsculo', /data-busca="[^"]*orcamento/.test(htmlVendas));
-check('data-busca inclui a descrição, não só o rótulo', /data-busca="[^"]*filtros/.test(htmlVendas));
+console.log('\n--- o filtro de telas foi removido ---');
+// A Área de Trabalho de um módulo mostra poucos blocos, todos visíveis de uma
+// vez: um campo para filtrar entre eles custava mais atenção do que economizava.
+// Removido junto: o data-busca de cada bloco e o aviso de lista vazia, que só
+// apareciam por causa dele.
+check('sem campo de filtro', !/workspaceFilter|workspace-filter/.test(htmlVendas));
+check('sem data-busca nos blocos', !/data-busca=/.test(htmlVendas));
+check('sem aviso de lista vazia', !/workspaceEmpty|Nenhuma tela encontrada/.test(htmlVendas));
+// O CSS tem que sair junto, senão fica regra órfã para sempre.
+const cssSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'public/app.css'), 'utf8');
+check('CSS do filtro removido', !/\.workspace-filter/.test(cssSrc));
+check('CSS do aviso vazio removido', !/\.workspace-empty/.test(cssSrc));
+// Os grupos de foco por tema listavam .workspace-filter por último; tirar o
+// seletor sem fechar a vírgula anterior quebraria o bloco inteiro.
+check('grupos de foco por tema continuam válidos',
+  /:root\[data-theme="dark"\] select:focus \{/.test(cssSrc)
+  && /:root:not\(\[data-theme="dark"\]\) select:focus \{/.test(cssSrc));
 
 console.log('\n--- fixar no bloco e faixa "mais usadas" ---');
 // A barra secundária saiu porque repetia os mesmos itens da Área de Trabalho.
 // Com ela foi embora o alfinete, que agora mora no próprio bloco.
 const semFavoritos = desenhar('reports');
-check('todo bloco tem o botão de fixar', (semFavoritos.match(/data-fixar=/g) || []).length === moduleSubItems.reports.length);
+// Dois tipos de alfinete convivem na tela, e a diferença importa:
+//   nos BLOCOS  -> fixa uma TELA  (chave "modulo::tela")
+//   no CABEÇALHO -> fixa o MÓDULO (chave só "modulo")
+// O do cabeçalho chegou quando a barra lateral virou só ícones e perdeu o
+// dela; contar os dois juntos escondia se um deles sumisse.
+const fixarTelas = (semFavoritos.match(/class="workspace-fixar /g) || []).length;
+check('todo bloco tem o botão de fixar tela', fixarTelas === moduleSubItems.reports.length, `${fixarTelas} de ${moduleSubItems.reports.length}`);
+check('e o cabeçalho tem o de fixar o módulo', /class="workspace-fixar-modulo/.test(semFavoritos));
+check('o do módulo usa a chave sem "::"', /data-fixar="reports"/.test(semFavoritos));
 check('sem nada fixado, não existe faixa', !semFavoritos.includes('workspace-favoritos'));
 // Bloco virou <div role="button"> porque o alfinete mora dentro dele: <button>
 // dentro de <button> é HTML inválido e o navegador desmonta a marcação.
@@ -152,7 +172,10 @@ TODAS_PRONTAS.forEach((m) => {
 });
 
 const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
-check('fiscal tem as 9 telas reais', reais('fiscal') === 9, `${reais('fiscal')} real(is)`);
+// 10 desde que o Painel Fiscal entrou. O número está escrito de propósito:
+// tela nova sem renderizador cai como "pendente" e este check já pegaria — mas
+// tela nova que ninguém registrou no menu passaria batido sem ele.
+check('fiscal tem as 10 telas reais', reais('fiscal') === 10, `${reais('fiscal')} real(is)`);
 // Sem nenhuma tela pendente em lugar nenhum, o menu não pode mais oferecer um
 // destino que não abre.
 const pendentesNoSistema = Object.entries(moduleSubItems)
@@ -230,8 +253,8 @@ check('Dashboard Geral nunca (tem tela própria)', W.deveAbrir('dashboard', { ac
 check('módulo desconhecido, não', W.deveAbrir('inexistente', { activeSub: null }) === false);
 
 console.log('\n--- rótulo com aspas não quebra o HTML ---');
-// Rótulo entra em atributo (data-busca, title): apóstrofo ou aspas escapados
-// errado fecham o atributo no meio e o bloco vira lixo na tela.
+// Rótulo entra em atributo (data-open-sub, title): apóstrofo ou aspas
+// escapados errado fecham o atributo no meio e o bloco vira lixo na tela.
 //
 // Este teste MONTA um módulo com esses caracteres em vez de depender de algum
 // rótulo real ter apóstrofo. Antes ele apontava para "Log's Vendas Importadas"
@@ -253,7 +276,7 @@ delete moduleLabels.__teste_escape;
 check('apóstrofo escapado', htmlEscape.includes('Log&#39;s'));
 check('aspas duplas escapadas', htmlEscape.includes('&quot;ZQXA&quot;'));
 check('& e < escapados', htmlEscape.includes('&amp;') && htmlEscape.includes('&lt;b&gt;'));
-check('nenhum apóstrofo cru dentro de atributo', !/data-busca="[^"]*'/.test(htmlEscape));
+check('nenhum apóstrofo cru dentro de atributo', !/title="[^"]*'/.test(htmlEscape));
 // O jeito direto de dizer a mesma coisa: nenhum trecho cru do rótulo sobrou.
 // Se `"ZQXA"` aparecer com as aspas de verdade, o atributo já fechou cedo.
 check('nenhuma aspa dupla crua no HTML', !htmlEscape.includes('"ZQXA"') && !htmlEscape.includes('"ZQXB"'));

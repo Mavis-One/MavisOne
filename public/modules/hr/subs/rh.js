@@ -90,7 +90,8 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
         title: 'Identificação',
         fields: [
           { name: 'name', label: 'Nome', required: true },
-          { name: 'document', label: 'CPF' },
+          // Colaborador é pessoa física: trava em CPF para não aceitar 14 dígitos.
+          { name: 'document', label: 'CPF', attrs: 'data-documento="cpf"' },
           { name: 'positionId', label: 'Profissão', type: 'select', empty: 'Sem profissão', options: (meta) => meta.positions || [] }
         ]
       },

@@ -10,15 +10,24 @@
   <body>
     <div id="app"></div>
     <script src="/modules/router.js"></script>
+    <!-- CPF/CNPJ antes de tudo: o app.js delega para ele, e as telas o usam
+         para ligar os campos de documento. -->
+    <script src="/modules/shared/documento.js"></script>
+    <!-- Antes de QUALQUER módulo: os painéis de Financeiro, Vendas, Estoque,
+         Compras, Fiscal, Frota, RH, PCP e Contratos chamam MavisPainel, e o
+         apelido financeBuildChartSvg é definido no fim deste arquivo. -->
+    <script src="/modules/shared/painel.js"></script>
     <script src="/modules/shared/module_workspace.js"></script>
     <script src="/modules/dashboard/index.js"></script>
     <script src="/modules/purchases/index.js"></script>
     <script src="/modules/purchases/subs/new_purchase.js"></script>
+    <script src="/modules/purchases/subs/painel.js"></script>
     <script src="/modules/purchases/subs/purchase_history.js"></script>
     <script src="/modules/purchases/subs/suppliers.js"></script>
     <script src="/modules/stock/shared.js"></script>
     <script src="/modules/stock/index.js"></script>
     <script src="/modules/stock/subs/price_manager.js"></script>
+    <script src="/modules/stock/subs/painel.js"></script>
     <script src="/modules/stock/subs/products.js"></script>
     <script src="/modules/stock/subs/new_product.js"></script>
     <script src="/modules/stock/subs/product_status.js"></script>
@@ -32,6 +41,7 @@
     <script src="/modules/stock/subs/new_price_table.js"></script>
     <script src="/modules/stock/subs/catalogs.js"></script>
     <script src="/modules/stock/subs/new_catalog.js"></script>
+    <script src="/modules/stock/subs/classes.js"></script>
     <script src="/modules/stock/subs/product_categories.js"></script>
     <script src="/modules/stock/subs/new_product_category.js"></script>
     <script src="/modules/stock/subs/movement_categories.js"></script>
@@ -39,6 +49,7 @@
     <script src="/modules/shared/atalhos.js"></script>
     <script src="/modules/shared/sales_totals.js"></script>
     <script src="/modules/shared/sales_status.js"></script>
+    <script src="/modules/shared/fiscal_permissoes.js"></script>
     <script src="/modules/shared/actions_menu.js"></script>
     <script src="/modules/shared/sales_record_actions.js"></script>
     <script src="/modules/finance/nfe_actions.js"></script>
@@ -52,10 +63,12 @@
     <script src="/modules/finance/subs/extrato_open_finance.js"></script>
     <script src="/modules/finance/subs/bancos_conectados.js"></script>
     <!-- Fiscal e Relatórios vêm DEPOIS de finance/subs/dashboard.js: é de lá que
-         saem financeStatCard, financeBuildChartSvg e financeFormatBRL. -->
+         saem financeStatCard e financeFormatBRL. O gráfico de tendência não
+         está mais nesse grupo — mudou para shared/painel.js, carregado no topo. -->
     <script src="/modules/fiscal/index.js"></script>
     <script src="/modules/fiscal/shared.js"></script>
     <script src="/modules/fiscal/subs/tabelas.js"></script>
+    <script src="/modules/fiscal/subs/painel.js"></script>
     <script src="/modules/fiscal/subs/eventos.js"></script>
     <script src="/modules/fiscal/subs/inutilizar.js"></script>
     <script src="/modules/fiscal/subs/logs.js"></script>
@@ -68,12 +81,16 @@
          cadastros/shared.js, então vêm DEPOIS dele. -->
     <script src="/modules/fleet/index.js"></script>
     <script src="/modules/fleet/subs/frota.js"></script>
+    <script src="/modules/fleet/subs/painel.js"></script>
     <script src="/modules/hr/index.js"></script>
     <script src="/modules/hr/subs/rh.js"></script>
+    <script src="/modules/hr/subs/painel.js"></script>
     <script src="/modules/pcp/index.js"></script>
     <script src="/modules/pcp/subs/pcp.js"></script>
+    <script src="/modules/pcp/subs/painel.js"></script>
     <script src="/modules/contracts/index.js"></script>
     <script src="/modules/contracts/subs/contratos.js"></script>
+    <script src="/modules/contracts/subs/painel.js"></script>
     <script src="/modules/crm/index.js"></script>
     <script src="/modules/crm/subs/crm.js"></script>
     <script src="/modules/cadastros/index.js"></script>
@@ -82,6 +99,7 @@
     <script src="/modules/cadastros/subs/novo_contato.js"></script>
     <script src="/modules/cadastros/subs/produtos.js"></script>
     <script src="/modules/cadastros/subs/novo_produto.js"></script>
+    <script src="/modules/cadastros/subs/classes_produto.js"></script>
     <script src="/modules/cadastros/subs/cashback.js"></script>
     <script src="/modules/cadastros/subs/novo_cashback.js"></script>
     <script src="/modules/cadastros/subs/agenda.js"></script>

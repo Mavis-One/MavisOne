@@ -6,7 +6,44 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
+  const cores = S.indiceDeCores(meta);
   const filters = { search: '', categoryId: '', status: '', situation: '', depositId: '' };
+
+  /**
+   * §20: a quebra por cor embaixo do saldo, e não numa tela de relatório à
+   * parte. É a mesma pergunta ("quanto tem deste produto?") com um nível a
+   * mais de detalhe — mandar o usuário para outro lugar para respondê-la é o
+   * que faz o relatório nunca ser aberto.
+   *
+   * `semClasse` aparece de propósito: é o saldo de antes do controle por cor,
+   * e escondê-lo faria a soma das cores não bater com o total.
+   */
+  /**
+   * Reserva: prometido em pedido aberto, ainda no depósito.
+   *
+   * `reserved` vem null quando a rota não calculou — aí a linha não diz nada,
+   * em vez de afirmar "nada reservado", que seria uma informação inventada.
+   * Zero reservado também não vira linha: seria ruído em todo produto parado.
+   */
+  function reservaDoProduto(product) {
+    if (product.reserved === null || product.reserved === undefined) return '';
+    if (Number(product.reserved) === 0) return '';
+    const livre = Number(product.available || 0);
+    return `<div class="stock-reserva" title="Prometido em pedidos abertos que ainda não foram faturados.">`
+      + `${S.formatQty(product.reserved)} reservado · <strong>${S.formatQty(livre)} livre</strong>`
+      + `</div>`;
+  }
+
+  function quebraPorCor(product) {
+    const quebra = product.classBalances;
+    if (!quebra) return '';
+    const partes = (quebra.valores || [])
+      .filter((linha) => linha.quantity !== 0)
+      .map((linha) => `${S.corBadge(cores, linha.classValueId)} ${S.formatQty(linha.quantity)}`);
+    if (quebra.semClasse !== 0) partes.push(`<span class="muted">sem cor ${S.formatQty(quebra.semClasse)}</span>`);
+    if (!partes.length) return '';
+    return `<div class="stock-quebra-cor">${partes.join(' · ')}</div>`;
+  }
 
   async function fetchProducts() {
     const params = new URLSearchParams();
@@ -91,7 +128,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
                     <td>${S.formatBRL(product.costPrice)}</td>
                     <td>${S.formatBRL(product.salePrice)}</td>
                     <td>${Number(product.margin || 0).toFixed(1)}%</td>
-                    <td>${S.formatQty(product.stockQuantity)}</td>
+                    <td>${S.formatQty(product.stockQuantity)}${reservaDoProduto(product)}${quebraPorCor(product)}</td>
                     <td>${S.situationBadge(product.situation)}</td>
                     <td>${S.statusBadge(product.status)}</td>
                     <td>

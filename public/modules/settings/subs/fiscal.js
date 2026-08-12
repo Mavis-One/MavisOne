@@ -392,7 +392,8 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         <h3>${isEditing ? 'Editar estabelecimento' : 'Novo estabelecimento'}</h3>
         <form id="fiscalEstabForm" class="form-grid">
           <div class="row">
-            <label>CNPJ (14 dígitos)<input name="cnpj" required maxlength="14" inputmode="numeric" placeholder="Somente números" value="${escapeHtml(estabForm.cnpj || '')}" /></label>
+            <!-- A máscara é só de tela: o submit grava com fiscalDigitsOnly. -->
+            <label>CNPJ<input name="cnpj" required data-documento="cnpj" value="${escapeHtml(estabForm.cnpj || '')}" /></label>
             <label>Ordem<input name="ordem" required maxlength="4" value="${escapeHtml(estabForm.ordem || '0001')}" placeholder="0001 = matriz" /></label>
             <label>Tipo
               <select name="tipo" required>
@@ -471,6 +472,43 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
       ${renderEstabelecimentosSection()}
     `;
     attachHandlers();
+    window.MavisDocumento?.ligarTodos(content);
+
+    // Consulta do CNPJ do estabelecimento. O emitente é o dado que mais custa
+    // errar: razão social, endereço e código IBGE saem em TODA nota emitida
+    // por ele, e corrigir depois exige cancelar as notas já autorizadas.
+    const campoCnpj = content.querySelector('#fiscalEstabForm [name="cnpj"]');
+    if (campoCnpj) {
+      const form = () => document.getElementById('fiscalEstabForm');
+      const preencher = (nome, valor) => {
+        const campo = form()?.querySelector(`[name="${nome}"]`);
+        if (campo && !String(campo.value || '').trim() && valor) campo.value = valor;
+      };
+      window.MavisDocumento.ligarConsultaCnpj(campoCnpj, {
+        api,
+        showToast,
+        devePreencherSozinho: () => !String(form()?.querySelector('[name="razaoSocial"]')?.value || '').trim(),
+        aoEncontrar: (dados) => {
+          preencher('razaoSocial', dados.razaoSocial);
+          preencher('nomeFantasia', dados.nomeFantasia);
+          preencher('email', dados.email);
+          preencher('telefone', dados.telefone);
+          preencher('logradouro', dados.logradouro);
+          preencher('numero', dados.numero);
+          preencher('complemento', dados.complemento);
+          preencher('bairro', dados.bairro);
+          preencher('municipio', dados.municipio);
+          preencher('uf', dados.uf);
+          preencher('cep', dados.cep);
+          // Só o código IBGE de verdade — o codigo_municipio da BrasilAPI é
+          // SIAFI e a SEFAZ rejeitaria a nota inteira.
+          preencher('codigoMunicipio', dados.codigoMunicipioIbge);
+          // A Receita devolve o CNAE como descrição ("Comércio varejista…"),
+          // não como código; o campo aqui espera o código, então não é
+          // preenchido — chutar deixaria o cadastro fiscal errado em silêncio.
+        }
+      });
+    }
   }
 
   function attachHandlers() {

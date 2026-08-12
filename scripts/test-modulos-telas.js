@@ -293,5 +293,18 @@ check('hr_positions ganha cbo', /add column if not exists cbo\b/.test(migracao))
 // quem estava lotado nele.
 check('os vínculos são ON DELETE SET NULL', !/references hr_(departments|work_schedules|employee_types|employee_categories)\(id\) on delete cascade/i.test(migracao));
 
+console.log('\n--- toda tela do menu de Estoque tem rota no módulo ---');
+// Falha silenciosa, do mesmo feitio das de cima: a tela aparece no menu, o
+// usuário clica e o roteador cai no fallback — abre Produtos, sem erro nenhum.
+// Foi exatamente o que aconteceu ao acrescentar Classes de Produto.
+const appSrcTelas = fs.readFileSync(path.join(RAIZ, 'public/app.js'), 'utf8').replace(/\r\n/g, '\n');
+const blocoStock = appSrcTelas.match(/\n  stock: \[([\s\S]*?)\n  \],/);
+const routerSrc = fs.readFileSync(path.join(RAIZ, 'public/modules/stock/index.js'), 'utf8');
+const chavesRoteador = [...routerSrc.match(/const STOCK_SUB_KEYS = \[([\s\S]*?)\];/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+check('o catálogo de subtelas do Estoque foi encontrado', Boolean(blocoStock));
+const chavesMenu = [...(blocoStock ? blocoStock[1] : '').matchAll(/key: '([^']+)'/g)].map((m) => m[1]);
+const semRota = chavesMenu.filter((k) => !chavesRoteador.includes(k));
+check(`nenhuma tela do menu ficou sem rota (${chavesMenu.length} telas)`, semRota.length === 0, semRota.join(', ') || undefined);
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

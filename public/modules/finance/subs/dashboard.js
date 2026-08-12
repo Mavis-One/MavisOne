@@ -70,53 +70,12 @@ function financeStatSubRow(tone, label, value) {
   return `<span class="finance-stat-sub-row ${tone}">${label}: ${financeFormatBRL(value)}</span>`;
 }
 
-// Utilitário de gráfico de tendência (linhas por período) compartilhado entre o
-// Financeiro e o Dashboard Geral. "lines" define quais campos da série viram
-// linhas e com qual classe de cor — por padrão, as 3 linhas do Financeiro
-// (Receitas/Despesas/Saldo); o Dashboard Geral passa sua própria configuração
-// pro gráfico de fluxo de Vendas (Pedidos/Orçamentos), mesmo motor de desenho.
-function financeBuildChartSvg(series, escapeHtml, lines) {
-  const width = 760;
-  const height = 220;
-  const paddingTop = 16;
-  const paddingBottom = 26;
-  const chartHeight = height - paddingTop - paddingBottom;
-  const n = Math.max(series.length, 1);
-  const step = n > 1 ? width / (n - 1) : width;
-  const baseY = paddingTop + chartHeight;
-
-  const activeLines = lines || [
-    { key: 'receitas', cssClass: 'finance-chart-line-receita' },
-    { key: 'despesas', cssClass: 'finance-chart-line-despesa' },
-    { key: 'saldo', cssClass: 'finance-chart-line-saldo' }
-  ];
-  const maxVal = Math.max(1, ...series.map((s) => Math.max(...activeLines.map((line) => Math.abs(Number(s[line.key]) || 0)))));
-
-  const pointsFor = (key) => series.map((s, i) => {
-    const x = n > 1 ? i * step : width / 2;
-    const y = baseY - (Number(s[key]) / maxVal) * chartHeight;
-    return { x, y, s };
-  });
-
-  const linePath = (points) => points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-  const dots = (points, cls, key) => points.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" class="finance-chart-dot ${cls}"><title>${escapeHtml(p.s.label)}: ${financeFormatBRL(p.s[key])}</title></circle>`).join('');
-
-  const linesData = activeLines.map((line) => ({ ...line, points: pointsFor(line.key) }));
-
-  const labels = series.map((s, i) => {
-    const x = n > 1 ? i * step : width / 2;
-    return `<text x="${x.toFixed(1)}" y="${height - 6}" text-anchor="middle" class="finance-chart-label">${escapeHtml(s.label)}</text>`;
-  }).join('');
-
-  return `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de tendência por período">
-      <line x1="0" y1="${baseY}" x2="${width}" y2="${baseY}" class="finance-chart-axis"></line>
-      ${linesData.map((line) => `<polyline points="${linePath(line.points)}" class="${line.cssClass}"></polyline>`).join('')}
-      ${linesData.map((line) => dots(line.points, line.cssClass, line.key)).join('')}
-      ${labels}
-    </svg>
-  `;
-}
+// O gráfico de tendência mudou de casa: agora é MavisPainel.graficoLinha, em
+// modules/shared/painel.js. Ele nasceu aqui e virou global por acidente — o
+// Dashboard Geral e Relatórios passaram a chamá-lo confiando na ordem das tags
+// <script>, e qualquer reordenação do index.html quebraria duas telas que nem
+// mencionam o Financeiro. `financeBuildChartSvg` continua valendo como apelido,
+// definido lá; o desenho é literalmente a mesma função.
 
 window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDashboard(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml } = ctx;

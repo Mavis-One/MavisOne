@@ -52,8 +52,13 @@ check('exige destinatário', /Preencha os dados do destinatário/.test(emissao))
 check('exige ao menos um item', /Adicione ao menos um item/.test(emissao));
 
 console.log('\n--- o financeiro NÃO pode sair em dobro ---');
+// Duas razões para NÃO gravar a condição: a nota veio de um pedido (o
+// financeiro é dele) ou a operação não gera financeiro nenhum (complemento de
+// ICMS, transferência, bonificação).
 check('condição de pagamento só é gravada sem pedido',
-  /condicaoPagamento: \(body\.orderId \|\| body\.saleId\) \? null : condicaoPagamentoDoBody\(body\)/.test(serverSrc));
+  /condicaoPagamento: \(body\.orderId \|\| body\.saleId\) \|\| !operacaoFiscal\.deveGerarFinanceiro\(\{ tipoOperacao \}\)/.test(serverSrc));
+check('e só em operação que gera financeiro',
+  /!operacaoFiscal\.deveGerarFinanceiro\(\{ tipoOperacao \}\)[\s\S]{0,60}\? null[\s\S]{0,60}: condicaoPagamentoDoBody\(body\)/.test(serverSrc));
 const gerador = serverSrc.slice(serverSrc.indexOf('async function gerarFinanceiroDaNfeAvulsa'), serverSrc.indexOf('async function aplicarRespostaFocusNaNfe'));
 check('o gerador desiste se a nota tem pedido', /if \(!nfe \|\| nfe\.orderId\) return 0;/.test(gerador));
 check('e desiste sem condição de pagamento', /if \(!condicao\) return 0;/.test(gerador));

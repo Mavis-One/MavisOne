@@ -18,7 +18,7 @@ const ORIGENS_MERCADORIA = [
 ];
 
 window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduct(ctx) {
-  const { content, api, showToast, state, loadModule } = ctx;
+  const { content, api, showToast, state, loadModule, confirmModal } = ctx;
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
@@ -36,6 +36,87 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
   }
 
   const value = (key, fallback = '') => S.escape(current ? current[key] ?? fallback : fallback);
+
+  // CLASSES (COR e, no futuro, VOLTAGEM/TAMANHO).
+  //
+  // Só na EDIÇÃO: a atribuição aponta para o id do produto, que não existe
+  // antes de salvar. Oferecer as cores num produto ainda inexistente daria uma
+  // escolha que se perderia no submit.
+  let catalogoClasses = [];
+  let classesDoProduto = [];
+  if (current) {
+    try {
+      const [cat, doProduto] = await Promise.all([
+        api('/api/stock/classes'),
+        api(`/api/stock/products/${encodeURIComponent(current.id)}/classes`)
+      ]);
+      catalogoClasses = cat.classes || [];
+      classesDoProduto = doProduto.classes || [];
+    } catch (error) {
+      // Sem as classes o resto do cadastro continua salvável — o produto não
+      // depende delas para existir.
+      catalogoClasses = [];
+    }
+  }
+
+  const usaClasse = (classId) => classesDoProduto.some((c) => c.classId === classId);
+  const usaValor = (classId, valorId) => classesDoProduto
+    .find((c) => c.classId === classId)?.valores.some((v) => v.id === valorId) || false;
+
+  function blocoClasses() {
+    if (!current) {
+      return `
+        <div class="cadastro-section">
+          <div class="cadastro-section-header"><h4>Classes</h4>
+            <p>Cor, voltagem e afins — cada valor com seu próprio saldo de estoque.</p></div>
+          <div class="cadastro-section-body">
+            <p class="muted">Salve o produto primeiro. As classes são atribuídas ao produto já cadastrado.</p>
+          </div>
+        </div>`;
+    }
+    if (!catalogoClasses.length) {
+      return `
+        <div class="cadastro-section">
+          <div class="cadastro-section-header"><h4>Classes</h4></div>
+          <div class="cadastro-section-body">
+            <p class="muted">Nenhuma classe cadastrada ainda. Cadastre "Cor" e as cores que você usa — depois volte para dizer quais deste produto.</p>
+            <button type="button" class="secondary" id="produtoIrParaClasses">Cadastrar classes e cores</button>
+          </div>
+        </div>`;
+    }
+    return `
+      <div class="cadastro-section">
+        <div class="cadastro-section-header"><h4>Classes</h4>
+          <p>Marque a classe e, dentro dela, apenas os valores que <strong>este</strong> produto tem.
+             Cada valor passa a ter saldo de estoque próprio.</p>
+          <!-- A cor que falta só aparece na hora de marcar. Sem esta saída, o
+               caminho seria sair do produto, achar o catálogo no menu e voltar
+               procurando o produto de novo. -->
+          <button type="button" class="secondary finance-pill-sm" id="produtoIrParaClasses">Cadastrar nova classe ou cor</button>
+        </div>
+        <div class="cadastro-section-body classe-lista">
+          ${catalogoClasses.map((classe) => `
+            <section class="classe-bloco ${usaClasse(classe.id) ? 'is-ativa' : ''}" data-classe="${S.escape(classe.id)}">
+              <label class="classe-cabecalho">
+                <input type="checkbox" class="classe-usar" data-classe="${S.escape(classe.id)}" ${usaClasse(classe.id) ? 'checked' : ''} />
+                <strong>${S.escape(classe.name)}</strong>
+                <span class="muted">${S.escape(classe.description || '')}</span>
+              </label>
+              <div class="classe-valores" ${usaClasse(classe.id) ? '' : 'hidden'}>
+                ${(classe.valores || []).length ? (classe.valores || []).map((valor) => `
+                  <label class="classe-valor">
+                    <input type="checkbox" class="classe-valor-check" data-classe="${S.escape(classe.id)}" data-valor="${S.escape(valor.id)}" ${usaValor(classe.id, valor.id) ? 'checked' : ''} />
+                    ${valor.hex ? `<span class="classe-amostra" style="background:${S.escape(valor.hex)}"></span>` : ''}
+                    <span>${S.escape(valor.name)}</span>
+                    ${valor.code ? `<em class="muted">${S.escape(valor.code)}</em>` : ''}
+                  </label>
+                `).join('') : '<p class="muted">Esta classe ainda não tem valores cadastrados.</p>'}
+              </div>
+            </section>
+          `).join('')}
+        </div>
+      </div>`;
+  }
 
   content.innerHTML = `
     <div class="panel">
@@ -110,6 +191,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
           </div>
           <p class="muted">Se informar estoque inicial maior que zero, selecione também o depósito padrão — é nele que a entrada será registrada.</p>
         `}
+        ${blocoClasses()}
         <label>Observações<textarea name="notes" rows="2">${value('notes')}</textarea></label>
         <div class="finance-actions-row">
           <button type="submit">${current ? 'Salvar alterações' : 'Salvar produto'}</button>
@@ -118,6 +200,45 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       </form>
     </div>
   `;
+
+  // Marcar a classe revela os valores dela. Desmarcar esconde, mas NÃO limpa
+  // as escolhas: quem desmarca por engano e remarca não perde as cores que já
+  // tinha selecionado.
+  content.querySelectorAll('.classe-usar').forEach((caixa) => {
+    caixa.addEventListener('change', () => {
+      const bloco = caixa.closest('.classe-bloco');
+      bloco?.classList.toggle('is-ativa', caixa.checked);
+      const valores = bloco?.querySelector('.classe-valores');
+      if (valores) valores.hidden = !caixa.checked;
+    });
+  });
+
+  // Lê o estado final da tela. Classe marcada sem nenhum valor fica de fora:
+  // um produto que "usa COR" mas não oferece cor nenhuma travaria a venda,
+  // que pediria uma escolha sem opções.
+  function lerClassesDaTela() {
+    return [...content.querySelectorAll('.classe-usar')]
+      .filter((caixa) => caixa.checked)
+      .map((caixa) => {
+        const classId = caixa.dataset.classe;
+        const valores = [...content.querySelectorAll(`.classe-valor-check[data-classe="${classId}"]`)]
+          .filter((v) => v.checked)
+          .map((v) => v.dataset.valor);
+        return { classId, valores };
+      })
+      .filter((c) => c.valores.length);
+  }
+
+  // Ir ao catálogo de classes e voltar para ESTE produto. O que já foi
+  // digitado no formulário se perde — a tela é reconstruída do servidor — por
+  // isso a confirmação: descobrir a perda depois de voltar seria pior.
+  document.getElementById('produtoIrParaClasses')?.addEventListener('click', async () => {
+    const seguir = await confirmModal('Ir para o cadastro de classes? Alterações não salvas neste produto serão perdidas.');
+    if (!seguir) return;
+    state.stockClassesVoltarPara = { sub: 'new_product', productId: current ? current.id : null };
+    state.activeSub = 'classes';
+    loadModule('stock');
+  });
 
   document.getElementById('stockProductCancel')?.addEventListener('click', () => {
     state.activeSub = 'products';
@@ -158,6 +279,24 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
 
     try {
       await api('/api/stock/products', { method: 'POST', body: JSON.stringify(payload) });
+      // As classes salvam DEPOIS e por rota própria, mas no mesmo clique: dois
+      // botões de salvar na mesma tela fariam metade do cadastro ser perdida
+      // por quem clicasse no errado.
+      //
+      // Falhar aqui não desfaz o produto, que já foi gravado — por isso o
+      // aviso diz exatamente o que ficou para trás, em vez de "erro ao salvar".
+      if (current) {
+        try {
+          await api(`/api/stock/products/${encodeURIComponent(current.id)}/classes`, {
+            method: 'PUT',
+            body: JSON.stringify({ classes: lerClassesDaTela() })
+          });
+        } catch (erroClasses) {
+          showToast(`Produto salvo, mas as classes não: ${erroClasses.message || erroClasses}`, 'error');
+          if (submitBtn) submitBtn.disabled = false;
+          return;
+        }
+      }
       showToast(current ? 'Produto atualizado.' : 'Produto criado.', 'success');
       state.activeSub = 'products';
       loadModule('stock');

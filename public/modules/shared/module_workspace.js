@@ -48,11 +48,6 @@ function svgDoTipo(tipo) {
   return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONES[tipo] || ICONES.lista}</svg>`;
 }
 
-// Busca sem acento: quem digita "orcamento" tem que achar "Orçamento".
-function semAcento(texto) {
-  return String(texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-}
-
 // moduleSubItems e moduleLabels são `const` no topo do app.js. `const` de nível
 // superior NÃO vira propriedade de window, então `window.moduleSubItems` é
 // undefined — a referência tem que ser pelo nome puro, como o dashboard já faz.
@@ -140,9 +135,19 @@ window.MavisWorkspace = {
           <!-- Sem repetir o nome do módulo: o cabeçalho da página já o exibe, e
                ler "Vendas" duas vezes na mesma tela não informa nada. -->
           <p class="muted">${itens.length} tela${itens.length === 1 ? '' : 's'} neste módulo.</p>
-          <input type="search" class="workspace-filter" id="workspaceFilter"
-            placeholder="Filtrar telas…" autocomplete="off"
-            aria-label="Filtrar telas de ${escapeHtml(titulo)}" />
+          <!-- FIXAR O MÓDULO INTEIRO.
+               Isso morava na barra lateral, que agora é só ícones e nunca
+               abre — o botão não teria onde caber. Aqui é melhor lugar: quem
+               decide fixar um módulo está justamente olhando para ele.
+               A chave é o nome do módulo sem "::tela", que é o que distingue
+               módulo fixado de tela fixada na mesma lista de favoritos. -->
+          <button type="button" class="workspace-fixar-modulo ${fixados.has(moduleName) ? 'active' : ''}"
+            data-fixar="${escapeHtml(moduleName)}"
+            aria-pressed="${fixados.has(moduleName) ? 'true' : 'false'}"
+            title="${fixados.has(moduleName) ? 'Desfixar' : 'Fixar'} ${escapeHtml(titulo)} no Dashboard Geral">
+            ${typeof favoriteIconSvg === 'function' ? favoriteIconSvg(fixados.has(moduleName)) : '★'}
+            <span>${fixados.has(moduleName) ? 'Módulo fixado' : 'Fixar módulo'}</span>
+          </button>
         </section>
 
         ${favoritos.length ? `
@@ -168,8 +173,7 @@ window.MavisWorkspace = {
             return `
               <div class="workspace-tile workspace-tile-${tipo}${item.pendente ? ' is-pendente' : ''}"
                 role="button" tabindex="0"
-                data-open-sub="${escapeHtml(item.key)}"
-                data-busca="${escapeHtml(semAcento(`${item.label} ${item.desc || ''}`))}">
+                data-open-sub="${escapeHtml(item.key)}">
                 <span class="workspace-tile-icon">${svgDoTipo(tipo)}</span>
                 <span class="workspace-tile-text">
                   <strong>${escapeHtml(item.label)}${item.pendente ? '<em class="workspace-tag">em preparo</em>' : ''}</strong>
@@ -180,8 +184,6 @@ window.MavisWorkspace = {
             `;
           }).join('')}
         </div>
-
-        <p class="workspace-empty muted" id="workspaceEmpty" hidden>Nenhuma tela encontrada.</p>
       </div>
     `;
 
@@ -239,17 +241,5 @@ window.MavisWorkspace = {
       });
     });
 
-    const filtro = content.querySelector('#workspaceFilter');
-    const vazio = content.querySelector('#workspaceEmpty');
-    filtro?.addEventListener('input', () => {
-      const termo = semAcento(filtro.value.trim());
-      let visiveis = 0;
-      content.querySelectorAll('.workspace-tile').forEach((tile) => {
-        const casa = !termo || tile.dataset.busca.includes(termo);
-        tile.hidden = !casa;
-        if (casa) visiveis++;
-      });
-      vazio.hidden = visiveis > 0;
-    });
   }
 };

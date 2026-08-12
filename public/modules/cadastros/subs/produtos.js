@@ -28,6 +28,7 @@ window.MavisSubscreenRegistry.cadastros.produtos = async function renderCadastro
   }
   await renderer(window.MavisCadastros.stockProxyCtx(ctx, {
     products: 'produtos',
-    new_product: 'novo_produto'
+    new_product: 'novo_produto',
+    classes: 'classes_produto'
   }));
 };

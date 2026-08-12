@@ -242,7 +242,29 @@ textarea { min-height: 110px; resize: vertical; }
 
 /* Campo de busca que substitui um <select> (ver renderSearchableSelect em app.js) */
 .searchable-select { position: relative; }
-.searchable-select-input { width: 100%; }
+/* Espaço à direita reservado para a lupa: sem ele o texto digitado passa por
+   baixo do botão e some justamente quando o nome é longo. */
+.searchable-select-input { width: 100%; padding-right: 38px; }
+
+.searchable-select-lupa {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.searchable-select-lupa:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.12)); color: var(--text); }
+.searchable-select-lupa:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .searchable-select-dropdown {
   position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; right: 0;
   max-height: 240px; overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
@@ -326,10 +348,11 @@ button.success:hover { background: var(--success-hover); }
   height: 100vh;
   align-self: start;
   overflow-y: auto;
+  /* Corta o que passa dos 72px: o rótulo do módulo continua no HTML (é dele
+     que sai o texto do balão e é o que o leitor de tela lê), mas nunca aparece
+     — a barra é só de ícones e não expande. */
   overflow-x: hidden;
-  transition: width 350ms cubic-bezier(0.4, 0, 0.2, 1), padding 350ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-.sidebar:hover, .sidebar.expanded { width: 260px; padding-left: 16px; padding-right: 16px; }
 
 .sidebar-header {
   display: flex;
@@ -341,16 +364,11 @@ button.success:hover { background: var(--success-hover); }
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   transition: all 350ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-.sidebar:hover .sidebar-header, .sidebar.expanded .sidebar-header { border-bottom-color: rgba(255, 255, 255, 0.15); }
 
 .logo-sidebar {
   width: 56px;
   transition: width 350ms cubic-bezier(0.4, 0, 0.2, 1), filter 350ms cubic-bezier(0.4, 0, 0.2, 1);
   filter: saturate(1.55) drop-shadow(0 0 8px rgba(118, 234, 0, 0.28));
-}
-.sidebar:hover .logo-sidebar, .sidebar.expanded .logo-sidebar {
-  width: 132px;
-  filter: saturate(1.65) drop-shadow(0 0 12px rgba(118, 234, 0, 0.4));
 }
 
 .sidebar h2 { margin-top: 0; white-space: nowrap; overflow: hidden; }
@@ -381,16 +399,12 @@ button.success:hover { background: var(--success-hover); }
   --brand-verde: var(--marca-verde-escrita);
   --brand-rosa: var(--marca-rosa-escrita);
 }
-.sidebar:hover .brand .brand-full, .sidebar.expanded .brand .brand-full { display: inline-block; }
-.sidebar:hover .brand .brand-short, .sidebar.expanded .brand .brand-short { display: none; }
 
 /* On auth (login) screen show full brand */
 .auth-card .brand .brand-full { display: inline-block; }
 .auth-card .brand .brand-short { display: none; }
 .auth-card .brand { text-align: center; justify-content: center; width: 100%; margin-bottom: 8px; }
 
-.sidebar .muted { color: #cbd5e1; font-weight: 600; margin: 4px 0 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 160px; transition: opacity 200ms ease, max-width 350ms ease, transform 350ms ease; opacity: 0; transform: translateX(-6px); }
-.sidebar:hover .muted, .sidebar.expanded .muted { opacity: 1; transform: none; max-width: 100%; }
 
 .nav-list { display: grid; gap: 6px; margin-top: 18px; }
 .nav-block { display: grid; gap: 6px; }
@@ -404,7 +418,37 @@ button.success:hover { background: var(--success-hover); }
 .nav-item { display: flex; align-items: center; gap: 12px; flex: 1; text-align: left; padding: 10px; border-radius: 10px; background: transparent; color: #fff; justify-content: flex-start; cursor: pointer; }
 .nav-item .icon { display:inline-flex; width:36px; height:36px; align-items:center; justify-content:center; border-radius:8px; background: rgba(255,255,255,0.06); font-weight:700; }
 .nav-item .text { white-space: nowrap; overflow: hidden; transition: opacity 200ms ease, transform 350ms ease; opacity: 0; transform: translateX(-6px); }
-.sidebar:hover .nav-item .text, .sidebar.expanded .nav-item .text { opacity: 1; transform: none; }
+
+/* NOME AO PASSAR O MOUSE, no lugar de abrir a barra inteira.
+   A barra abria sozinha ao encostar o mouse: quem só atravessava a tela para
+   chegar ao conteúdo empurrava o layout de 72px para 260px sem ter pedido
+   nada. Agora o hover só diz COMO o ícone se chama; abrir é decisão de clique.
+
+   position: fixed, e um balão só no <body>, porque a .sidebar tem
+   overflow-x: hidden — um balão dentro dela seria cortado na borda dos 72px,
+   exatamente onde ele precisa aparecer.
+
+   pointer-events: none é o que impede o pisca-pisca: se o balão recebesse o
+   mouse, o cursor sairia do ícone e entraria nele, escondendo o balão, o que
+   devolveria o mouse ao ícone, que o mostraria de novo. */
+#navDica {
+  position: fixed;
+  z-index: 200;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #0b1220;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 8px 20px rgba(2, 6, 23, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+#navDica.visivel { opacity: 1; transform: none; }
 .nav-item.active .icon { background: var(--primary); color: var(--on-primary); }
 .submenu { margin-left: 48px; margin-top: 6px; display: none; flex-direction: column; gap: 6px; }
 .sub-item { background: transparent; color: #cbd5e1; padding: 8px 10px; border-radius: 8px; text-align: left; cursor: pointer; flex: 1; }
@@ -426,12 +470,6 @@ button.success:hover { background: var(--success-hover); }
   pointer-events: none;
   transform: translateX(-6px);
   transition: opacity 200ms ease, transform 200ms ease, background 150ms ease, border-color 150ms ease, color 150ms ease;
-}
-.sidebar:hover .sidebar-pin-btn,
-.sidebar.expanded .sidebar-pin-btn {
-  opacity: 1;
-  pointer-events: auto;
-  transform: none;
 }
 .sidebar-pin-btn.active {
   background: #f59e0b;
@@ -817,6 +855,9 @@ button.success:hover { background: var(--success-hover); }
   .sidebar { border-bottom: 1px solid #1e293b; width: 100% !important; padding: 12px !important; }
   .sidebar .nav-item .text { opacity: 1; transform: none; }
   .sidebar .sidebar-pin-btn { opacity: 1; pointer-events: auto; transform: none; }
+  /* No celular a barra é uma faixa de largura total com os nomes escritos, e
+     não existe "passar o mouse": o balão repetiria o rótulo por cima dele. */
+  #navDica { display: none; }
   .submenu { display: block; margin-left: 0; }
   .secondary-sidebar { width: 100%; min-width: 100%; max-height: 0; padding: 0; }
   .secondary-sidebar.visible { width: 100%; min-width: 100%; max-height: 420px; padding: 16px 12px; }
@@ -1425,6 +1466,65 @@ tr[data-detail] { cursor: pointer; }
 .stock-detail-grid strong { font-weight: 600; word-break: break-word; }
 .modal textarea[readonly] { background: var(--bg); cursor: default; resize: vertical; }
 
+/* Cor (classe) do produto nas listas de Estoque.
+   ---------------------------------------------------------------------------
+   Selo ao lado do produto em vez de coluna própria: Movimentações já tem 11
+   colunas, e a maioria dos produtos não tem cor nenhuma — uma coluna vazia
+   custaria largura em todas as linhas para informar nada. */
+.stock-cor-selo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+/* A bolinha só aparece se o valor tiver hex cadastrado. Inventar uma cor de
+   fundo faria "Azul Marinho" e "Azul Royal" virarem o mesmo quadrado. */
+.stock-cor-bolinha {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  flex: none;
+}
+/* Reserva: prometido em pedido aberto, ainda no depósito. Não é saldo negativo
+   nem erro — é compromisso — então usa o tom de atenção, não o de perigo. */
+.stock-reserva {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--warning-text, var(--muted));
+  white-space: nowrap;
+}
+.stock-aviso-reserva {
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+  font-size: 12.5px;
+}
+/* Na venda, o "de 20" ao lado do disponível: sem ele o vendedor acha que o
+   estoque acabou, quando na verdade está comprometido com outro pedido. */
+.sales-item-reservado {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Quebra por cor embaixo do saldo, na lista de produtos. */
+.stock-quebra-cor {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  line-height: 1.7;
+  white-space: normal;
+}
+
 .finance-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .finance-modal-head h3 { margin: 0 0 4px; }
 .finance-modal-info-grid {
@@ -1749,6 +1849,19 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 /* Saldo que não cobre a quantidade pedida. Não bloqueia nada — o pedido pode
    ser salvo assim — mas faturar vai ser recusado pelo servidor, e descobrir
    isso só na hora de aprovar é o que faz perder a venda. */
+/* A cor do item. Selo em vez de mais uma coluna: só alguns produtos têm cor, e
+   uma coluna vazia na maioria das linhas custaria largura em todas elas. */
+.sales-item-cor {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 .sales-items-table .sales-item-readonly.is-alerta {
   background: color-mix(in srgb, var(--danger) 16%, var(--panel));
   color: var(--danger-text);
@@ -2005,27 +2118,18 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
    ============================================================================ */
 .workspace { display: grid; gap: 16px; }
 
+/* Texto à esquerda, "Fixar módulo" à direita. Voltou a ser flex quando o
+   botão de fixar entrou — com só o texto dentro, o flex não fazia nada. */
 .workspace-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 0;
 }
 .workspace-head h3 { margin: 0 0 4px; }
 .workspace-head p { margin: 0; }
-
-.workspace-filter {
-  flex: 0 1 280px;
-  min-width: 200px;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--input-bg);
-  color: var(--text);
-}
-.workspace-filter:focus { outline: none; border-color: var(--primary); }
 
 .workspace-grid {
   display: grid;
@@ -2076,11 +2180,9 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 .workspace-tile-documento .workspace-tile-icon { background: rgba(139, 92, 246, 0.14); color: #8b5cf6; }
 .workspace-tile-importar .workspace-tile-icon { background: rgba(245, 158, 11, 0.14); color: var(--warning-text); }
 
-.workspace-empty { margin: 4px 2px; }
 
 @media (max-width: 640px) {
   .workspace-grid { grid-template-columns: 1fr; }
-  .workspace-filter { flex: 1 1 100%; }
 }
 
 /* Movimento só para quem não pediu para reduzi-lo. */
@@ -2210,8 +2312,7 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 }
 :root[data-theme="dark"] input:focus,
 :root[data-theme="dark"] textarea:focus,
-:root[data-theme="dark"] select:focus,
-:root[data-theme="dark"] .workspace-filter:focus {
+:root[data-theme="dark"] select:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(var(--neon-rgb), 0.14);
   outline: none;
@@ -2361,8 +2462,7 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 }
 :root:not([data-theme="dark"]) input:focus,
 :root:not([data-theme="dark"]) textarea:focus,
-:root:not([data-theme="dark"]) select:focus,
-:root:not([data-theme="dark"]) .workspace-filter:focus {
+:root:not([data-theme="dark"]) select:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(var(--neon-rgb), 0.18);
   outline: none;
@@ -2660,3 +2760,656 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* CPF/CNPJ inválido. O aviso é inserido pelo modules/shared/documento.js logo
+   depois do campo, no blur — não a cada tecla, senão acusaria "inválido" no
+   terceiro dígito, quando ainda faltam oito. */
+.documento-invalido {
+  border-color: var(--danger) !important;
+}
+.documento-erro {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--danger-text);
+}
+
+/* Lupa de consulta de CNPJ dentro do campo de documento. A caixa recebe
+   position:relative só quando a lupa existe — campos sem consulta não mudam. */
+.documento-com-lupa { position: relative; display: block; }
+.documento-com-lupa input { padding-right: 38px; }
+.documento-lupa {
+  position: absolute;
+  right: 6px;
+  /* Alinha pela ALTURA DO INPUT, e não pelo centro da caixa: o aviso de erro
+     o wrapper envolve apenas o input, então o centro dele é o centro do campo. */
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.documento-lupa:hover:not(:disabled) { background: var(--hover-bg, rgba(148, 163, 184, 0.12)); color: var(--primary); }
+.documento-lupa:disabled { opacity: 0.35; cursor: not-allowed; }
+.documento-lupa.is-carregando { animation: documento-lupa-pulso 0.9s ease-in-out infinite; }
+@keyframes documento-lupa-pulso { 50% { opacity: 0.35; } }
+
+/* Fixar o MÓDULO inteiro no Dashboard Geral. Morava na barra lateral, que
+   agora é só ícones e nunca abre — o botão não teria onde caber. */
+.workspace-fixar-modulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.workspace-fixar-modulo:hover { border-color: var(--primary); color: var(--text); }
+.workspace-fixar-modulo.active { border-color: var(--primary); color: var(--primary); }
+.workspace-fixar-modulo svg { width: 15px; height: 15px; }
+
+/* ============================ BARRA SUPERIOR ==============================
+   Caminho acima, título embaixo. Antes tudo cabia numa linha só
+   ("Vendas > Novo Pedido") e o nome da tela competia com o do módulo pelo
+   mesmo peso visual — o caminho é referência, o título é onde a pessoa está. */
+.topbar-heading { min-width: 0; }
+.topbar-crumb {
+  margin: 0 0 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar-heading h1 { margin: 0; }
+
+/* Sino: marca sem número. O painel agrupa por tipo, então um número seria a
+   soma de REGISTROS e daria a 23 produtos abaixo do mínimo o mesmo peso de
+   duas notas rejeitadas. O ponto diz "tem algo"; a lista diz o quê. */
+.topbar-sino { position: relative; }
+.topbar-sino-marca {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning-text, #b45309);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+.topbar-sino-marca.is-critico { background: var(--danger); }
+
+/* Quem está logado. O nome saiu da barra lateral quando ela virou só ícones,
+   e aquele era o único lugar do sistema que o mostrava. */
+.topbar-usuario {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  max-width: 200px;
+}
+.topbar-avatar {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.topbar-usuario-nome {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Em tela estreita o nome sai e sobra o avatar — ele já identifica a conta,
+   e a barra tem botões demais para o nome disputar espaço. */
+@media (max-width: 900px) {
+  .topbar-usuario-nome { display: none; }
+  .topbar-usuario { padding: 4px; }
+}
+
+/* --- Menu da conta --------------------------------------------------------
+   Tema, Configurações e Sair eram três controles soltos disputando espaço com
+   o sino e os atalhos. Reunidos atrás do nome, que é onde se procura por eles.
+   O chip vira botão, então precisa de cursor e retorno ao passar o mouse — sem
+   isso ele continua parecendo só um rótulo. */
+.topbar-conta { position: relative; }
+button.topbar-usuario { cursor: pointer; font: inherit; color: inherit; }
+button.topbar-usuario:hover { border-color: var(--primary); }
+.topbar-conta-seta { color: var(--muted); flex: none; transition: transform 0.15s; }
+button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rotate(180deg); }
+
+.topbar-conta-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: 268px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px var(--shadow);
+}
+/* display de autor vence [hidden] do navegador — foi o defeito que deixou o
+   menu de Atalhos aberto para sempre. Aqui a regra é explícita. */
+.topbar-conta-menu[hidden] { display: none; }
+
+.topbar-conta-cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.topbar-conta-cabecalho > div { display: grid; min-width: 0; }
+.topbar-conta-cabecalho strong { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-conta-cabecalho .muted { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-avatar-grande { width: 36px; height: 36px; min-width: 36px; font-size: 13px; }
+
+.topbar-conta-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.topbar-conta-item:hover { background: var(--panel-alt); }
+.topbar-conta-icone { display: grid; place-items: center; width: 20px; color: var(--muted); flex: none; }
+.topbar-conta-texto { display: grid; flex: 1; min-width: 0; font-size: 13px; font-weight: 500; }
+.topbar-conta-texto em { font-size: 11.5px; font-style: normal; font-weight: 400; color: var(--muted); }
+.topbar-conta-divisor { height: 1px; background: var(--border); margin: 6px 4px; }
+
+/* O tema é um INTERRUPTOR, não uma ação: o ícone sozinho na barra nunca dizia
+   em qual estado estava, só o que aconteceria ao clicar. */
+.topbar-conta-switch {
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: var(--border);
+  flex: none;
+  position: relative;
+  transition: background 0.16s;
+}
+.topbar-conta-switch i {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 1px 2px var(--shadow);
+  transition: transform 0.16s;
+}
+.topbar-conta-switch.ligado { background: var(--primary); }
+.topbar-conta-switch.ligado i { transform: translateX(15px); }
+
+/* Sair em tom de perigo: é a única ação do menu que descarta o que está aberto,
+   e ela não pode parecer igual a trocar o tema. */
+.topbar-conta-sair { color: var(--danger-text); }
+.topbar-conta-sair .topbar-conta-icone { color: var(--danger-text); }
+.topbar-conta-sair:hover { background: color-mix(in srgb, var(--danger) 12%, var(--panel)); }
+
+/* Lista de pendências ancorada no sino. position: fixed e no <body> porque a
+   topbar é sticky e tem contexto de empilhamento próprio — dentro dela o
+   painel seria cortado ou ficaria por baixo do conteúdo. */
+.notif-painel {
+  position: fixed;
+  z-index: 210;
+  width: 340px;
+  max-width: calc(100vw - 16px);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: 0 14px 34px var(--shadow);
+}
+.notif-painel-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  font-size: 13px;
+}
+.notif-painel-topo .muted { font-size: 11.5px; }
+.notif-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.notif-item:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.12)); }
+.notif-item-texto { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.notif-item-texto strong { font-size: 13px; font-weight: 600; }
+.notif-item-texto span {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notif-item-conta { font-size: 15px; font-weight: 700; }
+/* Bolinha de severidade com halo: a mesma escala do painel — vermelho só para
+   o que já causou dano, senão a cor deixa de significar alguma coisa. */
+.notif-sev { width: 9px; height: 9px; min-width: 9px; border-radius: 50%; }
+.notif-sev-alta { background: var(--danger); box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18); }
+.notif-sev-media { background: var(--warning-text, #b45309); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18); }
+.notif-sev-baixa { background: var(--muted); box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.18); }
+/* Painel vazio é boa notícia e precisa dizer isso — sem texto, parece falha. */
+.notif-vazio { margin: 0; padding: 10px 12px 14px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+/* ======================= HUB — SAUDAÇÃO, KPIs, ATENÇÃO ==================== */
+.dashboard-saudacao {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.dashboard-saudacao h2 { margin: 0; font-size: 1.2rem; letter-spacing: -0.02em; }
+.dashboard-saudacao p { margin: 2px 0 0; font-size: 13px; }
+
+/* Abas de seção do painel.
+   ---------------------------------------------------------------------------
+   Separam o painel por área para quem abriu conferindo o caixa não passar pelo
+   gráfico de vendas no caminho. Atenção e Favoritos ficam FORA delas: aba
+   esconde conteúdo, e pendência escondida é pendência perdida. */
+.dashboard-abas {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  /* Rolagem horizontal em tela estreita, sem barra à mostra: com seis áreas a
+     tira não cabe, e quebrar em duas linhas empurraria o painel para baixo. */
+  scrollbar-width: none;
+}
+.dashboard-abas::-webkit-scrollbar { display: none; }
+.dashboard-aba {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 9px 15px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  border-radius: 0;
+}
+.dashboard-aba:hover { color: var(--text); }
+.dashboard-aba.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+/* Aba sem gráfico: o espaço da coluna esquerda continua ocupado para Atenção
+   não pular para a largura cheia e desalinhar com as outras abas. */
+.dashboard-aba-vazia {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+}
+
+/* auto-fit e não colunas fixas: com cinco cartões numa tela estreita, uma
+   grade de 5 colunas espremeria o valor a ponto de quebrar a linha. */
+.kpi-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.kpi-card {
+  padding: 14px 15px 13px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 1px 2px var(--shadow);
+  min-width: 0;
+}
+.kpi-card h3 {
+  margin: 0;
+  font-size: 10.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.kpi-valor {
+  margin: 7px 0 2px;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  /* Números alinham em coluna: sem isto, "1,28" e "423,8" saem com larguras
+     de dígito diferentes e a leitura de cima a baixo fica torta. */
+  font-variant-numeric: tabular-nums;
+}
+.kpi-valor small { font-size: 0.8rem; font-weight: 600; color: var(--muted); letter-spacing: 0; }
+.kpi-sub { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
+.kpi-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+/* Subir não é sempre bom (despesa que sobe é ruim), então a cor diz APENAS a
+   direção — quem interpreta é quem lê o título do cartão. */
+.kpi-delta-sobe { background: rgba(22, 163, 74, 0.14); color: var(--success); }
+.kpi-delta-desce { background: rgba(239, 68, 68, 0.14); color: var(--danger-text); }
+.kpi-delta-igual { background: rgba(148, 163, 184, 0.16); color: var(--muted); }
+
+.kpi-faixa { margin-top: 9px; }
+.kpi-trilho { height: 5px; border-radius: 20px; background: rgba(148, 163, 184, 0.2); overflow: hidden; }
+.kpi-trilho i { display: block; height: 100%; border-radius: 20px; background: var(--primary); }
+.kpi-trilho-perigo i { background: var(--danger); }
+.kpi-trilho-alerta i { background: var(--warning-text, #b45309); }
+.kpi-faixa-legenda {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+/* Sem eixo e sem rótulo: responde "está subindo ou caindo?", não "quanto". */
+.kpi-spark { display: block; width: 100%; height: 26px; margin-top: 8px; color: var(--primary); }
+
+/* Gráfico largo, pendências estreitas. Só a partir de 1100px: abaixo disso a
+   coluna de 1fr do painel ficaria menor que o texto das linhas. */
+@media (min-width: 1100px) {
+  .dashboard-charts-grid-principal { grid-template-columns: 1.75fr 1fr; }
+}
+
+.dashboard-atencao { padding: 0; overflow: hidden; }
+.dashboard-atencao-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 16px 8px;
+}
+.dashboard-atencao-topo h3 { margin: 0; }
+.dashboard-atencao-topo .muted { font-size: 11.5px; }
+.dashboard-atencao-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 10px 16px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.dashboard-atencao-item:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.1)); }
+.dashboard-atencao-texto { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.dashboard-atencao-texto strong { font-size: 13px; font-weight: 600; }
+.dashboard-atencao-texto span {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dashboard-atencao-conta { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dashboard-atencao-vazio { margin: 0; padding: 4px 16px 18px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+.dashboard-favoritos-topo { margin-bottom: 12px; }
+.dashboard-favoritos-topo h3 { margin: 0 0 4px; }
+.dashboard-favoritos-topo p { margin: 0; font-size: 12.5px; }
+
+/* ===================== CLASSES DO PRODUTO (COR e futuras) ================= */
+.classe-lista { display: grid; gap: 10px; }
+.classe-bloco {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--panel);
+}
+/* A borda acesa diz, de relance, quais classes este produto usa — sem ela é
+   preciso ler cada caixa de seleção para descobrir. */
+.classe-bloco.is-ativa { border-color: var(--primary); }
+.classe-cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+.classe-cabecalho .muted { font-size: 11.5px; font-weight: 400; }
+.classe-valores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.classe-valor {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.classe-valor:has(input:checked) { border-color: var(--primary); color: var(--primary); }
+.classe-valor em { font-size: 10.5px; font-style: normal; }
+/* Amostra da cor. Borda própria porque branco sobre painel claro sumiria. */
+.classe-amostra {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+/* --- Catálogo de classes (tela própria, em Estoque e em Cadastros) --------
+   Um cartão por classe, com seus valores dentro: criar "Cor" e ter de ir a
+   outra tela para dizer quais cores existem seria duas viagens para uma
+   tarefa só. */
+.classe-cartao {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+/* Classe desativada continua na tela — some das listas de escolha, não daqui,
+   senão desativar por engano não teria caminho de volta. */
+.classe-cartao.is-inativa { opacity: 0.62; }
+.classe-cartao-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.classe-cartao-head strong { font-size: 15px; margin-right: 8px; }
+.classe-cartao-head p { margin: 4px 0 0; font-size: 12.5px; }
+.classe-cartao-acoes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.classe-cartao tr.is-inativa td { opacity: 0.6; }
+/* A caixa "Mostrar amostra" fica na horizontal; o form-grid do modal empilha
+   tudo, e um checkbox com o rótulo em cima parece um campo de texto vazio. */
+.classe-hex-linha {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+}
+.classe-hex-linha input { width: auto; }
+
+/* ===================== PAINÉIS DE MÓDULO ==================================
+   Um layout só para os sete painéis (Compras, Estoque, Fiscal, Frota, RH, PCP,
+   Contratos). Sete folhas de estilo divergiriam no primeiro ajuste, e o usuário
+   veria o mesmo cartão de um jeito em cada módulo. */
+.painel-modulo { display: grid; gap: 14px; }
+.painel-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.painel-cabecalho h2 { margin: 0; font-size: 1.2rem; letter-spacing: -0.02em; }
+.painel-cabecalho p { margin: 2px 0 0; font-size: 13px; }
+
+/* Painel que não carregou precisa DIZER isso: zero em todos os cartões parece
+   uma empresa parada, não uma consulta que falhou. */
+.painel-erro {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+}
+.painel-erro p { margin: 4px 0 0; font-size: 13px; }
+
+/* auto-fit: um painel tem 2 ou 3 blocos conforme o módulo, e colunas fixas
+   deixariam buraco em quem tem menos. */
+.painel-grade {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+/* O gráfico de tendência ocupa a linha inteira: doze meses em meia largura
+   sobrepõem os rótulos. */
+.painel-bloco-largo { grid-column: 1 / -1; }
+.painel-bloco-topo { margin-bottom: 12px; }
+.painel-bloco-topo h3 { margin: 0 0 3px; font-size: 14px; }
+.painel-bloco-topo p { margin: 0; font-size: 12px; line-height: 1.5; }
+.painel-vazio { margin: 0; padding: 22px 0; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* --- Barras horizontais ---------------------------------------------------
+   HTML e não SVG: o rótulo é texto de tamanho variável ("Manutenção
+   preventiva"), e texto dentro de SVG não quebra linha nem herda a fonte. */
+.painel-barras { display: grid; gap: 9px; }
+.painel-barra-linha {
+  display: grid;
+  grid-template-columns: minmax(70px, 1.1fr) 2fr minmax(74px, auto);
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.painel-barra-rotulo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.painel-barra-trilho {
+  height: 9px;
+  border-radius: 999px;
+  background: var(--panel-alt);
+  overflow: hidden;
+}
+.painel-barra-preenche { display: block; height: 100%; border-radius: 999px; }
+.painel-barra-primary { background: var(--primary); }
+.painel-barra-alerta { background: var(--warning); }
+.painel-barra-perigo { background: var(--danger); }
+.painel-barra-valor { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* --- Rosca ----------------------------------------------------------------
+   stroke-dasharray num círculo: cada fatia é um traço do comprimento da sua
+   fração. Sem cálculo de arco e sem path à mão — e continua redonda em
+   qualquer tamanho. */
+.painel-rosca { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.painel-rosca-svg { width: 148px; height: 148px; flex: none; }
+.painel-rosca-fatia { transition: opacity 0.15s; }
+.painel-rosca-legenda { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 180px; display: grid; gap: 6px; }
+.painel-rosca-legenda li {
+  display: grid;
+  grid-template-columns: 12px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.painel-rosca-marca { width: 10px; height: 10px; border-radius: 3px; }
+.painel-rosca-nome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.painel-rosca-valor { font-variant-numeric: tabular-nums; font-weight: 600; }
+.painel-rosca-pct { color: var(--muted); min-width: 34px; text-align: right; }
+/* Seis cores fixas e reaproveitadas em ciclo. Gerar cor por hash do nome daria
+   vermelho para "Aprovado" em algum cadastro — cor de estado tem significado. */
+.painel-rosca-0 { stroke: var(--primary); background: var(--primary); }
+.painel-rosca-1 { stroke: #8b5cf6; background: #8b5cf6; }
+.painel-rosca-2 { stroke: #10b981; background: #10b981; }
+.painel-rosca-3 { stroke: #f59e0b; background: #f59e0b; }
+.painel-rosca-4 { stroke: #ef4444; background: #ef4444; }
+.painel-rosca-5 { stroke: #64748b; background: #64748b; }
+
+/* --- Ranking -------------------------------------------------------------- */
+.painel-ranking { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; counter-reset: pos; }
+.painel-ranking li {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.painel-ranking li:last-child { border-bottom: none; }
+.painel-ranking-pos {
+  display: grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--panel-alt);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.painel-ranking-nome { display: grid; min-width: 0; }
+.painel-ranking-nome strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.painel-ranking-nome .muted { font-size: 11px; }
+.painel-ranking-valor { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+/* Cartão de indicador em estado de atenção — mesma linguagem do painel
+   Atenção do hub, para os dois quererem dizer a mesma coisa. */
+.kpi-card-alerta { border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
