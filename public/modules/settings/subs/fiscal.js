@@ -439,7 +439,9 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             <label>CEP<input name="cep" required maxlength="9" value="${escapeHtml(estabForm.cep || '')}" /></label>
           </div>
           <div class="row">
-            <label>Token Focus NFe${isEditing ? ' (deixe em branco para manter o atual)' : ''}<input name="focusToken" type="password" autocomplete="off" placeholder="${estabForm.focusTokenConfigured ? '••••••••' : 'Gerado no painel da Focus NFe'}" /></label>
+            <label>Token Focus NFe${isEditing ? ' (deixe em branco para manter o atual)' : ''}<input name="focusToken" type="password" autocomplete="new-password" data-lpignore="true" spellcheck="false" placeholder="${estabForm.focusTokenConfigured ? '••••••••' : 'Gerado no painel da Focus NFe'}" />
+              <small class="muted">Não aceite sugestão do gerenciador de senhas aqui — cole o token gerado no painel da Focus NFe.</small>
+            </label>
             <label>Ambiente Focus
               <select name="focusAmbiente">
                 <option value="homologacao" ${!producaoJaSalva ? 'selected' : ''}>Homologação</option>
@@ -756,9 +758,14 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         if (cell) cell.textContent = 'Testando...';
         try {
           const status = await api(`/api/fiscal/estabelecimentos/${btn.dataset.id}/focus-status`);
+          // O motivo fica visível, não escondido num title: um 401 aqui pode ser
+          // token expirado, token do outro ambiente ou — o caso que já
+          // aconteceu — a senha do login gravada por autofill no lugar do token.
+          // "Falhou" sozinho não distingue nenhum deles.
           const label = status.connected
             ? '<span class="finance-badge finance-badge-success">Conectado</span>'
-            : `<span class="finance-badge finance-badge-danger" title="${escapeHtml(status.message || '')}">Falhou</span>`;
+            : `<span class="finance-badge finance-badge-danger">Falhou</span>`
+              + (status.message ? `<div class="fiscal-status-motivo">${escapeHtml(status.message)}</div>` : '');
           estabStatusById[btn.dataset.id] = label;
           if (cell) cell.innerHTML = label;
         } catch (error) {

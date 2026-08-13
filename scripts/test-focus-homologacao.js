@@ -157,6 +157,42 @@ const chamadas = [
   check('só o 401 é reportado como token recusado', /error\.status === 401/.test(focusSrc));
   check('listarEmpresas avisa que exige token parceiro', /token de conta PARCEIRA/.test(focusSrc));
 
+  console.log('\n--- o campo do token não aceita a senha do login por autofill ---');
+  // Aconteceu de verdade: o campo é type="password", o Chrome ignora
+  // autocomplete="off" em campo de senha e gravou a senha do login do ERP como
+  // token da Focus. O único sintoma era 401 "permissao_negada" no Testar
+  // conexão — que parece token expirado, e manda procurar defeito na Focus.
+  const dbFiscalSrc = ler('lib/db/fiscal.js');
+  check('o campo usa new-password, que o Chrome respeita', /name="focusToken"[^>]*autocomplete="new-password"/.test(telaSrc));
+  check('e não o autocomplete="off", que ele ignora', !/name="focusToken"[^>]*autocomplete="off"/.test(telaSrc));
+  // Gravar é o ponto de controle: só o servidor vê o valor antes de cifrar, e
+  // depois de cifrado o token nunca mais volta pra tela pra ser conferido.
+  check('a gravação valida o formato antes de cifrar', /encryptToBytea\(assertTokenValido\(payload\.focusToken\)\)/.test(dbFiscalSrc));
+  check('e a mensagem aponta o autofill como suspeito', /preenchimento automático do navegador/.test(focusSrc));
+
+  // A validação tem que barrar o caso real sem recusar token bom.
+  const tentaToken = (valor) => {
+    try {
+      focus.assertTokenValido(valor);
+      return null;
+    } catch (err) {
+      return err.status || 'erro sem status';
+    }
+  };
+  check('a senha do login é recusada', tentaToken('SENHA-REMOVIDA-DO-HISTORICO') === 400);
+  check('senha longa com pontuação também', tentaToken('Senha@Forte#2026!') === 400);
+  check('campo vazio é recusado', tentaToken('') === 400);
+  check('a recusa é 400 (erro do usuário), não 500', tentaToken('SENHA-REMOVIDA-DO-HISTORICO') === 400);
+  check('token de 32 alfanuméricos passa', tentaToken('aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gJ') === null);
+  check('espaço em volta é tolerado, não recusado', tentaToken('  aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gJ  ') === null);
+
+  console.log('\n--- a falha do teste de conexão diz o motivo, não só "Falhou" ---');
+  // A mensagem só existia no title do badge: um token errado ficava idêntico
+  // a uma queda da Focus para quem não passa o mouse em cima.
+  check('o motivo é renderizado no fluxo da célula', /fiscal-status-motivo/.test(telaSrc));
+  check('o motivo tem estilo', /\.fiscal-status-motivo/.test(ler('public/app.css')));
+  check('o 401 cita o autofill entre as causas', /preenchimento automático do navegador/.test(focusSrc));
+
   console.log('\n--- o token global só serve de padrão em teste ---');
   // Em produção o token é quem identifica o emitente: um token global
   // emitindo por outra filial sairia com o CNPJ errado na nota.

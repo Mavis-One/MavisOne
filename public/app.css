@@ -2714,6 +2714,18 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   line-height: 1.5;
 }
 
+/* Motivo da falha no "Testar conexão" do estabelecimento. Fica embaixo do
+   badge, dentro da célula: antes o texto morava só no title do badge, e um
+   token errado parecia idêntico a uma queda da Focus. */
+.fiscal-status-motivo {
+  margin-top: 4px;
+  max-width: 320px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
 /* CPF/CNPJ inválido. O aviso é inserido pelo modules/shared/documento.js logo
    depois do campo, no blur — não a cada tecla, senão acusaria "inválido" no
    terceiro dígito, quando ainda faltam oito. */
