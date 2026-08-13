@@ -1657,6 +1657,71 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   .sales-row-cliente { grid-template-columns: 1fr; }
 }
 
+/* ---------------------------------------------------------------------------
+   Cadastro de produto (Novo Produto / Editar Produto)
+   ---------------------------------------------------------------------------
+   O .content não tem largura máxima, então em monitor largo o painel ia de
+   ponta a ponta. Com o auto-fit padrão da .row, uma linha de dois campos dava
+   metade da tela para cada um: "Custo" e "Preço de venda" ficavam com campos
+   de ~900px para guardar um número. E, como o auto-fit calcula as colunas por
+   linha, a linha de 3 campos não alinhava com a de 4 — cada uma quebrava num
+   ponto diferente.
+
+   Aqui o painel é limitado e centrado, e as linhas passam a ter 4 colunas
+   fixas: todas as linhas dividem a mesma grade, então os campos alinham em
+   coluna de cima a baixo, e uma linha de dois campos ocupa meia largura em vez
+   de esticar. Quem precisa de mais espaço pede com .produto-campo-2. */
+.produto-form-wrap {
+  max-width: 1080px;
+  margin-inline: auto;
+}
+
+#stockProductForm .row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* Rótulo de duas linhas ("Categoria da movimentação inicial") empurraria o
+     campo dele para baixo do dos vizinhos; alinhar pelo fim encosta todos os
+     campos na mesma linha de base. */
+  align-items: end;
+}
+
+/* Item de grid nasce com min-width:auto (= min-content): sem estes zeros, um
+   <select> com opção longa (as de Origem passam de 50 caracteres) exige a
+   largura do próprio texto e estoura a grade para fora do painel. */
+#stockProductForm .row > label { min-width: 0; }
+/* A altura fixa iguala <input> e <select>: o select é ~2px mais alto que o
+   input com o mesmo padding, e numa linha que mistura os dois (Categoria com
+   Unidade, Depósito com Estoque) esses 2px desencontram os rótulos e deixam a
+   linha serrilhada. Com box-sizing:border-box (global), a altura já inclui o
+   padding e a borda. */
+#stockProductForm .row > label > input,
+#stockProductForm .row > label > select { width: 100%; min-width: 0; height: 42px; }
+
+.produto-campo-2 { grid-column: span 2; }
+
+/* Origem guarda a descrição inteira da tabela da SEFAZ; NCM e CEST são 8 e 7
+   dígitos. Dar a mesma largura aos três desperdiçaria nos dois curtos o espaço
+   que falta no longo. */
+#stockProductForm .produto-row-fiscal { grid-template-columns: 1fr 2fr 1fr 1fr; }
+
+/* Mesma ideia: os dois primeiros são quantidade, os dois últimos guardam nome
+   de depósito e endereço de prateleira. */
+#stockProductForm .produto-row-estoque { grid-template-columns: 0.8fr 0.8fr 1.2fr 1.2fr; }
+
+@media (max-width: 900px) {
+  #stockProductForm .row,
+  #stockProductForm .produto-row-fiscal,
+  #stockProductForm .produto-row-estoque { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  #stockProductForm .row,
+  #stockProductForm .produto-row-fiscal,
+  #stockProductForm .produto-row-estoque { grid-template-columns: 1fr; }
+  /* Numa coluna só, "span 2" deixaria o campo sozinho numa faixa dupla que não
+     existe — e o Grid o jogaria para fora da única coluna. */
+  #stockProductForm .produto-campo-2 { grid-column: auto; }
+}
+
 /* Respiro entre a linha de campos e o bloco seguinte (Produtos). O espaçamento
    vinha por acidente das legendas que ficavam no meio; sem elas os dois
    encostavam. Escopado ao formulário de venda para não mexer nas telas de
