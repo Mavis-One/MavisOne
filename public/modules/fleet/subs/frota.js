@@ -100,7 +100,7 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
       {
         title: 'Identificação',
         fields: [
-          { name: 'plate', label: 'Placa', required: true, hint: 'ABC1D23' },
+          { name: 'plate', label: 'Placa', required: true, hint: 'ABC1D23', mascara: 'placa' },
           { name: 'description', label: 'Descrição', hint: 'Como a equipe chama o veículo' },
           { name: 'status', label: 'Situação', type: 'select', empty: null, default: 'ativo', options: STATUS_VEICULO }
         ]

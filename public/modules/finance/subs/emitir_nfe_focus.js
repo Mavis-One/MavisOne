@@ -915,12 +915,19 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 //
 // Avulsa quer dizer nota emitida SEM pedido de origem — e é exatamente o que
 // esta tela faz: destinatário e itens preenchidos na hora, sem depender de
-// venda nenhuma. Existia uma segunda tela com esse nome que gravava um
-// registro local e nunca chegava à SEFAZ; quem a usasse acharia que emitiu.
-// Duas telas com o mesmo propósito, e a do nome certo era a que não emitia.
+// venda nenhuma. Existiu uma segunda tela com esse nome (finance/subs/
+// nova_nfe_avulsa.js) que gravava um registro local e nunca chegava à SEFAZ;
+// quem a usasse acharia que emitiu. Duas telas com o mesmo propósito, e a do
+// nome certo era a que não emitia.
 //
-// Registrada aqui como apelido, e não copiada: uma cópia divergiria na
-// primeira correção feita só de um lado.
+// O apelido abaixo passou a valer primeiro, e o arquivo virou código morto:
+// carregava em toda visita, registrava a si mesmo e era sobrescrito uma linha
+// depois — ninguém nunca via aquela tela. Apagado em 14/08/2026 (está no
+// histórico do git). O apelido continua porque é por "nova_nfe_avulsa" que o
+// menu e a Área de Trabalho chamam esta tela.
+//
+// Apelido, e não cópia: uma cópia divergiria na primeira correção feita só de
+// um lado.
 window.MavisSubscreenRegistry.finance.nova_nfe_avulsa =
   window.MavisSubscreenRegistry.finance.emitir_nfe_focus;
 

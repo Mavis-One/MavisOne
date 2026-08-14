@@ -274,7 +274,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                     </select>
                   </label>
                   <label>NCM
-                    <input name="ncm" maxlength="8" inputmode="numeric" value="${escapeHtml(form.ncm || '')}" placeholder="qualquer" />
+                    <input name="ncm" data-campo="ncm" value="${escapeHtml(form.ncm || '')}" placeholder="qualquer" />
                     <small class="muted">8 dígitos, sem ponto.</small>
                   </label>
                   ${campoCodigo('origem', 'Origem da mercadoria', tabelas.origemMercadoria, form.origem === null || form.origem === undefined ? '' : String(form.origem))}
@@ -442,7 +442,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                 ${TIPOS_OPERACAO.map((t) => `<option value="${t.value}" ${simulacao?.entrada?.tipoOperacao === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}
               </select>
             </label>
-            <label>NCM do produto<input name="ncm" maxlength="8" inputmode="numeric" value="${escapeHtml(simulacao?.entrada?.ncm || '')}" /></label>
+            <label>NCM do produto<input name="ncm" data-campo="ncm" value="${escapeHtml(simulacao?.entrada?.ncm || '')}" /></label>
             <label>Origem<input name="origem" type="number" min="0" max="8" value="${escapeHtml(simulacao?.entrada?.origem ?? '')}" /></label>
             <label>UF de destino
               <select name="ufDestino">

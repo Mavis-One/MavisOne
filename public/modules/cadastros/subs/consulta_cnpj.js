@@ -86,7 +86,7 @@ window.MavisSubscreenRegistry.cadastros.consulta_cnpj = async function renderCon
             <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
               <label class="cadastro-field">
                 <span>CNPJ</span>
-                <input name="document" id="cnpjInput" value="${C.escape(documentValue)}" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00" />
+                <input name="document" id="cnpjInput" value="${C.escape(documentValue)}" data-documento="cnpj" />
               </label>
               <div class="cadastro-field">
                 <span>&nbsp;</span>

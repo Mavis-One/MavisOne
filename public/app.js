@@ -3053,7 +3053,7 @@ async function loadModule(moduleName) {
                           <input name="deliveryCity" value="${escapeHtml(formState.deliveryCity)}" />
                         </label>
                         <label class="sales-total-field">UF
-                          <input name="deliveryState" value="${escapeHtml(formState.deliveryState)}" maxlength="2" />
+                          <input name="deliveryState" value="${escapeHtml(formState.deliveryState)}" data-campo="uf" />
                         </label>
                         <label class="sales-total-field">Bairro
                           <input name="deliveryDistrict" value="${escapeHtml(formState.deliveryDistrict)}" />
@@ -3887,12 +3887,12 @@ async function loadModule(moduleName) {
                   <div class="cadastro-grid cadastro-grid-3">
                     ${field('Nome fantasia', 'tradeName', peopleDraft.tradeName || '')}
                     ${field('E-mail geral', 'email', peopleDraft.email || '', 'type="email"')}
-                    ${field('Telefone', 'phone', peopleDraft.phone || '')}
+                    ${field('Telefone', 'phone', peopleDraft.phone || '', 'data-campo="telefone"')}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
                     ${field('E-mail secundários', 'secondaryEmails', peopleDraft.secondaryEmails || '')}
-                    ${field('WhatsApp', 'whatsapp', peopleDraft.whatsapp || '')}
-                    ${field('Telefone celular', 'mobilePhone', peopleDraft.mobilePhone || '')}
+                    ${field('WhatsApp', 'whatsapp', peopleDraft.whatsapp || '', 'data-campo="telefone"')}
+                    ${field('Telefone celular', 'mobilePhone', peopleDraft.mobilePhone || '', 'data-campo="telefone"')}
                   </div>
                   <div class="cadastro-grid cadastro-grid-2">
                     ${field('Transportadora padrão', 'defaultCarrier', peopleDraft.defaultCarrier || '')}
@@ -3907,7 +3907,7 @@ async function loadModule(moduleName) {
                     ${checkbox('deliveryDifferent', 'Endereço de entrega diferente', Boolean(peopleDraft.deliveryDifferent))}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('CEP', 'zipCode', maskCep(peopleDraft.zipCode || ''), 'id="peopleZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"', Boolean(fieldErrors.zipCode))}
+                    ${field('CEP', 'zipCode', maskCep(peopleDraft.zipCode || ''), 'id="peopleZipCodeInput" data-campo="cep"', Boolean(fieldErrors.zipCode))}
                     ${field('Logradouro', 'street', peopleDraft.street || '', '', Boolean(fieldErrors.addressLine))}
                     ${field('Número', 'streetNumber', peopleDraft.streetNumber || '')}
                   </div>
@@ -3917,7 +3917,7 @@ async function loadModule(moduleName) {
                     ${field('Cidade', 'city', peopleDraft.city || '', '', Boolean(fieldErrors.city))}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('UF', 'state', peopleDraft.state || '', '', Boolean(fieldErrors.state))}
+                    ${field('UF', 'state', peopleDraft.state || '', 'data-campo="uf"', Boolean(fieldErrors.state))}
                     ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', peopleDraft.ibgeCityCode || '')}
                     ${field('País', 'country', peopleDraft.country || 'Brasil')}
                   </div>
@@ -3987,7 +3987,7 @@ async function loadModule(moduleName) {
               <div class="cadastro-tab-panel" data-tab-panel="billing" hidden>
                 ${section('Endereço de cobrança', `
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('CEP', 'billingZipCode', maskCep(peopleDraft.billingZipCode || ''), 'id="peopleBillingZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"')}
+                    ${field('CEP', 'billingZipCode', maskCep(peopleDraft.billingZipCode || ''), 'id="peopleBillingZipCodeInput" data-campo="cep"')}
                     ${field('Logradouro', 'billingStreet', peopleDraft.billingStreet || '')}
                     ${field('Número', 'billingStreetNumber', peopleDraft.billingStreetNumber || '')}
                   </div>
@@ -3997,7 +3997,7 @@ async function loadModule(moduleName) {
                     ${field('Cidade', 'billingCity', peopleDraft.billingCity || '')}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('UF', 'billingState', peopleDraft.billingState || '')}
+                    ${field('UF', 'billingState', peopleDraft.billingState || '', 'data-campo="uf"')}
                     ${field('Cód. Cidade (IBGE)', 'billingIbgeCityCode', peopleDraft.billingIbgeCityCode || '')}
                     ${field('País', 'billingCountry', peopleDraft.billingCountry || 'Brasil')}
                   </div>
@@ -4007,7 +4007,7 @@ async function loadModule(moduleName) {
               <div class="cadastro-tab-panel" data-tab-panel="delivery" hidden>
                 ${section('Endereço de entrega', `
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('CEP', 'deliveryZipCode', maskCep(peopleDraft.deliveryZipCode || ''), 'id="peopleDeliveryZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"')}
+                    ${field('CEP', 'deliveryZipCode', maskCep(peopleDraft.deliveryZipCode || ''), 'id="peopleDeliveryZipCodeInput" data-campo="cep"')}
                     ${field('Logradouro', 'deliveryStreet', peopleDraft.deliveryStreet || '')}
                     ${field('Número', 'deliveryStreetNumber', peopleDraft.deliveryStreetNumber || '')}
                   </div>
@@ -4017,7 +4017,7 @@ async function loadModule(moduleName) {
                     ${field('Cidade', 'deliveryCity', peopleDraft.deliveryCity || '')}
                   </div>
                   <div class="cadastro-grid cadastro-grid-3">
-                    ${field('UF', 'deliveryState', peopleDraft.deliveryState || '')}
+                    ${field('UF', 'deliveryState', peopleDraft.deliveryState || '', 'data-campo="uf"')}
                     ${field('Cód. Cidade (IBGE)', 'deliveryIbgeCityCode', peopleDraft.deliveryIbgeCityCode || '')}
                     ${field('País', 'deliveryCountry', peopleDraft.deliveryCountry || 'Brasil')}
                   </div>
@@ -4063,12 +4063,12 @@ async function loadModule(moduleName) {
                 <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
                   ${field('CNPJ', 'document', documentValue, 'id="cnpjDocumentInput" inputmode="numeric" maxlength="18"', Boolean(fieldErrors.document))}
                   ${field('E-mail geral', 'email', cnpjDraft.email || '', 'type="email"')}
-                  ${field('Telefone', 'phone', cnpjDraft.phone || '')}
+                  ${field('Telefone', 'phone', cnpjDraft.phone || '', 'data-campo="telefone"')}
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
                   ${field('E-mail secundários', 'secondaryEmails', cnpjDraft.secondaryEmails || '')}
-                  ${field('WhatsApp', 'whatsapp', cnpjDraft.whatsapp || '')}
-                  ${field('Telefone celular', 'mobilePhone', cnpjDraft.mobilePhone || '')}
+                  ${field('WhatsApp', 'whatsapp', cnpjDraft.whatsapp || '', 'data-campo="telefone"')}
+                  ${field('Telefone celular', 'mobilePhone', cnpjDraft.mobilePhone || '', 'data-campo="telefone"')}
                 </div>
                 <div class="cadastro-grid cadastro-grid-2">
                   ${field('Transportadora padrão', 'defaultCarrier', cnpjDraft.defaultCarrier || '')}
@@ -4098,7 +4098,7 @@ async function loadModule(moduleName) {
 
               ${section('Endereço', `
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('CEP', 'zipCode', maskCep(cnpjDraft.zipCode || ''), 'id="cnpjZipCodeInput" inputmode="numeric" maxlength="9" placeholder="99999-999"', Boolean(fieldErrors.zipCode))}
+                  ${field('CEP', 'zipCode', maskCep(cnpjDraft.zipCode || ''), 'id="cnpjZipCodeInput" data-campo="cep"', Boolean(fieldErrors.zipCode))}
                   ${field('Logradouro', 'address', cnpjDraft.address || '', '', Boolean(fieldErrors.addressLine))}
                   ${field('Número', 'addressNumber', cnpjDraft.addressNumber || '')}
                 </div>
@@ -4108,7 +4108,7 @@ async function loadModule(moduleName) {
                   ${field('Cidade', 'city', cnpjDraft.city || '', '', Boolean(fieldErrors.city))}
                 </div>
                 <div class="cadastro-grid cadastro-grid-3">
-                  ${field('UF', 'state', cnpjDraft.state || '', '', Boolean(fieldErrors.state))}
+                  ${field('UF', 'state', cnpjDraft.state || '', 'data-campo="uf"', Boolean(fieldErrors.state))}
                   ${field('Cód. Cidade (IBGE)', 'ibgeCityCode', cnpjDraft.ibgeCityCode || '')}
                   ${field('País', 'country', cnpjDraft.country || 'Brasil')}
                 </div>
@@ -4187,7 +4187,7 @@ async function loadModule(moduleName) {
               <div class="cadastro-grid cadastro-grid-3">
                 ${field('Endereço', 'address', depositDraft.address || '')}
                 ${field('Cidade', 'city', depositDraft.city || '')}
-                ${field('UF', 'state', depositDraft.state || '')}
+                ${field('UF', 'state', depositDraft.state || '', 'data-campo="uf"')}
               </div>
               <div class="cadastro-grid cadastro-grid-2">
                 ${field('Responsável', 'manager', depositDraft.manager || '')}

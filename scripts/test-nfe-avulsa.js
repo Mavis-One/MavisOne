@@ -35,10 +35,21 @@ console.log('--- "Nova NF-e Avulsa" é a tela que EMITE ---');
 // Aliás, não cópia: uma cópia divergiria na primeira correção feita só de um lado.
 check('avulsa aponta para a tela de emissão',
   /finance\.nova_nfe_avulsa\s*=\s*\n?\s*window\.MavisSubscreenRegistry\.finance\.emitir_nfe_focus/.test(focusSrc));
-// A ordem de carga decide quem vence: o apelido precisa ser registrado DEPOIS.
+// Antes, quem vencia era decidido pela ORDEM DE CARGA: a tela que não emitia
+// registrava primeiro e o apelido sobrescrevia logo depois. Funcionava, mas
+// dependia de duas linhas do index.html continuarem nessa ordem — e deixava um
+// arquivo inteiro carregando para nunca ser usado. O arquivo foi apagado; o
+// que o teste cobra agora é mais forte que ordem: registro ÚNICO.
 const indexSrc = ler('public/index.html');
-check('emitir_nfe_focus.js carrega depois de nova_nfe_avulsa.js',
-  indexSrc.indexOf('emitir_nfe_focus.js') > indexSrc.indexOf('nova_nfe_avulsa.js'));
+check('o arquivo da tela que não emitia não existe mais',
+  !fs.existsSync(path.join(RAIZ, 'public/modules/finance/subs/nova_nfe_avulsa.js')));
+check('e não é mais carregado no index', !indexSrc.includes('subs/nova_nfe_avulsa.js'));
+const registros = [...fs.readdirSync(path.join(RAIZ, 'public/modules/finance/subs'))]
+  .filter((n) => n.endsWith('.js'))
+  .map((n) => fs.readFileSync(path.join(RAIZ, 'public/modules/finance/subs', n), 'utf8'))
+  .join('\n')
+  .match(/MavisSubscreenRegistry\.finance\.nova_nfe_avulsa\s*=/g) || [];
+check('só existe UM registro de finance.nova_nfe_avulsa', registros.length === 1, `${registros.length} registro(s)`);
 check('a tela de emissão chama a rota fiscal', /api\('\/api\/fiscal\/nfe\/emitir'/.test(focusSrc));
 
 console.log('\n--- emitir sem pedido é o caso normal, não a exceção ---');

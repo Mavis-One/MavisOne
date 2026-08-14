@@ -127,7 +127,15 @@ window.MavisStock = window.MavisStock || {};
     }
     const step = def.type === 'number' ? `step="${def.step || '1'}"` : '';
     const min = def.min !== undefined ? `min="${def.min}"` : '';
-    return `<label>${def.label}<input type="${def.type || 'text'}" name="${def.name}" ${step} ${min} ${required} value="${Stock.escape(val)}" /></label>`;
+    // Sem estas duas linhas, todo campo nascido desta fábrica era texto cru —
+    // e é ela que desenha RH, PCP, Frota, Contratos e metade do Estoque. Era
+    // por isso que o CPF do colaborador e a placa do veículo aceitavam
+    // qualquer coisa: não havia como DIZER que aquele campo é um CPF.
+    // `mascara` e `documento` usam os mesmos nomes nas três fábricas do
+    // sistema (esta, a de Cadastros e a dos Atalhos), de propósito.
+    const mascara = def.mascara ? `data-campo="${def.mascara}"` : '';
+    const documento = def.documento ? `data-documento="${def.documento === true ? '' : def.documento}"` : '';
+    return `<label>${def.label}<input type="${def.type || 'text'}" name="${def.name}" ${step} ${min} ${mascara} ${documento} ${required} value="${Stock.escape(val)}" /></label>`;
   };
 
   Stock.readForm = function readForm(form, fields) {

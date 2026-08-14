@@ -24,7 +24,6 @@ const serverSrc = ler('server.js');
 const indexSrc = ler('public/index.html');
 const espelhoSrc = ler('public/modules/fiscal/subs/nfe_espelho.js');
 const nfeEmitidasSrc = ler('public/modules/finance/subs/nfe_emitidas.js');
-const novaNfeSrc = ler('public/modules/finance/subs/nova_nfe_avulsa.js');
 
 function extrairConst(nome) {
   const i = appSrc.indexOf(`const ${nome} = {`);
@@ -86,7 +85,9 @@ console.log('\n--- o espelho aponta para telas que o Financeiro registra ---');
 // O espelho delega em vez de copiar. Se o Financeiro parar de registrar, o
 // Fiscal perde as duas — este check é quem avisa.
 const emitirFocusSrc = ler('public/modules/finance/subs/emitir_nfe_focus.js');
-const fontesFinance = nfeEmitidasSrc + novaNfeSrc + emitirFocusSrc;
+// nova_nfe_avulsa não tem arquivo próprio: é apelido registrado dentro do
+// emitir_nfe_focus.js. Por isso as duas fontes bastam para cobrir os três.
+const fontesFinance = nfeEmitidasSrc + emitirFocusSrc;
 ['nfe_emitidas', 'nova_nfe_avulsa', 'emitir_nfe_focus'].forEach((k) => {
   check(`espelho declara fiscal.${k}`, espelhoSrc.includes(`fiscal.${k}`));
   const registradoEmFinance = new RegExp(`MavisSubscreenRegistry\\.finance\\.${k}\\s*=`).test(fontesFinance);
@@ -98,7 +99,10 @@ check('o espelho resolve na chamada, não na carga',
 console.log('\n--- a volta entre as irmãs respeita o módulo de origem ---');
 // Este é o erro que o espelho cria se ninguém olhar: clicar "+ Nova NF-e"
 // dentro do Fiscal e ser jogado no Financeiro.
-[['nfe_emitidas.js', nfeEmitidasSrc], ['nova_nfe_avulsa.js', novaNfeSrc]].forEach(([nome, src]) => {
+// "Nova NF-e Avulsa" é apelido de emitir_nfe_focus.js desde a unificação — o
+// arquivo que tinha esse nome era código morto e foi apagado (ver
+// test-nfe-avulsa.js). Sobra uma tela real a conferir aqui.
+[['nfe_emitidas.js', nfeEmitidasSrc]].forEach(([nome, src]) => {
   check(`${nome} define moduloAtual()`, /const moduloAtual = \(\) =>/.test(src));
   check(`${nome} considera o Fiscal`, /activeModule === 'fiscal'/.test(src));
 });
@@ -106,7 +110,6 @@ console.log('\n--- a volta entre as irmãs respeita o módulo de origem ---');
 // (lancamentos), telas que existem em um módulo só.
 const fixosRestantes = [...nfeEmitidasSrc.matchAll(/loadModule\('finance'\)/g)].length;
 check('nfe_emitidas só mantém o loadModule fixo do salto para Lançamentos', fixosRestantes === 1, `${fixosRestantes} ocorrência(s)`);
-check('nova_nfe_avulsa não tem mais loadModule fixo', !/loadModule\('finance'\)/.test(novaNfeSrc));
 
 console.log('\n--- a leitura de eventos enxerga a inutilização ---');
 // getNfeEventos filtra por nfe_id; inutilização tem nfe_id NULO. Era por isso

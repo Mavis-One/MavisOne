@@ -42,8 +42,8 @@ window.MavisAtalhos = (function () {
     { name: 'document', label: 'CPF / CNPJ', required: true, linha: 1, documento: true },
     { name: 'name', label: 'Nome', required: true, linha: 1 },
     { name: 'email', label: 'E-mail', type: 'email', linha: 2 },
-    { name: 'phone', label: 'Telefone', linha: 2 },
-    { name: 'zipCode', label: 'CEP', linha: 3 },
+    { name: 'phone', label: 'Telefone', linha: 2, mascara: 'telefone' },
+    { name: 'zipCode', label: 'CEP', linha: 3, mascara: 'cep' },
     { name: 'address', label: 'Logradouro', linha: 3 },
     { name: 'number', label: 'Número', linha: 3 },
     { name: 'complement', label: 'Complemento', linha: 4 },
@@ -80,7 +80,7 @@ window.MavisAtalhos = (function () {
         // NCM e origem entram aqui porque sem eles a emissão de NF-e para com
         // "Nenhuma regra fiscal encontrada" — e descobrir isso na hora de
         // emitir é tarde demais.
-        { name: 'ncm', label: 'NCM', linha: 3, hint: '8 dígitos — exigido para emitir NF-e' },
+        { name: 'ncm', label: 'NCM', linha: 3, hint: '8 dígitos — exigido para emitir NF-e', mascara: 'ncm' },
         { name: 'origem', label: 'Origem', type: 'select', valor: '0', linha: 3,
           opcoes: ['0', '1', '2', '3', '4', '5', '6', '7', '8'],
           rotulos: { 0: '0 — Nacional', 1: '1 — Importação direta', 2: '2 — Mercado interno', 3: '3 — Nacional > 40% importado', 4: '4 — Processos básicos', 5: '5 — Nacional <= 40% importado', 6: '6 — Importada sem similar', 7: '7 — Mercado interno sem similar', 8: '8 — Nacional > 70% importado' } }
@@ -139,7 +139,9 @@ window.MavisAtalhos = (function () {
       const passo = campo.step ? `step="${campo.step}"` : '';
       const min = campo.min !== undefined ? `min="${campo.min}"` : '';
       const doc = campo.documento ? `data-documento="${campo.documento === true ? '' : campo.documento}"` : '';
-      controle = `<input type="${campo.type || 'text'}" name="${campo.name}" value="${escapeHtml(valor)}" ${passo} ${min} ${doc} ${obrigatorio} />`;
+      // Mesmo nome das outras duas fábricas (Estoque e Cadastros).
+      const mascara = campo.mascara ? `data-campo="${campo.mascara}"` : '';
+      controle = `<input type="${campo.type || 'text'}" name="${campo.name}" value="${escapeHtml(valor)}" ${passo} ${min} ${doc} ${mascara} ${obrigatorio} />`;
     }
     return `
       <label class="atalho-campo">

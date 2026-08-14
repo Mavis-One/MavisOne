@@ -13,6 +13,7 @@
     <!-- CPF/CNPJ antes de tudo: o app.js delega para ele, e as telas o usam
          para ligar os campos de documento. -->
     <script src="/modules/shared/documento.js"></script>
+    <script src="/modules/shared/campos.js"></script>
     <!-- Antes de QUALQUER módulo: os painéis de Financeiro, Vendas, Estoque,
          Compras, Fiscal, Frota, RH, PCP e Contratos chamam MavisPainel, e o
          apelido financeBuildChartSvg é definido no fim deste arquivo. -->
@@ -62,7 +63,6 @@
     <script src="/modules/finance/subs/lancamentos.js"></script>
     <script src="/modules/finance/subs/novo_lancamento.js"></script>
     <script src="/modules/finance/subs/nfe_emitidas.js"></script>
-    <script src="/modules/finance/subs/nova_nfe_avulsa.js"></script>
     <script src="/modules/finance/subs/emitir_nfe_focus.js"></script>
     <script src="/modules/finance/subs/extrato_open_finance.js"></script>
     <script src="/modules/finance/subs/bancos_conectados.js"></script>

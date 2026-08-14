@@ -177,7 +177,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
             <p class="muted">Usado na emissão de NF-e — o NCM e a origem são o que casam o item com a regra fiscal.</p>
             <div class="row produto-row-fiscal">
               <label>NCM
-                <input name="ncm" maxlength="8" inputmode="numeric" value="${value('ncm')}" placeholder="8 dígitos" />
+                <input name="ncm" data-campo="ncm" value="${value('ncm')}" />
               </label>
               <label>Origem
                 <select name="origem">
@@ -185,7 +185,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
                 </select>
               </label>
               <label>CEST
-                <input name="cest" maxlength="7" inputmode="numeric" value="${value('cest')}" placeholder="só com ST" />
+                <input name="cest" data-campo="cest" value="${value('cest')}" placeholder="só com ST" />
               </label>
               <label>Unidade tributável
                 <input name="unidadeTributavel" value="${value('unidadeTributavel', current ? '' : 'UN')}" placeholder="igual à unidade" />

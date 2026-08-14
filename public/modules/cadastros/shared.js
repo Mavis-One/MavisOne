@@ -112,7 +112,14 @@ window.MavisCadastros = window.MavisCadastros || {};
       }
       const step = def.type === 'number' ? `step="${def.step || '1'}"` : '';
       const min = def.min !== undefined ? `min="${def.min}"` : '';
-      return `<input type="${def.type || 'text'}" name="${def.name}" value="${C.escape(val)}" ${step} ${min} ${def.attrs || ''} />`;
+      // `mascara` e `documento` com os mesmos nomes das outras duas fábricas
+      // (Estoque e Atalhos): declarar um telefone tem que ser igual nas três,
+      // senão a próxima tela declara do jeito que a fábrica dela aceita e a
+      // divergência volta por outro caminho. `attrs` continua existindo para o
+      // que for específico de uma tela só.
+      const mascara = def.mascara ? `data-campo="${def.mascara}"` : '';
+      const documento = def.documento ? `data-documento="${def.documento === true ? '' : def.documento}"` : '';
+      return `<input type="${def.type || 'text'}" name="${def.name}" value="${C.escape(val)}" ${step} ${min} ${mascara} ${documento} ${def.attrs || ''} />`;
     })();
 
     return `

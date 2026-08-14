@@ -136,7 +136,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         <h3>${isEditing ? 'Editar empresa' : 'Nova empresa'}</h3>
         <form id="fiscalEmpresaForm" class="form-grid">
           <div class="row">
-            <label>CNPJ raiz (8 dígitos)<input name="cnpjRaiz" required maxlength="8" inputmode="numeric" placeholder="Somente números" value="${escapeHtml(empresaForm.cnpjRaiz || '')}" ${isEditing ? 'disabled' : ''} /></label>
+            <label>CNPJ raiz (8 dígitos)<input name="cnpjRaiz" required data-campo="cnpj-raiz" value="${escapeHtml(empresaForm.cnpjRaiz || '')}" ${isEditing ? 'disabled' : ''} /></label>
             <label>Razão social<input name="razaoSocial" required value="${escapeHtml(empresaForm.razaoSocial || '')}" /></label>
           </div>
           <div class="row">
@@ -224,7 +224,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
                 <option value="A3">A3</option>
               </select>
             </label>
-            <label>CNPJ titular<input name="titularCnpj" required maxlength="14" inputmode="numeric" placeholder="Somente números" /></label>
+            <label>CNPJ titular<input name="titularCnpj" required data-documento="cnpj" /></label>
           </div>
           <div class="row">
             <label>Válido de<input name="validoDe" type="date" required /></label>
@@ -353,8 +353,8 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
                 ${FISCAL_TIPO_OPERACAO_OPTIONS.map((o) => `<option value="${o.value}" ${regraForm.tipoOperacao === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
               </select>
             </label>
-            <label>NCM (vazio = qualquer)<input name="ncm" maxlength="8" inputmode="numeric" value="${escapeHtml(regraForm.ncm || '')}" /></label>
-            <label>UF destino (vazio = qualquer)<input name="ufDestino" maxlength="2" value="${escapeHtml(regraForm.ufDestino || '')}" /></label>
+            <label>NCM (vazio = qualquer)<input name="ncm" data-campo="ncm" value="${escapeHtml(regraForm.ncm || '')}" /></label>
+            <label>UF destino (vazio = qualquer)<input name="ufDestino" data-campo="uf" value="${escapeHtml(regraForm.ufDestino || '')}" /></label>
           </div>
           <div class="row">
             <label>CFOP<input name="cfop" required maxlength="4" value="${escapeHtml(regraForm.cfop || '')}" /></label>
@@ -416,7 +416,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
           </div>
           <div class="row">
             <label>E-mail<input name="email" type="email" value="${escapeHtml(estabForm.email || '')}" /></label>
-            <label>Telefone<input name="telefone" value="${escapeHtml(estabForm.telefone || '')}" /></label>
+            <label>Telefone<input name="telefone" data-campo="telefone" value="${escapeHtml(estabForm.telefone || '')}" /></label>
             <label>CNAE principal<input name="cnaePrincipal" required maxlength="7" inputmode="numeric" value="${escapeHtml(estabForm.cnaePrincipal || '')}" /></label>
           </div>
           <div class="row">
@@ -435,8 +435,8 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             <label>Município<input name="municipio" required value="${escapeHtml(estabForm.municipio || '')}" /></label>
           </div>
           <div class="row">
-            <label>UF<input name="uf" required maxlength="2" value="${escapeHtml(estabForm.uf || '')}" /></label>
-            <label>CEP<input name="cep" required maxlength="9" value="${escapeHtml(estabForm.cep || '')}" /></label>
+            <label>UF<input name="uf" required data-campo="uf" value="${escapeHtml(estabForm.uf || '')}" /></label>
+            <label>CEP<input name="cep" required data-campo="cep" value="${escapeHtml(estabForm.cep || '')}" /></label>
           </div>
           <div class="row">
             <label>Token Focus NFe${isEditing ? ' (deixe em branco para manter o atual)' : ''}<input name="focusToken" type="password" autocomplete="new-password" data-lpignore="true" spellcheck="false" placeholder="${estabForm.focusTokenConfigured ? '••••••••' : 'Gerado no painel da Focus NFe'}" />

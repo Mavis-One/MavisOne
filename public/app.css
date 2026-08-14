@@ -2791,13 +2791,21 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   white-space: normal;
 }
 
-/* CPF/CNPJ inválido. O aviso é inserido pelo modules/shared/documento.js logo
-   depois do campo, no blur — não a cada tecla, senão acusaria "inválido" no
-   terceiro dígito, quando ainda faltam oito. */
-.documento-invalido {
+/* Campo recusado. O aviso é inserido no BLUR pelo shared/documento.js
+   (CPF/CNPJ) e pelo shared/campos.js (telefone, CEP, UF, placa, NCM, CEST) —
+   não a cada tecla, senão acusaria "inválido" no terceiro dígito, quando ainda
+   faltam oito.
+
+   Os dois pares de classes dividem a MESMA regra de propósito: o usuário
+   aprende uma vez como o sistema reclama, e um CPF errado tem exatamente a
+   mesma cara de um telefone errado. Separar as regras faria o visual dos dois
+   divergir na primeira vez que alguém ajustasse só um lado. */
+.documento-invalido,
+.campo-invalido {
   border-color: var(--danger) !important;
 }
-.documento-erro {
+.documento-erro,
+.campo-erro {
   display: block;
   margin-top: 4px;
   font-size: 12px;

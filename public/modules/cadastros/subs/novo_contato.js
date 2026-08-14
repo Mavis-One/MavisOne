@@ -31,9 +31,9 @@ window.MavisSubscreenRegistry.cadastros.novo_contato = window.MavisCadastros.mak
       title: 'Contato',
       fields: [
         { name: 'email', label: 'E-mail', type: 'email' },
-        { name: 'phone', label: 'Telefone' },
-        { name: 'mobilePhone', label: 'Celular' },
-        { name: 'whatsapp', label: 'WhatsApp' }
+        { name: 'phone', label: 'Telefone', mascara: 'telefone' },
+        { name: 'mobilePhone', label: 'Celular', mascara: 'telefone' },
+        { name: 'whatsapp', label: 'WhatsApp', mascara: 'telefone' }
       ]
     },
     {

@@ -25,7 +25,7 @@ window.MavisSubscreenRegistry.cadastros.empresas = window.MavisCadastros.makeLis
   searchPlaceholder: 'Razão social, fantasia ou CNPJ',
   filters: [
     { name: 'city', label: 'Cidade' },
-    { name: 'state', label: 'UF' },
+    { name: 'state', label: 'UF', mascara: 'uf' },
     {
       name: 'taxRegime',
       label: 'Regime tributário',

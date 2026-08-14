@@ -15,7 +15,7 @@ window.MavisSubscreenRegistry.stock.new_deposit = window.MavisStock.makeFormScre
     { name: 'manager', label: 'Responsável' },
     { name: 'address', label: 'Endereço' },
     { name: 'city', label: 'Cidade' },
-    { name: 'state', label: 'UF' },
+    { name: 'state', label: 'UF', mascara: 'uf' },
     { name: 'notes', label: 'Observações', type: 'textarea' }
   ],
   rows: [[0, 1, 2], [3, 4], [5, 6], [7]]

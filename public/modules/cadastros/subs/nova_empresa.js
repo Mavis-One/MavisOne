@@ -15,7 +15,7 @@ window.MavisSubscreenRegistry.cadastros.nova_empresa = window.MavisCadastros.mak
       fields: [
         { name: 'name', label: 'Razão social', required: true },
         { name: 'tradeName', label: 'Nome fantasia' },
-        { name: 'document', label: 'CNPJ', attrs: 'data-documento="cnpj"' }
+        { name: 'document', label: 'CNPJ', documento: 'cnpj' }
       ]
     },
     {
@@ -52,7 +52,7 @@ window.MavisSubscreenRegistry.cadastros.nova_empresa = window.MavisCadastros.mak
           title: 'Contato',
           fields: [
             { name: 'email', label: 'E-mail', type: 'email' },
-            { name: 'phone', label: 'Telefone' }
+            { name: 'phone', label: 'Telefone', mascara: 'telefone' }
           ]
         }
       ]
@@ -64,12 +64,12 @@ window.MavisSubscreenRegistry.cadastros.nova_empresa = window.MavisCadastros.mak
         {
           title: 'Endereço',
           fields: [
-            { name: 'zipCode', label: 'CEP', attrs: 'inputmode="numeric" maxlength="9" placeholder="99999-999"' },
+            { name: 'zipCode', label: 'CEP', mascara: 'cep' },
             { name: 'address', label: 'Logradouro' },
             { name: 'addressNumber', label: 'Número' },
             { name: 'neighborhood', label: 'Bairro' },
             { name: 'city', label: 'Cidade' },
-            { name: 'state', label: 'UF' }
+            { name: 'state', label: 'UF', mascara: 'uf' }
           ]
         },
         {

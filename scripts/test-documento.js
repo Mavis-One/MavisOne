@@ -90,9 +90,12 @@ check('e antes do app.js', indexSrc.indexOf('/modules/shared/documento.js') < in
 
 console.log('\n--- todo campo de CPF/CNPJ do sistema está ligado ---');
 const CAMPOS = [
-  ['public/modules/hr/subs/rh.js', 'RH · Colaborador (CPF)', /name: 'document', label: 'CPF', attrs: 'data-documento="cpf"'/],
-  ['public/modules/cadastros/subs/nova_conta_bancaria.js', 'Conta bancária · titular', /name: 'document'[^}]*data-documento/],
-  ['public/modules/cadastros/subs/nova_empresa.js', 'Empresa · CNPJ', /data-documento="cnpj"/],
+  // A declaração canônica passou a ser `documento:` na própria fábrica, no
+  // lugar do `attrs: 'data-documento=...'` escrito à mão — as três fábricas do
+  // sistema entendem a mesma palavra agora (ver test-campos-padronizados.js).
+  ['public/modules/hr/subs/rh.js', 'RH · Colaborador (CPF)', /name: 'document', label: 'CPF', documento: 'cpf'/],
+  ['public/modules/cadastros/subs/nova_conta_bancaria.js', 'Conta bancária · titular', /name: 'document'[^}]*documento: true/],
+  ['public/modules/cadastros/subs/nova_empresa.js', 'Empresa · CNPJ', /name: 'document', label: 'CNPJ', documento: 'cnpj'/],
   ['public/modules/finance/subs/emitir_nfe_focus.js', 'NF-e · destinatário', /name="destDocumento" required data-documento/],
   ['public/modules/settings/subs/fiscal.js', 'Fiscal · estabelecimento', /name="cnpj" required data-documento="cnpj"/],
   ['public/modules/shared/atalhos.js', 'Atalho · Novo Cliente/Fornecedor', /name: 'document', label: 'CPF \/ CNPJ', required: true, linha: 1, documento: true/]

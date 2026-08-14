@@ -91,7 +91,7 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
         fields: [
           { name: 'name', label: 'Nome', required: true },
           // Colaborador é pessoa física: trava em CPF para não aceitar 14 dígitos.
-          { name: 'document', label: 'CPF', attrs: 'data-documento="cpf"' },
+          { name: 'document', label: 'CPF', documento: 'cpf' },
           { name: 'positionId', label: 'Profissão', type: 'select', empty: 'Sem profissão', options: (meta) => meta.positions || [] }
         ]
       },
@@ -119,7 +119,7 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
         title: 'Contato',
         fields: [
           { name: 'email', label: 'E-mail', type: 'email' },
-          { name: 'phone', label: 'Telefone' }
+          { name: 'phone', label: 'Telefone', mascara: 'telefone' }
         ]
       }
     ]
