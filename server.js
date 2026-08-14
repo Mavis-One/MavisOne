@@ -928,6 +928,31 @@ function normalizeSalesItems(rawItems) {
     .filter((item) => item.name && item.quantity > 0);
 }
 
+// O filtro acima exige `name`, e quem manda só o `productId` via integração ou
+// importação via o item sumir calado — o pedido voltava com "Adicione ao menos
+// um produto", mensagem que manda procurar defeito no lugar errado. O servidor
+// tem o id: dá para buscar o nome em vez de descartar a linha.
+//
+// Só consulta o que falta. Pela tela, que sempre preenche o nome, isto não faz
+// consulta nenhuma.
+async function completarNomesDosItens(rawItems) {
+  if (!Array.isArray(rawItems)) return rawItems;
+  return Promise.all(rawItems.map(async (item) => {
+    if (!item || String(item.name || '').trim() || !item.productId) return item;
+    const produto = await db.getProductById(item.productId).catch(() => null);
+    return produto ? { ...item, name: produto.name, sku: item.sku || produto.sku } : item;
+  }));
+}
+
+// Lista vazia e lista inteira recusada são problemas diferentes e pedem
+// respostas diferentes: "não mandou item" vs. "mandou item que não dá para
+// usar". A mesma frase para os dois fazia o integrador conferir o campo errado.
+function mensagemItensInvalidos(rawItems) {
+  return Array.isArray(rawItems) && rawItems.length
+    ? 'Nenhum item pôde ser aproveitado: cada linha precisa de um produto existente (ou o nome preenchido) e quantidade maior que zero.'
+    : 'Adicione ao menos um produto ao pedido/orçamento';
+}
+
 // Delega para o módulo compartilhado com o navegador (ver o porquê lá). O
 // servidor NUNCA confia no total que veio no body: recalcula a partir dos itens
 // e dos parâmetros, senão bastaria adulterar o JSON para gravar o total que
@@ -4227,9 +4252,9 @@ const server = http.createServer(async (req, res) => {
       const type = tipoPedido === 'nfe' ? 'nfe' : salesStatus.tipoDoStatus(status);
       let record;
       if (type === 'order' || type === 'quote') {
-        const items = normalizeSalesItems(body.items);
+        const items = normalizeSalesItems(await completarNomesDosItens(body.items));
         if (!items.length) {
-          return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
+          return sendJson(res, { error: mensagemItensInvalidos(body.items) }, 400);
         }
         // Aceita id OU nome: a tela sempre manda o id, mas registros importados
         // (CSV) só têm o nome. Sem nenhum dos dois o pedido nascia sem cliente.
@@ -4349,9 +4374,9 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       }
       const body = await readBody(req);
-      const items = normalizeSalesItems(body.items);
+      const items = normalizeSalesItems(await completarNomesDosItens(body.items));
       if (!items.length) {
-        return sendJson(res, { error: 'Adicione ao menos um produto ao pedido/orçamento' }, 400);
+        return sendJson(res, { error: mensagemItensInvalidos(body.items) }, 400);
       }
       if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
         return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);

@@ -154,6 +154,24 @@ const colunasAplicadas = db.FASES_OPCIONAIS
   check('nenhuma coluna opcional sobrou na última tentativa',
     db.FASES_OPCIONAIS.every((fase) => fase.colunas.every((coluna) => !(coluna in ultima))));
 
+  console.log('\n--- item que chega só com o productId não é descartado calado ---');
+  // normalizeSalesItems filtra por `item.name`, e quem integra manda só o id.
+  // O item sumia e o pedido inteiro voltava com "Adicione ao menos um produto"
+  // — mensagem que manda conferir o campo errado. O servidor tem o id: busca o
+  // nome antes de filtrar, em vez de jogar a linha fora.
+  const serverSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8');
+  check('existe o completador de nomes', /async function completarNomesDosItens/.test(serverSrc));
+  check('ele só consulta o que falta', /if \(!item \|\| String\(item\.name \|\| ''\)\.trim\(\) \|\| !item\.productId\) return item;/.test(serverSrc));
+  check('e não derruba o pedido se a busca falhar', /getProductById\(item\.productId\)\.catch\(\(\) => null\)/.test(serverSrc));
+  // As DUAS pontas: criar e editar pedido passam pelo mesmo filtro.
+  const usos = (serverSrc.match(/normalizeSalesItems\(await completarNomesDosItens\(body\.items\)\)/g) || []).length;
+  check('as duas rotas de pedido usam o completador', usos === 2, `${usos} de 2`);
+  check('nenhuma rota ficou com a chamada antiga', !/normalizeSalesItems\(body\.items\)/.test(serverSrc));
+  // Lista vazia e lista toda recusada são problemas diferentes.
+  check('a mensagem distingue "não mandou item" de "item inválido"', /function mensagemItensInvalidos/.test(serverSrc));
+  check('e as duas rotas usam a mensagem certa',
+    (serverSrc.match(/mensagemItensInvalidos\(body\.items\)/g) || []).length === 2);
+
   console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
   process.exit(falhas === 0 ? 0 : 1);
 })();

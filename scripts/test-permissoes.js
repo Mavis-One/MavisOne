@@ -24,6 +24,15 @@ check('estoque', P.resolverPermissao('/api/stock/movements', 'POST') === 'stock.
 check('cadastros', P.resolverPermissao('/api/cadastros/companies', 'POST') === 'cadastros.criar');
 check('compras', P.resolverPermissao('/api/purchases', 'GET') === 'purchases.ler');
 check('configurações', P.resolverPermissao('/api/settings', 'GET') === 'settings.ler');
+// POST em /api/settings EDITA, não cria: o handler faz
+// updateSettings({...getSettings(), ...payload}) e nunca insere. Pelo mapa
+// geral (POST -> criar), quem recebia settings.editar levava 403 ao salvar a
+// tela Empresa — uma permissão de editar que não permitia editar nada.
+check('POST em configurações é EDITAR, não criar', P.resolverPermissao('/api/settings', 'POST') === 'settings.editar');
+// A exceção é por método, e não acaoFixa, justamente para não arrastar o GET
+// junto: com acaoFixa, quem tivesse só settings.ler perderia a leitura.
+check('e a exceção por método não contamina o GET', P.resolverPermissao('/api/settings', 'GET') === 'settings.ler');
+check('nem o POST das outras rotas', P.resolverPermissao('/api/finance/entries', 'POST') === 'finance.criar');
 check('usuários usam ação fixa', P.resolverPermissao('/api/users/u1', 'PUT') === 'usuarios.gerenciar');
 check('gestão de acesso exige gerenciar usuários', P.resolverPermissao('/api/access-control/users/u1', 'PUT') === 'usuarios.gerenciar');
 check('auditoria tem permissão própria', P.resolverPermissao('/api/access-logs', 'GET') === 'auditoria.ler');
