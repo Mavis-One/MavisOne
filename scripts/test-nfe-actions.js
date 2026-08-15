@@ -152,8 +152,20 @@ const download = telaNfes.slice(
 check('o download busca com o token da sessão', /'x-auth-token': getSessionToken\(\)/.test(download));
 // Sem isto, erro de servidor vira aba em branco: o usuário não descobre que a
 // nota ainda não tem arquivo, nem que perdeu a permissão.
-check('e mostra o erro NA TELA quando a rota recusa', /if \(!resposta\.ok\)[\s\S]{0,220}showToast/.test(download));
-check('o PDF abre para leitura', /window\.open\(url, '_blank'\)/.test(download));
+check('e mostra o erro NA TELA quando a rota recusa', /if \(!resposta\.ok\)[\s\S]{0,600}showToast/.test(download));
+// A ORDEM importa: abrir a aba depois do await sai do gesto do clique, e o
+// Chrome barra a navegação — a janela aparece e fica em "about:blank", sem PDF
+// e sem erro. Foi o segundo bug desta mesma função, encontrado em 15/08/2026
+// com a primeira correção já no ar, e invisível no Chrome sem interface (que
+// não liga o bloqueador de pop-up).
+const posAbertura = download.indexOf("window.open('', '_blank')");
+const posBusca = download.indexOf('await fetch(');
+check('a aba é aberta ANTES da busca, dentro do clique', posAbertura > -1 && posAbertura < posBusca,
+  posAbertura === -1 ? 'window.open sem abrir vazia primeiro' : `abertura em ${posAbertura}, busca em ${posBusca}`);
+check('e a navegação usa a aba já aberta', /aba\.location\.replace\(url\)/.test(download));
+// Aba em branco esquecida é o sintoma que fez o usuário procurar problema onde
+// não estava: quando a rota recusa, a janela tem que sumir.
+check('erro fecha a aba em vez de deixá-la em branco', /if \(aba\) aba\.close\(\);[\s\S]{0,120}showToast/.test(download));
 // Revogar na hora deixaria a aba em branco — o objeto some antes de ser lido.
 check('e o objeto só é liberado depois', /setTimeout\(\(\) => URL\.revokeObjectURL\(url\)/.test(download));
 // Dez notas selecionadas seriam dez pop-ups, e o navegador bloqueia da segunda

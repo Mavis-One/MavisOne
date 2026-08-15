@@ -242,8 +242,23 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   //
   // O nome do arquivo é reposto pelo atributo `download`, e o objeto é liberado
   // depois; o custo de memória é de um DANFE (dezenas de KB), não de um lote.
+  //
+  // A ABA É ABERTA ANTES DA BUSCA, e isso não é estilo: é a correção de um
+  // segundo bug, encontrado com a primeira já no ar. Abrir a aba DEPOIS do
+  // await sai do gesto do usuário, e o Chrome trata como pop-up: a janela
+  // aparece e a navegação é barrada. O resultado era uma aba "about:blank"
+  // parada — nem PDF, nem erro, nem aviso. Não deu para ver isso no Chrome sem
+  // interface, que não liga o bloqueador de pop-up; só apareceu no navegador
+  // de verdade. Abrindo aqui, dentro do clique, a janela é nossa e navegar
+  // nela depois já não é pop-up nenhum.
   async function baixarArquivoFiscal(nfe, tipo, { paraLeitura = true } = {}) {
     const rotulo = tipo === 'xml' ? 'XML' : 'DANFE';
+    // PDF abre para LER — é o que a pessoa quer ao clicar em DANFE. XML não tem
+    // o que ver na tela, e o LOTE nunca abre aba: dez notas seriam dez pop-ups.
+    const querAba = paraLeitura && tipo !== 'xml';
+    const aba = querAba ? window.open('', '_blank') : null;
+    // Aba em branco enquanto a busca acontece parece travamento.
+    if (aba) aba.document.write(`<title>${rotulo}</title><p style="font:16px system-ui;padding:24px">Abrindo o ${rotulo}…</p>`);
     let url = null;
     try {
       const resposta = await fetch(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}/${tipo}`, {
@@ -252,6 +267,9 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       if (!resposta.ok) {
         // A rota devolve JSON no erro ("ainda não disponível", "Sem permissão").
         const corpo = await resposta.json().catch(() => ({}));
+        // Fecha a aba antes do aviso: deixá-la aberta em branco é justamente o
+        // sintoma que mandou o usuário procurar problema onde não estava.
+        if (aba) aba.close();
         showToast(corpo.error || `Não foi possível abrir o ${rotulo} (HTTP ${resposta.status}).`, 'error');
         return;
       }
@@ -259,19 +277,22 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       url = URL.createObjectURL(blob);
       const nome = `nfe-${nfe.number || nfe.key || nfe.id}.${tipo === 'xml' ? 'xml' : 'pdf'}`;
 
-      // PDF abre para LER — é o que a pessoa quer ao clicar em DANFE. XML não
-      // tem o que ver na tela, e o LOTE nunca abre aba: dez notas seriam dez
-      // pop-ups, e o navegador bloqueia da segunda em diante.
-      const aba = (tipo === 'xml' || !paraLeitura) ? null : window.open(url, '_blank');
-      if (!aba) {
+      if (aba && !aba.closed) {
+        // replace e não href: a aba não guarda o "carregando" no histórico, e
+        // o botão Voltar dela não volta para uma página que não existe mais.
+        aba.location.replace(url);
+      } else {
+        // Sem aba (XML, lote, ou pop-up bloqueado de vez): vai para o disco.
         const link = document.createElement('a');
         link.href = url;
         link.download = nome;
         document.body.appendChild(link);
         link.click();
         link.remove();
+        if (querAba) showToast(`O ${rotulo} foi baixado — o navegador bloqueou a abertura em nova aba.`, 'success');
       }
     } catch (error) {
+      if (aba) aba.close();
       showToast(`Falha ao buscar o ${rotulo}: ${error.message || 'erro desconhecido'}`, 'error');
     } finally {
       // Só depois da aba ler o conteúdo — revogar na hora deixa a aba em branco.
