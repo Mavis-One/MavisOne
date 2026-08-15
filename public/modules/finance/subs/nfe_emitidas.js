@@ -226,17 +226,63 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   // Estas ações só chegam aqui para notas de origem 'fiscal' — o painel bloqueia
   // as manuais antes, porque elas não existem na SEFAZ.
 
-  // Abre numa aba, em vez de fetch + blob: a rota devolve o arquivo com
-  // Content-Disposition, e deixar o navegador baixar preserva o nome e não
-  // segura o XML inteiro na memória da página.
-  function baixarArquivoFiscal(nfe, tipo) {
-    window.open(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}/${tipo}`, '_blank');
+  // BUSCA com o token e abre o resultado, em vez de apontar a aba para a rota.
+  //
+  // A versão anterior fazia window.open direto na URL da API, para preservar o
+  // nome do Content-Disposition e não segurar o arquivo na memória. Só que a
+  // autenticação deste sistema é por CABEÇALHO (x-auth-token, guardado no
+  // sessionStorage) e não por cookie: uma aba nova é navegação limpa, chega ao
+  // servidor sem token nenhum e leva 403 "Sem permissão".
+  //
+  // Medido em 15/08/2026 numa nota AUTORIZADA, com o PDF já guardado no banco:
+  // a rota devolvia 13 KB de %PDF-1.3 com o token, e 403 sem ele. Baixar DANFE,
+  // Baixar XML, DANFE com UN. TRIB. e DANFE em Lote passavam pela mesma função,
+  // então nenhum dos quatro funcionava — e a tela não dizia por quê, porque o
+  // erro acontecia na outra aba.
+  //
+  // O nome do arquivo é reposto pelo atributo `download`, e o objeto é liberado
+  // depois; o custo de memória é de um DANFE (dezenas de KB), não de um lote.
+  async function baixarArquivoFiscal(nfe, tipo, { paraLeitura = true } = {}) {
+    const rotulo = tipo === 'xml' ? 'XML' : 'DANFE';
+    let url = null;
+    try {
+      const resposta = await fetch(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}/${tipo}`, {
+        headers: { 'x-auth-token': getSessionToken() || '' }
+      });
+      if (!resposta.ok) {
+        // A rota devolve JSON no erro ("ainda não disponível", "Sem permissão").
+        const corpo = await resposta.json().catch(() => ({}));
+        showToast(corpo.error || `Não foi possível abrir o ${rotulo} (HTTP ${resposta.status}).`, 'error');
+        return;
+      }
+      const blob = await resposta.blob();
+      url = URL.createObjectURL(blob);
+      const nome = `nfe-${nfe.number || nfe.key || nfe.id}.${tipo === 'xml' ? 'xml' : 'pdf'}`;
+
+      // PDF abre para LER — é o que a pessoa quer ao clicar em DANFE. XML não
+      // tem o que ver na tela, e o LOTE nunca abre aba: dez notas seriam dez
+      // pop-ups, e o navegador bloqueia da segunda em diante.
+      const aba = (tipo === 'xml' || !paraLeitura) ? null : window.open(url, '_blank');
+      if (!aba) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = nome;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+    } catch (error) {
+      showToast(`Falha ao buscar o ${rotulo}: ${error.message || 'erro desconhecido'}`, 'error');
+    } finally {
+      // Só depois da aba ler o conteúdo — revogar na hora deixa a aba em branco.
+      if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
   }
 
   function baixarLoteFiscal(notas, tipo) {
-    // Uma aba por nota: a Focus não tem endpoint de lote. Abrir todas de uma
-    // vez faz o navegador bloquear como popup, então vai espaçado.
-    notas.forEach((nfe, i) => setTimeout(() => baixarArquivoFiscal(nfe, tipo), i * 400));
+    // Um arquivo por nota: a Focus não tem endpoint de lote. Vai espaçado para
+    // não disparar N buscas ao mesmo tempo, e sempre para o disco.
+    notas.forEach((nfe, i) => setTimeout(() => baixarArquivoFiscal(nfe, tipo, { paraLeitura: false }), i * 400));
     showToast(`Baixando ${notas.length} arquivo(s)…`, 'success');
   }
 

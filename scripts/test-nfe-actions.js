@@ -114,5 +114,51 @@ let semMotivo = 0;
 });
 check('nenhum motivo vazio ou genérico demais', semMotivo === 0, `${semMotivo} sem motivo`);
 
+console.log('\n--- baixar arquivo tem que LEVAR o token ---');
+// A autenticação deste sistema é por CABEÇALHO (x-auth-token, no
+// sessionStorage), nunca por cookie. Logo, qualquer navegação limpa para uma
+// rota de /api — window.open, href, location, form action — chega ao servidor
+// sem token e leva 403.
+//
+// Foi exatamente o que aconteceu com "Baixar DANFE": window.open apontava para
+// a rota, o 403 acontecia na ABA NOVA e a tela não tinha como avisar. Quatro
+// ações passavam por ali (DANFE, XML, DANFE com UN. TRIB. e o lote) e nenhuma
+// funcionava, com o PDF já guardado no banco. Medido em 15/08/2026: a mesma
+// rota devolvia 13 KB de %PDF-1.3 com o token e 403 sem ele.
+const path = require('path');
+const RAIZ = path.join(__dirname, '..');
+const lerArquivo = (rel) => fs.readFileSync(path.join(RAIZ, rel), 'utf8');
+
+function varrer(dir, achados = []) {
+  for (const nome of fs.readdirSync(dir)) {
+    const inteiro = path.join(dir, nome);
+    if (fs.statSync(inteiro).isDirectory()) varrer(inteiro, achados);
+    else if (nome.endsWith('.js')) achados.push(path.relative(RAIZ, inteiro).replace(/\\/g, '/'));
+  }
+  return achados;
+}
+// window.open('/api/...'), location = '/api/...', href = '/api/...' — em
+// qualquer forma de aspas, com ou sem template string.
+const NAVEGACAO_CRUA = /(?:window\.open|location\.(?:href|assign|replace)|\.href\s*=)\s*\(?\s*[`'"]\/api\/|(?:window\.open|location\.(?:href|assign|replace)|\.href\s*=)\s*\(?\s*`[^`]*\/api\//;
+const infratores = varrer(path.join(RAIZ, 'public'))
+  .filter((rel) => NAVEGACAO_CRUA.test(lerArquivo(rel)));
+check('nenhuma tela aponta navegação crua para /api', infratores.length === 0,
+  infratores.length ? 'ENCONTRADO em: ' + infratores.join(', ') : 'ok');
+
+const telaNfes = lerArquivo('public/modules/finance/subs/nfe_emitidas.js');
+const download = telaNfes.slice(
+  telaNfes.indexOf('async function baixarArquivoFiscal'),
+  telaNfes.indexOf('async function consultarStatusFiscal'));
+check('o download busca com o token da sessão', /'x-auth-token': getSessionToken\(\)/.test(download));
+// Sem isto, erro de servidor vira aba em branco: o usuário não descobre que a
+// nota ainda não tem arquivo, nem que perdeu a permissão.
+check('e mostra o erro NA TELA quando a rota recusa', /if \(!resposta\.ok\)[\s\S]{0,220}showToast/.test(download));
+check('o PDF abre para leitura', /window\.open\(url, '_blank'\)/.test(download));
+// Revogar na hora deixaria a aba em branco — o objeto some antes de ser lido.
+check('e o objeto só é liberado depois', /setTimeout\(\(\) => URL\.revokeObjectURL\(url\)/.test(download));
+// Dez notas selecionadas seriam dez pop-ups, e o navegador bloqueia da segunda
+// em diante — o lote vai para o disco.
+check('o lote não abre abas', /paraLeitura: false/.test(telaNfes));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
