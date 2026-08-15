@@ -107,10 +107,91 @@ check('a migração diz que está parcial', /PARCIAL de propósito/.test(migraca
 console.log('\n--- os campos são enviados e relidos ---');
 // Se ficarem de fora de CAMPOS_TEXTO, o formulário desenha mas não grava — e
 // editar uma regra apagaria o que já estava salvo.
-['cstIbsCbs', 'classTrib', 'aliquotaIbs', 'aliquotaCbs'].forEach((campo) => {
+['cstIbsCbs', 'classTrib', 'aliquotaIbsUf', 'aliquotaIbsMun', 'aliquotaCbs'].forEach((campo) => {
   check(`${campo} está em CAMPOS_TEXTO`, new RegExp(`'${campo}'`).test(telaSrc.slice(telaSrc.indexOf('const CAMPOS_TEXTO'), telaSrc.indexOf('function semAcento'))));
 });
 check('a seção de IBS/CBS existe no formulário', /IBS e CBS — Reforma Tributária/.test(telaSrc));
+
+console.log('\n--- o payload REALMENTE leva IBS/CBS à SEFAZ ---');
+// Este era o elo que faltava: tela e banco guardavam os quatro campos e o
+// payload não mandava nenhum. Medido em homologação em 14/08/2026 — a SEFAZ
+// recusa TODA nota com "1115 - Rejeicao: IBS/CBS não informado".
+const { buildNfePayload } = require('../lib/nfePayloadBuilder');
+const baseArgs = {
+  estabelecimento: { cnpj: '11222333000181', razaoSocial: 'Emitente SC Ltda', logradouro: 'Rua B', numero: '1', bairro: 'Centro', municipio: 'Joinville', uf: 'SC', cep: '89201000', codigoMunicipio: '4209102', inscricaoEstadual: '123456789' },
+  empresa: { crt: 3 },
+  destinatario: { nome: 'Cliente', documento: '12345678000199', contribuinte: true, logradouro: 'Rua A', numero: '10', bairro: 'Centro', municipio: 'Joinville', uf: 'SC', cep: '89201000' },
+  naturezaOperacao: 'Venda', tipoDocumento: 1, finalidadeEmissao: 1, dataEmissao: '2026-08-14T10:00:00-03:00',
+  ambiente: 'homologacao'
+};
+const comIbs = (regraExtra) => buildNfePayload({
+  ...baseArgs,
+  itens: [{
+    descricao: 'Produto', codigoProduto: 'P1', ncm: '73181500', quantidade: 2, valorUnitario: 100, unidadeComercial: 'UN',
+    regraFiscal: { cfop: '5102', cstIcms: '00', aliquotaIcms: 17, cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3, ...regraExtra }
+  }]
+}).items[0];
+
+// 2026: CBS 0,9%, IBS da UF exatamente 0,1% e IBS do município exatamente
+// 0,0%. Os números vêm de rejeição da SEFAZ, não de suposição: 0,05/0,05
+// (que um guia da Focus dava) foi recusado com "1036 — Alíquota do IBS do
+// Município inválida", e a 1026 cobra 0,1% na UF.
+const itemIbs = comIbs({ cstIbsCbs: '000', classTrib: '000001', aliquotaIbsUf: 0.1, aliquotaIbsMun: 0, aliquotaCbs: 0.9 });
+check('manda a situação tributária do IBS/CBS', itemIbs.ibs_cbs_situacao_tributaria === '000', itemIbs.ibs_cbs_situacao_tributaria);
+check('manda a classificação tributária', itemIbs.ibs_cbs_classificacao_tributaria === '000001', itemIbs.ibs_cbs_classificacao_tributaria);
+check('manda a base de cálculo (2 x 100)', itemIbs.ibs_cbs_base_calculo === 200, String(itemIbs.ibs_cbs_base_calculo));
+check('alíquota do IBS estadual (0,1% em 2026)', itemIbs.ibs_uf_aliquota === 0.1, String(itemIbs.ibs_uf_aliquota));
+check('valor do IBS estadual (200 x 0,1%)', itemIbs.ibs_uf_valor === 0.2, String(itemIbs.ibs_uf_valor));
+// O ZERO precisa VIAJAR. Omitir o campo é o que derruba a nota com 1036 —
+// zero é informação, ausência é outra coisa.
+check('alíquota do IBS municipal vai como zero explícito', itemIbs.ibs_mun_aliquota === 0, String(itemIbs.ibs_mun_aliquota));
+check('e o campo existe mesmo valendo zero', 'ibs_mun_aliquota' in itemIbs);
+check('valor do IBS municipal é zero', itemIbs.ibs_mun_valor === 0, String(itemIbs.ibs_mun_valor));
+// vIBS é a SOMA das partes já arredondadas: recalcular do zero produz o
+// centavo de diferença que a SEFAZ acusa ao conferir o total contra as partes.
+check('o total do IBS é a soma das duas competências', itemIbs.ibs_valor_total === 0.2, String(itemIbs.ibs_valor_total));
+check('alíquota da CBS', itemIbs.cbs_aliquota === 0.9, String(itemIbs.cbs_aliquota));
+check('valor da CBS (200 x 0,9%)', itemIbs.cbs_valor === 1.8, String(itemIbs.cbs_valor));
+
+console.log('\n--- os nomes são os da referência oficial da Focus ---');
+// campos.focusnfe.com.br/nfe/ItemNotaFiscalXML.html — conferidos contra as
+// tags do XML (pIBSUF, pIBSMun, pCBS, cClassTrib). A Focus IGNORA campo
+// desconhecido em silêncio e responde sucesso: nome errado aqui não dá erro,
+// produz nota AUTORIZADA e errada, que só aparece numa fiscalização.
+const builderSrc = ler('lib/nfePayloadBuilder.js');
+['ibs_cbs_situacao_tributaria', 'ibs_cbs_classificacao_tributaria', 'ibs_cbs_base_calculo',
+  'ibs_uf_aliquota', 'ibs_uf_valor', 'ibs_mun_aliquota', 'ibs_mun_valor',
+  'ibs_valor_total', 'cbs_aliquota', 'cbs_valor'].forEach((campo) => {
+  check(`usa "${campo}"`, new RegExp(`base\\.${campo}\\s*=`).test(builderSrc));
+});
+check('a origem dos nomes está citada no código', /campos\.focusnfe\.com\.br/.test(builderSrc));
+
+console.log('\n--- CST sem alíquota não leva percentual zerado ---');
+// Operação não tributada (400 e afins) não tem percentual. Mandar zero
+// explícito faz a SEFAZ cobrar coerência entre o CST e o valor.
+// Aqui as alíquotas nem sequer são declaradas na regra — é diferente de
+// declarar zero, e o payload precisa refletir essa diferença.
+const isento = comIbs({ cstIbsCbs: '400', classTrib: '400001' });
+check('não declarada, não manda ibs_uf_aliquota', !('ibs_uf_aliquota' in isento));
+check('nem ibs_mun_aliquota', !('ibs_mun_aliquota' in isento));
+check('nem cbs_aliquota', !('cbs_aliquota' in isento));
+check('nem o total do IBS', !('ibs_valor_total' in isento));
+check('mas ainda manda CST e classificação', isento.ibs_cbs_situacao_tributaria === '400' && isento.ibs_cbs_classificacao_tributaria === '400001');
+
+console.log('\n--- regra sem IBS/CBS não inventa situação tributária ---');
+// A nota continua sendo recusada — e é o certo: melhor a rejeição visível do
+// que uma nota autorizada sob uma hipótese legal que não é a dela.
+const semIbs = comIbs({});
+check('não inventa CST de IBS/CBS', !('ibs_cbs_situacao_tributaria' in semIbs));
+check('nem manda base de cálculo', !('ibs_cbs_base_calculo' in semIbs));
+
+console.log('\n--- o IBS vai separado por competência, não dividido ao meio ---');
+const migracaoAd = ler('supabase/migrations/fase-ad-ibs-cbs-uf-municipio.sql');
+check('a migração cria a coluna do estado', /aliquota_ibs_uf/.test(migracaoAd));
+check('e a do município', /aliquota_ibs_mun/.test(migracaoAd));
+check('o banco lê as duas', /aliquotaIbsUf: row\.aliquota_ibs_uf/.test(dbSrc) && /aliquotaIbsMun: row\.aliquota_ibs_mun/.test(dbSrc));
+check('e grava as duas', /aliquota_ibs_uf: numeroOuNulo/.test(dbSrc) && /aliquota_ibs_mun: numeroOuNulo/.test(dbSrc));
+check('a migração explica por que não é um total dividido', /passaria a mentir/.test(migracaoAd));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

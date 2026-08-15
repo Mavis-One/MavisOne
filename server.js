@@ -2874,7 +2874,18 @@ async function aplicarRespostaFocusNaNfe(nfe, resposta, user) {
     status: novoStatus,
     serie: resposta.serie,
     numero: resposta.numero,
-    chaveAcesso: resposta.chave_nfe,
+    // A Focus devolve a chave PREFIXADA: "NFe4226084379...". São 47
+    // caracteres, e a coluna é character(44) — a gravação estourava com
+    // "value too long for type character(44)", derrubando a atualização
+    // INTEIRA. O efeito era grotesco e silencioso: nota AUTORIZADA pela SEFAZ,
+    // com protocolo e DANFE prontos, e o sistema preso em "Processando" para
+    // sempre. Valia tanto pelo webhook quanto pela consulta manual, porque as
+    // duas passam por aqui.
+    //
+    // Só dígitos: a chave de acesso da NF-e é numérica de 44 posições, e é
+    // assim que ela entra em consulta na SEFAZ, em carta de correção e em
+    // referência de nota complementar.
+    chaveAcesso: String(resposta.chave_nfe || '').replace(/\D/g, '') || null,
     mensagemSefaz: resposta.mensagem_sefaz,
     protocolo: resposta.protocolo,
     urlXml: resposta.caminho_xml_nota_fiscal,
@@ -5046,10 +5057,39 @@ const server = http.createServer(async (req, res) => {
         return res.end(arquivo.conteudo);
       }
 
+      // Ler a NF-e RECONSULTA a SEFAZ quando ela ainda está em trânsito.
+      //
+      // A emissão assíncrona devolve 202 e a Focus avisa o desfecho por
+      // webhook. Quando o webhook não chega — não registrado, URL fora do ar,
+      // servidor local sem endereço público — a nota fica em PROCESSANDO para
+      // sempre. A tela tem a ação "Consultar Status" justamente para isso, e
+      // ela chamava ESTA rota, que só relia o banco: o botão respondia
+      // "Nenhuma mudança de status" e parecia confirmar que estava tudo bem.
+      //
+      // Encontrado emitindo em homologação em 14/08/2026: a nota estava
+      // AUTORIZADA na SEFAZ havia minutos, com chave e protocolo, e o sistema
+      // insistia em PROCESSANDO — o pior tipo de erro, porque a tela mostrava
+      // uma resposta tranquilizadora.
       if (pathname.startsWith('/api/fiscal/nfe/') && req.method === 'GET') {
         const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', ''));
-        const nfe = await fiscalDb.getNfeById(id);
+        let nfe = await fiscalDb.getNfeById(id);
         if (!nfe) return sendJson(res, { error: 'NF-e não encontrada' }, 404);
+
+        // Só PROCESSANDO reconsulta. Autorizada e cancelada são desfechos
+        // finais, e nota do Financeiro sem referência nunca foi transmitida —
+        // consultar as três seria uma ida à Focus por linha de listagem.
+        if (nfe.status === 'PROCESSANDO' && nfe.referencia && nfe.estabelecimentoId) {
+          try {
+            const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
+            const resposta = await client.consultarNfe(nfe.referencia);
+            nfe = await aplicarRespostaFocusNaNfe(nfe, resposta, user);
+          } catch (error) {
+            // Falha ao consultar NÃO é falha ao ler: a nota continua existindo
+            // e o usuário continua vendo o que já havia. Devolver 500 aqui
+            // esconderia a nota inteira por causa de uma instabilidade de rede.
+            console.error('Falha ao reconsultar NF-e', id, error.message);
+          }
+        }
         return sendJson(res, { nfe });
       }
     } catch (error) {

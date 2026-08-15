@@ -62,7 +62,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     'cstIcmsSt', 'mvaSt', 'aliquotaIcmsSt', 'cstPis', 'aliquotaPis', 'cstCofins', 'aliquotaCofins',
     'cstIpi', 'aliquotaIpi', 'codigoEnquadramentoIpi',
     // IBS/CBS — Reforma Tributária (LC 214/2025).
-    'cstIbsCbs', 'classTrib', 'aliquotaIbs', 'aliquotaCbs',
+    'cstIbsCbs', 'classTrib', 'aliquotaIbsUf', 'aliquotaIbsMun', 'aliquotaCbs',
     'prioridade', 'vigenciaInicio', 'vigenciaFim',
     'observacaoFisco'
   ];
@@ -305,7 +305,14 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                   ${campoCodigo('csosn', 'CSOSN (Simples Nacional)', tabelas.csosn, form.csosn)}
                   ${campoCodigo('cstIcms', 'CST ICMS (Regime Normal)', tabelas.cstIcms, form.cstIcms)}
                 </div>
-                <div class="row">
+                <!-- Estes campos só existem para CST que tributa a operação
+                     própria. Numa isenta (40), não tributada (41) ou suspensão
+                     (50) não há base, alíquota nem valor a declarar — e pedir
+                     um número que não vai para lugar nenhum convida a
+                     preencher. Quem esconde/mostra é o avisoCstIcms() abaixo,
+                     lendo o MESMO módulo que o servidor usa para montar o
+                     payload. -->
+                <div class="row" data-icms-proprio>
                   <label>Modalidade da base de cálculo
                     <select name="modalidadeBcIcms">
                       <option value="">não informar</option>
@@ -313,8 +320,9 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                     </select>
                   </label>
                   <label>Alíquota ICMS (%)<input name="aliquotaIcms" type="number" step="0.01" min="0" max="100" value="${form.aliquotaIcms ?? ''}" /></label>
-                  <label>Redução da BC (%)<input name="reducaoBcIcms" type="number" step="0.01" min="0" max="100" value="${form.reducaoBcIcms ?? ''}" /></label>
+                  <label data-icms-reducao>Redução da BC (%)<input name="reducaoBcIcms" type="number" step="0.01" min="0" max="100" value="${form.reducaoBcIcms ?? ''}" /></label>
                 </div>
+                <p class="fiscal-aviso-cst" data-aviso-cst hidden></p>
               </div>
             </div>
 
@@ -383,8 +391,15 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                   ${campoClassTrib(form)}
                 </div>
                 <div class="row">
-                  <label>Alíquota IBS (%)<input name="aliquotaIbs" type="number" step="0.0001" min="0" max="100" value="${form.aliquotaIbs ?? ''}" /></label>
-                  <label>Alíquota CBS (%)<input name="aliquotaCbs" type="number" step="0.0001" min="0" max="100" value="${form.aliquotaCbs ?? ''}" /></label>
+<!-- O IBS tem DOIS destinatários: o estado e o município, cada um com
+                       competência própria para legislar a sua alíquota. A Focus pede os
+                       dois separados (pIBSUF e pIBSMun) e a SEFAZ confere o total contra
+                       as partes — por isso são dois campos, e não um total dividido ao
+                       meio. Em 2026 a UF fica com os 0,1% inteiros e o municipio com 0,0% —
+                       zero EXPLICITO, nao em branco: em branco a SEFAZ recusa com 1036. -->
+                  <label>Alíquota IBS — estado (%)<input name="aliquotaIbsUf" type="number" step="0.0001" min="0" max="100" value="${form.aliquotaIbsUf ?? ''}" placeholder="2026: 0,1" /></label>
+                  <label>Alíquota IBS — município (%)<input name="aliquotaIbsMun" type="number" step="0.0001" min="0" max="100" value="${form.aliquotaIbsMun ?? ''}" placeholder="2026: 0 (zero)" /></label>
+                  <label>Alíquota CBS (%)<input name="aliquotaCbs" type="number" step="0.0001" min="0" max="100" value="${form.aliquotaCbs ?? ''}" placeholder="2026: 0,9" /></label>
                 </div>
               </div>
             </div>
@@ -570,6 +585,59 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       state.fiscalRegraForm = null;
       desenhar(ctx);
     });
+
+    // Campos de ICMS que só existem para CST que tributa a operação própria.
+    //
+    // Numa isenta (40), não tributada (41) ou suspensão (50) não há base,
+    // alíquota nem valor — o servidor manda SÓ o CST (ver nfePayloadBuilder).
+    // Deixar os campos na tela pediria um número que não vai a lugar nenhum, e
+    // quem preenchesse acharia que declarou alguma coisa.
+    //
+    // A decisão vem do MavisCstIcms, o mesmo módulo que o servidor usa: se a
+    // tela tivesse a sua própria lista, um CST novo entraria num lado só.
+    const campoCstIcms = content.querySelector('#fiscalRegraForm [name="cstIcms"]');
+    const campoCsosn = content.querySelector('#fiscalRegraForm [name="csosn"]');
+    const linhaIcms = content.querySelector('#fiscalRegraForm [data-icms-proprio]');
+    const campoReducao = content.querySelector('#fiscalRegraForm [data-icms-reducao]');
+    const avisoCst = content.querySelector('#fiscalRegraForm [data-aviso-cst]');
+
+    function aplicarRegrasDoCst() {
+      if (!linhaIcms) return;
+      const cst = campoCstIcms?.value || '';
+      const usaCsosn = Boolean(campoCsosn?.value);
+      const tabela = window.MavisCstIcms;
+      // Sem CST escolhido (ou no caminho do Simples, que usa CSOSN) a tela não
+      // esconde nada: o usuário ainda está decidindo.
+      const situacao = cst && tabela ? tabela.situacao(cst) : null;
+      const mostrarTributo = usaCsosn || !cst || !situacao || situacao.icmsProprio;
+
+      linhaIcms.hidden = !mostrarTributo;
+      if (campoReducao) campoReducao.hidden = mostrarTributo && situacao ? !situacao.reducao : false;
+
+      if (!avisoCst) return;
+      if (cst && !situacao) {
+        avisoCst.hidden = false;
+        avisoCst.textContent = `CST "${cst}" não existe na tabela do ICMS.`;
+      } else if (situacao && !situacao.suportado) {
+        // Recusar na hora de emitir, sem avisar aqui, faria o usuário
+        // descobrir só depois de montar a nota inteira.
+        avisoCst.hidden = false;
+        avisoCst.textContent = `CST ${tabela.normalizar(cst)} (${situacao.rotulo}) ainda não é emitido por este sistema: falta o ${situacao.falta}. A regra pode ser salva, mas a emissão vai recusar.`;
+      } else if (situacao && !situacao.icmsProprio) {
+        avisoCst.hidden = false;
+        avisoCst.textContent = `CST ${tabela.normalizar(cst)} — ${situacao.rotulo}. Não há base, alíquota nem valor de ICMS a declarar: a nota leva só a situação tributária.`;
+      } else {
+        avisoCst.hidden = true;
+        avisoCst.textContent = '';
+      }
+    }
+
+    campoCstIcms?.addEventListener('input', aplicarRegrasDoCst);
+    campoCstIcms?.addEventListener('change', aplicarRegrasDoCst);
+    campoCsosn?.addEventListener('input', aplicarRegrasDoCst);
+    campoCsosn?.addEventListener('change', aplicarRegrasDoCst);
+    // Vale já na abertura: editar uma regra isenta tem que abrir sem os campos.
+    aplicarRegrasDoCst();
 
     content.querySelector('#fiscalRegraForm')?.addEventListener('submit', async (evento) => {
       evento.preventDefault();

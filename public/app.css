@@ -2779,6 +2779,21 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   line-height: 1.5;
 }
 
+/* O que a situação tributária escolhida implica, na tela de Regras Fiscais.
+   Não é erro — é explicação de por que os campos de alíquota sumiram. Por isso
+   tem a cor do texto normal, e não a de recusa: campo que desaparece sem
+   explicação parece defeito da tela. */
+.fiscal-aviso-cst {
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--primary);
+  background: var(--panel-alt);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.fiscal-aviso-cst[hidden] { display: none; }
+
 /* Motivo da falha no "Testar conexão" do estabelecimento. Fica embaixo do
    badge, dentro da célula: antes o texto morava só no title do badge, e um
    token errado parecia idêntico a uma queda da Focus. */

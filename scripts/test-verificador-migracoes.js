@@ -74,12 +74,32 @@ console.log('\n--- a trava de deploy continua de pé ---');
 check('pendente ainda sai com código 1', /pendentes\.length[\s\S]{0,600}process\.exit\(1\)/.test(src));
 check('e a ressalva sozinha sai com 0', /naoConferidas\.length[\s\S]{0,200}process\.exit\(0\)/.test(src));
 
-console.log('\n--- o pacote para colar no SQL Editor está atualizado ---');
+console.log('\n--- o pacote para colar no SQL Editor é fiel às fases ---');
+// A primeira versão deste bloco cobrava uma fase POR NOME ("o pacote traz a
+// fase-v"). Envelheceu em um dia: a fase-v foi aplicada, saiu do pacote — como
+// devia — e o teste passou a acusar o comportamento CERTO. O que não envelhece
+// é a relação entre o pacote e os arquivos de fase.
 const pacote = ler('supabase/migrations/PENDENTES-rodar-agora.sql');
-check('o pacote traz a fase-v', /aliquota_fcp_uf_destino/.test(pacote) && /aliquota_interna_uf_destino/.test(pacote));
-// Um pacote que lista migração já aplicada faz quem for rodar duvidar do resto.
-check('e não lista mais as fases já aplicadas', !/Fase H —|Fase I —|Fase J —|Fase K —/.test(pacote));
 check('o verificador continua ignorando o pacote', /^--\s*CONSOLIDADO/im.test(pacote));
+
+const fasesCitadas = [...pacote.matchAll(/^--\s*>>>\s*(\S+\.sql)/gm)].map((m) => m[1]);
+check('o pacote diz de quais fases veio', fasesCitadas.length > 0, fasesCitadas.join(', ') || 'nenhuma');
+
+// Um pacote que inventa SQL, ou que cita arquivo inexistente, manda rodar no
+// banco algo que não está versionado em lugar nenhum.
+const comandos = (texto) => [...texto.matchAll(/^\s*alter\s+table[^;]+;/gim)].map((m) => m[0].replace(/\s+/g, ' ').trim());
+const doPacote = comandos(pacote);
+const dasFases = fasesCitadas.flatMap((nome) => {
+  const caminho = path.join(RAIZ, 'supabase', 'migrations', nome);
+  return fs.existsSync(caminho) ? comandos(ler(`supabase/migrations/${nome}`)) : [`ARQUIVO INEXISTENTE: ${nome}`];
+});
+fasesCitadas.forEach((nome) => {
+  check(`  ${nome} existe`, fs.existsSync(path.join(RAIZ, 'supabase', 'migrations', nome)));
+});
+const inventados = doPacote.filter((c) => !dasFases.includes(c));
+check('nenhum comando do pacote foi inventado', inventados.length === 0, inventados.slice(0, 2).join(' | ') || undefined);
+const esquecidos = dasFases.filter((c) => !doPacote.includes(c));
+check('e nenhum comando das fases citadas ficou de fora', esquecidos.length === 0, esquecidos.slice(0, 2).join(' | ') || undefined);
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

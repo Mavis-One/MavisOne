@@ -133,5 +133,33 @@ check('usa o canal de pré-preenchimento real', /state\.nfeFromOrder = \{/.test(
 check('a duplicata nasce sem pedido', /orderId: '',/.test(listaSrc));
 check('lê os itens do payload da nota original', /payloadEnviado \|\| \{\}\)\.items/.test(listaSrc));
 
+
+console.log('\n--- nota autorizada consegue ser GRAVADA ---');
+// A Focus devolve a chave prefixada: "NFe4226084379..." = 47 caracteres, numa
+// coluna character(44). A gravação estourava com "value too long" e derrubava
+// a atualização INTEIRA — nota AUTORIZADA pela SEFAZ, com protocolo e DANFE
+// prontos, e o sistema preso em "Processando" para sempre. Valia pelo webhook
+// e pela consulta manual, porque as duas passam pela mesma função.
+// Encontrado emitindo em homologação em 14/08/2026.
+check('a chave é normalizada para só dígitos antes de gravar',
+  /chaveAcesso: String\(resposta\.chave_nfe[\s\S]{0,40}replace\(/.test(serverSrc)
+  && /chave_nfe[\s\S]{0,60}\D/.test(serverSrc));
+check('e o motivo está escrito', /value too long for type character\(44\)/.test(serverSrc));
+
+console.log('\n--- "Consultar Status" consulta de verdade ---');
+// A tela chama GET /api/fiscal/nfe/:id para destravar nota parada quando o
+// webhook não chega. A rota só relia o banco: o botão respondia "Nenhuma
+// mudança de status" e parecia confirmar que estava tudo bem.
+const rotaGet = serverSrc.slice(
+  serverSrc.indexOf("if (pathname.startsWith('/api/fiscal/nfe/') && req.method === 'GET')"),
+  serverSrc.indexOf("if (pathname.startsWith('/api/fiscal/nfe/') && req.method === 'GET')") + 1600);
+check('a rota reconsulta a Focus', /client\.consultarNfe\(nfe\.referencia\)/.test(rotaGet));
+check('e aplica a resposta no registro', /aplicarRespostaFocusNaNfe\(nfe, resposta, user\)/.test(rotaGet));
+// Consultar toda nota de toda listagem seria uma ida à Focus por linha.
+check('só reconsulta quem está em trânsito', /nfe\.status === 'PROCESSANDO'/.test(rotaGet));
+check('e só quem foi mesmo transmitida', /nfe\.referencia && nfe\.estabelecimentoId/.test(rotaGet));
+// Instabilidade de rede não pode esconder a nota inteira.
+check('falha ao consultar não derruba a leitura', /Falha ao reconsultar NF-e/.test(rotaGet));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

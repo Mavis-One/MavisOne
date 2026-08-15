@@ -6,45 +6,40 @@
 --  Cole tudo de uma vez no SQL Editor do Supabase e execute.
 --  Cada instrução usa "if not exists": rodar duas vezes não causa dano.
 --
---  O QUE ESTÁ FALTANDO (varredura de 14/08/2026):
---    Fase V — DIFAL e FCP do estado de destino na regra fiscal
+--  O QUE ESTÁ FALTANDO (varredura de 14/08/2026, à noite):
+--    Fase AD — IBS separado por UF e por município na regra fiscal
 --
---  ISTO NÃO É "degrada em silêncio": está QUEBRADO na cara.
---  lib/db/fiscal.js grava as duas colunas em toda regra fiscal, e elas não
---  existem no banco. A tela Regras Fiscais devolve erro em qualquer tentativa
---  de salvar:
+--  POR QUE AGORA: a SEFAZ recusa TODA NF-e sem IBS/CBS. Medido numa emissão
+--  real em homologação hoje:
 --
---      createRegraFiscal: Could not find the 'aliquota_fcp_uf_destino'
---      column of 'regra_fiscal' in the schema cache
+--      status_sefaz   1115
+--      mensagem       Rejeicao: IBS/CBS não informado
 --
---  E o estrago não para nessa tela: é a regra fiscal que casa o item com a
---  tributação na hora de emitir. Sem conseguir cadastrar nenhuma regra, a
---  emissão de NF-e está bloqueada por baixo.
+--  O resto do caminho já funciona — o certificado assinou e a nota chegou à
+--  SEFAZ. O que falta é o payload levar os tributos da Reforma (LC 214/2025),
+--  e para isso a regra fiscal precisa guardar a alíquota do IBS separada por
+--  competência: o estado e o município legislam a deles de forma independente,
+--  e a API da Focus pede os dois (pIBSUF e pIBSMun).
 --
 --  Depois de rodar, confirme com:  npm run migracoes
 -- =============================================================================
 
--- >>> fase-v-difal-e-pagamento.sql
+-- >>> fase-ad-ibs-cbs-uf-municipio.sql
 -- ---------------------------------------------------------------------------
--- Fase V — DIFAL e crédito do Simples na regra fiscal
+-- Fase AD — IBS separado por UF e por Município na regra fiscal
 --
--- 1. DIFAL (EC 87/2015). Venda interestadual para quem NÃO é contribuinte deve
---    a diferença entre a alíquota interna do estado de DESTINO e a
---    interestadual. Para calcular é preciso saber a alíquota interna do outro
---    estado, que varia por UF e por produto — são 27 estados que mudam de
---    alíquota por lei estadual, então é dado, não código.
+-- A fase-z criou `aliquota_ibs` como um número só. Dividir esse total ao meio
+-- no código resolveria 2026 por coincidência (as alíquotas de teste são 0,05%
+-- + 0,05%) e passaria a mentir no primeiro ano em que estado e município
+-- divergirem — que é o desenho da LC 214/2025.
 --
---    Simples Nacional está DISPENSADO do DIFAL (ADI 5.464 do STF), por isso o
---    payload só monta a partilha quando a regra usa CST, não CSOSN.
---
--- 2. FCP no destino. Alguns estados cobram Fundo de Combate à Pobreza por cima
---    do DIFAL, com percentual próprio. Mesmo motivo: é dado.
+-- `aliquota_ibs` fica de pé, sem uso pelo payload: apagar coluna não tem
+-- volta. Não havia nenhuma regra fiscal cadastrada quando isto foi escrito,
+-- então não há dado a converter.
 -- ---------------------------------------------------------------------------
 
--- Alíquota interna do estado de DESTINO, para o cálculo do DIFAL. Fica NULL
--- em regra de operação interna e em regra de Simples Nacional — nos dois casos
--- não há partilha a calcular.
-alter table regra_fiscal add column if not exists aliquota_interna_uf_destino numeric(5,2);
+-- Competência do ESTADO de destino.
+alter table regra_fiscal add column if not exists aliquota_ibs_uf numeric(7,4);
 
--- Percentual do Fundo de Combate à Pobreza do estado de destino.
-alter table regra_fiscal add column if not exists aliquota_fcp_uf_destino numeric(5,2);
+-- Competência do MUNICÍPIO de destino.
+alter table regra_fiscal add column if not exists aliquota_ibs_mun numeric(7,4);

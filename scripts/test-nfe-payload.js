@@ -94,12 +94,24 @@ check('PIS 1,65% de 1000', pisCofins.pis_valor === 16.5, String(pisCofins.pis_va
 check('COFINS 7,6% de 1000', pisCofins.cofins_valor === 76, String(pisCofins.cofins_valor));
 
 console.log('\n--- alíquota ZERO é declarada, não omitida ---');
-// CST 40 (isento) com alíquota 0 tem que sair COM o grupo do imposto zerado.
-// Tratar 0 como "não preenchido" faria a nota sair sem o grupo e ser rejeitada.
+// A regra geral continua valendo para os impostos cujo grupo TEM alíquota:
+// 0 é informação, não campo vazio. PIS com CST 07 (isento) é o caso.
 const isento = primeiroItem({ cfop: '5102', cstIcms: '40', aliquotaIcms: 0, cstPis: '07', aliquotaPis: 0 });
-check('grupo de ICMS presente com alíquota 0', isento.icms_situacao_tributaria === '40' && isento.icms_aliquota === 0);
-check('ICMS zerado, não ausente', isento.icms_valor === 0, String(isento.icms_valor));
-check('PIS isento também sai declarado', isento.pis_situacao_tributaria === '07' && isento.pis_valor === 0);
+check('PIS isento sai declarado com valor zero', isento.pis_situacao_tributaria === '07' && isento.pis_valor === 0);
+
+// O ICMS é a EXCEÇÃO, e este teste afirmava o contrário. A versão anterior
+// exigia icms_aliquota === 0 e icms_valor === 0 no CST 40, argumentando que
+// sem eles "a nota sairia sem o grupo e seria rejeitada". Era hipótese,
+// escrita antes de qualquer emissão real ter acontecido neste sistema.
+//
+// MEDIDO em homologação em 15/08/2026, emitindo com CST 40 e SEM esses
+// campos: a SEFAZ não reclamou deles. Reclamou de outra coisa — "930: CST com
+// beneficio fiscal e nao informado o codigo de beneficio fiscal". O grupo N06
+// do layout (CST 40/41/50) não tem vBC, pICMS nem vICMS: declarar alíquota
+// numa isenta é declarar imposto onde não há. Ver test-cst-icms.js.
+check('CST 40 não leva alíquota', !('icms_aliquota' in isento), String(isento.icms_aliquota));
+check('nem valor de ICMS', !('icms_valor' in isento), String(isento.icms_valor));
+check('mas leva a situação tributária', isento.icms_situacao_tributaria === '40');
 
 console.log('\n--- dados que vêm do CADASTRO do produto, não da regra ---');
 const comProduto = primeiroItem(

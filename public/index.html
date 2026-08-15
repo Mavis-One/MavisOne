@@ -51,6 +51,10 @@
     <script src="/modules/shared/sales_totals.js"></script>
     <script src="/modules/shared/sales_status.js"></script>
     <script src="/modules/shared/fiscal_permissoes.js"></script>
+    <!-- O que cada CST do ICMS admite. Carregado antes do modulo Fiscal:
+         a tela de Regras usa para esconder alIquota em CST isento, e o
+         server.js faz require() do MESMO arquivo. -->
+    <script src="/modules/shared/cst_icms.js"></script>
     <!-- Texto padrao das observacoes da NF-e. Arquivo proprio de proposito:
          e texto de negocio (ficha tecnica, garantia), editavel sem mexer na
          tela de emissao. -->
