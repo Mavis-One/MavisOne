@@ -218,6 +218,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
              existia e não dava para usar. O valor sai de base x %, calculado no
              servidor: o cliente nunca manda o imposto pronto. -->
         <td><input type="number" step="0.01" min="0" max="100" data-field="aliquotaIcms" data-index="${index}" value="${item.aliquotaIcms ?? ''}" placeholder="da regra" style="width:80px;" title="Vazio = usa a alíquota da regra fiscal" /></td>
+        <!-- cBenef POR ITEM, digitado — igual à alíquota. Não há lista para
+             escolher: o código é da tabela da UF e muda por ato normativo,
+             então uma lista nossa nasceria desatualizada. Errar não passa
+             despercebido: a SEFAZ confere e devolve 931. -->
+        <td><input data-field="codigoBeneficioFiscal" data-index="${index}" value="${escapeHtml(item.codigoBeneficioFiscal ?? '')}" maxlength="10" placeholder="da regra" style="width:100px;" title="Código do benefício fiscal (cBenef), da tabela da UF. Vazio = usa o da regra fiscal. Só vale em CST isento (40, 41, 50)." /></td>
         <td class="nfe-item-total" data-row-total="${index}">${financeFormatBRL(itemTotal(item))}</td>
         <td><button type="button" class="icon-button" data-remove-item="${index}" title="Remover item" ${itens.length <= 1 ? 'disabled' : ''}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"></path></svg>
@@ -397,7 +402,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           ${ehComplemento() ? '' : `
             <div class="table-scroll">
               <table class="table">
-                <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th title="Em branco usa a alíquota da regra fiscal">ICMS %</th><th>Total</th><th></th></tr></thead>
+                <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th title="Em branco usa a alíquota da regra fiscal">ICMS %</th><th title="Código do benefício fiscal (cBenef). Em branco usa o da regra fiscal.">cBenef</th><th>Total</th><th></th></tr></thead>
                 <tbody id="nfeFocusItemsBody">${renderItemsRows()}</tbody>
               </table>
             </div>
@@ -654,7 +659,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     attachItemsHandlers();
 
     document.getElementById('nfeFocusAddItemBtn')?.addEventListener('click', () => {
-      itens.push({ produtoId: '', descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0, aliquotaIcms: '' });
+      itens.push({ produtoId: '', descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0, aliquotaIcms: '', codigoBeneficioFiscal: '' });
       refreshItemsTable();
     });
 
@@ -881,7 +886,12 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           origem: Number(item.origem || 0),
           // Só vai quando foi digitada. Mandar 0 para "não informado" faria o
           // servidor entender alíquota zero e emitir sem ICMS.
-          ...(String(item.aliquotaIcms ?? '').trim() === '' ? {} : { aliquotaIcms: Number(item.aliquotaIcms) })
+          ...(String(item.aliquotaIcms ?? '').trim() === '' ? {} : { aliquotaIcms: Number(item.aliquotaIcms) }),
+          // Mesma regra: em branco não vai, para o motor cair no da regra
+          // fiscal em vez de receber string vazia como "sem benefício".
+          ...(String(item.codigoBeneficioFiscal ?? '').trim() === ''
+            ? {}
+            : { codigoBeneficioFiscal: String(item.codigoBeneficioFiscal).trim() })
         })),
         // Grupo obrigatório do layout 4.0 — nota sem ele é rejeitada. Uma
         // parcela única com o total: o parcelamento é condição comercial e

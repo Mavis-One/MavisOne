@@ -248,5 +248,41 @@ check('e envia o campo no payload', /aliquotaIcms: Number\(item\.aliquotaIcms\)/
 // Mandar 0 para "não informado" faria o servidor emitir sem ICMS.
 check('campo vazio NÃO vira zero', /trim\(\) === '' \? \{\} :/.test(telaEmissaoSrc));
 
+
+console.log('\n--- o cBenef também é digitado POR ITEM ---');
+// Mesma lógica da alíquota: o benefício varia por mercadoria e muda por ato
+// normativo. Não existe lista para escolher — uma lista nossa nasceria
+// desatualizada, e o código é da tabela da UF.
+const isentasVariadas = buildNfePayload({
+  ...ARGS,
+  itens: [
+    { descricao: 'Benefício da regra', codigoProduto: 'A', ncm: '49019900', quantidade: 1, valorUnitario: 40, unidadeComercial: 'UN',
+      regraFiscal: { cfop: '5102', cstIcms: '40', codigoBeneficioFiscal: 'SC000001', cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3 } },
+    { descricao: 'Benefício próprio', codigoProduto: 'B', ncm: '49019900', quantidade: 1, valorUnitario: 40, unidadeComercial: 'UN', codigoBeneficioFiscal: 'SC000002',
+      regraFiscal: { cfop: '5102', cstIcms: '40', codigoBeneficioFiscal: 'SC000001', cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3 } },
+    // Regra SEM benefício e item COM: é este caso que prova a passagem, porque
+    // o código só pode ter vindo do item.
+    { descricao: 'Só o item declara', codigoProduto: 'C', ncm: '49019900', quantidade: 1, valorUnitario: 40, unidadeComercial: 'UN', codigoBeneficioFiscal: 'SC000003',
+      regraFiscal: { cfop: '5102', cstIcms: '40', cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3 } }
+  ]
+}).items;
+check('sem nada digitado, vale o da regra', isentasVariadas[0].codigo_beneficio_fiscal === 'SC000001', isentasVariadas[0].codigo_beneficio_fiscal);
+check('digitado no item vence o da regra', isentasVariadas[1].codigo_beneficio_fiscal === 'SC000002', isentasVariadas[1].codigo_beneficio_fiscal);
+check('e o item sozinho basta', isentasVariadas[2].codigo_beneficio_fiscal === 'SC000003', isentasVariadas[2].codigo_beneficio_fiscal);
+// Espaço em volta viraria um código diferente para a SEFAZ.
+const comEspaco = buildNfePayload({
+  ...ARGS,
+  itens: [{ descricao: 'X', codigoProduto: 'X', ncm: '49019900', quantidade: 1, valorUnitario: 40, unidadeComercial: 'UN', codigoBeneficioFiscal: '  SC000004  ',
+    regraFiscal: { cfop: '5102', cstIcms: '40', cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3 } }]
+}).items[0];
+check('e vai sem espaço em volta', comEspaco.codigo_beneficio_fiscal === 'SC000004', JSON.stringify(comEspaco.codigo_beneficio_fiscal));
+
+check('a tela de emissão tem a coluna cBenef', /data-field="codigoBeneficioFiscal"/.test(telaEmissaoSrc));
+check('com cabeçalho na tabela', /<th[^>]*>cBenef<\/th>/.test(telaEmissaoSrc));
+check('e envia o campo no payload', /codigoBeneficioFiscal: String\(item\.codigoBeneficioFiscal\)\.trim\(\)/.test(telaEmissaoSrc));
+// String vazia enviada seria lida como "sem benefício" e apagaria o da regra.
+check('em branco não é enviado', /String\(item\.codigoBeneficioFiscal \?\? ''\)\.trim\(\) === ''[\s\S]{0,40}\? \{\}/.test(telaEmissaoSrc));
+check('item novo já nasce com o campo', /codigoBeneficioFiscal: ''/.test(telaEmissaoSrc));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
