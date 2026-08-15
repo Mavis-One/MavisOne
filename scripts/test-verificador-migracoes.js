@@ -82,13 +82,25 @@ console.log('\n--- o pacote para colar no SQL Editor é fiel às fases ---');
 const pacote = ler('supabase/migrations/PENDENTES-rodar-agora.sql');
 check('o verificador continua ignorando o pacote', /^--\s*CONSOLIDADO/im.test(pacote));
 
+const comandos = (texto) => [...texto.matchAll(/^\s*alter\s+table[^;]+;/gim)].map((m) => m[0].replace(/\s+/g, ' ').trim());
+const doPacote = comandos(pacote);
 const fasesCitadas = [...pacote.matchAll(/^--\s*>>>\s*(\S+\.sql)/gm)].map((m) => m[1]);
-check('o pacote diz de quais fases veio', fasesCitadas.length > 0, fasesCitadas.join(', ') || 'nenhuma');
+
+// "Nada pendente" é estado legítimo, e este bloco não previa: exigia fase
+// citada sempre. Quando a fase-ae foi aplicada e saiu do pacote — como devia —
+// o teste passaria a acusar o comportamento CERTO, pelo mesmo motivo que a
+// versão anterior cobrava a fase-v pelo nome. O que vale é a coerência: pacote
+// sem fase citada não pode ter SQL solto, senão manda rodar no banco algo que
+// ninguém sabe de onde veio.
+if (!fasesCitadas.length) {
+  check('pacote sem fase citada está vazio de SQL', doPacote.length === 0, doPacote.slice(0, 2).join(' | ') || undefined);
+  check('e diz, em texto, que não há nada pendente', /NADA PENDENTE/i.test(pacote));
+} else {
+  check('o pacote diz de quais fases veio', true, fasesCitadas.join(', '));
+}
 
 // Um pacote que inventa SQL, ou que cita arquivo inexistente, manda rodar no
 // banco algo que não está versionado em lugar nenhum.
-const comandos = (texto) => [...texto.matchAll(/^\s*alter\s+table[^;]+;/gim)].map((m) => m[0].replace(/\s+/g, ' ').trim());
-const doPacote = comandos(pacote);
 const dasFases = fasesCitadas.flatMap((nome) => {
   const caminho = path.join(RAIZ, 'supabase', 'migrations', nome);
   return fs.existsSync(caminho) ? comandos(ler(`supabase/migrations/${nome}`)) : [`ARQUIVO INEXISTENTE: ${nome}`];

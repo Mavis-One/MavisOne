@@ -50,6 +50,22 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     { value: '3', label: '3 — Valor da operação' }
   ];
 
+  // motDesICMS do layout da NF-e. Lista curta de propósito: são os motivos que
+  // aparecem em operação comercial. Os demais (13 a 16) são de regimes
+  // específicos e entram quando alguém precisar.
+  const MOTIVOS_DESONERACAO = [
+    { value: '1', label: '1 — Táxi' },
+    { value: '3', label: '3 — Produtor agropecuário' },
+    { value: '4', label: '4 — Frotista/locadora' },
+    { value: '5', label: '5 — Diplomático/consular' },
+    { value: '6', label: '6 — Utilitários e motocicletas da Amazônia Ocidental e Áreas de Livre Comércio' },
+    { value: '7', label: '7 — SUFRAMA' },
+    { value: '9', label: '9 — Outros' },
+    { value: '10', label: '10 — Deficiente condutor' },
+    { value: '11', label: '11 — Deficiente não condutor' },
+    { value: '12', label: '12 — Órgão de fomento e desenvolvimento agropecuário' }
+  ];
+
   const UFS = ['AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT',
     'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO'];
 
@@ -62,6 +78,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     'cstIcmsSt', 'mvaSt', 'aliquotaIcmsSt', 'cstPis', 'aliquotaPis', 'cstCofins', 'aliquotaCofins',
     'cstIpi', 'aliquotaIpi', 'codigoEnquadramentoIpi',
     // IBS/CBS — Reforma Tributária (LC 214/2025).
+    'codigoBeneficioFiscal', 'icmsMotivoDesoneracao',
     'cstIbsCbs', 'classTrib', 'aliquotaIbsUf', 'aliquotaIbsMun', 'aliquotaCbs',
     'prioridade', 'vigenciaInicio', 'vigenciaFim',
     'observacaoFisco'
@@ -321,6 +338,23 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                   </label>
                   <label>Alíquota ICMS (%)<input name="aliquotaIcms" type="number" step="0.01" min="0" max="100" value="${form.aliquotaIcms ?? ''}" /></label>
                   <label data-icms-reducao>Redução da BC (%)<input name="reducaoBcIcms" type="number" step="0.01" min="0" max="100" value="${form.reducaoBcIcms ?? ''}" /></label>
+                </div>
+                <!-- Benefício fiscal: a SEFAZ recusa CST isento sem ele
+                     ("930 - CST com beneficio fiscal e nao informado o codigo
+                     de beneficio fiscal"). O código sai da tabela da UF, não
+                     de uma lista nossa: em SC, da SEF/SC. Só aparece nos CST
+                     que o exigem, pelo mesmo motivo da alíquota sumir. -->
+                <div class="row" data-icms-beneficio hidden>
+                  <label>Código do benefício fiscal (cBenef)
+                    <input name="codigoBeneficioFiscal" maxlength="10" value="${form.codigoBeneficioFiscal ?? ''}" placeholder="da tabela da UF" />
+                    <small class="muted">Peça ao contador o código da tabela da SEF/SC. A SEFAZ confere um a um: código errado volta como "931 — benefício fiscal incompatível com CST e UF", e a nota não sai.</small>
+                  </label>
+                  <label>Motivo da desoneração
+                    <select name="icmsMotivoDesoneracao">
+                      <option value="">não informar</option>
+                      ${MOTIVOS_DESONERACAO.map((m) => `<option value="${m.value}" ${String(form.icmsMotivoDesoneracao ?? '') === m.value ? 'selected' : ''}>${m.label}</option>`).join('')}
+                    </select>
+                  </label>
                 </div>
                 <p class="fiscal-aviso-cst" data-aviso-cst hidden></p>
               </div>
@@ -612,6 +646,9 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       const mostrarTributo = usaCsosn || !cst || !situacao || situacao.icmsProprio;
 
       linhaIcms.hidden = !mostrarTributo;
+      // O benefício é o espelho: aparece justamente onde a alíquota some.
+      const linhaBeneficio = content.querySelector('#fiscalRegraForm [data-icms-beneficio]');
+      if (linhaBeneficio) linhaBeneficio.hidden = mostrarTributo;
       if (campoReducao) campoReducao.hidden = mostrarTributo && situacao ? !situacao.reducao : false;
 
       if (!avisoCst) return;

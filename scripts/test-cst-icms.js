@@ -114,6 +114,9 @@ console.log('\n--- servidor e tela leem a MESMA tabela ---');
 // Se a tela tivesse a sua própria lista, um CST novo entraria num lado só: o
 // formulário esconderia a alíquota e o payload a mandaria assim mesmo.
 const builderSrc = ler('lib/nfePayloadBuilder.js');
+const serverSrc = ler('server.js');
+const dbFiscalSrc = ler('lib/db/fiscal.js');
+const telaRegrasSrc = ler('public/modules/fiscal/subs/regras.js');
 const telaSrc = ler('public/modules/fiscal/subs/regras.js');
 const indexSrc = ler('public/index.html');
 check('o builder importa o módulo compartilhado', /require\('\.\.\/public\/modules\/shared\/cst_icms'\)/.test(builderSrc));
@@ -142,6 +145,108 @@ console.log('\n--- "0" e "00" são o mesmo CST ---');
 check('normaliza "0" para "00"', CST.normalizar('0') === '00');
 check('normaliza 40 numérico', CST.normalizar(40) === '40');
 check('e devolve vazio para nulo', CST.normalizar(null) === '');
+
+console.log('\n--- só nota de VENDA gera contas a receber ---');
+// Emitir não é sinônimo de vender. A geração não consultava operacaoFiscal,
+// que já declarava geraFinanceiro por operação desde sempre: uma devolução com
+// condição de pagamento preenchida criava recebível de dinheiro que a empresa
+// não vai receber.
+const geracao = serverSrc.slice(
+  serverSrc.indexOf('async function gerarFinanceiroDaNfeAvulsa'),
+  serverSrc.indexOf('async function aplicarRespostaFocusNaNfe'));
+check('a geração consulta a operação fiscal', /operacaoFiscal\.operacao\(nfe\.tipoOperacaoFiscal\)/.test(geracao));
+check('e desiste quando a operação não gera', /if \(operacao && !operacao\.geraFinanceiro\) return 0;/.test(geracao));
+
+console.log('\n--- e o CFOP confirma ---');
+// A operação é escolhida na tela; o CFOP vem da regra fiscal do item. Os dois
+// podem discordar, e quem vence é o CFOP: é ele que vai no documento e é por
+// ele que o contador confere.
+check('classifica pelo CFOP dos itens', /cfopsDaNfeGeramFinanceiro\(nfe\)/.test(serverSrc));
+check('e desiste quando o CFOP diz que não é venda', /if \(porCfop === false\) return 0;/.test(geracao));
+// Rede instável não pode virar "não gera": recebível a menos some em silêncio.
+check('falha ao classificar NÃO cancela a geração', /return null;[\s\S]{0,200}Falha ao classificar o CFOP/.test(serverSrc));
+check('a classificação é DADO, não código', /from\('cfop'\)\.select\('codigo, gera_financeiro'\)/.test(dbFiscalSrc));
+// Coluna ausente (migração não rodada) não pode ser lida como "nenhum CFOP
+// gera" — isso faria todo recebível sumir em silêncio.
+check('coluna ausente vira "não sei", não "não gera"', /schema cache[\s\S]{0,60}return \{\};/.test(dbFiscalSrc));
+
+const migracaoAe = ler('supabase/migrations/fase-ae-financeiro-por-cfop-e-beneficio.sql');
+check('a migração cria a coluna do CFOP', /add column if not exists gera_financeiro/.test(migracaoAe));
+// Padrão seguro: recebível a mais é cobrança indevida de cliente.
+check('e o padrão é false', /gera_financeiro boolean not null default false/.test(migracaoAe));
+check('só venda de saída é semeada como true', /set gera_financeiro = true[\s\S]{0,120}tipo = 'SAIDA'[\s\S]{0,120}ilike 'Venda%'/.test(migracaoAe));
+
+console.log('\n--- a FK da parcela sai, e a checagem vai para o código ---');
+// A FK da fase-n apontava para `nfes` (manual, id TEXTO). A fase-aa tornou
+// `nfe` (fiscal, id UUID) a nota do sistema, e a FK ficou para trás: toda
+// parcela era recusada. Repontar o Postgres RECUSA — "incompatible types: text
+// and uuid" — e converter a coluna quebraria o caminho legado, que continua
+// vivo e grava id texto. Uma FK só sabe apontar para UMA tabela.
+check('a constraint é derrubada', /drop constraint if exists financial_entries_nfe_id_fkey/.test(migracaoAe));
+check('e NÃO é recriada', !/add constraint\s+financial_entries_nfe_id_fkey/.test(migracaoAe));
+// Perder integridade em silêncio seria pior do que perder integridade.
+check('a migração explica por que não dá para ter FK', /incompatible types: text and uuid/.test(migracaoAe));
+check('e a coluna fica comentada no banco', /comment on column financial_entries\.nfe_id/.test(migracaoAe));
+// O que o banco não garante mais, o código garante.
+check('o código confere que a nota existe antes de criar parcela', /const existe = await fiscalDb\.getNfeById\(nfe\.id\)/.test(geracao));
+check('e não cria quando não encontra', /parcela NÃO criada/.test(geracao));
+
+console.log('\n--- nota isenta leva o código de benefício fiscal ---');
+// Medido em homologação, 15/08/2026, em duas emissões seguidas:
+//
+//   sem cBenef  -> 930  CST com beneficio fiscal e nao informado o codigo
+//                       de beneficio fiscal [nItem:1]
+//   com SC830001-> 931  Informado codigo de beneficio fiscal incompativel
+//                       com CST e UF [nItem:1]
+//
+// A segunda prova que o campo CHEGA e é conferido contra a tabela do estado —
+// "SC830001" era sondagem e não existe em SC. Este teste garante o transporte;
+// o código válido é dado do contador, e nenhuma constante aqui inventa um.
+const isentaComBeneficio = montar({ cstIcms: '40', codigoBeneficioFiscal: 'SC830001' });
+check('manda o cBenef', isentaComBeneficio.codigo_beneficio_fiscal === 'SC830001', isentaComBeneficio.codigo_beneficio_fiscal);
+check('e segue sem alíquota', !('icms_aliquota' in isentaComBeneficio));
+const isentaSemBeneficio = montar({ cstIcms: '40' });
+check('sem benefício declarado, não inventa código', !('codigo_beneficio_fiscal' in isentaSemBeneficio));
+
+const desonerada = montar({ cstIcms: '40', codigoBeneficioFiscal: 'SC830001', icmsMotivoDesoneracao: '9', aliquotaIcms: 17 });
+check('desoneração leva o motivo', desonerada.icms_motivo_desoneracao === '9');
+check('e o valor que deixou de ser cobrado (200 x 17%)', desonerada.icms_valor_desonerado === 34, String(desonerada.icms_valor_desonerado));
+// Sem motivo, mandar só o valor faz a SEFAZ cobrar o par.
+check('sem motivo, não manda valor desonerado', !('icms_valor_desonerado' in isentaComBeneficio));
+
+console.log('\n--- a tela pede o benefício onde a alíquota some ---');
+check('a linha do benefício existe', /data-icms-beneficio/.test(telaRegrasSrc));
+// Quem preenche precisa saber que errar o código NÃO passa despercebido.
+check('a tela diz de onde vem o código e o que acontece se errar', /SEF\/SC[\s\S]{0,140}931/.test(telaRegrasSrc));
+check('e é o espelho da linha de alíquota', /linhaBeneficio\.hidden = mostrarTributo/.test(telaRegrasSrc));
+check('os campos novos são enviados no submit', /'codigoBeneficioFiscal', 'icmsMotivoDesoneracao'/.test(telaRegrasSrc));
+check('o banco lê os dois', /codigoBeneficioFiscal: row\.codigo_beneficio_fiscal/.test(dbFiscalSrc) && /icmsMotivoDesoneracao: row\.icms_motivo_desoneracao/.test(dbFiscalSrc));
+check('e grava os dois', /codigo_beneficio_fiscal: textoOuNulo/.test(dbFiscalSrc) && /icms_motivo_desoneracao: textoOuNulo/.test(dbFiscalSrc));
+
+
+
+console.log('\n--- alíquota de ICMS pode ser informada POR ITEM ---');
+// A regra fiscal dá o padrão; o item vence quando o produto tem tributação
+// própria. O motor já fazia isso, mas a tela de emissão não mandava o campo —
+// a capacidade existia e não dava para usar.
+const doisItens = buildNfePayload({
+  ...ARGS,
+  itens: [
+    { descricao: 'Padrão da regra', codigoProduto: 'A', ncm: '73181500', quantidade: 1, valorUnitario: 100, unidadeComercial: 'UN',
+      regraFiscal: { cfop: '5102', cstIcms: '00', aliquotaIcms: 17, cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3 } },
+    { descricao: 'Alíquota própria', codigoProduto: 'B', ncm: '84713012', quantidade: 1, valorUnitario: 100, unidadeComercial: 'UN', aliquotaIcms: 12,
+      regraFiscal: { cfop: '5102', cstIcms: '00', aliquotaIcms: 17, cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3 } }
+  ]
+}).items;
+check('o primeiro item usa a alíquota da regra', doisItens[0].icms_aliquota === 17, String(doisItens[0].icms_aliquota));
+check('o segundo usa a dele', doisItens[1].icms_aliquota === 12, String(doisItens[1].icms_aliquota));
+check('e o valor sai de base x % (100 x 12%)', doisItens[1].icms_valor === 12, String(doisItens[1].icms_valor));
+
+const telaEmissaoSrc = ler('public/modules/finance/subs/emitir_nfe_focus.js');
+check('a tela de emissão tem a coluna ICMS %', /data-field="aliquotaIcms"/.test(telaEmissaoSrc));
+check('e envia o campo no payload', /aliquotaIcms: Number\(item\.aliquotaIcms\)/.test(telaEmissaoSrc));
+// Mandar 0 para "não informado" faria o servidor emitir sem ICMS.
+check('campo vazio NÃO vira zero', /trim\(\) === '' \? \{\} :/.test(telaEmissaoSrc));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

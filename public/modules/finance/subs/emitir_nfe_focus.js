@@ -212,6 +212,12 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         <td><input type="number" step="0.01" min="0" data-field="quantidade" data-index="${index}" value="${item.quantidade}" style="width:80px;" /></td>
         <td><input type="number" step="0.01" min="0" data-field="valorUnitario" data-index="${index}" value="${item.valorUnitario}" style="width:100px;" /></td>
         <td><input data-field="unidadeComercial" data-index="${index}" value="${escapeHtml(item.unidadeComercial)}" style="width:70px;" /></td>
+        <!-- Alíquota POR ITEM. Em branco, vale a da regra fiscal; preenchida,
+             vence. O motor já aceitava (item.aliquotaIcms tem precedência sobre
+             regra.aliquotaIcms), mas a tela não mandava o campo — a capacidade
+             existia e não dava para usar. O valor sai de base x %, calculado no
+             servidor: o cliente nunca manda o imposto pronto. -->
+        <td><input type="number" step="0.01" min="0" max="100" data-field="aliquotaIcms" data-index="${index}" value="${item.aliquotaIcms ?? ''}" placeholder="da regra" style="width:80px;" title="Vazio = usa a alíquota da regra fiscal" /></td>
         <td class="nfe-item-total" data-row-total="${index}">${financeFormatBRL(itemTotal(item))}</td>
         <td><button type="button" class="icon-button" data-remove-item="${index}" title="Remover item" ${itens.length <= 1 ? 'disabled' : ''}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"></path></svg>
@@ -391,7 +397,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           ${ehComplemento() ? '' : `
             <div class="table-scroll">
               <table class="table">
-                <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th>Total</th><th></th></tr></thead>
+                <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th title="Em branco usa a alíquota da regra fiscal">ICMS %</th><th>Total</th><th></th></tr></thead>
                 <tbody id="nfeFocusItemsBody">${renderItemsRows()}</tbody>
               </table>
             </div>
@@ -648,7 +654,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     attachItemsHandlers();
 
     document.getElementById('nfeFocusAddItemBtn')?.addEventListener('click', () => {
-      itens.push({ produtoId: '', descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0 });
+      itens.push({ produtoId: '', descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0, aliquotaIcms: '' });
       refreshItemsTable();
     });
 
@@ -872,7 +878,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           quantidade: Number(item.quantidade || 0),
           valorUnitario: Number(item.valorUnitario || 0),
           unidadeComercial: item.unidadeComercial || 'UN',
-          origem: Number(item.origem || 0)
+          origem: Number(item.origem || 0),
+          // Só vai quando foi digitada. Mandar 0 para "não informado" faria o
+          // servidor entender alíquota zero e emitir sem ICMS.
+          ...(String(item.aliquotaIcms ?? '').trim() === '' ? {} : { aliquotaIcms: Number(item.aliquotaIcms) })
         })),
         // Grupo obrigatório do layout 4.0 — nota sem ele é rejeitada. Uma
         // parcela única com o total: o parcelamento é condição comercial e

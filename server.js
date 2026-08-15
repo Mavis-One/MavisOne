@@ -2825,10 +2825,62 @@ async function emitirNfeFiscal(body, user) {
  * chegar por webhook, minutos depois e sem usuário na tela, isto precisa ser
  * idempotente — a checagem de lançamento já existente é o que garante.
  */
+// Quais CFOPs da nota criam recebível.
+//
+// Emitir nota não é sinônimo de vender: devolução (1202) não gera nada, venda
+// (5405) gera. A classificação mora na COLUNA cfop.gera_financeiro, não aqui —
+// quando um CFOP fugir do padrão, a correção é um UPDATE, não um deploy.
+//
+// Falha ao consultar devolve `null`, que quem chama trata como "não sei" e não
+// como "não gera": deixar de criar recebível por instabilidade de rede seria
+// perder dinheiro em silêncio.
+async function cfopsDaNfeGeramFinanceiro(nfe) {
+  const itens = Array.isArray(nfe?.payloadEnviado?.items) ? nfe.payloadEnviado.items : [];
+  const codigos = [...new Set(itens.map((i) => String(i?.cfop || '').replace(/\D/g, '')).filter(Boolean))];
+  if (!codigos.length) return null;
+  try {
+    const tabela = await fiscalDb.getCfopsPorCodigo(codigos);
+    // Basta UM item de venda para a nota gerar: nota mista (venda + remessa)
+    // tem valor a receber pela parte vendida.
+    const conhecidos = codigos.filter((c) => tabela[c] !== undefined);
+    if (!conhecidos.length) return null;
+    return conhecidos.some((c) => tabela[c] === true);
+  } catch (error) {
+    console.error('Falha ao classificar o CFOP da NF-e', nfe.id, error.message);
+    return null;
+  }
+}
+
 async function gerarFinanceiroDaNfeAvulsa(nfe, user) {
   if (!nfe || nfe.orderId) return 0;
   const condicao = nfe.condicaoPagamento;
   if (!condicao) return 0;
+
+  // A OPERAÇÃO manda primeiro: transferência entre estabelecimentos próprios,
+  // remessa, retorno e devolução não são receita, ainda que tenham condição de
+  // pagamento preenchida. O catálogo já declarava isso em operacaoFiscal.js e
+  // esta função não consultava — uma devolução gerava recebível.
+  const operacao = operacaoFiscal.operacao(nfe.tipoOperacaoFiscal);
+  if (operacao && !operacao.geraFinanceiro) return 0;
+
+  // E o CFOP confirma. Os dois podem discordar: a operação é escolhida na tela,
+  // o CFOP vem da regra fiscal do item. Quando o CFOP diz que não é venda, ele
+  // vence — é ele que vai no documento e é por ele que o contador confere.
+  const porCfop = await cfopsDaNfeGeramFinanceiro(nfe);
+  if (porCfop === false) return 0;
+
+  // A NOTA PRECISA EXISTIR. Esta checagem era do banco (uma FK), e o banco não
+  // consegue mais fazê-la: financial_entries.nfe_id aponta ora para `nfe`
+  // (uuid, fiscal), ora para `nfes` (texto, manual), e uma FK só sabe apontar
+  // para uma tabela. Ver fase-ae.
+  //
+  // Sem isto, parcela órfã de documento fiscal entra calada — e é o tipo de
+  // inconsistência que só aparece na conferência do contador.
+  const existe = await fiscalDb.getNfeById(nfe.id);
+  if (!existe) {
+    console.error('NF-e não encontrada ao gerar o financeiro; parcela NÃO criada:', nfe.id);
+    return 0;
+  }
 
   const data = loadData();
   await syncFinanceData(data);
