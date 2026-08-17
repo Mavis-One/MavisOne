@@ -145,6 +145,43 @@ const infratores = varrer(path.join(RAIZ, 'public'))
 check('nenhuma tela aponta navegação crua para /api', infratores.length === 0,
   infratores.length ? 'ENCONTRADO em: ' + infratores.join(', ') : 'ok');
 
+console.log('\n--- janela de impressão: "noopener" e referência não convivem ---');
+// Por especificação, window.open com noopener DEVOLVE NULL — mas a aba é
+// criada do mesmo jeito. Quem guarda o retorno para escrever conteúdo (`win`,
+// document.write, print) recebe null, cai no guard de pop-up e deixa uma aba
+// about:blank vazia, sem conteúdo e sem erro.
+//
+// Aconteceu em 17/08/2026 nas quatro ações de impressão da NF-e (Imprimir,
+// 80mm, Etiqueta, Etiqueta 2 colunas) e na impressão de Vendas — nesta última
+// com um aviso que culpava o navegador por um bug nosso. Medido: com noopener
+// devolveu NULL e criou a aba; sem ele, o conteúdo é escrito e win.opener
+// segue null pela atribuição seguinte, que dá a mesma isolação.
+const COM_NOOPENER_E_RETORNO = /(?:const|let|var)\s+\w+\s*=\s*window\.open\([^)]*noopener/;
+const janelasOrfas = varrer(path.join(RAIZ, 'public'))
+  .filter((rel) => COM_NOOPENER_E_RETORNO.test(lerArquivo(rel)));
+check('ninguém guarda o retorno de um window.open com noopener', janelasOrfas.length === 0,
+  janelasOrfas.length ? 'ENCONTRADO em: ' + janelasOrfas.join(', ') : 'ok');
+
+// A isolação não pode ter sumido junto com o noopener.
+const telasQueImprimem = varrer(path.join(RAIZ, 'public'))
+  .filter((rel) => /window\.open\(\s*''\s*,\s*'_blank'\s*\)/.test(lerArquivo(rel)));
+check('e quem abre janela em branco continua zerando o opener',
+  telasQueImprimem.every((rel) => /\.opener\s*=\s*null/.test(lerArquivo(rel))),
+  telasQueImprimem.join(', ') || 'nenhuma');
+
+// Pop-up bloqueado DE VERDADE tem que falar. O silêncio foi o que fez o
+// usuário procurar o problema em tudo menos no botão.
+const telaPrint = lerArquivo('public/modules/finance/subs/nfe_emitidas.js');
+// O fim do trecho é o registro da tela — buscado A PARTIR do início da função,
+// porque `window.MavisSubscreenRegistry` também aparece na linha 1 do arquivo e
+// um indexOf solto devolvia 0, deixando a fatia vazia (e o teste "falhando" por
+// não ter o que ler).
+const inicioPrint = telaPrint.indexOf('function nfePrint');
+const impressao = telaPrint.slice(inicioPrint, telaPrint.indexOf('window.MavisSubscreenRegistry', inicioPrint));
+check('achei a função de impressão para inspecionar', impressao.length > 200, `${impressao.length} caracteres`);
+check('impressão bloqueada avisa em vez de sair calada',
+  /if \(!win\) throw new Error\(/.test(impressao) && !/if \(!win\) return;/.test(impressao));
+
 const telaNfes = lerArquivo('public/modules/finance/subs/nfe_emitidas.js');
 const download = telaNfes.slice(
   telaNfes.indexOf('async function baixarArquivoFiscal'),

@@ -2285,8 +2285,15 @@ async function loadModule(moduleName) {
           const cliente = meta.directory.find((e) => e.id === formState.clientSupplierId);
           const empresa = meta.companies.find((c) => c.id === formState.companyId);
           const vendedor = meta.sellers.find((s) => s.id === formState.sellerId);
-          const win = window.open('', '_blank', 'noopener,noreferrer');
-          if (!win) { showToast('O navegador bloqueou a janela de impressão.', 'warning'); return; }
+          // SEM 'noopener': por especificação ele faz window.open devolver
+          // NULL, e a aba é criada assim mesmo. Aqui o efeito era pior do que
+          // uma tela em branco — o aviso dizia "o navegador bloqueou", que é
+          // falso, e mandava a pessoa mexer em configuração de pop-up para
+          // resolver um bug nosso. Isso disparava em TODO clique, nunca só
+          // quando havia bloqueio de verdade. Ver a nota em nfe_emitidas.js.
+          // A isolação continua: win.opener = null, logo abaixo.
+          const win = window.open('', '_blank');
+          if (!win) { showToast('O navegador bloqueou a janela de impressão. Libere os pop-ups deste site e tente de novo.', 'warning'); return; }
           win.opener = null;
           win.document.write(`
             <html><head><meta charset="utf-8" /><title>${title} ${escapeHtml(String(editRecord?.code || ''))}</title><style>

@@ -138,8 +138,26 @@ const NFE_PRINT_LAYOUTS = {
 function nfePrint(nfe, layout = 'completo') {
   const build = NFE_PRINT_LAYOUTS[layout] || NFE_PRINT_LAYOUTS.completo;
   const { css, body } = build(nfe, escapeHtml);
-  const win = window.open('', '_blank', 'noopener,noreferrer');
-  if (!win) return;
+  // SEM 'noopener' na lista de opções — e isso não é descuido de segurança.
+  //
+  // Por especificação, window.open com noopener devolve NULL: quem chamou não
+  // recebe referência nenhuma. Só que a ABA É CRIADA do mesmo jeito. O
+  // resultado era: `win` nulo, o `if (!win) return` disparava em 100% dos
+  // cliques, nada era escrito, e sobrava uma aba about:blank vazia — sem
+  // conteúdo, sem impressão e sem mensagem de erro. Quatro ações caíam aqui:
+  // Imprimir, Imprimir 80mm, Etiqueta e Etiqueta em Duas Colunas.
+  //
+  // Medido em 17/08/2026: com noopener a chamada devolveu NULL e deixou uma
+  // aba about:blank; sem ele, o conteúdo é escrito e `win.opener` continua
+  // null por causa da linha abaixo. A proteção é a mesma — a janela nova não
+  // consegue mexer nesta — e aqui ela é atribuída DEPOIS, quando ainda dá para
+  // usar a referência.
+  // Agora `!win` significa MESMO pop-up bloqueado, e aí o silêncio é o pior
+  // desfecho possível: foi ele que fez o usuário procurar o problema em tudo
+  // menos no botão. Lança, que o painel de ações captura e mostra na tela —
+  // `showToast` vem do ctx e não existe neste escopo.
+  const win = window.open('', '_blank');
+  if (!win) throw new Error('O navegador bloqueou a janela de impressão. Libere os pop-ups deste site e tente de novo.');
   win.opener = null;
   win.document.write(`<html><head><title>NF-e ${escapeHtml(nfe.number)}</title><meta charset="utf-8" /><style>${css}</style></head><body>${body}</body></html>`);
   win.document.close();
