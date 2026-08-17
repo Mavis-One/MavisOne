@@ -100,13 +100,44 @@ window.MavisNfeActions = (function () {
       // Fora do prazo normal (24h em SC), a SEFAZ só aceita o cancelamento com
       // autorização específica. A chamada é a mesma; o que muda é o prazo, e
       // quem decide isso é a SEFAZ, não o sistema. Por isso avisa antes.
+      // E só aparece DEPOIS das 24h: dentro do prazo o cancelamento é o comum,
+      // e oferecer os dois lado a lado convidaria a pedir autorização especial
+      // para algo que a SEFAZ aceitaria direto.
       id: 'cancelamento_extemporaneo', label: 'Cancelamento Extemporâneo de NF-e', icon: ICONS.close, scope: 'single',
       needsApi: true, needsAuthorized: true, soFiscal: true,
+      enabled: (ctx) => {
+        const regra = (typeof window !== 'undefined' && window.MavisPrazoCancelamento)
+          || (typeof require === 'function' ? require('../shared/prazo_cancelamento') : null);
+        if (!regra) return true;
+        const prazo = regra.avaliar(ctx.nfe.autorizadoEm);
+        if (prazo.semReferencia) return true;
+        return prazo.dentroDoPrazo
+          ? 'Esta NF-e ainda está dentro das 24 horas: use "Cancelar NF-e". O extemporâneo é só para depois do prazo.'
+          : true;
+      },
       run: (ctx) => ctx.cancelar(ctx.nfe.id, { extemporaneo: true })
     },
     {
+      // PRAZO DE 24 HORAS, contado da autorização da SEFAZ. Passou disso, o
+      // cancelamento comum não existe mais — sobra o extemporâneo, que é outra
+      // coisa e está logo acima. O botão desliga com o motivo na dica, em vez
+      // de deixar a pessoa escrever a justificativa inteira para só então
+      // levar a recusa.
+      //
+      // Só vale para nota FISCAL: o registro manual do Financeiro não foi à
+      // SEFAZ, não tem prazo dela a cumprir, e cancelá-lo é apagar uma linha.
       id: 'cancelar', label: 'Cancelar NF-e', icon: ICONS.close, scope: 'single',
-      enabled: (ctx) => ctx.nfe.status === 'autorizada' ? true : 'Só é possível cancelar uma NF-e autorizada.',
+      enabled: (ctx) => {
+        if (ctx.nfe.status !== 'autorizada') return 'Só é possível cancelar uma NF-e autorizada.';
+        if (ctx.nfe.origem !== 'fiscal') return true;
+        const regra = (typeof window !== 'undefined' && window.MavisPrazoCancelamento)
+          || (typeof require === 'function' ? require('../shared/prazo_cancelamento') : null);
+        // Sem a regra carregada, NÃO liberar calado nem bloquear calado: o
+        // servidor tem a mesma trava e é ele quem decide.
+        if (!regra) return true;
+        const prazo = regra.avaliar(ctx.nfe.autorizadoEm);
+        return prazo.dentroDoPrazo ? true : prazo.motivo;
+      },
       run: (ctx) => ctx.cancelar(ctx.nfe.id)
     },
     {

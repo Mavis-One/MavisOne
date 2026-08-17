@@ -684,7 +684,9 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     try {
       await api(`/api/fiscal/nfe/${encodeURIComponent(id)}/cancelar`, {
         method: 'POST',
-        body: JSON.stringify({ justificativa: limpo })
+        // O servidor tem a mesma trava de 24h e recusa sem esta declaração —
+        // é ela que diz "quem clicou sabia que o prazo comum acabou".
+        body: JSON.stringify({ justificativa: limpo, extemporaneo: opcoes.extemporaneo === true })
       });
       showToast('NF-e cancelada na SEFAZ.', 'success');
       closeNfeModal();

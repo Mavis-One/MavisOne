@@ -15,6 +15,9 @@ const { buildNfePayload } = require('./lib/nfePayloadBuilder');
 // gera financeiro e exige documento referenciado — em vez de `if` de
 // finalidade espalhado pelo código de emissão.
 const operacaoFiscal = require('./lib/operacaoFiscal');
+// Prazo de 24h para cancelar NF-e. Mesmo arquivo que o navegador carrega, para
+// tela e servidor não discordarem sobre quando o prazo venceu.
+const prazoCancelamento = require('./public/modules/shared/prazo_cancelamento');
 // Painel "Atenção" do hub: junta o que já está errado e espalhado por seis
 // telas — conta vencida, NF-e rejeitada, pedido faturado sem nota, estoque
 // abaixo do mínimo.
@@ -1740,6 +1743,10 @@ function fiscalNfeParaLista(nfe) {
     protocolo: nfe.protocolo || '',
     temXml: Boolean(nfe.urlXml),
     temDanfe: Boolean(nfe.urlDanfe),
+    // Quando a SEFAZ autorizou — é daqui que sai o prazo de 24h para cancelar.
+    // Sem este campo a tela não teria como desabilitar o botão, e a pessoa só
+    // descobriria o vencimento depois de escrever a justificativa inteira.
+    autorizadoEm: nfe.autorizadoEm || '',
     // A nota fiscal não gera parcela por si: o financeiro vem do pedido.
     financialEntries: [],
     items: []
@@ -3051,7 +3058,7 @@ async function registrarWebhookFiscal(estabelecimentoId) {
   return { ...webhook, url: webhookUrl, removidos };
 }
 
-async function cancelarNfeFiscal(id, justificativa, user) {
+async function cancelarNfeFiscal(id, justificativa, user, opcoes = {}) {
   if (!justificativa || justificativa.trim().length < 15) {
     const err = new Error('Justificativa do cancelamento precisa ter ao menos 15 caracteres (exigência da SEFAZ).');
     err.status = 400;
@@ -3063,6 +3070,24 @@ async function cancelarNfeFiscal(id, justificativa, user) {
     err.status = 404;
     throw err;
   }
+
+  // PRAZO DE 24 HORAS. A regra vive aqui, e não só na tela: botão desabilitado
+  // é conforto, não trava — a rota continua aberta para qualquer chamada.
+  //
+  // O relógio começa na AUTORIZAÇÃO, não na emissão: a nota pode ficar minutos
+  // (ou horas, quando o webhook não chega) entre transmitida e autorizada, e é
+  // a autorização que a SEFAZ registra.
+  //
+  // Nota sem carimbo de autorização NÃO é bloqueada: seria impedir o
+  // cancelamento legítimo de uma nota recém-autorizada cujo horário ainda não
+  // voltou. Nesse caso quem decide é a SEFAZ, que recusa por prazo excedido.
+  const prazo = prazoCancelamento.avaliar(nfe.autorizadoEm);
+  if (!prazo.dentroDoPrazo && !opcoes.extemporaneo) {
+    const err = new Error(prazo.motivo);
+    err.status = 409;
+    throw err;
+  }
+
   const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
   const resposta = await client.cancelarNfe(nfe.referencia, justificativa);
   const updated = await fiscalDb.updateNfeAposResposta(nfe.id, {
@@ -5072,7 +5097,10 @@ const server = http.createServer(async (req, res) => {
       if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/cancelar') && req.method === 'POST') {
         const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', '').replace('/cancelar', ''));
         const body = await readBody(req);
-        const nfe = await cancelarNfeFiscal(id, body.justificativa || '', user);
+        // `extemporaneo` precisa vir DECLARADO pela tela. Sem isso, a única
+        // forma de o servidor saber que quem chamou aceitou o risco seria
+        // adivinhar pelo prazo — e aí a trava não travaria nada.
+        const nfe = await cancelarNfeFiscal(id, body.justificativa || '', user, { extemporaneo: body.extemporaneo === true });
         return sendJson(res, { success: true, nfe });
       }
 
