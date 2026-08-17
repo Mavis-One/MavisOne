@@ -111,6 +111,33 @@ console.log('\n--- a volta entre as irmãs respeita o módulo de origem ---');
 const fixosRestantes = [...nfeEmitidasSrc.matchAll(/loadModule\('finance'\)/g)].length;
 check('nfe_emitidas só mantém o loadModule fixo do salto para Lançamentos', fixosRestantes === 1, `${fixosRestantes} ocorrência(s)`);
 
+console.log('\n--- Vendas mostra a MESMA lista, não uma paralela ---');
+// Vendas tinha lista própria, alimentada por /api/sales/records?view=nfes, que
+// lê `data.nfes` — o registro MANUAL antigo. Nota transmitida à SEFAZ vive na
+// tabela `nfe` e não entrava ali. Medido em 17/08/2026: Vendas mostrava 1 nota
+// e a lista unificada, 9 — as duas NF-e AUTORIZADAS, com DANFE e protocolo,
+// eram invisíveis. E nada avisava: cabeçalho, tabela e contagem pareciam
+// certos, então quem conferisse faturamento por Vendas concluiria que as notas
+// não saíram.
+const blocoVendasNfes = appSrc.slice(appSrc.indexOf("if (sub === 'nfes')"), appSrc.indexOf("if (sub === 'new_nfe')"));
+check('o bloco de Vendas foi encontrado', blocoVendasNfes.length > 100, `${blocoVendasNfes.length} caracteres`);
+check('Vendas delega para a tela do Financeiro',
+  /MavisSubscreenRegistry\?\.finance\?\.nfe_emitidas/.test(blocoVendasNfes));
+// A consulta paralela é o que fazia a lista divergir — não pode voltar.
+check('e não consulta mais a lista paralela', !/view=nfes/.test(blocoVendasNfes));
+check('nem monta tabela própria de NF-e', !/<thead>[\s\S]{0,200}Número/.test(blocoVendasNfes));
+// Mesma defesa do espelho do Fiscal: falta da tela vira mensagem, não branco.
+check('resolve na chamada e explica se faltar',
+  /typeof tela !== 'function'/.test(blocoVendasNfes) && /não está carregada agora/.test(blocoVendasNfes));
+// O menu de Vendas prometia DANFE, XML e cancelamento numa tela que não tinha
+// nenhum dos três. Agora tem — e a promessa precisa continuar verdadeira.
+const itemVendas = moduleSubItems.sales.find((i) => i.key === 'nfes');
+check('o item de Vendas continua no menu', Boolean(itemVendas), itemVendas ? itemVendas.label : 'AUSENTE');
+check('e as três telas apontam para o mesmo lugar',
+  Boolean(moduleSubItems.finance.find((i) => i.key === 'nfe_emitidas'))
+  && Boolean(moduleSubItems.fiscal.find((i) => i.key === 'nfe_emitidas'))
+  && Boolean(itemVendas));
+
 console.log('\n--- a leitura de eventos enxerga a inutilização ---');
 // getNfeEventos filtra por nfe_id; inutilização tem nfe_id NULO. Era por isso
 // que ela nunca aparecia. getEventosFiscais não pode repetir esse filtro.

@@ -227,6 +227,9 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   // 'finance' fixo mandava para o Financeiro quem estava no Fiscal.
   // Só vale para as irmãs: ir para a venda ou para o lançamento continua
   // atravessando de módulo, porque essas telas existem em um lugar só.
+  // Vendas também espelha esta tela (app.js, sub 'nfes'), mas NÃO tem a irmã
+  // "Nova NF-e Avulsa" no menu — de lá o destino certo é mesmo o Financeiro,
+  // que tem. Por isso a queda para 'finance' e não um terceiro caso.
   const moduloAtual = () => (state.activeModule === 'fiscal' ? 'fiscal' : 'finance');
 
   const filters = { search: '', status: '', dateFrom: '', dateTo: '' };

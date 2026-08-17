@@ -3459,38 +3459,36 @@ async function loadModule(moduleName) {
         return;
       }
 
-      // Sub-aba: NF-e Emitidas
+      // Sub-aba: NF-e Emitidas — a MESMA tela do Financeiro e do Fiscal.
+      //
+      // Antes daqui saía uma lista própria, alimentada por
+      // /api/sales/records?view=nfes, que lê `data.nfes` — o registro MANUAL
+      // antigo. Nota transmitida à SEFAZ vive na tabela `nfe` e NÃO entrava
+      // nessa consulta. Medido em 17/08/2026: Vendas mostrava 1 nota e a lista
+      // unificada mostrava 9 — as duas NF-e autorizadas, com DANFE e protocolo,
+      // eram invisíveis aqui.
+      //
+      // Nada avisava. A tela parecia certa: cabeçalho, tabela, contagem. Quem
+      // conferisse o faturamento por Vendas concluiria que as notas não foram
+      // emitidas. O menu ainda prometia "com DANFE, XML e cancelamento", que
+      // esta lista nunca teve — nem seleção, nem filtro, nem ação nenhuma.
+      //
+      // Agora delega, como o Fiscal já fazia (modules/fiscal/subs/nfe_espelho.js):
+      // uma tela só, um lugar para corrigir. A resolução é na hora da chamada,
+      // não na carga, para a falta virar mensagem em vez de tela em branco.
       if (sub === 'nfes') {
-        const data = await api('/api/sales/records?view=nfes');
-        content.innerHTML = `
-          <div class="cadastro-page-head">
-            <div>
+        const tela = window.MavisSubscreenRegistry?.finance?.nfe_emitidas;
+        if (typeof tela !== 'function') {
+          content.innerHTML = `
+            <div class="panel">
               <h3>NF-e Emitidas</h3>
-              <p class="muted">${data.nfes.length} nota${data.nfes.length === 1 ? '' : 's'} encontrada${data.nfes.length === 1 ? '' : 's'}</p>
-            </div>
-            <div class="cadastro-list-actions">
-              <button type="button" onclick="state.activeSub='new_nfe'; renderApp(); loadModule('sales');">+ Nova NF-e Avulsa</button>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="table-scroll">
-              <table class="table">
-                <thead><tr><th>Número</th><th>Cliente</th><th>Data</th><th>Valor</th><th>Status</th></tr></thead>
-                <tbody>
-                  ${data.nfes.length ? data.nfes.map((nfe) => `
-                    <tr>
-                      <td>${escapeHtml(nfe.number || nfe.id)}</td>
-                      <td>${escapeHtml(nfe.customer)}</td>
-                      <td>${salesFormatDate(nfe.date)}</td>
-                      <td>${salesFormatBRL(nfe.amount)}</td>
-                      <td>${salesStatusBadge(nfe.status || 'emitida')}</td>
-                    </tr>
-                  `).join('') : '<tr><td colspan="5" class="muted">Nenhuma NF-e emitida.</td></tr>'}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        `;
+              <p class="muted">Esta tela é a mesma do Financeiro e não está carregada agora.</p>
+              <p class="muted">Verifique se <code>modules/finance/subs/nfe_emitidas.js</code>
+              continua listado no <code>index.html</code>.</p>
+            </div>`;
+          return;
+        }
+        await tela({ content, api, showToast, state, loadModule, escapeHtml, confirmModal });
         return;
       }
 
