@@ -135,9 +135,28 @@ const NFE_PRINT_LAYOUTS = {
   }
 };
 
-function nfePrint(nfe, layout = 'completo') {
+// O DOCUMENTO de uma nota fiscal é a DANFE, não um resumo montado por nós.
+//
+// Os layouts acima nasceram para o registro MANUAL do Financeiro, que nunca foi
+// à SEFAZ e não tem DANFE. Aplicá-los a uma nota fiscal produzia uma página sem
+// sentido, e não por acaso: fiscalNfeParaLista (server.js) devolve `items: []` e
+// não devolve endereço, porque a lista não precisa disso. O resultado impresso
+// era o número da nota, "Endereço: -, - - -" e uma tabela de produtos VAZIA.
+//
+// Pior do que inútil: um papel parecido com nota, sem os produtos, é o tipo de
+// coisa que alguém entrega junto com a mercadoria achando que é a DANFE.
+//
+// Etiqueta de despacho continua interna — etiqueta não é documento fiscal, e o
+// layout dela só usa destinatário e chave, que a lista tem.
+const NFE_LAYOUTS_DE_DOCUMENTO = ['completo', 'simplificado'];
+
+function nfeEscreverAviso(win, texto) {
+  win.document.write(`<title>${escapeHtml(texto)}</title><p style="font:16px system-ui;padding:24px">${escapeHtml(texto)}</p>`);
+  win.document.close();
+}
+
+async function nfePrint(nfe, layout = 'completo') {
   const build = NFE_PRINT_LAYOUTS[layout] || NFE_PRINT_LAYOUTS.completo;
-  const { css, body } = build(nfe, escapeHtml);
   // SEM 'noopener' na lista de opções — e isso não é descuido de segurança.
   //
   // Por especificação, window.open com noopener devolve NULL: quem chamou não
@@ -159,6 +178,41 @@ function nfePrint(nfe, layout = 'completo') {
   const win = window.open('', '_blank');
   if (!win) throw new Error('O navegador bloqueou a janela de impressão. Libere os pop-ups deste site e tente de novo.');
   win.opener = null;
+
+  // Nota que foi à SEFAZ: imprime a DANFE de verdade, a mesma que o "Baixar
+  // DANFE" entrega. Buscada com o token, porque a autenticação é por cabeçalho.
+  if (NFE_LAYOUTS_DE_DOCUMENTO.includes(layout) && nfe.origem === 'fiscal') {
+    const fechar = () => { try { win.close(); } catch (_) { /* já fechada */ } };
+    if (!nfe.temDanfe) {
+      fechar();
+      throw new Error('A DANFE só existe depois que a SEFAZ autoriza a nota. Enquanto isso não acontece, não há documento para imprimir.');
+    }
+    nfeEscreverAviso(win, 'Abrindo a DANFE…');
+    let resposta;
+    try {
+      resposta = await fetch(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}/danfe`, {
+        headers: { 'x-auth-token': getSessionToken() || '' }
+      });
+    } catch (error) {
+      fechar();
+      throw new Error(`Falha ao buscar a DANFE: ${error.message || 'erro desconhecido'}`);
+    }
+    if (!resposta.ok) {
+      const corpo = await resposta.json().catch(() => ({}));
+      fechar();
+      throw new Error(corpo.error || `Não foi possível abrir a DANFE (HTTP ${resposta.status}).`);
+    }
+    const url = URL.createObjectURL(await resposta.blob());
+    win.location.replace(url);
+    // O visualizador de PDF do navegador tem o próprio botão de imprimir;
+    // chamar print() de fora dele não é confiável, e falhar em silêncio já
+    // custou caro nesta tela. Melhor entregar a DANFE na tela, com o botão.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return;
+  }
+
+  // Registro manual do Financeiro (sem DANFE) e etiquetas: layout interno.
+  const { css, body } = build(nfe, escapeHtml);
   win.document.write(`<html><head><title>NF-e ${escapeHtml(nfe.number)}</title><meta charset="utf-8" /><style>${css}</style></head><body>${body}</body></html>`);
   win.document.close();
   win.focus();

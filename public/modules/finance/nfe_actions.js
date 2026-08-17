@@ -44,7 +44,14 @@ window.MavisNfeActions = (function () {
       run: (ctx) => ctx.print(ctx.nfe, 'completo')
     },
     {
+      // O layout 80mm resume a nota a partir dos itens da LISTA — e a lista de
+      // uma nota fiscal não traz itens nem endereço (fiscalNfeParaLista, no
+      // server.js). Numa nota da SEFAZ ele sairia sem produto nenhum. Para
+      // essas, o documento é a DANFE, que vem em A4 pelo botão Imprimir.
       id: 'imprimir_80mm', label: 'Imprimir NF-e Simplificada (80mm)', icon: ICONS.printer, scope: 'single',
+      enabled: (ctx) => (ctx.nfe && ctx.nfe.origem === 'fiscal'
+        ? 'Esta nota foi à SEFAZ: o documento dela é a DANFE, em A4 — use "Imprimir". O layout 80mm é do registro manual do Financeiro.'
+        : true),
       run: (ctx) => ctx.print(ctx.nfe, 'simplificado')
     },
     {

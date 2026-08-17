@@ -50,7 +50,14 @@ check('mas exige a API configurada', /API fiscal/.test(motivo('status_servico', 
 
 console.log('\n--- 1 NF autorizada, API fiscal NÃO configurada ---');
 const semApi = liberadas({ selecionadas: [nfe()], apiFiscalConfigurada: false });
-check('impressões liberadas', ['imprimir', 'imprimir_80mm', 'etiqueta', 'etiqueta_2col'].every((i) => semApi.includes(i)), semApi.join(', '));
+// Imprimir e etiquetas não dependem da API: saem do que a lista já tem. O
+// 80mm ficou de fora de propósito para nota fiscal — o layout resume a nota
+// pelos itens da lista, e a lista fiscal não manda itens; ver o bloco sobre a
+// DANFE, mais abaixo. Para o registro manual do Financeiro os quatro valem.
+check('impressões liberadas', ['imprimir', 'etiqueta', 'etiqueta_2col'].every((i) => semApi.includes(i)), semApi.join(', '));
+check('e o 80mm fica de fora só na nota fiscal',
+  !semApi.includes('imprimir_80mm')
+  && liberadas({ selecionadas: [manual()], apiFiscalConfigurada: false }).includes('imprimir_80mm'));
 check('duplicar e cancelar liberados', semApi.includes('duplicar') && semApi.includes('cancelar'));
 check('Baixar XML bloqueado por falta de API', /API fiscal/.test(motivo('baixar_xml', { selecionadas: [nfe()], apiFiscalConfigurada: false })));
 check('nenhuma ação de API liberada', !semApi.some((i) => ['baixar_xml', 'baixar_danfe', 'carta_correcao', 'consultar_status'].includes(i)));
@@ -181,6 +188,37 @@ const impressao = telaPrint.slice(inicioPrint, telaPrint.indexOf('window.MavisSu
 check('achei a função de impressão para inspecionar', impressao.length > 200, `${impressao.length} caracteres`);
 check('impressão bloqueada avisa em vez de sair calada',
   /if \(!win\) throw new Error\(/.test(impressao) && !/if \(!win\) return;/.test(impressao));
+
+console.log('\n--- imprimir uma nota da SEFAZ imprime a DANFE, não um resumo nosso ---');
+// Os layouts internos nasceram para o registro MANUAL do Financeiro. Numa nota
+// fiscal eles produzem uma página sem sentido, e não por acaso:
+// fiscalNfeParaLista devolve `items: []` e não devolve endereço. O impresso
+// saía com "Endereço: -, - - -" e a tabela de produtos VAZIA — um papel
+// parecido com nota, sem os produtos, que alguém pode entregar junto com a
+// mercadoria achando que é a DANFE. Relatado pelo usuário em 17/08/2026.
+check('a lista fiscal realmente não manda itens nem endereço',
+  /items: \[\]/.test(lerArquivo('server.js').slice(
+    lerArquivo('server.js').indexOf('function fiscalNfeParaLista'),
+    lerArquivo('server.js').indexOf('function filterNfes')))
+  && !/clientAddress/.test(lerArquivo('server.js').slice(
+    lerArquivo('server.js').indexOf('function fiscalNfeParaLista'),
+    lerArquivo('server.js').indexOf('function filterNfes'))));
+check('nota de origem fiscal cai no caminho da DANFE', /origem === 'fiscal'/.test(impressao));
+check('e busca a DANFE com o token', /\/danfe`[\s\S]{0,160}'x-auth-token': getSessionToken\(\)/.test(impressao));
+// Sem DANFE (ainda não autorizada) não existe documento — dizer isso é melhor
+// do que imprimir um resumo oco.
+check('sem DANFE, explica em vez de imprimir página oca',
+  /if \(!nfe\.temDanfe\)[\s\S]{0,200}throw new Error\('A DANFE só existe/.test(impressao));
+// Etiqueta NÃO é documento fiscal: continua no layout interno.
+check('etiqueta continua interna', !/'etiqueta'/.test(
+  telaPrint.slice(telaPrint.indexOf('NFE_LAYOUTS_DE_DOCUMENTO ='), telaPrint.indexOf('function nfeEscreverAviso'))));
+
+const so80 = { selecionadas: [nfe()], apiFiscalConfigurada: true };
+const motivo80 = motivo('imprimir_80mm', so80);
+check('80mm bloqueado para nota fiscal', Boolean(motivo80), motivo80 || 'XX LIBEROU');
+check('  e o motivo manda usar a DANFE', /DANFE/.test(motivo80 || ''), (motivo80 || '').slice(0, 60));
+check('80mm continua liberado para registro manual',
+  liberadas({ selecionadas: [manual()], apiFiscalConfigurada: true }).includes('imprimir_80mm'));
 
 const telaNfes = lerArquivo('public/modules/finance/subs/nfe_emitidas.js');
 const download = telaNfes.slice(
