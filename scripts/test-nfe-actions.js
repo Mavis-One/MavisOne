@@ -189,6 +189,53 @@ check('achei a função de impressão para inspecionar', impressao.length > 200,
 check('impressão bloqueada avisa em vez de sair calada',
   /if \(!win\) throw new Error\(/.test(impressao) && !/if \(!win\) return;/.test(impressao));
 
+console.log('\n--- pedir texto usa o componente do sistema, não o prompt do navegador ---');
+// O prompt do navegador não sabe validar. A SEFAZ exige 15 caracteres na
+// justificativa de cancelamento e na Carta de Correção, e o jeito antigo só
+// descobria isso DEPOIS: a caixa fechava levando o texto embora e um aviso
+// dizia que era curto demais. Para tentar de novo, digitar tudo outra vez.
+const appJs = lerArquivo('public/app.js');
+// Sem comentários: a primeira versão deste check acusou o comentário que
+// EXPLICA a troca ("no lugar do window.prompt()"). Teste que reclama de texto
+// em vez de código ensina a esconder a palavra, não a corrigir o problema.
+const semComentarios = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const promptsCrus = varrer(path.join(RAIZ, 'public'))
+  .filter((rel) => /(?:^|[^.\w])(?:window\.)?prompt\s*\(/m.test(
+    semComentarios(lerArquivo(rel)).replace(/promptModal\s*\(/g, '')));
+check('nenhuma tela usa mais o prompt do navegador', promptsCrus.length === 0,
+  promptsCrus.length ? 'ENCONTRADO em: ' + promptsCrus.join(', ') : 'ok');
+check('o sistema tem o seu promptModal', /function promptModal\(/.test(appJs));
+// O ganho real sobre o prompt: o botão só liga quando o texto serve.
+const corpoPrompt = appJs.slice(appJs.indexOf('function promptModal('), appJs.indexOf('function animarEntrada'));
+check('o botão fica desligado enquanto o texto é curto', /botao\.disabled = curto/.test(corpoPrompt));
+check('e o contador diz quanto falta', /Faltam \$\{faltam\} caractere/.test(corpoPrompt));
+check('desistir devolve null, e não texto vazio', /encerrar\(null\)/.test(corpoPrompt));
+// Arrastar para selecionar texto e soltar fora não pode jogar fora o que já
+// foi digitado — por isso o clique só conta se COMEÇOU no fundo.
+check('clique fora só fecha se começou fora', /comecouNoFundo/.test(corpoPrompt));
+check('Escape desiste', /evento\.key === 'Escape'/.test(corpoPrompt));
+// Campo multilinha: Enter quebra linha, confirmar é Ctrl+Enter.
+check('Enter sozinho não confirma', /evento\.key === 'Enter' && \(evento\.ctrlKey \|\| evento\.metaKey\)/.test(corpoPrompt));
+// Injeção: hoje só chega mensagem do sistema, mas basta um dia passar nome de
+// cliente para o innerHTML virar problema.
+check('o texto entra por textContent, não innerHTML', !/prompt-titulo'\)\.innerHTML/.test(corpoPrompt)
+  && /\.prompt-titulo'\)\.textContent/.test(corpoPrompt));
+
+const telaNfes2 = lerArquivo('public/modules/finance/subs/nfe_emitidas.js');
+check('cancelamento usa o modal, com o mínimo da SEFAZ', /promptModal\(\{[\s\S]{0,600}minimo: 15[\s\S]{0,200}maximo: 255/.test(telaNfes2));
+check('Carta de Correção também, com o teto de 1000', /promptModal\(\{[\s\S]{0,600}minimo: 15[\s\S]{0,200}maximo: 1000/.test(telaNfes2));
+// O aviso do extemporâneo era só mais uma linha no meio do texto do prompt.
+check('o aviso do extemporâneo virou campo próprio', /aviso: opcoes\.extemporaneo/.test(telaNfes2));
+
+const css = lerArquivo('public/app.css');
+check('o estilo do prompt existe', /\.prompt-modal \{/.test(css));
+// A lição da tela de Pessoas: classe nova não pode redefinir componente que já
+// existe. .modal-overlay/.modal/.modal-actions continuam com uma definição só.
+['.modal-overlay', '.modal-actions', '.btn-danger', '.btn-muted'].forEach((sel) => {
+  const ocorrencias = css.split('\n').filter((l) => l.trimStart().startsWith(sel + ' {')).length;
+  check(`  ${sel} continua definido uma vez só`, ocorrencias === 1, `${ocorrencias} definição(ões)`);
+});
+
 console.log('\n--- imprimir uma nota da SEFAZ imprime a DANFE, não um resumo nosso ---');
 // Os layouts internos nasceram para o registro MANUAL do Financeiro. Numa nota
 // fiscal eles produzem uma página sem sentido, e não por acaso:

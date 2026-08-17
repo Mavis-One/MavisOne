@@ -1108,6 +1108,38 @@ button.success:hover { background: var(--success-hover); }
 .btn { padding: 8px 12px; border-radius:8px; border: none; cursor: pointer; }
 .btn-muted { background: var(--panel-alt-hover); color: var(--text); }
 .btn-danger { background: var(--danger); color: #fff; }
+/* Faltava o par do .btn-danger: o promptModal precisa de um botão de confirmar
+   que NÃO seja vermelho (Carta de Correção não é destrutiva). Classe nova, sem
+   tocar nas de cima. --on-primary existe porque no tema escuro o primário é
+   neon e exige texto quase preto. */
+.btn-primary { background: var(--primary); color: var(--on-primary); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* ---- promptModal: pergunta de TEXTO no lugar do window.prompt() ---------
+   Só o corpo é novo; .modal-overlay, .modal e .modal-actions vêm de cima. */
+.prompt-modal { width: min(94%, 540px); text-align: left; }
+.prompt-titulo { margin: 0 0 10px; font-size: 1.05rem; }
+.prompt-descricao { margin: 0 0 12px; font-size: 0.86rem; line-height: 1.45; }
+/* O aviso do cancelamento extemporâneo: no prompt do navegador ele era mais
+   uma linha solta no meio do texto, e passava batido. */
+.prompt-aviso {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--warning);
+  border-left-width: 4px;
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning-text);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+.prompt-campo { display: grid; gap: 6px; }
+.prompt-rotulo { font-size: 0.86rem; font-weight: 600; }
+.prompt-texto { width: 100%; font-family: inherit; font-size: 0.94rem; }
+.prompt-contador { margin: 6px 0 0; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+/* Enquanto falta texto, o contador é o motivo de o botão estar apagado — quem
+   olha para o botão desligado precisa achar a explicação sem procurar. */
+.prompt-contador-curto { color: var(--danger-text); font-weight: 600; }
 
 .toast-container {
   position: fixed;

@@ -416,17 +416,18 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     // A SEFAZ exige de 15 a 1000 caracteres, e a CC-e NÃO pode corrigir valor,
     // data, destinatário nem itens — só dados que não alterem o cálculo do
     // imposto. Dizer isso aqui evita a rejeição depois de digitar tudo.
-    const texto = window.prompt(
-      'Carta de Correção (15 a 1000 caracteres).\n\n'
-      + 'Não serve para corrigir valores, datas, destinatário ou itens — só dados que não mudam o cálculo do imposto.\n\n'
-      + 'Descreva a correção:'
-    );
-    if (texto === null) return;
-    const limpo = String(texto).trim();
-    if (limpo.length < 15) {
-      showToast('A correção precisa ter ao menos 15 caracteres (exigência da SEFAZ).', 'error');
-      return;
-    }
+    const limpo = await promptModal({
+      titulo: `Carta de Correção — NF-e ${nfe.number || nfe.referencia || ''}`.trim(),
+      aviso: 'Não serve para corrigir valor, data, destinatário nem itens — só dados que não mudam o cálculo do imposto. A SEFAZ recusa o resto.',
+      descricao: 'A CC-e é um evento registrado na SEFAZ e fica no histórico da nota.',
+      rotulo: 'Descreva a correção',
+      placeholder: 'O que precisa ser corrigido na nota.',
+      minimo: 15,
+      maximo: 1000,
+      confirmar: 'Enviar correção',
+      tom: 'primary'
+    });
+    if (limpo === null) return;
     try {
       await api(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}/cce`, {
         method: 'POST',
@@ -663,19 +664,23 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       return;
     }
 
-    const aviso = opcoes.extemporaneo
-      ? 'CANCELAMENTO EXTEMPORÂNEO — fora do prazo normal (24h em SC).\n\n'
-        + 'A SEFAZ pode recusar, e a recusa não é do sistema: depende de autorização específica dela.\n\n'
-      : '';
-    const justificativa = window.prompt(
-      `${aviso}Justificativa do cancelamento (mínimo 15 caracteres, exigência da SEFAZ):`
-    );
-    if (justificativa === null) return;
-    const limpo = String(justificativa).trim();
-    if (limpo.length < 15) {
-      showToast('A justificativa precisa ter ao menos 15 caracteres.', 'error');
-      return;
-    }
+    // A SEFAZ exige de 15 a 255 caracteres na justificativa. O contador do
+    // modal cobra isso ENQUANTO se digita — o prompt do navegador só reclamava
+    // depois de fechar, levando o texto junto.
+    const limpo = await promptModal({
+      titulo: opcoes.extemporaneo ? 'Cancelamento extemporâneo de NF-e' : 'Cancelar NF-e na SEFAZ',
+      aviso: opcoes.extemporaneo
+        ? 'Fora do prazo normal (24h em SC). A SEFAZ pode recusar, e a recusa não é do sistema: depende de autorização específica dela.'
+        : '',
+      descricao: 'O cancelamento é um evento registrado na SEFAZ e fica no histórico da nota. A justificativa vai junto e não pode ser alterada depois.',
+      rotulo: 'Justificativa do cancelamento',
+      placeholder: 'Descreva o motivo do cancelamento.',
+      minimo: 15,
+      maximo: 255,
+      confirmar: 'Cancelar NF-e',
+      tom: 'danger'
+    });
+    if (limpo === null) return;
     try {
       await api(`/api/fiscal/nfe/${encodeURIComponent(id)}/cancelar`, {
         method: 'POST',

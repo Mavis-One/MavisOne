@@ -464,6 +464,129 @@ function confirmModal(message) {
   });
 }
 
+/**
+ * Pergunta um TEXTO, no componente do sistema, no lugar do window.prompt().
+ *
+ * Resolve com a string digitada, ou null se a pessoa desistir.
+ *
+ * O prompt do navegador não era só feio: ele não sabe validar. A SEFAZ exige
+ * 15 caracteres na justificativa de cancelamento e na Carta de Correção, e o
+ * jeito antigo só descobria isso DEPOIS — a pessoa escrevia, clicava OK, a
+ * caixa fechava levando o texto embora e um aviso vermelho dizia que era curto
+ * demais. Para tentar de novo, digitar tudo outra vez.
+ *
+ * Aqui o contador anda enquanto se escreve e o botão só liga quando o texto
+ * serve. E o navegador também não deixa explicar nada: o aviso de cancelamento
+ * extemporâneo virava mais uma linha solta no meio do texto da pergunta.
+ *
+ * Reusa .modal-overlay/.modal/.modal-actions do confirmModal — o que existe
+ * aqui de novo é só o corpo, com prefixo `prompt-` para não pisar em nada.
+ */
+function promptModal({
+  titulo,
+  descricao = '',
+  aviso = '',
+  rotulo = '',
+  placeholder = '',
+  minimo = 0,
+  maximo = 0,
+  confirmar = 'Confirmar',
+  tom = 'danger'
+} = {}) {
+  return new Promise((resolve) => {
+    document.getElementById('promptModal')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'promptModal';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal prompt-modal" role="dialog" aria-modal="true" aria-labelledby="promptModalTitulo">
+        <div class="modal-body">
+          <h3 class="prompt-titulo" id="promptModalTitulo"></h3>
+          <p class="prompt-aviso" hidden></p>
+          <p class="prompt-descricao muted" hidden></p>
+          <label class="prompt-campo">
+            <span class="prompt-rotulo"></span>
+            <textarea rows="4" class="prompt-texto"></textarea>
+          </label>
+          <p class="prompt-contador muted"></p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-muted" data-action="cancel">Cancelar</button>
+          <button type="button" class="btn" data-action="confirm" disabled></button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // textContent, nunca innerHTML: o que chega aqui é mensagem do sistema
+    // hoje, mas basta um dia passar nome de cliente para virar injeção.
+    const q = (sel) => overlay.querySelector(sel);
+    q('.prompt-titulo').textContent = titulo || 'Confirmação';
+    if (aviso) { q('.prompt-aviso').textContent = aviso; q('.prompt-aviso').hidden = false; }
+    if (descricao) { q('.prompt-descricao').textContent = descricao; q('.prompt-descricao').hidden = false; }
+    q('.prompt-rotulo').textContent = rotulo;
+    if (!rotulo) q('.prompt-rotulo').hidden = true;
+
+    const campo = q('.prompt-texto');
+    campo.placeholder = placeholder;
+    if (maximo) campo.maxLength = maximo;
+
+    const botao = q('[data-action=confirm]');
+    botao.textContent = confirmar;
+    botao.classList.add(tom === 'danger' ? 'btn-danger' : 'btn-primary');
+
+    const contador = q('.prompt-contador');
+    const valor = () => campo.value.trim();
+    function revisar() {
+      const n = valor().length;
+      const curto = n < minimo;
+      botao.disabled = curto;
+      if (minimo && curto) {
+        const faltam = minimo - n;
+        contador.textContent = `Faltam ${faltam} caractere${faltam === 1 ? '' : 's'} para o mínimo de ${minimo}.`;
+      } else if (maximo) {
+        contador.textContent = `${n} de ${maximo} caracteres.`;
+      } else {
+        contador.textContent = `${n} caractere${n === 1 ? '' : 's'}.`;
+      }
+      contador.classList.toggle('prompt-contador-curto', Boolean(minimo) && curto);
+    }
+    campo.addEventListener('input', revisar);
+    revisar();
+
+    let encerrado = false;
+    const encerrar = (resultado) => {
+      if (encerrado) return;
+      encerrado = true;
+      document.removeEventListener('keydown', aoTeclar, true);
+      overlay.remove();
+      resolve(resultado);
+    };
+    function aoTeclar(evento) {
+      if (evento.key === 'Escape') { evento.preventDefault(); encerrar(null); return; }
+      // Enter sozinho quebra linha (o campo é multilinha, e justificativa longa
+      // costuma ter parágrafo); confirmar é Ctrl+Enter.
+      if (evento.key === 'Enter' && (evento.ctrlKey || evento.metaKey) && !botao.disabled) {
+        evento.preventDefault();
+        encerrar(valor());
+      }
+    }
+    document.addEventListener('keydown', aoTeclar, true);
+
+    // Clicar fora desiste — mas só no fundo, nunca num arrasto que começou
+    // dentro do campo e terminou fora, que jogaria o texto digitado no lixo.
+    let comecouNoFundo = false;
+    overlay.addEventListener('mousedown', (e) => { comecouNoFundo = e.target === overlay; });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay && comecouNoFundo) encerrar(null); });
+
+    q('[data-action=cancel]').addEventListener('click', () => encerrar(null));
+    botao.addEventListener('click', () => { if (!botao.disabled) encerrar(valor()); });
+
+    campo.focus();
+  });
+}
+
 // Abertura que toca DEPOIS do login e ANTES do sistema aparecer: o logo vem de
 // longe e passa pela câmera. Resolve quando a animação termina — ou antes, se
 // o usuário pular.
