@@ -138,6 +138,30 @@ check('e as três telas apontam para o mesmo lugar',
   && Boolean(moduleSubItems.fiscal.find((i) => i.key === 'nfe_emitidas'))
   && Boolean(itemVendas));
 
+console.log('\n--- e "Nova NF-e Avulsa" de Vendas é a tela da Focus ---');
+// Aqui havia um formulário de SEIS campos digitados à mão (número, cliente,
+// data, valor, status, chave) gravando em `data.nfes`. Ele NÃO emitia: nenhuma
+// linha saía para a SEFAZ. Produzia um registro com "número" e "chave"
+// escolhidos por quem digitou, exibido na lista ao lado das notas de verdade.
+//
+// Nota fiscal não se digita: é transmitida, e número, série, chave e protocolo
+// vêm da SEFAZ. O formulário era um caminho para inventar documento fiscal por
+// engano.
+const blocoNovaNfe = appSrc.slice(appSrc.indexOf("if (sub === 'new_nfe')"), appSrc.indexOf("if (sub === 'import_logs')"));
+check('o bloco foi encontrado', blocoNovaNfe.length > 100, `${blocoNovaNfe.length} caracteres`);
+check('Vendas delega para a tela da Focus',
+  /MavisSubscreenRegistry\?\.finance\?\.nova_nfe_avulsa/.test(blocoNovaNfe));
+check('o formulário digitado à mão saiu', !/salesNfeForm/.test(appSrc));
+// A trava que importa: nenhuma TELA pode voltar a criar nota manual por aqui.
+const criaNfeManual = /type: 'nfe'/.test(appSrc);
+check('nenhuma tela cria mais NF-e manual', !criaNfeManual);
+check('e a delegação explica se a tela faltar',
+  /typeof tela !== 'function'/.test(blocoNovaNfe) && /emitir_nfe_focus\.js/.test(blocoNovaNfe));
+// O apelido é o que faz a delegação funcionar; se ele sumir, Vendas cai na
+// mensagem de "não carregada" sem ninguém perceber.
+check('finance ainda registra o apelido nova_nfe_avulsa',
+  /MavisSubscreenRegistry\.finance\.nova_nfe_avulsa\s*=/.test(emitirFocusSrc));
+
 console.log('\n--- a leitura de eventos enxerga a inutilização ---');
 // getNfeEventos filtra por nfe_id; inutilização tem nfe_id NULO. Era por isso
 // que ela nunca aparecia. getEventosFiscais não pode repetir esse filtro.

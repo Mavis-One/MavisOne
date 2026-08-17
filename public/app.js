@@ -3492,50 +3492,38 @@ async function loadModule(moduleName) {
         return;
       }
 
-      // Sub-aba: Nova NF-e Avulsa
+      // Sub-aba: Nova NF-e Avulsa — a MESMA tela da Focus do Financeiro/Fiscal.
+      //
+      // Aqui havia um formulário de SEIS campos digitados à mão (número,
+      // cliente, data, valor, status, chave) que gravava em `data.nfes` com
+      // type:'nfe'. Ele não emitia nada: nenhuma linha saía para a SEFAZ. O
+      // resultado era um registro que a tela de NF-e Emitidas exibia ao lado
+      // das notas de verdade, com um "número" e uma "chave" escolhidos por
+      // quem digitou.
+      //
+      // Nota fiscal não se digita: ela é transmitida, a SEFAZ devolve número,
+      // série, chave e protocolo, e é isso que vale. Manter o formulário era
+      // manter um caminho para inventar documento fiscal por engano — e a
+      // decisão de ficar com a tela da Focus já tinha sido tomada quando o
+      // Financeiro tinha essa mesma duplicidade.
+      //
+      // Delega igual ao Fiscal (modules/fiscal/subs/nfe_espelho.js) e igual à
+      // lista: uma tela só, um lugar para corrigir. `nova_nfe_avulsa` é apelido
+      // de `emitir_nfe_focus` (registrado no fim daquele arquivo) — usar o
+      // apelido casa com o rótulo do menu daqui.
       if (sub === 'new_nfe') {
-        content.innerHTML = `
-          <div class="panel">
-            <h3>Nova NF-e Avulsa</h3>
-            <form id="salesNfeForm" class="form-grid">
-              <div class="row">
-                <label>Número<input name="number" required /></label>
-                <label>Cliente<input name="customer" required /></label>
-                <label>Data<input name="date" type="date" /></label>
-              </div>
-              <div class="row">
-                <label>Valor<input name="amount" type="number" step="0.01" required value="0" /></label>
-                <label>Status<select name="status"><option value="emitida">Emitida</option><option value="cancelada">Cancelada</option></select></label>
-                <label>Chave<input name="key" /></label>
-              </div>
-              <button type="submit">Salvar NF-e</button>
-            </form>
-          </div>
-        `;
-        document.getElementById('salesNfeForm').addEventListener('submit', async (event) => {
-          event.preventDefault();
-          const formData = new FormData(event.target);
-          try {
-            await api('/api/sales/records', {
-              method: 'POST',
-              body: JSON.stringify({
-                type: 'nfe',
-                number: formData.get('number'),
-                customer: formData.get('customer'),
-                date: formData.get('date'),
-                amount: Number(formData.get('amount')),
-                status: formData.get('status'),
-                key: formData.get('key')
-              })
-            });
-            showToast('NF-e salva com sucesso.', 'success');
-            state.activeSub = 'nfes';
-            renderApp();
-            loadModule('sales');
-          } catch (error) {
-            showToast(error.message || 'Erro ao salvar NF-e.', 'error');
-          }
-        });
+        const tela = window.MavisSubscreenRegistry?.finance?.nova_nfe_avulsa;
+        if (typeof tela !== 'function') {
+          content.innerHTML = `
+            <div class="panel">
+              <h3>Nova NF-e Avulsa</h3>
+              <p class="muted">Esta tela é a mesma do Financeiro e não está carregada agora.</p>
+              <p class="muted">Verifique se <code>modules/finance/subs/emitir_nfe_focus.js</code>
+              continua listado no <code>index.html</code>.</p>
+            </div>`;
+          return;
+        }
+        await tela({ content, api, showToast, state, loadModule, escapeHtml, confirmModal });
         return;
       }
 
