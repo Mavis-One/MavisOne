@@ -1919,6 +1919,57 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
    Quatro números por linha: saldo e preço cadastrado (vêm do Estoque, só
    leitura) e quantidade e valor unitário (editáveis). O fundo acinzentado é o
    que diz, sem legenda, quais células o usuário pode mexer e quais não.       */
+/* GRUPOS DE PRODUTOS. Cada grupo e uma caixa: sem borda, dois grupos seguidos
+   viram uma lista so e o cabecalho do segundo parece uma linha da tabela do
+   primeiro. */
+.sales-grupo {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: var(--panel);
+}
+
+.sales-grupo-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+/* O nome do grupo e editavel, mas nao deve parecer um campo de formulario: e
+   o titulo da caixa. A borda so aparece quando o cursor chega perto. */
+.sales-grupo-nome {
+  flex: 1 1 220px;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+}
+
+.sales-grupo-nome:hover { border-color: var(--border); }
+.sales-grupo-nome:focus { border-color: var(--accent, var(--border)); background: var(--panel-alt); outline: none; }
+
+.sales-grupo-total {
+  font-size: 0.88rem;
+  color: var(--muted, inherit);
+  font-variant-numeric: tabular-nums;
+}
+
+.sales-grupo-head button { min-width: auto; padding: 6px 12px; font-size: 0.85rem; }
+
+.sales-grupo-acoes { margin: 4px 0 12px; }
+
+/* Tres botoes na coluna de acoes: sem isto eles quebram linha e a coluna
+   fica com o dobro da altura das outras. */
+.sales-item-acoes { white-space: nowrap; }
+.sales-item-acoes .icon-button { margin-right: 2px; }
+.sales-item-acoes .icon-button:disabled { opacity: 0.35; cursor: not-allowed; }
+
 .sales-items-table .sales-item-readonly {
   background: var(--panel-alt);
   color: var(--text);

@@ -66,7 +66,7 @@ check('o payload leva o chassi', /chassi: item\.chassi \|\| '',/.test(appSrc));
 check('item novo nasce com o campo', /chassi: '',/.test(appSrc));
 // A linha vazia da tabela tem de cobrir a coluna nova, senão a mensagem
 // "nenhum produto" fica torta.
-check('o colspan da linha vazia acompanhou', /colspan="8" class="muted">Nenhum produto adicionado/.test(appSrc));
+check('o colspan da linha vazia acompanhou', /colspan="8" class="muted">Nenhum produto neste grupo/.test(appSrc));
 // Em fonte proporcional, 0/O e 1/I ficam idênticos — e conferir chassi contra
 // o documento do equipamento é exatamente o caso em que isso importa.
 check('o campo é monoespaçado', /\.sales-item-chassi \{[\s\S]{0,220}monospace/.test(ler('public/app.css')));

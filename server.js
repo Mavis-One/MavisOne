@@ -41,6 +41,10 @@ const salesTotals = require('./public/modules/shared/sales_totals');
 // status, se o registro é pedido ou orçamento e se baixa estoque / gera
 // financeiro — as três decisões que antes eram `=== 'faturado'` espalhado.
 const salesStatus = require('./public/modules/shared/sales_status');
+// Grupos de Produtos (fase AH). Mesmo arquivo que o navegador carrega: se a
+// tela agrupasse de um jeito e o servidor de outro, o usuário veria três grupos
+// e o sistema gravaria dois.
+const salesGrupos = require('./public/modules/shared/sales_grupos');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
@@ -915,6 +919,11 @@ function normalizeSalesItems(rawItems) {
         productId: item.productId || '',
         name: String(item.name || '').trim(),
         sku: item.sku || '',
+        // A que grupo de produtos esta linha pertence (fase AH). Este objeto é
+        // uma lista branca: sem o campo aqui, o groupId que a tela mandou era
+        // descartado calado, e todos os itens voltavam para o primeiro grupo no
+        // próximo salvamento. Vazio é aceito — quem resolve é normalizarGrupos.
+        groupId: String(item.groupId || '').trim().slice(0, 40),
         // A cor viaja no ITEM, não no produto: o mesmo produto entra duas vezes
         // na mesma venda em cores diferentes, e cada linha baixa da sua cor.
         // O nome vem junto porque a lista da venda precisa mostrar "Preto" sem
@@ -1292,7 +1301,16 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
 // items[]/totalAmount — o serializer cai no campo "amount" achatado que eles já tinham,
 // pra continuar aparecendo na lista sem quebrar.
 function serializeSalesRecord(record, data) {
-  const items = Array.isArray(record.items) ? record.items : [];
+  // Normaliza na LEITURA também, e não só na gravação: pedido gravado antes da
+  // fase AH não tem grupo nenhum, e a tela precisa de um para desenhar os
+  // itens. Sem isto o pedido antigo abriria vazio, com os produtos existindo
+  // no total e em lugar nenhum na tela.
+  const normalizado = salesGrupos.normalizarGrupos(
+    record.productGroups,
+    Array.isArray(record.items) ? record.items : []
+  );
+  const productGroups = normalizado.groups;
+  const items = normalizado.items;
   const itemsTotal = items.reduce((sum, item) => sum + Number(item.total || 0), 0);
   const totalAmount = typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || itemsTotal || 0);
 
@@ -1317,6 +1335,7 @@ function serializeSalesRecord(record, data) {
     depositId: record.depositId || '',
     depositName: resolveById(data.deposits, record.depositId),
     items,
+    productGroups,
     discountAmount: Number(record.discountAmount || 0),
     discountPercent: Number(record.discountPercent || 0),
     freight: Number(record.freight || 0),
@@ -4578,10 +4597,15 @@ const server = http.createServer(async (req, res) => {
       const type = tipoPedido === 'nfe' ? 'nfe' : salesStatus.tipoDoStatus(status);
       let record;
       if (type === 'order' || type === 'quote') {
-        const items = normalizeSalesItems(await completarNomesDosItens(body.items));
-        if (!items.length) {
+        const itensBrutos = normalizeSalesItems(await completarNomesDosItens(body.items));
+        if (!itensBrutos.length) {
           return sendJson(res, { error: mensagemItensInvalidos(body.items) }, 400);
         }
+        // Grupos e itens saem juntos da mesma função: é ela que garante um
+        // grupo mínimo e que nenhum item fique apontando para grupo que não
+        // existe. Normalizar só um dos dois deixaria itens órfãos, que somem da
+        // tela sem sumir do total.
+        const { groups: productGroups, items } = salesGrupos.normalizarGrupos(body.productGroups, itensBrutos);
         // Aceita id OU nome: a tela sempre manda o id, mas registros importados
         // (CSV) só têm o nome. Sem nenhum dos dois o pedido nascia sem cliente.
         if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
@@ -4591,6 +4615,7 @@ const server = http.createServer(async (req, res) => {
         record = {
           id: createId(type === 'order' ? 'ord' : 'qte'),
           type,
+          productGroups,
           code: await db.getNextSalesCode(),
           clientSupplierId: body.clientSupplierId || '',
           clientSupplierName: body.clientSupplierName || '',
@@ -4700,10 +4725,13 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       }
       const body = await readBody(req);
-      const items = normalizeSalesItems(await completarNomesDosItens(body.items));
-      if (!items.length) {
+      const itensBrutos = normalizeSalesItems(await completarNomesDosItens(body.items));
+      if (!itensBrutos.length) {
         return sendJson(res, { error: mensagemItensInvalidos(body.items) }, 400);
       }
+      // Ver o comentário na criação: grupos e itens saem juntos da mesma
+      // função, para não sobrar item apontando para grupo que já não existe.
+      const { groups: productGroups, items } = salesGrupos.normalizarGrupos(body.productGroups, itensBrutos);
       if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
         return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
       }
@@ -4717,6 +4745,7 @@ const server = http.createServer(async (req, res) => {
       let updated = {
         ...current,
         type: tipoNovo,
+        productGroups,
         clientSupplierId: body.clientSupplierId || '',
         clientSupplierName: body.clientSupplierName || '',
         companyId: body.companyId || '',
