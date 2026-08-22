@@ -306,6 +306,109 @@ async function saveDashboardPins(nextPins) {
 
 window.saveDashboardPins = saveDashboardPins;
 
+// COLUNAS DA LISTA DE PEDIDOS E ORÇAMENTOS.
+//
+// O catálogo mora aqui, e não espalhado no HTML, porque três coisas precisam
+// da MESMA lista e não podem discordar: o cabeçalho, a célula de cada linha e
+// o seletor de colunas visíveis. Solto no template, alguém acrescenta um <th>
+// e esquece o <td>, e a tabela inteira desanda uma coluna para o lado.
+//
+// O campo "ordenavel" espelha a lista branca do servidor (CAMPOS_ORDENAVEIS,
+// em server.js): oferecer ordenação por coluna que o servidor ignora seria
+// clicar e não acontecer nada.
+// `f` traz os formatadores: data, brl e badge. Eles sao const LOCAIS dentro do
+// loadModule, e uma lambda global nao os alcanca — a primeira versao deste
+// catalogo morria com "salesFormatDate is not defined" e a tabela nao
+// desenhava. Recebendo por parametro, a dependencia fica declarada e o
+// catalogo continua num lugar so.
+const SALES_COLUNAS = [
+  { chave: 'code', rotulo: 'Código', ordenavel: true, fixa: true, valor: (r) => escapeHtml(String(r.code)) },
+  { chave: 'type', rotulo: 'Tipo', ordenavel: false, valor: (r) => (r.type === 'quote' ? 'Orçamento' : 'Pedido') },
+  { chave: 'date', rotulo: 'Data', ordenavel: true, valor: (r, f) => f.data(r.date) },
+  { chave: 'updatedAt', rotulo: 'Data de Alteração', ordenavel: true, valor: (r, f) => (r.updatedAt ? f.data(String(r.updatedAt).slice(0, 10)) : '-') },
+  { chave: 'status', rotulo: 'Status do Sistema', ordenavel: true, valor: (r, f) => f.badge(r.status) },
+  { chave: 'companyName', rotulo: 'Empresa', ordenavel: true, valor: (r) => escapeHtml(r.companyName || '-') },
+  { chave: 'customer', rotulo: 'Cliente', ordenavel: true, valor: (r) => escapeHtml(r.customer || '-') },
+  { chave: 'nfeNumero', rotulo: 'NF-e', ordenavel: true, valor: (r) => escapeHtml(r.nfeNumero || '-') },
+  { chave: 'sellerName', rotulo: 'Vendedor', ordenavel: true, valor: (r) => escapeHtml(r.sellerName || '-') },
+  { chave: 'clientContact', rotulo: 'Contato do cliente', ordenavel: true, valor: (r) => escapeHtml(r.clientContact || '-') },
+  { chave: 'amount', rotulo: 'Valor', ordenavel: true, valor: (r, f) => f.brl(r.totalAmount ?? r.amount) },
+  { chave: 'dataEnvio', rotulo: 'Data Envio', ordenavel: true, valor: (r, f) => (r.dataEnvio ? f.data(r.dataEnvio) : '-') },
+  { chave: 'saleOrigin', rotulo: 'Origem da Venda', ordenavel: true, valor: (r) => escapeHtml(r.saleOrigin || '-') }
+];
+
+// O que aparece para quem nunca escolheu nada: exatamente a tabela que existia
+// antes do seletor, para quem já usava a tela não estranhar.
+const SALES_COLUNAS_PADRAO = ['code', 'type', 'date', 'customer', 'companyName', 'sellerName', 'amount', 'status'];
+const SALES_POR_PAGINA = [15, 30, 50, 100];
+
+function salesColunasVisiveis() {
+  const salvas = state.preferences && state.preferences.sales_lista
+    ? state.preferences.sales_lista.colunas
+    : null;
+  const validas = Array.isArray(salvas)
+    ? salvas.filter((c) => SALES_COLUNAS.some((col) => col.chave === c))
+    : [];
+  // Nenhuma válida (preferência antiga, coluna renomeada) cai no padrão, em vez
+  // de desenhar uma tabela sem coluna nenhuma.
+  const escolhidas = validas.length ? validas : SALES_COLUNAS_PADRAO;
+  // Código nunca some: sem ele não há como identificar a linha.
+  return SALES_COLUNAS.filter((col) => col.fixa || escolhidas.includes(col.chave));
+}
+
+// Guarda em memória na hora e manda para o servidor depois: preferência é
+// conforto, e esperar a rede para redesenhar a tabela seria pagar caro por ela.
+async function salvarPreferencia(tela, valor) {
+  state.preferences = Object.assign({}, state.preferences || {}, { [tela]: valor });
+  try {
+    await api('/api/preferencias', { method: 'PUT', body: JSON.stringify({ tela, valor }) });
+  } catch (_) {
+    // Falhou o salvamento: vale nesta sessão e pronto. Um toast de erro aqui
+    // interromperia o trabalho por causa de uma escolha de coluna.
+  }
+}
+
+// FILTROS NA URL — é o que faz o link ser compartilhável e o F5 não perder a
+// busca. Só o que está preenchido entra, senão a barra vira um paredão de
+// parâmetros vazios.
+function salesEscreverUrl(filtros, extras) {
+  const params = new URLSearchParams();
+  const tudo = Object.assign({}, filtros, extras);
+  Object.keys(tudo).forEach((k) => {
+    const v = tudo[k];
+    if (v === '' || v === null || v === undefined) return;
+    // Página 1 e ordem padrão não vão para a URL: são o estado de sempre, e
+    // poluiriam todo link copiado.
+    if ((k === 'page' && Number(v) === 1) || (k === 'limit' && Number(v) === 15)) return;
+    // Direção sem coluna escolhida é ruído: "?dir=desc" aparecia em todo link
+    // mesmo sem ninguém ter ordenado nada.
+    if (k === 'dir' && !tudo.sort) return;
+    params.set(k, String(v));
+  });
+  const busca = params.toString();
+  // replaceState, não pushState: filtrar não é navegar. Empilhar histórico
+  // faria o botão Voltar do navegador desfazer filtro por filtro.
+  window.history.replaceState(null, '', busca ? '?' + busca : window.location.pathname);
+}
+
+function salesLerUrl() {
+  const p = new URLSearchParams(window.location.search);
+  const pegar = (k) => p.get(k) || '';
+  const limite = Number(pegar('limit'));
+  return {
+    filtros: {
+      search: pegar('search'), type: pegar('type'), status: pegar('status'),
+      companyId: pegar('companyId'), sellerId: pegar('sellerId'),
+      clientSupplierId: pegar('clientSupplierId'),
+      dateFrom: pegar('dateFrom'), dateTo: pegar('dateTo')
+    },
+    page: Number(pegar('page')) || 1,
+    limit: SALES_POR_PAGINA.includes(limite) ? limite : 15,
+    sort: pegar('sort'),
+    dir: pegar('dir') === 'asc' ? 'asc' : 'desc'
+  };
+}
+
 async function api(path, options = {}) {
   const headers = {};
   if (options.body) {
@@ -672,6 +775,10 @@ function renderAuth(error = '') {
       sessaoEncerradaAvisada = false;
       agendarSaidaDaVirada(response.sessaoExpiraEm);
       state.user = response.user;
+      // Preferencias de tela chegam junto do usuario. Sem isto a lista abriria
+      // no padrao a cada login, e a escolha de colunas so valeria enquanto a
+      // aba ficasse aberta.
+      state.preferences = (response.user && response.user.preferences) || {};
       state.user.dashboardPins = normalizeDashboardPins([
         ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
         ...readStoredDashboardPins(state.user.id)
@@ -1851,13 +1958,37 @@ async function loadModule(moduleName) {
       // Sub-aba: Pedidos e Orçamentos
       if (sub === 'orders_quotes') {
         const draft = state.salesDraft || (state.salesDraft = {});
+        // A URL manda na PRIMEIRA entrada; depois quem manda é o estado da
+        // tela. Sem esse "só uma vez", qualquer redesenho (salvar, excluir,
+        // paginar) puxaria os filtros do link de volta e desfaria o que a
+        // pessoa acabou de mudar.
+        if (!draft.ordersUrlLida) {
+          const daUrl = salesLerUrl();
+          draft.ordersUrlLida = true;
+          draft.ordersFilters = daUrl.filtros;
+          draft.ordersPage = daUrl.page;
+          draft.ordersLimit = daUrl.limit;
+          draft.ordersSort = daUrl.sort;
+          draft.ordersDir = daUrl.dir;
+          // Link com filtro abre o painel: senão a lista aparece filtrada e
+          // nada na tela explica por quê.
+          const temFiltroAlemDaBusca = Object.keys(daUrl.filtros)
+            .some((k) => k !== 'search' && daUrl.filtros[k]);
+          if (temFiltroAlemDaBusca) draft.showOrdersFilters = true;
+        }
         const filters = draft.ordersFilters || (draft.ordersFilters = { search: '', type: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
         const showFilters = Boolean(draft.showOrdersFilters);
         const page = draft.ordersPage || 1;
-        const limit = 15;
+        const limit = SALES_POR_PAGINA.includes(draft.ordersLimit) ? draft.ordersLimit : 15;
+        const sort = draft.ordersSort || '';
+        const dir = draft.ordersDir === 'asc' ? 'asc' : 'desc';
+        const colunas = salesColunasVisiveis();
+        const mostrandoSeletor = Boolean(draft.showOrdersColunas);
 
         const params = new URLSearchParams({ view: 'orders_quotes', page: String(page), limit: String(limit) });
         Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+        if (sort) { params.set('sort', sort); params.set('dir', dir); }
+        salesEscreverUrl(filters, { page, limit, sort, dir });
 
         const data = await api(`/api/sales/records?${params.toString()}`);
         const records = data.records || [];
@@ -1881,8 +2012,23 @@ async function loadModule(moduleName) {
                    campo Status lá dentro, não de qual botão foi clicado. -->
               <button type="button" onclick="state.salesDraft.editRecord=null; state.salesDraft.novoStatus=''; state.activeSub='new_sale'; renderApp(); loadModule('sales');">+ Nova Venda</button>
               <button type="button" class="secondary" id="salesFilterToggleBtn">${showFilters ? 'Ocultar filtros' : 'Busca avançada'}</button>
+              <button type="button" class="secondary" id="salesColunasBtn" title="Escolher colunas visíveis" aria-expanded="${mostrandoSeletor}">Colunas</button>
             </div>
           </div>
+
+          ${mostrandoSeletor ? `
+            <div class="panel" id="salesColunasPainel" style="margin-bottom:12px;">
+              <p class="muted" style="margin-top:0;">Colunas visíveis — a escolha fica guardada na sua conta.</p>
+              <div class="cadastro-filter-grid-5">
+                ${SALES_COLUNAS.map((col) => `
+                  <label class="muted" style="display:flex;align-items:center;gap:6px;">
+                    <input type="checkbox" data-coluna-visivel="${col.chave}"
+                      ${colunas.some((c) => c.chave === col.chave) ? 'checked' : ''}
+                      ${col.fixa ? 'checked disabled title="O código identifica a linha e não pode ser escondido."' : ''} />
+                    ${col.rotulo}
+                  </label>`).join('')}
+              </div>
+            </div>` : ''}
 
           <form id="salesQuickSearchForm" class="row" style="margin-bottom: 12px;">
             <label class="cadastro-field" style="grid-column: span 3;">
@@ -1955,18 +2101,19 @@ async function loadModule(moduleName) {
           <div class="panel">
             <div class="table-scroll">
               <table class="table table-actions">
-                <thead><tr><th>Código</th><th>Tipo</th><th>Data</th><th>Cliente</th><th>Empresa</th><th>Vendedor</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead>
+                <thead><tr>${colunas.map((col) => {
+                  if (!col.ordenavel) return `<th>${col.rotulo}</th>`;
+                  const ativa = sort === col.chave;
+                  // A seta mostra a ordem ATUAL, não a que o clique vai
+                  // aplicar. Cabeçalho sem indicador deixa a pessoa sem saber
+                  // se ordenou ou se a lista já estava assim.
+                  const seta = ativa ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
+                  return `<th><button type="button" class="sales-ordenar${ativa ? ' is-ativa' : ''}" data-coluna="${col.chave}" title="Ordenar por ${col.rotulo}">${col.rotulo}${seta}</button></th>`;
+                }).join('')}<th>Ações</th></tr></thead>
                 <tbody>
                   ${records.length ? records.map((record) => `
                     <tr>
-                      <td>${escapeHtml(String(record.code))}</td>
-                      <td>${record.type === 'quote' ? 'Orçamento' : 'Pedido'}</td>
-                      <td>${salesFormatDate(record.date)}</td>
-                      <td>${escapeHtml(record.customer)}</td>
-                      <td>${escapeHtml(record.companyName || '-')}</td>
-                      <td>${escapeHtml(record.sellerName || '-')}</td>
-                      <td>${salesFormatBRL(record.amount)}</td>
-                      <td>${salesStatusBadge(record.status)}</td>
+                      ${colunas.map((col) => `<td>${col.valor(record, { data: salesFormatDate, brl: salesFormatBRL, badge: salesStatusBadge })}</td>`).join('')}
                       <td>
                         <button class="icon-button edit sales-edit-record" data-id="${escapeHtml(record.id)}" title="Editar" aria-label="Editar">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
@@ -1976,7 +2123,7 @@ async function loadModule(moduleName) {
                         </button>
                       </td>
                     </tr>
-                  `).join('') : `<tr><td colspan="9" class="muted">Nenhum pedido ou orçamento encontrado${filters.search || showFilters ? ' com os filtros atuais' : ''}.</td></tr>`}
+                  `).join('') : `<tr><td colspan="${colunas.length + 1}" class="muted">Nenhum pedido ou orçamento encontrado${filters.search || showFilters ? ' com os filtros atuais' : ''}.</td></tr>`}
                 </tbody>
               </table>
             </div>
@@ -1984,6 +2131,18 @@ async function loadModule(moduleName) {
               <button type="button" class="secondary" id="salesPrevPage" ${page <= 1 ? 'disabled' : ''}>Anterior</button>
               <span class="muted">Página ${page} de ${totalPages}</span>
               <button type="button" class="secondary" id="salesNextPage" ${page >= totalPages ? 'disabled' : ''}>Próxima</button>
+              <label class="muted" style="display:flex;align-items:center;gap:6px;margin-left:12px;">
+                Por página
+                <select id="salesPorPagina">
+                  ${SALES_POR_PAGINA.map((n) => `<option value="${n}" ${n === limit ? 'selected' : ''}>${n}</option>`).join('')}
+                </select>
+              </label>
+              ${totalPages > 1 ? `
+                <form id="salesIrParaPagina" class="muted" style="display:flex;align-items:center;gap:6px;margin-left:12px;">
+                  Ir para
+                  <input type="number" min="1" max="${totalPages}" value="${page}" style="width:70px;" aria-label="Ir para a página" />
+                  <button type="submit" class="secondary">Ir</button>
+                </form>` : ''}
             </div>
           </div>
         `;
@@ -2014,6 +2173,60 @@ async function loadModule(moduleName) {
         document.getElementById('salesFilterClearBtn')?.addEventListener('click', () => {
           Object.assign(filters, { search: '', type: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
           state.salesDraft.ordersPage = 1;
+          loadModule('sales');
+        });
+        document.getElementById('salesColunasBtn')?.addEventListener('click', () => {
+          state.salesDraft.showOrdersColunas = !mostrandoSeletor;
+          loadModule('sales');
+        });
+        document.querySelectorAll('[data-coluna-visivel]').forEach((caixa) => {
+          caixa.addEventListener('change', () => {
+            const escolhidas = [...document.querySelectorAll('[data-coluna-visivel]')]
+              .filter((c) => c.checked)
+              .map((c) => c.dataset.colunaVisivel);
+            // Desmarcar tudo deixaria a tabela só com o código. Mantém ao menos
+            // uma coluna de conteúdo e devolve a marcação, para a caixa não
+            // ficar desmarcada mostrando o contrário do que vale.
+            if (escolhidas.filter((c) => c !== 'code').length === 0) {
+              showToast('Deixe ao menos uma coluna além do código.', 'warning');
+              caixa.checked = true;
+              return;
+            }
+            // Grava na ORDEM do catálogo, não na ordem de clique: a tabela é
+            // desenhada por SALES_COLUNAS, e guardar outra ordem faria a
+            // preferência parecer embaralhada ao reabrir.
+            const emOrdem = SALES_COLUNAS.map((c) => c.chave).filter((c) => escolhidas.includes(c));
+            salvarPreferencia('sales_lista', { colunas: emOrdem });
+            loadModule('sales');
+          });
+        });
+        document.querySelectorAll('.sales-ordenar').forEach((botao) => {
+          botao.addEventListener('click', () => {
+            const coluna = botao.dataset.coluna;
+            // Clicar na coluna já ordenada inverte; em outra, começa
+            // decrescente — que é o que se quer em data e valor, as mais
+            // usadas.
+            state.salesDraft.ordersDir = (sort === coluna && dir === 'desc') ? 'asc' : 'desc';
+            state.salesDraft.ordersSort = coluna;
+            state.salesDraft.ordersPage = 1;
+            loadModule('sales');
+          });
+        });
+        document.getElementById('salesPorPagina')?.addEventListener('change', (evento) => {
+          state.salesDraft.ordersLimit = Number(evento.target.value) || 15;
+          // Volta para a página 1: com 100 por página, a página 7 de antes
+          // pode nem existir mais.
+          state.salesDraft.ordersPage = 1;
+          loadModule('sales');
+        });
+        document.getElementById('salesIrParaPagina')?.addEventListener('submit', (evento) => {
+          evento.preventDefault();
+          const alvo = Number(evento.target.querySelector('input').value);
+          if (!Number.isFinite(alvo) || alvo < 1 || alvo > totalPages) {
+            showToast(`Informe uma página entre 1 e ${totalPages}.`, 'warning');
+            return;
+          }
+          state.salesDraft.ordersPage = Math.floor(alvo);
           loadModule('sales');
         });
         document.getElementById('salesPrevPage')?.addEventListener('click', () => {

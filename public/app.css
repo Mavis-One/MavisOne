@@ -3548,3 +3548,19 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   text-transform: uppercase;
   max-width: 320px;
 }
+
+/* Cabeçalho ordenável da lista de vendas. É um <button> dentro do <th>, e não
+   o <th> clicável: só assim funciona por teclado e o leitor de tela anuncia
+   que aquilo se aciona. Herda tudo do cabeçalho para não virar um botão
+   desenhado no meio da tabela. */
+.table th .sales-ordenar {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: inherit;
+}
+.table th .sales-ordenar:hover { text-decoration: underline; }
+.table th .sales-ordenar.is-ativa { color: var(--primary); }

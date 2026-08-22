@@ -613,6 +613,10 @@ function serializeUserForClient(user, acesso = null) {
     allowedModules: user.allowedModules,
     theme: user.theme,
     dashboardPins: normalizeDashboardPins(user.dashboardPins),
+    // Preferencias de tela (fase-ag). Vao junto do usuario para a lista abrir
+    // com as colunas escolhidas ja na primeira renderizacao, sem uma segunda
+    // ida ao servidor.
+    preferences: user.preferences && typeof user.preferences === 'object' ? user.preferences : {},
     active: user.active !== false,
     // A tela usa isto só para esconder botão que o usuário não pode usar. Quem
     // decide de verdade é o servidor: esconder não é bloquear.
@@ -1366,6 +1370,19 @@ function serializeSalesRecord(record, data) {
     financeApplied: Boolean(record.financeApplied),
     // Qual NF-e saiu deste pedido; vazio enquanto não houver emissão.
     nfeId: record.nfeId || '',
+    // O NÚMERO da nota, não o id: a coluna "NF-e" da lista mostra "1042", e o
+    // id é um uuid que não diz nada a quem lê. Resolvido aqui porque é aqui que
+    // se tem `data` em mãos — na tela seria uma varredura por linha.
+    nfeNumero: (() => {
+      if (!record.nfeId) return '';
+      const fiscal = (data.nfe || []).find((n) => n.id === record.nfeId);
+      if (fiscal) return String(fiscal.numero || '');
+      const manual = (data.nfes || []).find((n) => n.id === record.nfeId);
+      return manual ? String(manual.number || '') : '';
+    })(),
+    // Data de envio: mora dentro do grupo de entrega, e a lista precisa dela
+    // achatada para poder ordenar e mostrar como coluna.
+    dataEnvio: salesDelivery(record).shippingDate || '',
     createdByName: record.createdByName || '',
     createdAt: record.createdAt || '',
     updatedAt: record.updatedAt || ''
@@ -3257,6 +3274,50 @@ async function inutilizarNumeracaoFiscal(body, user) {
 
 // Paginação: um valor não numérico na query (?page=abc) virava NaN e devolvia
 // lista vazia em vez de cair na primeira página.
+// ORDENAÇÃO DA LISTA DE VENDAS.
+//
+// Lista branca, e não `record[campo]` direto: o campo vem da query string, e
+// deixar o cliente escolher qualquer chave é entregar a ele a forma de ler o
+// objeto inteiro — inclusive o que o serializer não deveria expor.
+//
+// Ordena sobre o registro JÁ SERIALIZADO. Empresa e vendedor são ids no
+// registro cru e viram nome só na serialização: ordenar antes colocaria a
+// lista em ordem de id, que não é ordem nenhuma para quem lê.
+const CAMPOS_ORDENAVEIS = {
+  code: (r) => Number(r.code) || 0,
+  date: (r) => String(r.date || ''),
+  updatedAt: (r) => String(r.updatedAt || ''),
+  status: (r) => String(r.status || ''),
+  companyName: (r) => String(r.companyName || '').toLowerCase(),
+  customer: (r) => String(r.customer || '').toLowerCase(),
+  nfeNumero: (r) => Number(r.nfeNumero) || 0,
+  sellerName: (r) => String(r.sellerName || '').toLowerCase(),
+  clientContact: (r) => String(r.clientContact || '').toLowerCase(),
+  amount: (r) => Number(r.totalAmount ?? r.amount ?? 0),
+  dataEnvio: (r) => String(r.dataEnvio || ''),
+  saleOrigin: (r) => String(r.saleOrigin || '').toLowerCase()
+};
+
+function ordenarSalesRecords(registros, campo, direcao) {
+  const ler = CAMPOS_ORDENAVEIS[campo];
+  // Sem campo válido, a ordem histórica: código decrescente, que é "o mais
+  // recente primeiro" para quem cria pedido em sequência.
+  if (!ler) {
+    return registros.sort((a, b) => (Number(b.code) || 0) - (Number(a.code) || 0)
+      || String(b.date || '').localeCompare(String(a.date || '')));
+  }
+  const sinal = direcao === 'asc' ? 1 : -1;
+  return registros.sort((a, b) => {
+    const x = ler(a);
+    const y = ler(b);
+    if (x < y) return -1 * sinal;
+    if (x > y) return 1 * sinal;
+    // Desempate estável pelo código: sem isto, duas linhas com a mesma data
+    // trocam de lugar a cada recarga e parecem bug de paginação.
+    return (Number(b.code) || 0) - (Number(a.code) || 0);
+  });
+}
+
 function parsePageParams(searchParams, defaultLimit = 20, maxLimit = 100) {
   const rawPage = Number(searchParams.get('page'));
   const rawLimit = Number(searchParams.get('limit'));
@@ -3591,6 +3652,46 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Método não permitido' }, 405);
     } catch (error) {
       return sendJson(res, { error: 'Erro ao salvar favoritos do dashboard' }, 400);
+    }
+  }
+
+  // PREFERENCIAS DE TELA por usuario (fase-ag).
+  //
+  // Uma rota generica, e nao uma por tela: a proxima lista que precisar lembrar
+  // de algo entra sem rota nova. O corpo e { tela, valor } e cada tela decide o
+  // formato do proprio valor.
+  //
+  // Grava preservando as outras telas — o lib/db/auth faz o merge. Mandar o
+  // objeto inteiro do cliente deixaria uma tela apagar a preferencia de outra.
+  if (pathname === '/api/preferencias') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user) return sendJson(res, { error: 'Não autenticado' }, 401);
+
+      if (req.method === 'GET') {
+        return sendJson(res, { preferences: user.preferences || {} });
+      }
+
+      if (req.method === 'PUT') {
+        const body = await readBody(req);
+        const tela = String(body.tela || '').trim();
+        if (!tela || !/^[a-z_0-9.]{1,40}$/i.test(tela)) {
+          return sendJson(res, { error: 'Informe a tela da preferência.' }, 400);
+        }
+        // Só objeto: string ou array solto aqui viraria formato imprevisível
+        // para quem lê depois.
+        if (!body.valor || typeof body.valor !== 'object' || Array.isArray(body.valor)) {
+          return sendJson(res, { error: 'A preferência precisa ser um objeto.' }, 400);
+        }
+        const preferences = await db.updateUserPreference(user.id, tela, body.valor);
+        // null = coluna ainda não existe (fase-ag não rodada). A tela segue no
+        // padrão em vez de mostrar erro por algo que não impede trabalhar.
+        return sendJson(res, { success: true, preferences: preferences || {}, gravado: preferences !== null });
+      }
+
+      return sendJson(res, { error: 'Método não permitido' }, 405);
+    } catch (error) {
+      return sendJson(res, { error: 'Erro ao salvar a preferência' }, 400);
     }
   }
 
@@ -4344,11 +4445,18 @@ const server = http.createServer(async (req, res) => {
     const view = url.searchParams.get('view') || 'orders_quotes';
     if (view === 'orders_quotes') {
       const combined = [...data.orders, ...data.quotes];
-      const filtered = filterSalesRecords(combined, data, url.searchParams)
-        .sort((a, b) => Number(b.code || 0) - Number(a.code || 0) || String(b.date || '').localeCompare(String(a.date || '')));
+      const filtered = filterSalesRecords(combined, data, url.searchParams);
       const { page, limit } = parsePageParams(url.searchParams, 15);
+      // SERIALIZA -> ORDENA -> FATIA, nesta ordem. Ordenar antes de serializar
+      // poria empresa e vendedor em ordem de id; fatiar antes de ordenar
+      // ordenaria só a página, que é o clássico "ordenei e mudou só um pedaço".
+      const ordenados = ordenarSalesRecords(
+        filtered.map((record) => serializeSalesRecord(record, data)),
+        url.searchParams.get('sort') || '',
+        url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
+      );
       const start = (page - 1) * limit;
-      const records = filtered.slice(start, start + limit).map((record) => serializeSalesRecord(record, data));
+      const records = ordenados.slice(start, start + limit);
       return sendJson(res, {
         records,
         total: filtered.length,
