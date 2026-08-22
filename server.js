@@ -2630,6 +2630,28 @@ async function emitirNfeFiscal(body, user) {
     .map((r) => String(r?.chaveAcesso || r?.chave || '').replace(/\D/g, ''))
     .find((c) => c.length === 44) || null;
 
+  // UM PEDIDO, UMA NOTA. O caminho MANUAL (POST /api/finance/nfe) já barrava a
+  // segunda emissão; o caminho FISCAL, que é o que vai à SEFAZ, não barrava
+  // nada — dava para faturar o mesmo pedido duas vezes e ficar com dois
+  // documentos na SEFAZ. E documento fiscal não se apaga: sobraria cancelar um
+  // deles, com justificativa, dentro do prazo.
+  //
+  // Nota que terminou em ERRO ou foi CANCELADA não conta: o pedido precisa
+  // poder tentar de novo.
+  const pedidoDaNota = body.orderId || body.saleId || '';
+  if (pedidoDaNota) {
+    const jaEmitidas = await fiscalDb.getNfesPorPedido(pedidoDaNota);
+    const viva = jaEmitidas.find((n) => !['ERRO', 'CANCELADO', 'DENEGADO'].includes(String(n.status || '').toUpperCase()));
+    if (viva) {
+      const err = new Error(
+        `Este pedido já tem a NF-e ${viva.numero || viva.referencia} (${viva.status}). `
+        + 'Cancele a nota existente antes de emitir outra — duas notas para o mesmo pedido são dois documentos na SEFAZ.'
+      );
+      err.status = 409;
+      throw err;
+    }
+  }
+
   const itens = [];
   for (let index = 0; index < itensBody.length; index += 1) {
     const bruto = itensBody[index];
@@ -2806,6 +2828,31 @@ async function emitirNfeFiscal(body, user) {
     nfeOriginalChave: chaveOriginal,
     payloadEnviado: payload
   });
+
+  // O PEDIDO PASSA A SABER QUAL NOTA SAIU DELE.
+  //
+  // A coluna orders.nfe_id existe desde a fase-P e NINGUÉM a preenchia por este
+  // caminho: em 22/08/2026 havia 7 pedidos no banco, 3 deles faturados, e zero
+  // com nfe_id. O sentido contrário (nfe.order_id) já era gravado, então o
+  // vínculo existia pela metade — dava para ir da nota ao pedido, nunca do
+  // pedido à nota.
+  //
+  // É gravado AGORA, logo após criar o registro da nota e ANTES de mandar para
+  // a Focus, porque é dele que a guarda acima depende: se a transmissão falhar
+  // e o usuário clicar de novo, a segunda tentativa precisa encontrar a
+  // primeira. Nota que terminar em ERRO não trava o pedido — a guarda ignora
+  // ERRO, CANCELADO e DENEGADO.
+  //
+  // Falhar aqui NÃO derruba a emissão: a nota é o documento, o vínculo é
+  // conveniência. Mas precisa aparecer no log, e não virar exceção calada.
+  if (pedidoDaNota) {
+    try {
+      const pedido = await db.getOrderById(pedidoDaNota);
+      if (pedido) await db.updateOrder(pedido.id, { ...pedido, nfeId: nfe.id });
+    } catch (error) {
+      console.error('NF-e emitida, mas não consegui gravar o vínculo no pedido', pedidoDaNota, error.message);
+    }
+  }
 
   try {
     const client = await focusNfe.forEstabelecimento(estabelecimento.id);
