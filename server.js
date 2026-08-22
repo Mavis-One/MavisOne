@@ -5091,6 +5091,24 @@ const server = http.createServer(async (req, res) => {
         // sentido "sumir" com uma reserva de estoque junto com o registro.
         await transitionOrderStockEffect(data, { oldItems: record.items || [], newItems: [], wasApplied: true, willApply: false, record, user });
       }
+      // Os anexos vao junto. Sem isto o registro some do banco e os arquivos
+      // ficam para sempre no Storage, sem nada apontando para eles: ninguem
+      // consegue ve-los pela tela, ninguem consegue apaga-los, e a conta do
+      // armazenamento cresce sozinha.
+      //
+      // Antes de excluir o registro, porque depois as fichas ja nao existem
+      // para dizer QUAIS arquivos apagar.
+      for (const ficha of (Array.isArray(record.attachments) ? record.attachments : [])) {
+        try {
+          await anexosDb.removerAnexo(ficha);
+        } catch (erro) {
+          // Falha ao apagar UM arquivo nao pode impedir a exclusao do pedido:
+          // o usuario pediu para excluir o registro, e travar aqui deixaria o
+          // pedido vivo por causa de um arquivo. Fica no log para alguem
+          // limpar depois.
+          console.error('[anexos] arquivo orfao no Storage:', ficha.caminho, erro.message);
+        }
+      }
       await (recordKey === 'orders' ? db.deleteOrder(id) : db.deleteQuote(id));
       // saveData aqui é só pra persistir data.stockMovements (ver comentário
       // equivalente na rota PUT acima) — o registro em si já foi excluído

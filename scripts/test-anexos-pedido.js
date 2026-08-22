@@ -80,6 +80,17 @@ check('usam registrarAuditoria, que existe', (serverSrc.match(/registrarAuditori
 // Um arquivo grande demais no meio da seleção não pode derrubar os outros.
 check('um arquivo ruim não derruba a leva', /erros\.push\(erro\.message\)/.test(serverSrc));
 check('o serializer devolve as fichas', /attachments: Array\.isArray\(record\.attachments\)/.test(serverSrc));
+// Excluir o pedido tem de levar os arquivos junto. Sem isto o registro some do
+// banco e os arquivos ficam para sempre no Storage, sem nada apontando para
+// eles: ninguém os vê pela tela, ninguém os apaga, e a conta cresce sozinha.
+check('excluir o pedido apaga os anexos do Storage',
+  /record\.attachments : \[\]\)\) \{[\s\S]{0,200}anexosDb\.removerAnexo/.test(serverSrc));
+// E ANTES de excluir o registro: depois, as fichas já não existem para dizer
+// QUAIS arquivos apagar.
+check('  e antes de apagar o registro',
+  serverSrc.indexOf('anexosDb.removerAnexo(ficha)') < serverSrc.indexOf('db.deleteOrder(id) : db.deleteQuote(id)'));
+// Um arquivo que falha ao apagar não pode manter o pedido vivo.
+check('  e falha de um arquivo não trava a exclusão', /arquivo orfao no Storage/.test(serverSrc));
 
 console.log('\n--- o corpo da requisição tem teto ---');
 // Sem teto, o corpo era acumulado em memória até o cliente parar de mandar.
