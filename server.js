@@ -45,6 +45,9 @@ const salesStatus = require('./public/modules/shared/sales_status');
 // tela agrupasse de um jeito e o servidor de outro, o usuário veria três grupos
 // e o sistema gravaria dois.
 const salesGrupos = require('./public/modules/shared/sales_grupos');
+// Aba Impostos do pedido. Roda a MESMA montagem tributária da emissão — ver o
+// cabeçalho de lib/calcularTributos.js.
+const { calcularTributos } = require('./lib/calcularTributos');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
@@ -1508,6 +1511,87 @@ function filterSalesRecords(registros, query) {
   if (dateTo) result = result.filter((r) => { const d = lerData(r); return d && d <= dateTo; });
 
   return result;
+}
+
+// Traduz um pedido para o que o cálculo fiscal precisa saber: quem emite, para
+// quem, e o que sai. Nada aqui inventa imposto — só reúne o que já está
+// cadastrado e diz, em português, o que faltou.
+async function montarContextoFiscalDoPedido(body, data) {
+  const empresas = await fiscalDb.getEmpresas();
+  const empresa = empresas.find((e) => e.ativo !== false) || empresas[0] || null;
+  const estabelecimentos = empresa ? await fiscalDb.getEstabelecimentos(empresa.id) : [];
+  const emitentes = estabelecimentos.filter((e) => e.ativo !== false && e.emiteNfe !== false);
+
+  // O estabelecimento é escolhido pelo CNPJ da empresa do pedido. Sem esse
+  // vínculo — e hoje o cadastro de empresas da venda não guarda CNPJ — cai no
+  // único emitente, e o `motivo` diz que foi isso que aconteceu. Escolher em
+  // silêncio seria pior: numa empresa com duas filiais em UFs diferentes, a
+  // alíquota mudaria sem ninguém saber por quê.
+  const empresaDaVenda = (data.companies || []).find((c) => c.id === body.companyId) || null;
+  const documento = String((empresaDaVenda && (empresaDaVenda.document || empresaDaVenda.cnpj)) || '').replace(/\D/g, '');
+  const porCnpj = documento ? emitentes.find((e) => String(e.cnpj || '').replace(/\D/g, '') === documento) : null;
+  let estabelecimento = porCnpj;
+  let motivo = '';
+  if (!estabelecimento && emitentes.length === 1) {
+    estabelecimento = emitentes[0];
+    motivo = documento
+      ? `O CNPJ da empresa do pedido não casa com nenhum estabelecimento; usando o único emitente cadastrado (${estabelecimento.razaoSocial || estabelecimento.cnpj}).`
+      : `A empresa "${(empresaDaVenda && empresaDaVenda.name) || 'do pedido'}" não tem CNPJ cadastrado; usando o único estabelecimento emitente (${estabelecimento.razaoSocial || estabelecimento.cnpj}).`;
+  } else if (!estabelecimento && emitentes.length > 1) {
+    motivo = 'Há mais de um estabelecimento emitente e a empresa do pedido não tem CNPJ para identificar qual é — cadastre o CNPJ da empresa.';
+  }
+
+  // UF e condição de contribuinte do cliente saem do Cadastro. As duas mudam a
+  // conta: destino decide interna x interestadual, e contribuinte decide DIFAL.
+  const cliente = getCadastroDirectory(data).find((c) => c.id === body.clientSupplierId) || null;
+  const destinatario = {
+    uf: (cliente && cliente.state) || '',
+    // Quem tem inscrição estadual é contribuinte. É o mesmo critério que a
+    // emissão usa, e não um campo novo para alguém manter em dia.
+    contribuinte: Boolean(cliente && String(cliente.stateRegistration || '').trim())
+  };
+
+  const produtos = await db.getProducts();
+  const itens = (Array.isArray(body.items) ? body.items : []).map((item) => {
+    const produto = produtos.find((p) => p.id === item.productId) || null;
+    return {
+      codigoProduto: item.sku || (produto && produto.sku) || '',
+      descricao: item.name || (produto && produto.name) || '',
+      // NCM e origem são do PRODUTO, não do item da venda: são classificação
+      // da mercadoria, e o item só diz quanto e por quanto.
+      ncm: (produto && produto.ncm) || '',
+      origem: (produto && produto.origem) || 0,
+      cest: (produto && produto.cest) || '',
+      quantidade: Number(item.quantity || 0),
+      valorUnitario: Number(item.unitPrice || 0)
+    };
+  });
+
+  // Valor faturado: o que já virou nota AUTORIZADA. Pedido sem nota tem zero —
+  // e zero aqui significa "ainda não faturou", não "faturou zero".
+  let valorFaturado = 0;
+  if (body.nfeId) {
+    const nota = await fiscalDb.getNfeById(body.nfeId).catch(() => null);
+    if (nota && String(nota.status || '').toUpperCase() === 'AUTORIZADO') {
+      valorFaturado = Number(nota.valorTotal || 0);
+    }
+  }
+
+  return {
+    itens,
+    empresa,
+    estabelecimento,
+    destinatario,
+    valorFaturado,
+    resumo: {
+      empresa: empresa ? (empresa.razaoSocial || empresa.cnpjRaiz) : '',
+      estabelecimento: estabelecimento ? (estabelecimento.razaoSocial || estabelecimento.cnpj) : '',
+      ufEmitente: estabelecimento ? estabelecimento.uf : '',
+      ufDestino: destinatario.uf,
+      contribuinte: destinatario.contribuinte,
+      motivo
+    }
+  };
 }
 
 function buildSalesDashboardSummary(data) {
@@ -4500,6 +4584,31 @@ const server = http.createServer(async (req, res) => {
       paymentMethods: (data.paymentMethods || []).filter((forma) => forma.status !== 'inativo'),
       carriers: getCarriersDirectory(data)
     });
+  }
+
+  // Tributos de um pedido — leitura, nunca gravação. Recebe o pedido COMO ESTÁ
+  // NA TELA (POST com o corpo, não GET por id) para a aba poder mostrar o
+  // imposto do que a pessoa acabou de digitar, antes de salvar. Uma prévia que
+  // só funcionasse depois de salvar não serviria para conferir antes.
+  if (pathname === '/api/sales/tributos' && req.method === 'POST') {
+    const data = loadData();
+    await syncCadastroData(data);
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    try {
+      const body = await readBody(req);
+      const contexto = await montarContextoFiscalDoPedido(body, data);
+      const resultado = await calcularTributos({
+        ...contexto,
+        tipoOperacao: body.tipoOperacao || 'VENDA',
+        data: body.date || new Date().toISOString().slice(0, 10)
+      }, { resolverRegraFiscal: fiscalDb.resolverRegraFiscal });
+      return sendJson(res, { tributos: resultado, contexto: contexto.resumo });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Não foi possível calcular os tributos.' }, error.status || 400);
+    }
   }
 
   if (pathname === '/api/sales/dashboard' && req.method === 'GET') {

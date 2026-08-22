@@ -2684,6 +2684,11 @@ async function loadModule(moduleName) {
         // Aba aberta. Não é campo do registro — é só onde o usuário estava
         // quando a tela foi redesenhada (ao adicionar um produto, por exemplo).
         let abaAtiva = 'dados';
+        // Apuração da aba Impostos. Vive aqui e não no `draft` porque é
+        // derivada do que está na tela AGORA: guardá-la entre visitas faria a
+        // aba mostrar o imposto de uma versão anterior do pedido.
+        let tributos = null;
+        let tributosCarregando = false;
         // Hora de agora só para registro novo — editar não pode carimbar a hora
         // por cima da que o pedido já tinha.
         const horaAgora = new Date().toTimeString().slice(0, 5);
@@ -2769,6 +2774,52 @@ async function loadModule(moduleName) {
           sellerCommissionPercent: Number(origem?.sellerCommissionPercent || 0),
           agentCommissionPercent: Number(origem?.agentCommissionPercent || 0)
         });
+
+        // Apura os tributos do que está na tela AGORA — antes de salvar,
+        // inclusive. Uma prévia que só funcionasse depois de salvar não
+        // serviria para conferir antes de faturar, que é para o que ela existe.
+        //
+        // Quem calcula é o servidor, com as regras fiscais cadastradas e a
+        // MESMA montagem da emissão. Repetir a conta aqui daria dois números
+        // para a mesma pergunta.
+        const carregarTributos = async () => {
+          if (tributosCarregando) return;
+          tributosCarregando = true;
+          renderForm();
+          try {
+            syncFormState();
+            const resposta = await api('/api/sales/tributos', {
+              method: 'POST',
+              body: JSON.stringify({
+                companyId: formState.companyId,
+                clientSupplierId: formState.clientSupplierId,
+                date: formState.date,
+                nfeId: (editRecord && editRecord.nfeId) || '',
+                items: items.map((item) => ({
+                  productId: item.productId,
+                  name: item.name,
+                  sku: item.sku,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice
+                }))
+              })
+            });
+            tributos = { ...(resposta.tributos || {}), contexto: resposta.contexto || null };
+          } catch (erro) {
+            // A falha vira pendência dentro da própria aba, e não um toast que
+            // some: quem abriu a aba quer ver o motivo ali, junto dos números.
+            tributos = {
+              falhou: true,
+              pendencias: [{ escopo: 'apuração', motivo: erro.message || 'Não foi possível calcular os tributos.' }],
+              naoCalculados: [],
+              porItem: [],
+              calculado: false
+            };
+          } finally {
+            tributosCarregando = false;
+            renderForm();
+          }
+        };
 
         // Monta o payload a partir do que está na tela agora. Usado tanto pelo
         // submit quanto pelas ações do menu — o PUT exige o registro inteiro,
@@ -3125,28 +3176,110 @@ async function loadModule(moduleName) {
           // fiscal nenhum — por isso zerados aqui, com a nota explicando.
           const faturado = SalesStatus.geraFinanceiro(formState.status);
           const zeros = (...rotulos) => rotulos.map((rotulo) => [rotulo, 0]);
+          // ABA IMPOSTOS — cada linha é [rótulo, valor, chave].
+          //
+          // A `chave` é o caminho do campo no retorno de calcularTributos, e
+          // serve para uma coisa só: saber se aquele zero significa "não há
+          // esse imposto" ou "este sistema ainda não apura". A tela mostra
+          // R$ 0,00 no primeiro caso e "—" no segundo. Mostrar os dois igual é
+          // o defeito clássico desta tela: alguém confere o pedido, vê ISS
+          // zerado e conclui que não há ISS a pagar.
+          //
+          // Antes daqui vinham zeros chumbados no código — todos do segundo
+          // tipo, e todos com cara do primeiro.
+          const t = tributos || null;
+          const ler = (caminho) => {
+            if (!t) return null;
+            return caminho.split('.').reduce((obj, parte) => (obj == null ? null : obj[parte]), t);
+          };
+          const naoApurado = (chave) => {
+            if (!chave) return false;
+            // Apuração que FALHOU não tem número nenhum para mostrar: exibir
+            // R$ 0,00 num campo que ninguém conseguiu calcular é justamente o
+            // erro que esta tela existe para não cometer.
+            if (t && t.falhou) return true;
+            // NENHUM item apurado: não existe número para mostrar em campo
+            // nenhum. O aviso vermelho explica, mas um R$ 0,00 ao lado dele
+            // continua sendo lido como "não há esse imposto" — e some da
+            // memória assim que a pessoa rola a tela.
+            if (t && (t.porItem || []).length === 0 && (t.pendencias || []).length) return true;
+            return Boolean(t && (t.naoCalculados || []).includes(chave));
+          };
+          const linha = (rotulo, chave) => [rotulo, ler(chave), chave];
+
           const GRUPOS_IMPOSTOS = [
             { titulo: 'Valores da Nota', tom: 'azul', linhas: [
-              ['Valor Total da Nota', totais.totalAmount],
-              ['Valor Faturado na Nota', faturado ? totais.totalAmount : 0]
+              // O valor total sai do cálculo dos itens quando ele roda; sem
+              // apuração, cai no total comercial da tela, que é o que a pessoa
+              // está vendo no rodapé.
+              // Sem chave quando cai no total da TELA: esse número é o total
+              // comercial que a pessoa está vendo no rodapé, não uma
+              // afirmação fiscal, e existe mesmo sem apuração.
+              ['Valor Total da Nota',
+                t && t.calculado ? t.valoresDaNota.valorTotal : totais.totalAmount,
+                t && t.calculado ? 'valoresDaNota.valorTotal' : null],
+              // Faturado é o que já virou nota AUTORIZADA. Zero aqui é "ainda
+              // não faturou", e não "faturou zero".
+              linha('Valor Faturado na Nota', 'valoresDaNota.valorFaturado')
             ] },
-            { titulo: 'ICMS', tom: 'vermelho', linhas: zeros(
-              'Base Calc. ICMS Destacado', 'Valor ICMS Destacado', 'Desconto Zona Franca',
-              'Valor do Diferencial da Alíquota', 'Base de Cálc. Subst. Tributária',
-              'Valor Subst. Tributária', 'Valor ICMS Desonerado') },
-            { titulo: 'FCP', tom: 'marrom', linhas: zeros(
-              'Base Calc. FCP', 'Valor FCP', 'Base de Cálc. FCP Subst. Tributária',
-              'Valor FCP Subst. Tributária', 'Base de Cálc. FCP ST Retido Anteriormente',
-              'Valor FCP ST Retido Anteriormente') },
-            { titulo: 'PIS', tom: 'verde', linhas: zeros(
-              'Base Calc.', 'Valor', 'Desconto Zona Franca',
-              'Base de Cálc. Subst. Tributária', 'Valor Subst. Tributária') },
-            { titulo: 'COFINS', tom: 'amarelo', linhas: zeros(
-              'Base Calc.', 'Valor', 'Base de Cálc. Subst. Tributária', 'Valor Subst. Tributária') },
-            { titulo: 'ISSQN', tom: 'ciano', linhas: zeros('Base', 'Valor', 'ISS Por Subst. Tributária') },
-            { titulo: 'Outros', tom: 'roxo', linhas: zeros(
-              'Valor IRRF', 'Valor CSLL Retido', 'Valor INSS Retido', 'Base de Cálc IPI', 'Valor IPI') },
-            { titulo: 'IBS/CBS', tom: 'azul', linhas: zeros('Base de Cálculo IBS/CBS', 'Valor IBS', 'Valor CBS') }
+            { titulo: 'ICMS', tom: 'vermelho', linhas: [
+              linha('Base Calc. ICMS Destacado', 'icms.baseCalculoDestacado'),
+              linha('Valor ICMS Destacado', 'icms.valorDestacado'),
+              linha('Desconto Zona Franca', 'icms.descontoZonaFranca'),
+              linha('Valor do Diferencial da Alíquota', 'icms.valorDiferencialAliquota'),
+              linha('Base de Cálc. Subst. Tributária', 'icms.baseSt'),
+              linha('Valor Subst. Tributária', 'icms.valorSt'),
+              linha('Valor ICMS Desonerado', 'icms.icmsDesonerado')
+            ] },
+            { titulo: 'FCP', tom: 'marrom', linhas: [
+              linha('Base Calc. FCP', 'fcp.base'),
+              linha('Valor FCP', 'fcp.valor'),
+              linha('Base de Cálc. FCP Subst. Tributária', 'fcp.baseSt'),
+              linha('Valor FCP Subst. Tributária', 'fcp.valorSt'),
+              linha('Base de Cálc. FCP ST Retido Anteriormente', 'fcp.baseStRetidoAnteriormente'),
+              linha('Valor FCP ST Retido Anteriormente', 'fcp.valorStRetidoAnteriormente'),
+              // O FCP do estado de DESTINO é outro campo da nota (vFCPUFDest) e
+              // é o único que este sistema apura. Somá-lo em "Valor FCP" faria
+              // dois impostos diferentes virarem um número só.
+              linha('Valor FCP do estado de destino', 'fcp.ufDestino.valor')
+            ] },
+            { titulo: 'PIS', tom: 'verde', linhas: [
+              linha('Base Calc.', 'pis.base'),
+              linha('Valor', 'pis.valor'),
+              linha('Desconto Zona Franca', 'pis.descontoZonaFranca'),
+              linha('Base de Cálc. Subst. Tributária', 'pis.baseSt'),
+              linha('Valor Subst. Tributária', 'pis.valorSt')
+            ] },
+            { titulo: 'COFINS', tom: 'amarelo', linhas: [
+              linha('Base Calc.', 'cofins.base'),
+              linha('Valor', 'cofins.valor'),
+              linha('Base de Cálc. Subst. Tributária', 'cofins.baseSt'),
+              linha('Valor Subst. Tributária', 'cofins.valorSt')
+            ] },
+            { titulo: 'ISSQN', tom: 'ciano', linhas: [
+              linha('Base', 'issqn.base'),
+              linha('Valor', 'issqn.valor'),
+              linha('ISS Por Subst. Tributária', 'issqn.issPorSt')
+            ] },
+            { titulo: 'Outros', tom: 'roxo', linhas: [
+              linha('Valor IRRF', 'outros.irrf'),
+              linha('Valor CSLL Retido', 'outros.csllRetido'),
+              linha('Valor INSS Retido', 'outros.inssRetido'),
+              linha('Base de Cálc IPI', 'outros.baseIpi'),
+              linha('Valor IPI', 'outros.valorIpi')
+            ] },
+            { titulo: 'IBS/CBS', tom: 'azul', linhas: [
+              linha('Base de Cálculo IBS/CBS', 'ibsCbs.baseCalculo'),
+              linha('Valor IBS', 'ibsCbs.valorIbs'),
+              linha('Valor CBS', 'ibsCbs.valorCbs')
+            ] },
+            // Imposto Seletivo: existe no modelo desde já, como pede a reforma,
+            // mesmo sem regulamentação aplicável — por isso todas as linhas
+            // aparecem como não apuradas, e não como zero.
+            { titulo: 'IS (Imposto Seletivo)', tom: 'roxo', linhas: [
+              linha('Base', 'is.base'),
+              linha('Valor', 'is.valor')
+            ] }
           ];
 
           // Em registro novo mostra quem está preenchendo — é quem vai constar
@@ -3720,22 +3853,90 @@ async function loadModule(moduleName) {
                 </div><!-- /aba Entrega -->
 
                 <div class="sales-tab-panel" data-aba="impostos" ${abaAtiva === 'impostos' ? '' : 'hidden'}>
-                  <p class="sales-totals-nota">
-                    Os impostos são apurados na emissão da NF-e, no módulo Fiscal — enquanto o
-                    ${title.toLowerCase()} não é faturado, os tributos ficam zerados. "Valores da Nota"
-                    já reflete o total desta venda.
-                  </p>
+                  ${tributosCarregando ? '<p class="sales-totals-nota">Apurando os tributos…</p>' : ''}
+
+                  ${!tributosCarregando && !tributos ? `
+                    <p class="sales-totals-nota">
+                      Os tributos são apurados pelas regras fiscais cadastradas, com a mesma
+                      montagem usada na emissão da NF-e. Abra esta aba para calcular.
+                    </p>` : ''}
+
+                  ${tributos && tributos.contexto ? `
+                    <!-- Emitente e destino ficam à vista porque MUDAM a conta:
+                         a UF decide interna x interestadual, e ser contribuinte
+                         decide se há DIFAL. Sem isso a pessoa vê um número sem
+                         saber sobre qual operação ele foi feito. -->
+                    <p class="sales-totals-nota">
+                      <strong>${escapeHtml(tributos.contexto.estabelecimento || '—')}</strong>
+                      (${escapeHtml(tributos.contexto.ufEmitente || '?')}) →
+                      ${escapeHtml(tributos.contexto.ufDestino || '?')},
+                      cliente ${tributos.contexto.contribuinte ? 'contribuinte' : 'não contribuinte'}.
+                      ${tributos.contexto.motivo ? `<br /><span class="muted">${escapeHtml(tributos.contexto.motivo)}</span>` : ''}
+                    </p>` : ''}
+
+                  ${tributos && tributos.pendencias && tributos.pendencias.length ? `
+                    <!-- Item que não pôde ser apurado NÃO entra nas somas:
+                         somar zero por ele faria o total parecer completo. Por
+                         isso o aviso é vermelho e diz quantos ficaram de fora. -->
+                    <div class="sales-itens-alerta">
+                      <strong>Apuração incompleta — ${tributos.pendencias.length} ${tributos.pendencias.length === 1 ? 'pendência' : 'pendências'}.</strong>
+                      Os totais abaixo somam só o que deu para apurar.
+                      <ul>
+                        ${tributos.pendencias.map((p) => `<li>${escapeHtml(p.escopo)}: ${escapeHtml(p.motivo)}</li>`).join('')}
+                      </ul>
+                    </div>` : ''}
+
                   <div class="sales-impostos-grid">
                     ${GRUPOS_IMPOSTOS.map((grupo) => `
                       <section class="sales-imposto-card">
                         <h4 class="sales-imposto-titulo sales-imposto-${grupo.tom}">${grupo.titulo}</h4>
                         <dl>
-                          ${grupo.linhas.map(([rotulo, valor]) => `
-                            <div><dt>${rotulo}</dt><dd>${salesFormatBRL(valor)}</dd></div>
-                          `).join('')}
+                          ${grupo.linhas.map(([rotulo, valor, chave]) => {
+                            // "—" quando o sistema não apura aquele campo;
+                            // R$ 0,00 quando apura e deu zero. São respostas
+                            // diferentes e não podem ter a mesma aparência.
+                            const vazio = naoApurado(chave);
+                            return `<div><dt>${rotulo}</dt><dd ${vazio ? 'class="muted" title="Este sistema ainda não apura este campo — não é o mesmo que zero."' : ''}>${vazio ? '—' : salesFormatBRL(valor || 0)}</dd></div>`;
+                          }).join('')}
                         </dl>
                       </section>
                     `).join('')}
+                  </div>
+
+                  ${tributos && tributos.porItem && tributos.porItem.length ? `
+                    <!-- Por item porque o total não explica nada sozinho:
+                         CFOP e situação tributária são o que se confere antes
+                         de faturar. -->
+                    <div class="table-scroll" style="margin-top: 14px;">
+                      <table class="table">
+                        <thead><tr>
+                          <th>#</th><th>Produto</th><th>NCM</th><th>CFOP</th><th>CST/CSOSN</th>
+                          <th>Valor</th><th>Base ICMS</th><th>Alíq.</th><th>ICMS</th>
+                          <th>PIS</th><th>COFINS</th><th>IPI</th><th>IBS</th><th>CBS</th>
+                        </tr></thead>
+                        <tbody>
+                          ${tributos.porItem.map((i) => `<tr>
+                            <td>${i.numero}</td>
+                            <td>${escapeHtml(i.descricao)}</td>
+                            <td>${escapeHtml(i.ncm)}</td>
+                            <td>${escapeHtml(i.cfop)}</td>
+                            <td>${escapeHtml(i.situacaoIcms)}</td>
+                            <td>${salesFormatBRL(i.valorBruto)}</td>
+                            <td>${salesFormatBRL(i.icmsBase)}</td>
+                            <td>${i.icmsAliquota}%</td>
+                            <td>${salesFormatBRL(i.icmsValor)}</td>
+                            <td>${salesFormatBRL(i.pisValor)}</td>
+                            <td>${salesFormatBRL(i.cofinsValor)}</td>
+                            <td>${salesFormatBRL(i.ipiValor)}</td>
+                            <td>${salesFormatBRL(i.ibsValor)}</td>
+                            <td>${salesFormatBRL(i.cbsValor)}</td>
+                          </tr>`).join('')}
+                        </tbody>
+                      </table>
+                    </div>` : ''}
+
+                  <div class="cadastro-filter-actions" style="margin-top:12px;">
+                    <button type="button" class="secondary" id="salesRecalcularTributosBtn" ${tributosCarregando ? 'disabled' : ''}>Recalcular</button>
                   </div>
                 </div><!-- /aba Impostos -->
 
@@ -4057,7 +4258,21 @@ async function loadModule(moduleName) {
           });
 
           content.querySelectorAll('.sales-tab').forEach((botao) => {
-            botao.addEventListener('click', () => abrirAba(botao.dataset.aba));
+            botao.addEventListener('click', () => {
+              abrirAba(botao.dataset.aba);
+              // Só apura ao ENTRAR na aba, e não a cada redesenho: a conta é
+              // uma ida ao servidor, e refazê-la a cada tecla digitada em
+              // outra aba seria uma chamada por caractere. Sem item não há o
+              // que apurar.
+              if (botao.dataset.aba === 'impostos' && !tributos && items.length) carregarTributos();
+            });
+          });
+
+          document.getElementById('salesRecalcularTributosBtn')?.addEventListener('click', () => {
+            // Recalcular joga fora o resultado anterior de propósito: quem
+            // clica está dizendo que o pedido mudou.
+            tributos = null;
+            carregarTributos();
           });
 
           // --- Aba Pagamentos: linhas de pagamento ------------------------------
