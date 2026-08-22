@@ -400,6 +400,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           ` : ''}
 
           ${ehComplemento() ? '' : `
+            <!-- Painel da aba "3. Itens". A ABERTURA dele havia sumido, e o
+                 estrago ia muito alem de uma aba sem conteudo: a tag de
+                 fechamento la embaixo ficava sem par e fechava o div.panel
+                 ANTES da hora. Efeito medido em 17/08/2026: os paineis
+                 "4. Pagamento" e "5. Observacoes" caiam para FORA do form, e
+                 o FormData nao enxergava mais nem a forma de pagamento nem as
+                 observacoes — a nota saia com o padrao sem ninguem pedir. E a
+                 tabela de itens ficava visivel em TODAS as abas. -->
+            <div class="cadastro-tab-panel" data-tab-panel="itens" hidden>
             <div class="table-scroll">
               <table class="table">
                 <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th title="Em branco usa a alíquota da regra fiscal">ICMS %</th><th title="Código do benefício fiscal (cBenef). Em branco usa o da regra fiscal.">cBenef</th><th>Total</th><th></th></tr></thead>
@@ -595,19 +604,66 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   }
 
   function attachHandlers() {
-    content.querySelectorAll('.cadastro-tab').forEach((tabBtn) => {
-      tabBtn.addEventListener('click', () => {
-        const target = tabBtn.dataset.tab;
-        content.querySelectorAll('.cadastro-tab').forEach((btn) => {
-          const isActive = btn === tabBtn;
-          btn.classList.toggle('active', isActive);
-          btn.setAttribute('aria-selected', String(isActive));
-        });
-        content.querySelectorAll('.cadastro-tab-panel').forEach((panel) => {
-          panel.hidden = panel.dataset.tabPanel !== target;
-        });
+    // Trocar de aba mexe so no `hidden`: sem redesenhar, o que ja foi digitado
+    // nas outras abas continua no lugar (e no FormData).
+    const abrirAba = (alvo) => {
+      content.querySelectorAll('.cadastro-tab').forEach((btn) => {
+        const ativa = btn.dataset.tab === alvo;
+        btn.classList.toggle('active', ativa);
+        btn.setAttribute('aria-selected', String(ativa));
       });
+      content.querySelectorAll('.cadastro-tab-panel').forEach((panel) => {
+        panel.hidden = panel.dataset.tabPanel !== alvo;
+      });
+    };
+
+    content.querySelectorAll('.cadastro-tab').forEach((tabBtn) => {
+      tabBtn.addEventListener('click', () => abrirAba(tabBtn.dataset.tab));
     });
+
+    // O BOTAO DE EMITIR MORRIA EM SILENCIO.
+    //
+    // Sete campos obrigatorios (nome, documento e o endereco do destinatario)
+    // vivem na aba 2, que nasce escondida. O navegador recusa o envio por causa
+    // deles, mas nao consegue mostrar a mensagem em cima de um campo invisivel:
+    // nao ha bolha, nao ha aviso, nao ha erro no console. Medido em 17/08/2026,
+    // com o emitente ja escolhido: clicar em "Emitir NF-e" nao produzia NADA.
+    //
+    // O evento `invalid` dispara para cada campo reprovado, na fase de captura,
+    // ANTES de o navegador escolher de qual reclamar — abrir a aba aqui devolve
+    // o campo a tela a tempo de a mensagem nativa aparecer sobre ele.
+    let jaAbriuAbaInvalida = false;
+    document.getElementById('nfeFocusForm')?.addEventListener('invalid', (evento) => {
+      // So o primeiro interessa: e dele que o navegador vai reclamar. Os demais
+      // do mesmo lote so trocariam a aba de novo, escondendo justamente o campo
+      // que esta prestes a receber a mensagem.
+      if (jaAbriuAbaInvalida) return;
+      jaAbriuAbaInvalida = true;
+      // O lote inteiro e sincrono; voltar ao laco de eventos rearma para a
+      // proxima tentativa de emitir.
+      setTimeout(() => { jaAbriuAbaInvalida = false; }, 0);
+      const painel = evento.target.closest('.cadastro-tab-panel');
+      if (painel && painel.hidden) abrirAba(painel.dataset.tabPanel);
+
+      // E AVISA, sempre. A bolha nativa nem sempre aparece: os campos da tabela
+      // de itens sao identificados por data-field e nao tem atributo name, e o
+      // Chrome desiste deles com "An invalid form control with name='' is not
+      // focusable" — no console, onde ninguem olha. Um toast dizendo a aba
+      // fecha o buraco, porque quem clicou em Emitir precisa saber por que a
+      // nota nao saiu.
+      const aba = painel
+        ? content.querySelector(`.cadastro-tab[data-tab="${painel.dataset.tabPanel}"] span`)?.textContent
+        : null;
+      showToast(aba
+        ? `Falta preencher em "${aba}" para emitir.`
+        : 'Há campos obrigatórios em branco.', 'error');
+      // Focar depois de a aba abrir: e o que da ao navegador a chance de
+      // desenhar a mensagem em cima do campo certo.
+      if (typeof evento.target.focus === 'function') {
+        setTimeout(() => { try { evento.target.focus(); } catch (_) { /* ignora */ } }, 0);
+      }
+    }, true);
+
 
     document.getElementById('nfeFocusEstabSelect')?.addEventListener('change', async (event) => {
       selectedEstabelecimentoId = event.target.value;
