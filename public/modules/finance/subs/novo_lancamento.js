@@ -30,6 +30,13 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   }
 
   let formType = editEntry ? String(editEntry.type).toUpperCase() : 'DESPESA';
+  // Vinculado a pedido/NF-e: dá para editar, mas só o que a origem não possui.
+  // Travar na tela é o que evita o beco sem saída — antes o formulário aceitava
+  // tudo e o servidor recusava depois de preenchido.
+  const vinculado = Boolean(editEntry && editEntry.vinculo);
+  const travado = (campo) => (vinculado && (editEntry.camposTravados || []).includes(campo)
+    ? 'readonly tabindex="-1" title="Vem do pedido/NF-e de origem e não pode ser alterado aqui."'
+    : '');
 
   function directoryOptions(filterText) {
     const term = (filterText || '').trim().toLowerCase();
@@ -62,6 +69,16 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
             <p class="muted">${editEntry ? `Editando ${escapeHtml(String(editEntry.id).slice(-8))}` : 'Registre uma receita, despesa ou transferência.'}</p>
           </div>
         </div>
+        ${vinculado ? `
+          <p class="prompt-aviso">
+            <strong>Lançamento gerado ${editEntry.vinculo === 'nfe' ? 'por uma NF-e' : 'por um pedido'}.</strong>
+            Valor, data, descrição e cliente vêm de lá e aparecem travados aqui —
+            ${editEntry.vinculo === 'nfe'
+              ? 'corrigi-los exige cancelar a nota e emitir outra.'
+              : 'para mudá-los, corrija o pedido de origem e o financeiro acompanha.'}
+            Vencimento, conta bancária, plano de contas, centro de custo, documento e
+            observação você ajusta normalmente por aqui.
+          </p>` : ''}
 
         <div class="finance-period-group" role="tablist" style="margin-bottom: 18px;">
           ${FINANCE_TYPE_TOGGLE.map((opt) => `<button type="button" class="finance-pill ${formType === opt.value ? 'active' : ''}" data-type="${opt.value}" ${editEntry ? 'disabled' : ''}>${opt.label}</button>`).join('')}
@@ -69,9 +86,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
 
         <form id="financeEntryForm" class="form-grid">
           <div class="row">
-            <label>Data<input type="date" name="date" required value="${editEntry ? editEntry.date : today}" /></label>
+            <label>Data<input type="date" name="date" required value="${editEntry ? editEntry.date : today}" ${travado('date')} /></label>
             <label>Vencimento<input type="date" name="dueDate" required value="${editEntry ? editEntry.dueDate : today}" /></label>
-            <label>Valor<input type="number" step="0.01" min="0.01" name="amount" required value="${editEntry ? editEntry.amountPrevisto : ''}" /></label>
+            <label>Valor<input type="number" step="0.01" min="0.01" name="amount" required value="${editEntry ? editEntry.amountPrevisto : ''}" ${travado('amount')} /></label>
           </div>
 
           ${isTransfer ? `
@@ -92,15 +109,15 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           ` : `
             <div class="row">
               <label>${isReceita ? 'Cliente' : 'Fornecedor'}
-                <input type="text" id="financePartySearch" placeholder="Buscar por nome ou código..." autocomplete="off" value="${editEntry && editEntry.clienteFornecedor ? escapeHtml(editEntry.clienteFornecedor) : ''}" />
+                <input type="text" id="financePartySearch" placeholder="Buscar por nome ou código..." autocomplete="off" value="${editEntry && editEntry.clienteFornecedor ? escapeHtml(editEntry.clienteFornecedor) : ''}" ${vinculado ? 'readonly tabindex="-1"' : ''} />
               </label>
               <label>&nbsp;
-                <select name="clientSupplierId" id="financePartySelect">
+                <select name="clientSupplierId" id="financePartySelect" ${vinculado ? 'disabled title="Vem do pedido/NF-e de origem."' : ''}>
                   <option value="">Nenhum (usar nome livre abaixo)</option>
                   ${directoryOptions('')}
                 </select>
               </label>
-              <label>Nome livre (se não cadastrado)<input name="clientSupplierName" value="${editEntry && !editEntry.clientSupplierId ? escapeHtml(editEntry.clienteFornecedor || '') : ''}" /></label>
+              <label>Nome livre (se não cadastrado)<input name="clientSupplierName" value="${editEntry && !editEntry.clientSupplierId ? escapeHtml(editEntry.clienteFornecedor || '') : ''}" ${travado('clientSupplierName')} /></label>
             </div>
             <div class="row">
               <label>Conta bancária
@@ -126,7 +143,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
 
           <div class="row">
             <label>Documento<input name="document" value="${editEntry ? escapeHtml(editEntry.document || '') : ''}" /></label>
-            <label>Descrição<input name="description" required value="${editEntry ? escapeHtml(editEntry.description || '') : ''}" /></label>
+            <label>Descrição<input name="description" required value="${editEntry ? escapeHtml(editEntry.description || '') : ''}" ${travado('description')} /></label>
           </div>
           <label>Observação<textarea name="note" rows="3">${editEntry ? escapeHtml(editEntry.note || '') : ''}</textarea></label>
 
@@ -272,15 +289,23 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       if (submitBtn?.disabled) return;
       if (submitBtn) submitBtn.disabled = true;
       const formData = new FormData(event.target);
-      const payload = {
-        type: formType,
-        date: formData.get('date'),
-        dueDate: formData.get('dueDate'),
-        amount: Number(formData.get('amount')),
-        description: formData.get('description'),
-        document: formData.get('document'),
-        note: formData.get('note')
-      };
+      const payload = vinculado
+        ? {
+          // Só o que o pedido/NF-e não possui. Reenviar valor e data iguais
+          // seria pedir para divergir por formato de data ou arredondamento.
+          dueDate: formData.get('dueDate'),
+          document: formData.get('document'),
+          note: formData.get('note')
+        }
+        : {
+          type: formType,
+          date: formData.get('date'),
+          dueDate: formData.get('dueDate'),
+          amount: Number(formData.get('amount')),
+          description: formData.get('description'),
+          document: formData.get('document'),
+          note: formData.get('note')
+        };
       if (formType === 'TRANSFERENCIA') {
         payload.bankAccountId = formData.get('sourceBankAccountId') || '';
         payload.targetBankAccountId = formData.get('targetBankAccountId') || '';
@@ -288,8 +313,10 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         payload.bankAccountId = formData.get('bankAccountId') || '';
         payload.category = formData.get('category') || '';
         payload.costCenter = formData.get('costCenter') || '';
-        payload.clientSupplierId = formData.get('clientSupplierId') || '';
-        payload.clientSupplierName = formData.get('clientSupplierName') || '';
+        if (!vinculado) {
+          payload.clientSupplierId = formData.get('clientSupplierId') || '';
+          payload.clientSupplierName = formData.get('clientSupplierName') || '';
+        }
       }
 
       try {

@@ -1555,6 +1555,16 @@ function serializeFinanceEntry(entry, data) {
     // sem esse fallback o valor realizado aparece como R$ 0,00 para um lançamento já "Pago/Recebido"
     amountRealizado: payments.length > 0 ? financeEntryPaidTotal(payments) : (isFinanceEntryRealized(entry) ? Number(entry.amount || 0) : 0),
     editable: !entry.referenceId && !entry.nfeId,
+    // Vinculado a um pedido ou a uma NF-e: NÃO significa mais "intocável".
+    // Valor, data, descrição e cliente pertencem à origem; vencimento, conta,
+    // plano de contas, centro de custo, documento e observação continuam sendo
+    // do Financeiro. A tela usa isto para travar só o que é da origem, em vez
+    // de deixar preencher tudo e recusar no fim — que era o beco sem saída
+    // relatado em 22/08/2026.
+    vinculo: entry.nfeId ? 'nfe' : (entry.referenceId ? 'pedido' : ''),
+    camposTravados: (entry.referenceId || entry.nfeId)
+      ? ['amount', 'date', 'description', 'clientSupplierId', 'clientSupplierName', 'type']
+      : [],
     status: financeEntryStatusLabel(entry),
     rawStatus: entry.status,
     createdByName: entry.createdByName || '',
@@ -6958,17 +6968,76 @@ const server = http.createServer(async (req, res) => {
       if (!entry) {
         return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
       }
-      if (entry.referenceId) {
-        return sendJson(res, { error: 'Lançamentos gerados automaticamente por vendas/compras não podem ser editados aqui.' }, 400);
-      }
-      if (entry.nfeId) {
-        return sendJson(res, { error: 'Lançamentos gerados por uma NF-e não podem ser editados diretamente. Cancele a NF-e se precisar corrigir os valores.' }, 400);
-      }
       if (entry.status !== 'pending') {
         return sendJson(res, { error: 'Só é possível editar lançamentos ainda pendentes (sem baixa registrada).' }, 400);
       }
 
       const body = await readBody(req);
+
+      // LANÇAMENTO VINCULADO a um pedido (referenceId) ou a uma NF-e (nfeId).
+      //
+      // Antes daqui saía um "não pode editar" seco, e o sistema se contradizia:
+      // ao FATURAR um pedido, o próprio app leva o usuário a esta tela para
+      // "ajustar forma de pagamento e vencimento" (ver public/app.js, no fluxo
+      // de mudança de status da venda). A pessoa preenchia tudo e o servidor
+      // recusava — um beco sem saída que o sistema mesmo criava. Relatado em
+      // 22/08/2026, num recebível do Pedido 1009.
+      //
+      // A saída não é liberar tudo. Valor, data, descrição e cliente PERTENCEM
+      // ao pedido: mudá-los aqui faria o Financeiro divergir da venda, e a
+      // conferência só acusaria isso muito depois. O que não pertence — quando
+      // vence, em que conta cai, em que plano de contas e centro de custo
+      // entra, documento e observação — é justamente o que faltava ajustar.
+      const vinculadoAoPedido = Boolean(entry.referenceId);
+      const vinculadoANfe = Boolean(entry.nfeId);
+      if (vinculadoAoPedido || vinculadoANfe) {
+        const mudou = (campo, comparar) => body[campo] !== undefined && comparar(body[campo]);
+        const texto = (v) => String(v == null ? '' : v).trim();
+        const protegidos = [
+          ['valor', mudou('amount', (v) => Number(v || 0) !== Number(entry.amount || 0))],
+          ['data', mudou('date', (v) => texto(v) !== texto(entry.date))],
+          ['descrição', mudou('description', (v) => texto(v) !== texto(entry.description))],
+          ['cliente', mudou('clientSupplierId', (v) => texto(v) !== texto(entry.clientSupplierId))
+            || mudou('clientSupplierName', (v) => texto(v) !== texto(entry.clientSupplierName))],
+          ['tipo', mudou('type', (v) => texto(v).toUpperCase() !== texto(entry.type).toUpperCase())]
+        ].filter(([, alterado]) => alterado).map(([nome]) => nome);
+
+        // Recusa em vez de ignorar em silêncio: aceitar o salvamento e manter o
+        // valor antigo é pior do que negar — a tela diria "salvo" e o número
+        // continuaria o outro.
+        if (protegidos.length) {
+          const onde = vinculadoANfe
+            ? 'Esses dados vêm da NF-e; para corrigi-los é preciso cancelar a nota e emitir outra.'
+            : 'Esses dados vêm do pedido de origem; corrija por lá e o financeiro acompanha.';
+          return sendJson(res, {
+            error: `Neste lançamento não dá para alterar: ${protegidos.join(', ')}. ${onde} `
+              + 'Vencimento, conta bancária, plano de contas, centro de custo, documento e observação continuam editáveis aqui.'
+          }, 400);
+        }
+
+        // Só o que o pedido/NF-e não possui.
+        if (body.dueDate !== undefined) entry.dueDate = body.dueDate;
+        if (body.document !== undefined) entry.document = body.document;
+        if (body.note !== undefined) entry.note = body.note;
+        if (body.category !== undefined) entry.category = body.category;
+        if (body.costCenter !== undefined) entry.costCenter = body.costCenter;
+        if (body.bankAccountId !== undefined) entry.bankAccountId = body.bankAccountId;
+        if (body.targetBankAccountId !== undefined) entry.targetBankAccountId = body.targetBankAccountId;
+        entry.status = recomputeFinanceEntryStatus(entry, data);
+        entry.updatedAt = new Date().toISOString();
+        // Mesmo caminho de persistência da edição livre, logo abaixo: registro
+        // inteiro no banco, auditoria e só então o arquivo local.
+        await db.updateFinancialEntry(entry.id, entry);
+        await addFinanceAuditLog(data, {
+          action: 'editarLancamentoVinculado',
+          entry,
+          byId: user.id,
+          byName: user.name,
+          details: { referenceId: entry.referenceId || '', nfeId: entry.nfeId || '' }
+        });
+        saveData(data);
+        return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
+      }
       if (body.description !== undefined) entry.description = String(body.description).trim();
       if (body.amount !== undefined) entry.amount = Number(body.amount || 0);
       if (body.date !== undefined) entry.date = body.date;

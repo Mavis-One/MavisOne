@@ -363,7 +363,7 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
         ` : ''}
 
         <div class="finance-modal-actions">
-          ${entry.editable && entry.rawStatus === 'pending' ? `<button type="button" class="secondary" id="financeModalEdit">Editar</button>` : ''}
+          ${entry.rawStatus === 'pending' ? `<button type="button" class="secondary" id="financeModalEdit">${entry.editable ? 'Editar' : 'Editar vencimento e classificação'}</button>` : ''}
           ${canEstorno ? `<button type="button" class="secondary" id="financeModalEstorno">Estornar última baixa</button>` : ''}
           ${canCancel ? `<button type="button" class="btn-danger" id="financeModalCancel">Cancelar lançamento</button>` : ''}
         </div>
