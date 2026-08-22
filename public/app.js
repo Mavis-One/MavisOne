@@ -356,6 +356,22 @@ function salesColunasVisiveis() {
   return SALES_COLUNAS.filter((col) => col.fixa || escolhidas.includes(col.chave));
 }
 
+// Tudo o que a sessão precisa aplicar quando um usuário entra — seja pelo
+// login, seja pelo F5 que restaura por /api/me. Existe como função porque os
+// dois caminhos tinham o bloco copiado, e o F5 ficou sem `state.preferences`:
+// a pessoa escolhia as colunas, recarregava, e a lista voltava ao padrão.
+// Divergência de cópia não avisa; some um campo de cada vez.
+function adotarUsuarioDaSessao(user) {
+  state.user = user;
+  state.preferences = (user && user.preferences) || {};
+  state.user.dashboardPins = normalizeDashboardPins([
+    ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
+    ...readStoredDashboardPins(state.user.id)
+  ]);
+  persistStoredDashboardPins(state.user.id, state.user.dashboardPins);
+  applyTheme(state.user.theme);
+}
+
 // Guarda em memória na hora e manda para o servidor depois: preferência é
 // conforto, e esperar a rede para redesenhar a tabela seria pagar caro por ela.
 async function salvarPreferencia(tela, valor) {
@@ -774,17 +790,7 @@ function renderAuth(error = '') {
       // derrubado uma vez e entrou de novo cairia em silêncio na segunda.
       sessaoEncerradaAvisada = false;
       agendarSaidaDaVirada(response.sessaoExpiraEm);
-      state.user = response.user;
-      // Preferencias de tela chegam junto do usuario. Sem isto a lista abriria
-      // no padrao a cada login, e a escolha de colunas so valeria enquanto a
-      // aba ficasse aberta.
-      state.preferences = (response.user && response.user.preferences) || {};
-      state.user.dashboardPins = normalizeDashboardPins([
-        ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
-        ...readStoredDashboardPins(state.user.id)
-      ]);
-      persistStoredDashboardPins(state.user.id, state.user.dashboardPins);
-      applyTheme(state.user.theme);
+      adotarUsuarioDaSessao(response.user);
       // A abertura começa ANTES de montar a tela e roda por cima: o dashboard
       // carrega atrás dela, então a animação ocupa um tempo que já existia.
       const abertura = animarEntrada();
@@ -6195,13 +6201,7 @@ async function loadModule(moduleName) {
     // Recarregar a página recria o timer da virada: ele vive na memória da
     // aba, então some a cada F5.
     agendarSaidaDaVirada(response.sessaoExpiraEm);
-    state.user = response.user;
-    state.user.dashboardPins = normalizeDashboardPins([
-      ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
-      ...readStoredDashboardPins(state.user.id)
-    ]);
-    persistStoredDashboardPins(state.user.id, state.user.dashboardPins);
-    applyTheme(state.user.theme);
+    adotarUsuarioDaSessao(response.user);
     restoreLastRoute();
     const moduleHistory = ensureModuleRouteHistory(state.activeModule);
     moduleHistory.currentRouteKey = getRouteKey(state.activeModule, state.activeSub);

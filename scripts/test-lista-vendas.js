@@ -91,9 +91,15 @@ check('a gravação preserva as outras telas', /async function updateUserPrefere
 // Coluna ausente (fase-ag nao rodada) nao pode derrubar login nem tela.
 check('coluna ausente degrada em vez de quebrar', /does not exist\|Could not find\|schema cache/.test(ler('lib/db/auth.js')));
 check('as preferências chegam junto do usuário', /preferences: user\.preferences && typeof user\.preferences === 'object'/.test(serverSrc));
-check('e a tela as guarda no login', /state\.preferences = \(response\.user && response\.user\.preferences\) \|\| \{\}/.test(appSrc));
 // Preferencia invalida (coluna renomeada) nao pode desenhar tabela sem colunas.
 check('preferência inválida cai no padrão', /const escolhidas = validas\.length \? validas : SALES_COLUNAS_PADRAO/.test(appSrc));
+
+// Login e F5 sao dois caminhos para a mesma coisa, e o bloco estava copiado
+// nos dois. So o login preenchia state.preferences: a pessoa escolhia coluna,
+// recarregava, e a lista voltava ao padrao. Uma funcao so, chamada pelos dois.
+const chamadas = (appSrc.match(/adotarUsuarioDaSessao\(response\.user\)/g) || []).length;
+check('login e F5 adotam o usuario pela mesma funcao', chamadas === 2, chamadas + ' chamada(s)');
+check('e e ela que preenche as preferencias', /function adotarUsuarioDaSessao[\s\S]{0,400}state\.preferences = \(user && user\.preferences\)/.test(appSrc));
 
 console.log('\n--- a migração da preferência existe ---');
 const fase = ler('supabase/migrations/fase-ag-preferencias-do-usuario.sql');
