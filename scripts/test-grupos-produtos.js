@@ -113,7 +113,10 @@ const dbSrc = semComentarios(ler('lib/db/vendas-compras.js'));
 // Sem isto, gravar um pedido antes da migração devolveria erro e o usuário
 // perderia o que acabou de digitar.
 check('a fase AH entra no fallback de coluna ausente', /nome: 'Fase AH', colunas: COLUNAS_FASE_AH/.test(dbSrc));
-check('e é a primeira a ser tirada (mais nova)', dbSrc.indexOf("'Fase AH'") < dbSrc.indexOf("'Fase P'"));
+// A ordem da lista é o último recurso: quando o erro DIZ a coluna, o fallback
+// tira a fase dona dela. A ordem só decide quando o nome não sai da mensagem.
+check('quem manda é a coluna citada, não a posição na lista',
+  /const alvo = \(coluna && FASES_OPCIONAIS\.find\(\(f\) => f\.colunas\.includes\(coluna\)/.test(dbSrc));
 check('a perda é explicada no log', /os itens continuam gravados, todos num grupo só/.test(ler('lib/db/vendas-compras.js')));
 
 console.log('\n--- a tela ---');
@@ -135,5 +138,50 @@ check('mover troca com o vizinho DO MESMO grupo', /filter\(\(x\) => x\.it\.group
 check('a linha recebe o índice da lista plana', /doGrupo\.map\(\(\{ item, index \}, posicao\)/.test(appBruto));
 check('o documento impresso mostra os grupos', /grupos\.length > 1[\s\S]{0,200}class="grp"/.test(appBruto));
 
-console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
-process.exit(falhas ? 1 : 0);
+console.log('\n--- coluna ausente derruba a fase CERTA ---');
+// Este bloco nasceu de um defeito real: `quotes` não tem `nfe_id` (a fase P foi
+// só para `orders`), então TODO salvamento de orçamento batia em erro de coluna
+// e o fallback descartava a primeira fase da lista junto — que passou a ser a
+// AH. O orçamento salvava, nada avisava, e os grupos não estavam lá ao reabrir.
+require('dotenv').config();
+const vendasDb = require('../lib/db/vendas-compras');
+const { colunaDoErro, withColunasNovasFallback, FASES_OPCIONAIS } = vendasDb;
+
+// As duas formas em que a mensagem chega (PostgREST e Postgres).
+check('lê a coluna do erro do PostgREST',
+  colunaDoErro({ message: "Could not find the 'nfe_id' column of 'quotes' in the schema cache" }) === 'nfe_id');
+check('e do erro do Postgres',
+  colunaDoErro({ message: 'column "product_groups" of relation "orders" does not exist' }) === 'product_groups');
+check('erro sem nome de coluna não inventa um', colunaDoErro({ message: 'timeout' }) === '');
+
+// Simula o Supabase recusando APENAS nfe_id, como acontece de verdade em quotes.
+(async () => {
+  const tentativas = [];
+  const executar = async (row) => {
+    tentativas.push(Object.keys(row));
+    if ('nfe_id' in row) {
+      return { error: { code: 'PGRST204', message: "Could not find the 'nfe_id' column of 'quotes' in the schema cache" } };
+    }
+    return { data: row, error: null };
+  };
+  const linha = { code: 1, nfe_id: 'x', product_groups: [{ id: 'g1' }], payment_info: {} };
+  const r = await withColunasNovasFallback(linha, executar, 'teste');
+  check('a gravação passa depois de tirar a fase certa', !r.error);
+  const final = tentativas[tentativas.length - 1];
+  check('  nfe_id saiu', !final.includes('nfe_id'), final.join(','));
+  // A garantia que faltava: o que NÃO foi citado no erro continua sendo gravado.
+  check('  product_groups FICOU', final.includes('product_groups'));
+  check('  payment_info FICOU', final.includes('payment_info'));
+  check('  e bastou uma repetição', tentativas.length === 2, `${tentativas.length} tentativas`);
+
+  // Fase P só existe em orders: mandá-la em quotes era o que provocava o erro.
+  const linhaPedido = vendasDb.buildOrderQuoteRow('order', { status: 'pedido', date: '2026-01-01' });
+  const linhaOrcamento = vendasDb.buildOrderQuoteRow('quote', { status: 'orcamento', date: '2026-01-01' });
+  check('o pedido leva nfe_id', 'nfe_id' in linhaPedido);
+  check('o orçamento NÃO leva nfe_id', !('nfe_id' in linhaOrcamento));
+  check('mas os dois levam product_groups',
+    'product_groups' in linhaPedido && 'product_groups' in linhaOrcamento);
+
+  console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
+  process.exit(falhas ? 1 : 0);
+})();
