@@ -53,10 +53,12 @@ check('nenhuma coluna oferece ordenação que o servidor ignora', semServidor.le
 
 console.log('\n--- o servidor ordena a lista INTEIRA, não a página ---');
 const rota = serverSrc.slice(serverSrc.indexOf("if (view === 'orders_quotes')"), serverSrc.indexOf("if (view === 'nfes')"));
-const posSerializa = rota.indexOf('filtered.map((record) => serializeSalesRecord');
+// A Busca Avancada (passo 4) empurrou a serializacao para ANTES do filtro:
+// numero da NF-e e transportadora so existem depois de serializar.
+const posSerializa = rota.indexOf('combined.map((record) => serializeSalesRecord');
 const posOrdena = rota.indexOf('ordenarSalesRecords(');
 const posFatia = rota.indexOf('.slice(start, start + limit)');
-check('serializa antes de ordenar', posOrdena > -1 && posSerializa > posOrdena, `ordena ${posOrdena}, serializa ${posSerializa}`);
+check('serializa antes de ordenar', posSerializa > -1 && posOrdena > posSerializa, `serializa ${posSerializa}, ordena ${posOrdena}`);
 // Fatiar antes de ordenar ordena só a página — o clássico "ordenei e mudou só
 // um pedaço da lista".
 check('e fatia DEPOIS de ordenar', posFatia > posOrdena, `fatia ${posFatia}`);

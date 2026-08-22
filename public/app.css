@@ -804,6 +804,31 @@ button.success:hover { background: var(--success-hover); }
   font-size: 0.88rem;
 }
 
+/* Busca Avancada: campos a esquerda, o bloco de datas a direita. A pergunta
+   "quando" e uma so -- Periodo, Data Inicial/Final e Filtrar Por trabalham
+   juntos, e separa-los dos campos de "quem/o que" e o que deixa isso obvio. */
+.sales-busca-avancada {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 16px;
+  align-items: start;
+}
+
+.sales-busca-datas {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.sales-busca-datas h4 { margin: 0; font-size: 0.9rem; }
+
+/* Campo travado por um atalho de periodo: mostra a data que o atalho quer
+   dizer hoje, e deixa claro que nao e para digitar ali. */
+.sales-busca-datas input:disabled { opacity: 0.75; cursor: not-allowed; }
 .cadastro-filter-actions {
   grid-column: 1 / -1;
   display: flex;
@@ -871,6 +896,9 @@ button.success:hover { background: var(--success-hover); }
 
 @media (max-width: 1024px) {
   .cadastro-filter-grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  /* Abaixo de 1024px a coluna de 260px espremeria os campos: o bloco de
+     datas passa a ser a ultima faixa, com a largura inteira. */
+  .sales-busca-avancada { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {

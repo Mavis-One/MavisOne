@@ -1389,43 +1389,104 @@ function serializeSalesRecord(record, data) {
   };
 }
 
-function filterSalesRecords(records, data, query) {
-  let result = records.slice();
+// As quatro datas do "Filtrar Por". Lista branca pelo mesmo motivo da
+// ordenação: campo vindo da query string sem lista é leitura livre do objeto.
+//
+// Todas devolvem AAAA-MM-DD. `updatedAt` vem com hora, e comparar
+// '2026-08-22T13:40:00Z' com '2026-08-22' deixaria de fora tudo o que foi
+// alterado no próprio dia final da busca — o registro some justamente no dia em
+// que a pessoa mexeu nele.
+const CAMPOS_DE_DATA = {
+  cadastro: (r) => String(r.date || '').slice(0, 10),
+  alteracao: (r) => String(r.updatedAt || '').slice(0, 10),
+  faturamento: (r) => String((r.paymentInfo && r.paymentInfo.nfeBillingDate) || '').slice(0, 10),
+  envio: (r) => String(r.dataEnvio || '').slice(0, 10)
+};
 
-  const search = String(query.get('search') || '').trim().toLowerCase();
+// Recebe registros JÁ SERIALIZADOS, não os crus. Antes recebia o cru e chamava
+// serializeSalesRecord de novo lá dentro, uma vez por linha, só para poder
+// comparar o nome do cliente. E mesmo assim os campos que a Busca Avançada
+// precisa — número da NF-e, transportadora, data de faturamento — só existem
+// depois de serializar. Serializar uma vez antes de filtrar resolve os dois.
+function filterSalesRecords(registros, query) {
+  let result = registros.slice();
+  const texto = (v) => String(v === null || v === undefined ? '' : v).trim().toLowerCase();
+  const contem = (valor, alvo) => texto(valor).includes(alvo);
+
+  // Texto = "contém", sem diferenciar maiúsculas: quem procura a OC do cliente
+  // digita o pedaço que lembra, não o código inteiro.
+  const filtroTexto = (param, ler) => {
+    const alvo = texto(query.get(param));
+    if (!alvo) return;
+    result = result.filter((r) => contem(ler(r), alvo));
+  };
+  // Seleção = igualdade: o valor vem de uma lista, e "contém" faria a empresa
+  // de id 'emp-1' casar com 'emp-12'.
+  const filtroExato = (param, ler) => {
+    const alvo = String(query.get(param) || '').trim();
+    if (!alvo) return;
+    result = result.filter((r) => String(ler(r) || '') === alvo);
+  };
+
+  const search = texto(query.get('search'));
   if (search) {
-    result = result.filter((record) => {
-      const serialized = serializeSalesRecord(record, data);
-      return String(serialized.code).toLowerCase().includes(search)
-        || serialized.customer.toLowerCase().includes(search)
-        || String(record.id).toLowerCase().includes(search);
-    });
+    result = result.filter((r) => contem(r.code, search) || contem(r.customer, search) || contem(r.id, search));
   }
 
-  // Compara normalizado dos dois lados: o filtro manda o valor do catálogo e o
-  // banco ainda pode ter o legado ('faturado' casa com 'pedido-faturado').
+  // O status do registro já sai normalizado do serializer; o do filtro vem do
+  // catálogo. Normalizar o do filtro também faz o legado casar ('faturado'
+  // encontra 'pedido-faturado').
   const status = query.get('status');
   if (status) {
     const alvo = salesStatus.normalizar(status);
-    result = result.filter((record) => salesStatus.normalizar(record.status, record.type) === alvo);
+    result = result.filter((r) => r.status === alvo);
   }
 
-  const type = query.get('type');
-  if (type) result = result.filter((record) => record.type === type);
+  filtroExato('type', (r) => r.type);
+  filtroExato('companyId', (r) => r.companyId);
+  filtroExato('sellerId', (r) => r.sellerId);
+  filtroExato('clientSupplierId', (r) => r.clientSupplierId);
+  filtroExato('carrierId', (r) => r.delivery && r.delivery.carrierId);
+  filtroExato('category', (r) => r.category);
+  filtroExato('saleOrigin', (r) => r.saleOrigin);
 
-  const companyId = query.get('companyId');
-  if (companyId) result = result.filter((record) => record.companyId === companyId);
+  // Uma caixa só para NF-e, NFC-e e NFS-e, como pede o briefing: quem procura
+  // por um número de nota não quer antes descobrir de qual das três ele é.
+  // Junta o número da nota emitida (vínculo fiscal) com os digitados na aba
+  // Pagamentos, que é onde moram as notas lançadas à mão.
+  filtroTexto('nfeNumero', (r) => [
+    r.nfeNumero,
+    r.paymentInfo && r.paymentInfo.nfeNumber,
+    r.paymentInfo && r.paymentInfo.nfseNumber
+  ].filter(Boolean).join(' '));
+  filtroTexto('customerPoCode', (r) => r.customerPoCode);
+  filtroTexto('clientContact', (r) => r.clientContact);
+  filtroTexto('clientStatus', (r) => r.clientStatus);
 
-  const sellerId = query.get('sellerId');
-  if (sellerId) result = result.filter((record) => record.sellerId === sellerId);
+  // Faixa de valor. Campo vazio não filtra; "De" maior que "Até" não se
+  // conserta sozinho — devolve lista vazia, que é a resposta honesta ao que foi
+  // pedido. Trocar os dois em silêncio faria a tela responder outra pergunta.
+  const numero = (v) => {
+    const bruto = String(v === null || v === undefined ? '' : v).trim().replace(',', '.');
+    if (!bruto) return null;
+    const n = Number(bruto);
+    return Number.isFinite(n) ? n : null;
+  };
+  const valorDe = numero(query.get('valorDe'));
+  const valorAte = numero(query.get('valorAte'));
+  if (valorDe !== null) result = result.filter((r) => Number(r.amount || 0) >= valorDe);
+  if (valorAte !== null) result = result.filter((r) => Number(r.amount || 0) <= valorAte);
 
-  const clientSupplierId = query.get('clientSupplierId');
-  if (clientSupplierId) result = result.filter((record) => record.clientSupplierId === clientSupplierId);
-
+  // "Filtrar Por" escolhe QUAL data o período compara. Sem isso, procurar o que
+  // foi enviado na semana passada devolvia o que foi CADASTRADO na semana
+  // passada — parecido o bastante para ninguém desconfiar do resultado.
+  const lerData = CAMPOS_DE_DATA[query.get('dateField')] || CAMPOS_DE_DATA.cadastro;
   const dateFrom = query.get('dateFrom');
   const dateTo = query.get('dateTo');
-  if (dateFrom) result = result.filter((record) => record.date >= dateFrom);
-  if (dateTo) result = result.filter((record) => record.date <= dateTo);
+  // Registro sem a data escolhida fica de fora: pedido que nunca foi enviado
+  // não pertence a "enviados em agosto", em nenhuma das pontas do intervalo.
+  if (dateFrom) result = result.filter((r) => { const d = lerData(r); return d && d >= dateFrom; });
+  if (dateTo) result = result.filter((r) => { const d = lerData(r); return d && d <= dateTo; });
 
   return result;
 }
@@ -4445,13 +4506,19 @@ const server = http.createServer(async (req, res) => {
     const view = url.searchParams.get('view') || 'orders_quotes';
     if (view === 'orders_quotes') {
       const combined = [...data.orders, ...data.quotes];
-      const filtered = filterSalesRecords(combined, data, url.searchParams);
+      // SERIALIZA -> FILTRA -> ORDENA -> FATIA, nesta ordem.
+      //
+      // Serializar primeiro porque a Busca Avançada filtra por campos que só
+      // existem depois: o número da NF-e (o registro guarda o id), a
+      // transportadora e a data de faturamento (que moram dentro de grupos).
+      // Ordenar antes de serializar poria empresa e vendedor em ordem de id, e
+      // fatiar antes de ordenar ordenaria só a página — o clássico "ordenei e
+      // mudou só um pedaço da lista".
+      const serializados = combined.map((record) => serializeSalesRecord(record, data));
+      const filtered = filterSalesRecords(serializados, url.searchParams);
       const { page, limit } = parsePageParams(url.searchParams, 15);
-      // SERIALIZA -> ORDENA -> FATIA, nesta ordem. Ordenar antes de serializar
-      // poria empresa e vendedor em ordem de id; fatiar antes de ordenar
-      // ordenaria só a página, que é o clássico "ordenei e mudou só um pedaço".
       const ordenados = ordenarSalesRecords(
-        filtered.map((record) => serializeSalesRecord(record, data)),
+        filtered,
         url.searchParams.get('sort') || '',
         url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
       );
@@ -4470,7 +4537,13 @@ const server = http.createServer(async (req, res) => {
           companies: data.companies,
           sellers: getSellersDirectory(data),
           deposits: data.deposits,
-          directory: getCadastroDirectory(data)
+          directory: getCadastroDirectory(data),
+          // Transportadora e Categoria viram select na Busca Avançada, e as
+          // duas listas vêm do Cadastro. Digitadas à mão virariam "Revenda",
+          // "revenda" e "Revensa" como se fossem coisas diferentes, e aí
+          // nenhum filtro por categoria fecha.
+          carriers: getCarriersDirectory(data),
+          productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo')
         }
       });
     }

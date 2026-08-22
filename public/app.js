@@ -342,6 +342,78 @@ const SALES_COLUNAS = [
 const SALES_COLUNAS_PADRAO = ['code', 'type', 'date', 'customer', 'companyName', 'sellerName', 'amount', 'status'];
 const SALES_POR_PAGINA = [15, 30, 50, 100];
 
+// BUSCA AVANÇADA — um catálogo só de filtros, pelo mesmo motivo do catálogo de
+// colunas: o estado inicial, a leitura da URL e a escrita na URL liam três
+// listas separadas, e bastava esquecer uma para o filtro funcionar na tela e
+// sumir no F5.
+// A mesma lista serve ao cadastro (o campo Origem da Venda) e ao filtro. Em
+// duas cópias, filtrar por "Balcão" deixaria de achar as vendas de balcão no
+// dia em que uma das listas mudasse.
+const ORIGENS_VENDA = ['Venda Direta', 'Televendas', 'E-commerce', 'Marketplace', 'Representante', 'Balcão'];
+
+const SALES_FILTROS = [
+  'search', 'type', 'status', 'companyId', 'sellerId', 'clientSupplierId',
+  'nfeNumero', 'customerPoCode', 'carrierId', 'clientStatus', 'category',
+  'saleOrigin', 'clientContact', 'valorDe', 'valorAte',
+  'periodo', 'dateField', 'dateFrom', 'dateTo'
+];
+const salesFiltrosVazios = () => {
+  const vazio = {};
+  SALES_FILTROS.forEach((k) => { vazio[k] = ''; });
+  return vazio;
+};
+
+// "Filtrar Por": qual data o período compara. Os nomes têm de bater com o
+// CAMPOS_DE_DATA do servidor — é ele quem filtra de verdade.
+const SALES_CAMPOS_DE_DATA = [
+  { chave: 'cadastro', rotulo: 'Data Cadastro' },
+  { chave: 'alteracao', rotulo: 'Data de Alteração' },
+  { chave: 'faturamento', rotulo: 'Data de Faturamento' },
+  { chave: 'envio', rotulo: 'Data de Envio' }
+];
+
+const SALES_PERIODOS = [
+  { chave: 'hoje', rotulo: 'Hoje' },
+  { chave: '7dias', rotulo: 'Últimos 7 dias' },
+  { chave: '30dias', rotulo: 'Últimos 30 dias' },
+  { chave: 'mes', rotulo: 'Este Mês' },
+  { chave: 'mespassado', rotulo: 'Mês Passado' },
+  { chave: 'personalizado', rotulo: 'Personalizado' }
+];
+
+// Os atalhos de período vão para a URL pelo NOME ("hoje", "7dias"), não pelas
+// datas que eles significam agora. Um link com "hoje" mandado hoje e aberto
+// amanhã deve mostrar o dia de quem abre — é o que "hoje" quer dizer. Só
+// "Personalizado" fixa datas, porque aí as datas SÃO a escolha.
+//
+// As datas são montadas com getFullYear/getMonth/getDate, e não com
+// toISOString(): no Brasil (UTC-3) toISOString() depois das 21h já devolve o
+// dia seguinte, e "Hoje" passaria a mostrar amanhã ao anoitecer.
+function salesPeriodoEmDatas(periodo) {
+  if (!periodo || periodo === 'personalizado') return null;
+  const hoje = new Date();
+  const iso = (d) => d.getFullYear() + '-'
+    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0');
+  // "Últimos 7 dias" conta o dia de hoje: 6 dias para trás + hoje = 7.
+  const diasAtras = (n) => { const d = new Date(hoje); d.setDate(d.getDate() - n); return d; };
+  if (periodo === 'hoje') return { dateFrom: iso(hoje), dateTo: iso(hoje) };
+  if (periodo === '7dias') return { dateFrom: iso(diasAtras(6)), dateTo: iso(hoje) };
+  if (periodo === '30dias') return { dateFrom: iso(diasAtras(29)), dateTo: iso(hoje) };
+  if (periodo === 'mes') {
+    return { dateFrom: iso(new Date(hoje.getFullYear(), hoje.getMonth(), 1)), dateTo: iso(hoje) };
+  }
+  if (periodo === 'mespassado') {
+    // Dia 0 do mês atual = último dia do mês passado. O próprio Date resolve
+    // fevereiro e ano bissexto sem tabela de dias.
+    return {
+      dateFrom: iso(new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)),
+      dateTo: iso(new Date(hoje.getFullYear(), hoje.getMonth(), 0))
+    };
+  }
+  return null;
+}
+
 function salesColunasVisiveis() {
   const salvas = state.preferences && state.preferences.sales_lista
     ? state.preferences.sales_lista.colunas
@@ -412,12 +484,9 @@ function salesLerUrl() {
   const pegar = (k) => p.get(k) || '';
   const limite = Number(pegar('limit'));
   return {
-    filtros: {
-      search: pegar('search'), type: pegar('type'), status: pegar('status'),
-      companyId: pegar('companyId'), sellerId: pegar('sellerId'),
-      clientSupplierId: pegar('clientSupplierId'),
-      dateFrom: pegar('dateFrom'), dateTo: pegar('dateTo')
-    },
+    // Do catálogo, não de uma lista escrita à mão aqui: filtro novo que
+    // aparecesse só na tela funcionaria até o primeiro F5.
+    filtros: SALES_FILTROS.reduce((acc, k) => { acc[k] = pegar(k); return acc; }, {}),
     page: Number(pegar('page')) || 1,
     limit: SALES_POR_PAGINA.includes(limite) ? limite : 15,
     sort: pegar('sort'),
@@ -1982,7 +2051,7 @@ async function loadModule(moduleName) {
             .some((k) => k !== 'search' && daUrl.filtros[k]);
           if (temFiltroAlemDaBusca) draft.showOrdersFilters = true;
         }
-        const filters = draft.ordersFilters || (draft.ordersFilters = { search: '', type: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
+        const filters = draft.ordersFilters || (draft.ordersFilters = salesFiltrosVazios());
         const showFilters = Boolean(draft.showOrdersFilters);
         const page = draft.ordersPage || 1;
         const limit = SALES_POR_PAGINA.includes(draft.ordersLimit) ? draft.ordersLimit : 15;
@@ -1991,15 +2060,27 @@ async function loadModule(moduleName) {
         const colunas = salesColunasVisiveis();
         const mostrandoSeletor = Boolean(draft.showOrdersColunas);
 
+        // O atalho de período vira datas AQUI, na hora de perguntar ao
+        // servidor — e não na URL, que guarda o nome do atalho. Assim um link
+        // com "Hoje" aberto amanhã mostra o dia de quem abre.
+        const periodoEmDatas = salesPeriodoEmDatas(filters.periodo);
+        const filtrosDaConsulta = Object.assign({}, filters, periodoEmDatas || {});
+
         const params = new URLSearchParams({ view: 'orders_quotes', page: String(page), limit: String(limit) });
-        Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+        Object.entries(filtrosDaConsulta).forEach(([key, value]) => {
+          // `periodo` é vocabulário da tela: o servidor só entende datas, e
+          // mandar o nome do atalho seria pedir para ele adivinhar o fuso de
+          // quem está olhando.
+          if (key === 'periodo') return;
+          if (value) params.set(key, value);
+        });
         if (sort) { params.set('sort', sort); params.set('dir', dir); }
         salesEscreverUrl(filters, { page, limit, sort, dir });
 
         const data = await api(`/api/sales/records?${params.toString()}`);
         const records = data.records || [];
         const totalPages = Math.max(1, Math.ceil((data.total || 0) / limit));
-        const meta = data.meta || { companies: [], sellers: [], deposits: [], directory: [] };
+        const meta = data.meta || { companies: [], sellers: [], deposits: [], directory: [], carriers: [], productCategories: [] };
 
         content.innerHTML = `
           <div class="finance-stat-cards">
@@ -2046,59 +2127,176 @@ async function loadModule(moduleName) {
 
           ${showFilters ? `
             <form id="salesFilterForm" class="cadastro-filter-panel">
-              <div class="cadastro-filter-grid-5">
-                <!-- Tipo e Status são filtros distintos de propósito: o status
-                     já implica o tipo, mas "todos os pedidos, em qualquer
-                     etapa" é a pergunta mais comum da lista. -->
-                <label class="cadastro-field">
-                  <span>Tipo</span>
-                  <select name="type">
-                    <option value="">Todos</option>
-                    <option value="order" ${filters.type === 'order' ? 'selected' : ''}>Pedido</option>
-                    <option value="quote" ${filters.type === 'quote' ? 'selected' : ''}>Orçamento</option>
-                  </select>
-                </label>
-                <label class="cadastro-field">
-                  <span>Status</span>
-                  <select name="status">
-                    <option value="">Todos</option>
-                    <!-- Aqui o catálogo inteiro é selecionável: filtrar por um
-                         status que o sistema atribui é justamente o uso deles. -->
-                    ${SalesStatus.CATALOGO.map((item) => `<option value="${item.value}" ${filters.status === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
-                  </select>
-                </label>
-                <label class="cadastro-field">
-                  <span>Empresa</span>
-                  <select name="companyId">
-                    <option value="">Todas</option>
-                    ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.companyId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-                  </select>
-                </label>
-                <label class="cadastro-field">
-                  <span>Vendedor</span>
-                  <select name="sellerId">
-                    <option value="">Todos</option>
-                    ${meta.sellers.map((s) => `<option value="${escapeHtml(s.id)}" ${filters.sellerId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
-                  </select>
-                </label>
-                <label class="cadastro-field">
-                  <span>Cliente/Fornecedor</span>
-                  <select name="clientSupplierId">
-                    <option value="">Todos</option>
-                    ${meta.directory.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.clientSupplierId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-                  </select>
-                </label>
-                <label class="cadastro-field">
-                  <span>Data inicial</span>
-                  <input type="date" name="dateFrom" value="${escapeHtml(filters.dateFrom)}" />
-                </label>
-                <label class="cadastro-field">
-                  <span>Data final</span>
-                  <input type="date" name="dateTo" value="${escapeHtml(filters.dateTo)}" />
-                </label>
+              <div class="sales-busca-avancada">
+                <div>
+                  <div class="cadastro-filter-grid-5">
+                    <!-- Tipo e Status são filtros distintos de propósito: o
+                         status já implica o tipo, mas "todos os pedidos, em
+                         qualquer etapa" é a pergunta mais comum da lista. -->
+                    <label class="cadastro-field">
+                      <span>Tipo</span>
+                      <select name="type">
+                        <option value="">Todos</option>
+                        <option value="order" ${filters.type === 'order' ? 'selected' : ''}>Pedido</option>
+                        <option value="quote" ${filters.type === 'quote' ? 'selected' : ''}>Orçamento</option>
+                      </select>
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Status do Sistema</span>
+                      <select name="status">
+                        <option value="">Todos</option>
+                        <!-- Aqui o catálogo inteiro é selecionável: filtrar por
+                             um status que o sistema atribui é justamente o uso
+                             deles. -->
+                        ${SalesStatus.CATALOGO.map((item) => `<option value="${item.value}" ${filters.status === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Cliente/Fornecedor</span>
+                      <select name="clientSupplierId">
+                        <option value="">Todos</option>
+                        ${meta.directory.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.clientSupplierId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Empresa</span>
+                      <select name="companyId">
+                        <option value="">Todas</option>
+                        ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.companyId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Vendedor</span>
+                      <select name="sellerId">
+                        <option value="">Todos</option>
+                        ${meta.sellers.map((s) => `<option value="${escapeHtml(s.id)}" ${filters.sellerId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <!-- Uma caixa só para as três notas: quem procura por um
+                         número não quer antes descobrir se ele é de NF-e,
+                         NFC-e ou NFS-e. -->
+                    <label class="cadastro-field">
+                      <span>Nº da NF-e / NFC-e / NFS-e</span>
+                      <input name="nfeNumero" value="${escapeHtml(filters.nfeNumero)}" placeholder="Número da nota" />
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Ordem de Compra do Cliente</span>
+                      <input name="customerPoCode" value="${escapeHtml(filters.customerPoCode)}" placeholder="OC do cliente" />
+                    </label>
+                    <label class="cadastro-field" ${(meta.carriers || []).length ? '' : 'title="Nenhum cadastro está marcado como Transportadora."'}>
+                      <span>Transportadora${(meta.carriers || []).length ? '' : ' <span class="muted">(nenhuma cadastrada)</span>'}</span>
+                      <select name="carrierId" ${(meta.carriers || []).length ? '' : 'disabled'}>
+                        <option value="">Todas</option>
+                        ${(meta.carriers || []).map((t) => `<option value="${escapeHtml(t.id)}" ${filters.carrierId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="cadastro-field" ${(meta.productCategories || []).length ? '' : 'title="Nenhuma categoria de produto cadastrada no Estoque."'}>
+                      <span>Categoria${(meta.productCategories || []).length ? '' : ' <span class="muted">(nenhuma cadastrada)</span>'}</span>
+                      <select name="category" ${(meta.productCategories || []).length ? '' : 'disabled'}>
+                        <option value="">Todas</option>
+                        ${(meta.productCategories || []).map((c) => `<option value="${escapeHtml(c.name)}" ${filters.category === c.name ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Origem da Venda</span>
+                      <select name="saleOrigin">
+                        <option value="">Todas</option>
+                        ${ORIGENS_VENDA.map((o) => `<option value="${escapeHtml(o)}" ${filters.saleOrigin === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <!-- "Status" (do cliente) é texto livre no cadastro, então
+                         aqui também é: um select inventaria uma lista que o
+                         cadastro não usa. -->
+                    <label class="cadastro-field">
+                      <span>Status do Cliente</span>
+                      <input name="clientStatus" value="${escapeHtml(filters.clientStatus)}" placeholder="Parte do texto" />
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Contato do cliente</span>
+                      <input name="clientContact" value="${escapeHtml(filters.clientContact)}" placeholder="Nome do contato" />
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Valor De (R$)</span>
+                      <input name="valorDe" type="number" step="0.01" min="0" value="${escapeHtml(filters.valorDe)}" placeholder="0,00" />
+                    </label>
+                    <label class="cadastro-field">
+                      <span>Valor Até (R$)</span>
+                      <input name="valorAte" type="number" step="0.01" min="0" value="${escapeHtml(filters.valorAte)}" placeholder="0,00" />
+                    </label>
+                    <!-- Atributos ainda não existem no cadastro do pedido.
+                         Campo habilitado sobre dado que ninguém consegue
+                         preencher devolveria "nenhum resultado" para toda
+                         busca, e a lista pareceria vazia por outro motivo. -->
+                    <label class="cadastro-field" title="Os atributos do pedido entram no cadastro; até lá não há o que filtrar.">
+                      <span>Atributo <span class="muted">(em breve)</span></span>
+                      <input disabled placeholder="Depende dos atributos no cadastro" />
+                    </label>
+                    <label class="cadastro-field" title="Os atributos do pedido entram no cadastro; até lá não há o que filtrar.">
+                      <span>Valor do Atributo <span class="muted">(em breve)</span></span>
+                      <input disabled placeholder="Depende dos atributos no cadastro" />
+                    </label>
+                  </div>
+
+                  <!-- Os quatro marcadores dependem de registro que o sistema
+                       ainda não faz: ninguém anota quando um pedido foi
+                       impresso, nem se veio por API, e ordem de produção ainda
+                       não se liga ao pedido. Ficam à vista e desligados, com o
+                       motivo, em vez de filtrar sempre por "não". -->
+                  <div class="cadastro-filter-toggle-list" style="margin-top:12px;">
+                    ${[
+                      ['Impresso', 'Ninguém registra ainda quando o pedido é impresso.'],
+                      ['Impresso Danfe', 'A impressão da DANFE não fica registrada no pedido.'],
+                      ['Via API', 'Não há marcação de origem por API nos pedidos.'],
+                      ['Ordem de Produção', 'As ordens de produção ainda não se ligam ao pedido.']
+                    ].map(([rotulo, motivo]) => `
+                      <label class="muted" title="${escapeHtml(motivo)}">
+                        <input type="checkbox" disabled /> ${escapeHtml(rotulo)} <span class="muted">(em breve)</span>
+                      </label>`).join('')}
+                  </div>
+                </div>
+
+                <!-- Bloco de datas à direita, como no sistema de referência: a
+                     pergunta "quando" é uma só, e separá-la dos campos de
+                     "quem/o quê" deixa claro que Período, Data Inicial/Final e
+                     Filtrar Por trabalham juntos. -->
+                <aside class="sales-busca-datas">
+                  <h4>Filtros por Datas</h4>
+                  <label class="cadastro-field">
+                    <span>Por Período</span>
+                    <select name="periodo" id="salesPeriodo">
+                      <option value="">Qualquer data</option>
+                      ${SALES_PERIODOS.map((p) => `<option value="${p.chave}" ${filters.periodo === p.chave ? 'selected' : ''}>${escapeHtml(p.rotulo)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <!-- Com um atalho escolhido, as datas viram resultado, não
+                       entrada: aparecem preenchidas e travadas para mostrar
+                       QUE intervalo o atalho quer dizer hoje. -->
+                  <label class="cadastro-field">
+                    <span>Data Inicial</span>
+                    <input type="date" name="dateFrom"
+                      value="${escapeHtml(periodoEmDatas ? periodoEmDatas.dateFrom : filters.dateFrom)}"
+                      ${periodoEmDatas ? 'disabled' : ''} />
+                  </label>
+                  <label class="cadastro-field">
+                    <span>Data Final</span>
+                    <input type="date" name="dateTo"
+                      value="${escapeHtml(periodoEmDatas ? periodoEmDatas.dateTo : filters.dateTo)}"
+                      ${periodoEmDatas ? 'disabled' : ''} />
+                  </label>
+                  <!-- Sem isto, procurar o que foi ENVIADO na semana passada
+                       devolvia o que foi CADASTRADO na semana passada —
+                       parecido o bastante para ninguém desconfiar. -->
+                  <label class="cadastro-field">
+                    <span>Filtrar Por</span>
+                    <select name="dateField">
+                      ${SALES_CAMPOS_DE_DATA.map((c) => `<option value="${c.chave}" ${(filters.dateField || 'cadastro') === c.chave ? 'selected' : ''}>${escapeHtml(c.rotulo)}</option>`).join('')}
+                    </select>
+                  </label>
+                </aside>
               </div>
+
               <div class="cadastro-filter-actions">
-                <button type="submit">Aplicar filtros</button>
+                <button type="submit">Buscar</button>
                 <button type="button" class="secondary" id="salesFilterClearBtn">Limpar filtros</button>
               </div>
             </form>
@@ -2166,18 +2364,28 @@ async function loadModule(moduleName) {
         document.getElementById('salesFilterForm')?.addEventListener('submit', (event) => {
           event.preventDefault();
           const formData = new FormData(event.target);
-          filters.type = formData.get('type') || '';
-          filters.status = formData.get('status') || '';
-          filters.companyId = formData.get('companyId') || '';
-          filters.sellerId = formData.get('sellerId') || '';
-          filters.clientSupplierId = formData.get('clientSupplierId') || '';
-          filters.dateFrom = formData.get('dateFrom') || '';
-          filters.dateTo = formData.get('dateTo') || '';
+          // Pelo catálogo, e não campo a campo: era assim que um filtro novo
+          // aparecia na tela, era preenchido e nunca chegava à busca.
+          // `formData.has` respeita quem não está no formulário (a busca
+          // rápida) e quem está desabilitado (as datas sob um atalho de
+          // período — desabilitado não entra no FormData, e é o que queremos:
+          // manda o atalho, não as datas que ele calculou).
+          SALES_FILTROS.forEach((chave) => {
+            if (chave === 'search') return;
+            if (formData.has(chave)) filters[chave] = formData.get(chave) || '';
+          });
+          // Trocar de atalho não pode deixar para trás as datas digitadas do
+          // "Personalizado" anterior: elas viajariam junto no link sem
+          // aparecer em campo nenhum.
+          if (filters.periodo && filters.periodo !== 'personalizado') {
+            filters.dateFrom = '';
+            filters.dateTo = '';
+          }
           state.salesDraft.ordersPage = 1;
           loadModule('sales');
         });
         document.getElementById('salesFilterClearBtn')?.addEventListener('click', () => {
-          Object.assign(filters, { search: '', type: '', status: '', companyId: '', sellerId: '', clientSupplierId: '', dateFrom: '', dateTo: '' });
+          Object.assign(filters, salesFiltrosVazios());
           state.salesDraft.ordersPage = 1;
           loadModule('sales');
         });
@@ -2422,8 +2630,6 @@ async function loadModule(moduleName) {
 
         // Opções de "Origem da Venda". Lista fixa: não existe cadastro de origens
         // no sistema ainda. Quando existir, vira meta como empresas/vendedores.
-        const ORIGENS_VENDA = ['Venda Direta', 'Televendas', 'E-commerce', 'Marketplace', 'Representante', 'Balcão'];
-
         // Campos do cabeçalho (Dados) e da seção "Informações Gerais". Nenhum
         // deles entra no cálculo de totais nem mexe em estoque — são
         // classificação e acompanhamento.
