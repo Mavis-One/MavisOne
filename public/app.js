@@ -2023,6 +2023,14 @@ async function loadModule(moduleName) {
         return `${d}/${m}/${y}`;
       };
       const salesFormatBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      // Tamanho de arquivo em unidade legivel. "1048576 bytes" nao diz nada a
+      // quem esta conferindo se cabe no limite de 10 MB.
+      const salesFormatTamanho = (bytes) => {
+        const n = Number(bytes || 0);
+        if (n < 1024) return n + " B";
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1).replace(".", ",") + " KB";
+        return (n / 1024 / 1024).toFixed(1).replace(".", ",") + " MB";
+      };
       // Saldo de estoque aceita fracionário (produto vendido por kg/metro), mas
       // a esmagadora maioria é inteira — mostrar "38" e não "38,000".
       const salesFormatQty = (value) => {
@@ -2689,6 +2697,11 @@ async function loadModule(moduleName) {
         // aba mostrar o imposto de uma versão anterior do pedido.
         let tributos = null;
         let tributosCarregando = false;
+        // Anexos: as fichas vêm com o registro e são atualizadas por cada
+        // resposta das rotas de anexo. Ficam aqui, e não no formState, porque
+        // não são campo de formulário — não vão no payload do salvar.
+        let anexos = (origem && Array.isArray(origem.attachments)) ? origem.attachments.slice() : [];
+        let anexosOcupado = false;
         // Hora de agora só para registro novo — editar não pode carimbar a hora
         // por cima da que o pedido já tinha.
         const horaAgora = new Date().toTimeString().slice(0, 5);
@@ -3161,6 +3174,7 @@ async function loadModule(moduleName) {
           { id: 'pagamentos', label: 'Pagamentos' },
           { id: 'entrega', label: 'Entrega' },
           { id: 'impostos', label: 'Impostos' },
+          { id: 'arquivos', label: 'Arquivos Anexados' },
           { id: 'observacoes', label: 'Observações / Termos e Condições' }
         ];
 
@@ -3940,6 +3954,45 @@ async function loadModule(moduleName) {
                   </div>
                 </div><!-- /aba Impostos -->
 
+                <div class="sales-tab-panel" data-aba="arquivos" ${abaAtiva === 'arquivos' ? '' : 'hidden'}>
+                  ${!isEditing ? `
+                    <!-- O arquivo é guardado numa pasta com o id do registro, e
+                         registro novo ainda não tem id. Aceitar o arquivo antes
+                         de salvar exigiria segurá-lo na memória do navegador
+                         até o salvamento — e perdê-lo em silêncio se algo
+                         desse errado no meio. -->
+                    <p class="sales-totals-nota">
+                      Salve o ${title.toLowerCase()} primeiro. Os anexos ficam guardados junto do
+                      registro, e ele precisa existir para receber arquivo.
+                    </p>` : `
+                    <div class="sales-anexos">
+                      <label class="sales-anexo-envio">
+                        <input type="file" id="salesAnexoInput" multiple ${anexosOcupado ? 'disabled' : ''} />
+                        <span class="muted">Vários de uma vez. Até 10 MB por arquivo.</span>
+                      </label>
+                      ${anexosOcupado ? '<p class="sales-totals-nota">Enviando…</p>' : ''}
+
+                      ${anexos.length ? `
+                        <div class="table-scroll" style="margin-top:12px;">
+                          <table class="table table-actions">
+                            <thead><tr><th>Arquivo</th><th>Tamanho</th><th>Enviado em</th><th>Por</th><th>Ações</th></tr></thead>
+                            <tbody>
+                              ${anexos.map((a) => `<tr>
+                                <td>${escapeHtml(a.nome)}</td>
+                                <td>${salesFormatTamanho(a.tamanho)}</td>
+                                <td>${formatarDataHora(a.enviadoEm) || '-'}</td>
+                                <td>${escapeHtml(a.enviadoPor || '-')}</td>
+                                <td class="sales-item-acoes">
+                                  <button type="button" class="secondary sales-anexo-baixar" data-anexo="${escapeHtml(a.id)}">Abrir</button>
+                                  <button type="button" class="icon-button sales-anexo-excluir" data-anexo="${escapeHtml(a.id)}" title="Excluir">×</button>
+                                </td>
+                              </tr>`).join('')}
+                            </tbody>
+                          </table>
+                        </div>` : '<p class="muted" style="margin-top:12px;">Nenhum arquivo anexado.</p>'}
+                    </div>`}
+                </div><!-- /aba Arquivos Anexados -->
+
                 <div class="sales-tab-panel" data-aba="observacoes" ${abaAtiva === 'observacoes' ? '' : 'hidden'}>
                   <label class="sales-campo-longo">Observações
                     <textarea name="note" rows="6" placeholder="Observações sobre o ${title.toLowerCase()}">${escapeHtml(formState.note)}</textarea>
@@ -4265,6 +4318,87 @@ async function loadModule(moduleName) {
               // outra aba seria uma chamada por caractere. Sem item não há o
               // que apurar.
               if (botao.dataset.aba === 'impostos' && !tributos && items.length) carregarTributos();
+            });
+          });
+
+          // --- Aba Arquivos Anexados -------------------------------------------
+          document.getElementById('salesAnexoInput')?.addEventListener('change', async (evento) => {
+            const escolhidos = [...(evento.target.files || [])];
+            if (!escolhidos.length || anexosOcupado) return;
+            anexosOcupado = true;
+            renderForm();
+            try {
+              // base64 porque o servidor não tem parser de multipart e o
+              // briefing pede para não introduzir dependência nova. Custa ~33%
+              // a mais de tráfego, e é o preço de não escrever um parser de
+              // multipart à mão só para isto.
+              const lerArquivo = (arquivo) => new Promise((resolve, reject) => {
+                const leitor = new FileReader();
+                leitor.onload = () => resolve({ nome: arquivo.name, tipo: arquivo.type, conteudoBase64: String(leitor.result) });
+                leitor.onerror = () => reject(new Error(`Não consegui ler "${arquivo.name}".`));
+                leitor.readAsDataURL(arquivo);
+              });
+              const arquivos = await Promise.all(escolhidos.map(lerArquivo));
+              const resposta = await api(`/api/sales/records/${editRecord.id}/anexos`, {
+                method: 'POST',
+                body: JSON.stringify({ arquivos })
+              });
+              anexos = resposta.attachments || anexos;
+              // Um arquivo recusado no meio da seleção não derruba os outros:
+              // o servidor sobe o que dá e devolve a lista do que não deu.
+              if (resposta.erros && resposta.erros.length) {
+                showToast(resposta.erros.join(' | '), 'warning');
+              } else {
+                showToast(`${resposta.enviados} arquivo(s) anexado(s).`, 'success');
+              }
+            } catch (erro) {
+              showToast(erro.message || 'Não foi possível anexar.', 'error');
+            } finally {
+              anexosOcupado = false;
+              renderForm();
+            }
+          });
+
+          content.querySelectorAll('.sales-anexo-baixar').forEach((botao) => {
+            botao.addEventListener('click', async () => {
+              // A aba é aberta ANTES do fetch, ainda dentro do clique: depois
+              // do await o navegador já não considera a abertura como gesto do
+              // usuário e bloqueia a janela. Mesmo caminho da DANFE.
+              const aba = window.open('', '_blank');
+              try {
+                // O bucket é privado e a rota exige sessão, então não dá para
+                // apontar a aba direto para a URL: sem o cabeçalho de token
+                // viria 403. Busca aqui e entrega o blob.
+                const resposta = await fetch(`/api/sales/records/${editRecord.id}/anexos/${botao.dataset.anexo}`, {
+                  headers: { 'x-auth-token': getSessionToken() }
+                });
+                if (!resposta.ok) throw new Error('Não consegui abrir o arquivo.');
+                const blob = await resposta.blob();
+                const url = URL.createObjectURL(blob);
+                if (aba) aba.location.replace(url);
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+              } catch (erro) {
+                if (aba) aba.close();
+                showToast(erro.message || 'Não consegui abrir o arquivo.', 'error');
+              }
+            });
+          });
+
+          content.querySelectorAll('.sales-anexo-excluir').forEach((botao) => {
+            botao.addEventListener('click', async () => {
+              const ficha = anexos.find((a) => a.id === botao.dataset.anexo);
+              // Excluir apaga o arquivo do Storage — não há lixeira de onde
+              // tirar de volta.
+              const ok = await confirmModal(`Excluir "${ficha ? ficha.nome : 'o anexo'}"? O arquivo é apagado e não dá para recuperar.`);
+              if (!ok) return;
+              try {
+                const resposta = await api(`/api/sales/records/${editRecord.id}/anexos/${botao.dataset.anexo}`, { method: 'DELETE' });
+                anexos = resposta.attachments || [];
+                renderForm();
+                showToast('Anexo excluído.', 'success');
+              } catch (erro) {
+                showToast(erro.message || 'Não foi possível excluir.', 'error');
+              }
             });
           });
 

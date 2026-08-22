@@ -1922,6 +1922,20 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 /* GRUPOS DE PRODUTOS. Cada grupo e uma caixa: sem borda, dois grupos seguidos
    viram uma lista so e o cabecalho do segundo parece uma linha da tabela do
    primeiro. */
+/* ANEXOS. A area de envio e uma faixa tracejada: sinaliza "solte/escolha aqui"
+   sem precisar de texto explicando que ali se poe arquivo. */
+.sales-anexo-envio {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--panel-alt);
+}
+
+.sales-anexo-envio input[type="file"] { font-size: 0.9rem; }
+
 .sales-grupo {
   border: 1px solid var(--border);
   border-radius: 12px;

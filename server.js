@@ -48,6 +48,9 @@ const salesGrupos = require('./public/modules/shared/sales_grupos');
 // Aba Impostos do pedido. Roda a MESMA montagem tributária da emissão — ver o
 // cabeçalho de lib/calcularTributos.js.
 const { calcularTributos } = require('./lib/calcularTributos');
+// Anexos do pedido: binário no Supabase Storage (bucket privado), ficha no
+// próprio pedido. Ver o cabeçalho de lib/db/anexos.js.
+const anexosDb = require('./lib/db/anexos');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
@@ -576,10 +579,29 @@ function sendJson(res, payload, statusCode = 200) {
   res.end(JSON.stringify(payload));
 }
 
-function readBody(req) {
+// LIMITE_CORPO_PADRAO cobre com folga qualquer JSON desta API (um pedido com
+// centenas de itens não chega perto). O upload de anexo passa um teto próprio,
+// maior, porque o arquivo viaja em base64 — que é ~33% maior que o binário.
+//
+// Antes não havia teto nenhum: o corpo era acumulado em memória até o cliente
+// parar de mandar. Com uma rota que aceita arquivo, isso deixa de ser teórico.
+const LIMITE_CORPO_PADRAO = 8 * 1024 * 1024;
+
+function readBody(req, limiteBytes = LIMITE_CORPO_PADRAO) {
   return new Promise((resolve, reject) => {
     let body = '';
+    let recebidos = 0;
     req.on('data', (chunk) => {
+      recebidos += chunk.length;
+      if (recebidos > limiteBytes) {
+        const err = new Error(`Corpo da requisição maior que o limite de ${Math.round(limiteBytes / 1024 / 1024)} MB.`);
+        err.status = 413;
+        // Destrói a conexão: continuar lendo o que já passou do teto é
+        // exatamente o que o teto existe para impedir.
+        req.destroy();
+        reject(err);
+        return;
+      }
       body += chunk;
     });
     req.on('end', () => {
@@ -1339,6 +1361,9 @@ function serializeSalesRecord(record, data) {
     depositName: resolveById(data.deposits, record.depositId),
     items,
     productGroups,
+    // Fichas dos anexos (fase AI). Só metadado — o binário fica no Storage e
+    // sai por uma rota própria, que confere a sessão antes de entregar.
+    attachments: Array.isArray(record.attachments) ? record.attachments : [],
     discountAmount: Number(record.discountAmount || 0),
     discountPercent: Number(record.discountPercent || 0),
     freight: Number(record.freight || 0),
@@ -4798,6 +4823,109 @@ const server = http.createServer(async (req, res) => {
   // Um pedido/orçamento pelo id. Existe para o fluxo Aprovar -> Financeiro ->
   // voltar ao pedido: sem isto, a volta teria que baixar a lista inteira e
   // procurar o registro nela.
+  // ANEXOS. Estas rotas vêm ANTES das genéricas de /api/sales/records/:id —
+  // o GET genérico casa com qualquer coisa depois da barra e engoliria
+  // ".../anexos/<id>" achando que "<id>/anexos/<id>" é um código de pedido.
+  const rotaAnexo = pathname.match(/^\/api\/sales\/records\/([^/]+)\/anexos(?:\/([^/]+))?$/);
+  if (rotaAnexo) {
+    const registroId = decodeURIComponent(rotaAnexo[1]);
+    const anexoId = rotaAnexo[2] ? decodeURIComponent(rotaAnexo[2]) : '';
+    try {
+      const data = loadData();
+      await syncSalesData(data);
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const ehPedido = (data.orders || []).some((o) => o.id === registroId);
+      const registro = [...(data.orders || []), ...(data.quotes || [])].find((r) => r.id === registroId);
+      if (!registro) return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      const fichas = Array.isArray(registro.attachments) ? registro.attachments : [];
+      const gravar = async (novas) => {
+        const atualizado = { ...registro, attachments: novas };
+        return ehPedido ? db.updateOrder(registroId, atualizado) : db.updateQuote(registroId, atualizado);
+      };
+
+      if (req.method === 'GET' && !anexoId) {
+        return sendJson(res, { attachments: fichas });
+      }
+
+      if (req.method === 'POST' && !anexoId) {
+        // Teto próprio: o arquivo vem em base64, que é ~33% maior que o
+        // binário, e o limite por arquivo é de 10 MB.
+        const body = await readBody(req, 16 * 1024 * 1024);
+        const arquivos = Array.isArray(body.arquivos) ? body.arquivos : [];
+        if (!arquivos.length) return sendJson(res, { error: 'Nenhum arquivo enviado.' }, 400);
+        const enviados = [];
+        const erros = [];
+        for (const arquivo of arquivos) {
+          try {
+            enviados.push(await anexosDb.enviarAnexo(registroId, arquivo, user));
+          } catch (erro) {
+            // Um arquivo grande demais no meio da seleção não pode derrubar os
+            // outros: sobe o que dá, e diz quais não deram.
+            erros.push(erro.message);
+          }
+        }
+        if (enviados.length) {
+          await gravar([...fichas, ...enviados]);
+          await registrarAuditoria({
+            action: 'anexarArquivoPedido',
+            targetId: registroId,
+            targetUsername: String(registro.code || registroId),
+            byId: user.id,
+            byName: user.name,
+            details: { arquivos: enviados.map((a) => a.nome) }
+          });
+        }
+        return sendJson(res, {
+          attachments: [...fichas, ...enviados],
+          enviados: enviados.length,
+          erros
+        }, enviados.length ? 200 : 400);
+      }
+
+      if (req.method === 'GET' && anexoId) {
+        const ficha = fichas.find((a) => a.id === anexoId);
+        if (!ficha) return sendJson(res, { error: 'Anexo não encontrado' }, 404);
+        const { bytes, tipo } = await anexosDb.baixarAnexo(ficha);
+        // O bucket é privado e os bytes saem por aqui, não por URL do Storage:
+        // URL de arquivo vaza fácil (e-mail, print, log de proxy), e um anexo
+        // de pedido tem contrato e dado de cliente dentro.
+        res.writeHead(200, {
+          'Content-Type': tipo,
+          'Content-Length': bytes.length,
+          // `inline` para PDF e imagem abrirem no navegador; o nome original
+          // (com acento) vai no filename* como manda a RFC 5987.
+          'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(ficha.nome)}`,
+          'Cache-Control': 'private, no-store'
+        });
+        return res.end(bytes);
+      }
+
+      if (req.method === 'DELETE' && anexoId) {
+        const ficha = fichas.find((a) => a.id === anexoId);
+        if (!ficha) return sendJson(res, { error: 'Anexo não encontrado' }, 404);
+        await anexosDb.removerAnexo(ficha);
+        const restantes = fichas.filter((a) => a.id !== anexoId);
+        await gravar(restantes);
+        await registrarAuditoria({
+          action: 'excluirAnexoPedido',
+          targetId: registroId,
+          targetUsername: String(registro.code || registroId),
+          byId: user.id,
+          byName: user.name,
+          details: { arquivo: ficha.nome, caminho: ficha.caminho }
+        });
+        return sendJson(res, { attachments: restantes });
+      }
+
+      return sendJson(res, { error: 'Método não permitido' }, 405);
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao tratar o anexo' }, error.status || 400);
+    }
+  }
+
   if (pathname.startsWith('/api/sales/records/') && req.method === 'GET') {
     try {
       const data = loadData();
