@@ -109,6 +109,81 @@
     'reprovado': 'orcamento-reprovado'
   };
 
+  // TRANSIÇÕES VÁLIDAS — de qual status para quais.
+  //
+  // Antes disto, qualquer status podia virar qualquer outro: bastava um PUT
+  // com o campo `status` preenchido. Um pedido faturado voltava a "Orçamento"
+  // sem estornar nada, e o estoque baixado e o contas a receber criado ficavam
+  // lá, agora sem nenhum documento que os explicasse.
+  //
+  // A lista está aqui, e não só no banco, porque é a mesma pergunta que a tela
+  // faz para desabilitar a opção e que o servidor faz para recusar. Duas
+  // cópias divergem. O banco tem a MESMA lista, gerada deste objeto pela
+  // migração fase-AJ — e um teste confere que as duas não se separaram.
+  //
+  // O que a lista diz, em português:
+  //
+  //  - orçamento vira pedido, aprovado ou reprovado — nunca faturado direto:
+  //    faturar orçamento sem virar pedido pularia a conferência;
+  //  - pedido caminha para não faturado, pré-faturado, faturado, aprovado sem
+  //    faturamento ou cancelado;
+  //  - FATURADO É PORTA DE SAÍDA: dele só se sai para cancelado. Sai
+  //    mercadoria e nasce dinheiro a receber; qualquer outro destino teria de
+  //    estornar os dois, e estorno é operação própria, não troca de campo;
+  //  - cancelado e reprovado não voltam. Reabrir um cancelado é criar outro
+  //    documento, não ressuscitar este — é isso que mantém o histórico
+  //    contável.
+  const TRANSICOES = {
+    orcamento: ['pedido', 'orcamento-aprovado', 'orcamento-reprovado'],
+    'orcamento-aprovado': ['pedido', 'orcamento-reprovado'],
+    'orcamento-reprovado': [],
+
+    pedido: ['pedido-nao-faturado', 'pedido-pre-faturado', 'pedido-faturado',
+      'pedido-aprovado-sem-faturamento', 'pedido-parcialmente-faturado', 'pedido-cancelado'],
+    'pedido-nao-faturado': ['pedido', 'pedido-pre-faturado', 'pedido-faturado',
+      'pedido-aprovado-sem-faturamento', 'pedido-cancelado'],
+    'pedido-pre-faturado': ['pedido-faturado', 'pedido-parcialmente-faturado',
+      'pedido-nao-faturado', 'pedido-cancelado'],
+    'pedido-parcialmente-faturado': ['pedido-faturado', 'pedido-cancelado'],
+    'pedido-faturado': ['pedido-cancelado'],
+    'pedido-aprovado-sem-faturamento': ['pedido-cancelado'],
+    'pedido-cancelado': []
+  };
+
+  /**
+   * `de` e `para` são normalizados aqui: o status gravado pode ser legado
+   * ('faturado'), e comparar o texto cru recusaria uma transição que é válida.
+   *
+   * Ficar no MESMO status é sempre permitido — salvar um pedido sem mexer no
+   * status é a operação mais comum da tela, e ela não é uma transição.
+   */
+  function podeTransicionar(de, para) {
+    const origem = normalizar(de);
+    const destino = normalizar(para);
+    if (origem === destino) return true;
+    return (TRANSICOES[origem] || []).includes(destino);
+  }
+
+  // A frase que a tela e o servidor mostram. Diz de onde para onde, e para
+  // onde DÁ — recusa sem alternativa deixa a pessoa tentando de novo.
+  function motivoDaRecusa(de, para) {
+    const origem = normalizar(de);
+    const destino = normalizar(para);
+    if (podeTransicionar(origem, destino)) return '';
+    const saidas = TRANSICOES[origem] || [];
+    const nome = (v) => (PORVALOR.get(v) ? PORVALOR.get(v).label : v);
+    if (!saidas.length) {
+      return `"${nome(origem)}" é situação final: não vira "${nome(destino)}" nem nenhuma outra. Crie um documento novo.`;
+    }
+    return `"${nome(origem)}" não vira "${nome(destino)}". Daqui só dá para: ${saidas.map(nome).join(', ')}.`;
+  }
+
+  // Os destinos possíveis a partir de um status — a tela usa para desabilitar
+  // no select o que não é caminho, em vez de deixar escolher e recusar depois.
+  function destinosDe(status) {
+    return (TRANSICOES[normalizar(status)] || []).slice();
+  }
+
   const PADRAO_POR_TIPO = { order: 'pedido', quote: 'orcamento' };
 
   function padraoDoTipo(tipo) {
@@ -187,6 +262,10 @@
     reservaEstoque,
     geraFinanceiro,
     ehCancelado,
+    TRANSICOES,
+    podeTransicionar,
+    motivoDaRecusa,
+    destinosDe,
     rotulo,
     padraoDoTipo,
     opcoesSelect

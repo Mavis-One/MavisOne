@@ -51,11 +51,19 @@ for (const rel of fontes) {
     declaradas.add(m[1].toLowerCase());
   }
 }
-const comRls = new Set([...rls.matchAll(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_][a-z_0-9]*)\s+enable\s+row\s+level\s+security/gi)]
-  .map((m) => m[1].toLowerCase()));
+// O RLS de uma tabela mora na migração que a CRIA, e não retroativamente na
+// fase-af: a fase-af fechou as 77 que existiam quando ela foi escrita. Tabela
+// criada depois liga a própria — procurar só na fase-af acusaria falta de RLS
+// numa tabela que já está fechada.
+const comRls = new Set();
+for (const rel of fontes) {
+  for (const m of ler(rel).matchAll(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_][a-z_0-9]*)\s+enable\s+row\s+level\s+security/gi)) {
+    comRls.add(m[1].toLowerCase());
+  }
+}
 
 console.log(`    tabelas declaradas no schema: ${declaradas.size}`);
-console.log(`    tabelas com RLS na fase-af  : ${comRls.size}`);
+console.log(`    tabelas com RLS declarada   : ${comRls.size}`);
 const semRls = [...declaradas].filter((t) => !comRls.has(t)).sort();
 check('nenhuma tabela declarada ficou sem RLS', semRls.length === 0,
   semRls.length ? 'FALTANDO: ' + semRls.join(', ') : 'ok');
@@ -63,7 +71,7 @@ check('nenhuma tabela declarada ficou sem RLS', semRls.length === 0,
 // O contrário também importa: RLS numa tabela que não existe é comando que
 // falha no SQL Editor e faz a pessoa achar que a migração está quebrada.
 const inexistentes = [...comRls].filter((t) => !declaradas.has(t)).sort();
-check('e a fase-af não cita tabela que ninguém cria', inexistentes.length === 0,
+check('e nenhuma migração cita tabela que ninguém cria', inexistentes.length === 0,
   inexistentes.length ? 'INVENTADAS: ' + inexistentes.join(', ') : 'ok');
 
 console.log('\n--- o app não depende de RLS para separar empresa ---');

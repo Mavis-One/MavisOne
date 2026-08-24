@@ -1936,6 +1936,44 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 
 .sales-anexo-envio input[type="file"] { font-size: 0.9rem; }
 
+/* SELECAO MULTIPLA E ACOES EM LOTE */
+.sales-col-selecao { width: 34px; text-align: center; }
+
+/* Linha marcada precisa se distinguir SEM depender so da caixinha: com 50
+   linhas na tela, procurar quais estao marcadas olhando checkbox e trabalho. */
+tr.is-selecionada > td { background: var(--panel-alt); }
+
+.sales-lote-barra {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-alt);
+}
+
+.sales-lote-barra button { min-width: auto; padding: 6px 14px; }
+
+.sales-lote-menu { margin-bottom: 12px; display: grid; gap: 14px; }
+.sales-lote-menu h5 { margin: 0 0 8px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted, inherit); }
+
+/* Menu em GRADE, como pede o briefing: 24 acoes em lista vertical viram uma
+   rolagem que esconde metade delas. */
+.sales-lote-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.sales-lote-grade button { min-width: auto; text-align: left; padding: 8px 12px; font-size: 0.88rem; }
+
+/* Acao indisponivel fica visivel e apagada, com o motivo no title: escondida,
+   a pessoa procura para sempre. */
+.sales-lote-grade button:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .sales-grupo {
   border: 1px solid var(--border);
   border-radius: 12px;

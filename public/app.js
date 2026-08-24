@@ -2060,6 +2060,10 @@ async function loadModule(moduleName) {
           if (temFiltroAlemDaBusca) draft.showOrdersFilters = true;
         }
         const filters = draft.ordersFilters || (draft.ordersFilters = salesFiltrosVazios());
+        // Ids selecionados. No draft para sobreviver ao redesenho da lista
+        // (paginar, ordenar); fora da URL de propósito — seleção é intenção do
+        // momento, não filtro que se compartilha por link.
+        if (!Array.isArray(draft.selecionados)) draft.selecionados = [];
         const showFilters = Boolean(draft.showOrdersFilters);
         const page = draft.ordersPage || 1;
         const limit = SALES_POR_PAGINA.includes(draft.ordersLimit) ? draft.ordersLimit : 15;
@@ -2310,10 +2314,59 @@ async function loadModule(moduleName) {
             </form>
           ` : ''}
 
+          ${draft.selecionados.length ? (() => {
+            // Só os registros DESTA página entram no menu: o catálogo decide
+            // elegibilidade a partir do registro, e um id selecionado numa
+            // página anterior não está mais em mãos para ser avaliado.
+            const selecionados = records.filter((r) => draft.selecionados.includes(r.id));
+            const grupos = {};
+            window.MavisSalesBulkActions.CATALOGO.forEach((acao) => {
+              const { elegiveis, ignorados } = window.MavisSalesBulkActions.avaliar(acao.id, selecionados);
+              (grupos[acao.grupo] = grupos[acao.grupo] || []).push({ acao, elegiveis, ignorados });
+            });
+            return `
+            <div class="sales-lote-barra">
+              <strong>${selecionados.length} selecionado${selecionados.length === 1 ? '' : 's'}</strong>
+              <button type="button" class="secondary" id="salesLoteMenuBtn" aria-expanded="${Boolean(draft.showLoteMenu)}">Mais Ações ▾</button>
+              <button type="button" class="secondary" id="salesLoteLimparBtn">Cancelar Seleção</button>
+            </div>
+            ${draft.showLoteMenu ? `
+              <!-- Menu em GRADE, agrupado, como pede o briefing. Ação sem
+                   backend fica à vista e desabilitada com o motivo: escondida,
+                   a pessoa procura para sempre. -->
+              <div class="panel sales-lote-menu" id="salesLoteMenu">
+                ${Object.entries(grupos).map(([nomeGrupo, itens]) => `
+                  <section>
+                    <h5>${escapeHtml(nomeGrupo)}</h5>
+                    <div class="sales-lote-grade">
+                      ${itens.map(({ acao, elegiveis, ignorados }) => {
+                        // Zero elegíveis = botão que só produziria "0
+                        // processados, N ignorados". Desabilita e mostra o
+                        // primeiro motivo, que é o que a pessoa precisa saber.
+                        const motivo = elegiveis.length ? '' : ((ignorados[0] && ignorados[0].motivo) || 'Nenhum selecionado é elegível.');
+                        return `<button type="button" class="secondary sales-lote-acao ${acao.tone ? 'is-' + acao.tone : ''}"
+                          data-acao="${acao.id}" ${motivo ? 'disabled' : ''} title="${escapeHtml(motivo || (elegiveis.length + ' de ' + selecionados.length + ' elegíveis'))}">
+                          ${escapeHtml(acao.label)}${elegiveis.length && elegiveis.length < selecionados.length ? ` <span class="muted">(${elegiveis.length})</span>` : ''}
+                        </button>`;
+                      }).join('')}
+                    </div>
+                  </section>`).join('')}
+              </div>` : ''}`;
+          })() : ''}
+
           <div class="panel">
             <div class="table-scroll">
               <table class="table table-actions">
-                <thead><tr>${colunas.map((col) => {
+                <thead><tr>
+                  <!-- Seleção múltipla. O "selecionar todos" marca o que está
+                       NA PÁGINA, não os 500 do filtro: marcar o que não se vê e
+                       depois excluir é como se perde dado sem perceber. -->
+                  <th class="sales-col-selecao">
+                    <input type="checkbox" id="salesSelecionarTodos"
+                      ${records.length && records.every((r) => draft.selecionados.includes(r.id)) ? 'checked' : ''}
+                      title="Selecionar os desta página" />
+                  </th>
+                  ${colunas.map((col) => {
                   if (!col.ordenavel) return `<th>${col.rotulo}</th>`;
                   const ativa = sort === col.chave;
                   // A seta mostra a ordem ATUAL, não a que o clique vai
@@ -2324,7 +2377,11 @@ async function loadModule(moduleName) {
                 }).join('')}<th>Ações</th></tr></thead>
                 <tbody>
                   ${records.length ? records.map((record) => `
-                    <tr>
+                    <tr class="${draft.selecionados.includes(record.id) ? 'is-selecionada' : ''}">
+                      <td class="sales-col-selecao">
+                        <input type="checkbox" class="sales-selecionar" data-id="${escapeHtml(record.id)}"
+                          ${draft.selecionados.includes(record.id) ? 'checked' : ''} />
+                      </td>
                       ${colunas.map((col) => `<td>${col.valor(record, { data: salesFormatDate, brl: salesFormatBRL, badge: salesStatusBadge })}</td>`).join('')}
                       <td>
                         <button class="icon-button edit sales-edit-record" data-id="${escapeHtml(record.id)}" title="Editar" aria-label="Editar">
@@ -2335,7 +2392,7 @@ async function loadModule(moduleName) {
                         </button>
                       </td>
                     </tr>
-                  `).join('') : `<tr><td colspan="${colunas.length + 1}" class="muted">Nenhum pedido ou orçamento encontrado${filters.search || showFilters ? ' com os filtros atuais' : ''}.</td></tr>`}
+                  `).join('') : `<tr><td colspan="${colunas.length + 2}" class="muted">Nenhum pedido ou orçamento encontrado${filters.search || showFilters ? ' com os filtros atuais' : ''}.</td></tr>`}
                 </tbody>
               </table>
             </div>
@@ -2397,6 +2454,79 @@ async function loadModule(moduleName) {
           state.salesDraft.ordersPage = 1;
           loadModule('sales');
         });
+        // --- Seleção múltipla e ações em lote --------------------------------
+        document.getElementById('salesSelecionarTodos')?.addEventListener('change', (evento) => {
+          const idsDaPagina = records.map((r) => r.id);
+          if (evento.target.checked) {
+            // União, não substituição: quem marcou linhas na página 1 e passou
+            // para a 2 não pode perder as primeiras ao marcar todas aqui.
+            draft.selecionados = [...new Set([...draft.selecionados, ...idsDaPagina])];
+          } else {
+            draft.selecionados = draft.selecionados.filter((id) => !idsDaPagina.includes(id));
+          }
+          loadModule('sales');
+        });
+        content.querySelectorAll('.sales-selecionar').forEach((caixa) => {
+          caixa.addEventListener('change', () => {
+            const id = caixa.dataset.id;
+            draft.selecionados = caixa.checked
+              ? [...new Set([...draft.selecionados, id])]
+              : draft.selecionados.filter((x) => x !== id);
+            loadModule('sales');
+          });
+        });
+        document.getElementById('salesLoteLimparBtn')?.addEventListener('click', () => {
+          draft.selecionados = [];
+          draft.showLoteMenu = false;
+          loadModule('sales');
+        });
+        document.getElementById('salesLoteMenuBtn')?.addEventListener('click', () => {
+          draft.showLoteMenu = !draft.showLoteMenu;
+          loadModule('sales');
+        });
+        content.querySelectorAll('.sales-lote-acao').forEach((botao) => {
+          botao.addEventListener('click', async () => {
+            const acaoId = botao.dataset.acao;
+            const acao = window.MavisSalesBulkActions.PORID.get(acaoId);
+            const selecionados = records.filter((r) => draft.selecionados.includes(r.id));
+            const { elegiveis, ignorados } = window.MavisSalesBulkActions.avaliar(acaoId, selecionados);
+            if (!elegiveis.length) return;
+
+            // Imprimir/Baixar rodam na tela: o documento é montado aqui, não no
+            // servidor. Mandar ao servidor seria pedir para ele redesenhar o
+            // que a tela já tem.
+            if (acao.confirma) {
+              const ok = await confirmModal(
+                `${acao.confirma}\n\n${elegiveis.length} de ${selecionados.length} selecionado(s) serão processados.`
+              );
+              if (!ok) return;
+            }
+            try {
+              const resposta = await api('/api/sales/records/lote', {
+                method: 'POST',
+                body: JSON.stringify({ acao: acaoId, ids: elegiveis.map((r) => r.id) })
+              });
+              // O resumo vem do SERVIDOR, não do que a tela previu: entre
+              // desenhar a lista e clicar, outra pessoa pode ter faturado um
+              // dos selecionados.
+              const naoFeitos = resposta.ignorados || [];
+              showToast(resposta.resumo || '', naoFeitos.length ? 'warning' : 'success');
+              if (naoFeitos.length) {
+                // O briefing pede o motivo de CADA ignorado, e um toast não
+                // cabe cinco linhas. O detalhe vai para um modal.
+                await confirmModal(
+                  `${resposta.resumo}\n\n` + naoFeitos.map((i) => `#${i.code}: ${i.motivo}`).join('\n')
+                );
+              }
+              draft.selecionados = [];
+              draft.showLoteMenu = false;
+              loadModule('sales');
+            } catch (erro) {
+              showToast(erro.message || 'Não foi possível executar a ação.', 'error');
+            }
+          });
+        });
+
         document.getElementById('salesColunasBtn')?.addEventListener('click', () => {
           state.salesDraft.showOrdersColunas = !mostrandoSeletor;
           loadModule('sales');

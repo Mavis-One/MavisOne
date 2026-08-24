@@ -51,6 +51,9 @@ const { calcularTributos } = require('./lib/calcularTributos');
 // Anexos do pedido: binário no Supabase Storage (bucket privado), ficha no
 // próprio pedido. Ver o cabeçalho de lib/db/anexos.js.
 const anexosDb = require('./lib/db/anexos');
+// Ações em lote da lista. Mesmo arquivo que o navegador carrega: é ele que diz
+// quem é elegível, e a tela e o servidor precisam responder igual.
+const salesBulk = require('./public/modules/shared/sales_bulk_actions');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
@@ -1617,6 +1620,196 @@ async function montarContextoFiscalDoPedido(body, data) {
       motivo
     }
   };
+}
+
+/**
+ * Aplica o que a MUDANÇA DE STATUS provoca: baixa/devolução de estoque,
+ * criação/cancelamento das contas a receber, e a troca de tabela quando o
+ * documento deixa de ser pedido (ou passa a ser).
+ *
+ * Existe como função porque a rota PUT e as ações em lote precisam do MESMO
+ * comportamento. Duas cópias divergiriam no lugar mais caro possível: aprovar
+ * em lote sem gerar as contas a receber ficaria "aprovado" na tela e nada no
+ * Financeiro, e ninguém percebe até a cobrança não sair.
+ */
+async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo, tipoNovo, isOrder, data, user }) {
+  // Os dois efeitos são independentes: cada status do catálogo declara se
+  // baixa estoque e se gera financeiro, e "Pedido Aprovado Sem Faturamento"
+  // é justamente o que faz um sem o outro (transferência, remessa,
+  // bonificação). Orçamento nunca faz nenhum dos dois.
+  const eraFaturado = Boolean(current.financeApplied);
+  const vaiBaixarEstoque = tipoNovo === 'order' && salesStatus.baixaEstoque(statusNovo);
+  const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.geraFinanceiro(statusNovo);
+
+  // Roda sempre — inclusive quando o registro DEIXA de ser pedido: virar
+  // orçamento tem que devolver ao estoque o que o pedido reservava. A
+  // função sai na hora se não havia nem passa a haver reserva.
+  await transitionOrderStockEffect(data, {
+    oldItems: current.items || [],
+    newItems: items,
+    wasApplied: Boolean(current.stockApplied),
+    willApply: vaiBaixarEstoque,
+    record: updated,
+    user
+  });
+  updated.stockApplied = vaiBaixarEstoque;
+  updated.financeApplied = vaiGerarFinanceiro;
+
+  // Trocar o status pode mudar o tipo, e pedido e orçamento moram em
+  // tabelas diferentes. Grava na tabela nova ANTES de apagar da antiga,
+  // mantendo id e código: se a gravação falhar, o registro original
+  // continua de pé em vez de sumir. Referências por id (NF-e, contas a
+  // receber) seguem válidas porque o id não muda.
+  const mudouDeTabela = isOrder !== (tipoNovo === 'order');
+  if (!mudouDeTabela) {
+    updated = isOrder ? await db.updateOrder(id, updated) : await db.updateQuote(id, updated);
+  } else {
+    updated = tipoNovo === 'order' ? await db.createOrder(updated) : await db.createQuote(updated);
+    if (isOrder) await db.deleteOrder(id); else await db.deleteQuote(id);
+    // Espelha a troca nas listas em memória desta requisição — sem isso o
+    // saveData() gravaria o registro nas duas listas ao mesmo tempo.
+    const origemLista = isOrder ? data.orders : data.quotes;
+    const destinoLista = tipoNovo === 'order' ? data.orders : data.quotes;
+    const posicao = origemLista.findIndex((entry) => entry.id === id);
+    if (posicao >= 0) origemLista.splice(posicao, 1);
+    destinoLista.push(updated);
+  }
+
+  // Depois de gravar, pelo mesmo motivo da criação: o registro atualizado é
+  // que carrega o total e as parcelas atuais. Também roda sempre — um
+  // pedido faturado que vira orçamento precisa ter as parcelas canceladas.
+  const efeitoFinanceiro = await transitionOrderFinanceEffect(data, {
+    record: updated, wasApplied: eraFaturado, willApply: vaiGerarFinanceiro, user
+  });
+  return { updated, efeitoFinanceiro };
+}
+
+// --- As três operações que as ações em lote executam -------------------------
+// Cada uma faz por UM registro o que a rota individual faz, usando as mesmas
+// peças. Nenhuma delas decide elegibilidade: quem decide é sales_bulk_actions,
+// consultado pela tela e pelo servidor.
+
+async function mudarStatusSalesRecord(serializado, destino, data, user) {
+  const isOrder = (data.orders || []).some((o) => o.id === serializado.id);
+  const lista = isOrder ? data.orders : data.quotes;
+  const current = lista.find((r) => r.id === serializado.id);
+  if (!current) throw new Error('Registro não encontrado.');
+
+  const statusNovo = salesStatus.normalizar(destino, undefined);
+  if (!salesStatus.podeTransicionar(current.status, statusNovo)) {
+    throw new Error(salesStatus.motivoDaRecusa(current.status, statusNovo));
+  }
+  const tipoNovo = salesStatus.tipoDoStatus(statusNovo);
+  const updated = {
+    ...current,
+    type: tipoNovo,
+    status: statusNovo,
+    updatedByName: user.name,
+    updatedAt: new Date().toISOString()
+  };
+  const efeitos = await aplicarEfeitosDeStatus({
+    id: serializado.id,
+    current,
+    updated,
+    // Os itens NÃO mudam numa ação em lote: só o status. Passar os mesmos faz
+    // transitionOrderStockEffect comparar antes/depois e mexer só no que a
+    // mudança de status pede.
+    items: current.items || [],
+    statusNovo,
+    tipoNovo,
+    isOrder,
+    data,
+    user
+  });
+  await registrarAuditoria({
+    action: 'mudarStatusEmLote',
+    targetId: serializado.id,
+    targetUsername: String(serializado.code || serializado.id),
+    byId: user.id,
+    byName: user.name,
+    details: { de: current.status, para: statusNovo }
+  });
+  return efeitos.updated;
+}
+
+async function excluirSalesRecord(id, data, user) {
+  const order = await db.getOrderById(id);
+  const isOrder = Boolean(order);
+  const record = order || await db.getQuoteById(id);
+  if (!record) throw new Error('Registro não encontrado.');
+  if (isOrder && record.stockApplied) {
+    // Excluir um pedido que reservava estoque devolve a reserva — sumir com o
+    // registro e deixar a reserva de pé travaria a mercadoria para sempre.
+    await transitionOrderStockEffect(data, {
+      oldItems: record.items || [], newItems: [], wasApplied: true, willApply: false, record, user
+    });
+  }
+  // Os anexos vão junto: sem isto os arquivos ficam no Storage sem nada
+  // apontando para eles. Antes de excluir o registro, porque depois as fichas
+  // já não existem para dizer QUAIS arquivos apagar.
+  for (const ficha of (Array.isArray(record.attachments) ? record.attachments : [])) {
+    try {
+      await anexosDb.removerAnexo(ficha);
+    } catch (erro) {
+      console.error('[anexos] arquivo orfao no Storage:', ficha.caminho, erro.message);
+    }
+  }
+  await (isOrder ? db.deleteOrder(id) : db.deleteQuote(id));
+  const lista = isOrder ? data.orders : data.quotes;
+  const pos = lista.findIndex((r) => r.id === id);
+  if (pos >= 0) lista.splice(pos, 1);
+  await registrarAuditoria({
+    action: 'excluirEmLote',
+    targetId: id,
+    targetUsername: String(record.code || id),
+    byId: user.id,
+    byName: user.name
+  });
+}
+
+async function duplicarSalesRecord(serializado, data, user) {
+  const tipo = serializado.type === 'quote' ? 'quote' : 'order';
+  // A cópia nasce como RASCUNHO do próprio tipo. Duplicar um pedido faturado e
+  // a cópia já nascer faturada baixaria estoque e criaria contas a receber de
+  // uma venda que ninguém fez.
+  const status = salesStatus.padraoDoTipo(tipo);
+  const copia = {
+    ...serializado,
+    id: createId(tipo === 'order' ? 'ord' : 'qte'),
+    code: await db.getNextSalesCode(),
+    status,
+    type: tipo,
+    stockApplied: false,
+    financeApplied: false,
+    // A NF-e é do documento original. A cópia é outro documento e ainda não
+    // tem nota.
+    nfeId: '',
+    // Anexos não são copiados: o arquivo está no Storage sob o id do original,
+    // e duas fichas apontando para o mesmo arquivo fariam excluir uma quebrar
+    // a outra.
+    attachments: [],
+    // O chassi identifica UMA unidade física: copiá-lo criaria duas vendas do
+    // mesmo equipamento.
+    items: (serializado.items || []).map((item) => ({ ...item, chassi: '' })),
+    createdBy: user.id,
+    createdByName: user.name,
+    createdAt: new Date().toISOString(),
+    updatedByName: user.name,
+    updatedAt: new Date().toISOString()
+  };
+  const gravado = tipo === 'order' ? await db.createOrder(copia) : await db.createQuote(copia);
+  // Entra na lista em memória desta requisição: sem isso, duplicar dois
+  // registros na mesma leva faria o segundo não enxergar o primeiro.
+  (tipo === 'order' ? data.orders : data.quotes).push(gravado);
+  await registrarAuditoria({
+    action: 'duplicarEmLote',
+    targetId: gravado.id,
+    targetUsername: String(gravado.code),
+    byId: user.id,
+    byName: user.name,
+    details: { origem: serializado.code }
+  });
+  return gravado;
 }
 
 function buildSalesDashboardSummary(data) {
@@ -4823,6 +5016,79 @@ const server = http.createServer(async (req, res) => {
   // Um pedido/orçamento pelo id. Existe para o fluxo Aprovar -> Financeiro ->
   // voltar ao pedido: sem isto, a volta teria que baixar a lista inteira e
   // procurar o registro nela.
+  // AÇÕES EM LOTE. Vem antes das rotas de /api/sales/records/:id pelo mesmo
+  // motivo dos anexos: o path genérico casaria com "lote" achando que é um id.
+  if (pathname === '/api/sales/records/lote' && req.method === 'POST') {
+    try {
+      const data = loadData();
+      await syncCadastroData(data);
+      await syncSalesData(data);
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
+      const acaoId = String(body.acao || '');
+      if (!ids.length) return sendJson(res, { error: 'Selecione ao menos um registro.' }, 400);
+      // Teto: uma seleção de milhares viraria milhares de idas ao Supabase numa
+      // requisição só, e o navegador desistiria antes do fim.
+      if (ids.length > 200) return sendJson(res, { error: 'Selecione no máximo 200 registros por vez.' }, 400);
+
+      const todos = [...(data.orders || []), ...(data.quotes || [])];
+      const selecionados = ids
+        .map((id) => todos.find((r) => r.id === id))
+        .filter(Boolean)
+        .map((r) => serializeSalesRecord(r, data));
+
+      // A ELEGIBILIDADE É AVALIADA AQUI TAMBÉM, e não só na tela. A tela avalia
+      // para não oferecer o que não dá; o servidor avalia porque a tela pode
+      // estar com dado velho — outra pessoa faturou o pedido enquanto este
+      // usuário olhava a lista.
+      const { acao, elegiveis, ignorados } = salesBulk.avaliar(acaoId, selecionados);
+      if (!acao) return sendJson(res, { error: 'Ação desconhecida.' }, 400);
+
+      const resultados = [];
+      const falhas = [];
+      for (const registro of elegiveis) {
+        try {
+          if (acaoId === 'duplicar') {
+            const copia = await duplicarSalesRecord(registro, data, user);
+            resultados.push({ id: registro.id, code: registro.code, novo: copia.code });
+          } else if (acaoId === 'excluir') {
+            await excluirSalesRecord(registro.id, data, user);
+            resultados.push({ id: registro.id, code: registro.code });
+          } else if (acao.destino) {
+            await mudarStatusSalesRecord(registro, acao.destino(registro), data, user);
+            resultados.push({ id: registro.id, code: registro.code });
+          } else {
+            falhas.push({ code: registro.code, motivo: 'Ação sem execução no servidor.' });
+          }
+        } catch (erro) {
+          // Falha de UM registro não derruba a leva: o resto continua, e o
+          // motivo aparece junto dos ignorados. Abortar tudo no primeiro erro
+          // deixaria a pessoa sem saber o que foi feito e o que não foi.
+          falhas.push({ code: registro.code, motivo: erro.message || 'Falhou.' });
+        }
+      }
+      saveData(data);
+
+      const naoFeitos = [
+        ...ignorados.map((i) => ({ code: i.registro.code, motivo: i.motivo })),
+        ...falhas
+      ];
+      return sendJson(res, {
+        acao: acaoId,
+        processados: resultados.length,
+        ignorados: naoFeitos,
+        resumo: salesBulk.resumo(resultados.length, naoFeitos.length),
+        resultados
+      });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao executar a ação em lote' }, error.status || 400);
+    }
+  }
+
   // ANEXOS. Estas rotas vêm ANTES das genéricas de /api/sales/records/:id —
   // o GET genérico casa com qualquer coisa depois da barra e engoliria
   // ".../anexos/<id>" achando que "<id>/anexos/<id>" é um código de pedido.
@@ -4976,6 +5242,17 @@ const server = http.createServer(async (req, res) => {
       // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo
       // faria a troca ser revertida para o padrão do tipo antigo.
       const statusNovo = salesStatus.normalizar(body.status || current.status, undefined);
+
+      // TRANSICAO. Antes disto qualquer status virava qualquer outro: bastava
+      // um PUT com o campo preenchido. Um pedido faturado voltava a
+      // "Orcamento" sem estornar nada, e o estoque baixado e o contas a
+      // receber criado ficavam la, agora sem documento nenhum que os
+      // explicasse. A tela ja escondia o caminho -- mas esconder nao e barrar,
+      // e quem chama a API direto passava.
+      if (!salesStatus.podeTransicionar(current.status, statusNovo)) {
+        return sendJson(res, { error: salesStatus.motivoDaRecusa(current.status, statusNovo) }, 409);
+      }
+
       const tipoNovo = salesStatus.tipoDoStatus(statusNovo);
 
       const totais = computeSalesTotals(items, body);
@@ -5004,54 +5281,16 @@ const server = http.createServer(async (req, res) => {
         updatedAt: new Date().toISOString()
       };
 
-      // Os dois efeitos são independentes: cada status do catálogo declara se
-      // baixa estoque e se gera financeiro, e "Pedido Aprovado Sem Faturamento"
-      // é justamente o que faz um sem o outro (transferência, remessa,
-      // bonificação). Orçamento nunca faz nenhum dos dois.
-      const eraFaturado = Boolean(current.financeApplied);
-      const vaiBaixarEstoque = tipoNovo === 'order' && salesStatus.baixaEstoque(statusNovo);
-      const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.geraFinanceiro(statusNovo);
-
-      // Roda sempre — inclusive quando o registro DEIXA de ser pedido: virar
-      // orçamento tem que devolver ao estoque o que o pedido reservava. A
-      // função sai na hora se não havia nem passa a haver reserva.
-      await transitionOrderStockEffect(data, {
-        oldItems: current.items || [],
-        newItems: items,
-        wasApplied: Boolean(current.stockApplied),
-        willApply: vaiBaixarEstoque,
-        record: updated,
-        user
+      // Estoque, financeiro e a eventual troca de tabela saem daqui — ver
+      // aplicarEfeitosDeStatus(). Antes esta orquestração morava só nesta rota,
+      // e as ações em lote precisariam de uma segunda cópia: aprovar em lote
+      // sem gerar as contas a receber seria "aprovado" na tela e nada no
+      // Financeiro.
+      const efeitos = await aplicarEfeitosDeStatus({
+        id, current, updated, items, statusNovo, tipoNovo, isOrder, data, user
       });
-      updated.stockApplied = vaiBaixarEstoque;
-      updated.financeApplied = vaiGerarFinanceiro;
-
-      // Trocar o status pode mudar o tipo, e pedido e orçamento moram em
-      // tabelas diferentes. Grava na tabela nova ANTES de apagar da antiga,
-      // mantendo id e código: se a gravação falhar, o registro original
-      // continua de pé em vez de sumir. Referências por id (NF-e, contas a
-      // receber) seguem válidas porque o id não muda.
-      const mudouDeTabela = isOrder !== (tipoNovo === 'order');
-      if (!mudouDeTabela) {
-        updated = isOrder ? await db.updateOrder(id, updated) : await db.updateQuote(id, updated);
-      } else {
-        updated = tipoNovo === 'order' ? await db.createOrder(updated) : await db.createQuote(updated);
-        if (isOrder) await db.deleteOrder(id); else await db.deleteQuote(id);
-        // Espelha a troca nas listas em memória desta requisição — sem isso o
-        // saveData() abaixo gravaria o registro nas duas listas ao mesmo tempo.
-        const origemLista = isOrder ? data.orders : data.quotes;
-        const destinoLista = tipoNovo === 'order' ? data.orders : data.quotes;
-        const posicao = origemLista.findIndex((entry) => entry.id === id);
-        if (posicao >= 0) origemLista.splice(posicao, 1);
-        destinoLista.push(updated);
-      }
-
-      // Depois de gravar, pelo mesmo motivo da criação: o registro atualizado é
-      // que carrega o total e as parcelas atuais. Também roda sempre — um
-      // pedido faturado que vira orçamento precisa ter as parcelas canceladas.
-      const efeitoFinanceiro = await transitionOrderFinanceEffect(data, {
-        record: updated, wasApplied: eraFaturado, willApply: vaiGerarFinanceiro, user
-      });
+      updated = efeitos.updated;
+      const efeitoFinanceiro = efeitos.efeitoFinanceiro;
       // updateOrder/updateQuote não tocam data.orders/data.quotes (já
       // gravaram no Supabase direto) — saveData aqui é só pra persistir
       // data.stockMovements, que transitionOrderStockEffect pode ter alterado.
@@ -5080,39 +5319,21 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
-      const order = await db.getOrderById(id);
-      const recordKey = order ? 'orders' : 'quotes';
-      const record = order || await db.getQuoteById(id);
-      if (!record) {
-        return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
-      }
-      if (recordKey === 'orders' && record.stockApplied) {
-        // Excluir um pedido já faturado devolve o estoque reservado — não faz
-        // sentido "sumir" com uma reserva de estoque junto com o registro.
-        await transitionOrderStockEffect(data, { oldItems: record.items || [], newItems: [], wasApplied: true, willApply: false, record, user });
-      }
-      // Os anexos vao junto. Sem isto o registro some do banco e os arquivos
-      // ficam para sempre no Storage, sem nada apontando para eles: ninguem
-      // consegue ve-los pela tela, ninguem consegue apaga-los, e a conta do
-      // armazenamento cresce sozinha.
-      //
-      // Antes de excluir o registro, porque depois as fichas ja nao existem
-      // para dizer QUAIS arquivos apagar.
-      for (const ficha of (Array.isArray(record.attachments) ? record.attachments : [])) {
-        try {
-          await anexosDb.removerAnexo(ficha);
-        } catch (erro) {
-          // Falha ao apagar UM arquivo nao pode impedir a exclusao do pedido:
-          // o usuario pediu para excluir o registro, e travar aqui deixaria o
-          // pedido vivo por causa de um arquivo. Fica no log para alguem
-          // limpar depois.
-          console.error('[anexos] arquivo orfao no Storage:', ficha.caminho, erro.message);
+      // A exclusão inteira — devolução de estoque, remoção dos anexos do
+      // Storage e a saída da lista em memória — mora em excluirSalesRecord,
+      // porque as ações em lote fazem exatamente isto. Duas cópias divergem, e
+      // aqui a divergência custaria reserva de estoque presa para sempre ou
+      // arquivo órfão no Storage.
+      try {
+        await excluirSalesRecord(id, data, user);
+      } catch (erro) {
+        if (/não encontrado/.test(erro.message)) {
+          return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
         }
+        throw erro;
       }
-      await (recordKey === 'orders' ? db.deleteOrder(id) : db.deleteQuote(id));
-      // saveData aqui é só pra persistir data.stockMovements (ver comentário
-      // equivalente na rota PUT acima) — o registro em si já foi excluído
-      // do Supabase pela linha anterior.
+      // saveData aqui é só pra persistir data.stockMovements — o registro em si
+      // já saiu do Supabase.
       saveData(data);
       return sendJson(res, { success: true });
     } catch (error) {

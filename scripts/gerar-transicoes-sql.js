@@ -1,23 +1,27 @@
--- =============================================================================
--- CONSOLIDADO — junta as migracoes PENDENTES para colar de uma vez no SQL
---  Editor do Supabase. Quem manda sao os arquivos de fase; o verificador
---  (scripts/verificar-migracoes.js) ignora este arquivo.
---
---  PENDENTE em 24/08/2026:
---    Fase AJ — transicoes validas de status (tabela, funcoes e gatilhos)
---
---  A fase-AI (anexos) ja foi aplicada e saiu daqui.
---
---  ATENCAO: esta migracao cria GATILHO em orders e quotes. Depois dela, um
---  UPDATE de status invalido passa a ser recusado pelo proprio banco -- e o
---  que se quer, mas e a primeira migracao desta serie que muda o que o banco
---  ACEITA, e nao so o que ele guarda.
---
---  Confira depois com:  npm run migracoes
--- =============================================================================
+#!/usr/bin/env node
+// Gera supabase/migrations/fase-aj-transicoes-de-status.sql A PARTIR de
+// TRANSICOES em public/modules/shared/sales_status.js.
+//
+// A lista de transicoes nao e redigitada em lugar nenhum: mudou no modulo,
+// roda-se este script e o SQL sai igual. scripts/test-transicoes-status.js
+// confere par a par que o arquivo no disco corresponde ao modulo -- se
+// alguem editar o SQL a mao, ou mudar o modulo e esquecer de regerar, a
+// suite acusa.
+//
+//   node scripts/gerar-transicoes-sql.js
+const fs = require('fs');
+const S = require('../public/modules/shared/sales_status');
 
--- >>> fase-aj-transicoes-de-status.sql
--- ---------------------------------------------------------------------------
+const pares = [];
+Object.entries(S.TRANSICOES).forEach(([de, destinos]) => destinos.forEach((para) => pares.push([de, para])));
+const valores = pares.map(([a, b]) => `  ('${a}', '${b}')`).join(',\n');
+const legados = Object.entries(S.LEGADOS).map(([de, para]) => `    when '${de}' then '${para}'`).join('\n');
+
+// $$ montado por código: escrito literalmente, o shell que chama este script
+// tenta expandir.
+const D2 = '$' + '$';
+
+const sql = `-- ---------------------------------------------------------------------------
 -- Fase AJ — transicoes validas de status, no BANCO
 --
 -- Ate aqui qualquer status virava qualquer outro: bastava um UPDATE com o
@@ -60,17 +64,12 @@ language sql
 immutable
 security definer
 set search_path = public
-as $$
+as ${D2}
   select case lower(trim(coalesce(bruto, '')))
-    when 'pendente' then 'pedido'
-    when 'faturado' then 'pedido-faturado'
-    when 'cancelado' then 'pedido-cancelado'
-    when 'em aberto' then 'orcamento'
-    when 'aprovado' then 'orcamento-aprovado'
-    when 'reprovado' then 'orcamento-reprovado'
+${legados}
     else lower(trim(coalesce(bruto, '')))
   end;
-$$;
+${D2};
 
 -- Os pares validos numa TABELA, e nao num case gigante: da para consultar
 -- ("de onde da para sair daqui?") e a geracao a partir do JS fica literal.
@@ -90,30 +89,7 @@ alter table sales_status_transicao enable row level security;
 -- par velho para tras.
 delete from sales_status_transicao;
 insert into sales_status_transicao (de, para) values
-  ('orcamento', 'pedido'),
-  ('orcamento', 'orcamento-aprovado'),
-  ('orcamento', 'orcamento-reprovado'),
-  ('orcamento-aprovado', 'pedido'),
-  ('orcamento-aprovado', 'orcamento-reprovado'),
-  ('pedido', 'pedido-nao-faturado'),
-  ('pedido', 'pedido-pre-faturado'),
-  ('pedido', 'pedido-faturado'),
-  ('pedido', 'pedido-aprovado-sem-faturamento'),
-  ('pedido', 'pedido-parcialmente-faturado'),
-  ('pedido', 'pedido-cancelado'),
-  ('pedido-nao-faturado', 'pedido'),
-  ('pedido-nao-faturado', 'pedido-pre-faturado'),
-  ('pedido-nao-faturado', 'pedido-faturado'),
-  ('pedido-nao-faturado', 'pedido-aprovado-sem-faturamento'),
-  ('pedido-nao-faturado', 'pedido-cancelado'),
-  ('pedido-pre-faturado', 'pedido-faturado'),
-  ('pedido-pre-faturado', 'pedido-parcialmente-faturado'),
-  ('pedido-pre-faturado', 'pedido-nao-faturado'),
-  ('pedido-pre-faturado', 'pedido-cancelado'),
-  ('pedido-parcialmente-faturado', 'pedido-faturado'),
-  ('pedido-parcialmente-faturado', 'pedido-cancelado'),
-  ('pedido-faturado', 'pedido-cancelado'),
-  ('pedido-aprovado-sem-faturamento', 'pedido-cancelado');
+${valores};
 
 create or replace function sales_status_transicao_valida(de text, para text)
 returns boolean
@@ -128,7 +104,7 @@ stable
 -- para uma tabela propria.
 security definer
 set search_path = public
-as $$
+as ${D2}
   select
     -- Ficar no MESMO status nao e transicao: salvar um pedido sem mexer no
     -- status e a operacao mais comum da tela.
@@ -138,14 +114,14 @@ as $$
       where t.de = sales_status_normalizar(de)
         and t.para = sales_status_normalizar(para)
     );
-$$;
+${D2};
 
 create or replace function sales_status_guarda()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $$
+as ${D2}
 begin
   -- Linha nova entra com o status que quiser: ela nao vem de lugar nenhum.
   if tg_op = 'INSERT' then
@@ -162,7 +138,7 @@ begin
   end if;
   return new;
 end;
-$$;
+${D2};
 
 drop trigger if exists orders_status_guarda on orders;
 create trigger orders_status_guarda
@@ -176,3 +152,8 @@ create trigger quotes_status_guarda
 
 comment on table sales_status_transicao is
   'Transicoes validas de status de pedido/orcamento. Gerada de TRANSICOES em public/modules/shared/sales_status.js; scripts/test-transicoes-status.js confere que as duas nao divergiram.';
+`;
+
+const path = require('path');
+fs.writeFileSync(path.join(__dirname, '..', 'supabase', 'migrations', 'fase-aj-transicoes-de-status.sql'), sql);
+console.log(`migracao gerada com ${pares.length} pares e ${Object.keys(S.LEGADOS).length} legados`);
