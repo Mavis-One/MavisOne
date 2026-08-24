@@ -1,17 +1,21 @@
 -- =============================================================================
 -- CONSOLIDADO — junta as migracoes PENDENTES para colar de uma vez no SQL
---  Editor do Supabase. Quem manda sao os arquivos de fase; o verificador
---  (scripts/verificar-migracoes.js) ignora este arquivo.
+--  Editor do Supabase.
 --
 --  PENDENTE em 24/08/2026:
---    Fase AJ — transicoes validas de status (tabela, funcoes e gatilhos)
+--    Fase AJ — CORRECAO. Rode de novo, mesmo tendo rodado ha pouco.
 --
---  A fase-AI (anexos) ja foi aplicada e saiu daqui.
+--  POR QUE RODAR DE NOVO: a versao anterior nomeou os parametros das funcoes
+--  "de"/"para", iguais as colunas da tabela. Dentro do subselect o Postgres
+--  resolve nome solto como COLUNA, entao a comparacao virava t.de = t.de e a
+--  funcao respondia TRUE para qualquer par -- medido no seu banco: ate
+--  "xxx -> yyy" passava. O gatilho existia e nao barrava nada.
 --
---  ATENCAO: esta migracao cria GATILHO em orders e quotes. Depois dela, um
---  UPDATE de status invalido passa a ser recusado pelo proprio banco -- e o
---  que se quer, mas e a primeira migracao desta serie que muda o que o banco
---  ACEITA, e nao so o que ele guarda.
+--  Nada quebrou por causa disso (a falha era permissiva, nao restritiva), mas
+--  a terceira porta estava aberta enquanto parecia fechada.
+--
+--  Esta versao renomeia para p_de/p_para e derruba as funcoes antes de
+--  recriar (create or replace recusa trocar nome de parametro).
 --
 --  Confira depois com:  npm run migracoes
 -- =============================================================================
@@ -54,21 +58,26 @@
 -- Traduz o status gravado para o vocabulario atual. Mesmo mapa do modulo
 -- compartilhado: sem isto, um pedido gravado como 'faturado' nao teria linha
 -- na tabela de transicoes e ficaria impossivel de cancelar.
-create or replace function sales_status_normalizar(bruto text)
+-- DROP antes de criar: a primeira versao desta migracao nomeou os parametros
+-- "de"/"para", e "create or replace" recusa trocar nome de parametro
+-- ("cannot change name of input parameter"). Sem o drop, quem ja rodou a
+-- versao anterior nao consegue aplicar a correcao.
+drop function if exists sales_status_normalizar(text);
+create or replace function sales_status_normalizar(p_bruto text)
 returns text
 language sql
 immutable
 security definer
 set search_path = public
 as $$
-  select case lower(trim(coalesce(bruto, '')))
+  select case lower(trim(coalesce(p_bruto, '')))
     when 'pendente' then 'pedido'
     when 'faturado' then 'pedido-faturado'
     when 'cancelado' then 'pedido-cancelado'
     when 'em aberto' then 'orcamento'
     when 'aprovado' then 'orcamento-aprovado'
     when 'reprovado' then 'orcamento-reprovado'
-    else lower(trim(coalesce(bruto, '')))
+    else lower(trim(coalesce(p_bruto, '')))
   end;
 $$;
 
@@ -115,7 +124,8 @@ insert into sales_status_transicao (de, para) values
   ('pedido-faturado', 'pedido-cancelado'),
   ('pedido-aprovado-sem-faturamento', 'pedido-cancelado');
 
-create or replace function sales_status_transicao_valida(de text, para text)
+drop function if exists sales_status_transicao_valida(text, text);
+create or replace function sales_status_transicao_valida(p_de text, p_para text)
 returns boolean
 language sql
 stable
@@ -129,14 +139,21 @@ stable
 security definer
 set search_path = public
 as $$
+  -- OS PARAMETROS SE CHAMAM p_de/p_para, e nao de/para, porque a TABELA tem
+  -- colunas com esses nomes. Dentro do subselect o Postgres resolve um nome
+  -- solto como COLUNA, nao como parametro: escrito "sales_status_normalizar(de)",
+  -- vira sales_status_normalizar(t.de), a comparacao fica t.de = t.de e o
+  -- exists() da verdadeiro para QUALQUER par. Medido em 24/08/2026 contra o
+  -- banco: ate "xxx -> yyy" respondia true. A guarda existia e nao guardava
+  -- nada -- pior do que nao existir, porque parecia estar la.
   select
     -- Ficar no MESMO status nao e transicao: salvar um pedido sem mexer no
     -- status e a operacao mais comum da tela.
-    sales_status_normalizar(de) = sales_status_normalizar(para)
+    sales_status_normalizar(p_de) = sales_status_normalizar(p_para)
     or exists (
       select 1 from sales_status_transicao t
-      where t.de = sales_status_normalizar(de)
-        and t.para = sales_status_normalizar(para)
+      where t.de = sales_status_normalizar(p_de)
+        and t.para = sales_status_normalizar(p_para)
     );
 $$;
 

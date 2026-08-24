@@ -80,6 +80,32 @@ Object.keys(S.LEGADOS).forEach((legado) => {
   check(`  legado "${legado}" também é traduzido no banco`, sql.includes(`when '${legado}' then`));
 });
 
+console.log('\n--- os parâmetros não colidem com as colunas ---');
+// Esta seção nasceu de um defeito medido contra o banco em 24/08/2026.
+//
+// A primeira versão nomeou os parâmetros `de`/`para` — os MESMOS nomes das
+// colunas da tabela. Dentro do subselect, o Postgres resolve um nome solto como
+// COLUNA, não como parâmetro: `sales_status_normalizar(de)` virou
+// `sales_status_normalizar(t.de)`, a comparação ficou `t.de = t.de` e o
+// `exists()` deu verdadeiro para QUALQUER par. Até "xxx -> yyy" respondia true.
+//
+// A guarda existia e não guardava nada — pior do que não existir, porque
+// parecia estar lá, com teste verde e migração aplicada.
+const colunas = ['de', 'para'];
+const assinaturas = [...sql.matchAll(/create or replace function\s+\w+\s*\(([^)]*)\)/gi)].map((m) => m[1]);
+check('há assinaturas para conferir', assinaturas.length >= 3, `${assinaturas.length} funções`);
+assinaturas.forEach((assinatura) => {
+  const nomes = assinatura.split(',').map((p) => p.trim().split(/\s+/)[0]).filter(Boolean);
+  const colidem = nomes.filter((n) => colunas.includes(n.toLowerCase()));
+  check(`  (${nomes.join(', ')}) não usa nome de coluna`, colidem.length === 0,
+    colidem.length ? 'COLIDE: ' + colidem.join(', ') : 'ok');
+});
+// Trocar nome de parâmetro exige DROP: `create or replace` recusa com
+// "cannot change name of input parameter", e quem já rodou a versão anterior
+// não conseguiria aplicar a correção.
+check('as funções são derrubadas antes de recriadas',
+  (sql.match(/drop function if exists/g) || []).length >= 2);
+
 console.log('\n--- o gatilho fecha a porta que sobra ---');
 check('há gatilho em orders e em quotes',
   /create trigger orders_status_guarda/.test(sql) && /create trigger quotes_status_guarda/.test(sql));
