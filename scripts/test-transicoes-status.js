@@ -212,7 +212,22 @@ check('o resumo mostrado vem do SERVIDOR', /showToast\(resposta\.resumo/.test(ap
 check('e o detalhe de cada ignorado é mostrado', /naoFeitos\.map\(\(i\) => /.test(appSrc));
 check('o módulo é carregado no navegador', /sales_bulk_actions\.js/.test(ler('public/index.html')));
 // A linha marcada precisa se distinguir sem depender só da caixinha.
-check('linha selecionada se destaca', /tr\.is-selecionada > td/.test(ler('public/app.css')));
+const cssApp = ler('public/app.css');
+check('linha selecionada se destaca', /tr\.is-selecionada > td/.test(cssApp));
+// A caixa de seleção é CHECKBOX, não a chave que o resto do sistema usa. A
+// diferença não é só visual: chave promete efeito imediato, e marcar linha não
+// faz nada até escolher a ação. A regra global transforma TODO
+// input[type=checkbox] em chave, então esta sobrescrita precisa continuar
+// existindo — some ela e a coluna volta a ter 8 chaves ligadas na tela.
+const regraSelecao = (cssApp.match(/\.sales-col-selecao input\[type="?checkbox"?\]\s*\{[^}]*\}/) || [''])[0];
+check('a seleção usa checkbox, não chave', /border-radius:\s*4px/.test(regraSelecao), regraSelecao ? 'regra existe' : 'REGRA SUMIU');
+// Sem `padding: 0`, a regra global de campos (padding: 10px 12px) empurra a
+// caixa para 26x22 com box-sizing: border-box — o quadrado vira retângulo.
+check('  com padding zerado, senão vira retângulo', /padding:\s*0/.test(regraSelecao));
+// A regra global desloca o círculo da chave no :checked (translateX); sem
+// redeclarar o transform aqui, o tique sairia do lugar.
+check('  e o tique fica girado, não deslocado',
+  /\.sales-col-selecao input\[type="?checkbox"?\]:checked::before\s*\{[^}]*rotate\(45deg\)/.test(cssApp));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

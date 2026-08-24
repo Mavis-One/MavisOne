@@ -1937,6 +1937,62 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 .sales-anexo-envio input[type="file"] { font-size: 0.9rem; }
 
 /* SELECAO MULTIPLA E ACOES EM LOTE */
+
+/* A caixa de selecao da lista e CHECKBOX, e nao a chave que o resto do
+   sistema usa. A diferenca nao e so visual:
+
+     chave (toggle)  -> liga/desliga algo, e o efeito acontece na hora
+     caixa (checkbox) -> marca este item para uma acao que vem depois
+
+   Selecionar linha e o segundo caso: nada acontece ao marcar; o efeito vem
+   quando se escolhe a acao no menu. Uma chave ali promete um efeito imediato
+   que nao existe -- e, com 50 linhas, sugere 50 coisas ligadas.
+
+   Sobrescreve a regra global de input[type=checkbox] (linha ~278). */
+.sales-col-selecao input[type=checkbox] {
+  /* padding: 0 e obrigatorio aqui. A regra global de campos (linha ~240)
+     aplica "padding: 10px 12px" a TODO input, e com box-sizing: border-box
+     isso empurra a caixa para 26x22 -- o quadrado vira retangulo. A chave de
+     40px escondia o efeito, porque 40 ja era maior que o padding somado. */
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  border-radius: 4px;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+}
+
+/* O tique e desenhado com duas bordas de um retangulo girado 45 graus: nao
+   depende de fonte de icone nem de SVG externo, e acompanha a cor do tema. */
+.sales-col-selecao input[type=checkbox]::before {
+  content: "";
+  top: 1px;
+  left: 5px;
+  width: 4px;
+  height: 9px;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  border: solid var(--panel);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.sales-col-selecao input[type=checkbox]:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+/* transform repetido de proposito: a regra global desloca o circulo da chave
+   (translateX) no :checked, e sem redeclarar aqui o tique sairia do lugar. */
+.sales-col-selecao input[type=checkbox]:checked::before {
+  opacity: 1;
+  transform: rotate(45deg);
+}
+
 .sales-col-selecao { width: 34px; text-align: center; }
 
 /* Linha marcada precisa se distinguir SEM depender so da caixinha: com 50
