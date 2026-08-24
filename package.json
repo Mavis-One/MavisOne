@@ -18,7 +18,9 @@
     "paineis": "node scripts/test-paineis-modulos.js",
     "nfe-observacoes": "node scripts/test-nfe-observacoes.js",
     "chassi": "node scripts/test-chassi-item.js",
-    "mapa": "node scripts/mapa-do-sistema.js"
+    "mapa": "node scripts/mapa-do-sistema.js",
+    "backup": "node scripts/backup-supabase.js",
+    "restaurar": "node scripts/restaurar-supabase.js"
   },
   "engines": {
     "node": ">=18"
