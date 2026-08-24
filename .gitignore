@@ -9,3 +9,4 @@ logs/
 # histórico a cada operação. Enquanto o Financeiro não migra para o Supabase,
 # este arquivo é a base local de cada máquina — não deve ser versionado.
 data/
+supabase/.temp/
