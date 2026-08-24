@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-08-12 21:32 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-08-24 20:59 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -28,10 +28,11 @@ Vendas  (sales)  —  8 tela(s) no menu
   [app] Logs de Vendas Importadas          Histórico das importações já processadas.
   [app] Importar Vendas                    Carrega vendas em lote a partir de um CSV.
 
-Compras  (purchases)  —  4 tela(s) no menu
+Compras  (purchases)  —  5 tela(s) no menu
 ------------------------------------------
   [ok]  Painel de Compras                  Quanto entrou, de quem e a que preço.
   [ok]  Nova Compra                        Lança uma compra e dá entrada no estoque.
+  [ok]  Entrada de NF-e                    Lê o XML do fornecedor, reconhece quem emitiu e dá entrada com os dados da nota.
   [ok]  Histórico de Compras               Compras registradas, por período e fornecedor.
   [ok]  Fornecedores                       Fornecedores cadastrados e seus dados.
 
@@ -184,7 +185,7 @@ Cadastros  (cadastros)  —  19 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 120 telas no menu.
+TOTAL: 14 módulos, 121 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -197,12 +198,18 @@ o próprio arquivo dá de si, no comentário de cabeçalho.
       Painel "Atenção" do hub.
   lib/cadastros-core.js
       Núcleo dos cadastros auxiliares do módulo Cadastros.
+  lib/calcularTributos.js
+      TRIBUTOS DE UM PEDIDO — a conta que alimenta a aba Impostos.
+  lib/entradaNfe.js
+      ENTRADA DE NF-e — ler o XML do fornecedor e dizer o que dele já existe aqui.
   lib/focusnfe.js
       Cliente para a API da Focus NFe (https://doc.focusnfe.com.br).
   lib/kpis.js
       KPIs do topo do hub.
   lib/nfePayloadBuilder.js
       Monta o payload de emissão de NF-e no formato da Focus NFe (https://doc.focusnfe.com.br/reference/emitir_nfe).
+  lib/nfeXml.js
+      LEITOR DE XML DE NF-e — o arquivo que o fornecedor manda, virado em objeto.
   lib/operacaoFiscal.js
       Catálogo de OPERAÇÕES FISCAIS.
   lib/painel-modulos.js
@@ -229,6 +236,10 @@ regra só, para tela e servidor nunca discordarem.
       Barra de ações do topo dos formulários: [ Mais Ações ▾ ] [ Salvar ] [ Voltar ] Componente genérico — a tela passa o catálogo de ações dela.
   atalhos.js
       Botão "Atalhos" da barra superior.
+  campos.js
+      Telefone, CEP, UF e placa — comportamento ÚNICO, usado por todas as telas.
+  cst_icms.js
+      O que cada CST do ICMS admite — FONTE ÚNICA.
   documento.js
       CPF e CNPJ — implementação ÚNICA, usada por todas as telas.
   fiscal_permissoes.js   [também no servidor]
@@ -239,6 +250,12 @@ regra só, para tela e servidor nunca discordarem.
       Texto padrão das observações adicionais da NF-e.
   painel.js
       Kit de painel — os blocos que TODO dashboard de módulo usa.
+  prazo_cancelamento.js   [também no servidor]
+      Prazo de cancelamento da NF-e: 24 horas contadas da AUTORIZAÇÃO.
+  sales_bulk_actions.js   [também no servidor]
+      Menu "Mais Ações" da LISTA — as ações em lote.
+  sales_grupos.js   [também no servidor]
+      Grupos de Produtos de um Pedido/Orçamento — FONTE ÚNICA.
   sales_record_actions.js
       Catálogo do "Mais Ações" da tela de Pedidos e Orçamentos.
   sales_status.js   [também no servidor]
@@ -256,6 +273,8 @@ data/db.json — arquivo fora do controle de versão.
 
 Arquivos de acesso (lib/db)
 ---------------------------
+  lib/db/anexos.js
+      ANEXOS DE PEDIDO — o binário no Supabase Storage, a ficha no pedido.
   lib/db/auth.js
       tabelas: users
   lib/db/cadastros.js
@@ -268,12 +287,15 @@ Arquivos de acesso (lib/db)
   lib/db/crm.js
       Conexão com o CRM externo.
       tabelas: crm_connection
+  lib/db/entrada-nfe.js
+      ENTRADA DE NF-e no banco.
+      tabelas: nfe_entrada, nfe_entrada_item
   lib/db/estoque.js
       tabelas: products
   lib/db/financeiro.js
       tabelas: bank_accounts, bank_transactions, cost_centers, financial_categories, financial_entries, financial_payments, nfe_items, nfes
   lib/db/fiscal.js
-      tabelas: certificado_digital, empresa, estabelecimento, nfe, nfe_arquivos, nfe_eventos, regra_fiscal
+      tabelas: certificado_digital, cfop, empresa, estabelecimento, nfe, nfe_arquivos, nfe_eventos, regra_fiscal
   lib/db/modulos.js
       CRUD dos módulos Frota, RH, PCP e Contratos.
       tabelas: contract_templates, contract_types, contracts, fleet_maintenances, fleet_refuels, fleet_vehicles, hr_departments, hr_employee_categories, hr_employee_types, hr_employees, hr_leaves, hr_positions, hr_time_entries, hr_work_schedules, pcp_bom, pcp_entries, pcp_orders, pcp_quality_checks, pcp_sectors, pcp_statuses
@@ -287,20 +309,21 @@ Arquivos de acesso (lib/db)
   lib/db/vendas-compras.js
       tabelas: import_logs, orders, purchases, quotes, sales
 
-Tabelas usadas (65)
+Tabelas usadas (68)
 -------------------
   access_logs             account_balances        audit_logs
   bank_accounts           bank_cards              bank_transactions
-  card_transactions       certificado_digital     cnpjs
-  contract_templates      contract_types          contracts
-  cost_centers            crm_connection          deposits
-  empresa                 estabelecimento         financial_categories
-  financial_entries       financial_institutions  financial_payments
-  fleet_maintenances      fleet_refuels           fleet_vehicles
-  hr_departments          hr_employee_categories  hr_employee_types
-  hr_employees            hr_leaves               hr_positions
-  hr_time_entries         hr_work_schedules       import_logs
-  nfe                     nfe_arquivos            nfe_eventos
+  card_transactions       certificado_digital     cfop
+  cnpjs                   contract_templates      contract_types
+  contracts               cost_centers            crm_connection
+  deposits                empresa                 estabelecimento
+  financial_categories    financial_entries       financial_institutions
+  financial_payments      fleet_maintenances      fleet_refuels
+  fleet_vehicles          hr_departments          hr_employee_categories
+  hr_employee_types       hr_employees            hr_leaves
+  hr_positions            hr_time_entries         hr_work_schedules
+  import_logs             nfe                     nfe_arquivos
+  nfe_entrada             nfe_entrada_item        nfe_eventos
   nfe_items               nfes                    open_finance_audit_logs
   open_finance_connectionsopen_finance_webhook_eventsorders
   pcp_bom                 pcp_entries             pcp_orders
@@ -313,7 +336,7 @@ Tabelas usadas (65)
   user_roles              users
 
 ==============================================================================
-4. ROTAS DA API (88 encontradas no server.js)
+4. ROTAS DA API (94 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -381,8 +404,12 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/open-finance/institutions                       GET
   /api/open-finance/status                             GET
   /api/pcp/orders/from-sale                            POST
+  /api/preferencias                                    
   /api/purchases                                       GET POST
   /api/purchases/…                                     
+  /api/purchases/entrada-nfe                           GET POST
+  /api/purchases/entrada-nfe/…                         
+  /api/purchases/entrada-nfe/analisar                  POST
   /api/reports/overview                                GET
   /api/sales                                           GET POST
   /api/sales/dashboard                                 GET
@@ -390,6 +417,8 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/sales/meta                                      GET
   /api/sales/records                                   GET POST
   /api/sales/records/…                                 
+  /api/sales/records/lote                              POST
+  /api/sales/tributos                                  POST
   /api/settings                                        GET POST
   /api/stock                                           GET POST
   /api/stock/…                                         
@@ -410,12 +439,20 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-23 arquivo(s) em supabase/migrations, em ordem de fase:
+31 arquivo(s) em supabase/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
   fase-ab-nfe-complementar-icms.sql
   fase-ac-classes-de-produto.sql
+  fase-ad-ibs-cbs-uf-municipio.sql
+  fase-ae-financeiro-por-cfop-e-beneficio.sql
+  fase-af-rls-fechar-porta-publica.sql
+  fase-ag-preferencias-do-usuario.sql
+  fase-ah-grupos-de-produtos.sql
+  fase-ai-anexos-do-pedido.sql
+  fase-aj-transicoes-de-status.sql
+  fase-ak-entrada-de-nfe.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -439,25 +476,36 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-40 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+57 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
+  [npm test] test-anexos-pedido.js              Arquivos Anexados ao pedido/orçamento.
   [npm test] test-atalhos.js                    Botão "Atalhos" da barra superior — public/modules/shared/atalhos.js O que quebra em silêncio aqui: 1.
   [npm test] test-atencao.js                    Painel "Atenção" do hub — lib/atencao.js O QUE ELE RESOLVE
   [npm test] test-auditoria-fiscal.js           Trilha de auditoria — emissão, cancelamento, CC-e e inutilização de NF-e.
+  [avulso]  test-backup-restauracao.js         A VOLTA: backup -> apaga -> restaura -> confere.
+  [npm test] test-busca-avancada.js             Busca Avançada de Pedidos e Orçamentos.
+  [npm test] test-calcular-tributos.js          Aba Impostos e calcularTributos.
   [npm test] test-campo-busca.js                Campo de busca com sugestão (renderSearchableSelect / attachSearchableSelect).
+  [npm test] test-campos-padronizados.js        Um telefone é um telefone em toda tela do sistema.
   [npm test] test-chassi-item.js                Chassi na linha do item de venda.
   [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
   [npm test] test-complemento-icms.js           NF-e COMPLEMENTAR EXCLUSIVA DE ICMS.
   [npm test] test-contrato-financeiro.js        Geração das parcelas de um contrato — parcelasDoContrato / vencimentoDoPeriodo.
+  [npm test] test-cst-icms.js                   O CST decide QUAIS campos a nota carrega — não é um rótulo.
   [npm test] test-dashboard-hub.js              Desenho do hub — public/modules/dashboard/index.js O que este teste guarda: 1.
   [npm test] test-documento.js                  CPF e CNPJ — modules/shared/documento.js.
+  [npm test] test-emissao-abas.js               A tela de emissão de NF-e: estrutura das abas e o que acontece ao clicar em "Emitir NF-e" com campo obrigatóri
+  [npm test] test-entrada-nfe.js                ENTRADA DE NF-e — o XML do fornecedor, o fornecedor que falta e o que a nota não pode fazer sozinha.
   [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
   [avulso]  test-gate-openfinance.js           O portão central alcança mesmo o Open Finance? A regra de permissão dizia '/api/openfinance', mas a rota é '/a
+  [npm test] test-grupos-produtos.js            Grupos de Produtos do Pedido/Orçamento.
   [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
   [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
+  [npm test] test-lancamento-vinculado.js       Lançamento gerado por PEDIDO ou por NF-e: o que dá e o que não dá para mudar.
+  [npm test] test-lista-vendas.js               Lista de Pedidos e Orçamentos: colunas, ordenação, paginação e URL.
   [npm test] test-module-workspace.js           Testa a Área de Trabalho dos módulos contra as listas REAIS do app.js.
   [avulso]  test-modulos-crud.js               CRUD dos módulos Frota, RH, PCP e Contratos contra o Supabase REAL.
   [avulso]  test-modulos-e2e.js                Fluxo real dos módulos novos pelas rotas HTTP, autenticado.
@@ -472,8 +520,11 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-permissoes-fiscais.js         Permissões do módulo Fiscal — a tela e o portão do servidor têm de falar a mesma língua.
   [avulso]  test-permissoes-tela.js            A tela de Papéis e Permissões contra as permissões REAIS do banco.
   [npm test] test-permissoes.js                 Regras de controle de acesso (lib/permissoes.js).
+  [npm test] test-prazo-cancelamento.js         Prazo de 24 horas para cancelar NF-e.
+  [npm test] test-produto-abas.js               Abas do cadastro de produto.
   [npm test] test-regras-fiscais.js             Modelo de regras fiscais — scripts/seed-regras-fiscais.js Os CFOPs vieram do ERP que o usuário usa hoje: 5102,
   [npm test] test-reserva-estoque.js            Reserva de estoque — a ponte entre "prometido" e "baixado".
+  [npm test] test-rls.js                        RLS: toda tabela do schema precisa estar na fase-af.
   [npm test] test-sales-actions.js              Regras do menu "Mais Ações" da tela de Pedidos e Orçamentos.
   [npm test] test-sales-record-fields.js        Campos do Pedido/Orçamento: ida e volta entre o formulário e o banco.
   [npm test] test-sales-status.js               Catálogo de status de Pedido/Orçamento — public/modules/shared/sales_status.js O que este teste protege: 1.
@@ -481,21 +532,26 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-sales-totals.js               Regras de desconto, frete e soma dos totais de Pedido/Orçamento.
   [npm test] test-sessao-expira.js              Expiração das sessões na virada do dia — lib/sessao.js A conta de "quando esta sessão morre" é fácil de escrev
   [avulso]  test-sessao-unica.js               Sessão única por usuário: entrar numa máquina derruba a outra.
+  [npm test] test-transicoes-status.js          Transições de status e ações em lote.
   [npm test] test-vendas-financeiro.js          Contas a receber geradas por um pedido faturado (lib/vendas-financeiro.js).
+  [npm test] test-verificador-migracoes.js      O verificador de migrações precisa estar certo sobre o que ele NÃO sabe.
+  [npm test] test-vinculo-pedido-nfe.js         Vínculo pedido <-> NF-e: existe nos DOIS sentidos, e um pedido não emite duas notas.
 
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-106 arquivos JS carregados por public/index.html, nesta ordem.
+111 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
   /modules/shared/documento.js
+  /modules/shared/campos.js
   /modules/shared/painel.js
   /modules/shared/module_workspace.js
   /modules/dashboard/index.js
   /modules/purchases/index.js
   /modules/purchases/subs/new_purchase.js
+  /modules/purchases/subs/entrada_nfe.js
   /modules/purchases/subs/painel.js
   /modules/purchases/subs/purchase_history.js
   /modules/purchases/subs/suppliers.js
@@ -524,7 +580,11 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/atalhos.js
   /modules/shared/sales_totals.js
   /modules/shared/sales_status.js
+  /modules/shared/sales_grupos.js
+  /modules/shared/sales_bulk_actions.js
   /modules/shared/fiscal_permissoes.js
+  /modules/shared/cst_icms.js
+  /modules/shared/prazo_cancelamento.js
   /modules/shared/nfe_texto_padrao.js
   /modules/shared/actions_menu.js
   /modules/shared/sales_record_actions.js
@@ -534,7 +594,6 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/finance/subs/lancamentos.js
   /modules/finance/subs/novo_lancamento.js
   /modules/finance/subs/nfe_emitidas.js
-  /modules/finance/subs/nova_nfe_avulsa.js
   /modules/finance/subs/emitir_nfe_focus.js
   /modules/finance/subs/extrato_open_finance.js
   /modules/finance/subs/bancos_conectados.js

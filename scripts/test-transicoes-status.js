@@ -219,7 +219,12 @@ check('linha selecionada se destaca', /tr\.is-selecionada > td/.test(cssApp));
 // faz nada até escolher a ação. A regra global transforma TODO
 // input[type=checkbox] em chave, então esta sobrescrita precisa continuar
 // existindo — some ela e a coluna volta a ter 8 chaves ligadas na tela.
-const regraSelecao = (cssApp.match(/\.sales-col-selecao input\[type="?checkbox"?\]\s*\{[^}]*\}/) || [''])[0];
+// A Entrada de NF-e (fase AK) marca item para uma ação posterior pelo mesmo
+// motivo, então divide esta regra: o seletor virou lista. O teste procura o
+// BLOCO que cobre a seleção da lista, não um seletor exato — senão qualquer
+// tela nova que reaproveite a regra derrubaria este check sem nada ter
+// quebrado na tela.
+const regraSelecao = (cssApp.match(/[^{}]*\.sales-col-selecao input\[type="?checkbox"?\]\s*\{[^}]*\}/) || [''])[0];
 check('a seleção usa checkbox, não chave', /border-radius:\s*4px/.test(regraSelecao), regraSelecao ? 'regra existe' : 'REGRA SUMIU');
 // Sem `padding: 0`, a regra global de campos (padding: 10px 12px) empurra a
 // caixa para 26x22 com box-sizing: border-box — o quadrado vira retângulo.
@@ -227,7 +232,7 @@ check('  com padding zerado, senão vira retângulo', /padding:\s*0/.test(regraS
 // A regra global desloca o círculo da chave no :checked (translateX); sem
 // redeclarar o transform aqui, o tique sairia do lugar.
 check('  e o tique fica girado, não deslocado',
-  /\.sales-col-selecao input\[type="?checkbox"?\]:checked::before\s*\{[^}]*rotate\(45deg\)/.test(cssApp));
+  /\.sales-col-selecao input\[type="?checkbox"?\]:checked::before[^{}]*\{[^}]*rotate\(45deg\)/.test(cssApp));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

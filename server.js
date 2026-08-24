@@ -51,6 +51,11 @@ const { calcularTributos } = require('./lib/calcularTributos');
 // Anexos do pedido: binário no Supabase Storage (bucket privado), ficha no
 // próprio pedido. Ver o cabeçalho de lib/db/anexos.js.
 const anexosDb = require('./lib/db/anexos');
+// Entrada de NF-e: o XML que o fornecedor manda. O leitor nao usa biblioteca
+// externa (ver o cabecalho de lib/nfeXml.js) e a conferencia e funcao pura --
+// analisar uma nota nao pode criar fornecedor nem mexer em estoque sozinha.
+const entradaNfe = require('./lib/entradaNfe');
+const entradaNfeDb = require('./lib/db/entrada-nfe');
 // Ações em lote da lista. Mesmo arquivo que o navegador carrega: é ele que diz
 // quem é elegível, e a tela e o servidor precisam responder igual.
 const salesBulk = require('./public/modules/shared/sales_bulk_actions');
@@ -3887,6 +3892,108 @@ function filterStockMovements(data, params, productsById) {
   });
 }
 
+// ============================================================================
+// ENTRADA DE NF-e — a nota que o FORNECEDOR emitiu contra nós.
+//
+// TRÊS PASSOS, E O SEGUNDO É DE UMA PESSOA
+// ----------------------------------------
+//   analisar  ->  lê o XML e diz o que dele já existe aqui. NÃO GRAVA NADA.
+//   (pessoa)  ->  cadastra o fornecedor que faltava, vincula os itens.
+//   lançar    ->  grava a entrada, o estoque e o contas a pagar.
+//
+// Analisar não grava de propósito. Arrastar um XML para a tela é "deixa eu ver
+// o que tem aqui", não "lança isso" — e um fornecedor criado por engano, ou uma
+// entrada em duplicidade, é bem mais difícil de desfazer do que de evitar.
+//
+// O SERVIDOR RELÊ O XML NO LANÇAMENTO
+// -----------------------------------
+// A rota de lançar recebe o XML de novo e o processa outra vez, do zero. Ela
+// NÃO aceita os valores que a tela leu. Se aceitasse, o navegador poderia
+// mandar uma nota de R$ 600 com total de R$ 60.000 e o sistema gravaria os dois
+// números que ele quisesse. O que a tela manda são DECISÕES (qual produto é
+// cada item, o que movimenta estoque) — nunca os fatos da nota.
+//
+// CADASTRO DE FORNECEDOR E DE PRODUTO NÃO ESTÃO AQUI
+// --------------------------------------------------
+// A tela posta na rota que já existe (/api/cadastros/cnpjs, /api/cadastros/
+// pessoas, /api/stock/products). Um segundo caminho de criação significaria uma
+// segunda validação de CNPJ, uma segunda checagem de duplicidade e uma segunda
+// permissão para manter em dia — e a que ficasse para trás seria a porta aberta.
+// Efeito colateral bem-vindo: quem só tem Compras consegue LANÇAR a entrada,
+// mas cadastrar o fornecedor continua exigindo Cadastros, como sempre exigiu.
+// ============================================================================
+
+// Sem a migração, `nfe_entrada` não existe e o erro do PostgREST não diz a
+// ninguém o que fazer. Pior: a checagem de duplicidade mora nessa tabela, então
+// engolir o erro deixaria a mesma nota entrar duas vezes em silêncio.
+function traduzirErroDaEntrada(error) {
+  const texto = String((error && error.message) || '');
+  if (/nfe_entrada/.test(texto) && /(does not exist|schema cache|Could not find the table)/i.test(texto)) {
+    const err = new Error('As tabelas da Entrada de NF-e ainda não existem no banco. Rode supabase/migrations/fase-ak-entrada-de-nfe.sql no SQL Editor do Supabase.');
+    err.status = 503;
+    return err;
+  }
+  return error;
+}
+
+async function conferirEntradaDeNfe(xml) {
+  const nota = entradaNfe.lerNotaDeEntrada(xml);
+  const data = loadData();
+  await syncCadastroData(data);
+
+  const produtos = await db.getProducts();
+  const vinculosAnteriores = await entradaNfeDb.vinculosDoFornecedor(nota.emitente.documento);
+  const entradaExistente = await entradaNfeDb.buscarPorChave(nota.chave);
+  // Estabelecimento é opcional no sistema: sem nenhum cadastrado, as checagens
+  // de "esta nota é minha?" simplesmente não rodam, em vez de acusar toda nota.
+  let estabelecimentos = [];
+  try {
+    estabelecimentos = await fiscalDb.getEstabelecimentos();
+  } catch (erroEstab) {
+    estabelecimentos = [];
+  }
+
+  const conferencia = entradaNfe.montarConferencia({
+    nota,
+    diretorio: getCadastroDirectory(data),
+    produtos,
+    vinculosAnteriores,
+    documentosProprios: estabelecimentos.map((e) => e.cnpj),
+    entradaExistente
+  });
+
+  return { conferencia, data, produtos };
+}
+
+/**
+ * Junta o que a NOTA diz com o que a TELA decidiu.
+ *
+ * A lista percorrida é a da nota, nunca a do corpo da requisição: item que a
+ * tela não mencionou fica com o vínculo sugerido e sem movimentar estoque, em
+ * vez de sumir do lançamento.
+ */
+function decisoesDosItens(conferencia, body) {
+  const enviados = new Map(
+    (Array.isArray(body.itens) ? body.itens : []).map((i) => [Number(i.numero), i])
+  );
+  return conferencia.itens.map((item) => {
+    const escolha = enviados.get(item.numero) || {};
+    const sugerido = item.vinculo ? item.vinculo.produtoId : '';
+    const escolheu = Object.prototype.hasOwnProperty.call(escolha, 'produtoId');
+    const produtoId = escolheu ? String(escolha.produtoId || '') : sugerido;
+    return {
+      item,
+      produtoId,
+      // Vínculo escolhido na tela é 'manual' — e é ele que alimenta o de-para
+      // da próxima nota deste fornecedor. Sugestão aceita mantém a origem
+      // original (gtin/codigo/descricao), que diz o quanto se pode confiar.
+      vinculoOrigem: produtoId ? (produtoId === sugerido && item.vinculo ? item.vinculo.por : 'manual') : '',
+      movimentarEstoque: Boolean(produtoId) && escolha.movimentarEstoque !== false && body.movimentarEstoque !== false,
+      depositoId: String(escolha.depositoId || body.depositoId || '')
+    };
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const { pathname } = url;
@@ -6500,6 +6607,282 @@ const server = http.createServer(async (req, res) => {
   // (cadastroCollectionMatch), que atende /api/cadastros/companies a partir do
   // descritor em lib/cadastros-core.js — que é o endpoint que a tela de
   // Empresas realmente chama. Ninguém chamava a versão em português.
+
+  // --------------------------------------------------------------------------
+  // ENTRADA DE NF-e — ver o bloco de comentário antes de conferirEntradaDeNfe().
+  // Vêm ANTES de /api/purchases porque as rotas de compra casam por prefixo.
+  // --------------------------------------------------------------------------
+
+  if (pathname === '/api/purchases/entrada-nfe/analisar' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      if (!String(body.xml || '').trim()) {
+        return sendJson(res, { error: 'Envie o XML da NF-e.' }, 400);
+      }
+      const { conferencia, data, produtos } = await conferirEntradaDeNfe(body.xml);
+      return sendJson(res, {
+        ...conferencia,
+        // A tela precisa da lista para vincular item na mão. Vai daqui, e não
+        // de /api/stock/products, para que quem tem só Compras consiga
+        // conferir a nota inteira — cadastrar produto novo continua sendo
+        // do Estoque.
+        produtos: produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', ean: p.ean || '' })),
+        depositos: (data.deposits || []).map((d) => ({ id: d.id, name: d.name })),
+        permissoes: {
+          cadastrarFornecedor: user.allowedModules.includes('cadastros'),
+          cadastrarProduto: user.allowedModules.includes('stock')
+        }
+      });
+    } catch (error) {
+      const traduzido = traduzirErroDaEntrada(error);
+      return sendJson(res, { error: traduzido.message || 'Não consegui ler o XML.' }, traduzido.status || 400);
+    }
+  }
+
+  if (pathname === '/api/purchases/entrada-nfe' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      return sendJson(res, { entradas: await entradaNfeDb.listarEntradas({}) });
+    } catch (error) {
+      const traduzido = traduzirErroDaEntrada(error);
+      return sendJson(res, { error: traduzido.message || 'Erro ao listar entradas' }, traduzido.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/purchases/entrada-nfe/') && pathname.endsWith('/xml') && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/purchases/entrada-nfe/', '').replace('/xml', ''));
+      const registro = await entradaNfeDb.obterXml(id);
+      if (!registro) return sendJson(res, { error: 'Entrada não encontrada' }, 404);
+      // O XML é o documento fiscal: entregue como arquivo, com o nome que a
+      // contabilidade espera (a chave), não como texto solto na tela.
+      res.writeHead(200, {
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${registro.chave}.xml"`
+      });
+      return res.end(registro.xml || '');
+    } catch (error) {
+      const traduzido = traduzirErroDaEntrada(error);
+      return sendJson(res, { error: traduzido.message || 'Erro ao baixar o XML' }, traduzido.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/purchases/entrada-nfe/') && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/purchases/entrada-nfe/', ''));
+      const entrada = await entradaNfeDb.obterEntrada(id);
+      if (!entrada) return sendJson(res, { error: 'Entrada não encontrada' }, 404);
+      return sendJson(res, { entrada });
+    } catch (error) {
+      const traduzido = traduzirErroDaEntrada(error);
+      return sendJson(res, { error: traduzido.message || 'Erro ao abrir a entrada' }, traduzido.status || 400);
+    }
+  }
+
+  if (pathname === '/api/purchases/entrada-nfe' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      if (!String(body.xml || '').trim()) {
+        return sendJson(res, { error: 'Envie o XML da NF-e.' }, 400);
+      }
+
+      // Releitura completa do XML: o que vale são os dados da nota lidos AQUI.
+      const { conferencia, data, produtos } = await conferirEntradaDeNfe(body.xml);
+      const nota = conferencia.nota;
+
+      if (conferencia.bloqueios.length) {
+        return sendJson(res, {
+          error: conferencia.bloqueios.map((b) => b.mensagem).join(' '),
+          bloqueios: conferencia.bloqueios
+        }, 409);
+      }
+
+      const decisoes = decisoesDosItens(conferencia, body);
+      const produtosPorId = new Map(produtos.map((p) => [p.id, p]));
+
+      // ---- validação ANTES de gravar qualquer coisa -------------------------
+      // Um item recusado no meio da gravação deixaria a nota lançada pela
+      // metade: estoque de dois itens dentro, do terceiro fora, e nenhum aviso.
+      for (const decisao of decisoes) {
+        const rotulo = `Item ${decisao.item.numero} (${decisao.item.descricao})`;
+        if (decisao.produtoId && !produtosPorId.has(decisao.produtoId)) {
+          return sendJson(res, { error: `${rotulo}: o produto vinculado não existe mais.` }, 400);
+        }
+        if (!decisao.movimentarEstoque) continue;
+        if (!decisao.depositoId) {
+          return sendJson(res, { error: `${rotulo}: escolha o depósito antes de dar entrada no estoque.` }, 400);
+        }
+        let classesDoProduto = [];
+        try {
+          classesDoProduto = await classesDb.classesDoProduto(decisao.produtoId);
+        } catch (erroClasses) {
+          classesDoProduto = [];
+        }
+        try {
+          assertMovementIsPossible(data, produtosPorId, {
+            productId: decisao.produtoId,
+            depositId: decisao.depositoId,
+            type: 'entrada',
+            quantity: decisao.item.quantidade,
+            classValueId: '',
+            classesDoProduto
+          });
+        } catch (erroMovimento) {
+          // O XML não traz cor/voltagem: produto controlado por classe não tem
+          // como entrar direto da nota. Dizer QUAL item trava é o que permite
+          // desmarcar só ele e lançar o resto.
+          return sendJson(res, { error: `${rotulo}: ${erroMovimento.message}` }, erroMovimento.status || 400);
+        }
+      }
+
+      const querFinanceiro = body.gerarFinanceiro !== false;
+      const vaiMovimentar = decisoes.some((d) => d.movimentarEstoque);
+      const status = decisoes.some((d) => !d.produtoId) ? 'REVISAR' : 'LANCADA';
+
+      // ---- a nota --------------------------------------------------------
+      const entrada = await entradaNfeDb.criarEntrada({
+        entrada: {
+          chave: nota.chave,
+          modelo: nota.modelo,
+          serie: nota.serie,
+          numero: nota.numero,
+          dataEmissao: nota.dataEmissao,
+          naturezaOperacao: nota.naturezaOperacao,
+          emitenteDocumento: nota.emitente.documento,
+          emitenteNome: nota.emitente.nome,
+          emitenteIe: nota.emitente.inscricaoEstadual,
+          cadastroId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
+          destinatarioDocumento: nota.destinatario ? nota.destinatario.documento : '',
+          valorProdutos: nota.totais.produtos || 0,
+          valorTotal: nota.totais.nota || 0,
+          status,
+          movimentouEstoque: vaiMovimentar,
+          gerouFinanceiro: querFinanceiro,
+          xml: String(body.xml),
+          resumo: nota,
+          criadoPor: user.id,
+          criadoPorNome: user.name
+        },
+        itens: decisoes.map((d) => ({
+          numero: d.item.numero,
+          codigo: d.item.codigo,
+          ean: d.item.ean,
+          descricao: d.item.descricao,
+          ncm: d.item.ncm,
+          cfop: d.item.cfop,
+          unidade: d.item.unidade,
+          quantidade: d.item.quantidade,
+          valorUnitario: d.item.valorUnitario,
+          valorTotal: d.item.valorTotal,
+          produtoId: d.produtoId,
+          vinculoOrigem: d.vinculoOrigem,
+          movimentouEstoque: d.movimentarEstoque,
+          imposto: { icms: d.item.icms, ipi: d.item.ipi, pis: d.item.pis, cofins: d.item.cofins }
+        }))
+      });
+
+      // ---- estoque -------------------------------------------------------
+      const movimentados = [];
+      for (const decisao of decisoes.filter((d) => d.movimentarEstoque)) {
+        const produto = produtosPorId.get(decisao.produtoId);
+        data.stockMovements.push(buildMovementRecord(data, {
+          type: 'entrada',
+          productId: produto.id,
+          depositId: decisao.depositoId,
+          quantity: decisao.item.quantidade,
+          unitCost: decisao.item.valorUnitario,
+          date: nota.dataEmissao,
+          document: `NF-e ${nota.numero}/${nota.serie}`,
+          note: `Entrada da NF-e ${nota.numero} de ${nota.emitente.nome}`,
+          origin: 'entrada-nfe'
+        }, user));
+        await db.upsertProduct({
+          ...produto,
+          stockQuantity: Number(produto.stockQuantity || 0) + Number(decisao.item.quantidade || 0),
+          // Custo do produto passa a ser o desta nota quando a tela pediu.
+          // vUnCom é o preço da mercadoria: NÃO inclui frete, IPI nem ST. Custo
+          // de reposição de verdade sai de rateio, e rateio é decisão de quem
+          // apura — não de quem lança a nota.
+          ...(body.atualizarCusto === false ? {} : { costPrice: Number(decisao.item.valorUnitario || 0) })
+        });
+        movimentados.push(produto.name);
+      }
+      if (movimentados.length) saveData(data);
+
+      // ---- contas a pagar --------------------------------------------------
+      const financeiro = [];
+      if (querFinanceiro) {
+        await syncFinanceData(data);
+        // Sem duplicata na nota (à vista, ou emissor que não preencheu cobr),
+        // vira uma parcela só vencendo na emissão — melhor do que sumir com a
+        // dívida porque o XML não detalhou o parcelamento.
+        const parcelas = nota.duplicatas.length
+          ? nota.duplicatas
+          : [{ numero: '001', vencimento: nota.dataEmissao, valor: nota.totais.nota || 0 }];
+        for (let i = 0; i < parcelas.length; i += 1) {
+          const parcela = parcelas[i];
+          const lancamento = await db.createFinancialEntry({
+            type: 'purchase',
+            referenceId: entrada.id,
+            date: nota.dataEmissao,
+            dueDate: parcela.vencimento || nota.dataEmissao,
+            description: `NF-e ${nota.numero} — ${nota.emitente.nome} (${i + 1}/${parcelas.length})`,
+            amount: Number(parcela.valor || 0),
+            // A chave no campo Documento é o que liga a conta a pagar à nota na
+            // conciliação — nome de fornecedor muda, chave não.
+            document: nota.chave,
+            clientSupplierId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
+            clientSupplierName: nota.emitente.nome,
+            status: 'pending',
+            createdBy: user.id,
+            createdByName: user.name
+          });
+          data.finance.push(lancamento);
+          financeiro.push(lancamento);
+        }
+        saveData(data);
+      }
+
+      await registrarAuditoria({
+        action: 'entrada-nfe-lancada',
+        targetId: entrada.id,
+        targetUsername: nota.emitente.nome,
+        byId: user.id,
+        byName: user.name,
+        details: `NF-e ${nota.numero}/${nota.serie} — chave ${nota.chave} — R$ ${Number(nota.totais.nota || 0).toFixed(2)}`
+      });
+
+      return sendJson(res, {
+        success: true,
+        entrada,
+        estoque: movimentados,
+        financeiro,
+        status
+      });
+    } catch (error) {
+      const traduzido = traduzirErroDaEntrada(error);
+      return sendJson(res, { error: traduzido.message || 'Erro ao lançar a entrada' }, traduzido.status || 400);
+    }
+  }
 
   if (pathname === '/api/purchases' && req.method === 'GET') {
     const data = loadData();

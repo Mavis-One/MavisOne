@@ -11,6 +11,25 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
   const limit = 20;
   const cores = S.indiceDeCores(meta);
 
+
+  // De onde a movimentacao veio. Sem este mapa, TUDO que nao fosse saldo
+  // inicial ou transferencia aparecia como "Manual" -- inclusive a entrada
+  // de uma NF-e de fornecedor e a baixa de uma compra, que ninguem digitou.
+  // Rotulo errado aqui e pior do que rotulo nenhum: manda procurar a pessoa
+  // que "lancou na mao" um movimento que o sistema gerou.
+  const ORIGENS = {
+    'saldo-inicial': ['Saldo inicial', 'muted'],
+    'entrada-nfe': ['Entrada de NF-e', 'info'],
+    purchase: ['Compra', 'info'],
+    order: ['Pedido', 'info'],
+    producao: ['Produção', 'info']
+  };
+  function seloDeOrigem(movement) {
+    if (movement.transferId) return S.badge('Transferência', 'info');
+    const achado = ORIGENS[movement.origin];
+    return achado ? S.badge(achado[0], achado[1]) : S.badge('Manual', 'muted');
+  }
+
   const eyeIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
 
   // Escopo da movimentação: só leitura. Movimentação registrada não se edita,
@@ -49,7 +68,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
             ${detailItem('Custo total', S.formatBRL(movement.totalCost))}
             ${detailItem('Categoria', S.escape(movement.categoryName || '-'))}
             ${detailItem('Documento', S.escape(movement.document || '-'))}
-            ${detailItem('Origem', movement.transferId ? S.badge('Transferência', 'info') : S.badge(movement.origin === 'saldo-inicial' ? 'Saldo inicial' : 'Manual', 'muted'))}
+            ${detailItem('Origem', seloDeOrigem(movement))}
             ${detailItem('Registrado por', S.escape(movement.createdByName || '-'))}
           </div>
           <label>Observação
@@ -165,7 +184,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
                   <td>${S.formatBRL(movement.unitCost)}</td>
                   <td>${S.escape(movement.categoryName || '-')}</td>
                   <td>${S.escape(movement.document || '-')}</td>
-                  <td>${movement.transferId ? S.badge('Transferência', 'info') : S.badge(movement.origin === 'saldo-inicial' ? 'Saldo inicial' : 'Manual', 'muted')}</td>
+                  <td>${seloDeOrigem(movement)}</td>
                   <td>
                     <button type="button" class="icon-button" data-detail-btn="${movement.id}" title="Ver observação">${eyeIcon}</button>
                     <button type="button" class="icon-button" data-delete="${movement.id}" title="Estornar" ${movement.transferId ? 'disabled' : ''}>${S.trashIcon}</button>

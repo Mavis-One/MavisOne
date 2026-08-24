@@ -1486,6 +1486,7 @@ const moduleSubItems = {
   purchases: [
     { key: 'painel', label: 'Painel de Compras', desc: 'Quanto entrou, de quem e a que preço.' },
     { key: 'new_purchase', label: 'Nova Compra', desc: 'Lança uma compra e dá entrada no estoque.' },
+    { key: 'entrada_nfe', label: 'Entrada de NF-e', desc: 'Lê o XML do fornecedor, reconhece quem emitiu e dá entrada com os dados da nota.' },
     { key: 'purchase_history', label: 'Histórico de Compras', desc: 'Compras registradas, por período e fornecedor.' },
     { key: 'suppliers', label: 'Fornecedores', desc: 'Fornecedores cadastrados e seus dados.' }
   ],

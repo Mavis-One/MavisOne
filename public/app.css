@@ -1949,6 +1949,8 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
    que nao existe -- e, com 50 linhas, sugere 50 coisas ligadas.
 
    Sobrescreve a regra global de input[type=checkbox] (linha ~278). */
+.entrada-col-check input[type=checkbox],
+.entrada-opcao input[type=checkbox],
 .sales-col-selecao input[type=checkbox] {
   /* padding: 0 e obrigatorio aqui. A regra global de campos (linha ~240)
      aplica "padding: 10px 12px" a TODO input, e com box-sizing: border-box
@@ -1965,6 +1967,8 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 
 /* O tique e desenhado com duas bordas de um retangulo girado 45 graus: nao
    depende de fonte de icone nem de SVG externo, e acompanha a cor do tema. */
+.entrada-col-check input[type=checkbox]::before,
+.entrada-opcao input[type=checkbox]::before,
 .sales-col-selecao input[type=checkbox]::before {
   content: "";
   top: 1px;
@@ -1981,6 +1985,8 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   transition: opacity 120ms ease;
 }
 
+.entrada-col-check input[type=checkbox]:checked,
+.entrada-opcao input[type=checkbox]:checked,
 .sales-col-selecao input[type=checkbox]:checked {
   background: var(--primary);
   border-color: var(--primary);
@@ -1988,6 +1994,8 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 
 /* transform repetido de proposito: a regra global desloca o circulo da chave
    (translateX) no :checked, e sem redeclarar aqui o tique sairia do lugar. */
+.entrada-col-check input[type=checkbox]:checked::before,
+.entrada-opcao input[type=checkbox]:checked::before,
 .sales-col-selecao input[type=checkbox]:checked::before {
   opacity: 1;
   transform: rotate(45deg);
@@ -3751,3 +3759,101 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 .table th .sales-ordenar:hover { text-decoration: underline; }
 .table th .sales-ordenar.is-ativa { color: var(--primary); }
+
+/* ===========================================================================
+   ENTRADA DE NF-e (Compras) — conferir a nota do fornecedor antes de lançar.
+
+   A tela é uma sequência de decisões, e o CSS acompanha isso: primeiro o que
+   impede, depois quem é o fornecedor, depois os itens, e só no fim o botão que
+   grava. O bloco do fornecedor não cadastrado é o único com moldura colorida —
+   é a pergunta que a tela existe para fazer, e ela não pode passar batida no
+   meio de seis painéis iguais.
+   =========================================================================== */
+.entrada-nfe { display: grid; gap: 0; }
+
+/* Área de soltar o arquivo. Tracejada porque a borda contínua a faria parecer
+   um painel a mais; tracejado é a convenção de "solte algo aqui". */
+.entrada-drop {
+  margin-top: 12px;
+  padding: 26px 18px;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  text-align: center;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.entrada-drop p { margin: 0 0 4px; }
+.entrada-drop-ativa { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.entrada-drop-ocupada { opacity: 0.7; }
+
+/* Botão que se comporta como link: usado onde a ação é secundária e um botão
+   sólido roubaria a atenção do que importa na tela. */
+.entrada-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.entrada-avisos { display: grid; gap: 8px; margin-bottom: 16px; }
+.entrada-aviso {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.34);
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning-text, #b45309);
+  font-size: 13px;
+  line-height: 1.45;
+}
+/* Bloqueio e aviso não podem ter a mesma cara: um impede o lançamento, o outro
+   só pede atenção. */
+.entrada-aviso-bloqueio {
+  border-color: rgba(239, 68, 68, 0.34);
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger-text);
+}
+
+.entrada-nota-head { display: flex; flex-wrap: wrap; gap: 18px; justify-content: space-between; align-items: flex-start; }
+.entrada-nota-head h3 { margin: 0 0 4px; }
+.entrada-nota-head p { margin: 0 0 2px; }
+/* A chave é conferida contra o papel/portal, dígito a dígito: monoespaçada e
+   em blocos de quatro, que é como ela aparece na DANFE. */
+.entrada-chave { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; letter-spacing: 0.02em; }
+.entrada-nota-numeros {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 2px 14px;
+  align-items: baseline;
+  font-size: 13px;
+}
+.entrada-nota-numeros strong { font-variant-numeric: tabular-nums; text-align: right; }
+
+.entrada-fornecedor h4 { margin: 6px 0 4px; }
+.entrada-fornecedor p { margin: 0 0 2px; }
+.entrada-fornecedor-topo { display: flex; gap: 8px; align-items: center; }
+/* Fornecedor novo: a moldura existe para a pergunta não se perder. */
+.entrada-fornecedor-novo { border-color: rgba(245, 158, 11, 0.45); }
+.entrada-fornecedor-pergunta { margin: 12px 0 10px; font-weight: 600; line-height: 1.5; }
+.entrada-fornecedor-acoes { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.entrada-fornecedor-acoes .muted { font-size: 12px; max-width: 420px; }
+
+.entrada-itens td { vertical-align: top; }
+.entrada-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.entrada-col-check { width: 64px; text-align: center; }
+.entrada-col-produto { min-width: 260px; }
+.entrada-item-codigo { display: block; font-size: 11.5px; margin-top: 2px; }
+.entrada-selo { display: inline-block; margin-top: 6px; font-size: 11px; }
+.entrada-btn-produto { display: block; margin-top: 6px; font-size: 12px; }
+
+.entrada-opcao { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; font-weight: 600; }
+.entrada-opcao-alinhada { align-self: end; margin-top: 0; }
+.entrada-nota-custo { font-size: 12px; margin: 10px 0 0; line-height: 1.5; }
+.entrada-rodape-acoes { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+
+/* A tabela de itens encolhe em vez de rolar — ver o comentário no HTML dela.
+   Um container de rolagem cortaria o dropdown do campo de busca de produto. */
+.entrada-itens-wrap { width: 100%; }
+.entrada-itens { min-width: 0; }

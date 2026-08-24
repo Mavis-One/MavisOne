@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture de teste: NF-e de ENTRADA (nota que um fornecedor emitiu contra
+     nos). Nao e uma nota real; CNPJ e CPF sao os de teste conhecidos.
+     Usada por scripts/test-entrada-nfe.js. -->
+<nfeProc versao="4.00" xmlns="http://www.portalfiscal.inf.br/nfe">
+  <NFe>
+    <infNFe Id="NFe42260811222333000181550010000123451123456780" versao="4.00">
+      <ide>
+        <cUF>42</cUF>
+        <cNF>12345678</cNF>
+        <natOp>VENDA DE MERCADORIA ADQUIRIDA DE TERCEIROS</natOp>
+        <mod>55</mod>
+        <serie>1</serie>
+        <nNF>12345</nNF>
+        <dhEmi>2026-08-20T22:15:00-03:00</dhEmi>
+        <dhSaiEnt>2026-08-20T22:30:00-03:00</dhSaiEnt>
+        <tpNF>1</tpNF>
+        <idDest>1</idDest>
+        <cMunFG>4205407</cMunFG>
+        <tpImp>1</tpImp>
+        <tpEmis>1</tpEmis>
+        <cDV>0</cDV>
+        <tpAmb>1</tpAmb>
+        <finNFe>1</finNFe>
+        <indFinal>0</indFinal>
+        <indPres>9</indPres>
+        <procEmi>0</procEmi>
+        <verProc>4.00</verProc>
+      </ide>
+      <emit>
+        <CNPJ>11222333000181</CNPJ>
+        <xNome>DISTRIBUIDORA MODELO &amp; CIA LTDA</xNome>
+        <xFant>MODELO DISTRIBUIÇÃO</xFant>
+        <enderEmit>
+          <xLgr>RUA DAS INDUSTRIAS</xLgr>
+          <nro>1500</nro>
+          <xCpl>GALPAO 3</xCpl>
+          <xBairro>DISTRITO INDUSTRIAL</xBairro>
+          <cMun>4205407</cMun>
+          <xMun>FLORIANOPOLIS</xMun>
+          <UF>SC</UF>
+          <CEP>88010100</CEP>
+          <cPais>1058</cPais>
+          <xPais>BRASIL</xPais>
+          <fone>4833334444</fone>
+        </enderEmit>
+        <IE>255123456</IE>
+        <IM>987654</IM>
+        <CNAE>4649408</CNAE>
+        <CRT>3</CRT>
+      </emit>
+      <dest>
+        <CNPJ>52998224725000</CNPJ>
+        <xNome>MINHA EMPRESA LTDA</xNome>
+        <enderDest>
+          <xLgr>AVENIDA CENTRAL</xLgr>
+          <nro>200</nro>
+          <xBairro>CENTRO</xBairro>
+          <cMun>4216602</cMun>
+          <xMun>SAO JOSE</xMun>
+          <UF>SC</UF>
+          <CEP>88103100</CEP>
+          <cPais>1058</cPais>
+          <xPais>BRASIL</xPais>
+        </enderDest>
+        <indIEDest>1</indIEDest>
+        <IE>2551119999</IE>
+        <email>compras@minhaempresa.com.br</email>
+      </dest>
+      <det nItem="1">
+        <prod>
+          <cProd>FORN-4471</cProd>
+          <cEAN>7891234567895</cEAN>
+          <xProd>PARAFUSO SEXTAVADO 3/8 X 2 INOX</xProd>
+          <NCM>73181500</NCM>
+          <CFOP>5102</CFOP>
+          <uCom>PC</uCom>
+          <qCom>100.0000</qCom>
+          <vUnCom>2.5000000000</vUnCom>
+          <vProd>250.00</vProd>
+          <cEANTrib>7891234567895</cEANTrib>
+          <uTrib>PC</uTrib>
+          <qTrib>100.0000</qTrib>
+          <vUnTrib>2.5000000000</vUnTrib>
+          <indTot>1</indTot>
+        </prod>
+        <imposto>
+          <ICMS>
+            <ICMS00>
+              <orig>0</orig>
+              <CST>00</CST>
+              <modBC>3</modBC>
+              <vBC>250.00</vBC>
+              <pICMS>17.00</pICMS>
+              <vICMS>42.50</vICMS>
+            </ICMS00>
+          </ICMS>
+          <IPI>
+            <cEnq>999</cEnq>
+            <IPITrib>
+              <CST>50</CST>
+              <vBC>250.00</vBC>
+              <pIPI>5.00</pIPI>
+              <vIPI>12.50</vIPI>
+            </IPITrib>
+          </IPI>
+          <PIS>
+            <PISAliq>
+              <CST>01</CST>
+              <vBC>250.00</vBC>
+              <pPIS>1.65</pPIS>
+              <vPIS>4.13</vPIS>
+            </PISAliq>
+          </PIS>
+          <COFINS>
+            <COFINSAliq>
+              <CST>01</CST>
+              <vBC>250.00</vBC>
+              <pCOFINS>7.60</pCOFINS>
+              <vCOFINS>19.00</vCOFINS>
+            </COFINSAliq>
+          </COFINS>
+        </imposto>
+        <infAdProd>LOTE 2026-08 - GARANTIA 12 MESES</infAdProd>
+      </det>
+      <det nItem="2">
+        <prod>
+          <cProd>FORN-9902</cProd>
+          <cEAN>SEM GTIN</cEAN>
+          <xProd>CAIXA ORGANIZADORA 20L</xProd>
+          <NCM>39241000</NCM>
+          <CFOP>5102</CFOP>
+          <uCom>UN</uCom>
+          <qCom>10.0000</qCom>
+          <vUnCom>35.0000000000</vUnCom>
+          <vProd>350.00</vProd>
+          <cEANTrib>SEM GTIN</cEANTrib>
+          <uTrib>UN</uTrib>
+          <qTrib>10.0000</qTrib>
+          <vUnTrib>35.0000000000</vUnTrib>
+          <vDesc>0.00</vDesc>
+          <indTot>1</indTot>
+        </prod>
+        <imposto>
+          <ICMS>
+            <ICMSSN102>
+              <orig>0</orig>
+              <CSOSN>102</CSOSN>
+            </ICMSSN102>
+          </ICMS>
+        </imposto>
+      </det>
+      <total>
+        <ICMSTot>
+          <vBC>250.00</vBC>
+          <vICMS>42.50</vICMS>
+          <vICMSDeson>0.00</vICMSDeson>
+          <vFCP>0.00</vFCP>
+          <vBCST>0.00</vBCST>
+          <vST>0.00</vST>
+          <vProd>600.00</vProd>
+          <vFrete>0.00</vFrete>
+          <vSeg>0.00</vSeg>
+          <vDesc>0.00</vDesc>
+          <vII>0.00</vII>
+          <vIPI>12.50</vIPI>
+          <vIPIDevol>0.00</vIPIDevol>
+          <vPIS>4.13</vPIS>
+          <vCOFINS>19.00</vCOFINS>
+          <vOutro>0.00</vOutro>
+          <vNF>612.50</vNF>
+        </ICMSTot>
+      </total>
+      <transp>
+        <modFrete>0</modFrete>
+      </transp>
+      <cobr>
+        <fat>
+          <nFat>12345</nFat>
+          <vOrig>612.50</vOrig>
+          <vDesc>0.00</vDesc>
+          <vLiq>612.50</vLiq>
+        </fat>
+        <dup>
+          <nDup>001</nDup>
+          <dVenc>2026-09-19</dVenc>
+          <vDup>306.25</vDup>
+        </dup>
+        <dup>
+          <nDup>002</nDup>
+          <dVenc>2026-10-19</dVenc>
+          <vDup>306.25</vDup>
+        </dup>
+      </cobr>
+      <pag>
+        <detPag>
+          <indPag>1</indPag>
+          <tPag>15</tPag>
+          <vPag>612.50</vPag>
+        </detPag>
+      </pag>
+      <infAdic>
+        <infCpl>PEDIDO 8890 - ENTREGA NO GALPAO 2</infCpl>
+      </infAdic>
+    </infNFe>
+    <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+      <SignedInfo>
+        <Reference URI="#NFe42260811222333000181550010000123451123456780" />
+      </SignedInfo>
+      <SignatureValue>ZmFrZS1hc3NpbmF0dXJhLWRlLXRlc3Rl</SignatureValue>
+    </Signature>
+  </NFe>
+  <protNFe versao="4.00">
+    <infProt>
+      <tpAmb>1</tpAmb>
+      <verAplic>SVRS202608</verAplic>
+      <chNFe>42260811222333000181550010000123451123456780</chNFe>
+      <dhRecbto>2026-08-20T22:16:30-03:00</dhRecbto>
+      <nProt>142260000123456</nProt>
+      <digVal>ZmFrZQ==</digVal>
+      <cStat>100</cStat>
+      <xMotivo>Autorizado o uso da NF-e</xMotivo>
+    </infProt>
+  </protNFe>
+</nfeProc>

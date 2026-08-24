@@ -9,5 +9,11 @@
 --  contra o banco: a funcao acerta os 10 casos e o gatilho recusa escrita
 --  direta com "Transicao de status invalida".
 --
+--  A fase-AK (entrada de NF-e) foi aplicada e conferida contra o banco:
+--  as duas tabelas existem com todas as colunas que o codigo grava, a
+--  UNIQUE da chave barra a nota repetida, o CHECK do status recusa valor
+--  inventado e o cascade leva os itens junto.
+--  Prova:  node scripts/prova-entrada-nfe.js
+--
 --  Confira com:  npm run migracoes
 -- =============================================================================
