@@ -2062,31 +2062,39 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 
 .sales-lote-barra button { min-width: auto; padding: 6px 14px; }
 
-.sales-lote-menu { margin-bottom: 12px; display: grid; gap: 14px; }
-.sales-lote-menu h5 { margin: 0 0 8px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted, inherit); }
+/* ---------------------------------------------------------------------------
+   PAINEL DE ACOES EM LOTE — as 24 acoes juntas, como quadrados lado a lado.
 
-/* Menu em GRADE, como pede o briefing: 24 acoes em lista vertical viram uma
-   rolagem que esconde metade delas. */
+   Duas versoes ficaram para tras aqui, e as duas caiam no mesmo buraco: espaco
+   vazio. Primeiro foram faixas de botoes largos de 210px, uma por grupo;
+   depois, a mesma grade de quadrados com o titulo do grupo cortando a largura.
+   Como os grupos tem de 2 a 6 acoes e a tela tem espaco para 13 quadrados por
+   linha, cada faixa terminava com dois tercos de vazio -- e eram seis faixas.
+
+   Agora e uma grade continua: 24 quadrados um atras do outro, sem titulo
+   nenhum no meio. Eles preenchem a linha inteira e o painel cabe em duas.
+
+   A separacao entre um quadrado e outro e o gap de 1px mostrando o fundo da
+   grade, e nao a borda de cada botao. Com 24 bordas encostadas, cada divisa
+   teria 2px e a grade pareceria feita de caixas soltas em vez de um painel.
+   --------------------------------------------------------------------------- */
+.sales-lote-menu { margin-bottom: 28px; }
+
 .sales-lote-grade {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
-}
-
-.sales-lote-grade button { min-width: auto; text-align: left; padding: 8px 12px; font-size: 0.88rem; }
-
-/* Acao indisponivel fica visivel e apagada, com o motivo no title: escondida,
-   a pessoa procura para sempre. */
-.sales-lote-grade button:disabled { opacity: 0.45; cursor: not-allowed; }
-
-.sales-grupo {
+  /* auto-fill (nao auto-fit): com poucas acoes numa linha, auto-fit ESTICA os
+     quadrados ate ocupar a largura toda e eles deixam de ser quadrados. */
+  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  gap: 1px;
+  background: var(--border);
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
 }
 
-.sales-grupo-head {
+.sales-lote-acao {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
@@ -2108,27 +2116,41 @@ tr.is-selecionada > td { background: var(--panel-alt); }
   cursor: pointer;
   transition: background 150ms ease;
 }
+.sales-lote-acao:hover:not(:disabled) { background: var(--panel-alt-hover); }
+.sales-lote-acao:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 
-/* O nome do grupo e editavel, mas nao deve parecer um campo de formulario: e
-   o titulo da caixa. A borda so aparece quando o cursor chega perto. */
-.sales-grupo-nome {
-  flex: 1 1 220px;
+.sales-lote-icone { display: block; color: var(--muted); }
+.sales-lote-icone svg { width: 22px; height: 22px; display: block; }
+.sales-lote-rotulo { display: block; }
+
+/* O tom colore o DESENHO, nao o fundo: 24 quadrados com fundo colorido viram
+   um mosaico onde nada se destaca. Aprovar em verde e cancelar em vermelho, o
+   resto neutro -- as duas que nao se pode clicar por engano. */
+.sales-lote-acao.is-success .sales-lote-icone { color: var(--success); }
+.sales-lote-acao.is-danger .sales-lote-icone { color: var(--danger); }
+
+/* "3 de 8": a acao vale para parte da selecao. E o aviso de que clicar aqui
+   NAO processa tudo o que esta marcado. */
+.sales-lote-parcial {
+  display: block;
+  font-size: 10px;
   font-weight: 700;
   color: var(--warning-text);
 }
 
-.sales-grupo-nome:hover { border-color: var(--border); }
-.sales-grupo-nome:focus { border-color: var(--accent, var(--border)); background: var(--panel-alt); outline: none; }
-
-.sales-grupo-total {
-  font-size: 0.88rem;
-  color: var(--muted, inherit);
-  font-variant-numeric: tabular-nums;
+/* Acao indisponivel fica visivel e apagada, com o motivo no title: escondida,
+   a pessoa procura para sempre. */
+.sales-lote-acao:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+  background: var(--panel);
 }
 
-.sales-grupo-head button { min-width: auto; padding: 6px 12px; font-size: 0.85rem; }
+@media (max-width: 640px) {
+  .sales-lote-grade { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+  .sales-lote-acao { min-height: 96px; padding: 14px 6px; font-size: 10.5px; }
+}
 
-.sales-grupo-acoes { margin: 4px 0 12px; }
 
 /* Tres botoes na coluna de acoes: sem isto eles quebram linha e a coluna
    fica com o dobro da altura das outras. */

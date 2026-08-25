@@ -285,9 +285,9 @@ check('e o nome da cor viaja com o item', /classValueName: String\(item\.classVa
 check('a venda exige a cor quando é obrigatória', /Selecione \$\{classe\.name\.toLowerCase\(\)\} para este produto/.test(appSrc));
 // O campo só aparece para produto que tem cor — o resto do catálogo não ganha
 // um campo vazio permanente.
-// Uma linha de adicionar por GRUPO (fase AH): o id leva o grupo como sufixo.
-// Com id fixo, a cor escolhida no segundo grupo ia parar no campo do primeiro.
-check('o campo de cor é condicional', /id="salesClassField__\$\{grupo\.id\}" hidden/.test(appSrc));
+// Uma linha de adicionar produto por venda -- os grupos de produtos (fase AH)
+// foram retirados da tela, e com eles o sufixo que separava um campo do outro.
+check('o campo de cor é condicional', /id="salesClassField" hidden/.test(appSrc));
 
 console.log('\n--- §12: o saldo mostrado é o DA COR ---');
 // Mostrar o saldo geral numa linha colorida é sempre um número maior que o

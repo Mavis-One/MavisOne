@@ -2332,26 +2332,49 @@ async function loadModule(moduleName) {
               <button type="button" class="secondary" id="salesLoteLimparBtn">Cancelar Seleção</button>
             </div>
             ${draft.showLoteMenu ? `
-              <!-- Menu em GRADE, agrupado, como pede o briefing. Ação sem
-                   backend fica à vista e desabilitada com o motivo: escondida,
-                   a pessoa procura para sempre. -->
+              <!-- Painel de QUADRADOS: as 24 ações juntas, uma ao lado da
+                   outra, todas do mesmo tamanho, numa grade só.
+
+                   O GRUPO SUMIU DA TELA, MAS NÃO DO CÓDIGO. Cada grupo era uma
+                   faixa própria; como eles têm de 2 a 6 ações, o fim de quase
+                   toda faixa ficava vazio — numa tela larga, seis linhas
+                   quase inteiras de vazio. Sem os títulos, os quadrados
+                   preenchem a linha inteira e a grade fica cheia.
+
+                   O Object.entries(grupos) continua aqui pela ORDEM: é ele
+                   que garante Aprovar e Cancelar antes de Gerar Ordem de
+                   Produção. Achatar direto pelo catálogo daria a mesma ordem
+                   hoje e deixaria de dar no dia em que alguém inserir uma
+                   ação no meio dele. O nome do grupo vai no title de cada
+                   quadrado, que é onde ele ainda ajuda a se localizar.
+
+                   Ação sem backend fica à vista e desabilitada com o motivo:
+                   escondida, a pessoa procura para sempre. -->
               <div class="panel sales-lote-menu" id="salesLoteMenu">
-                ${Object.entries(grupos).map(([nomeGrupo, itens]) => `
-                  <section>
-                    <h5>${escapeHtml(nomeGrupo)}</h5>
-                    <div class="sales-lote-grade">
-                      ${itens.map(({ acao, elegiveis, ignorados }) => {
-                        // Zero elegíveis = botão que só produziria "0
-                        // processados, N ignorados". Desabilita e mostra o
-                        // primeiro motivo, que é o que a pessoa precisa saber.
-                        const motivo = elegiveis.length ? '' : ((ignorados[0] && ignorados[0].motivo) || 'Nenhum selecionado é elegível.');
-                        return `<button type="button" class="secondary sales-lote-acao ${acao.tone ? 'is-' + acao.tone : ''}"
-                          data-acao="${acao.id}" ${motivo ? 'disabled' : ''} title="${escapeHtml(motivo || (elegiveis.length + ' de ' + selecionados.length + ' elegíveis'))}">
-                          ${escapeHtml(acao.label)}${elegiveis.length && elegiveis.length < selecionados.length ? ` <span class="muted">(${elegiveis.length})</span>` : ''}
-                        </button>`;
-                      }).join('')}
-                    </div>
-                  </section>`).join('')}
+                <div class="sales-lote-grade">
+                  ${Object.entries(grupos).map(([nomeGrupo, itens]) => `
+                    ${itens.map(({ acao, elegiveis, ignorados }) => {
+                      // Zero elegíveis = botão que só produziria "0
+                      // processados, N ignorados". Desabilita e mostra o
+                      // primeiro motivo, que é o que a pessoa precisa saber.
+                      const motivo = elegiveis.length ? '' : ((ignorados[0] && ignorados[0].motivo) || 'Nenhum selecionado é elegível.');
+                      // O catálogo guarda o NOME do desenho (ele também roda no
+                      // servidor, onde não há SVG). A lupa é o desenho de
+                      // reserva: ação nova sem ícone aparece assim mesmo, em vez
+                      // de virar um quadrado com um buraco em cima.
+                      const desenho = (window.MavisActionsMenu.ICONS[acao.icone] || window.MavisActionsMenu.ICONS.note);
+                      // O número só aparece quando a ação vale para PARTE da
+                      // seleção — é o aviso de que clicar ali não processa tudo.
+                      const parcial = elegiveis.length && elegiveis.length < selecionados.length;
+                      return `<button type="button" class="sales-lote-acao ${acao.tone ? 'is-' + acao.tone : ''}"
+                        data-acao="${acao.id}" ${motivo ? 'disabled' : ''} title="${escapeHtml(nomeGrupo + ' — ' + (motivo || (elegiveis.length + ' de ' + selecionados.length + ' elegíveis')))}">
+                        <span class="sales-lote-icone">${desenho}</span>
+                        <span class="sales-lote-rotulo">${escapeHtml(acao.label)}</span>
+                        ${parcial ? `<span class="sales-lote-parcial">${elegiveis.length} de ${selecionados.length}</span>` : ''}
+                      </button>`;
+                    }).join('')}
+                  `).join('')}
+                </div>
               </div>` : ''}`;
           })() : ''}
 
@@ -2648,17 +2671,13 @@ async function loadModule(moduleName) {
         if (state.salesDraft?.novoStatus) delete state.salesDraft.novoStatus;
 
         const origem = editRecord || duplicado;
-        // Grupos e itens saem juntos da MESMA função que o servidor usa. Ela
-        // garante um grupo mínimo e que nenhum item aponte para grupo que não
-        // existe — pedido gravado antes da fase AH chega sem grupo nenhum, e
-        // sem isto abriria com os produtos somando no total e aparecendo em
-        // lugar nenhum na tela.
-        const inicial = window.MavisSalesGrupos.normalizarGrupos(
-          origem ? origem.productGroups : null,
-          origem ? (origem.items || []).map((item) => ({ ...item })) : []
-        );
-        let grupos = inicial.groups;
-        let items = inicial.items;
+        // Uma lista de itens, e so. O pedido ja teve grupos de produtos (fase
+        // AH): a tela foi retirada porque separava o que ninguem separava na
+        // pratica, e cada venda comecava com um "Grupo de Produtos Padrao - 01"
+        // que so ocupava espaco. Pedido gravado com grupos continua abrindo
+        // certo -- os itens sempre foram uma lista PLANA, e o `groupId` de cada
+        // um agora e um campo que ninguem le.
+        let items = origem ? (origem.items || []).map((item) => ({ ...item })) : [];
 
         // Saldo e preço de cadastro NÃO são copiados para dentro do item: o
         // item guarda o que foi vendido (quantidade e preço praticados), e o
@@ -2985,17 +3004,10 @@ async function loadModule(moduleName) {
             depositId: formData.get('depositId') || '',
             date: formData.get('date') || '',
             dueDate: formData.get('dueDate') || '',
-            // A lista de grupos vai junto dos itens: o servidor normaliza os
-            // dois de uma vez, e mandar só um dos lados deixaria item apontando
-            // para grupo que não existe.
-            productGroups: grupos.map((grupo, i) => ({ id: grupo.id, name: grupo.name, ordem: i })),
             items: items.map((item) => ({
               productId: item.productId,
               name: item.name,
               sku: item.sku,
-              // Sem o grupo aqui, o pedido salvaria os itens certos e todos
-              // voltariam para o primeiro grupo na próxima abertura.
-              groupId: item.groupId || '',
               // Sem a cor aqui, o pedido salvaria a linha certa e o faturamento
               // baixaria do saldo geral — a quebra por cor nunca fecharia.
               classId: item.classId || '',
@@ -3064,9 +3076,6 @@ async function loadModule(moduleName) {
               table { width: 100%; border-collapse: collapse; margin-top: 10px; }
               th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 12px; }
               .num { text-align: right; }
-              /* Linha de cabecalho de grupo: fundo leve para nao se confundir
-                 com um produto. So aparece quando ha mais de um grupo. */
-              tr.grp td { background: #f1f5f9; border-top: 2px solid #cbd5e1; }
               .tot { text-align: right; margin-top: 10px; font-size: 13px; }
               .tot strong { font-size: 15px; }
             </style></head><body>
@@ -3084,24 +3093,12 @@ async function loadModule(moduleName) {
               </div>
               <table>
                 <thead><tr><th>Produto</th><th>SKU</th><th class="num">Qtd.</th><th class="num">Valor unit.</th><th class="num">Total</th></tr></thead>
-                <!-- Com mais de um grupo, o documento mostra a divisão e o
-                     total de cada um. Imprimir tudo corrido faria o
-                     agrupamento existir só na tela e sumir justamente no papel
-                     que vai para o cliente. Com um grupo só, o cabeçalho seria
-                     ruído: a tabela sai lisa, como sempre saiu. -->
-                <tbody>${grupos.map((grupo) => {
-                  const doGrupo = window.MavisSalesGrupos.itensDoGrupo(items, grupo.id);
-                  if (!doGrupo.length) return '';
-                  const cabecalho = grupos.length > 1
-                    ? `<tr class="grp"><td colspan="4"><strong>${escapeHtml(grupo.name)}</strong></td><td class="num"><strong>${salesFormatBRL(window.MavisSalesGrupos.totalDoGrupo(items, grupo.id))}</strong></td></tr>`
-                    : '';
-                  return cabecalho + doGrupo.map((i) => `<tr>
-                    <td>${escapeHtml(i.name || '')}</td><td>${escapeHtml(i.sku || '-')}</td>
-                    <td class="num">${i.quantity}</td>
-                    <td class="num">${salesFormatBRL(i.unitPrice)}</td>
-                    <td class="num">${salesFormatBRL(Number(i.quantity) * Number(i.unitPrice))}</td>
-                  </tr>`).join('');
-                }).join('')}</tbody>
+                <tbody>${items.map((i) => `<tr>
+                  <td>${escapeHtml(i.name || '')}</td><td>${escapeHtml(i.sku || '-')}</td>
+                  <td class="num">${i.quantity}</td>
+                  <td class="num">${salesFormatBRL(i.unitPrice)}</td>
+                  <td class="num">${salesFormatBRL(Number(i.quantity) * Number(i.unitPrice))}</td>
+                </tr>`).join('')}</tbody>
               </table>
               <!-- Mesmas linhas do resumo da tela, e pela mesma fonte de cálculo:
                    antes o documento listava desconto em % e R$ separados e omitia
@@ -3504,49 +3501,23 @@ async function loadModule(moduleName) {
                 <div class="cadastro-section">
                   <div class="cadastro-section-header">
                     <h4>Produtos</h4>
-                    <p>Um ou mais grupos de produtos. O grupo separa o que é vendido junto mas precisa aparecer separado — obra e manutenção, por exemplo.</p>
+                    <p>Os produtos desta venda.</p>
                   </div>
                   <div class="cadastro-section-body">
-                    ${grupos.map((grupo, iGrupo) => {
-                      // Os itens deste grupo, com o índice que eles ocupam na
-                      // lista PLANA: os handlers de quantidade, preço e chassi
-                      // trabalham por índice absoluto, e passar o índice de
-                      // dentro do grupo faria o segundo grupo editar as linhas
-                      // do primeiro.
-                      const doGrupo = items
-                        .map((item, index) => ({ item, index }))
-                        .filter((x) => x.item.groupId === grupo.id);
-                      const totalGrupo = window.MavisSalesGrupos.totalDoGrupo(items, grupo.id);
-                      return `
-                      <div class="sales-grupo" data-grupo="${escapeHtml(grupo.id)}">
-                        <div class="sales-grupo-head">
-                          <input class="sales-grupo-nome" data-grupo="${escapeHtml(grupo.id)}"
-                                 value="${escapeHtml(grupo.name)}" maxlength="60"
-                                 aria-label="Nome do grupo de produtos" />
-                          <span class="sales-grupo-total">${doGrupo.length} ${doGrupo.length === 1 ? 'item' : 'itens'} · <strong>${salesFormatBRL(totalGrupo)}</strong></span>
-                          <button type="button" class="secondary" data-duplicar-grupo="${escapeHtml(grupo.id)}"
-                                  title="Cria um grupo novo com uma cópia destes itens.">Duplicar</button>
-                          <!-- Excluir o único grupo deixaria o pedido sem onde
-                               pôr item nenhum. O botão fica à vista e desligado,
-                               dizendo por quê. -->
-                          <button type="button" class="secondary" data-excluir-grupo="${escapeHtml(grupo.id)}"
-                                  ${grupos.length === 1 ? 'disabled title="O pedido precisa de ao menos um grupo."' : (doGrupo.length ? `title="Exclui o grupo e os ${doGrupo.length} itens dele."` : 'title="Exclui o grupo vazio."')}>Excluir</button>
-                        </div>
-
-                        <div class="row sales-grupo-add">
-                          <label style="flex: 2;">Adiciona novos Produtos
-                            ${renderSearchableSelect({ id: 'salesProduct__' + grupo.id, name: 'productPick__' + grupo.id, options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p) })), selectedValue: '', placeholder: 'Buscar produto...' })}
-                          </label>
-                          <!-- A cor só aparece depois de escolher o produto, e só
-                               para produto que tem cor. Um campo vazio permanente
-                               na tela é ruído para quem vende parafuso. -->
-                          <label id="salesClassField__${grupo.id}" hidden><span id="salesClassLabel__${grupo.id}">Cor</span>
-                            <select id="salesClassValue__${grupo.id}"><option value="">Selecione</option></select>
-                          </label>
-                          <label>Quantidade<input id="salesProductQty__${grupo.id}" type="number" min="1" step="1" value="1" /></label>
-                          <div style="align-self: end;"><button type="button" class="secondary sales-add-item" data-grupo="${escapeHtml(grupo.id)}">+ Adicionar</button></div>
-                        </div>
-                        <p class="muted" id="salesClassAviso__${grupo.id}" hidden></p>
+                    <div class="row sales-produto-add">
+                      <label style="flex: 2;">Adiciona novos Produtos
+                        ${renderSearchableSelect({ id: 'salesProduct', name: 'productPick', options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p) })), selectedValue: '', placeholder: 'Buscar produto...' })}
+                      </label>
+                      <!-- A cor só aparece depois de escolher o produto, e só
+                           para produto que tem cor. Um campo vazio permanente
+                           na tela é ruído para quem vende parafuso. -->
+                      <label id="salesClassField" hidden><span id="salesClassLabel">Cor</span>
+                        <select id="salesClassValue"><option value="">Selecione</option></select>
+                      </label>
+                      <label>Quantidade<input id="salesProductQty" type="number" min="1" step="1" value="1" /></label>
+                      <div style="align-self: end;"><button type="button" class="secondary sales-add-item">+ Adicionar</button></div>
+                    </div>
+                    <p class="muted" id="salesClassAviso" hidden></p>
 
                         <!-- Cada linha mostra, lado a lado, os quatro números que
                              decidem a venda: o que existe em estoque, quanto o
@@ -3576,7 +3547,7 @@ async function loadModule(moduleName) {
                               <th>Ações</th>
                             </tr></thead>
                             <tbody>
-                              ${doGrupo.length ? doGrupo.map(({ item, index }, posicao) => {
+                              ${items.length ? items.map((item, index) => {
                                 const produto = produtoDoItem(item);
                                 // Produto excluído do cadastro depois da venda: o
                                 // item continua válido no pedido, só não há mais
@@ -3630,22 +3601,16 @@ async function loadModule(moduleName) {
                                          na nota; mover é decisão de quem monta o
                                          pedido, não do acaso da digitação. -->
                                     <button type="button" class="icon-button sales-mover-item" data-index="${index}" data-direcao="-1"
-                                            ${posicao === 0 ? 'disabled' : ''} title="Mover para cima">▲</button>
+                                            ${index === 0 ? 'disabled' : ''} title="Mover para cima">▲</button>
                                     <button type="button" class="icon-button sales-mover-item" data-index="${index}" data-direcao="1"
-                                            ${posicao === doGrupo.length - 1 ? 'disabled' : ''} title="Mover para baixo">▼</button>
+                                            ${index === items.length - 1 ? 'disabled' : ''} title="Mover para baixo">▼</button>
                                     <button type="button" class="icon-button sales-remove-item" data-index="${index}" title="Remover">×</button>
                                   </td>
                                 </tr>
-                              `; }).join('') : '<tr><td colspan="8" class="muted">Nenhum produto neste grupo ainda.</td></tr>'}
+                              `; }).join('') : '<tr><td colspan="8" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
                             </tbody>
                           </table>
                         </div>
-                      </div>`;
-                    }).join('')}
-
-                    <div class="sales-grupo-acoes">
-                      <button type="button" class="secondary" id="salesNovoGrupoBtn">+ Novo Grupo de Produtos</button>
-                    </div>
 
                     ${itensSemSaldo().length ? `
                       <p class="sales-itens-alerta">
@@ -4165,13 +4130,10 @@ async function loadModule(moduleName) {
           // Preenche o campo Cor a partir do produto escolhido. O saldo entra
           // no rótulo pelo mesmo motivo do rótulo do produto: escolher a cor
           // sem ver que ela está zerada só seria descoberto no faturamento.
-          // `sufixo` é o id do grupo: cada grupo tem a sua linha de adicionar
-          // produto, e com ids fixos a cor escolhida no segundo grupo iria parar
-          // no campo do primeiro.
-          async function montarCampoCor(productId, sufixo) {
-            const campo = document.getElementById('salesClassField__' + sufixo);
-            const select = document.getElementById('salesClassValue__' + sufixo);
-            const aviso = document.getElementById('salesClassAviso__' + sufixo);
+          async function montarCampoCor(productId) {
+            const campo = document.getElementById('salesClassField');
+            const select = document.getElementById('salesClassValue');
+            const aviso = document.getElementById('salesClassAviso');
             if (!campo || !select) return;
             const registro = productId ? await carregarClasses(productId) : null;
             const classe = registro?.classe || null;
@@ -4182,7 +4144,7 @@ async function loadModule(moduleName) {
               return;
             }
             campo.hidden = false;
-            const rotulo = document.getElementById('salesClassLabel__' + sufixo);
+            const rotulo = document.getElementById('salesClassLabel');
             if (rotulo) rotulo.textContent = classe.name;
             const obrigatoria = classe.required !== false;
             select.innerHTML = `<option value="">${obrigatoria ? 'Selecione' : `Sem ${escapeHtml(classe.name.toLowerCase())}`}</option>`
@@ -4198,12 +4160,10 @@ async function loadModule(moduleName) {
             }
           }
 
-          grupos.forEach((grupo) => {
-            attachSearchableSelect({
-              id: 'salesProduct__' + grupo.id,
-              options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p), product: p })),
-              onSelect: (value) => { montarCampoCor(value, grupo.id); }
-            });
+          attachSearchableSelect({
+            id: 'salesProduct',
+            options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p), product: p })),
+            onSelect: (value) => { montarCampoCor(value); }
           });
 
           // Trocar Pedido <-> Orçamento muda o título, os rótulos e o campo
@@ -4215,13 +4175,11 @@ async function loadModule(moduleName) {
           });
 
           content.querySelectorAll('.sales-add-item').forEach((botao) => botao.addEventListener('click', () => {
-            const grupoId = botao.dataset.grupo;
-            // O id é 'salesProduct__<grupo>' + 'Value': quem monta o sufixo
-            // 'Value' é o renderSearchableSelect, no fim do id inteiro. Montar
-            // 'salesProductValue__<grupo>' encontrava null, e a tela dizia
+            // O sufixo 'Value' é quem o renderSearchableSelect acrescenta ao id
+            // do campo — sem ele, getElementById devolve null e a tela diz
             // "Selecione um produto" com o produto já selecionado na frente.
-            const productId = document.getElementById('salesProduct__' + grupoId + 'Value')?.value;
-            const qtyInput = document.getElementById('salesProductQty__' + grupoId);
+            const productId = document.getElementById('salesProductValue')?.value;
+            const qtyInput = document.getElementById('salesProductQty');
             const product = meta.products.find((p) => p.id === productId);
             if (!productId || !product) {
               showToast('Selecione um produto.', 'warning');
@@ -4232,7 +4190,7 @@ async function loadModule(moduleName) {
             // produto duas vezes na mesma venda, uma linha por cor, cada uma
             // baixando do seu próprio saldo.
             const classe = classeDe(product.id);
-            const corSelect = document.getElementById('salesClassValue__' + grupoId);
+            const corSelect = document.getElementById('salesClassValue');
             const classValueId = classe ? (corSelect?.value || '') : '';
             if (classe && classe.required !== false && !classValueId) {
               showToast(`Selecione ${classe.name.toLowerCase()} para este produto.`, 'warning');
@@ -4242,10 +4200,6 @@ async function loadModule(moduleName) {
               productId: product.id,
               name: product.name,
               sku: product.sku || '',
-              // O item nasce dentro do grupo cujo botão foi clicado. Sem isto
-              // todo produto cairia no primeiro grupo, e a tela mostraria o
-              // item longe de onde a pessoa acabou de clicar.
-              groupId: grupoId,
               classId: classValueId ? classe.classId : '',
               classValueId,
               // O nome fica gravado no item para a lista não depender do
@@ -4265,103 +4219,19 @@ async function loadModule(moduleName) {
             renderForm();
           }));
 
-          // MOVER ITEM dentro do grupo. Troca as posições na lista PLANA entre
-          // o item e o vizinho DO MESMO GRUPO — trocar com o vizinho de índice
-          // embaralharia a ordem dos outros grupos junto.
+          // MOVER ITEM: troca de lugar com o vizinho. A ordem das linhas é a
+          // ordem em que o produto sai no documento e na nota.
           const moverItem = (index, direcao) => {
-            const item = items[index];
-            if (!item) return;
-            const irmaos = items
-              .map((it, i) => ({ it, i }))
-              .filter((x) => x.it.groupId === item.groupId);
-            const posicao = irmaos.findIndex((x) => x.i === index);
-            const alvo = posicao + direcao;
-            if (alvo < 0 || alvo >= irmaos.length) return;
-            const outro = irmaos[alvo].i;
+            const alvo = index + direcao;
+            if (!items[index] || alvo < 0 || alvo >= items.length) return;
             const guardado = items[index];
-            items[index] = items[outro];
-            items[outro] = guardado;
+            items[index] = items[alvo];
+            items[alvo] = guardado;
             syncFormState();
             renderForm();
           };
           content.querySelectorAll('.sales-mover-item').forEach((btn) => {
             btn.addEventListener('click', () => moverItem(Number(btn.dataset.index), Number(btn.dataset.direcao)));
-          });
-
-          // NOME DO GRUPO: guarda a cada tecla e só redesenha ao sair do campo.
-          // Um renderForm() por tecla reconstruiria o input e tiraria o foco no
-          // meio da digitação — mesmo motivo do campo de chassi.
-          content.querySelectorAll('.sales-grupo-nome').forEach((input) => {
-            input.addEventListener('input', () => {
-              const grupo = grupos.find((g) => g.id === input.dataset.grupo);
-              if (grupo) grupo.name = input.value;
-            });
-            input.addEventListener('change', () => {
-              const grupo = grupos.find((g) => g.id === input.dataset.grupo);
-              // Nome em branco deixaria o grupo sem identificação nenhuma na
-              // tela e no documento impresso: volta para o padrão da posição.
-              if (grupo && !String(input.value).trim()) {
-                grupo.name = window.MavisSalesGrupos.nomePadrao(grupos.indexOf(grupo));
-              }
-              syncFormState();
-              renderForm();
-            });
-          });
-
-          document.getElementById('salesNovoGrupoBtn')?.addEventListener('click', () => {
-            const novo = {
-              id: window.MavisSalesGrupos.novoId(grupos.length),
-              name: window.MavisSalesGrupos.nomePadrao(grupos.length),
-              ordem: grupos.length
-            };
-            grupos.push(novo);
-            syncFormState();
-            renderForm();
-          });
-
-          content.querySelectorAll('[data-duplicar-grupo]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-              const origemId = btn.dataset.duplicarGrupo;
-              const origemGrupo = grupos.find((g) => g.id === origemId);
-              if (!origemGrupo) return;
-              const novo = {
-                id: window.MavisSalesGrupos.novoId(grupos.length),
-                name: origemGrupo.name + ' (cópia)',
-                ordem: grupos.length
-              };
-              grupos.push(novo);
-              // Cópia dos itens, não referência: editar a quantidade na cópia
-              // não pode mexer no original. O chassi NÃO é copiado — ele
-              // identifica UMA unidade física, e duas linhas com o mesmo chassi
-              // seriam duas vendas do mesmo equipamento.
-              window.MavisSalesGrupos.itensDoGrupo(items, origemId).forEach((item) => {
-                items.push({ ...item, groupId: novo.id, chassi: '' });
-              });
-              syncFormState();
-              renderForm();
-              showToast('Grupo duplicado. O chassi não é copiado — ele identifica uma unidade.', 'info');
-            });
-          });
-
-          content.querySelectorAll('[data-excluir-grupo]').forEach((btn) => {
-            btn.addEventListener('click', async () => {
-              const grupoId = btn.dataset.excluirGrupo;
-              if (grupos.length === 1) return;
-              const doGrupo = window.MavisSalesGrupos.itensDoGrupo(items, grupoId);
-              const grupo = grupos.find((g) => g.id === grupoId);
-              // Grupo com item leva os itens junto: perguntar antes, porque o
-              // desfazer aqui é digitar tudo de novo.
-              if (doGrupo.length) {
-                const ok = await confirmModal(
-                  `Excluir "${grupo ? grupo.name : 'o grupo'}" e os ${doGrupo.length} ${doGrupo.length === 1 ? 'item' : 'itens'} dele?`
-                );
-                if (!ok) return;
-              }
-              grupos = grupos.filter((g) => g.id !== grupoId);
-              items = items.filter((item) => item.groupId !== grupoId);
-              syncFormState();
-              renderForm();
-            });
           });
 
           content.querySelectorAll('.sales-remove-item').forEach((btn) => {

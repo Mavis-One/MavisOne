@@ -204,13 +204,42 @@ check('que marca só a PÁGINA', /const idsDaPagina = records\.map/.test(appSrc)
 // Quem marcou na página 1 e passou para a 2 não pode perder as primeiras.
 check('e não apaga a seleção das outras páginas', /\[\.\.\.new Set\(\[\.\.\.draft\.selecionados, \.\.\.idsDaPagina\]\)\]/.test(appSrc));
 check('a barra aparece com seleção', /sales-lote-barra/.test(appSrc));
-check('o menu é em grade e agrupado', /sales-lote-grade/.test(appSrc) && /Object\.entries\(grupos\)\.map/.test(appSrc));
+// O agrupamento nao aparece mais na tela, mas continua decidindo a ORDEM: e ele
+// que poe Aprovar e Cancelar antes de Gerar Ordem de Producao.
+check('o menu é em grade, na ordem dos grupos', /sales-lote-grade/.test(appSrc) && /Object\.entries\(grupos\)\.map/.test(appSrc));
 // Habilitar com zero elegíveis levaria a "0 processados, 15 ignorados".
 check('ação sem elegível fica desabilitada com o motivo', /const motivo = elegiveis\.length \? '' : /.test(appSrc));
 // Entre desenhar a lista e clicar, outra pessoa pode ter faturado um deles.
 check('o resumo mostrado vem do SERVIDOR', /showToast\(resposta\.resumo/.test(appSrc));
 check('e o detalhe de cada ignorado é mostrado', /naoFeitos\.map\(\(i\) => /.test(appSrc));
 check('o módulo é carregado no navegador', /sales_bulk_actions\.js/.test(ler('public/index.html')));
+
+// --- o painel de quadrados -------------------------------------------------
+// A grade e UMA so, CONTINUA: as 24 acoes uma atras da outra, sem titulo de
+// grupo cortando a linha. Titulo no meio (ou uma grade por grupo) traz de volta
+// a faixa com dois tercos de vazio que motivou a mudanca.
+const cssPainel = ler('public/app.css');
+const bulkSrc = ler('public/modules/shared/sales_bulk_actions.js');
+check('as ações são quadrados numa grade só',
+  /\.sales-lote-grade \{[^}]*repeat\(auto-fill, minmax\(\d+px, 1fr\)\)/.test(cssPainel));
+check('  sem título de grupo quebrando a grade',
+  !/sales-lote-grupo/.test(appSrc) && !/sales-lote-grupo/.test(cssPainel));
+// O nome do grupo nao sumiu: foi para o title, onde ainda ajuda a se localizar.
+check('  com o grupo no title de cada quadrado', /title="\$\{escapeHtml\(nomeGrupo \+ /.test(appSrc));
+// Sem altura minima os quadrados acompanham o rotulo: "NF-e" viraria uma tira
+// e "Gerar Ordens de Producao Agrupado por Produto", um bloco de tres linhas.
+check('  e todos com a mesma altura', /\.sales-lote-acao \{[^}]*min-height: \d+px/.test(cssPainel));
+// O botao global tem fundo primario: sem zerar, os 24 quadrados ficariam verdes.
+check('  sem herdar o fundo do botão padrão', /\.sales-lote-acao \{[^}]*background: var\(--panel\)/.test(cssPainel));
+// Icone e NOME, nao SVG: este arquivo tambem roda no servidor por require().
+check('o catálogo guarda o NOME do ícone, não o SVG',
+  /icone: '[a-z]+'/.test(bulkSrc) && !/<svg/.test(bulkSrc));
+check('  e a tela resolve o nome em MavisActionsMenu.ICONS',
+  /window\.MavisActionsMenu\.ICONS\[acao\.icone\]/.test(appSrc));
+// Acao que vale para parte da selecao precisa avisar: clicar ali nao processa
+// tudo o que esta marcado.
+check('  a ação parcial avisa quantos serão processados',
+  /sales-lote-parcial/.test(appSrc) && /\.sales-lote-parcial \{/.test(cssPainel));
 // A linha marcada precisa se distinguir sem depender só da caixinha.
 const cssApp = ler('public/app.css');
 check('linha selecionada se destaca', /tr\.is-selecionada > td/.test(cssApp));

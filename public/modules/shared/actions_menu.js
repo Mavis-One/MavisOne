@@ -21,7 +21,21 @@ window.MavisActionsMenu = (function () {
     download: icon('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>'),
     copy: icon('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
     note: icon('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'),
-    clock: icon('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>')
+    clock: icon('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'),
+    // Da fase do painel de acoes em lote: o quadrado precisa de um desenho, e
+    // reaproveitar `note` (que e uma lupa) em oito acoes diferentes deixaria a
+    // grade sem distincao nenhuma. Todos no mesmo traco 1.7 do conjunto.
+    trash: icon('<polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>'),
+    edit: icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>'),
+    file: icon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
+    truck: icon('<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>'),
+    factory: icon('<path d="M2 20h20"/><path d="M4 20V9l6 4V9l6 4V4h4v16"/>'),
+    tag: icon('<path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>'),
+    barcode: icon('<path d="M3 5v14"/><path d="M7 5v14"/><path d="M11 5v14"/><path d="M14 5v14"/><path d="M18 5v14"/><path d="M21 5v14"/>'),
+    undo: icon('<path d="M3 7v6h6"/><path d="M3.5 13a9 9 0 1 0 2.3-6.3L3 10"/>'),
+    split: icon('<path d="M12 3v18"/><path d="M6 8 3 12l3 4"/><path d="m18 8 3 4-3 4"/>'),
+    comment: icon('<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/>'),
+    list: icon('<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>')
   };
 
   function motivoBloqueio(action, ctx) {

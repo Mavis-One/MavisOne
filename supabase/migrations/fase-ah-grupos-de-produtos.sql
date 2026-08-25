@@ -1,4 +1,20 @@
 -- ---------------------------------------------------------------------------
+-- ATENCAO -- A TELA DE GRUPOS FOI RETIRADA EM 25/08/2026.
+--
+-- O pedido nao tem mais grupos: a tela de Produtos voltou a ser uma lista so.
+-- Os grupos separavam o que ninguem separava na pratica, e toda venda nascia
+-- com um "Grupo de Produtos Padrao - 01" que so ocupava espaco.
+--
+-- A COLUNA CONTINUA NO BANCO, E DE PROPOSITO. Ela guarda os grupos dos pedidos
+-- que ja foram gravados com eles; apagar a coluna apagaria esse historico para
+-- sempre, e o ganho seria zero -- uma coluna jsonb que ninguem le nao custa
+-- consulta nem espaco relevante. Os itens nunca dependeram dela: sempre foram
+-- lista plana, e o `groupId` de cada item virou um campo que ninguem le.
+--
+-- Se um dia a funcao voltar, o dado esta aqui. Se nunca voltar, nada quebra.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
 -- Fase AH — Grupos de Produtos no pedido e no orcamento
 --
 -- O pedido passa a ter 1..N grupos ("Grupo de Produtos Padrao - 01",

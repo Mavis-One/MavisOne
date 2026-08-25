@@ -38,12 +38,16 @@
   // pressas poria em risco a impressão que hoje funciona.
   const IMPRESSAO_EM_BREVE = () => 'A impressão em lote depende de extrair o construtor do documento, hoje preso à tela de cadastro. Imprima pelo pedido.';
 
+  // `icone` e o NOME de um desenho de MavisActionsMenu.ICONS, nao o SVG.
+  // Este arquivo tambem roda no servidor por require(), onde nao existe
+  // `window` -- montar o SVG aqui quebraria o server.js no boot. Quem desenha e
+  // a tela, que resolve o nome na hora de montar a grade.
   const ehPedido = (r) => r.type === 'order';
 
   const CATALOGO = [
     // --- Fluxo de venda -------------------------------------------------------
     {
-      id: 'aprovar', grupo: 'Fluxo de venda', label: 'Aprovar', tone: 'success',
+      id: 'aprovar', icone: 'check', grupo: 'Fluxo de venda', label: 'Aprovar', tone: 'success',
       // Aprovar significa coisas diferentes conforme o documento: orçamento
       // vira "Orçamento Aprovado", pedido vai para "Faturado". Uma ação só, com
       // o destino decidido por registro — separar em duas obrigaria a pessoa a
@@ -58,7 +62,7 @@
       }
     },
     {
-      id: 'aprovar_sem_faturamento', grupo: 'Fluxo de venda', label: 'Aprovar Sem Faturamento',
+      id: 'aprovar_sem_faturamento', icone: 'check', grupo: 'Fluxo de venda', label: 'Aprovar Sem Faturamento',
       // Saída de mercadoria que NÃO é venda: transferência, remessa,
       // bonificação, comodato. Baixa estoque e não cria nada a receber.
       destino: () => 'pedido-aprovado-sem-faturamento',
@@ -72,7 +76,7 @@
       }
     },
     {
-      id: 'cancelar', grupo: 'Fluxo de venda', label: 'Cancelar', tone: 'danger',
+      id: 'cancelar', icone: 'cancel', grupo: 'Fluxo de venda', label: 'Cancelar', tone: 'danger',
       destino: (r) => (ehPedido(r) ? 'pedido-cancelado' : 'orcamento-reprovado'),
       confirma: 'Cancelar os selecionados? Isso não volta atrás — um cancelado não é reaberto, cria-se outro documento.',
       elegivel: (r) => {
@@ -85,19 +89,19 @@
         return true;
       }
     },
-    { id: 'faturamento_parcial', grupo: 'Fluxo de venda', label: 'Faturamento Parcial', elegivel: EM_BREVE('Faturamento parcial') },
-    { id: 'devolver', grupo: 'Fluxo de venda', label: 'Devolver Produtos', tone: 'danger', elegivel: EM_BREVE('Devolução de produtos') },
-    { id: 'boletos', grupo: 'Fluxo de venda', label: 'Enviar Boleto(s) ao Cliente', elegivel: EM_BREVE('Emissão de boleto') },
+    { id: 'faturamento_parcial', icone: 'split', grupo: 'Fluxo de venda', label: 'Faturamento Parcial', elegivel: EM_BREVE('Faturamento parcial') },
+    { id: 'devolver', icone: 'undo', grupo: 'Fluxo de venda', label: 'Devolver Produtos', tone: 'danger', elegivel: EM_BREVE('Devolução de produtos') },
+    { id: 'boletos', icone: 'money', grupo: 'Fluxo de venda', label: 'Enviar Boleto(s) ao Cliente', elegivel: EM_BREVE('Emissão de boleto') },
 
     // --- Registro -------------------------------------------------------------
     {
-      id: 'duplicar', grupo: 'Registro', label: 'Duplicar',
+      id: 'duplicar', icone: 'copy', grupo: 'Registro', label: 'Duplicar',
       // A cópia nasce como rascunho do próprio tipo: duplicar um pedido
       // faturado e a cópia já nascer faturada baixaria estoque de novo.
       elegivel: () => true
     },
     {
-      id: 'excluir', grupo: 'Registro', label: 'Excluir', tone: 'danger',
+      id: 'excluir', icone: 'trash', grupo: 'Registro', label: 'Excluir', tone: 'danger',
       confirma: 'Excluir os selecionados? Os anexos vão junto e não há como recuperar.',
       elegivel: (r) => {
         // Faturado tem estoque baixado e financeiro gerado; sumir com o
@@ -107,8 +111,8 @@
         return true;
       }
     },
-    { id: 'editar', grupo: 'Registro', label: 'Editar', elegivel: EM_BREVE('Edição em lote') },
-    { id: 'observacoes', grupo: 'Registro', label: 'Observações', elegivel: EM_BREVE('Observação em lote') },
+    { id: 'editar', icone: 'edit', grupo: 'Registro', label: 'Editar', elegivel: EM_BREVE('Edição em lote') },
+    { id: 'observacoes', icone: 'comment', grupo: 'Registro', label: 'Observações', elegivel: EM_BREVE('Observação em lote') },
 
     // --- Fiscal ---------------------------------------------------------------
     {
@@ -116,26 +120,26 @@
       // escolha de estabelecimento, operação fiscal e conferência de item a
       // item. Nota fiscal errada não se apaga: cancela-se, e cancelamento tem
       // prazo de 24 h.
-      id: 'nfe', grupo: 'Fiscal', label: 'NF-e',
+      id: 'nfe', icone: 'file', grupo: 'Fiscal', label: 'NF-e',
       elegivel: () => 'Emissão em lote não existe: cada nota exige escolher estabelecimento e operação fiscal. Emita pelo pedido.'
     },
-    { id: 'nfce', grupo: 'Fiscal', label: 'NFC-e / CF-e', elegivel: EM_BREVE('NFC-e') },
-    { id: 'nfse', grupo: 'Fiscal', label: 'NFS-e', elegivel: EM_BREVE('NFS-e') },
-    { id: 'cte', grupo: 'Fiscal', label: 'CT-e', elegivel: EM_BREVE('CT-e') },
+    { id: 'nfce', icone: 'barcode', grupo: 'Fiscal', label: 'NFC-e / CF-e', elegivel: EM_BREVE('NFC-e') },
+    { id: 'nfse', icone: 'tool', grupo: 'Fiscal', label: 'NFS-e', elegivel: EM_BREVE('NFS-e') },
+    { id: 'cte', icone: 'truck', grupo: 'Fiscal', label: 'CT-e', elegivel: EM_BREVE('CT-e') },
 
     // --- Documentos -----------------------------------------------------------
-    { id: 'imprimir', grupo: 'Documentos', label: 'Imprimir', elegivel: IMPRESSAO_EM_BREVE },
-    { id: 'impressao_direta', grupo: 'Documentos', label: 'Impressão Direta', elegivel: IMPRESSAO_EM_BREVE },
-    { id: 'baixar', grupo: 'Documentos', label: 'Baixar', elegivel: IMPRESSAO_EM_BREVE },
-    { id: 'email', grupo: 'Documentos', label: 'Enviar por E-mail', elegivel: EM_BREVE('Envio por e-mail') },
-    { id: 'etiqueta', grupo: 'Documentos', label: 'Imprimir Etiqueta de Expedição', elegivel: EM_BREVE('Etiqueta de expedição') },
+    { id: 'imprimir', icone: 'printer', grupo: 'Documentos', label: 'Imprimir', elegivel: IMPRESSAO_EM_BREVE },
+    { id: 'impressao_direta', icone: 'printer', grupo: 'Documentos', label: 'Impressão Direta', elegivel: IMPRESSAO_EM_BREVE },
+    { id: 'baixar', icone: 'download', grupo: 'Documentos', label: 'Baixar', elegivel: IMPRESSAO_EM_BREVE },
+    { id: 'email', icone: 'mail', grupo: 'Documentos', label: 'Enviar por E-mail', elegivel: EM_BREVE('Envio por e-mail') },
+    { id: 'etiqueta', icone: 'tag', grupo: 'Documentos', label: 'Imprimir Etiqueta de Expedição', elegivel: EM_BREVE('Etiqueta de expedição') },
 
     // --- Expedição e Produção -------------------------------------------------
-    { id: 'ordem_expedicao', grupo: 'Expedição', label: 'Gerar Ordem de Expedição', elegivel: EM_BREVE('Ordem de expedição') },
-    { id: 'ver_expedicao', grupo: 'Expedição', label: 'Ver Ordens de Expedição', elegivel: EM_BREVE('Ordem de expedição') },
-    { id: 'op_individual', grupo: 'Produção', label: 'Gerar Ordens de Produção Individual', elegivel: EM_BREVE('Ordem de produção a partir do pedido') },
-    { id: 'op_por_venda', grupo: 'Produção', label: 'Gerar Ordens de Produção Agrupado por Venda', elegivel: EM_BREVE('Ordem de produção a partir do pedido') },
-    { id: 'op_por_produto', grupo: 'Produção', label: 'Gerar Ordens de Produção Agrupado por Produto', elegivel: EM_BREVE('Ordem de produção a partir do pedido') }
+    { id: 'ordem_expedicao', icone: 'truck', grupo: 'Expedição', label: 'Gerar Ordem de Expedição', elegivel: EM_BREVE('Ordem de expedição') },
+    { id: 'ver_expedicao', icone: 'list', grupo: 'Expedição', label: 'Ver Ordens de Expedição', elegivel: EM_BREVE('Ordem de expedição') },
+    { id: 'op_individual', icone: 'factory', grupo: 'Produção', label: 'Gerar Ordens de Produção Individual', elegivel: EM_BREVE('Ordem de produção a partir do pedido') },
+    { id: 'op_por_venda', icone: 'factory', grupo: 'Produção', label: 'Gerar Ordens de Produção Agrupado por Venda', elegivel: EM_BREVE('Ordem de produção a partir do pedido') },
+    { id: 'op_por_produto', icone: 'factory', grupo: 'Produção', label: 'Gerar Ordens de Produção Agrupado por Produto', elegivel: EM_BREVE('Ordem de produção a partir do pedido') }
   ];
 
   const PORID = new Map(CATALOGO.map((a) => [a.id, a]));
