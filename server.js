@@ -55,6 +55,10 @@ const entradaNfeDb = require('./lib/db/entrada-nfe');
 // Ações em lote da lista. Mesmo arquivo que o navegador carrega: é ele que diz
 // quem é elegível, e a tela e o servidor precisam responder igual.
 const salesBulk = require('./public/modules/shared/sales_bulk_actions');
+// Relatório de Vendas: a regra de quem vê o quê e o cálculo do relatório, os
+// dois em funções puras. Ver o cabeçalho de lib/relatorios-escopo.js.
+const escopoLib = require('./lib/relatorios-escopo');
+const relatoriosVendas = require('./lib/relatorios-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
@@ -4792,6 +4796,88 @@ const server = http.createServer(async (req, res) => {
   // Os cálculos são os MESMOS construtores dos painéis de cada módulo. Refazer
   // a conta aqui daria dois números diferentes para a mesma pergunta — e o
   // relatório seria o que perderia a confiança.
+
+  // ==========================================================================
+  // RELATÓRIO DE VENDAS
+  //
+  // O ESCOPO É MONTADO AQUI, A PARTIR DO USUÁRIO AUTENTICADO — nunca do que a
+  // tela mandou. As duas rotas abaixo (ver e exportar) chamam a MESMA função de
+  // cálculo com o MESMO escopo, e é isso que faz o CSV nunca conter uma linha
+  // que a tabela não mostrava.
+  //
+  // O parâmetro `vendedorId` da query string é aceito e depois IGNORADO para
+  // quem não pode escolher vendedor (ver vendedoresPermitidos em
+  // lib/relatorios-escopo.js). Ignorar, e não recusar: recusar contaria a quem
+  // sondasse que existe algo ali; ignorar simplesmente devolve o que a pessoa
+  // sempre pôde ver.
+  // ==========================================================================
+  async function montarRelatorioDeVendas(req, params) {
+    const data = loadData();
+    await syncCadastroData(data);
+    await syncSalesData(data);
+    const user = await getCurrentUser(req);
+    if (!user) return { erro: 'Não autenticado', status: 401 };
+
+    // ehAdmin() consulta o RBAC (com cache de 5 min) — por isso o escopo recebe
+    // a resposta pronta em vez de descobrir sozinho: a função da regra é pura.
+    const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+
+    const registros = [...data.orders, ...data.quotes].map((r) => serializeSalesRecord(r, data));
+    const filtros = {
+      dataDe: params.get('dataDe') || '',
+      dataAte: params.get('dataAte') || '',
+      vendedorId: params.get('vendedorId') || '',
+      clienteId: params.get('clienteId') || '',
+      produtoId: params.get('produtoId') || '',
+      status: params.get('status') || '',
+      tipo: params.get('tipo') || '',
+      busca: params.get('busca') || '',
+      ordem: params.get('ordem') || 'data',
+      direcao: params.get('direcao') || 'desc',
+      pagina: params.get('pagina') || 1,
+      porPagina: params.get('porPagina') || 25
+    };
+    return { relatorio: relatoriosVendas.montarRelatorio({ registros, filtros, escopo }), filtros, escopo, registros };
+  }
+
+  if (pathname === '/api/reports/vendas' && req.method === 'GET') {
+    try {
+      const { erro, status, relatorio } = await montarRelatorioDeVendas(req, url.searchParams);
+      if (erro) return sendJson(res, { error: erro }, status);
+      return sendJson(res, relatorio);
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao montar o relatório de vendas' }, 400);
+    }
+  }
+
+  if (pathname === '/api/reports/vendas/export' && req.method === 'GET') {
+    try {
+      const contexto = await montarRelatorioDeVendas(req, url.searchParams);
+      if (contexto.erro) return sendJson(res, { error: contexto.erro }, contexto.status);
+      // Reaplica o filtro SEM paginação: a exportação leva o resultado inteiro,
+      // e não a página que estava na tela. Mesmo escopo, mesmos filtros — só o
+      // recorte de página é que não faz sentido num arquivo.
+      const linhas = relatoriosVendas.ordenar(
+        relatoriosVendas.filtrar(
+          contexto.registros.flatMap(relatoriosVendas.linhasDoRegistro),
+          contexto.filtros,
+          contexto.escopo
+        ),
+        contexto.filtros.ordem,
+        contexto.filtros.direcao
+      );
+      const csv = relatoriosVendas.montarCsv(linhas);
+      const hoje = new Date().toISOString().slice(0, 10);
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="relatorio-de-vendas-${hoje}.csv"`
+      });
+      return res.end(csv);
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao exportar' }, 400);
+    }
+  }
+
   if (pathname === '/api/reports/overview' && req.method === 'GET') {
     const data = loadData();
     // Sem checagem de permissão aqui: o portão central já traduziu esta rota
@@ -8837,6 +8923,9 @@ const server = http.createServer(async (req, res) => {
     if (canSeeSales) await syncSalesData(data);
     if (canSeePurchases) await syncPurchasesData(data);
  await syncFinanceData(data);
+    // people vem do Supabase: sem este sync, a lista de vendedores do vinculo
+    // chega vazia e a tela sugere que ninguem e' vendedor.
+    if (canManageUsers) await syncCadastroData(data);
     const [settings, allUsers, products] = await Promise.all([
       db.getSettings(),
       canManageUsers ? db.getUsers() : Promise.resolve([]),
@@ -8859,12 +8948,19 @@ const server = http.createServer(async (req, res) => {
           // Sanitiza na LEITURA também: usuário gravado antes de as permissões
           // fantasma serem removidas ainda carrega 'manifestar' na coluna, e
           // devolvê-la faria a tela mostrar um controle que não existe.
-          fiscalPermissions: fiscalPermissoes.sanitizar(entry.fiscalPermissions)
+          fiscalPermissions: fiscalPermissoes.sanitizar(entry.fiscalPermissions),
+          // Fase AL: de quem sao as "minhas vendas" deste usuario. Sem isto a
+          // tela de Usuarios nao teria como mostrar o vinculo atual, e todo
+          // salvamento pareceria estar desvinculando alguem.
+          sellerId: entry.sellerId || ''
         }))
       : [];
     return sendJson(res, {
       settings,
       users: safeUsers,
+      // As pessoas com papel "Vendedor" no Cadastros. So' quem administra usuario
+      // recebe a lista: ela e' um cadastro, e nao um dado publico.
+      sellers: canManageUsers ? getSellersDirectory(data) : [],
       totals,
       permissions: {
         company: true,
@@ -8898,7 +8994,9 @@ const server = http.createServer(async (req, res) => {
           allowedModules: body.payload.allowedModules || ['dashboard'],
           // Gravar só o que o portão sabe exigir. Sem isto, um POST à mão
           // salvaria 'manifestar' na coluna e ela voltaria a aparecer na tela.
-          fiscalPermissions: fiscalPermissoes.sanitizar(body.payload.fiscalPermissions)
+          fiscalPermissions: fiscalPermissoes.sanitizar(body.payload.fiscalPermissions),
+          // Fase AL: de quem sao as "minhas vendas" deste usuario.
+          sellerId: String(body.payload.sellerId || '').trim()
         });
         const data = loadData();
         data.auditLogs = data.auditLogs || [];
@@ -9107,7 +9205,9 @@ const server = http.createServer(async (req, res) => {
         fiscalPermissions: fiscalPermissoes.sanitizar(
           Array.isArray(body.fiscalPermissions) ? body.fiscalPermissions : target.fiscalPermissions
         ),
-        password: body.password ? String(body.password) : undefined
+        password: body.password ? String(body.password) : undefined,
+        // Ausente = nao mexe no vinculo; vazio = desvincula. Ver updateUser.
+        sellerId: body.sellerId === undefined ? undefined : String(body.sellerId || '').trim()
       });
       const data = loadData();
       data.auditLogs = data.auditLogs || [];

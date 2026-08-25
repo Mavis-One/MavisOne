@@ -6818,6 +6818,16 @@ async function loadModule(moduleName) {
                 </div>
                 <div class="row">
                   <label>Função<select name="role"><option value="user">Usuário</option><option value="admin">Admin</option></select></label>
+                  <!-- O vínculo com o vendedor do Cadastros. É ele que decide
+                       quais vendas esta pessoa vê no Relatório de Vendas — sem
+                       vínculo, e não sendo admin, ela não vê venda nenhuma (e a
+                       tela diz isso). Ver lib/relatorios-escopo.js. -->
+                  <label>Vendedor vinculado
+                    <select name="sellerId">
+                      <option value="">Nenhum — não vê vendas nos relatórios</option>
+                      ${(data.sellers || []).map((v) => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.name)}</option>`).join('')}
+                    </select>
+                  </label>
                 </div>
                 <div class="checkbox-grid">
                   ${['dashboard', 'sales', 'purchases', 'stock', 'finance', 'settings', 'cadastros'].map((module) => `<label><input type="checkbox" name="module" value="${module}" /> ${moduleLabels[module]}</label>`).join('')}
@@ -6829,9 +6839,9 @@ async function loadModule(moduleName) {
             <div class="panel">
               <h3>Usuários cadastrados</h3>
               <table class="table table-actions">
-                <thead><tr><th>Usuário</th><th>Nome</th><th>Função</th><th>Módulos</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Usuário</th><th>Nome</th><th>Função</th><th>Módulos</th><th>Vendedor vinculado</th><th>Ações</th></tr></thead>
                 <tbody>
-                  ${data.users.map((user) => `\n                    <tr data-user-id="${user.id}">\n                      <td>${user.username}</td>\n                      <td>${user.name}</td>\n                      <td>${user.role}</td>\n                      <td>${user.allowedModules.join(', ')}</td>\n                      <td>\n                        <button class="delete-user icon-button" data-id="${user.id}" title="Excluir usuário" ${state.user?.role !== 'admin' || state.user?.id === user.id ? 'disabled' : ''}>\n                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>\n                        </button>\n                      </td>\n                    </tr>\n                  `).join('') }
+                  ${data.users.map((user) => `\n                    <tr data-user-id="${user.id}">\n                      <td>${user.username}</td>\n                      <td>${user.name}</td>\n                      <td>${user.role}</td>\n                      <td>${user.allowedModules.join(', ')}</td>\n                      <td>${user.role === 'admin' ? '<span class="muted">Admin — vê todas as vendas</span>' : `<select class="user-seller" data-id="${escapeHtml(user.id)}"><option value="">Nenhum</option>${(data.sellers || []).map((v) => `<option value="${escapeHtml(v.id)}" ${v.id === user.sellerId ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}</select>`}</td>\n                      <td>\n                      <button class="delete-user icon-button" data-id="${user.id}" title="Excluir usuário" ${state.user?.role !== 'admin' || state.user?.id === user.id ? 'disabled' : ''}>\n                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>\n                        </button>\n                      </td>\n                    </tr>\n                  `).join('') }
                 </tbody>
               </table>
             </div>
@@ -6860,13 +6870,43 @@ async function loadModule(moduleName) {
             try {
               await api('/api/settings', {
                 method: 'POST',
-                body: JSON.stringify({ type: 'user', payload: { name: formData.get('name'), username: formData.get('username'), password: formData.get('password'), role: formData.get('role'), allowedModules: selectedModules } })
+                body: JSON.stringify({ type: 'user', payload: { name: formData.get('name'), username: formData.get('username'), password: formData.get('password'), role: formData.get('role'), allowedModules: selectedModules, sellerId: formData.get('sellerId') || '' } })
               });
               showToast('Usuário criado com sucesso.', 'success');
               loadModule('settings');
             } catch (error) {
               showToast(error.message || 'Erro ao criar usuário.', 'error');
             }
+          });
+
+          // Vínculo usuário -> vendedor. Grava na hora, sem botão Salvar: é um
+          // campo só, e um formulário inteiro para uma escolha faria a pessoa
+          // achar que precisa confirmar mais alguma coisa.
+          document.querySelectorAll('.user-seller').forEach((select) => {
+            select.addEventListener('change', async () => {
+              const alvo = (data.users || []).find((u) => u.id === select.dataset.id);
+              if (!alvo) return;
+              try {
+                // Manda os campos que a rota exige junto do vínculo: mandar só
+                // o sellerId faria o servidor recusar por falta de nome.
+                await api(`/api/users/${encodeURIComponent(alvo.id)}`, {
+                  method: 'PUT',
+                  body: JSON.stringify({
+                    name: alvo.name,
+                    role: alvo.role,
+                    allowedModules: alvo.allowedModules,
+                    sellerId: select.value
+                  })
+                });
+                showToast(select.value
+                  ? 'Vínculo salvo. Este usuário passa a ver as vendas desse vendedor.'
+                  : 'Vínculo removido. Este usuário deixa de ver vendas nos relatórios.', 'success');
+                loadModule('settings');
+              } catch (error) {
+                showToast(error.message || 'Erro ao salvar o vínculo.', 'error');
+                loadModule('settings');
+              }
+            });
           });
 
           // delete handlers

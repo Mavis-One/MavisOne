@@ -2256,28 +2256,6 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 }
 .sales-tabs + .panel { border-top-left-radius: 0; border-top-right-radius: 0; }
 
-.sales-toggle-linha { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-top: 16px; }
-.sales-campo-longo { display: grid; gap: 10px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
-.sales-campo-longo textarea { width: 100%; }
-
-/* Aba Impostos — cartões só de leitura, um por tributo. */
-.sales-impostos-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 16px;
-  margin-top: 16px;
-}
-.sales-imposto-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.sales-imposto-titulo {
-  margin: 0;
-  padding: 10px 14px;
-  font-size: 13px;
-  font-weight: 700;
-  color: #fff;
-}
-.sales-imposto-card dl { margin: 0; }
-.sales-imposto-card dl > div {
-  display: flex;
 /* O CONTEUDO DE CADA ABA TAMBEM E UMA GRADE.
    -------------------------------------------------------------------------
    O formulario da venda e .form-grid (26px entre blocos), mas o filho direto
@@ -2294,8 +2272,30 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .sales-tab-panel { display: grid; gap: 26px; align-content: start; }
 .sales-tab-panel[hidden] { display: none; }
 
-  justify-content: space-between;
+.sales-toggle-linha { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-top: 16px; }
+.sales-campo-longo { display: grid; gap: 10px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+.sales-campo-longo textarea { width: 100%; }
+
+/* Aba Impostos — cartões só de leitura, um por tributo. */
+.sales-impostos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 22px;
+  margin-top: 16px;
+}
+.sales-imposto-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.sales-imposto-titulo {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.sales-imposto-card dl { margin: 0; }
+.sales-imposto-card dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
   padding: 9px 14px;
   font-size: 12px;
   border-top: 1px solid var(--border);
@@ -3948,3 +3948,101 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
    Um container de rolagem cortaria o dropdown do campo de busca de produto. */
 .entrada-itens-wrap { width: 100%; }
 .entrada-itens { min-width: 0; }
+
+/* ===========================================================================
+   RELATÓRIOS — a tela na ordem em que a pergunta e' feita.
+
+   Filtros, indicadores, tabela, graficos, detalhamento. A ordem nao e' gosto:
+   e' a sequencia em que a pessoa pensa. Primeiro ela recorta o que quer ver,
+   depois olha os numeros grandes para saber se e' muito ou pouco, depois
+   procura a venda especifica. Grafico antes da tabela obriga a rolar para
+   chegar ao que a maioria vem buscar.
+
+   O CSS aqui e' curto de proposito: painel, cartao, tabela e selo ja' existem
+   no sistema e sao reaproveitados. So' o que e' proprio da tela mora aqui.
+   =========================================================================== */
+
+/* O painel de filtros tem moldura em destaque: em relatorio, o erro mais caro
+   e' olhar um numero achando que ele e' de um periodo que nao e' o filtrado. */
+.rel-filtros { border-color: color-mix(in srgb, var(--primary) 32%, var(--border)); }
+.rel-filtros-topo { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.rel-filtros-topo h3 { margin: 0; }
+
+/* De quem sao os numeros da tela. Para o vendedor comum, e' a unica indicacao
+   de que o relatorio e' o dele -- e ela fica onde ele ja' esta' olhando. */
+.rel-escopo-selo {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rel-filtros-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 22px;
+  margin-top: 18px;
+}
+
+.rel-filtros-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.rel-filtros-acoes > div { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* Tabela x Por vendedor: sao duas leituras do MESMO conjunto, nao dois
+   relatorios. Por isso pilulas, e nao abas com moldura -- aba sugere que o
+   conteudo de baixo troca por inteiro. */
+.rel-visoes { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.rel-tabela-topo { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+.rel-tabela-topo h3 { margin: 0; }
+
+/* Numero alinhado a' direita e com digito de largura fixa: e' o que permite
+   comparar duas linhas de dinheiro passando o olho pela coluna. */
+.rel-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Celula clicavel. Parece link e nao botao porque a acao e' NAVEGAR -- botao
+   solido em toda celula transformaria a tabela num tabuleiro. */
+.rel-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  text-align: left;
+  cursor: pointer;
+}
+.rel-link:hover { text-decoration: underline; }
+.rel-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+
+/* Agrupamento por vendedor: o <summary> ja' da' abrir/fechar sem uma linha de
+   JavaScript, e continua funcionando com teclado. */
+.rel-grupo summary { cursor: pointer; list-style: none; }
+.rel-grupo summary::-webkit-details-marker { display: none; }
+.rel-grupo-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+}
+.rel-grupo-topo::before { content: "▸"; margin-right: 8px; color: var(--muted); }
+.rel-grupo details[open] > summary .rel-grupo-topo::before { content: "▾"; }
+.rel-grupo-resumo { display: flex; flex-wrap: wrap; gap: 18px; align-items: baseline; font-size: 13px; color: var(--muted); }
+.rel-grupo-resumo strong { color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; }
+
+/* Impressao: o botao Imprimir da barra usa o print do navegador, entao a folha
+   nao pode sair com menu, filtros e botoes. Fica so' o relatorio. */
+@media print {
+  .sidebar, .secondary-sidebar, .topbar, .rel-filtros-acoes, .rel-visoes { display: none !important; }
+  .panel { break-inside: avoid; box-shadow: none; }
+}
