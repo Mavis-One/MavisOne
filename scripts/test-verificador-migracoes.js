@@ -113,5 +113,43 @@ check('nenhum comando do pacote foi inventado', inventados.length === 0, inventa
 const esquecidos = dasFases.filter((c) => !doPacote.includes(c));
 check('e nenhum comando das fases citadas ficou de fora', esquecidos.length === 0, esquecidos.slice(0, 2).join(' | ') || undefined);
 
+// ---------------------------------------------------------------------------
+// RECRIAR O BANCO DO ZERO — a ordem das fases não é a ordem alfabética.
+//
+// Esta é a regra que, quebrada, só aparece como "relation does not exist" no
+// meio de um arquivo de 4 mil linhas, num banco novo, provavelmente no dia em
+// que alguém está com pressa. 'fase-aa' vem antes de 'fase-h' em qualquer
+// listagem de pasta — e rodar nessa ordem tenta alterar tabela que ainda não
+// foi criada.
+// ---------------------------------------------------------------------------
+console.log('\n--- a recriação do zero sai na ordem das FASES, não da pasta ---');
+const { ordenarPorFase } = require('./gerar-sql-do-zero');
+const nomes = fs.readdirSync(path.join(RAIZ, 'supabase', 'migrations'))
+  .filter((n) => n.endsWith('.sql') && !n.startsWith('PENDENTES'));
+const ordenados = ordenarPorFase(nomes);
+const fase = (n) => (/^fase-([a-z]+)-/i.exec(n) || [])[1] || '';
+check('uma letra vem antes de duas (z antes de aa)',
+  ordenados.findIndex((n) => fase(n) === 'z') < ordenados.findIndex((n) => fase(n) === 'aa'),
+  `z na posição ${ordenados.findIndex((n) => fase(n) === 'z')}, aa na ${ordenados.findIndex((n) => fase(n) === 'aa')}`);
+check('  e a ordem alfabética crua faria o contrário',
+  nomes.slice().sort().findIndex((n) => fase(n) === 'aa') < nomes.slice().sort().findIndex((n) => fase(n) === 'z'));
+check('dentro do mesmo tamanho, é alfabética',
+  ordenados.findIndex((n) => fase(n) === 'ak') < ordenados.findIndex((n) => fase(n) === 'al'));
+check('nenhuma migração fica de fora do arquivo do zero', ordenados.length === nomes.length,
+  `${ordenados.length} de ${nomes.length}`);
+// O arquivo gerado precisa existir e citar as mesmas fases, senão quem recriar
+// o banco vai colar uma versão velha sem saber.
+const zero = path.join(RAIZ, 'supabase', 'RECRIAR-DO-ZERO.sql');
+if (fs.existsSync(zero)) {
+  const conteudo = ler('supabase/RECRIAR-DO-ZERO.sql');
+  const faltando = ordenados.filter((n) => !conteudo.includes(n));
+  check('o arquivo gerado traz todas as migrações', faltando.length === 0, faltando.slice(0, 3).join(', ') || undefined);
+  check('  e o schema.sql vem primeiro',
+    conteudo.indexOf('supabase/schema.sql') < conteudo.indexOf(`supabase/migrations/${ordenados[0]}`));
+  check('  e avisa que a senha semente é pública', /senha/i.test(conteudo) && /p[úu]blic/i.test(conteudo));
+} else {
+  check('o arquivo do zero existe (rode: npm run zero)', false, 'supabase/RECRIAR-DO-ZERO.sql não encontrado');
+}
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

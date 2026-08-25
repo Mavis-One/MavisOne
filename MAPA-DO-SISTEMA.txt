@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-08-24 20:59 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-08-25 13:48 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -216,6 +216,10 @@ o próprio arquivo dá de si, no comentário de cabeçalho.
       Painéis por módulo — a CONTA, separada da tela.
   lib/permissoes.js
       Regras de controle de acesso — SEM banco e SEM rede, de propósito.
+  lib/relatorios-escopo.js
+      QUEM PODE VER QUAIS VENDAS — a regra, sem banco e sem rede.
+  lib/relatorios-vendas.js
+      RELATÓRIO DE VENDAS — o cálculo, em um lugar só.
   lib/reservas.js
       Reserva de estoque — o que já foi PROMETIDO e ainda não saiu.
   lib/secrets.js
@@ -254,8 +258,6 @@ regra só, para tela e servidor nunca discordarem.
       Prazo de cancelamento da NF-e: 24 horas contadas da AUTORIZAÇÃO.
   sales_bulk_actions.js   [também no servidor]
       Menu "Mais Ações" da LISTA — as ações em lote.
-  sales_grupos.js   [também no servidor]
-      Grupos de Produtos de um Pedido/Orçamento — FONTE ÚNICA.
   sales_record_actions.js
       Catálogo do "Mais Ações" da tela de Pedidos e Orçamentos.
   sales_status.js   [também no servidor]
@@ -336,7 +338,7 @@ Tabelas usadas (68)
   user_roles              users
 
 ==============================================================================
-4. ROTAS DA API (94 encontradas no server.js)
+4. ROTAS DA API (96 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -411,6 +413,8 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/purchases/entrada-nfe/…                         
   /api/purchases/entrada-nfe/analisar                  POST
   /api/reports/overview                                GET
+  /api/reports/vendas                                  GET
+  /api/reports/vendas/export                           GET
   /api/sales                                           GET POST
   /api/sales/dashboard                                 GET
   /api/sales/import                                    POST
@@ -439,7 +443,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-31 arquivo(s) em supabase/migrations, em ordem de fase:
+32 arquivo(s) em supabase/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -453,6 +457,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-ai-anexos-do-pedido.sql
   fase-aj-transicoes-de-status.sql
   fase-ak-entrada-de-nfe.sql
+  fase-al-usuario-vendedor.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -501,7 +506,6 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
   [avulso]  test-gate-openfinance.js           O portão central alcança mesmo o Open Finance? A regra de permissão dizia '/api/openfinance', mas a rota é '/a
-  [npm test] test-grupos-produtos.js            Grupos de Produtos do Pedido/Orçamento.
   [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
   [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
   [npm test] test-lancamento-vinculado.js       Lançamento gerado por PEDIDO ou por NF-e: o que dá e o que não dá para mudar.
@@ -523,6 +527,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-prazo-cancelamento.js         Prazo de 24 horas para cancelar NF-e.
   [npm test] test-produto-abas.js               Abas do cadastro de produto.
   [npm test] test-regras-fiscais.js             Modelo de regras fiscais — scripts/seed-regras-fiscais.js Os CFOPs vieram do ERP que o usuário usa hoje: 5102,
+  [npm test] test-relatorio-vendas.js           RELATÓRIO DE VENDAS — quem vê o quê, provado com dados de mentira.
   [npm test] test-reserva-estoque.js            Reserva de estoque — a ponte entre "prometido" e "baixado".
   [npm test] test-rls.js                        RLS: toda tabela do schema precisa estar na fase-af.
   [npm test] test-sales-actions.js              Regras do menu "Mais Ações" da tela de Pedidos e Orçamentos.
@@ -540,7 +545,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-111 arquivos JS carregados por public/index.html, nesta ordem.
+110 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -580,7 +585,6 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/atalhos.js
   /modules/shared/sales_totals.js
   /modules/shared/sales_status.js
-  /modules/shared/sales_grupos.js
   /modules/shared/sales_bulk_actions.js
   /modules/shared/fiscal_permissoes.js
   /modules/shared/cst_icms.js

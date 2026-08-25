@@ -19,6 +19,7 @@
     "nfe-observacoes": "node scripts/test-nfe-observacoes.js",
     "chassi": "node scripts/test-chassi-item.js",
     "mapa": "node scripts/mapa-do-sistema.js",
+    "zero": "node scripts/gerar-sql-do-zero.js",
     "backup": "node scripts/backup-supabase.js",
     "restaurar": "node scripts/restaurar-supabase.js"
   },
