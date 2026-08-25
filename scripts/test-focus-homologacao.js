@@ -179,10 +179,14 @@ const chamadas = [
       return err.status || 'erro sem status';
     }
   };
-  check('a senha do login é recusada', tentaToken('SENHA-REMOVIDA-DO-HISTORICO') === 400);
+  // Uma senha de login qualquer. O teste prova que ela NAO passa por token da
+  // Focus -- confundir os dois foi erro real. O valor em si nao importa: o que
+  // o token exige e formato, e nenhuma senha de login tem esse formato.
+  const senhaDeLogin = 'umaSenhaDeLogin123';
+  check('a senha do login é recusada', tentaToken(senhaDeLogin) === 400);
   check('senha longa com pontuação também', tentaToken('Senha@Forte#2026!') === 400);
   check('campo vazio é recusado', tentaToken('') === 400);
-  check('a recusa é 400 (erro do usuário), não 500', tentaToken('SENHA-REMOVIDA-DO-HISTORICO') === 400);
+  check('a recusa é 400 (erro do usuário), não 500', tentaToken(senhaDeLogin) === 400);
   check('token de 32 alfanuméricos passa', tentaToken('aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gJ') === null);
   check('espaço em volta é tolerado, não recusado', tentaToken('  aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gJ  ') === null);
 

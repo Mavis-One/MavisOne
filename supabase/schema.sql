@@ -399,8 +399,14 @@ create index if not exists idx_audit_logs_at on audit_logs(at desc);
 
 -- ----------------------------------------------------------------------------
 -- Dados semente mínimos
--- Usuário admin / senha "SENHA-REMOVIDA-DO-HISTORICO" (mesma credencial padrão que o app já usa
--- hoje no data/db.json) — mas agora com hash bcrypt em vez de texto puro.
+-- Usuário admin com a senha padrão do projeto, gravada como hash bcrypt.
+--
+-- A SENHA NÃO ESTÁ ESCRITA AQUI de propósito: este arquivo é versionado, e
+-- credencial em repositório é credencial pública. Troque-a no primeiro acesso:
+--
+--     node scripts/hash-senha.js
+--
+-- Ele pede a senha sem eco e devolve o UPDATE pronto para o SQL Editor.
 -- ----------------------------------------------------------------------------
 insert into settings (id, company_name, currency, tax_rate)
 values (1, 'MavisONE', 'BRL', 0)
