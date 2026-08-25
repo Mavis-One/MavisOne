@@ -84,11 +84,28 @@ check('.cadastro-tab-panel também', (cssSrc.match(/^\.cadastro-tab-panel\s*\{/g
 // display:grid, então precisa do par explícito ou o painel nunca fecha.
 check('e o painel oculto tem display:none explícito', /\.cadastro-tab-panel\[hidden\]\s*\{\s*display:\s*none/.test(cssSrc));
 
+// A aba da VENDA caiu na outra metade da mesma pegadinha, e ao contrario: ela
+// nao era grade nenhuma. O formulario e .form-grid, mas o filho direto dele e a
+// aba -- as linhas de campo dentro dela empilhavam sem gap, e as duas primeiras
+// linhas da aba Dados ficavam coladas enquanto o resto do sistema respirava.
+const cssVenda = ler('public/app.css');
+check('a aba da venda também é grade', /\.sales-tab-panel \{[^}]*display: grid/.test(cssVenda));
+check('  com o mesmo passo do formulário', /\.sales-tab-panel \{[^}]*gap: 26px/.test(cssVenda));
+// Mesma armadilha da .cadastro-tab-panel: sem isto, as seis abas da venda
+// aparecem TODAS de uma vez.
+check('  e a aba oculta tem display:none explícito', /\.sales-tab-panel\[hidden\]\s*\{\s*display:\s*none/.test(cssVenda));
+
 console.log('\n--- a grade dos campos continua de pé ---');
 check('o painel do produto é centrado', /\.produto-form-wrap\s*\{[^}]*margin-inline:\s*auto/.test(cssSrc));
 check('e a tela usa esse invólucro', /class="produto-form-wrap"/.test(telaSrc));
 check('as linhas têm colunas fixas, não auto-fit', /#stockProductForm \.row \{[\s\S]{0,120}repeat\(4, minmax\(0, 1fr\)\)/.test(cssSrc));
-check('input e select têm a mesma altura', /#stockProductForm \.row > label > (input|select)[\s\S]{0,120}height: 42px/.test(cssSrc));
+// A altura em si e livre (ela acompanha o tamanho padrao do campo, que muda
+// em app.css num lugar so). O que este check cobra e que input e select
+// continuem no MESMO seletor com altura fixa -- e dai que vem a igualdade.
+// Cravar o numero aqui so faria a suite falhar a cada ajuste de tamanho,
+// sem nada ter quebrado na tela.
+check('input e select têm a mesma altura',
+  /#stockProductForm \.row > label > input,[\s\S]{0,80}> select \{[^}]*height: \d+px/.test(cssSrc));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

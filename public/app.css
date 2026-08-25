@@ -235,10 +235,41 @@ button, input, select { font: inherit; }
 
 .auth-card h1 { margin-top: 0; }
 
-.form-grid { display: grid; gap: 12px; }
-label { display: grid; gap: 6px; font-weight: 600; }
-input, select, textarea { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); }
-textarea { min-height: 110px; resize: vertical; }
+/* ---------------------------------------------------------------------------
+   TAMANHO DO CAMPO E O ESPACO ENTRE ELES — decidido em um lugar so.
+
+   O campo tem 48px de altura (13px de padding + 1px de borda de cada lado sobre
+   uma linha de ~20px). Nao e capricho: 48px e o alvo de toque confortavel, e
+   este ERP e usado em tablet no balcao e no chao de fabrica, onde a pessoa
+   toca com o dedo e nao com o mouse.
+
+   A escada vale para o SISTEMA INTEIRO -- toda tela que tem campo usa estes
+   quatro numeros, e nao um espacamento proprio inventado na hora:
+
+     10px  do rotulo para o campo dele    (label, .cadastro-field, .atalho-campo)
+     22px  de um campo para o vizinho     (.row, .cadastro-grid, .atalho-linha)
+     26px  de uma linha para a seguinte   (.form-grid, .cadastro-form)
+     16px  entre chips de marcar          (.cadastro-check-grid, toggles)
+
+   Os 16px sao a unica excecao, e tem motivo: chip de marcar ja tem borda e
+   fundo proprios, entao a divisa entre um e outro nao depende do vazio. Campo
+   de digitar nao tem essa sorte -- a caixa dele e a unica coisa que o separa
+   do vizinho.
+
+   O rotulo tem que estar visivelmente mais perto do proprio campo do que da
+   vizinhanca: e o que diz de quem ele e. Com os tres espacos parecidos, uma
+   coluna de campos vira uma lista de pares ambiguos e a pessoa le o rotulo de
+   baixo como se fosse do campo de cima. Foi por isso que a primeira tentativa
+   (8 / 18 / 18) ainda parecia apertada: o campo cresceu para 48px e os espacos
+   ao redor nao acompanharam, entao a tela ganhou massa sem ganhar respiro.
+
+   Mexer nestes numeros mexe nas 121 telas de uma vez — que e justamente o
+   motivo de eles morarem aqui, e nao espalhados em cada tela.
+   --------------------------------------------------------------------------- */
+.form-grid { display: grid; gap: 26px; }
+label { display: grid; gap: 10px; font-weight: 600; }
+input, select, textarea { padding: 13px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); }
+textarea { min-height: 120px; resize: vertical; }
 
 /* Campo de busca que substitui um <select> (ver renderSearchableSelect em app.js) */
 .searchable-select { position: relative; }
@@ -270,14 +301,17 @@ textarea { min-height: 110px; resize: vertical; }
   max-height: 240px; overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 12px 30px rgba(2, 6, 23, 0.25);
 }
-.searchable-select-option { padding: 8px 12px; cursor: pointer; font-weight: 400; }
+.searchable-select-option { padding: 10px 14px; cursor: pointer; font-weight: 400; }
 .searchable-select-option:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.12)); }
-.searchable-select-empty { padding: 8px 12px; color: var(--muted); font-weight: 400; }
+.searchable-select-empty { padding: 10px 14px; color: var(--muted); font-weight: 400; }
 
 /* Checkboxes padronizados como toggle switches: verde quando ativo, cinza quando inativo */
 input[type="checkbox"] {
   -webkit-appearance: none;
   appearance: none;
+  /* A regra de campo acima vale para TODO input, inclusive este. Sem zerar o
+     padding aqui, a chave herda os 13px e o circulo interno sai do trilho. */
+  padding: 0;
   width: 40px;
   height: 22px;
   min-width: 40px;
@@ -317,7 +351,10 @@ input[type="checkbox"]:focus-visible {
   outline-offset: 2px;
 }
 button {
-  padding: 10px 14px;
+  /* Acompanha a altura do campo: botao e campo dividem linha em quase toda
+     tela (Buscar ao lado da busca, + ao lado do select), e 6px de diferenca
+     entre eles deixa a linha serrilhada. */
+  padding: 12px 16px;
   border: none;
   border-radius: 10px;
   background: var(--primary);
@@ -544,7 +581,7 @@ button.success:hover { background: var(--success-hover); }
 
 .cadastro-form {
   display: grid;
-  gap: 18px;
+  gap: 26px;
 }
 
 .cadastro-page-head {
@@ -595,14 +632,14 @@ button.success:hover { background: var(--success-hover); }
 }
 
 .cadastro-section-body {
-  padding: 16px 18px 18px;
+  padding: 20px 22px 22px;
   display: grid;
-  gap: 14px;
+  gap: 22px;
 }
 
 .cadastro-grid {
   display: grid;
-  gap: 12px;
+  gap: 22px;
   align-items: start;
 }
 
@@ -612,7 +649,7 @@ button.success:hover { background: var(--success-hover); }
 
 .cadastro-field {
   display: grid;
-  gap: 6px;
+  gap: 10px;
 }
 
 .cadastro-field span,
@@ -658,8 +695,9 @@ button.success:hover { background: var(--success-hover); }
 }
 
 .cadastro-inline-action .icon-button {
-  width: 44px;
-  height: 44px;
+  /* Quadrado do tamanho do campo que ele acompanha (48px). */
+  width: 48px;
+  height: 48px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-alt);
@@ -677,14 +715,14 @@ button.success:hover { background: var(--success-hover); }
 .cadastro-check-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
+  gap: 16px;
 }
 
 .cadastro-check {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel-alt);
@@ -760,7 +798,7 @@ button.success:hover { background: var(--success-hover); }
 
 .cadastro-tab-panel {
   display: grid;
-  gap: 18px;
+  gap: 26px;
 }
 
 .cadastro-tab-panel[hidden] {
@@ -774,8 +812,8 @@ button.success:hover { background: var(--success-hover); }
 
 .cadastro-filter-panel {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 22px;
+  padding: 18px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel-alt);
@@ -784,14 +822,14 @@ button.success:hover { background: var(--success-hover); }
 .cadastro-filter-grid-5 {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
+  gap: 22px;
 }
 
 .cadastro-filter-toggle-list {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 16px;
+  padding: 14px 16px;
   border-radius: 10px;
   background: var(--panel-alt);
 }
@@ -810,15 +848,15 @@ button.success:hover { background: var(--success-hover); }
 .sales-busca-avancada {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 260px;
-  gap: 16px;
+  gap: 22px;
   align-items: start;
 }
 
 .sales-busca-datas {
   display: grid;
-  gap: 10px;
+  gap: 22px;
   align-content: start;
-  padding: 12px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
@@ -863,7 +901,7 @@ button.success:hover { background: var(--success-hover); }
   .secondary-sidebar.visible { width: 100%; min-width: 100%; max-height: 420px; padding: 16px 12px; }
   .cadastro-grid-2,
   .cadastro-grid-3 { grid-template-columns: 1fr; }
-  .cadastro-inline-action .icon-button { width: 42px; height: 42px; }
+  .cadastro-inline-action .icon-button { width: 44px; height: 44px; }
   .cadastro-page-head,
   .cadastro-help-row,
   .cadastro-actions { align-items: stretch; flex-direction: column; }
@@ -1085,7 +1123,10 @@ button.success:hover { background: var(--success-hover); }
   font-size: 1rem;
 }
 
-.panel { padding: 18px; margin-bottom: 16px; }
+/* 28px entre um painel e outro (contra 16px de antes): o painel e a unidade
+   que a pessoa le por vez — filtros, formulario, lista. Colados, os tres viram
+   uma parede so e a borda de 1px e a unica coisa dizendo onde um acaba. */
+.panel { padding: 22px; margin-bottom: 28px; }
 .panel:has(> table.table) {
   overflow-x: auto;
 }
@@ -1099,7 +1140,7 @@ button.success:hover { background: var(--success-hover); }
 .delete-user { background: transparent; border: 1px solid rgba(239,68,68,0.18); color: var(--danger); padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 .delete-user:hover { background: rgba(239,68,68,0.06); }
 .muted { color: var(--muted); }
-.row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.row { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 
 /* Campo Status da tela Nova Venda.
    O <select> pede, por conta própria, a largura da MAIOR opção — e
@@ -1118,7 +1159,7 @@ button.success:hover { background: var(--success-hover); }
   background-color: var(--status-sistema-bg);
   color: var(--status-sistema-text);
 }
-.checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.checkbox-grid { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; }
 .checkbox-grid label { display: flex; gap: 6px; align-items: center; font-weight: 400; }
 
 .icon-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding: 0; border-radius:8px; background: transparent; border: none; cursor: pointer; color: var(--danger); }
@@ -1161,7 +1202,7 @@ button.success:hover { background: var(--success-hover); }
   font-size: 0.86rem;
   line-height: 1.45;
 }
-.prompt-campo { display: grid; gap: 6px; }
+.prompt-campo { display: grid; gap: 10px; }
 .prompt-rotulo { font-size: 0.86rem; font-weight: 600; }
 .prompt-texto { width: 100%; font-family: inherit; font-size: 0.94rem; }
 .prompt-contador { margin: 6px 0 0; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
@@ -1301,8 +1342,8 @@ button.success:hover { background: var(--success-hover); }
 .finance-pill.active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .finance-pill-sm { padding: 6px 12px; font-size: 0.82rem; }
 
-.finance-custom-range { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
-.finance-custom-range label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+.finance-custom-range { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-end; }
+.finance-custom-range label { display: flex; flex-direction: column; gap: 10px; font-size: 0.85rem; color: var(--muted); }
 
 .finance-positive { color: var(--success); }
 .finance-negative { color: var(--danger-text); }
@@ -1754,7 +1795,7 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
    linha serrilhada. Com box-sizing:border-box (global), a altura já inclui o
    padding e a borda. */
 #stockProductForm .row > label > input,
-#stockProductForm .row > label > select { width: 100%; min-width: 0; height: 42px; }
+#stockProductForm .row > label > select { width: 100%; min-width: 0; height: 48px; }
 
 .produto-campo-2 { grid-column: span 2; }
 
@@ -1882,13 +1923,13 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 .atalho-modal-icone { color: var(--primary); display: inline-flex; }
 .atalho-fechar { margin-left: auto; }
 
-.atalho-form { display: flex; flex-direction: column; gap: 14px; }
+.atalho-form { display: flex; flex-direction: column; gap: 26px; }
 .atalho-linha {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+  gap: 22px;
 }
-.atalho-campo { display: grid; gap: 5px; font-size: 12px; font-weight: 600; }
+.atalho-campo { display: grid; gap: 10px; font-size: 12px; font-weight: 600; }
 .atalho-campo input, .atalho-campo select, .atalho-campo textarea { font-weight: 400; }
 .atalho-campo small { font-weight: 400; }
 
@@ -2040,18 +2081,32 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 
 .sales-grupo {
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
-  margin-bottom: 14px;
-  background: var(--panel);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .sales-grupo-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
+  justify-content: flex-start;
+  gap: 8px;
+  /* Quadrado: 126px de coluna por 106px de altura. Nao e o quadrado exato de
+     geometria -- o rotulo de tres linhas ("Gerar Ordens de Producao Agrupado
+     por Produto") precisa da altura, e um quadrado perfeito o cortaria. */
+  min-height: 106px;
+  padding: 16px 8px;
+  /* Zera o botao global (fundo primario, cantos arredondados, padding proprio):
+     aqui quem desenha a divisa e a grade. */
+  background: var(--panel);
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  cursor: pointer;
+  transition: background 150ms ease;
 }
 
 /* O nome do grupo e editavel, mas nao deve parecer um campo de formulario: e
@@ -2059,12 +2114,7 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .sales-grupo-nome {
   flex: 1 1 220px;
   font-weight: 700;
-  font-size: 1rem;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
+  color: var(--warning-text);
 }
 
 .sales-grupo-nome:hover { border-color: var(--border); }
@@ -2136,7 +2186,9 @@ tr.is-selecionada > td { background: var(--panel-alt); }
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 18px;
-  margin: 8px 0;
+  /* Sem margem propria: quem separa este painel dos blocos vizinhos e o gap da
+     aba (.sales-tab-panel). Somar os dois daria 34px so aqui. */
+  margin: 0;
 }
 :root[data-theme="dark"] .sales-totals-panel {
   background: color-mix(in srgb, var(--primary) 12%, var(--panel));
@@ -2145,7 +2197,8 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .sales-totals-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 14px 18px;
+  /* Mesma escada da grade de campos: a linha respira mais que a coluna. */
+  gap: 24px 22px;
   align-items: end;
 }
 
@@ -2182,7 +2235,7 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .sales-tabs + .panel { border-top-left-radius: 0; border-top-right-radius: 0; }
 
 .sales-toggle-linha { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-top: 16px; }
-.sales-campo-longo { display: grid; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+.sales-campo-longo { display: grid; gap: 10px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
 .sales-campo-longo textarea { width: 100%; }
 
 /* Aba Impostos — cartões só de leitura, um por tributo. */
@@ -2203,8 +2256,24 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .sales-imposto-card dl { margin: 0; }
 .sales-imposto-card dl > div {
   display: flex;
+/* O CONTEUDO DE CADA ABA TAMBEM E UMA GRADE.
+   -------------------------------------------------------------------------
+   O formulario da venda e .form-grid (26px entre blocos), mas o filho direto
+   dele e a ABA -- e dentro da aba as linhas de campo eram divs empilhadas num
+   bloco comum, sem gap nenhum. Resultado: as duas primeiras linhas da aba
+   Dados ficavam coladas, com o rotulo de "Tabela de Precos" quase encostando
+   no campo de "Cliente/Fornecedor", enquanto todas as outras telas do sistema
+   (que poem a .row direto no .form-grid) respiravam os 26px.
+
+   O [hidden] logo abaixo NAO e opcional. `hidden` esconde pela regra
+   `display: none` do NAVEGADOR, e qualquer `display` declarado aqui a vence --
+   sem redeclarar, as seis abas apareceriam TODAS de uma vez, empilhadas. Mesma
+   pegadinha que .cadastro-tab-panel[hidden] ja documenta. */
+.sales-tab-panel { display: grid; gap: 26px; align-content: start; }
+.sales-tab-panel[hidden] { display: none; }
+
   justify-content: space-between;
-  gap: 16px;
+  gap: 22px;
   padding: 9px 14px;
   font-size: 12px;
   border-top: 1px solid var(--border);
@@ -2279,7 +2348,7 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .sales-info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
-  gap: 14px 18px;
+  gap: 24px 22px;
   align-items: end;
 }
 .sales-info-datahora { display: flex; gap: 8px; }
@@ -2288,7 +2357,7 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .sales-info-toggle { margin-top: 16px; padding-bottom: 0; }
 
 /* Rótulo + campo do painel de totais e da seção Informações Gerais. */
-.sales-total-field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; }
+.sales-total-field { display: flex; flex-direction: column; gap: 10px; font-size: 12px; font-weight: 600; }
 .sales-total-field input { width: 100%; }
 .sales-total-field.is-readonly input,
 .sales-total-field input:disabled,
@@ -2903,7 +2972,7 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 /* Linha de detalhe aberta abaixo do registro. */
 .fiscal-detalhe {
   display: grid;
-  gap: 12px;
+  gap: 22px;
   padding: 12px 4px 4px;
 }
 @media (min-width: 900px) {
@@ -2962,7 +3031,7 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .fiscal-simulacao-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px 18px;
+  gap: 22px;
   margin: 0;
 }
 .fiscal-simulacao-grid dt { color: var(--muted); font-size: 12px; }
