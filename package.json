@@ -33,7 +33,10 @@
     "banco:log": "docker compose logs -f banco",
     "sql-compat": "node scripts/test-sql-compat.js",
     "prova-banco": "node scripts/prova-banco.js",
-    "backup:provar": "node scripts/test-backup-restauracao.js"
+    "backup:provar": "node scripts/test-backup-restauracao.js",
+    "backup:estado": "node scripts/estado-backup.js",
+    "backup:log": "docker compose logs -f backup",
+    "envio:log": "docker compose logs -f envio"
   },
   "engines": {
     "node": ">=18"

@@ -5,6 +5,11 @@
 #   npm run migracoes        # confere que o banco nasceu completo
 #   npm start
 #
+# Esse `up -d` sobe DUAS coisas: o banco e o backup automático (serviço
+# `backup`, lá embaixo). Não há mais um passo separado para ligar backup, nem
+# uma tarefa agendada no Windows para esquecer de criar em outra máquina.
+# Para saber se está funcionando:  npm run backup:estado
+#
 # Na PRIMEIRA subida o Postgres executa sozinho o banco/RECRIAR-DO-ZERO.sql
 # montado abaixo, e o banco já sobe com as 32 fases dentro. Não existe mais o
 # passo de colar SQL num editor web — e, com ele, some o risco de colar pela
@@ -67,19 +72,44 @@
 # uma rede Docker entre os dois (ou um túnel), não abrir a porta.
 #
 # ---------------------------------------------------------------------------
-# LEVAR PARA A VPS (Portainer)
+# LEVAR PARA A VPS
 # ---------------------------------------------------------------------------
-#   1. Stacks -> Add stack -> cole este arquivo;
-#   2. em "Environment variables", defina POSTGRES_PASSWORD com uma senha de
-#      verdade. NÃO deixe o padrão de desenvolvimento;
-#   3. o bind mount do RECRIAR-DO-ZERO.sql abaixo NÃO funciona no Portainer (o
-#      repositório não está na VPS). Duas saídas: usar o deploy por Git
-#      Repository do Portainer, que clona o repo antes de subir, ou subir sem o
-#      volume e aplicar o arquivo uma vez com
-#      `psql "$DATABASE_URL" -f RECRIAR-DO-ZERO.sql`;
-#   4. a stack de backup em deploy/backup-banco/ aponta para cá trocando o
-#      PGDUMP_URL — e agora ela cobre TUDO, inclusive os anexos de pedido, que
-#      passaram a ser tabela na fase AM.
+# A VPS JÁ TEM O REPOSITÓRIO CLONADO (é o que o scripts/deploy.sh usa), então o
+# caminho mais curto NÃO é o Portainer: é este mesmo arquivo, na pasta do
+# projeto, por SSH. Os bind mounts abaixo — o RECRIAR-DO-ZERO.sql e o destino
+# do backup — dependem justamente de o repositório estar lá.
+#
+#   1. no .env da VPS:
+#        POSTGRES_PASSWORD=<senha de verdade>   # NÃO o padrão de desenvolvimento
+#        POSTGRES_PORT=5432                     # ou outra, se a 5432 estiver ocupada
+#        DATABASE_URL=postgres://mavisone:<senha>@localhost:5432/mavisone
+#        BACKUP_HORA=03                         # VPS fica ligada: fixe a hora
+#        BACKUP_DESTINO=/mnt/backups            # fora do clone do repositório
+#   2. `docker compose up -d` — sobe banco e backup;
+#   3. `npm run migracoes` para conferir que o banco nasceu completo;
+#   4. `npm run backup:estado` no dia seguinte. É a única prova de que a cópia
+#      diária está saindo mesmo.
+#
+# O backup vai junto: o serviço `backup` faz parte desta stack. A stack separada
+# de deploy/backup-banco/ só é necessária quando o banco NÃO subiu por este
+# arquivo — um Postgres que já estava na VPS, ou em outra máquina.
+#
+# SE FOR MESMO PELO PORTAINER
+#   Use "Git Repository" em vez de colar o arquivo: colado, o Portainer não tem
+#   o repositório e os dois bind mounts quebram. Sem o do RECRIAR-DO-ZERO.sql o
+#   banco sobe VAZIO — nesse caso aplique o arquivo uma vez, à mão, com
+#   `psql "$DATABASE_URL" -f RECRIAR-DO-ZERO.sql`.
+#
+# TIRAR AS CÓPIAS DE DENTRO DA VPS
+#   BACKUP_DESTINO tira os arquivos de dentro do clone, mas não os tira da
+#   máquina: se a VPS morrer, eles morrem junto. Quem resolve isso é o serviço
+#   `envio` (lá embaixo), que manda os arquivos para um remoto do rclone e
+#   confere que chegaram. Ele fica desligado até você ligar:
+#
+#     COMPOSE_PROFILES=envio
+#     ENVIO_REMOTO=b2:mavisone-backups
+#
+#   Veja deploy/rclone.conf.exemplo para gerar a configuração do rclone.
 
 services:
   banco:
@@ -118,6 +148,342 @@ services:
       start_period: 60s
       retries: 5
 
+  # ---------------------------------------------------------------------------
+  # BACKUP AUTOMATICO — sobe junto com o banco e nao depende de ninguem lembrar
+  # ---------------------------------------------------------------------------
+  # `npm run backup` continua existindo e continua sendo o backup de quando VOCE
+  # quer um. O problema que ele nunca resolveu e o outro: o backup que ninguem
+  # tirou. Este servico e a resposta — `docker compose up -d` sobe banco E
+  # backup, e a partir dai a copia sai sozinha.
+  #
+  # POR QUE "A CADA X HORAS" E NAO "AS 03:00"
+  #   Porque esta maquina nao fica ligada de madrugada. Um laco que espera dar
+  #   03:00 nunca roda num computador que e desligado as 18h — e isso nao
+  #   aparece como erro, aparece como uma pasta de backups que parou de crescer.
+  #   Aqui a regra e outra: "se NAO existe backup dos ultimos X horas, tire um
+  #   agora". Numa VPS ligada 24h isso da um backup por dia; nesta maquina, da
+  #   um backup logo que ela liga. O mesmo arquivo serve nos dois lugares.
+  #
+  #   Efeito colateral bom: um `npm run backup` feito a mao tambem conta como
+  #   backup recente, entao a automacao nao duplica o que voce acabou de tirar.
+  #
+  # ONDE OS ARQUIVOS CAEM — de proposito, no mesmo lugar
+  #   ./data/backup, a MESMA pasta do `npm run backup`. Entao
+  #   `node scripts/restaurar-banco.js` lista os automaticos junto com os
+  #   manuais, e existe UM caminho de restauracao, nao dois. As opcoes de
+  #   pg_dump aqui sao identicas as do scripts/backup-banco.js pela mesma razao.
+  #
+  #   O nome usa UTC (como o toISOString do script manual) para que a ordem
+  #   alfabetica dos arquivos seja a ordem cronologica. O sufixo -auto diz de
+  #   onde veio: se os ultimos arquivos forem todos manuais, a automacao morreu.
+  #
+  #   Sendo bind mount e nao volume, `npm run banco:zerar` (docker compose
+  #   down -v) APAGA o banco e NAO apaga os backups. Era para ser assim.
+  backup:
+    # Alpine aqui pode: este container so roda pg_dump, nao guarda dado — a
+    # ordenacao alfabetica que obrigou o banco a ser Debian nao se aplica.
+    # A major TEM de acompanhar a do banco: pg_dump mais velho que o servidor
+    # recusa a conexao.
+    image: postgres:17-alpine
+    container_name: mavisone-backup
+    restart: unless-stopped
+    depends_on:
+      banco:
+        # Sem isto o primeiro backup tenta sair enquanto o banco ainda esta
+        # rodando o RECRIAR-DO-ZERO, e falha por conexao recusada.
+        condition: service_healthy
+    environment:
+      # PGHOST/PGUSER/PGPASSWORD em vez de uma URL, e o motivo e a senha: numa
+      # URL, um `@` ou `/` dentro da senha quebra o proprio endereco e o erro
+      # que aparece e "host nao encontrado". Nestas variaveis a senha e opaca.
+      #
+      # O host e `banco`, o nome do servico: dentro da rede do compose isso
+      # resolve para o container. `localhost` NAO funcionaria — cada container
+      # tem o seu — e a porta publicada no host (5433 nesta maquina) tambem
+      # nao: aqui dentro o Postgres escuta na 5432.
+      PGHOST: banco
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-mavisone}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-mavisone}
+      PGDATABASE: ${POSTGRES_DB:-mavisone}
+      BACKUP_INTERVALO_HORAS: ${BACKUP_INTERVALO_HORAS:-24}
+      # VAZIO NESTA MAQUINA, "03" NA VPS — e a diferenca e o unico ajuste que
+      # este servico precisa para servir nos dois lugares.
+      #
+      # Vazio: copia assim que passar do intervalo, que numa maquina desligada
+      # as 18h significa "assim que ela ligar". Numa VPS ligada 24h esse mesmo
+      # comportamento faz a copia cair no horario em que a stack subiu — as
+      # 14h30 de uma terca, junto com o movimento do dia.
+      #
+      # Preenchido: espera dar essa hora (24h, fuso do TZ). O intervalo continua
+      # valendo como rede de seguranca: passando de INTERVALO + 12h sem copia
+      # nenhuma, ele tira fora de hora, para o dia em que a VPS estiver
+      # reiniciando exatamente as 03:00.
+      BACKUP_HORA: ${BACKUP_HORA:-}
+      BACKUP_RETENCAO_DIAS: ${BACKUP_RETENCAO_DIAS:-30}
+      # A poda NUNCA desce abaixo disto. Sem esse piso, um banco parado (ou um
+      # backup quebrado) por mais de RETENCAO dias faria a limpeza apagar o
+      # ultimo backup que restou — a falha vira perda total exatamente quando
+      # ninguem esta olhando.
+      BACKUP_MINIMO_ARQUIVOS: ${BACKUP_MINIMO_ARQUIVOS:-3}
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      # NA VPS, APONTE PARA FORA DO CLONE DO REPOSITORIO — de preferencia para
+      # um disco que sobreviva a maquina:
+      #   BACKUP_DESTINO=/mnt/backups
+      # Backup dentro da pasta do projeto morre junto com a pasta do projeto, e
+      # a hora em que se descobre isso e a hora em que ele fazia falta.
+      - ${BACKUP_DESTINO:-./data/backup}:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        INTERVALO=$${BACKUP_INTERVALO_HORAS:-24}
+        RETENCAO=$${BACKUP_RETENCAO_DIAS:-30}
+        MINIMO=$${BACKUP_MINIMO_ARQUIVOS:-3}
+        HORA=$${BACKUP_HORA:-}
+        # Ate onde a espera pela hora marcada pode ir. Depois disto o laco
+        # desiste de esperar e copia fora de hora.
+        LIMITE=$$((INTERVALO + 12))
+        MARCA_DE_FALHA=/tmp/pg_dump-falhou
+
+        # "Existe copia com menos de $$1 horas?" — a pergunta que este laco faz
+        # o tempo todo, em vez de "que horas sao".
+        copia_recente() {
+          [ -n "$$(find /backups -name 'mavisone-*.sql.gz' -mmin "-$$(($$1 * 60))" 2>/dev/null | head -n 1)" ]
+        }
+
+        echo "[backup] de pe em $$(date '+%F %T') ($${TZ})."
+        if [ -n "$${HORA}" ]; then
+          echo "[backup] um backup por dia as $${HORA}:00, ou fora de hora se passar de $${LIMITE}h sem copia."
+        else
+          echo "[backup] um backup a cada $${INTERVALO}h, sem hora marcada (defina BACKUP_HORA para fixar uma)."
+        fi
+        echo "[backup] guardando $${RETENCAO} dias em /backups, e nunca menos que $${MINIMO} arquivos."
+
+        while true; do
+          if copia_recente "$${INTERVALO}"; then
+            sleep 900
+            continue
+          fi
+
+          # Passou do intervalo. Com hora marcada, espera ela chegar — mas nao
+          # para sempre: sem NENHUMA copia ha mais de LIMITE horas, copia agora.
+          if [ -n "$${HORA}" ] && [ "$$(date +%H)" != "$${HORA}" ] && copia_recente "$${LIMITE}"; then
+            sleep 900
+            continue
+          fi
+
+          carimbo=$$(date -u +%Y-%m-%dT%H-%M-%S)
+          arquivo="/backups/mavisone-$${carimbo}-auto.sql.gz"
+          echo "[backup] $$(date '+%F %T') gerando $$(basename "$${arquivo}")"
+
+          # O STATUS DE UM PIPE E O DO ULTIMO COMANDO — que aqui e o gzip.
+          # Se o pg_dump falhar, o gzip comprime nada, termina feliz, e sem
+          # este cuidado o arquivo vazio seria renomeado como backup bom. A
+          # marca no disco atravessa o subshell do pipe e diz a verdade.
+          rm -f "$${MARCA_DE_FALHA}"
+          { pg_dump --no-owner --no-privileges --clean --if-exists || : > "$${MARCA_DE_FALHA}"; } \
+            | gzip -9 > "$${arquivo}.parcial"
+
+          tamanho=$$(wc -c < "$${arquivo}.parcial")
+          if [ ! -f "$${MARCA_DE_FALHA}" ] && [ "$${tamanho}" -gt 1024 ]; then
+            # So vira nome definitivo depois de pronto: um dump interrompido no
+            # meio ficaria com cara de backup bom, e isso so se descobre no dia
+            # em que ele precisa funcionar.
+            mv "$${arquivo}.parcial" "$${arquivo}"
+            echo "[backup] ok — $$(du -h "$${arquivo}" | cut -f1)"
+
+            total=$$(find /backups -name 'mavisone-*.sql.gz' | wc -l)
+            for velho in $$(find /backups -name 'mavisone-*.sql.gz' -mtime "+$${RETENCAO}" | sort); do
+              if [ "$${total}" -le "$${MINIMO}" ]; then break; fi
+              rm -f "$${velho}"
+              total=$$((total - 1))
+              echo "[backup] podado (mais de $${RETENCAO} dias): $$(basename "$${velho}")"
+            done
+          else
+            rm -f "$${arquivo}.parcial"
+            echo "[backup] FALHOU — nada foi gravado. O erro do pg_dump esta acima." >&2
+            # Erra rapido de novo: se for coisa passageira (banco reiniciando),
+            # 5 minutos resolvem; se nao for, o healthcheck fica vermelho.
+            sleep 300
+            continue
+          fi
+
+          sleep 900
+        done
+    healthcheck:
+      # BACKUP QUE MORRE CALADO E O NORMAL, NAO A EXCECAO.
+      # Este teste nao pergunta se o container esta vivo — um laco preso num
+      # erro continua vivo. Ele pergunta se existe backup recente. Passadas
+      # INTERVALO + 6 horas sem arquivo novo, o container aparece "unhealthy"
+      # no `docker compose ps` e no Portainer, que e onde alguem ve.
+      # A folga acompanha a agenda: com hora marcada o laco pode legitimamente
+      # esperar ate 12h a mais, e uma folga curta acusaria falha onde nao ha.
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$${BACKUP_HORA:-}" ]; then folga=18; else folga=6; fi;
+          find /backups -name 'mavisone-*.sql.gz'
+          -mmin "-$$(( ($${BACKUP_INTERVALO_HORAS:-24} + folga) * 60 ))" | grep -q .
+      interval: 5m
+      timeout: 10s
+      # Folga para o primeiro backup sair antes de qualquer julgamento.
+      start_period: 10m
+      retries: 3
+
+
+  # ---------------------------------------------------------------------------
+  # ENVIO PARA FORA DA MAQUINA — a parte que backup nenhum faz sozinho
+  # ---------------------------------------------------------------------------
+  # O servico `backup` protege contra erro humano: alguem apagou, alguem rodou o
+  # UPDATE sem WHERE, o dado volta. Ele NAO protege contra a maquina: disco que
+  # morre, VPS que some, ransomware que cifra tudo que o servidor enxerga —
+  # nesses casos o backup morre junto com o banco, no mesmo instante.
+  #
+  # Este servico e a outra metade: leva os arquivos para um lugar que nao e esta
+  # maquina. Sao coisas diferentes e as duas precisam existir.
+  #
+  # ELE SO SOBE QUANDO VOCE PEDE (profile)
+  #   Sem um remoto configurado ele nao teria o que fazer, e um container em
+  #   ciclo de reinicio e barulho que faz a gente parar de olhar para o
+  #   `docker compose ps` — que e exatamente onde os problemas de verdade
+  #   aparecem. Entao ele fica fora do `docker compose up -d` normal.
+  #
+  #   Para ligar, no .env da VPS:   COMPOSE_PROFILES=envio
+  #   Ou, sem mexer no .env:        docker compose --profile envio up -d
+  #
+  # A PASTA DE BACKUPS ENTRA COMO SO-LEITURA, DE PROPOSITO
+  #   Um enviador que pode escrever na pasta e um enviador que pode APAGAR a
+  #   pasta quando alguem errar uma flag do rclone (`sync` no lugar de `copy`
+  #   inverte a direcao do estrago). Ele le e envia; nunca escreve. O que ele
+  #   precisa gravar — a marca do ultimo envio conferido — vai para um volume
+  #   separado.
+  #
+  # QUALQUER VARIAVEL RCLONE_* VALE AQUI
+  #   O rclone le a propria configuracao do ambiente, entao coisas como
+  #   RCLONE_BWLIMIT=2M (nao comer a banda da VPS no horario comercial) ou
+  #   RCLONE_TRANSFERS=2 funcionam so de colocar no .env. Nao ha nada a
+  #   acrescentar aqui para isso.
+  envio:
+    image: rclone/rclone:1
+    container_name: mavisone-envio
+    restart: unless-stopped
+    profiles: ["envio"]
+    depends_on:
+      # Nao e dependencia tecnica (ele so le arquivos), e ordem: sem o servico
+      # de backup de pe, nao ha o que enviar.
+      - backup
+    environment:
+      # OBRIGATORIA. O nome do remoto do rclone.conf mais o caminho:
+      #   ENVIO_REMOTO=b2:mavisone-backups
+      #   ENVIO_REMOTO=drive:backups/mavisone
+      # SEM `:?` AQUI, por mais tentador que seja. O Compose interpola o arquivo
+      # INTEIRO antes de olhar para os profiles: uma variavel obrigatoria neste
+      # servico derrubaria o `docker compose up -d` normal desta maquina, que
+      # nem sobe o envio. Quem cobra e o laco la embaixo, que ve o valor vazio.
+      ENVIO_REMOTO: ${ENVIO_REMOTO:-}
+      # De quanto em quanto tempo ele procura arquivo novo para subir. Nao
+      # precisa ser rapido: o que importa e que o backup do dia nao passe o dia
+      # inteiro so aqui dentro.
+      ENVIO_INTERVALO_MINUTOS: ${ENVIO_INTERVALO_MINUTOS:-30}
+      # VAZIO = NUNCA APAGA NADA LA FORA, e esse e o padrao de proposito.
+      # Guardar mais tempo fora da maquina do que dentro dela costuma ser o
+      # certo, e um comando que apaga no remoto por engano apaga justamente a
+      # copia que existia para quando tudo o mais falhasse. Preencha so se o
+      # custo do armazenamento pedir.
+      ENVIO_RETENCAO_DIAS: ${ENVIO_RETENCAO_DIAS:-}
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      # So-leitura. Ver o bloco acima.
+      - ${BACKUP_DESTINO:-./data/backup}:/backups:ro
+      # A pasta com o rclone.conf. E uma PASTA, nao o arquivo: apontar um bind
+      # mount para um arquivo que ainda nao existe faz o Docker criar um
+      # DIRETORIO com aquele nome, e ai o erro que aparece nao tem nada a ver
+      # com a causa. Copie o deploy/rclone.conf.exemplo para dentro dela.
+      - ${ENVIO_CONFIG_DIR:-./deploy/rclone}:/config/rclone:ro
+      - envio-estado:/estado
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        REMOTO="$${ENVIO_REMOTO}"
+        INTERVALO=$${ENVIO_INTERVALO_MINUTOS:-30}
+        RETENCAO=$${ENVIO_RETENCAO_DIAS:-}
+        MARCA=/estado/ultimo-envio
+        FILTRO="mavisone-*.sql.gz"
+
+        echo "[envio] de pe em $$(date '+%F %T') ($${TZ})."
+
+        # Sem destino nao ha o que fazer — mas ele NAO sai com erro aqui. Com
+        # `restart: unless-stopped`, sair viraria um container reiniciando a
+        # cada segundo, e a mensagem que explica o problema sobe no log entre
+        # centenas de copias dela mesma. Ele avisa uma vez por hora e fica
+        # vermelho no healthcheck, que e onde se olha.
+        while [ -z "$${REMOTO}" ]; do
+          echo "[envio] ENVIO_REMOTO esta vazio. Defina no .env, no formato remoto:caminho (ex.: b2:mavisone-backups)." >&2
+          sleep 3600
+        done
+
+        echo "[envio] destino: $${REMOTO} — procurando arquivo novo a cada $${INTERVALO} min."
+        if [ -n "$${RETENCAO}" ]; then
+          echo "[envio] APAGANDO no destino o que passar de $${RETENCAO} dias."
+        else
+          echo "[envio] nada e apagado no destino (ENVIO_RETENCAO_DIAS vazio)."
+        fi
+
+        # Erra na partida, nao daqui a um mes. Remoto errado, credencial
+        # vencida e bucket inexistente aparecem TODOS aqui, na primeira volta,
+        # enquanto voce ainda esta olhando para o log.
+        if rclone lsd "$${REMOTO}" >/dev/null 2>&1; then
+          echo "[envio] o destino respondeu."
+        else
+          echo "[envio] O DESTINO NAO RESPONDEU. Confira ENVIO_REMOTO e o rclone.conf:" >&2
+          rclone lsd "$${REMOTO}" || true
+          echo "[envio] segue tentando mesmo assim — pode ser coisa passageira." >&2
+        fi
+
+        while true; do
+          if rclone copy /backups "$${REMOTO}" --include "$${FILTRO}" --stats-one-line --stats 1m; then
+            # COPIAR NAO E TER CHEGADO. O `copy` termina bem em casos em que o
+            # arquivo la fora ficou diferente do daqui, e um backup fora da
+            # maquina que ninguem conferiu nao e backup, e esperanca. O `check
+            # --one-way` compara hash (ou tamanho, se o destino nao tiver hash)
+            # de cada arquivo daqui contra o de la.
+            if rclone check /backups "$${REMOTO}" --include "$${FILTRO}" --one-way; then
+              date '+%F %T' > "$${MARCA}"
+              echo "[envio] $$(date '+%F %T') tudo o que esta aqui esta la fora tambem."
+
+              if [ -n "$${RETENCAO}" ]; then
+                rclone delete "$${REMOTO}" --include "$${FILTRO}" --min-age "$${RETENCAO}d" || true
+              fi
+            else
+              echo "[envio] A CONFERENCIA FALHOU — o que esta la fora nao bate com o que esta aqui." >&2
+            fi
+          else
+            echo "[envio] FALHOU o envio. Veja o erro acima." >&2
+          fi
+          sleep $$((INTERVALO * 60))
+        done
+    healthcheck:
+      # Mesma ideia do healthcheck do backup: nao pergunta se o container esta
+      # vivo, pergunta se houve envio CONFERIDO ha pouco. A marca so e escrita
+      # depois do `rclone check` passar, entao um remoto que parou de aceitar
+      # arquivo deixa este container vermelho mesmo com o laco girando.
+      test:
+        - CMD-SHELL
+        - >-
+          find /estado -name ultimo-envio
+          -mmin "-$$(( $${ENVIO_INTERVALO_MINUTOS:-30} * 3 ))" | grep -q .
+      interval: 5m
+      timeout: 10s
+      start_period: 15m
+      retries: 3
+
 volumes:
   dados:
     name: mavisone-banco-dados
+  # Guarda so a marca do ultimo envio conferido. Fica fora de /backups para que
+  # a pasta de backups possa entrar como so-leitura no enviador.
+  envio-estado:
+    name: mavisone-envio-estado

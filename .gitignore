@@ -10,3 +10,8 @@ logs/
 # este arquivo é a base local de cada máquina — não deve ser versionado.
 data/
 supabase/.temp/
+
+# Configuração do rclone usada pelo serviço `envio`: guarda credencial de
+# acesso ao destino dos backups (chave, token, senha). O modelo versionado é o
+# deploy/rclone.conf.exemplo; o arquivo real fica só na máquina.
+deploy/rclone/

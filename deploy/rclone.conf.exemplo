@@ -1,0 +1,74 @@
+# ---------------------------------------------------------------------------
+# MODELO do rclone.conf usado pelo servico `envio` do docker-compose.yml.
+# ---------------------------------------------------------------------------
+#
+# COMO USAR
+#   1. gere a configuracao de verdade numa maquina COM NAVEGADOR (a sua), onde
+#      o rclone consegue abrir a tela de autorizacao do provedor:
+#
+#        rclone config
+#
+#      Em servidor sem navegador o proprio rclone manda usar outra maquina e
+#      colar o token — nao tente adivinhar o formato do token na mao.
+#
+#   2. copie o arquivo gerado para a VPS, dentro da pasta que o compose monta:
+#
+#        deploy/rclone/rclone.conf
+#
+#      A PASTA, e nao o arquivo, e o que o compose monta. Ver o comentario do
+#      servico `envio`.
+#
+#   3. no .env da VPS:
+#
+#        COMPOSE_PROFILES=envio
+#        ENVIO_REMOTO=b2:mavisone-backups     # o nome daqui + o caminho la
+#
+# ONDE ESTE ARQUIVO MORA E POR QUE ELE NAO PODE SER COMMITADO
+#   O rclone.conf de verdade guarda CREDENCIAL: chave de acesso, token de
+#   atualizacao, senha. O .gitignore ja barra deploy/rclone/, mas confira antes
+#   de commitar — segredo que entra no historico do git continua la depois de
+#   apagado, e a unica saida e trocar a credencial.
+#
+#   O rclone consegue guardar o arquivo cifrado (`rclone config` pergunta por
+#   uma senha). Se usar, o container precisa da variavel RCLONE_CONFIG_PASS, e
+#   ai a senha vai para o .env em vez de para o arquivo — troca um problema
+#   pelo outro, mas o .env ja e o lugar dos segredos aqui.
+#
+# ---------------------------------------------------------------------------
+# EXEMPLOS. Apague o que nao usar; deixe UM remoto configurado.
+# ---------------------------------------------------------------------------
+
+# Backblaze B2 — costuma ser o mais barato para backup e nao cobra por
+# requisicao de escrita. As duas chaves saem do painel da B2.
+[b2]
+type = b2
+account = SEU_KEY_ID
+key = SUA_APPLICATION_KEY
+hard_delete = true
+
+# Amazon S3 e compativeis (Wasabi, MinIO, Cloudflare R2, Backblaze via S3).
+# Para os compativeis, provider = Other e endpoint = o host do servico.
+[s3]
+type = s3
+provider = AWS
+access_key_id = SUA_CHAVE
+secret_access_key = SEU_SEGREDO
+region = sa-east-1
+# endpoint = s3.us-west-001.backblazeb2.com
+
+# Google Drive. O `token` abaixo e gerado pelo `rclone config` — nao da para
+# escrever a mao. Atencao: o Drive de conta pessoal tem cota de API por dia e e
+# o remoto que mais falha em backup grande.
+[drive]
+type = drive
+scope = drive.file
+token = {"access_token":"...","refresh_token":"...","expiry":"..."}
+
+# Um segundo disco montado na propria VPS. Melhor que nada e pior do que
+# parece: protege contra o disco do banco morrer, NAO protege contra a VPS
+# sumir, contra ransomware que enxerga o ponto de montagem, nem contra o
+# provedor encerrar a conta. Se for o unico destino possivel, que seja este —
+# mas saiba o que ele nao cobre.
+[disco2]
+type = alias
+remote = /mnt/disco2/backups-mavisone

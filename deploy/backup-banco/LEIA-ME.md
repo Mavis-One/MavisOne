@@ -1,19 +1,46 @@
 # Backup do banco na VPS (Portainer + Docker)
 
-## As duas formas de tirar backup, e por que as duas existem
+## Antes de tudo: você provavelmente não precisa desta stack
+
+O `docker-compose.yml` da raiz **já sobe um serviço `backup` junto com o
+banco**. Quem subiu o banco por ele está com backup automático desde o primeiro
+`docker compose up -d`, e subir esta stack por cima só faria duas cópias do
+mesmo banco em dois lugares diferentes.
+
+Esta stack é para o caso contrário: um Postgres que **não** subiu por aquele
+compose — um banco que já estava na VPS, ou que roda em outra máquina.
+
+## As três formas, e o que cada uma resolve
 
 | | onde roda | quando | o que cobre |
 |---|---|---|---|
+| serviço `backup` da stack principal | junto com o banco | sozinho, a cada 24h | estrutura + dados |
 | `npm run backup` | sua máquina | quando você manda | estrutura + dados |
-| esta stack | VPS, via Portainer | sozinha, todo dia | estrutura + dados |
+| esta stack | VPS, via Portainer | sozinha, na hora marcada | estrutura + dados |
 
-**As duas cobrem a mesma coisa agora.** Antes da saída do Supabase não era
-assim: o backup da máquina de desenvolvimento exportava dados pelo PostgREST e
-deixava de fora função, gatilho, índice e sequência, porque não havia `pg_dump`
-instalado ali. Com o banco em Docker, o `pg_dump` está dentro do container, e
-`npm run backup` o usa — o backup incompleto deixou de existir.
+**As três cobrem a mesma coisa.** Antes da saída do Supabase não era assim: o
+backup da máquina de desenvolvimento exportava dados pelo PostgREST e deixava de
+fora função, gatilho, índice e sequência, porque não havia `pg_dump` instalado
+ali. Com o banco em Docker, o `pg_dump` está dentro do container — o backup
+incompleto deixou de existir.
 
-A diferença que sobrou é **quem se lembra de rodar**: a stack não se esquece.
+A diferença que sobrou é **quem se lembra de rodar**, e as automações não se
+esquecem.
+
+### Por que a agenda das duas automações é diferente
+
+Na stack principal o gatilho é *"não existe cópia das últimas 24h? tire uma
+agora"*. Aqui é *"deu a hora marcada"*.
+
+Não é inconsistência, é o ambiente. A máquina de desenvolvimento é desligada às
+18h: um laço esperando dar 03:00 nunca rodaria nela — e isso não aparece como
+erro, aparece como uma pasta que parou de crescer. Numa VPS ligada 24h a hora
+fixa é melhor, porque a cópia cai sempre no horário mais vazio, e não no horário
+em que alguém reiniciou a stack.
+
+Esta stack tem as duas coisas: a hora marcada e um `LIMITE_HORAS` que dispara
+fora de hora se passar tempo demais sem cópia nenhuma — para o dia em que a VPS
+estiver reiniciando exatamente às 03:00.
 
 ## Os anexos vêm juntos
 
@@ -35,8 +62,10 @@ dump é o sistema inteiro**.
 
 3. Em *Environment variables*, defina:
    - `PGDUMP_URL` — a string do passo 1, com a senha real;
-   - `RETENCAO_DIAS` (padrão 30);
-   - `HORA` (padrão 03) e `TZ` (padrão America/Sao_Paulo).
+   - `RETENCAO_DIAS` (padrão 30) e `MINIMO_ARQUIVOS` (padrão 3, o piso que a
+     poda nunca ultrapassa);
+   - `HORA` (padrão 03), `LIMITE_HORAS` (padrão 36) e `TZ` (padrão
+     America/Sao_Paulo).
 
    Não escreva a senha dentro do compose: ela ficaria salva no Portainer em
    texto, visível para quem abrisse a stack.
@@ -44,6 +73,24 @@ dump é o sistema inteiro**.
 4. Suba e **confira o log**. Ele diz de cara a que horas vai rodar. Não espere
    até amanhã para descobrir que a conexão está errada — mude `HORA` para o
    próximo horário cheio, veja o backup sair, e depois volte para 03.
+
+## Como saber se ainda está funcionando
+
+Backup não falha com barulho: o container fica "Up", e a pasta parou de crescer
+há três semanas. Por isso o container tem um **healthcheck que não pergunta se
+ele está vivo** — um laço preso num erro continua vivo — e sim **se existe
+arquivo recente**. Quando as cópias param, ele fica `unhealthy` no Portainer.
+
+Na stack principal, a mesma pergunta em forma de comando:
+
+```
+npm run backup:estado
+```
+
+Ele mostra a idade do backup mais novo, quantos existem, se o container está de
+pé e saudável, e distingue o que veio da automação (sufixo `-auto`) do que foi
+tirado à mão — porque uma pasta cheia de backups manuais é exatamente o disfarce
+de uma automação morta.
 
 ## Restaurar
 
@@ -74,7 +121,11 @@ transição de status inválida em silêncio.
 
 ## O que isto não faz
 
-Não manda o arquivo para fora da VPS. Se a VPS morrer, o backup morre junto.
-Aponte o volume para um disco que saia da máquina, ou acrescente um passo de
-envio. Backup na mesma máquina protege contra erro humano, não contra perda de
-máquina.
+Não manda o arquivo para fora da VPS. Se a VPS morrer, o backup morre junto —
+backup na mesma máquina protege contra erro humano, não contra perda de máquina.
+
+Quem resolve isso é o serviço `envio` do `docker-compose.yml` da raiz, que sobe
+os arquivos para um remoto do rclone e **confere** que chegaram. Para usá-lo com
+esta stack, aponte o `BACKUP_DESTINO` do repositório para o mesmo lugar em que
+esta stack grava, ou troque o volume `backups` daqui por um bind mount para essa
+pasta. As duas coisas escrevem o mesmo formato de arquivo, de propósito.

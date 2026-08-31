@@ -1,5 +1,22 @@
 # Stack de BACKUP do banco do MavisONE — para subir no Portainer, na VPS.
 #
+# ANTES DE USAR ESTA STACK, VEJA SE VOCE PRECISA DELA
+# ---------------------------------------------------
+# O docker-compose.yml da raiz do repositorio ja sobe um servico `backup` junto
+# com o banco: quem subiu o banco por ele NAO precisa desta stack, e manter as
+# duas so faz dois backups do mesmo banco em dois lugares diferentes.
+#
+# Esta aqui existe para o caso contrario: um Postgres que NAO subiu por aquele
+# compose — um banco que ja estava na VPS, ou em outra maquina.
+#
+# A DIFERENCA DE AGENDA ENTRE AS DUAS E DE PROPOSITO
+#   La o gatilho e "nao existe copia das ultimas X horas, tire uma agora",
+#   porque a maquina de desenvolvimento e desligada as 18h e um laco esperando
+#   dar 03:00 nunca rodaria nela. Aqui, numa VPS ligada 24h, a hora fixa e
+#   melhor: o backup cai sempre no horario mais vazio, e nao no horario em que
+#   alguem reiniciou a stack. O laco abaixo tem as duas coisas — a hora marcada
+#   e uma rede de seguranca para o dia em que a VPS estiver fora do ar as 03:00.
+#
 # O QUE MUDOU DESDE A SAIDA DO SUPABASE
 # -------------------------------------
 # Esta stack existia porque a maquina de desenvolvimento nao tinha pg_dump: o
@@ -63,23 +80,46 @@ services:
       RETENCAO_DIAS: ${RETENCAO_DIAS:-30}
       # Hora local do backup (formato 24h). Fuso definido em TZ.
       HORA: ${HORA:-03}
+      # Rede de seguranca: passadas tantas horas sem NENHUM backup novo, tira um
+      # fora de hora. E o que salva o dia em que a VPS estava reiniciando as
+      # 03:00 — sem isto, aquele dia simplesmente nao tem copia, e ninguem fica
+      # sabendo.
+      LIMITE_HORAS: ${LIMITE_HORAS:-36}
+      # A poda NUNCA desce abaixo disto. Sem esse piso, um banco fora do ar por
+      # mais de RETENCAO_DIAS faria a limpeza apagar o ultimo backup que restou:
+      # a falha vira perda total, e exatamente quando ninguem esta olhando.
+      MINIMO_ARQUIVOS: ${MINIMO_ARQUIVOS:-3}
       TZ: ${TZ:-America/Sao_Paulo}
     volumes:
       - backups:/backups
     # Laco proprio em vez de cron: a imagem do postgres nao traz cron, e
     # instalar um so para isto acrescenta uma peca que tambem pode falhar
     # calada. O laco dorme ate a hora marcada e roda uma vez por dia.
+    # Laco proprio em vez de cron: a imagem do postgres nao traz cron, e
+    # instalar um so para isto acrescenta uma peca que tambem pode falhar
+    # calada. O laco acorda de 5 em 5 minutos e decide se e hora de copiar.
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
-        echo "[backup] de pe. Alvo: $${HORA}:00 ($${TZ}), retencao $${RETENCAO_DIAS} dias."
+        MARCA_DE_FALHA=/tmp/pg_dump-falhou
+        echo "[backup] de pe. Alvo: $${HORA}:00 ($${TZ}), retencao $${RETENCAO_DIAS} dias (nunca menos que $${MINIMO_ARQUIVOS} arquivos)."
+        echo "[backup] rede de seguranca: se passar de $${LIMITE_HORAS}h sem copia nova, tira uma fora de hora."
         while true; do
           agora=$$(date +%H)
-          if [ "$$agora" = "$${HORA}" ]; then
+          atrasado=nao
+          if [ -z "$$(find /backups -name 'mavisone-*.sql.gz' -mmin "-$$((LIMITE_HORAS * 60))" 2>/dev/null | head -n 1)" ]; then
+            atrasado=sim
+          fi
+
+          if [ "$$agora" = "$${HORA}" ] || [ "$$atrasado" = "sim" ]; then
+            if [ "$$atrasado" = "sim" ] && [ "$$agora" != "$${HORA}" ]; then
+              echo "[backup] $$(date '+%F %T') sem copia ha mais de $${LIMITE_HORAS}h — tirando fora de hora."
+            fi
             carimbo=$$(date +%Y%m%d-%H%M%S)
             arquivo="/backups/mavisone-$${carimbo}.sql.gz"
             echo "[backup] $$(date '+%F %T') gerando $${arquivo}"
+
             # --no-owner e --no-privileges: os papeis do servidor de origem nao
             # existem em outro servidor, e sem isto a restauracao falha em toda
             # linha de GRANT/OWNER TO.
@@ -89,15 +129,32 @@ services:
             # Nao ha mais --exclude-schema: aquilo tirava os schemas internos da
             # plataforma Supabase, que nao existem num Postgres comum. Este
             # banco tem so o schema public, e ele inteiro deve ir.
-            if pg_dump "$${PGDUMP_URL}" \
-                 --no-owner --no-privileges --clean --if-exists \
-                 | gzip -9 > "$${arquivo}.parcial"; then
+            #
+            # O `|| : > MARCA` NAO E ENFEITE. O status de um pipe e o do ULTIMO
+            # comando — o gzip. Com o pg_dump falhando, o gzip comprime nada,
+            # termina com sucesso, e um `if pg_dump ... | gzip; then` daria
+            # CERTO: 20 bytes renomeados como backup bom, descobertos so no dia
+            # em que ele precisasse funcionar. Conferido rodando contra um
+            # Postgres de verdade. A marca em disco atravessa o subshell do pipe.
+            rm -f "$${MARCA_DE_FALHA}"
+            { pg_dump "$${PGDUMP_URL}" --no-owner --no-privileges --clean --if-exists \
+                || : > "$${MARCA_DE_FALHA}"; } | gzip -9 > "$${arquivo}.parcial"
+
+            tamanho=$$(wc -c < "$${arquivo}.parcial")
+            if [ ! -f "$${MARCA_DE_FALHA}" ] && [ "$${tamanho}" -gt 1024 ]; then
               # So vira arquivo final se o dump terminou. Sem isto, um dump
               # interrompido no meio fica com nome de backup bom e ninguem
               # descobre ate precisar dele.
               mv "$${arquivo}.parcial" "$${arquivo}"
               echo "[backup] ok — $$(du -h "$${arquivo}" | cut -f1)"
-              find /backups -name 'mavisone-*.sql.gz' -mtime "+$${RETENCAO_DIAS}" -print -delete
+
+              total=$$(find /backups -name 'mavisone-*.sql.gz' | wc -l)
+              for velho in $$(find /backups -name 'mavisone-*.sql.gz' -mtime "+$${RETENCAO_DIAS}" | sort); do
+                if [ "$${total}" -le "$${MINIMO_ARQUIVOS}" ]; then break; fi
+                rm -f "$${velho}"
+                total=$$((total - 1))
+                echo "[backup] podado (mais de $${RETENCAO_DIAS} dias): $${velho}"
+              done
             else
               rm -f "$${arquivo}.parcial"
               echo "[backup] FALHOU — nada foi gravado. Veja o erro acima." >&2
@@ -107,7 +164,22 @@ services:
           fi
           sleep 300
         done
-
+    healthcheck:
+      # BACKUP QUE MORRE CALADO E O NORMAL, NAO A EXCECAO. Este teste nao
+      # pergunta se o container esta vivo — um laco preso num erro continua
+      # vivo. Ele pergunta se existe copia recente em disco. Passado o
+      # LIMITE_HORAS mais uma folga, o container aparece "unhealthy" no
+      # Portainer, que e onde alguem ve.
+      test:
+        - CMD-SHELL
+        - >-
+          find /backups -name 'mavisone-*.sql.gz'
+          -mmin "-$$(( ($${LIMITE_HORAS:-36} + 6) * 60 ))" | grep -q .
+      interval: 15m
+      timeout: 10s
+      # Folga para a primeira copia sair antes de qualquer julgamento.
+      start_period: 60m
+      retries: 3
 volumes:
   backups:
     # Trocar por um bind mount para um disco que saia da VPS:
