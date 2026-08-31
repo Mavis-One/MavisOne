@@ -71,10 +71,37 @@ function existeNoPath(programa) {
 }
 
 /**
- * Decide COMO rodar o pg_dump e devolve { programa, argumentos, descricao }.
+ * A MESMA URL NÃO SERVE NOS DOIS LADOS — e essa suposição já custou um backup.
  *
- * Dentro do container, "localhost:5432" é o próprio Postgres — então a mesma
- * DATABASE_URL do .env funciona nos dois caminhos, sem reescrever a string.
+ * A DATABASE_URL do .env descreve o caminho do HOST até o banco: `localhost` e
+ * a porta PUBLICADA pelo compose. Dentro do container nada disso vale — lá o
+ * Postgres escuta na 5432, e a porta publicada no host não existe.
+ *
+ * Enquanto a porta do host era 5432 a diferença ficava escondida, porque os
+ * dois números batiam por coincidência. Numa máquina onde a 5432 já estava
+ * ocupada (por um PostgreSQL nativo, por exemplo), o compose passou a publicar
+ * na 5433 e o pg_dump de dentro do container foi procurar a 5433 lá dentro:
+ * "connection refused", com o banco funcionando perfeitamente.
+ *
+ * Então a URL é reescrita: mesmo usuário, mesma senha, mesmo banco, mas host e
+ * porta trocados pelos de dentro.
+ */
+function urlDentroDoContainer(url) {
+  try {
+    const u = new URL(url);
+    u.hostname = '127.0.0.1';
+    u.port = process.env.DOCKER_PORTA_INTERNA || '5432';
+    return u.toString();
+  } catch {
+    // URL em formato exótico (libpq aceita mais coisa que a classe URL). Devolve
+    // como veio: melhor tentar e falhar com a mensagem do pg_dump do que
+    // inventar uma string.
+    return url;
+  }
+}
+
+/**
+ * Decide COMO rodar o pg_dump e devolve { programa, argumentos, descricao }.
  */
 function comoRodar(ferramenta, argumentosDaFerramenta) {
   const url = urlDoBanco();
@@ -89,7 +116,7 @@ function comoRodar(ferramenta, argumentosDaFerramenta) {
     programa: 'docker',
     // -T porque não há terminal: sem isso o docker tenta alocar TTY e o
     // conteúdo binário do dump chega corrompido na saída.
-    argumentos: ['compose', 'exec', '-T', SERVICO, ferramenta, url, ...argumentosDaFerramenta],
+    argumentos: ['compose', 'exec', '-T', SERVICO, ferramenta, urlDentroDoContainer(url), ...argumentosDaFerramenta],
     descricao: `${ferramenta} de dentro do container "${SERVICO}"`
   };
 }
@@ -120,6 +147,20 @@ async function main() {
   console.log(`[backup] usando ${descricao}`);
   console.log(`[backup] gerando ${path.relative(RAIZ, arquivo)}`);
 
+  /**
+   * ESPERA AS DUAS COISAS: o processo TERMINAR e o arquivo TERMINAR de escrever.
+   *
+   * A primeira versão resolvia no 'close' do arquivo e lia `filho.exitCode` ali.
+   * Não funciona: o stdout do filho acaba antes de o processo ser encerrado,
+   * então o exitCode ainda era `null` — que o código lia como falha. Pior, o
+   * stderr do pg_dump nem chegava a ser impresso, e o backup falhava
+   * anunciando NADA. Foi exatamente o que aconteceu ao rodar via
+   * `docker compose exec`, onde há mais latência entre uma coisa e outra.
+   *
+   * Agora o código de saída vem do evento 'close' do PROCESSO, que é o único
+   * lugar onde ele existe de verdade, e a escrita é aguardada em separado para
+   * o arquivo não ser medido antes de estar fechado.
+   */
   const codigo = await new Promise((resolver) => {
     const filho = spawn(programa, argumentos, { cwd: RAIZ });
     const saida = fs.createWriteStream(parcial);
@@ -128,8 +169,16 @@ async function main() {
     // O stderr do pg_dump é onde moram os erros de verdade; sem repassar, uma
     // falha de conexão viraria um arquivo vazio e um sucesso aparente.
     filho.stderr.on('data', (pedaco) => process.stderr.write(pedaco));
+
+    let codigoDoProcesso = null;
+    let arquivoFechado = false;
+    const talvezResolver = () => {
+      if (codigoDoProcesso !== null && arquivoFechado) resolver(codigoDoProcesso);
+    };
     filho.on('error', (erro) => { console.error(`[backup] não consegui executar ${programa}: ${erro.message}`); resolver(1); });
-    saida.on('close', () => resolver(filho.exitCode === null ? 1 : filho.exitCode));
+    filho.on('close', (c) => { codigoDoProcesso = c === null ? 1 : c; talvezResolver(); });
+    saida.on('close', () => { arquivoFechado = true; talvezResolver(); });
+    saida.on('error', (erro) => { console.error(`[backup] falha ao gravar o arquivo: ${erro.message}`); resolver(1); });
   });
 
   if (codigo !== 0) {

@@ -29,6 +29,33 @@
 # antes, nenhuma lista muda de cara na mudança de banco.
 #
 # ---------------------------------------------------------------------------
+# SE A 5432 JÁ ESTIVER OCUPADA
+# ---------------------------------------------------------------------------
+# O erro é este, e ele NÃO diz que a porta está ocupada:
+#
+#   Error response from daemon: ports are not available: exposing port
+#   TCP 127.0.0.1:5432 -> ... bind: An attempt was made to access a socket in a
+#   way forbidden by its access permissions.
+#
+# No Windows a mensagem sugere permissão, e a causa costuma ser outra coisa.
+# Aconteceu de verdade aqui: um PostgreSQL instalado nativamente (serviço
+# postgresql-x64-18) segurava a 5432. Como conferir:
+#
+#   Get-NetTCPConnection -LocalPort 5432 -State Listen
+#   netsh interface ipv4 show excludedportrange protocol=tcp
+#
+# A segunda linha importa porque, com Hyper-V ligado, o Windows reserva faixas
+# de portas — e uma faixa reservada dá exatamente o mesmo erro sem ninguém
+# estar escutando.
+#
+# A saída sem mexer no que já existe é publicar em outra porta, no .env:
+#   POSTGRES_PORT=5433
+#   DATABASE_URL=postgres://mavisone:mavisone@localhost:5433/mavisone
+#
+# As duas linhas andam JUNTAS. Só a primeira faz o app procurar o banco na
+# porta errada.
+#
+# ---------------------------------------------------------------------------
 # POR QUE A PORTA ESTÁ PRESA EM 127.0.0.1
 # ---------------------------------------------------------------------------
 # "5432:5432" abriria o Postgres para a REDE, não só para esta máquina — e no

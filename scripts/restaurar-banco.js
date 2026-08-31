@@ -38,6 +38,26 @@ function existeNoPath(programa) {
   return r.status === 0;
 }
 
+/**
+ * A URL do HOST reescrita para valer DENTRO do container.
+ *
+ * A DATABASE_URL descreve o caminho do host: `localhost` e a porta publicada
+ * pelo compose. Lá dentro o Postgres escuta na 5432, e a porta do host não
+ * existe. Enquanto as duas eram 5432 a diferença ficava escondida por
+ * coincidência; numa máquina com a 5432 já ocupada, ela vira "connection
+ * refused" com o banco funcionando. Mesma correção de backup-banco.js.
+ */
+function urlDentroDoContainer(url) {
+  try {
+    const u = new URL(url);
+    u.hostname = '127.0.0.1';
+    u.port = process.env.DOCKER_PORTA_INTERNA || '5432';
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 /** A URL sem a senha, para poder ser impressa e conferida. */
 function alvoLegivel(url) {
   try {
@@ -95,7 +115,9 @@ async function main() {
     // sucesso, deixando um banco restaurado PELA METADE — que é pior do que
     // uma restauração que falhou, porque parece ter dado certo.
     ? [url, '-v', 'ON_ERROR_STOP=1', '--quiet']
-    : ['compose', 'exec', '-T', SERVICO, 'psql', url, '-v', 'ON_ERROR_STOP=1', '--quiet'];
+    // Dentro do container a URL do host não vale: lá o Postgres escuta na 5432,
+    // e a porta publicada no host pode ser outra. Ver urlDentroDoContainer().
+    : ['compose', 'exec', '-T', SERVICO, 'psql', urlDentroDoContainer(url), '-v', 'ON_ERROR_STOP=1', '--quiet'];
 
   console.log(`\n[restaurar] usando ${usaLocal ? 'psql do sistema' : `psql de dentro do container "${SERVICO}"`}`);
 
