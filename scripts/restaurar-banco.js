@@ -31,7 +31,10 @@ const RAIZ = path.join(__dirname, '..');
 const SERVICO = process.env.DOCKER_SERVICO_BANCO || 'banco';
 
 function existeNoPath(programa) {
-  const r = spawnSync(programa, ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' });
+  // Sem shell:true. A DATABASE_URL leva a senha do banco como argumento, e
+  // shell:true concatena argumentos sem escapar -- uma senha com & ou | viraria
+  // sintaxe do cmd.exe. Ver o bloco equivalente em backup-banco.js.
+  const r = spawnSync(programa, ['--version'], { stdio: 'ignore' });
   return r.status === 0;
 }
 
@@ -97,7 +100,7 @@ async function main() {
   console.log(`\n[restaurar] usando ${usaLocal ? 'psql do sistema' : `psql de dentro do container "${SERVICO}"`}`);
 
   const codigo = await new Promise((resolver) => {
-    const filho = spawn(programa, args, { cwd: RAIZ, shell: process.platform === 'win32' });
+    const filho = spawn(programa, args, { cwd: RAIZ });
     fs.createReadStream(caminho).pipe(zlib.createGunzip()).pipe(filho.stdin);
     filho.stdout.on('data', (p) => process.stdout.write(p));
     filho.stderr.on('data', (p) => process.stderr.write(p));

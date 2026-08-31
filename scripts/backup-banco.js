@@ -51,8 +51,22 @@ function urlDoBanco() {
   return url;
 }
 
+/**
+ * NADA AQUI RODA COM `shell: true`, E O MOTIVO É A SENHA.
+ *
+ * A DATABASE_URL vai como argumento para o pg_dump, e ela carrega a senha do
+ * banco dentro. Com shell:true o Node NÃO escapa os argumentos — ele concatena
+ * tudo numa linha de comando e entrega ao cmd.exe. Uma senha com `&`, `|` ou
+ * `"` deixaria de ser senha e viraria sintaxe: no melhor caso o backup falha
+ * com um erro incompreensível, no pior o que vem depois do `&` é executado.
+ *
+ * Sem shell, o Node passa os argumentos direto para o processo, um a um, e o
+ * conteúdo da senha deixa de ser interpretável. No Windows o CreateProcess já
+ * procura no PATH e completa o `.exe` sozinho, então não se perde nada — foi
+ * conferido rodando contra um pg_dump de verdade.
+ */
 function existeNoPath(programa) {
-  const r = spawnSync(programa, ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' });
+  const r = spawnSync(programa, ['--version'], { stdio: 'ignore' });
   return r.status === 0;
 }
 
@@ -107,7 +121,7 @@ async function main() {
   console.log(`[backup] gerando ${path.relative(RAIZ, arquivo)}`);
 
   const codigo = await new Promise((resolver) => {
-    const filho = spawn(programa, argumentos, { cwd: RAIZ, shell: process.platform === 'win32' });
+    const filho = spawn(programa, argumentos, { cwd: RAIZ });
     const saida = fs.createWriteStream(parcial);
     const gzip = zlib.createGzip({ level: 9 });
     filho.stdout.pipe(gzip).pipe(saida);

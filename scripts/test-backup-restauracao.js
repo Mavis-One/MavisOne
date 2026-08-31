@@ -57,8 +57,12 @@ function rodar(script, argumentos = []) {
   }
 
   console.log('--- 1. uma linha marcada, para ter o que procurar depois ---');
+  // `document` e `name` são NOT NULL; o resto tem padrão no schema. O `extra`
+  // vai preenchido de propósito: é jsonb, e o dump ter de levar jsonb de volta
+  // intacto é uma das coisas que este teste prova.
   const { error: erroInsert } = await banco.from('people').insert({
-    id: MARCA, name: 'PROVA DE BACKUP', kind: 'cliente'
+    id: MARCA, name: 'PROVA DE BACKUP', document: '00000000000', type: 'pessoa-fisica',
+    extra: { prova: true, quando: new Date().toISOString() }
   });
   check(!erroInsert, 'linha de prova criada', erroInsert ? erroInsert.message : MARCA);
   if (erroInsert) { await fecharPool(); process.exit(1); }
@@ -84,8 +88,11 @@ function rodar(script, argumentos = []) {
   esquecerCatalogo();
 
   console.log('\n--- 5. o DADO voltou ---');
-  const voltou = await banco.from('people').select('id, name').eq('id', MARCA).maybeSingle();
+  const voltou = await banco.from('people').select('id, name, extra').eq('id', MARCA).maybeSingle();
   check(voltou.data !== null, 'a linha marcada está de volta', voltou.data ? voltou.data.name : 'sumiu');
+  check(Boolean(voltou.data && voltou.data.extra && voltou.data.extra.prova === true),
+    '  e o jsonb dela voltou como estrutura, não como texto',
+    voltou.data ? JSON.stringify(voltou.data.extra) : '—');
 
   console.log('\n--- 6. a ESTRUTURA voltou junto (o que o backup antigo não trazia) ---');
   // Função: existia no schema.sql e o backup por PostgREST nunca a levava.
