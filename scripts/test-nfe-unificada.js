@@ -20,7 +20,7 @@ const ler = (p) => fs.readFileSync(path.join(RAIZ, p), 'utf8').replace(/\r\n/g, 
 const serverSrc = ler('server.js');
 const telaSrc = ler('public/modules/finance/subs/nfe_emitidas.js');
 const dbSrc = ler('lib/db/fiscal.js');
-const migracao = ler('supabase/migrations/fase-aa-nfe-lista-unificada.sql');
+const migracao = ler('banco/migrations/fase-aa-nfe-lista-unificada.sql');
 
 let falhas = 0;
 const check = (nome, cond, det) => {

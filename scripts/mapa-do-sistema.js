@@ -307,13 +307,13 @@ for (const [caminho, metodos] of listaRotas) {
 
 // ---- 5. migrações
 escrever(titulo('5. MIGRAÇÕES DE BANCO'));
-if (existe('supabase/migrations')) {
-  const migracoes = fs.readdirSync(path.join(RAIZ, 'supabase/migrations')).filter((f) => f.endsWith('.sql')).sort();
-  escrever(`${migracoes.length} arquivo(s) em supabase/migrations, em ordem de fase:`);
+if (existe('banco/migrations')) {
+  const migracoes = fs.readdirSync(path.join(RAIZ, 'banco/migrations')).filter((f) => f.endsWith('.sql')).sort();
+  escrever(`${migracoes.length} arquivo(s) em banco/migrations, em ordem de fase:`);
   escrever();
   for (const m of migracoes) escrever(`  ${m}`);
 } else {
-  escrever('  (pasta supabase/migrations não encontrada)');
+  escrever('  (pasta banco/migrations não encontrada)');
 }
 
 // ---- 6. testes

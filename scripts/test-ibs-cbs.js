@@ -17,7 +17,7 @@ const path = require('path');
 const RAIZ = path.join(__dirname, '..');
 const ler = (p) => fs.readFileSync(path.join(RAIZ, p), 'utf8').replace(/\r\n/g, '\n');
 
-const migracao = ler('supabase/migrations/fase-z-ibs-cbs.sql');
+const migracao = ler('banco/migrations/fase-z-ibs-cbs.sql');
 const dbSrc = ler('lib/db/fiscal.js');
 const telaSrc = ler('public/modules/fiscal/subs/regras.js');
 
@@ -186,7 +186,7 @@ check('não inventa CST de IBS/CBS', !('ibs_cbs_situacao_tributaria' in semIbs))
 check('nem manda base de cálculo', !('ibs_cbs_base_calculo' in semIbs));
 
 console.log('\n--- o IBS vai separado por competência, não dividido ao meio ---');
-const migracaoAd = ler('supabase/migrations/fase-ad-ibs-cbs-uf-municipio.sql');
+const migracaoAd = ler('banco/migrations/fase-ad-ibs-cbs-uf-municipio.sql');
 check('a migração cria a coluna do estado', /aliquota_ibs_uf/.test(migracaoAd));
 check('e a do município', /aliquota_ibs_mun/.test(migracaoAd));
 check('o banco lê as duas', /aliquotaIbsUf: row\.aliquota_ibs_uf/.test(dbSrc) && /aliquotaIbsMun: row\.aliquota_ibs_mun/.test(dbSrc));

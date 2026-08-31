@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-08-31 14:50 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-08-31 16:11 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -313,7 +313,7 @@ Arquivos de acesso (lib/db)
       CRUD dos módulos Frota, RH, PCP e Contratos.
       tabelas: contract_templates, contract_types, contracts, fleet_maintenances, fleet_refuels, fleet_vehicles, hr_departments, hr_employee_categories, hr_employee_types, hr_employees, hr_leaves, hr_positions, hr_time_entries, hr_work_schedules, pcp_bom, pcp_entries, pcp_orders, pcp_quality_checks, pcp_sectors, pcp_statuses
   lib/db/openfinance.js
-      Acesso a dados do módulo Open Finance (tabelas da Fase E em supabase/schema.sql).
+      Acesso a dados do módulo Open Finance (tabelas da Fase E em banco/schema.sql).
       tabelas: account_balances, bank_cards, card_transactions, financial_institutions, open_finance_audit_logs, open_finance_connections, open_finance_webhook_events
   lib/db/rbac.js
       tabelas: access_logs, permissions, role_permissions, roles, user_permissions, user_roles
@@ -455,7 +455,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-33 arquivo(s) em supabase/migrations, em ordem de fase:
+33 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql

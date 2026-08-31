@@ -37,7 +37,7 @@
 require('dotenv').config();
 
 const db = require('../db');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
 const BASE = process.env.BASE || 'http://localhost:3000';
 const CARIMBO = String(Date.now()).slice(-9);
@@ -126,7 +126,7 @@ const criados = { pessoas: [], usuarios: [], pedidos: [] };
       'users.seller_id existe e guardou o vinculo (fase AL aplicada)',
       `sellerId lido: "${usuarioA.sellerId}"`);
     if (usuarioA.sellerId !== vendedorA.id) {
-      console.log('      >> rode supabase/migrations/fase-al-usuario-vendedor.sql; sem ela o painel fica vazio para todos.');
+      console.log('      >> rode banco/migrations/fase-al-usuario-vendedor.sql; sem ela o painel fica vazio para todos.');
     }
 
     const pedidoA = await db.createOrder({
@@ -227,7 +227,7 @@ const criados = { pessoas: [], usuarios: [], pedidos: [] };
 
     // ---------------------------------------------------------------- a NF-e
     console.log('\n--- 4. a coluna NF-e sai preenchida ---');
-    const { data: notas } = await supabase.from('nfe').select('id, numero').limit(1);
+    const { data: notas } = await banco.from('nfe').select('id, numero').limit(1);
     const nota = (notas || [])[0];
     if (!nota) {
       console.log('  -- PULADO: nao ha NF-e no banco, e esta prova NAO emite uma so para testar');

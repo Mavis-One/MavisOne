@@ -41,7 +41,7 @@ window.MavisSubscreenRegistry.fiscal.tabelas = async function renderTabelasFisca
       <div class="panel workspace-pendente">
         <h3>Tabelas Fiscais</h3>
         <p>As tabelas de referência ainda não existem no banco. Elas são criadas
-        pela migração <code>supabase/migrations/fase-q-tabelas-fiscais.sql</code>.</p>
+        pela migração <code>banco/migrations/fase-q-tabelas-fiscais.sql</code>.</p>
         <p class="muted">Enquanto isso, o CFOP na emissão de NF-e continua como texto livre.</p>
       </div>
     `;

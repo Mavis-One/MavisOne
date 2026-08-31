@@ -170,7 +170,7 @@ check('a classificação é DADO, não código', /from\('cfop'\)\.select\('codig
 // gera" — isso faria todo recebível sumir em silêncio.
 check('coluna ausente vira "não sei", não "não gera"', /schema cache[\s\S]{0,60}return \{\};/.test(dbFiscalSrc));
 
-const migracaoAe = ler('supabase/migrations/fase-ae-financeiro-por-cfop-e-beneficio.sql');
+const migracaoAe = ler('banco/migrations/fase-ae-financeiro-por-cfop-e-beneficio.sql');
 check('a migração cria a coluna do CFOP', /add column if not exists gera_financeiro/.test(migracaoAe));
 // Padrão seguro: recebível a mais é cobrança indevida de cliente.
 check('e o padrão é false', /gera_financeiro boolean not null default false/.test(migracaoAe));

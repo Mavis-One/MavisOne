@@ -478,7 +478,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         ${erro ? `<p class="fiscal-regra-erro">${escapeHtml(erro)}</p>` : ''}
         ${tabelas.disponivel ? '' : `
           <p class="muted">As tabelas oficiais de CFOP/CST ainda não existem no banco (migração
-          <code>supabase/migrations/fase-q-tabelas-fiscais.sql</code>), então os códigos aqui são digitados à mão.</p>`}
+          <code>banco/migrations/fase-q-tabelas-fiscais.sql</code>), então os códigos aqui são digitados à mão.</p>`}
       </div>
 
       <details class="panel fiscal-simulador" ${simulacao ? 'open' : ''}>

@@ -29,7 +29,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 const entradaNfeDb = require('../lib/db/entrada-nfe');
 const entradaNfe = require('../lib/entradaNfe');
 
@@ -53,7 +53,7 @@ const CHAVE = ('42260811222333000181550010000123451' + carimbo).slice(0, 32) + c
 
   // Produto real: o item tem FK para products(id). Sem nenhum produto no banco,
   // os checks de vinculo sao PULADOS -- nao inventados.
-  const { data: produtos } = await supabase.from('products').select('id, name').limit(1);
+  const { data: produtos } = await banco.from('products').select('id, name').limit(1);
   const produto = (produtos || [])[0] || null;
 
   let entradaId = '';
@@ -128,11 +128,11 @@ const CHAVE = ('42260811222333000181550010000123451' + carimbo).slice(0, 32) + c
     check(erroDuplicidade && erroDuplicidade.status === 409, '  com status 409, nao 500',
       erroDuplicidade ? String(erroDuplicidade.status) : '-');
     // A cabeca da duplicata nao pode ter ficado no banco.
-    const { data: repetidas } = await supabase.from('nfe_entrada').select('id').eq('chave', CHAVE);
+    const { data: repetidas } = await banco.from('nfe_entrada').select('id').eq('chave', CHAVE);
     check((repetidas || []).length === 1, '  e sobrou uma linha so com essa chave', String((repetidas || []).length));
 
     console.log('\n--- 3. o CHECK do status recusa valor inventado ---');
-    const statusInvalido = await supabase.from('nfe_entrada')
+    const statusInvalido = await banco.from('nfe_entrada')
       .update({ status: 'CONFERIDA' }).eq('id', entradaId).select('id');
     check(Boolean(statusInvalido.error), 'status fora de LANCADA/REVISAR e recusado',
       statusInvalido.error ? statusInvalido.error.message.slice(0, 90) : 'PASSOU (o check nao existe)');
@@ -188,9 +188,9 @@ const CHAVE = ('42260811222333000181550010000123451' + carimbo).slice(0, 32) + c
   } finally {
     console.log('\n--- 8. limpeza (e a prova do on delete cascade) ---');
     if (entradaId) {
-      const { error } = await supabase.from('nfe_entrada').delete().eq('id', entradaId);
+      const { error } = await banco.from('nfe_entrada').delete().eq('id', entradaId);
       check(!error, 'a nota de prova foi removida do banco', error ? error.message : entradaId);
-      const { data: orfaos } = await supabase.from('nfe_entrada_item')
+      const { data: orfaos } = await banco.from('nfe_entrada_item')
         .select('id').eq('entrada_id', entradaId);
       // Sem o cascade, os itens ficariam apontando para uma entrada que nao
       // existe -- e o proximo relatorio de credito somaria imposto fantasma.

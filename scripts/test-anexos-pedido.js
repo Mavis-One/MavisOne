@@ -62,7 +62,7 @@ check('tipo com quebra de linha vira o genérico', anexos.tipoSeguro('text/html\
 check('tipo vazio vira o genérico', anexos.tipoSeguro('') === 'application/octet-stream');
 
 console.log('\n--- a tabela do binário existe e é separada do pedido ---');
-const faseAm = ler('supabase/migrations/fase-am-anexos-no-banco.sql');
+const faseAm = ler('banco/migrations/fase-am-anexos-no-banco.sql');
 check('fase-am cria pedido_anexo', /create table if not exists pedido_anexo/.test(faseAm));
 check('o conteúdo é bytea', /conteudo bytea not null/.test(faseAm));
 // O ponto todo: a ficha continua em orders.attachments, então listar pedido não
@@ -115,7 +115,7 @@ check('devolvendo 413', /err\.status = 413/.test(serverSrc));
 check('o upload tem teto próprio e maior', /readBody\(req, 16 \* 1024 \* 1024\)/.test(serverSrc));
 
 console.log('\n--- a migração é aditiva ---');
-const sql = ler('supabase/migrations/fase-ai-anexos-do-pedido.sql');
+const sql = ler('banco/migrations/fase-ai-anexos-do-pedido.sql');
 check('cria attachments em orders', /alter table if exists orders add column if not exists attachments jsonb/.test(sql));
 check('e em quotes também', /alter table if exists quotes add column if not exists attachments jsonb/.test(sql));
 check('com padrão de lista vazia', /default '\[\]'::jsonb/.test(sql));

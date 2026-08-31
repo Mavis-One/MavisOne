@@ -29,7 +29,7 @@
  * Ele limpa o que escreve. Os ids começam com `zz-prova-`.
  */
 require('dotenv').config();
-const { supabase, fecharPool } = require('../lib/db/client');
+const { banco, fecharPool } = require('../lib/db/client');
 const { consultar } = require('../lib/db/conexao');
 const { esquecerCatalogo } = require('../lib/db/catalogo');
 
@@ -70,7 +70,7 @@ const MARCA = `zz-prova-${Date.now()}`;
   esquecerCatalogo();
 
   const bytesOriginais = Buffer.from('MZ\x00\x01 çãõ', 'utf8');
-  const gravou = await supabase.from('zz_prova_tipos').insert({
+  const gravou = await banco.from('zz_prova_tipos').insert({
     id: MARCA,
     um_jsonb: ['vendas', { fiscal: true }],
     uma_lista: ['sales', 'stock'],
@@ -110,39 +110,39 @@ const MARCA = `zz-prova-${Date.now()}`;
 
   // -------------------------------------------------------------------------
   console.log('\n--- 2. os operadores que o sistema usa, contra o Postgres ---');
-  await supabase.from('zz_prova_tipos').insert([
+  await banco.from('zz_prova_tipos').insert([
     { id: MARCA + '-b', um_dinheiro: 20 },
     { id: MARCA + '-c', um_dinheiro: 30 }
   ]);
 
-  const ordenado = await supabase.from('zz_prova_tipos').select('id, um_dinheiro')
+  const ordenado = await banco.from('zz_prova_tipos').select('id, um_dinheiro')
     .in('id', [MARCA + '-b', MARCA + '-c']).order('um_dinheiro', { ascending: false });
   check(!ordenado.error && ordenado.data.length === 2 && ordenado.data[0].um_dinheiro === 30,
     'in() + order() desc', ordenado.error ? ordenado.error.message : JSON.stringify(ordenado.data.map((r) => r.um_dinheiro)));
 
   // O check que mais importa da migração inteira: lista vazia é ZERO linhas.
-  const vazio = await supabase.from('zz_prova_tipos').select('id').in('id', []);
+  const vazio = await banco.from('zz_prova_tipos').select('id').in('id', []);
   check(!vazio.error && vazio.data.length === 0, 'in([]) devolve ZERO linhas, não a tabela',
     vazio.error ? vazio.error.message : `${vazio.data.length} linha(s)`);
 
-  const paginado = await supabase.from('zz_prova_tipos').select('id', { count: 'exact' })
+  const paginado = await banco.from('zz_prova_tipos').select('id', { count: 'exact' })
     .in('id', [MARCA, MARCA + '-b', MARCA + '-c']).order('id').range(0, 1);
   check(!paginado.error && paginado.data.length === 2 && paginado.count === 3,
     'range() pagina e count:exact conta o TOTAL', `${paginado.data.length} de ${paginado.count}`);
 
-  const nulo = await supabase.from('zz_prova_tipos').select('id').eq('id', MARCA + '-b').not('um_dinheiro', 'is', null);
+  const nulo = await banco.from('zz_prova_tipos').select('id').eq('id', MARCA + '-b').not('um_dinheiro', 'is', null);
   check(!nulo.error && nulo.data.length === 1, 'not(is null)', nulo.error && nulo.error.message);
 
-  const atualizou = await supabase.from('zz_prova_tipos').update({ um_dinheiro: 99 }).eq('id', MARCA + '-b').select().single();
+  const atualizou = await banco.from('zz_prova_tipos').update({ um_dinheiro: 99 }).eq('id', MARCA + '-b').select().single();
   check(!atualizou.error && atualizou.data.um_dinheiro === 99, 'update().select().single()', atualizou.error && atualizou.error.message);
 
-  const subiu = await supabase.from('zz_prova_tipos').upsert({ id: MARCA + '-b', um_dinheiro: 77 }).select().single();
+  const subiu = await banco.from('zz_prova_tipos').upsert({ id: MARCA + '-b', um_dinheiro: 77 }).select().single();
   check(!subiu.error && subiu.data.um_dinheiro === 77, 'upsert() acha a PK sozinho e atualiza', subiu.error && subiu.error.message);
 
-  const nada = await supabase.from('zz_prova_tipos').select('id').eq('id', 'nao-existe').maybeSingle();
+  const nada = await banco.from('zz_prova_tipos').select('id').eq('id', 'nao-existe').maybeSingle();
   check(!nada.error && nada.data === null, 'maybeSingle() sem linha devolve null, sem erro');
 
-  const exigente = await supabase.from('zz_prova_tipos').select('id').eq('id', 'nao-existe').single();
+  const exigente = await banco.from('zz_prova_tipos').select('id').eq('id', 'nao-existe').single();
   check(Boolean(exigente.error) && exigente.error.code === 'PGRST116', 'single() sem linha devolve erro de cardinalidade',
     exigente.error && exigente.error.code);
 
@@ -151,50 +151,50 @@ const MARCA = `zz-prova-${Date.now()}`;
   // lib/db/classes.js, fiscal.js, estoque.js e rbac.js decidem a mensagem da
   // tela a partir destes códigos. Se o driver entregasse outro, a tela passaria
   // a dizer "erro ao gravar" em vez de "já existe um cadastro com este CNPJ".
-  const duplicada = await supabase.from('zz_prova_tipos').insert({ id: MARCA });
+  const duplicada = await banco.from('zz_prova_tipos').insert({ id: MARCA });
   check(duplicada.error && duplicada.error.code === '23505', '23505 — chave única violada',
     duplicada.error && duplicada.error.code);
 
-  const semTabela = await supabase.from('zz_tabela_que_nao_existe').select('*').limit(1);
+  const semTabela = await banco.from('zz_tabela_que_nao_existe').select('*').limit(1);
   check(semTabela.error && semTabela.error.code === '42P01', '42P01 — tabela não existe',
     semTabela.error && semTabela.error.code);
   check(/does not exist/i.test((semTabela.error || {}).message || ''),
     '  e a mensagem diz "does not exist" (é o que verificar-migracoes.js procura)');
 
-  const semColuna = await supabase.from('zz_prova_tipos').select('coluna_que_nao_existe').limit(1);
+  const semColuna = await banco.from('zz_prova_tipos').select('coluna_que_nao_existe').limit(1);
   check(semColuna.error && semColuna.error.code === '42703', '42703 — coluna não existe',
     semColuna.error && semColuna.error.code);
 
   // -------------------------------------------------------------------------
   console.log('\n--- 4. contra o schema REAL do sistema ---');
-  const codigo = await supabase.rpc('next_cadastro_code');
+  const codigo = await banco.rpc('next_cadastro_code');
   check(!codigo.error && typeof codigo.data === 'string', 'a função next_cadastro_code devolve o VALOR, não uma linha',
     codigo.error ? codigo.error.message : JSON.stringify(codigo.data));
 
   // O jsonb de verdade que motivou metade desta camada.
-  const usuario = await supabase.from('users').select('id, dashboard_pins, allowed_modules').eq('username', 'admin').maybeSingle();
+  const usuario = await banco.from('users').select('id, dashboard_pins, allowed_modules').eq('username', 'admin').maybeSingle();
   check(!usuario.error && usuario.data, 'o usuário admin está lá', usuario.error && usuario.error.message);
   if (usuario.data) {
     const pinsOriginais = usuario.data.dashboard_pins;
     check(Array.isArray(usuario.data.allowed_modules), 'allowed_modules (text[]) volta como array',
       JSON.stringify(usuario.data.allowed_modules).slice(0, 60));
-    const gravouPins = await supabase.from('users').update({ dashboard_pins: ['zz-prova'] }).eq('id', usuario.data.id).select().single();
+    const gravouPins = await banco.from('users').update({ dashboard_pins: ['zz-prova'] }).eq('id', usuario.data.id).select().single();
     check(!gravouPins.error && Array.isArray(gravouPins.data.dashboard_pins) && gravouPins.data.dashboard_pins[0] === 'zz-prova',
       'dashboard_pins (jsonb) grava array JS e relê como array',
       gravouPins.error ? gravouPins.error.message : JSON.stringify(gravouPins.data.dashboard_pins));
-    await supabase.from('users').update({ dashboard_pins: pinsOriginais }).eq('id', usuario.data.id);
+    await banco.from('users').update({ dashboard_pins: pinsOriginais }).eq('id', usuario.data.id);
   }
 
   // O único select com relacionamento embutido do sistema. Tabela vazia é
   // resultado válido: o que se prova aqui é que o Postgres ACEITA a subconsulta.
-  const embutido = await supabase.from('nfe_eventos')
+  const embutido = await banco.from('nfe_eventos')
     .select('*, nfe(referencia, numero, serie, chave_acesso, status)').limit(5);
   check(!embutido.error, 'o select embutido de nfe_eventos → nfe é aceito',
     embutido.error ? embutido.error.message : `${(embutido.data || []).length} evento(s)`);
 
   // -------------------------------------------------------------------------
   console.log('\n--- 5. limpeza ---');
-  await supabase.from('zz_prova_tipos').delete().in('id', [MARCA, MARCA + '-b', MARCA + '-c']);
+  await banco.from('zz_prova_tipos').delete().in('id', [MARCA, MARCA + '-b', MARCA + '-c']);
   await consultar('drop table if exists zz_prova_tipos');
   esquecerCatalogo();
   check(true, 'tabela de prova removida');

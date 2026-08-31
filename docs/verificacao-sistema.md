@@ -42,7 +42,7 @@ Bate nos 28 endpoints GET da API e reporta status + tamanho das coleções.
 
 | Camada | Onde | Papel |
 |---|---|---|
-| **Supabase (Postgres)** | `lib/db/*.js` via `@supabase/supabase-js` | Único banco real. Sem fallback. |
+| **Postgres em Docker** | `lib/db/*.js` via `lib/db/client.js` (driver `pg`) | Único banco real. Sem fallback. |
 | **JSON legado** | `data/db.json` via `loadData()`/`saveData()` em `server.js` | Ainda é a fonte de verdade do Financeiro |
 
 Não existe SQLite nem lowdb no código — `test.sqlite` e `data/db.sqlite` são
@@ -142,7 +142,7 @@ real num arquivo local não versionado é um risco de conformidade.
 
 ### 3. Ledger de estoque sem tabela
 
-`data.stockMovements` não tem equivalente no `supabase/schema.sql`. Falta criar
+`data.stockMovements` não tem equivalente no `banco/schema.sql`. Falta criar
 uma tabela `stock_movements` e migrar `registrarMovimentoEstoque()`.
 
 ### 4. Empresas de cadastro sem tabela
@@ -174,7 +174,7 @@ consome hoje, mas é uma armadilha — deve ser removida ou corrigida.
 ### 8. Tabelas do schema sem nenhum código
 
 `grupo_economico`, `serie_nfe`, `declaracao_importacao` e `di_adicao` estão
-definidas em `supabase/schema.sql` e não têm CRUD algum. `serie_nfe` em
+definidas em `banco/schema.sql` e não têm CRUD algum. `serie_nfe` em
 particular era para controlar numeração de série, mas a numeração real vem da
 resposta da Focus NFe.
 

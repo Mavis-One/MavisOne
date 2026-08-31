@@ -62,7 +62,7 @@ destinos.forEach((d) => {
 });
 
 console.log('\n--- o BANCO tem exatamente a mesma lista ---');
-const sql = ler('supabase/migrations/fase-aj-transicoes-de-status.sql');
+const sql = ler('banco/migrations/fase-aj-transicoes-de-status.sql');
 const doSql = new Set([...sql.matchAll(/^\s*\('([a-z-]+)', '([a-z-]+)'\)/gm)].map((m) => `${m[1]}>${m[2]}`));
 const doModulo = new Set();
 Object.entries(S.TRANSICOES).forEach(([de, lista]) => lista.forEach((para) => doModulo.add(`${de}>${para}`)));

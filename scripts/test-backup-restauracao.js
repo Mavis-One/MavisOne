@@ -30,7 +30,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { supabase, fecharPool } = require('../lib/db/client');
+const { banco, fecharPool } = require('../lib/db/client');
 const { consultar } = require('../lib/db/conexao');
 const { esquecerCatalogo } = require('../lib/db/catalogo');
 
@@ -57,7 +57,7 @@ function rodar(script, argumentos = []) {
   }
 
   console.log('--- 1. uma linha marcada, para ter o que procurar depois ---');
-  const { error: erroInsert } = await supabase.from('people').insert({
+  const { error: erroInsert } = await banco.from('people').insert({
     id: MARCA, name: 'PROVA DE BACKUP', kind: 'cliente'
   });
   check(!erroInsert, 'linha de prova criada', erroInsert ? erroInsert.message : MARCA);
@@ -71,8 +71,8 @@ function rodar(script, argumentos = []) {
   if (!arquivo) { await fecharPool(); process.exit(1); }
 
   console.log('\n--- 3. apaga a linha (e confere que sumiu mesmo) ---');
-  await supabase.from('people').delete().eq('id', MARCA);
-  const sumiu = await supabase.from('people').select('id').eq('id', MARCA).maybeSingle();
+  await banco.from('people').delete().eq('id', MARCA);
+  const sumiu = await banco.from('people').select('id').eq('id', MARCA).maybeSingle();
   check(sumiu.data === null, 'a linha não está mais lá');
 
   console.log('\n--- 4. restaura ---');
@@ -84,23 +84,23 @@ function rodar(script, argumentos = []) {
   esquecerCatalogo();
 
   console.log('\n--- 5. o DADO voltou ---');
-  const voltou = await supabase.from('people').select('id, name').eq('id', MARCA).maybeSingle();
+  const voltou = await banco.from('people').select('id, name').eq('id', MARCA).maybeSingle();
   check(voltou.data !== null, 'a linha marcada está de volta', voltou.data ? voltou.data.name : 'sumiu');
 
   console.log('\n--- 6. a ESTRUTURA voltou junto (o que o backup antigo não trazia) ---');
   // Função: existia no schema.sql e o backup por PostgREST nunca a levava.
-  const funcao = await supabase.rpc('next_cadastro_code');
+  const funcao = await banco.rpc('next_cadastro_code');
   check(!funcao.error && funcao.data != null, 'a função next_cadastro_code responde', funcao.error ? funcao.error.message : String(funcao.data));
 
   // Gatilho: a fase-AJ instalou o guarda de transição de status. Se o dump não
   // trouxesse gatilhos, o banco voltaria aceitando transição inválida em
   // silêncio — o pior tipo de restauração "bem-sucedida".
   const idPedido = `zz-teste-backup-ped-${Date.now()}`;
-  await supabase.from('orders').insert({
+  await banco.from('orders').insert({
     id: idPedido, type: 'order', code: 999996, status: 'pedido-faturado',
     date: '2026-08-31', customer: 'PROVA DE BACKUP', amount: 10, items: []
   });
-  const recusa = await supabase.from('orders').update({ status: 'orcamento' }).eq('id', idPedido);
+  const recusa = await banco.from('orders').update({ status: 'orcamento' }).eq('id', idPedido);
   check(Boolean(recusa.error), 'o gatilho de status voltou e ainda recusa', recusa.error ? recusa.error.code : 'PASSOU (não deveria)');
 
   const { rows } = await consultar(`select count(*)::int as n from pg_indexes where schemaname = 'public'`);
@@ -110,9 +110,9 @@ function rodar(script, argumentos = []) {
   check(tabelas[0].n > 70, 'as tabelas voltaram', `${tabelas[0].n} tabelas`);
 
   console.log('\n--- 7. limpeza ---');
-  await supabase.from('orders').delete().eq('id', idPedido);
-  await supabase.from('people').delete().eq('id', MARCA);
-  const limpo = await supabase.from('people').select('id').eq('id', MARCA).maybeSingle();
+  await banco.from('orders').delete().eq('id', idPedido);
+  await banco.from('people').delete().eq('id', MARCA);
+  const limpo = await banco.from('people').select('id').eq('id', MARCA).maybeSingle();
   check(limpo.data === null, 'as linhas de prova saíram');
 
   await fecharPool();

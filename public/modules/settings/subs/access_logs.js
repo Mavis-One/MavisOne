@@ -39,7 +39,7 @@ window.MavisSubscreenRegistry.settings.access_logs = async function renderAccess
       <div class="panel">
         <p class="sales-totals-alerta">
           A tabela de auditoria ainda não existe no banco — nada está sendo registrado.
-          Rode <code>supabase/migrations/fase-l-controle-de-acesso.sql</code> no Supabase.
+          Rode <code>banco/migrations/fase-l-controle-de-acesso.sql</code> no Supabase.
         </p>
       </div>` : ''}
 

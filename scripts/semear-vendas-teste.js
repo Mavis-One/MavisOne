@@ -52,7 +52,7 @@ require('dotenv').config();
 
 const crypto = require('crypto');
 const db = require('../db');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
 const argumentos = process.argv.slice(2);
 const LIMPAR = argumentos.includes('--limpar');
@@ -138,7 +138,7 @@ const IDS_PESSOAS = [...VENDEDORES.map((v) => v.id), ...CLIENTES.map((c) => c.id
 const IDS_PEDIDOS = PEDIDOS.map((p) => p.id);
 
 async function acharUsuario(username) {
-  const { data } = await supabase.from('users')
+  const { data } = await banco.from('users')
     .select('id, username, seller_id, role').eq('username', username).maybeSingle();
   return data ? { id: data.id, username: data.username, sellerId: data.seller_id || '', role: data.role } : null;
 }
@@ -146,7 +146,7 @@ async function acharUsuario(username) {
 async function limpar(admin) {
   console.log('\n--- limpando o dado de teste ---');
   for (const id of IDS_PEDIDOS) {
-    const { error } = await supabase.from('orders').delete().eq('id', id);
+    const { error } = await banco.from('orders').delete().eq('id', id);
     check(!error, `pedido ${id}`, error ? error.message : undefined);
   }
 
@@ -154,8 +154,8 @@ async function limpar(admin) {
     if (!vendedor.login) continue;
     const usuario = await acharUsuario(vendedor.login.username);
     if (!usuario) { check(true, `login ${vendedor.login.username}`, 'nao existia'); continue; }
-    await supabase.from('user_roles').delete().eq('user_id', usuario.id);
-    const { error } = await supabase.from('users').delete().eq('id', usuario.id);
+    await banco.from('user_roles').delete().eq('user_id', usuario.id);
+    const { error } = await banco.from('users').delete().eq('id', usuario.id);
     check(!error, `login ${vendedor.login.username} removido`, error ? error.message : undefined);
   }
 
@@ -163,7 +163,7 @@ async function limpar(admin) {
     // So' desfaz o vinculo se ele apontar para o vendedor DESTE script. Um
     // vinculo com um vendedor de verdade, feito a mao depois, nao e' assunto
     // daqui e apagar seria destruir configuracao que ninguem pediu para tirar.
-    await supabase.from('users').update({ seller_id: null }).eq('id', admin.id);
+    await banco.from('users').update({ seller_id: null }).eq('id', admin.id);
     check(true, `vinculo de "${admin.username}" desfeito`);
   } else if (admin) {
     check(true, `vinculo de "${admin.username}" preservado`,
@@ -171,7 +171,7 @@ async function limpar(admin) {
   }
 
   for (const id of IDS_PESSOAS) {
-    const { error } = await supabase.from('people').delete().eq('id', id);
+    const { error } = await banco.from('people').delete().eq('id', id);
     check(!error, `pessoa ${id}`, error ? error.message : undefined);
   }
 }
@@ -192,16 +192,16 @@ async function limpar(admin) {
   // Idempotencia: apaga o que este mesmo script tenha deixado antes, para
   // rodar de novo nao esbarrar na chave primaria nem no code duplicado.
   console.log('\n--- 0. removendo uma semeadura anterior, se houver ---');
-  for (const id of IDS_PEDIDOS) await supabase.from('orders').delete().eq('id', id);
+  for (const id of IDS_PEDIDOS) await banco.from('orders').delete().eq('id', id);
   for (const vendedor of VENDEDORES) {
     if (!vendedor.login) continue;
     const antigo = await acharUsuario(vendedor.login.username);
     if (antigo) {
-      await supabase.from('user_roles').delete().eq('user_id', antigo.id);
-      await supabase.from('users').delete().eq('id', antigo.id);
+      await banco.from('user_roles').delete().eq('user_id', antigo.id);
+      await banco.from('users').delete().eq('id', antigo.id);
     }
   }
-  for (const id of IDS_PESSOAS) await supabase.from('people').delete().eq('id', id);
+  for (const id of IDS_PESSOAS) await banco.from('people').delete().eq('id', id);
   console.log('  -- pronto');
 
   console.log('\n--- 1. vendedores ---');
@@ -224,12 +224,12 @@ async function limpar(admin) {
   }
 
   console.log('\n--- 3. logins e vinculos ---');
-  const { error: erroVinculo } = await supabase.from('users')
+  const { error: erroVinculo } = await banco.from('users')
     .update({ seller_id: VENDEDORES[0].id }).eq('id', admin.id);
   check(!erroVinculo, `"${admin.username}" vinculado a ${VENDEDORES[0].name}`,
     erroVinculo ? erroVinculo.message : undefined);
   if (erroVinculo) {
-    console.log('      >> se a coluna nao existe, rode supabase/migrations/fase-al-usuario-vendedor.sql');
+    console.log('      >> se a coluna nao existe, rode banco/migrations/fase-al-usuario-vendedor.sql');
   }
 
   for (const vendedor of VENDEDORES) {
@@ -247,7 +247,7 @@ async function limpar(admin) {
   // O produto de exemplo do schema. Se nao existir, os itens vao sem vinculo:
   // o painel soma pelo total do pedido e nao depende do produto, entao a
   // ausencia nao invalida o teste -- so' deixa a aba Itens mais pobre.
-  const { data: produto } = await supabase.from('products')
+  const { data: produto } = await banco.from('products')
     .select('id, name, sku').eq('id', 'prod-1').maybeSingle();
 
   for (const p of PEDIDOS) {

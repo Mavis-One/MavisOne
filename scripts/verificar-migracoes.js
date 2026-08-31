@@ -6,7 +6,7 @@
 // colunas não existiam no banco — o código degrada de propósito, e a degradação
 // é justamente o que esconde o problema.
 //
-// Este script não tem lista própria do que esperar: ele LÊ supabase/migrations/
+// Este script não tem lista própria do que esperar: ele LÊ banco/migrations/
 // e cobra do banco exatamente o que os arquivos dizem criar. Migração nova passa
 // a ser verificada sozinha, sem ninguém lembrar de atualizar nada aqui.
 //
@@ -14,9 +14,9 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
-const DIR = path.join(__dirname, '..', 'supabase', 'migrations');
+const DIR = path.join(__dirname, '..', 'banco', 'migrations');
 
 // Lê os arquivos e extrai o que cada um promete criar.
 function lerMigracoes() {
@@ -48,14 +48,14 @@ function lerMigracoes() {
 // PostgREST devolve erro nomeando a coluna/tabela quando ela não existe — é o
 // jeito de perguntar "isto existe?" sem acesso ao catálogo do Postgres.
 async function existeColuna(tabela, coluna) {
-  const { error } = await supabase.from(tabela).select(coluna).limit(1);
+  const { error } = await banco.from(tabela).select(coluna).limit(1);
   if (!error) return true;
   if (/does not exist|Could not find|schema cache/i.test(error.message || '')) return false;
   throw new Error(`${tabela}.${coluna}: ${error.message}`);
 }
 
 async function existeTabela(tabela) {
-  const { error } = await supabase.from(tabela).select('*').limit(1);
+  const { error } = await banco.from(tabela).select('*').limit(1);
   if (!error) return true;
   if (/does not exist|Could not find|schema cache/i.test(error.message || '')) return false;
   throw new Error(`${tabela}: ${error.message}`);
@@ -121,7 +121,7 @@ async function existeTabela(tabela) {
   }
   console.log(`===== ${pendentes.length} MIGRAÇÃO(ÕES) PENDENTE(S) =====`);
   console.log('Rode no SQL Editor do Supabase, nesta ordem:');
-  pendentes.forEach((n) => console.log(`  supabase/migrations/${n}`));
+  pendentes.forEach((n) => console.log(`  banco/migrations/${n}`));
   console.log('');
   // Sai com erro de propósito: dá para usar no deploy como trava.
   process.exit(1);

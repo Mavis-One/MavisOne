@@ -265,7 +265,7 @@ check('a listagem não traz a coluna xml', !/'xml'/.test(colunas));
 
 // ---------------------------------------------------------------------------
 console.log('\n--- a migração ---');
-const migracao = ler('supabase/migrations/fase-ak-entrada-de-nfe.sql');
+const migracao = ler('banco/migrations/fase-ak-entrada-de-nfe.sql');
 check('cria as duas tabelas', /create table if not exists nfe_entrada\b/.test(migracao) && /create table if not exists nfe_entrada_item\b/.test(migracao));
 // A chave é a identidade da nota no Brasil inteiro: é o UNIQUE que impede a
 // mesma nota entrar duas vezes, mesmo que a tela esqueça de conferir.

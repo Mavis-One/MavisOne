@@ -25,7 +25,7 @@ const ler = (p) => fs.readFileSync(path.join(RAIZ, p), 'utf8').replace(/\r\n/g, 
 const O = require('../lib/operacaoFiscal');
 const { buildNfePayload } = require('../lib/nfePayloadBuilder');
 const serverSrc = ler('server.js');
-const migracao = ler('supabase/migrations/fase-ab-nfe-complementar-icms.sql');
+const migracao = ler('banco/migrations/fase-ab-nfe-complementar-icms.sql');
 const telaSrc = ler('public/modules/finance/subs/emitir_nfe_focus.js');
 
 let falhas = 0;

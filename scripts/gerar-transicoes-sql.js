@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Gera supabase/migrations/fase-aj-transicoes-de-status.sql A PARTIR de
+// Gera banco/migrations/fase-aj-transicoes-de-status.sql A PARTIR de
 // TRANSICOES em public/modules/shared/sales_status.js.
 //
 // A lista de transicoes nao e redigitada em lugar nenhum: mudou no modulo,
@@ -168,5 +168,5 @@ comment on table sales_status_transicao is
 `;
 
 const path = require('path');
-fs.writeFileSync(path.join(__dirname, '..', 'supabase', 'migrations', 'fase-aj-transicoes-de-status.sql'), sql);
+fs.writeFileSync(path.join(__dirname, '..', 'banco', 'migrations', 'fase-aj-transicoes-de-status.sql'), sql);
 console.log(`migracao gerada com ${pares.length} pares e ${Object.keys(S.LEGADOS).length} legados`);

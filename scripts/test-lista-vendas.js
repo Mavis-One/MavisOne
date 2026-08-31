@@ -104,7 +104,7 @@ check('login e F5 adotam o usuario pela mesma funcao', chamadas === 2, chamadas 
 check('e e ela que preenche as preferencias', /function adotarUsuarioDaSessao[\s\S]{0,400}state\.preferences = \(user && user\.preferences\)/.test(appSrc));
 
 console.log('\n--- a migração da preferência existe ---');
-const fase = ler('supabase/migrations/fase-ag-preferencias-do-usuario.sql');
+const fase = ler('banco/migrations/fase-ag-preferencias-do-usuario.sql');
 check('fase-ag cria users.preferences', /add column if not exists preferences jsonb/.test(fase));
 check('com padrão vazio', /default '\{\}'::jsonb/.test(fase));
 

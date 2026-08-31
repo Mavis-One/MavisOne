@@ -10,7 +10,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
 const RAIZ = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(RAIZ, 'public/app.js'), 'utf8');
@@ -34,7 +34,7 @@ let falhas = 0;
 const check = (n, c, d) => { console.log(`${c ? '  OK ' : '  XX '} ${n}${d ? ' -> ' + d : ''}`); if (!c) falhas++; };
 
 (async () => {
-  const { data, error } = await supabase.from('permissions').select('slug,resource,action');
+  const { data, error } = await banco.from('permissions').select('slug,resource,action');
   if (error) { console.log('  XX  não foi possível ler as permissões:', error.message); process.exit(1); }
 
   const recursos = [...new Set(data.map((p) => p.resource))];
@@ -67,7 +67,7 @@ const check = (n, c, d) => { console.log(`${c ? '  OK ' : '  XX '} ${n}${d ? ' -
 
   console.log('\n--- o papel usuário não recebe exclusão nos módulos novos ---');
   // Apagar contrato ou colaborador some com histórico que a tela não recupera.
-  const { data: rp } = await supabase.from('role_permissions').select('role_slug,permission_slug');
+  const { data: rp } = await banco.from('role_permissions').select('role_slug,permission_slug');
   const doUsuario = (rp || []).filter((r) => r.role_slug === 'usuario').map((r) => r.permission_slug);
   const excluirIndevido = doUsuario.filter((s) => /^(fleet|hr|pcp|contracts|crm)\.excluir$/.test(s));
   check('nenhum excluir para o papel usuário', excluirIndevido.length === 0, excluirIndevido.join(', ') || 'ok');

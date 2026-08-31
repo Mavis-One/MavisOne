@@ -200,7 +200,7 @@ check('grava o vínculo com o pedido (orderId)', /orderId: pedido\.id/.test(serv
 console.log('\n--- PCP: etapa fixa x status cadastrado ---');
 // A etapa é o que o código lê ('concluida' fecha a ordem). O status é rótulo
 // da empresa. Fundir os dois quebraria a lógica no primeiro nome digitado.
-const migracaoPcp = fs.readFileSync(path.join(RAIZ, 'supabase/migrations/fase-w-pcp-chao-de-fabrica.sql'), 'utf8');
+const migracaoPcp = fs.readFileSync(path.join(RAIZ, 'banco/migrations/fase-w-pcp-chao-de-fabrica.sql'), 'utf8');
 ['pcp_sectors', 'pcp_statuses', 'pcp_quality_checks'].forEach((tabela) => {
   check(`create table ${tabela}`, new RegExp(`create table if not exists ${tabela}\\b`).test(migracaoPcp));
 });
@@ -208,7 +208,7 @@ check('pcp_orders ganha sector_id', /add column if not exists sector_id\b/.test(
 check('pcp_orders ganha status_id', /add column if not exists status_id\b/.test(migracaoPcp));
 check('o status cadastrado declara a etapa a que pertence', /etapa text not null[\s\S]{0,120}check \(etapa in/.test(migracaoPcp));
 check('a coluna status (etapa) continua com CHECK fixo', /check \(status in \('aberta', 'em_producao', 'concluida', 'cancelada'\)\)/.test(
-  fs.readFileSync(path.join(RAIZ, 'supabase/migrations/fase-r-modulos-novos.sql'), 'utf8')));
+  fs.readFileSync(path.join(RAIZ, 'banco/migrations/fase-r-modulos-novos.sql'), 'utf8')));
 check('setor e status na ordem são SET NULL', !/references pcp_(sectors|statuses)\(id\) on delete cascade/i.test(migracaoPcp));
 // A inspeção não existe fora da ordem — CASCADE aqui é o correto.
 check('inspeção de qualidade é CASCADE na ordem', /references pcp_orders\(id\) on delete cascade/i.test(migracaoPcp));
@@ -219,7 +219,7 @@ check('quantidade reprovada NÃO é coluna', !/quantidade_reprovada/.test(migrac
 console.log('\n--- Contratos: tipo é diferente de modelo ---');
 // Tipo é a classificação ("Locação de equipamento"); modelo é o texto com as
 // cláusulas. Fundir os dois faria um tipo novo exigir um texto inteiro.
-const migracaoTipos = fs.readFileSync(path.join(RAIZ, 'supabase/migrations/fase-x-tipos-de-contrato.sql'), 'utf8');
+const migracaoTipos = fs.readFileSync(path.join(RAIZ, 'banco/migrations/fase-x-tipos-de-contrato.sql'), 'utf8');
 check('create table contract_types', /create table if not exists contract_types\b/.test(migracaoTipos));
 check('contracts ganha type_id', /add column if not exists type_id\b/.test(migracaoTipos));
 check('tipo e modelo são tabelas separadas', /template_id text references contract_templates\(id\)/.test(migracaoTipos));
@@ -284,7 +284,7 @@ check('a fábrica de lista suporta ações por linha', /config\.rowActions \|\| 
   fs.readFileSync(path.join(RAIZ, 'public/modules/cadastros/shared.js'), 'utf8')));
 
 console.log('\n--- todo recurso novo de RH tem tabela na migração ---');
-const migracao = fs.readFileSync(path.join(RAIZ, 'supabase/migrations/fase-u-rh-organizacional.sql'), 'utf8');
+const migracao = fs.readFileSync(path.join(RAIZ, 'banco/migrations/fase-u-rh-organizacional.sql'), 'utf8');
 ['hr_departments', 'hr_work_schedules', 'hr_employee_types', 'hr_employee_categories'].forEach((tabela) => {
   check(`create table ${tabela}`, new RegExp(`create table if not exists ${tabela}\\b`).test(migracao));
 });

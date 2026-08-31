@@ -50,7 +50,7 @@ if (linhaColunas) {
     casar('alter table produtos add column ncm text;')[0] === 'produtos.ncm');
 
   // A prova final: o arquivo real da fase-v tem que render as duas colunas.
-  const faseV = ler('supabase/migrations/fase-v-difal-e-pagamento.sql');
+  const faseV = ler('banco/migrations/fase-v-difal-e-pagamento.sql');
   const achadas = casar(faseV);
   check('a fase-v real declara as 2 colunas do DIFAL', achadas.length === 2, achadas.join(', '));
   check('inclusive a que quebrava as Regras Fiscais',
@@ -79,7 +79,7 @@ console.log('\n--- o pacote para colar no SQL Editor é fiel às fases ---');
 // fase-v"). Envelheceu em um dia: a fase-v foi aplicada, saiu do pacote — como
 // devia — e o teste passou a acusar o comportamento CERTO. O que não envelhece
 // é a relação entre o pacote e os arquivos de fase.
-const pacote = ler('supabase/migrations/PENDENTES-rodar-agora.sql');
+const pacote = ler('banco/migrations/PENDENTES-rodar-agora.sql');
 check('o verificador continua ignorando o pacote', /^--\s*CONSOLIDADO/im.test(pacote));
 
 const comandos = (texto) => [...texto.matchAll(/^\s*alter\s+table[^;]+;/gim)].map((m) => m[0].replace(/\s+/g, ' ').trim());
@@ -102,11 +102,11 @@ if (!fasesCitadas.length) {
 // Um pacote que inventa SQL, ou que cita arquivo inexistente, manda rodar no
 // banco algo que não está versionado em lugar nenhum.
 const dasFases = fasesCitadas.flatMap((nome) => {
-  const caminho = path.join(RAIZ, 'supabase', 'migrations', nome);
-  return fs.existsSync(caminho) ? comandos(ler(`supabase/migrations/${nome}`)) : [`ARQUIVO INEXISTENTE: ${nome}`];
+  const caminho = path.join(RAIZ, 'banco', 'migrations', nome);
+  return fs.existsSync(caminho) ? comandos(ler(`banco/migrations/${nome}`)) : [`ARQUIVO INEXISTENTE: ${nome}`];
 });
 fasesCitadas.forEach((nome) => {
-  check(`  ${nome} existe`, fs.existsSync(path.join(RAIZ, 'supabase', 'migrations', nome)));
+  check(`  ${nome} existe`, fs.existsSync(path.join(RAIZ, 'banco', 'migrations', nome)));
 });
 const inventados = doPacote.filter((c) => !dasFases.includes(c));
 check('nenhum comando do pacote foi inventado', inventados.length === 0, inventados.slice(0, 2).join(' | ') || undefined);
@@ -124,7 +124,7 @@ check('e nenhum comando das fases citadas ficou de fora', esquecidos.length === 
 // ---------------------------------------------------------------------------
 console.log('\n--- a recriação do zero sai na ordem das FASES, não da pasta ---');
 const { ordenarPorFase } = require('./gerar-sql-do-zero');
-const nomes = fs.readdirSync(path.join(RAIZ, 'supabase', 'migrations'))
+const nomes = fs.readdirSync(path.join(RAIZ, 'banco', 'migrations'))
   .filter((n) => n.endsWith('.sql') && !n.startsWith('PENDENTES'));
 const ordenados = ordenarPorFase(nomes);
 const fase = (n) => (/^fase-([a-z]+)-/i.exec(n) || [])[1] || '';
@@ -139,16 +139,16 @@ check('nenhuma migração fica de fora do arquivo do zero', ordenados.length ===
   `${ordenados.length} de ${nomes.length}`);
 // O arquivo gerado precisa existir e citar as mesmas fases, senão quem recriar
 // o banco vai colar uma versão velha sem saber.
-const zero = path.join(RAIZ, 'supabase', 'RECRIAR-DO-ZERO.sql');
+const zero = path.join(RAIZ, 'banco', 'RECRIAR-DO-ZERO.sql');
 if (fs.existsSync(zero)) {
-  const conteudo = ler('supabase/RECRIAR-DO-ZERO.sql');
+  const conteudo = ler('banco/RECRIAR-DO-ZERO.sql');
   const faltando = ordenados.filter((n) => !conteudo.includes(n));
   check('o arquivo gerado traz todas as migrações', faltando.length === 0, faltando.slice(0, 3).join(', ') || undefined);
   check('  e o schema.sql vem primeiro',
-    conteudo.indexOf('supabase/schema.sql') < conteudo.indexOf(`supabase/migrations/${ordenados[0]}`));
+    conteudo.indexOf('banco/schema.sql') < conteudo.indexOf(`banco/migrations/${ordenados[0]}`));
   check('  e avisa que a senha semente é pública', /senha/i.test(conteudo) && /p[úu]blic/i.test(conteudo));
 } else {
-  check('o arquivo do zero existe (rode: npm run zero)', false, 'supabase/RECRIAR-DO-ZERO.sql não encontrado');
+  check('o arquivo do zero existe (rode: npm run zero)', false, 'banco/RECRIAR-DO-ZERO.sql não encontrado');
 }
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);

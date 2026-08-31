@@ -18,7 +18,7 @@
 // ainda mais direta, porque nao ha intermediario nenhum entre este script e o
 // gatilho.
 require('dotenv').config();
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
 let falhas = 0;
 const check = (ok, t, d) => { console.log(`  ${ok ? 'OK ' : 'XX '} ${t}${d !== undefined ? ' -> ' + d : ''}`); if (!ok) falhas++; };
@@ -33,10 +33,10 @@ const rest = async (metodo, caminho, corpo) => {
   const colunas = (consulta.match(/select=([^&]+)/) || [])[1] || '*';
 
   let resultado;
-  if (metodo === 'POST') resultado = await supabase.from(tabela).insert(corpo).select();
-  else if (metodo === 'PATCH') resultado = await supabase.from(tabela).update(corpo).eq('id', id).select();
-  else if (metodo === 'GET') resultado = await supabase.from(tabela).select(colunas).eq('id', id);
-  else if (metodo === 'DELETE') resultado = await supabase.from(tabela).delete().eq('id', id);
+  if (metodo === 'POST') resultado = await banco.from(tabela).insert(corpo).select();
+  else if (metodo === 'PATCH') resultado = await banco.from(tabela).update(corpo).eq('id', id).select();
+  else if (metodo === 'GET') resultado = await banco.from(tabela).select(colunas).eq('id', id);
+  else if (metodo === 'DELETE') resultado = await banco.from(tabela).delete().eq('id', id);
   else throw new Error('metodo nao previsto nesta prova: ' + metodo);
 
   if (resultado.error) {

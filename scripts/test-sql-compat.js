@@ -33,7 +33,7 @@ const check = (nome, cond, det) => {
 
 // O catálogo de mentira carrega fatos VERDADEIROS deste schema: se um deles
 // deixar de valer, o teste passa a mentir junto. Por isso a última seção volta
-// no supabase/schema.sql e confere cada um contra o arquivo.
+// no banco/schema.sql e confere cada um contra o arquivo.
 const catalogo = {
   tipos: new Map([
     ['users.dashboard_pins', 'jsonb'],
@@ -247,7 +247,7 @@ check('mas o VALOR perigoso passa ileso, como parâmetro', r.valores[0] === "'; 
 
 // ---------------------------------------------------------------------------
 console.log('\n--- 10. a camada cobre o que o código realmente usa ---');
-// Lê lib/ e scripts/ e confere que todo método encadeado num supabase.from()
+// Lê lib/ e scripts/ e confere que todo método encadeado num banco.from()
 // existe na classe. Um operador novo que ninguém implementou falha AQUI, e não
 // em produção devolvendo linha demais.
 const metodosDaClasse = new Set(Object.getOwnPropertyNames(Consulta.prototype));
@@ -285,8 +285,8 @@ const colher = (trecho) => {
 };
 for (const arquivo of arquivos) {
   const src = fs.readFileSync(arquivo, 'utf8');
-  // (a) a cadeia escrita de uma vez: supabase.from('x').select().eq()...
-  const cadeia = /supabase\s*\.\s*from\([\s\S]{0,600}?;/g;
+  // (a) a cadeia escrita de uma vez: banco.from('x').select().eq()...
+  const cadeia = /banco\s*\.\s*from\([\s\S]{0,600}?;/g;
   let m;
   while ((m = cadeia.exec(src))) colher(m[0]);
 
@@ -294,7 +294,7 @@ for (const arquivo of arquivos) {
   // lib/db/fiscal.js montam filtro condicional ("consulta = consulta.ilike()").
   // Sem este segundo passe, ilike() e outros ficariam de fora da conferência e
   // o teste diria "tudo coberto" sem ter olhado para eles.
-  const variaveis = new Set([...src.matchAll(/(?:let|const|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*supabase\s*\.\s*from\(/g)].map((v) => v[1]));
+  const variaveis = new Set([...src.matchAll(/(?:let|const|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*banco\s*\.\s*from\(/g)].map((v) => v[1]));
   for (const nomeVar of variaveis) {
     const uso = new RegExp(`\\b${nomeVar}\\s*(?:=\\s*${nomeVar}\\s*)?((?:\\.\\s*[a-zA-Z]+\\s*\\([^;]*?\\))+)`, 'g');
     let u;
@@ -310,9 +310,9 @@ check('todo método usado no código existe na camada', semImplementacao.length 
 console.log('\n--- 11. o catálogo de mentira deste teste bate com o schema real ---');
 // Sem esta seção o teste vira uma conversa consigo mesmo: ele provaria que a
 // camada trata jsonb direito usando um jsonb que talvez não exista no banco.
-const schema = fs.readFileSync(path.join(RAIZ, 'supabase/schema.sql'), 'utf8');
+const schema = fs.readFileSync(path.join(RAIZ, 'banco/schema.sql'), 'utf8');
 check('users.dashboard_pins é jsonb de verdade', /dashboard_pins jsonb/.test(schema));
-check('users.preferences é jsonb de verdade', /preferences jsonb/.test(schema) || fs.existsSync(path.join(RAIZ, 'supabase/migrations/fase-ag-preferencias-do-usuario.sql')));
+check('users.preferences é jsonb de verdade', /preferences jsonb/.test(schema) || fs.existsSync(path.join(RAIZ, 'banco/migrations/fase-ag-preferencias-do-usuario.sql')));
 check('users.allowed_modules é text[] de verdade', /allowed_modules text\[\]/.test(schema));
 check('orders.items é jsonb de verdade', /orders add column if not exists items jsonb/.test(schema));
 check('nfe_arquivos.conteudo é bytea de verdade', /conteudo bytea/.test(schema));

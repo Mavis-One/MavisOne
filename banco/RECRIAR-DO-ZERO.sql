@@ -2,7 +2,7 @@
 -- RECRIAR O BANCO DO ZERO — arquivo GERADO. Não edite aqui.
 --
 --   Gerado por: node scripts/gerar-sql-do-zero.js
---   Fonte:      supabase/schema.sql + supabase/migrations/*.sql
+--   Fonte:      banco/schema.sql + banco/migrations/*.sql
 --
 -- COMO USAR — no Postgres em Docker, você NÃO roda isto à mão
 --   O docker-compose.yml monta este arquivo em /docker-entrypoint-initdb.d/ e o
@@ -17,7 +17,7 @@
 --   (o -v APAGA os dados. É essa a intenção aqui, mas não é reversível.)
 --
 --   Num banco que já existe e você não quer derrubar, ainda dá para aplicar
---   à mão:  psql "$DATABASE_URL" -f supabase/RECRIAR-DO-ZERO.sql
+--   à mão:  psql "$DATABASE_URL" -f banco/RECRIAR-DO-ZERO.sql
 --
 -- A ORDEM DESTE ARQUIVO NÃO É A ORDEM ALFABÉTICA DA PASTA, e isso é o ponto:
 -- 'fase-aa' vem antes de 'fase-h' em qualquer listagem, e rodar nessa ordem
@@ -34,44 +34,44 @@
 -- qualquer coisa de verdade.
 --
 -- Arquivos incluídos, nesta ordem:
---   supabase/schema.sql
---   01. supabase/migrations/fase-h-campos-financeiros.sql
---   02. supabase/migrations/fase-i-informacoes-gerais.sql
---   03. supabase/migrations/fase-j-cabecalho-dados.sql
---   04. supabase/migrations/fase-k-abas-pagamento-entrega.sql
---   05. supabase/migrations/fase-l-controle-de-acesso.sql
---   06. supabase/migrations/fase-m-financeiro-no-supabase.sql
---   07. supabase/migrations/fase-n-nfe-no-supabase.sql
---   08. supabase/migrations/fase-o-pedido-gera-financeiro.sql
---   09. supabase/migrations/fase-p-vinculo-pedido-nfe.sql
---   10. supabase/migrations/fase-q-tabelas-fiscais.sql
---   11. supabase/migrations/fase-r-modulos-novos.sql
---   12. supabase/migrations/fase-s-permissoes-modulos-novos.sql
---   13. supabase/migrations/fase-t-permissoes-fiscais-gerente.sql
---   14. supabase/migrations/fase-u-rh-organizacional.sql
---   15. supabase/migrations/fase-v-difal-e-pagamento.sql
---   16. supabase/migrations/fase-w-pcp-chao-de-fabrica.sql
---   17. supabase/migrations/fase-x-tipos-de-contrato.sql
---   18. supabase/migrations/fase-y-cst-faltantes.sql
---   19. supabase/migrations/fase-z-ibs-cbs.sql
---   20. supabase/migrations/fase-aa-nfe-lista-unificada.sql
---   21. supabase/migrations/fase-ab-nfe-complementar-icms.sql
---   22. supabase/migrations/fase-ac-classes-de-produto.sql
---   23. supabase/migrations/fase-ad-ibs-cbs-uf-municipio.sql
---   24. supabase/migrations/fase-ae-financeiro-por-cfop-e-beneficio.sql
---   25. supabase/migrations/fase-af-rls-fechar-porta-publica.sql
---   26. supabase/migrations/fase-ag-preferencias-do-usuario.sql
---   27. supabase/migrations/fase-ah-grupos-de-produtos.sql
---   28. supabase/migrations/fase-ai-anexos-do-pedido.sql
---   29. supabase/migrations/fase-aj-transicoes-de-status.sql
---   30. supabase/migrations/fase-ak-entrada-de-nfe.sql
---   31. supabase/migrations/fase-al-usuario-vendedor.sql
---   32. supabase/migrations/fase-am-anexos-no-banco.sql
+--   banco/schema.sql
+--   01. banco/migrations/fase-h-campos-financeiros.sql
+--   02. banco/migrations/fase-i-informacoes-gerais.sql
+--   03. banco/migrations/fase-j-cabecalho-dados.sql
+--   04. banco/migrations/fase-k-abas-pagamento-entrega.sql
+--   05. banco/migrations/fase-l-controle-de-acesso.sql
+--   06. banco/migrations/fase-m-financeiro-no-supabase.sql
+--   07. banco/migrations/fase-n-nfe-no-supabase.sql
+--   08. banco/migrations/fase-o-pedido-gera-financeiro.sql
+--   09. banco/migrations/fase-p-vinculo-pedido-nfe.sql
+--   10. banco/migrations/fase-q-tabelas-fiscais.sql
+--   11. banco/migrations/fase-r-modulos-novos.sql
+--   12. banco/migrations/fase-s-permissoes-modulos-novos.sql
+--   13. banco/migrations/fase-t-permissoes-fiscais-gerente.sql
+--   14. banco/migrations/fase-u-rh-organizacional.sql
+--   15. banco/migrations/fase-v-difal-e-pagamento.sql
+--   16. banco/migrations/fase-w-pcp-chao-de-fabrica.sql
+--   17. banco/migrations/fase-x-tipos-de-contrato.sql
+--   18. banco/migrations/fase-y-cst-faltantes.sql
+--   19. banco/migrations/fase-z-ibs-cbs.sql
+--   20. banco/migrations/fase-aa-nfe-lista-unificada.sql
+--   21. banco/migrations/fase-ab-nfe-complementar-icms.sql
+--   22. banco/migrations/fase-ac-classes-de-produto.sql
+--   23. banco/migrations/fase-ad-ibs-cbs-uf-municipio.sql
+--   24. banco/migrations/fase-ae-financeiro-por-cfop-e-beneficio.sql
+--   25. banco/migrations/fase-af-rls-fechar-porta-publica.sql
+--   26. banco/migrations/fase-ag-preferencias-do-usuario.sql
+--   27. banco/migrations/fase-ah-grupos-de-produtos.sql
+--   28. banco/migrations/fase-ai-anexos-do-pedido.sql
+--   29. banco/migrations/fase-aj-transicoes-de-status.sql
+--   30. banco/migrations/fase-ak-entrada-de-nfe.sql
+--   31. banco/migrations/fase-al-usuario-vendedor.sql
+--   32. banco/migrations/fase-am-anexos-no-banco.sql
 -- ============================================================================
 
 
 -- ============================================================================
--- >>> supabase/schema.sql
+-- >>> banco/schema.sql
 -- ============================================================================
 
 -- ============================================================================
@@ -1764,7 +1764,7 @@ on conflict (codigo) do update set descricao = excluded.descricao;
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-h-campos-financeiros.sql
+-- >>> banco/migrations/fase-h-campos-financeiros.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -1805,7 +1805,7 @@ alter table if exists quotes add column if not exists total_weight numeric not n
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-i-informacoes-gerais.sql
+-- >>> banco/migrations/fase-i-informacoes-gerais.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -1850,7 +1850,7 @@ alter table if exists quotes add column if not exists updated_by_name text not n
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-j-cabecalho-dados.sql
+-- >>> banco/migrations/fase-j-cabecalho-dados.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -1874,7 +1874,7 @@ alter table if exists quotes add column if not exists price_table text not null 
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-k-abas-pagamento-entrega.sql
+-- >>> banco/migrations/fase-k-abas-pagamento-entrega.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -1905,7 +1905,7 @@ alter table if exists quotes add column if not exists sales_terms text not null 
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-l-controle-de-acesso.sql
+-- >>> banco/migrations/fase-l-controle-de-acesso.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2107,7 +2107,7 @@ on conflict do nothing;
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-m-financeiro-no-supabase.sql
+-- >>> banco/migrations/fase-m-financeiro-no-supabase.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2149,7 +2149,7 @@ alter table if exists financial_entries drop constraint if exists financial_entr
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-n-nfe-no-supabase.sql
+-- >>> banco/migrations/fase-n-nfe-no-supabase.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2187,7 +2187,7 @@ create index if not exists idx_nfes_status on nfes (status);
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-o-pedido-gera-financeiro.sql
+-- >>> banco/migrations/fase-o-pedido-gera-financeiro.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2218,7 +2218,7 @@ create index if not exists idx_financial_entries_reference_id on financial_entri
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-p-vinculo-pedido-nfe.sql
+-- >>> banco/migrations/fase-p-vinculo-pedido-nfe.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2249,7 +2249,7 @@ create index if not exists idx_nfes_order_id on nfes (order_id);
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-q-tabelas-fiscais.sql
+-- >>> banco/migrations/fase-q-tabelas-fiscais.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2522,7 +2522,7 @@ on conflict (codigo) do update set descricao = excluded.descricao;
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-r-modulos-novos.sql
+-- >>> banco/migrations/fase-r-modulos-novos.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2718,7 +2718,7 @@ create table if not exists crm_connection (
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-s-permissoes-modulos-novos.sql
+-- >>> banco/migrations/fase-s-permissoes-modulos-novos.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2796,7 +2796,7 @@ on conflict do nothing;
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-t-permissoes-fiscais-gerente.sql
+-- >>> banco/migrations/fase-t-permissoes-fiscais-gerente.sql
 -- ============================================================================
 
 -- Fase T — o papel "gerente" não tinha NENHUMA permissão fiscal
@@ -2838,7 +2838,7 @@ on conflict do nothing;
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-u-rh-organizacional.sql
+-- >>> banco/migrations/fase-u-rh-organizacional.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2967,7 +2967,7 @@ alter table hr_positions add column if not exists cbo text;
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-v-difal-e-pagamento.sql
+-- >>> banco/migrations/fase-v-difal-e-pagamento.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3010,7 +3010,7 @@ alter table regra_fiscal add column if not exists aliquota_fcp_uf_destino numeri
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-w-pcp-chao-de-fabrica.sql
+-- >>> banco/migrations/fase-w-pcp-chao-de-fabrica.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3123,7 +3123,7 @@ create index if not exists idx_pcp_orders_setor on pcp_orders (sector_id);
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-x-tipos-de-contrato.sql
+-- >>> banco/migrations/fase-x-tipos-de-contrato.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3177,7 +3177,7 @@ create index if not exists idx_contracts_tipo on contracts (type_id);
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-y-cst-faltantes.sql
+-- >>> banco/migrations/fase-y-cst-faltantes.sql
 -- ============================================================================
 
 -- Fase Y — códigos CST que faltavam nas tabelas de referência.
@@ -3227,7 +3227,7 @@ on conflict (codigo) do update set descricao = excluded.descricao, grupo = exclu
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-z-ibs-cbs.sql
+-- >>> banco/migrations/fase-z-ibs-cbs.sql
 -- ============================================================================
 
 -- Fase Z — IBS e CBS (Reforma Tributária, LC 214/2025).
@@ -3344,7 +3344,7 @@ comment on column regra_fiscal.class_trib is 'cClassTrib — classificação tri
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-aa-nfe-lista-unificada.sql
+-- >>> banco/migrations/fase-aa-nfe-lista-unificada.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3410,7 +3410,7 @@ create index if not exists idx_nfe_order on nfe (order_id);
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-ab-nfe-complementar-icms.sql
+-- >>> banco/migrations/fase-ab-nfe-complementar-icms.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3535,7 +3535,7 @@ create index if not exists idx_nfe_original_chave on nfe (nfe_original_chave)
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-ac-classes-de-produto.sql
+-- >>> banco/migrations/fase-ac-classes-de-produto.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3683,7 +3683,7 @@ on conflict (id) do update set
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-ad-ibs-cbs-uf-municipio.sql
+-- >>> banco/migrations/fase-ad-ibs-cbs-uf-municipio.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3719,7 +3719,7 @@ alter table regra_fiscal add column if not exists aliquota_ibs_mun numeric(7,4);
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-ae-financeiro-por-cfop-e-beneficio.sql
+-- >>> banco/migrations/fase-ae-financeiro-por-cfop-e-beneficio.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3818,7 +3818,7 @@ comment on column regra_fiscal.icms_motivo_desoneracao is
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-af-rls-fechar-porta-publica.sql
+-- >>> banco/migrations/fase-af-rls-fechar-porta-publica.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3953,7 +3953,7 @@ alter table if exists users enable row level security;
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-ag-preferencias-do-usuario.sql
+-- >>> banco/migrations/fase-ag-preferencias-do-usuario.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -3976,7 +3976,7 @@ comment on column users.preferences is
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-ah-grupos-de-produtos.sql
+-- >>> banco/migrations/fase-ah-grupos-de-produtos.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -4036,7 +4036,7 @@ comment on column quotes.product_groups is
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-ai-anexos-do-pedido.sql
+-- >>> banco/migrations/fase-ai-anexos-do-pedido.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -4075,7 +4075,7 @@ comment on column quotes.attachments is
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-aj-transicoes-de-status.sql
+-- >>> banco/migrations/fase-aj-transicoes-de-status.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -4253,7 +4253,7 @@ comment on table sales_status_transicao is
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-ak-entrada-de-nfe.sql
+-- >>> banco/migrations/fase-ak-entrada-de-nfe.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -4407,7 +4407,7 @@ comment on column nfe_entrada_item.codigo_fornecedor is
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-al-usuario-vendedor.sql
+-- >>> banco/migrations/fase-al-usuario-vendedor.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -4461,7 +4461,7 @@ comment on column users.seller_id is
 
 
 -- ============================================================================
--- >>> supabase/migrations/fase-am-anexos-no-banco.sql
+-- >>> banco/migrations/fase-am-anexos-no-banco.sql
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------

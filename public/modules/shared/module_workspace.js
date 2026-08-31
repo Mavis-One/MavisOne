@@ -99,7 +99,7 @@ window.MavisWorkspace = {
         <p class="muted">${escapeHtml(item.desc || '')}</p>
         <p>Esta tela está desenhada, mas ainda não tem onde gravar: as tabelas
         de <strong>${escapeHtml(modulo)}</strong> são criadas pela migração
-        <code>supabase/migrations/fase-r-modulos-novos.sql</code>, que ainda não
+        <code>banco/migrations/fase-r-modulos-novos.sql</code>, que ainda não
         foi executada no banco.</p>
         <p class="muted">${prontas} de ${total} telas de ${escapeHtml(modulo)} já estão no ar.</p>
         <button type="button" id="voltarAreaTrabalho">Voltar à Área de Trabalho</button>

@@ -5,7 +5,7 @@
 #   npm run migracoes        # confere que o banco nasceu completo
 #   npm start
 #
-# Na PRIMEIRA subida o Postgres executa sozinho o supabase/RECRIAR-DO-ZERO.sql
+# Na PRIMEIRA subida o Postgres executa sozinho o banco/RECRIAR-DO-ZERO.sql
 # montado abaixo, e o banco já sobe com as 32 fases dentro. Não existe mais o
 # passo de colar SQL num editor web — e, com ele, some o risco de colar pela
 # metade e descobrir semanas depois que uma coluna nunca existiu.
@@ -50,7 +50,7 @@
 #      Repository do Portainer, que clona o repo antes de subir, ou subir sem o
 #      volume e aplicar o arquivo uma vez com
 #      `psql "$DATABASE_URL" -f RECRIAR-DO-ZERO.sql`;
-#   4. a stack de backup em deploy/backup-supabase/ aponta para cá trocando o
+#   4. a stack de backup em deploy/backup-banco/ aponta para cá trocando o
 #      PGDUMP_URL — e agora ela cobre TUDO, inclusive os anexos de pedido, que
 #      passaram a ser tabela na fase AM.
 
@@ -78,7 +78,7 @@ services:
       # Só de leitura: o container não tem por que escrever no repositório, e
       # um script de inicialização que pode ser alterado de dentro do container
       # é um jeito de virar root no banco.
-      - ./supabase/RECRIAR-DO-ZERO.sql:/docker-entrypoint-initdb.d/01-recriar-do-zero.sql:ro
+      - ./banco/RECRIAR-DO-ZERO.sql:/docker-entrypoint-initdb.d/01-recriar-do-zero.sql:ro
     healthcheck:
       # Sem -U, o pg_isready pergunta pelo usuário "root" do container e o
       # healthcheck fica vermelho com o banco funcionando perfeitamente.

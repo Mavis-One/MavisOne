@@ -20,7 +20,7 @@
 require('dotenv').config();
 const http = require('http');
 const rbac = require('../lib/db/rbac');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
 const PORTA = 3999;
 const USUARIO = process.env.USUARIO_TESTE || 'teste';
@@ -80,11 +80,11 @@ async function ateQue(descricao, condicao) {
   if (login.status !== 200) { console.log(`  (login recusou: ${login.status})`); process.exit(1); }
   const token = login.json.token;
 
-  const { data: linha } = await supabase.from('users').select('id').eq('username', USUARIO).maybeSingle();
+  const { data: linha } = await banco.from('users').select('id').eq('username', USUARIO).maybeSingle();
   if (!linha) { console.log(`  (usuário "${USUARIO}" não existe)`); process.exit(1); }
   const userId = linha.id;
 
-  const { data: originais } = await supabase
+  const { data: originais } = await banco
     .from('user_permissions').select('permission_slug,effect').eq('user_id', userId);
   const excecoesOriginais = (originais || []).map((e) => ({ permission_slug: e.permission_slug, effect: e.effect }));
   console.log(`\n  exceções originais de "${USUARIO}": ${excecoesOriginais.length}`);
@@ -94,7 +94,7 @@ async function ateQue(descricao, condicao) {
     if (restaurado) return;
     restaurado = true;
     await rbac.definirPermissoesDoUsuario(userId, excecoesOriginais);
-    const { data: agora } = await supabase
+    const { data: agora } = await banco
       .from('user_permissions').select('permission_slug,effect').eq('user_id', userId);
     const sobrou = (agora || []).some((e) => e.effect === 'NEGAR' && e.permission_slug === 'finance.ler');
     check('estado original devolvido, sem negação sobrando', !sobrou, `${(agora || []).length} exceção(ões)`);
@@ -111,7 +111,7 @@ async function ateQue(descricao, condicao) {
       ...excecoesOriginais.filter((e) => e.permission_slug !== 'finance.ler'),
       { permission_slug: 'finance.ler', effect: 'NEGAR' }
     ]);
-    const { data: conf } = await supabase
+    const { data: conf } = await banco
       .from('user_permissions').select('permission_slug,effect').eq('user_id', userId);
     check('negação gravada', (conf || []).some((e) => e.permission_slug === 'finance.ler' && e.effect === 'NEGAR'));
 
@@ -131,7 +131,7 @@ async function ateQue(descricao, condicao) {
     check('Financeiro comum barra igual (mesma negação)', financeiro.status === 403, `HTTP ${financeiro.status}`);
 
     console.log('\n--- e a tentativa negada entrou na trilha de auditoria ---');
-    const { data: trilha } = await supabase
+    const { data: trilha } = await banco
       .from('access_logs').select('action,result').eq('user_id', userId)
       .eq('result', 'NEGADO').order('created_at', { ascending: false }).limit(20);
     const temRegistro = (trilha || []).some((l) => String(l.action || '').startsWith('finance.'));

@@ -7,7 +7,7 @@
  *
  * POR QUE ISTO EXISTE
  * -------------------
- * O supabase/schema.sql cria o usuário `admin` com um hash escrito lá dentro.
+ * O banco/schema.sql cria o usuário `admin` com um hash escrito lá dentro.
  * Esse hash está versionado no git: qualquer pessoa com acesso ao repositório
  * — hoje, ou em qualquer commit do passado — consegue a senha correspondente em
  * segundos, porque ela é a padrão conhecida do projeto.

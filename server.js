@@ -4005,7 +4005,7 @@ function filterStockMovements(data, params, productsById) {
 function traduzirErroDaEntrada(error) {
   const texto = String((error && error.message) || '');
   if (/nfe_entrada/.test(texto) && /(does not exist|schema cache|Could not find the table)/i.test(texto)) {
-    const err = new Error('As tabelas da Entrada de NF-e ainda não existem no banco. Rode supabase/migrations/fase-ak-entrada-de-nfe.sql no SQL Editor do Supabase.');
+    const err = new Error('As tabelas da Entrada de NF-e ainda não existem no banco. Rode banco/migrations/fase-ak-entrada-de-nfe.sql no SQL Editor do Supabase.');
     err.status = 503;
     return err;
   }

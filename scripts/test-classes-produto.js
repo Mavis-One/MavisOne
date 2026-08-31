@@ -23,7 +23,7 @@ const path = require('path');
 
 const RAIZ = path.join(__dirname, '..');
 const ler = (p) => fs.readFileSync(path.join(RAIZ, p), 'utf8').replace(/\r\n/g, '\n');
-const migracao = ler('supabase/migrations/fase-ac-classes-de-produto.sql');
+const migracao = ler('banco/migrations/fase-ac-classes-de-produto.sql');
 const dbSrc = ler('lib/db/classes.js');
 const serverSrc = ler('server.js');
 

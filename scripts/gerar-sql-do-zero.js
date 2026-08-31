@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Gera supabase/RECRIAR-DO-ZERO.sql — o banco inteiro, num arquivo só, na
+ * Gera banco/RECRIAR-DO-ZERO.sql — o banco inteiro, num arquivo só, na
  * ORDEM CERTA.
  *
  * Desde a saída do Supabase, este arquivo tem um segundo papel além de "colar
@@ -46,8 +46,8 @@ const fs = require('fs');
 const path = require('path');
 
 const RAIZ = path.join(__dirname, '..');
-const DIR = path.join(RAIZ, 'supabase', 'migrations');
-const SAIDA = path.join(RAIZ, 'supabase', 'RECRIAR-DO-ZERO.sql');
+const DIR = path.join(RAIZ, 'banco', 'migrations');
+const SAIDA = path.join(RAIZ, 'banco', 'RECRIAR-DO-ZERO.sql');
 
 /**
  * A ordem das fases. Exportada e pura para o teste poder cobrá-la sem gerar
@@ -82,7 +82,7 @@ function gerar() {
 -- RECRIAR O BANCO DO ZERO — arquivo GERADO. Não edite aqui.
 --
 --   Gerado por: node scripts/gerar-sql-do-zero.js
---   Fonte:      supabase/schema.sql + supabase/migrations/*.sql
+--   Fonte:      banco/schema.sql + banco/migrations/*.sql
 --
 -- COMO USAR — no Postgres em Docker, você NÃO roda isto à mão
 --   O docker-compose.yml monta este arquivo em /docker-entrypoint-initdb.d/ e o
@@ -97,7 +97,7 @@ function gerar() {
 --   (o -v APAGA os dados. É essa a intenção aqui, mas não é reversível.)
 --
 --   Num banco que já existe e você não quer derrubar, ainda dá para aplicar
---   à mão:  psql "$DATABASE_URL" -f supabase/RECRIAR-DO-ZERO.sql
+--   à mão:  psql "$DATABASE_URL" -f banco/RECRIAR-DO-ZERO.sql
 --
 -- A ORDEM DESTE ARQUIVO NÃO É A ORDEM ALFABÉTICA DA PASTA, e isso é o ponto:
 -- 'fase-aa' vem antes de 'fase-h' em qualquer listagem, e rodar nessa ordem
@@ -114,8 +114,8 @@ function gerar() {
 -- qualquer coisa de verdade.
 --
 -- Arquivos incluídos, nesta ordem:
---   supabase/schema.sql
-${arquivos.map((n, i) => `--   ${String(i + 1).padStart(2, '0')}. supabase/migrations/${n}`).join('\n')}
+--   banco/schema.sql
+${arquivos.map((n, i) => `--   ${String(i + 1).padStart(2, '0')}. banco/migrations/${n}`).join('\n')}
 -- ============================================================================
 
 `;
@@ -129,9 +129,9 @@ ${conteudo.trim()}
 
 `;
 
-  const partes = [cabecalho, bloco('supabase/schema.sql', fs.readFileSync(path.join(RAIZ, 'supabase', 'schema.sql'), 'utf8'))];
+  const partes = [cabecalho, bloco('banco/schema.sql', fs.readFileSync(path.join(RAIZ, 'banco', 'schema.sql'), 'utf8'))];
   for (const nome of arquivos) {
-    partes.push(bloco(`supabase/migrations/${nome}`, fs.readFileSync(path.join(DIR, nome), 'utf8')));
+    partes.push(bloco(`banco/migrations/${nome}`, fs.readFileSync(path.join(DIR, nome), 'utf8')));
   }
 
   const sql = partes.join('');
@@ -141,7 +141,7 @@ ${conteudo.trim()}
 
 if (require.main === module) {
   const { arquivos, linhas } = gerar();
-  console.log(`\nsupabase/RECRIAR-DO-ZERO.sql gerado — ${linhas} linhas.`);
+  console.log(`\nbanco/RECRIAR-DO-ZERO.sql gerado — ${linhas} linhas.`);
   console.log(`  schema.sql + ${arquivos.length} migrações, na ordem das fases.`);
   console.log(`  Primeira: ${arquivos[0]}`);
   console.log(`  Última:   ${arquivos[arquivos.length - 1]}\n`);

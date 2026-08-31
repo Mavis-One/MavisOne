@@ -7,7 +7,7 @@
 // Cria, lê, edita e apaga tudo o que usa — o banco fica como estava.
 require('dotenv').config();
 const m = require('../lib/db/modulos');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
 let falhas = 0;
 const check = (n, c, d) => { console.log(`${c ? '  OK ' : '  XX '} ${n}${d ? ' -> ' + d : ''}`); if (!c) falhas++; };
@@ -99,7 +99,7 @@ const lixo = [];
     const teste = await crm.testarConexao();
     check('teste com endereço inválido não lança', teste.ok === false && typeof teste.error === 'string');
     check('falha NÃO apaga o último sucesso', (await crm.getConexao()).lastOkAt === antes.lastOkAt);
-    await supabase.from('crm_connection').delete().eq('id', 1);
+    await banco.from('crm_connection').delete().eq('id', 1);
 
     console.log('\n--- 9. exclusão ---');
     await m.remover('fleet/vehicles', v.id);
@@ -113,7 +113,7 @@ const lixo = [];
     for (const [rec, id] of lixo.reverse()) {
       try { await m.remover(rec, id); } catch (_) { /* já removido pelo cascade */ }
     }
-    const sobra = async (t) => ((await supabase.from(t).select('id')).data || []).length;
+    const sobra = async (t) => ((await banco.from(t).select('id')).data || []).length;
     console.log(`  restaram: veículos ${await sobra('fleet_vehicles')}, contratos ${await sobra('contracts')}, manutenções ${await sobra('fleet_maintenances')}`);
     console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
     process.exit(falhas === 0 ? 0 : 1);

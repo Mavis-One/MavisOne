@@ -204,7 +204,7 @@ check('nenhuma rota confia no vendedorId da tela sem passar pelo escopo',
 
 console.log('\n--- o vínculo usuário -> vendedor existe de ponta a ponta ---');
 check('a migração cria a coluna',
-  /alter table if exists users\s+add column if not exists seller_id/i.test(ler('supabase/migrations/fase-al-usuario-vendedor.sql')));
+  /alter table if exists users\s+add column if not exists seller_id/i.test(ler('banco/migrations/fase-al-usuario-vendedor.sql')));
 check('o usuário lido do banco traz o vínculo', /sellerId: row\.seller_id/.test(ler('lib/db/auth.js')));
 const appSrc = ler('public/app.js');
 check('e a tela de Usuários tem o campo de vínculo', /name="sellerId"/.test(appSrc));

@@ -18,7 +18,7 @@ require('dotenv').config();
 const http = require('http');
 const db = require('../db');
 const rbac = require('../lib/db/rbac');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
 const PORTA = 3999;
 const LOGIN = 'zz-teste-admin-papel';
@@ -79,9 +79,9 @@ async function apagar() {
   if (apagado || !userId) return;
   apagado = true;
   try { await rbac.definirPapeisDoUsuario(userId, [], null); } catch (_) { /* segue e apaga o usuário */ }
-  try { await supabase.from('user_permissions').delete().eq('user_id', userId); } catch (_) { /* idem */ }
+  try { await banco.from('user_permissions').delete().eq('user_id', userId); } catch (_) { /* idem */ }
   await db.deleteUser(userId);
-  const { data } = await supabase.from('users').select('id').eq('username', LOGIN).maybeSingle();
+  const { data } = await banco.from('users').select('id').eq('username', LOGIN).maybeSingle();
   check('usuário descartável removido', !data, data ? 'AINDA EXISTE' : 'removido');
 }
 
@@ -108,7 +108,7 @@ async function apagar() {
 
     console.log('\n--- promove a admin SÓ pelo papel novo (user_roles) ---');
     await rbac.definirPapeisDoUsuario(userId, ['admin'], null);
-    const { data: linha } = await supabase.from('users').select('role').eq('id', userId).maybeSingle();
+    const { data: linha } = await banco.from('users').select('role').eq('id', userId).maybeSingle();
     check('a coluna antiga users.role continua "user"', linha?.role === 'user', `role='${linha?.role}'`);
     const acesso = await rbac.carregarAcessoDoUsuario(userId);
     check('o papel admin está em user_roles', (acesso?.roles || []).includes('admin'), (acesso?.roles || []).join(', '));

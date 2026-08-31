@@ -300,7 +300,7 @@ console.log('\n--- recusa do banco chega legível na tela ---');
 check('P0001 (raise da trigger) preserva a mensagem', /error\.code === 'P0001'[\s\S]{0,120}new Error\(error\.message\)/.test(dbFiscalSrc));
 check('CNPJ repetido diz que é CNPJ repetido', /23505[\s\S]{0,160}Já existe um estabelecimento cadastrado com este CNPJ/.test(dbFiscalSrc));
 check('e as duas escritas usam esse tratamento', (dbFiscalSrc.match(/assertEstabelecimentoValido\(error, '(create|update)Estabelecimento'\)/g) || []).length === 2);
-check('a trigger que gera o P0001 existe no schema', /estabelecimento_valida_cnpj_raiz/.test(ler('supabase/schema.sql')));
+check('a trigger que gera o P0001 existe no schema', /estabelecimento_valida_cnpj_raiz/.test(ler('banco/schema.sql')));
 
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
 process.exit(falhas === 0 ? 0 : 1);

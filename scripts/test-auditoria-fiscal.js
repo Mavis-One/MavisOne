@@ -25,7 +25,7 @@ const ler = (p) => fs.readFileSync(path.join(RAIZ, p), 'utf8').replace(/\r\n/g, 
 
 const serverSrc = ler('server.js');
 const settingsSrc = ler('lib/db/settings.js');
-const schemaSrc = ler('supabase/schema.sql');
+const schemaSrc = ler('banco/schema.sql');
 
 let falhas = 0;
 const check = (nome, cond, det) => {

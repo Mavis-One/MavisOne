@@ -11,7 +11,7 @@
 // Sem SENHA_TESTE ele avisa e sai sem falhar, em vez de adivinhar credencial.
 require('dotenv').config();
 const http = require('http');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 
 const PORTA = 3999;
 let token = '';
@@ -112,7 +112,7 @@ const criados = [];
     falhas++;
     console.log('  XX  ERRO:', e.message);
   } finally {
-    for (const [tabela, id] of criados) await supabase.from(tabela).delete().eq('id', id);
+    for (const [tabela, id] of criados) await banco.from(tabela).delete().eq('id', id);
     console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
     process.exit(falhas === 0 ? 0 : 1);
   }

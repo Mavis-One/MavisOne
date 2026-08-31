@@ -28,7 +28,7 @@ window.MavisSubscreenRegistry.settings.access_control = async function renderAcc
           As tabelas de controle de acesso ainda não existem no banco. Enquanto isso, o sistema
           continua com o modelo antigo — acesso por módulo inteiro, sem trilha de auditoria.
         </p>
-        <p class="muted">Rode <code>supabase/migrations/fase-l-controle-de-acesso.sql</code> no SQL Editor do Supabase e recarregue esta tela.</p>
+        <p class="muted">Rode <code>banco/migrations/fase-l-controle-de-acesso.sql</code> no SQL Editor do Supabase e recarregue esta tela.</p>
       </div>`;
     return;
   }

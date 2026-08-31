@@ -33,8 +33,8 @@ const check = (nome, cond, det) => {
   if (!cond) falhas++;
 };
 
-const DIR = path.join(RAIZ, 'supabase', 'migrations');
-const ARQ_RLS = 'supabase/migrations/fase-af-rls-fechar-porta-publica.sql';
+const DIR = path.join(RAIZ, 'banco', 'migrations');
+const ARQ_RLS = 'banco/migrations/fase-af-rls-fechar-porta-publica.sql';
 const rls = ler(ARQ_RLS);
 
 console.log('--- a fase-af existe e não inventa política ---');
@@ -53,7 +53,7 @@ console.log('\n--- toda tabela declarada no schema tem RLS ligada ---');
 // A lista de tabelas sai do que as migrações e o schema DECLARAM criar. Assim,
 // tabela nova entra na conta sozinha, sem ninguém lembrar de atualizar aqui.
 const arquivos = fs.readdirSync(DIR).filter((n) => n.endsWith('.sql') && !n.startsWith('PENDENTES'));
-const fontes = ['supabase/schema.sql', ...arquivos.map((n) => `supabase/migrations/${n}`)];
+const fontes = ['banco/schema.sql', ...arquivos.map((n) => `banco/migrations/${n}`)];
 const declaradas = new Set();
 for (const rel of fontes) {
   const sql = ler(rel);
@@ -107,9 +107,9 @@ check('e não sobrou chave do Supabase sendo lida', !/SUPABASE_SERVICE_ROLE_KEY|
 // "force row level security" em lugar nenhum, e a frase da explicação casaria
 // com a busca. Comentário citando um comando não executa comando — é o mesmo
 // cuidado que scripts/verificar-migracoes.js já toma para não inventar tabela.
-const migracoes = fs.readdirSync(path.join(RAIZ, 'supabase', 'migrations'))
+const migracoes = fs.readdirSync(path.join(RAIZ, 'banco', 'migrations'))
   .filter((n) => n.endsWith('.sql'))
-  .map((n) => fs.readFileSync(path.join(RAIZ, 'supabase', 'migrations', n), 'utf8'))
+  .map((n) => fs.readFileSync(path.join(RAIZ, 'banco', 'migrations', n), 'utf8'))
   .join('\n')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*--.*$/gm, '');

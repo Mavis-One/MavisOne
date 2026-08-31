@@ -6,7 +6,7 @@
 //
 // POR QUE ISTO PRECISA EXISTIR
 // ----------------------------
-// O `admin` que nasce do supabase/schema.sql vem com sete modulos em
+// O `admin` que nasce do banco/schema.sql vem com sete modulos em
 // `allowed_modules`: dashboard, sales, purchases, stock, finance, settings,
 // cadastros. O sistema tem QUATORZE -- fiscal, reports, fleet, crm, hr, pcp e
 // contracts entraram depois, e a semente do schema nunca foi atualizada.
@@ -32,7 +32,7 @@
 require('dotenv').config();
 
 const db = require('../db');
-const { supabase } = require('../lib/db/client');
+const { banco } = require('../lib/db/client');
 const fiscalPermissoes = require('../public/modules/shared/fiscal_permissoes');
 
 // A lista vem do moduleSubItems de public/app.js, que e' a fonte unica das
@@ -64,7 +64,7 @@ const check = (ok, titulo, detalhe) => {
   console.log(`    ${MODULOS.length} modulos: ${MODULOS.join(', ')}`);
   console.log(`    ${FISCAIS.length} permissoes fiscais: ${FISCAIS.join(', ')}\n`);
 
-  const { data: antes, error: erroLeitura } = await supabase
+  const { data: antes, error: erroLeitura } = await banco
     .from('users').select('id, username, role, allowed_modules, fiscal_permissions, active')
     .eq('username', LOGIN).maybeSingle();
   if (erroLeitura) throw erroLeitura;
@@ -76,7 +76,7 @@ const check = (ok, titulo, detalhe) => {
   console.log(`  -- antes: ${(antes.allowed_modules || []).length} modulos` +
     (faltavam.length ? `, faltando ${faltavam.join(', ')}` : ', nenhum faltando'));
 
-  const { error } = await supabase.from('users').update({
+  const { error } = await banco.from('users').update({
     role: 'admin',
     active: true,
     allowed_modules: MODULOS,
@@ -87,7 +87,7 @@ const check = (ok, titulo, detalhe) => {
   // O papel do RBAC e' outro caminho, consultado por outras rotas. Preserva os
   // papeis que ja existirem: definirPapeisDoUsuario substitui a lista inteira,
   // entao apagar o resto aqui tiraria acesso em vez de dar.
-  const { data: papeisAtuais } = await supabase.from('user_roles').select('role_slug').eq('user_id', antes.id);
+  const { data: papeisAtuais } = await banco.from('user_roles').select('role_slug').eq('user_id', antes.id);
   const slugs = [...new Set([...(papeisAtuais || []).map((l) => l.role_slug), 'admin'])];
   await db.rbac.definirPapeisDoUsuario(antes.id, slugs, null);
 
