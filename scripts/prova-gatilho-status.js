@@ -11,21 +11,42 @@
 // "xxx -> yyy" -- os pares estavam certos, so nao eram consultados.
 // Semantica de resolucao de nome no Postgres so aparece rodando contra o banco.
 //
-// Escreve direto no PostgREST com a chave de servico -- que ignora RLS e nao
-// passa por rota nenhuma da aplicacao. E exatamente o caminho que so o banco
-// fecha: script de correcao, UPDATE no SQL Editor, integracao futura.
+// Escreve direto no BANCO, sem passar por rota nenhuma da aplicacao. E
+// exatamente o caminho que so o banco fecha: script de correcao, UPDATE no
+// psql, integracao futura. Antes isso era um POST no PostgREST; desde a saida
+// do Supabase e SQL, pela mesma camada que o sistema usa -- o que torna a prova
+// ainda mais direta, porque nao ha intermediario nenhum entre este script e o
+// gatilho.
 require('dotenv').config();
-const u = process.env.SUPABASE_URL;
-const k = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const h = { apikey: k, Authorization: 'Bearer ' + k, 'content-type': 'application/json', Prefer: 'return=representation' };
+const { supabase } = require('../lib/db/client');
 
 let falhas = 0;
 const check = (ok, t, d) => { console.log(`  ${ok ? 'OK ' : 'XX '} ${t}${d !== undefined ? ' -> ' + d : ''}`); if (!ok) falhas++; };
+
+// Mantem a forma { status, body } das 11 chamadas abaixo. Os codigos HTTP
+// viraram traducao do resultado do SQL: o que importa para a prova e a
+// DISTINCAO entre passou e o banco recusou, e a mensagem do gatilho -- as duas
+// coisas continuam inteiras.
 const rest = async (metodo, caminho, corpo) => {
-  const r = await fetch(u + '/rest/v1/' + caminho, { method: metodo, headers: h, body: corpo ? JSON.stringify(corpo) : undefined });
-  const txt = await r.text();
-  let json = null; try { json = JSON.parse(txt); } catch (_) { json = txt; }
-  return { status: r.status, body: json };
+  const [tabela, consulta = ''] = caminho.split('?');
+  const id = (consulta.match(/id=eq\.([^&]+)/) || [])[1];
+  const colunas = (consulta.match(/select=([^&]+)/) || [])[1] || '*';
+
+  let resultado;
+  if (metodo === 'POST') resultado = await supabase.from(tabela).insert(corpo).select();
+  else if (metodo === 'PATCH') resultado = await supabase.from(tabela).update(corpo).eq('id', id).select();
+  else if (metodo === 'GET') resultado = await supabase.from(tabela).select(colunas).eq('id', id);
+  else if (metodo === 'DELETE') resultado = await supabase.from(tabela).delete().eq('id', id);
+  else throw new Error('metodo nao previsto nesta prova: ' + metodo);
+
+  if (resultado.error) {
+    // P0001 e o raise da trigger -- a recusa que esta prova procura. Qualquer
+    // outro erro tambem e >= 400, e a mensagem vai junto no corpo.
+    return { status: resultado.error.code === 'P0001' ? 400 : 409, body: resultado.error };
+  }
+  if (metodo === 'POST') return { status: 201, body: resultado.data };
+  if (metodo === 'DELETE') return { status: 204, body: null };
+  return { status: 200, body: resultado.data };
 };
 
 (async () => {

@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 /**
  * Gera supabase/RECRIAR-DO-ZERO.sql — o banco inteiro, num arquivo só, na
- * ORDEM CERTA, para colar no SQL Editor de um Supabase novo.
+ * ORDEM CERTA.
+ *
+ * Desde a saída do Supabase, este arquivo tem um segundo papel além de "colar
+ * em algum lugar": ele é o que o container do Postgres roda sozinho na primeira
+ * subida (o docker-compose.yml monta este arquivo em
+ * /docker-entrypoint-initdb.d/). Ou seja, `docker compose up` já entrega um
+ * banco pronto — não existe mais o passo manual de colar SQL num editor web, e
+ * portanto não existe mais o risco de colar pela metade.
  *
  *   node scripts/gerar-sql-do-zero.js
  *
@@ -77,10 +84,20 @@ function gerar() {
 --   Gerado por: node scripts/gerar-sql-do-zero.js
 --   Fonte:      supabase/schema.sql + supabase/migrations/*.sql
 --
--- COMO USAR
---   1. crie o projeto no Supabase e abra o SQL Editor;
---   2. cole este arquivo INTEIRO e rode;
---   3. confira com: npm run migracoes  (com o .env já apontando para o novo).
+-- COMO USAR — no Postgres em Docker, você NÃO roda isto à mão
+--   O docker-compose.yml monta este arquivo em /docker-entrypoint-initdb.d/ e o
+--   Postgres o executa sozinho na PRIMEIRA subida (quando o volume está vazio).
+--   Então:
+--     docker compose up -d       sobe o banco já com tudo dentro
+--     npm run migracoes          confere
+--
+--   Para reconstruir do zero depois de já ter subido, o volume precisa sair —
+--   o Postgres só roda o initdb com o volume vazio:
+--     docker compose down -v && docker compose up -d
+--   (o -v APAGA os dados. É essa a intenção aqui, mas não é reversível.)
+--
+--   Num banco que já existe e você não quer derrubar, ainda dá para aplicar
+--   à mão:  psql "$DATABASE_URL" -f supabase/RECRIAR-DO-ZERO.sql
 --
 -- A ORDEM DESTE ARQUIVO NÃO É A ORDEM ALFABÉTICA DA PASTA, e isso é o ponto:
 -- 'fase-aa' vem antes de 'fase-h' em qualquer listagem, e rodar nessa ordem

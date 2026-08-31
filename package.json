@@ -10,7 +10,7 @@
     "e2e": "node scripts/test-modulos-e2e.js",
     "permissoes-tela": "node scripts/test-permissoes-tela.js",
     "sessao": "node scripts/test-sessao-unica.js",
-    "test": "node scripts/test-permissoes.js && node scripts/test-verificador-migracoes.js && node scripts/test-permissoes-fiscais.js && node scripts/test-sessao-expira.js && node scripts/test-vendas-financeiro.js && node scripts/test-contrato-financeiro.js && node scripts/test-sales-totals.js && node scripts/test-sales-record-fields.js && node scripts/test-sales-status.js && node scripts/test-sales-actions.js && node scripts/test-nfe-actions.js && node scripts/test-nfe-unificada.js && node scripts/test-nfe-avulsa.js && node scripts/test-auditoria-fiscal.js && node scripts/test-nfe-payload.js && node scripts/test-nfe-observacoes.js && node scripts/test-chassi-item.js && node scripts/test-complemento-icms.js && node scripts/test-focus-homologacao.js && node scripts/test-regras-fiscais.js && node scripts/test-atencao.js && node scripts/test-kpis.js && node scripts/test-dashboard-hub.js && node scripts/test-paineis-modulos.js && node scripts/test-navegacao.js && node scripts/test-module-workspace.js && node scripts/test-campo-busca.js && node scripts/test-documento.js && node scripts/test-campos-padronizados.js && node scripts/test-classes-produto.js && node scripts/test-produto-abas.js && node scripts/test-reserva-estoque.js && node scripts/test-modulos-telas.js && node scripts/test-atalhos.js && node scripts/test-fiscal-telas.js && node scripts/test-ibs-cbs.js && node scripts/test-cst-icms.js && node scripts/test-prazo-cancelamento.js && node scripts/test-emissao-abas.js && node scripts/test-lancamento-vinculado.js && node scripts/test-vinculo-pedido-nfe.js && node scripts/test-rls.js && node scripts/test-lista-vendas.js && node scripts/test-busca-avancada.js && node scripts/test-calcular-tributos.js && node scripts/test-anexos-pedido.js && node scripts/test-transicoes-status.js && node scripts/test-entrada-nfe.js && node scripts/test-relatorio-vendas.js && node scripts/test-meu-painel.js",
+    "test": "node scripts/test-sql-compat.js && node scripts/test-permissoes.js && node scripts/test-verificador-migracoes.js && node scripts/test-permissoes-fiscais.js && node scripts/test-sessao-expira.js && node scripts/test-vendas-financeiro.js && node scripts/test-contrato-financeiro.js && node scripts/test-sales-totals.js && node scripts/test-sales-record-fields.js && node scripts/test-sales-status.js && node scripts/test-sales-actions.js && node scripts/test-nfe-actions.js && node scripts/test-nfe-unificada.js && node scripts/test-nfe-avulsa.js && node scripts/test-auditoria-fiscal.js && node scripts/test-nfe-payload.js && node scripts/test-nfe-observacoes.js && node scripts/test-chassi-item.js && node scripts/test-complemento-icms.js && node scripts/test-focus-homologacao.js && node scripts/test-regras-fiscais.js && node scripts/test-atencao.js && node scripts/test-kpis.js && node scripts/test-dashboard-hub.js && node scripts/test-paineis-modulos.js && node scripts/test-navegacao.js && node scripts/test-module-workspace.js && node scripts/test-campo-busca.js && node scripts/test-documento.js && node scripts/test-campos-padronizados.js && node scripts/test-classes-produto.js && node scripts/test-produto-abas.js && node scripts/test-reserva-estoque.js && node scripts/test-modulos-telas.js && node scripts/test-atalhos.js && node scripts/test-fiscal-telas.js && node scripts/test-ibs-cbs.js && node scripts/test-cst-icms.js && node scripts/test-prazo-cancelamento.js && node scripts/test-emissao-abas.js && node scripts/test-lancamento-vinculado.js && node scripts/test-vinculo-pedido-nfe.js && node scripts/test-rls.js && node scripts/test-lista-vendas.js && node scripts/test-busca-avancada.js && node scripts/test-calcular-tributos.js && node scripts/test-anexos-pedido.js && node scripts/test-transicoes-status.js && node scripts/test-entrada-nfe.js && node scripts/test-relatorio-vendas.js && node scripts/test-meu-painel.js",
     "gate": "node scripts/test-gate-openfinance.js",
     "admin-papel": "node scripts/test-admin-por-papel.js",
     "permissoes-fiscais": "node scripts/test-permissoes-fiscais.js",
@@ -20,20 +20,27 @@
     "chassi": "node scripts/test-chassi-item.js",
     "mapa": "node scripts/mapa-do-sistema.js",
     "zero": "node scripts/gerar-sql-do-zero.js",
-    "backup": "node scripts/backup-supabase.js",
-    "restaurar": "node scripts/restaurar-supabase.js",
+    "backup": "node scripts/backup-banco.js",
+    "restaurar": "node scripts/restaurar-banco.js",
     "meu-painel": "node scripts/test-meu-painel.js",
     "prova-meu-painel": "node scripts/prova-meu-painel.js",
     "liberar-admin": "node scripts/liberar-admin.js",
     "semear-vendas": "node scripts/semear-vendas-teste.js",
-    "semear-vendas:limpar": "node scripts/semear-vendas-teste.js --limpar"
+    "semear-vendas:limpar": "node scripts/semear-vendas-teste.js --limpar",
+    "banco:subir": "docker compose up -d",
+    "banco:parar": "docker compose down",
+    "banco:zerar": "docker compose down -v && docker compose up -d",
+    "banco:log": "docker compose logs -f banco",
+    "sql-compat": "node scripts/test-sql-compat.js",
+    "prova-banco": "node scripts/prova-banco.js",
+    "backup:provar": "node scripts/test-backup-restauracao.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.0.0",
     "bcryptjs": "^3.0.3",
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "pg": "^8.23.0"
   }
 }

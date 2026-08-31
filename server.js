@@ -44,7 +44,7 @@ const salesStatus = require('./public/modules/shared/sales_status');
 // Aba Impostos do pedido. Roda a MESMA montagem tributária da emissão — ver o
 // cabeçalho de lib/calcularTributos.js.
 const { calcularTributos } = require('./lib/calcularTributos');
-// Anexos do pedido: binário no Supabase Storage (bucket privado), ficha no
+// Anexos do pedido: binário na tabela pedido_anexo (fase AM), ficha no
 // próprio pedido. Ver o cabeçalho de lib/db/anexos.js.
 const anexosDb = require('./lib/db/anexos');
 // Entrada de NF-e: o XML que o fornecedor manda. O leitor nao usa biblioteca
@@ -1400,8 +1400,9 @@ function serializeSalesRecord(record, data) {
     depositId: record.depositId || '',
     depositName: resolveById(data.deposits, record.depositId),
     items,
-    // Fichas dos anexos (fase AI). Só metadado — o binário fica no Storage e
-    // sai por uma rota própria, que confere a sessão antes de entregar.
+    // Fichas dos anexos (fase AI). Só metadado — o binário mora em outra
+    // tabela e sai por uma rota própria, que confere a sessão antes de
+    // entregar. É por isso que listar pedido não arrasta megabyte de PDF.
     attachments: Array.isArray(record.attachments) ? record.attachments : [],
     discountAmount: Number(record.discountAmount || 0),
     discountPercent: Number(record.discountPercent || 0),
@@ -1780,14 +1781,14 @@ async function excluirSalesRecord(id, data, user) {
       oldItems: record.items || [], newItems: [], wasApplied: true, willApply: false, record, user
     });
   }
-  // Os anexos vão junto: sem isto os arquivos ficam no Storage sem nada
-  // apontando para eles. Antes de excluir o registro, porque depois as fichas
+  // Os anexos vão junto: sem isto as linhas de pedido_anexo ficam sem nada
+  // apontando para elas. Antes de excluir o registro, porque depois as fichas
   // já não existem para dizer QUAIS arquivos apagar.
   for (const ficha of (Array.isArray(record.attachments) ? record.attachments : [])) {
     try {
       await anexosDb.removerAnexo(ficha);
     } catch (erro) {
-      console.error('[anexos] arquivo orfao no Storage:', ficha.caminho, erro.message);
+      console.error('[anexos] arquivo orfao em pedido_anexo:', ficha.id, erro.message);
     }
   }
   await (isOrder ? db.deleteOrder(id) : db.deleteQuote(id));
@@ -1820,9 +1821,9 @@ async function duplicarSalesRecord(serializado, data, user) {
     // A NF-e é do documento original. A cópia é outro documento e ainda não
     // tem nota.
     nfeId: '',
-    // Anexos não são copiados: o arquivo está no Storage sob o id do original,
-    // e duas fichas apontando para o mesmo arquivo fariam excluir uma quebrar
-    // a outra.
+    // Anexos não são copiados: o arquivo está gravado sob o id do anexo
+    // original, e duas fichas apontando para a mesma linha fariam excluir uma
+    // quebrar a outra.
     attachments: [],
     // O chassi identifica UMA unidade física: copiá-lo criaria duas vendas do
     // mesmo equipamento.
@@ -5535,9 +5536,10 @@ const server = http.createServer(async (req, res) => {
         const ficha = fichas.find((a) => a.id === anexoId);
         if (!ficha) return sendJson(res, { error: 'Anexo não encontrado' }, 404);
         const { bytes, tipo } = await anexosDb.baixarAnexo(ficha);
-        // O bucket é privado e os bytes saem por aqui, não por URL do Storage:
-        // URL de arquivo vaza fácil (e-mail, print, log de proxy), e um anexo
-        // de pedido tem contrato e dado de cliente dentro.
+        // Os bytes saem por aqui, e nao existe URL nenhuma para o arquivo:
+        // URL vaza facil (e-mail, print, log de proxy), e um anexo de pedido
+        // tem contrato e dado de cliente dentro. Desde a fase AM o binario e
+        // uma linha de tabela — so alcancavel por consulta do servidor.
         res.writeHead(200, {
           'Content-Type': tipo,
           'Content-Length': bytes.length,
@@ -5708,11 +5710,11 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
-      // A exclusão inteira — devolução de estoque, remoção dos anexos do
-      // Storage e a saída da lista em memória — mora em excluirSalesRecord,
+      // A exclusão inteira — devolução de estoque, remoção dos anexos e a
+      // saída da lista em memória — mora em excluirSalesRecord,
       // porque as ações em lote fazem exatamente isto. Duas cópias divergem, e
       // aqui a divergência custaria reserva de estoque presa para sempre ou
-      // arquivo órfão no Storage.
+      // arquivo órfão em pedido_anexo.
       try {
         await excluirSalesRecord(id, data, user);
       } catch (erro) {
@@ -9621,4 +9623,37 @@ function startServer(port, retriesLeft) {
   });
 }
 
-startServer(BASE_PORT, MAX_PORT_RETRIES);
+/**
+ * CONFERE O BANCO ANTES DE ABRIR A PORTA.
+ *
+ * O pool de conexões é preguiçoso de propósito (lib/db/conexao.js): ele nasce na
+ * primeira consulta, não no require, para que os testes e scripts que só leem
+ * código não exijam banco no ar. O efeito colateral é que, sem esta checagem, um
+ * DATABASE_URL errado deixa o servidor SUBIR NORMALMENTE e anunciar "Servidor
+ * iniciado" — e o erro só aparece depois, uma tela por vez, como "erro ao
+ * carregar" em tudo.
+ *
+ * Esse é exatamente o modo de falha que já custou semanas neste projeto (ver o
+ * cabeçalho de scripts/verificar-migracoes.js): o sistema degrada em silêncio e
+ * a degradação esconde a causa. Uma consulta trivial aqui troca isso por uma
+ * mensagem que diz o que fazer, antes de qualquer requisição existir.
+ */
+async function conferirBanco() {
+  const { consultar } = require('./lib/db/conexao');
+  try {
+    await consultar('select 1');
+  } catch (erro) {
+    console.error('\n[banco] NÃO consegui conectar. O servidor não vai subir.\n');
+    console.error(`  motivo: ${erro.message}\n`);
+    if (!process.env.DATABASE_URL) {
+      console.error('  DATABASE_URL não está definida. Copie .env.example para .env.');
+    } else {
+      console.error('  O banco está no ar?   docker compose up -d');
+      console.error('  Ele terminou de subir? docker compose logs -f banco');
+    }
+    console.error('');
+    process.exit(1);
+  }
+}
+
+conferirBanco().then(() => startServer(BASE_PORT, MAX_PORT_RETRIES));

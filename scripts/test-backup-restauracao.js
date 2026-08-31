@@ -2,172 +2,120 @@
 /**
  * A VOLTA: backup -> apaga -> restaura -> confere.
  *
- *   node scripts/test-backup-restauracao.js
+ *   node scripts/test-backup-restauracao.js --confirmo
  *
- * NÃO entra em `npm test`: escreve no banco de verdade. Roda à mão depois de
- * mexer no backup ou no restaurador.
+ * NÃO entra em `npm test`: mexe no banco de verdade e RESTAURA por cima dele.
+ * Roda à mão depois de mexer no backup ou no restaurador.
  *
  * Um backup que nunca foi restaurado não é um backup — é um arquivo. Este
  * teste é o que transforma um no outro.
  *
- * ELE USA DADOS PRÓPRIOS, criados e apagados aqui, com ids marcados
- * `zz-teste-backup-*`. Nada de apagar linha de verdade para ver se volta.
+ * POR QUE ELE FICOU MUITO MENOR
+ * -----------------------------
+ * A versão anterior exportava tabela por tabela pelo PostgREST e precisava
+ * exercitar à mão o ciclo de chave estrangeira (hr_departments <-> hr_employees)
+ * e as colunas de identidade — dois caminhos que só existiam porque o backup era
+ * feito na unha, sem pg_dump. Com pg_dump esses caminhos não existem mais: quem
+ * resolve ordem, ciclo e identidade é o Postgres. O que sobrou para provar é o
+ * que sempre importou de verdade — o dado volta, e a ESTRUTURA volta junto.
  *
- * O que ele exercita de propósito:
- *   - o CICLO de chave estrangeira (hr_departments <-> hr_employees), que é o
- *     único caminho do restaurador que a operação normal nunca percorre;
- *   - o GATILHO de status em orders/quotes, que pode recusar uma restauração
- *     por cima de linha mais nova — comportamento correto e surpreendente.
+ * O QUE ELE FAZ COM O SEU BANCO
+ * -----------------------------
+ * Restaura o backup que ele mesmo acabou de tirar, segundos antes. Na prática o
+ * banco volta ao ponto em que estava — mas é uma restauração de verdade, então
+ * qualquer escrita que aconteça DURANTE o teste se perde. Não rode com outra
+ * pessoa usando o sistema.
  */
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
-const { criarRest } = require('./lib-backup');
+const { spawnSync } = require('child_process');
+const { supabase, fecharPool } = require('../lib/db/client');
+const { consultar } = require('../lib/db/conexao');
+const { esquecerCatalogo } = require('../lib/db/catalogo');
 
 const RAIZ = path.join(__dirname, '..');
-const MARCA = 'zz-teste-backup';
+const MARCA = `zz-teste-backup-${Date.now()}`;
+
 let falhas = 0;
 const check = (ok, t, d) => { console.log(`  ${ok ? 'OK ' : 'XX '} ${t}${d !== undefined ? ' -> ' + d : ''}`); if (!ok) falhas++; };
 
-const rest = criarRest();
-const api = async (metodo, caminho, corpo, extra = {}) => {
-  const r = await fetch(`${rest.base}/rest/v1/${caminho}`, {
-    method: metodo,
-    headers: rest.cabecalhos(Object.assign({ Prefer: 'return=representation' }, extra)),
-    body: corpo ? JSON.stringify(corpo) : undefined
+function rodar(script, argumentos = []) {
+  const r = spawnSync(process.execPath, [path.join(RAIZ, 'scripts', script), ...argumentos], {
+    cwd: RAIZ, encoding: 'utf8'
   });
-  const txt = await r.text();
-  let json = null; try { json = JSON.parse(txt); } catch (_) { json = txt; }
-  return { status: r.status, body: json };
-};
-const rodar = (args) => execFileSync(process.execPath, args, { cwd: RAIZ, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (r.stdout) process.stdout.write(r.stdout.split('\n').map((l) => (l ? '      ' + l : l)).join('\n'));
+  if (r.status !== 0 && r.stderr) process.stderr.write(r.stderr);
+  return r;
+}
 
 (async () => {
-  const dep = `${MARCA}-dep`;
-  const emp = `${MARCA}-emp`;
-  const ord = `${MARCA}-ord`;
-  const qte = `${MARCA}-qte`;
-
-  console.log('--- 0. cria dados de teste, incluindo o CICLO de FK ---');
-  await api('DELETE', `hr_departments?id=eq.${dep}`);
-  await api('DELETE', `hr_employees?id=eq.${emp}`);
-  await api('DELETE', `orders?id=eq.${ord}`);
-  await api('DELETE', `quotes?id=eq.${qte}`);
-
-  // Passo 1: os dois sem apontar um para o outro (o ciclo não deixa criar de
-  // uma vez nem aqui).
-  const e1 = await api('POST', 'hr_employees', { id: emp, name: 'PESSOA DE TESTE DO BACKUP' });
-  check(e1.status === 201, 'colaborador criado', String(e1.status) + ' ' + JSON.stringify(e1.body).slice(0, 100));
-  const d1 = await api('POST', 'hr_departments', { id: dep, name: 'SETOR DE TESTE DO BACKUP', manager_id: emp });
-  check(d1.status === 201, 'departamento criado apontando para o colaborador', String(d1.status));
-  // Passo 2: fecha o ciclo.
-  const e2 = await api('PATCH', `hr_employees?id=eq.${emp}`, { department_id: dep });
-  check(e2.status === 200, 'e o colaborador aponta de volta — ciclo fechado', String(e2.status));
-
-  const o1 = await api('POST', 'orders', {
-    id: ord, type: 'order', code: 999990, status: 'pedido-faturado', date: '2026-08-24',
-    customer: 'CLIENTE DE TESTE DO BACKUP', amount: 123.45, items: [{ name: 'X', quantity: 2, unitPrice: 61.725 }]
-  });
-  check(o1.status === 201, 'pedido criado (faturado, para testar o gatilho)', String(o1.status));
-  const q1 = await api('POST', 'quotes', {
-    id: qte, type: 'quote', code: 999991, status: 'orcamento', date: '2026-08-24',
-    customer: 'CLIENTE DE TESTE DO BACKUP', amount: 10, items: []
-  });
-  check(q1.status === 201, 'orçamento criado', String(q1.status));
-
-  console.log('\n--- 1. backup ---');
-  const saida = rodar([path.join('scripts', 'backup-supabase.js')]);
-  const m = saida.match(/data\/backup\/(\d{8}-\d{6})/);
-  check(!!m, 'backup rodou', m ? m[1] : saida.slice(-200));
-  const pasta = `data/backup/${m[1]}`;
-  const manifesto = JSON.parse(fs.readFileSync(path.join(RAIZ, pasta, 'manifesto.json'), 'utf8'));
-  const conta = (t) => (manifesto.tabelas.find((x) => x.nome === t) || {}).linhas;
-  check(conta('hr_departments') === 1 && conta('hr_employees') === 1, 'as tabelas do ciclo entraram no backup');
-  check(!manifesto.erros.length, 'sem erros de coleta', JSON.stringify(manifesto.erros).slice(0, 120));
-  // A ordem tem de pôr quem é referenciado antes de quem referencia.
-  const iCat = manifesto.ordemDeInsercao.indexOf('financial_categories');
-  const iEnt = manifesto.ordemDeInsercao.indexOf('financial_entries');
-  check(iCat >= 0 && iCat < iEnt, 'a ordem respeita a dependência', `categorias ${iCat} < lançamentos ${iEnt}`);
-
-  console.log('\n--- 2. APAGA os dados de teste ---');
-  // Ordem inversa: o departamento aponta para o colaborador.
-  await api('PATCH', `hr_employees?id=eq.${emp}`, { department_id: null });
-  await api('DELETE', `hr_departments?id=eq.${dep}`);
-  await api('DELETE', `hr_employees?id=eq.${emp}`);
-  await api('DELETE', `orders?id=eq.${ord}`);
-  await api('DELETE', `quotes?id=eq.${qte}`);
-  const sumiu = await api('GET', `hr_employees?id=eq.${emp}&select=id`);
-  check(Array.isArray(sumiu.body) && sumiu.body.length === 0, 'sumiram do banco');
-
-  console.log('\n--- 3. ensaio não escreve nada ---');
-  const ensaio = rodar([path.join('scripts', 'restaurar-supabase.js'), pasta]);
-  check(/MODO: ENSAIO/.test(ensaio), 'o padrão é ensaio');
-  const aindaSumido = await api('GET', `hr_employees?id=eq.${emp}&select=id`);
-  check(aindaSumido.body.length === 0, 'e o ensaio de fato não gravou');
-
-  console.log('\n--- 4. restaura de verdade ---');
-  let restaurou = '';
-  try {
-    restaurou = rodar([path.join('scripts', 'restaurar-supabase.js'), pasta, '--executar']);
-  } catch (erro) {
-    // O script sai com código 1 quando há falha; a saída ainda interessa.
-    restaurou = String((erro.stdout || '') + (erro.stderr || ''));
+  if (!process.argv.includes('--confirmo')) {
+    console.error('Este teste RESTAURA o banco por cima do atual (ver o cabeçalho).');
+    console.error('Se for isso mesmo: node scripts/test-backup-restauracao.js --confirmo');
+    process.exit(1);
   }
-  console.log(restaurou.split('\n').filter((l) => /FALHA|Segunda passada|hr_|linha\(s\)/.test(l)).slice(0, 8).map((l) => '    ' + l.trim()).join('\n'));
 
-  console.log('\n--- 5. tudo voltou? ---');
-  const vEmp = (await api('GET', `hr_employees?id=eq.${emp}&select=*`)).body[0];
-  const vDep = (await api('GET', `hr_departments?id=eq.${dep}&select=*`)).body[0];
-  const vOrd = (await api('GET', `orders?id=eq.${ord}&select=*`)).body[0];
-  const vQte = (await api('GET', `quotes?id=eq.${qte}&select=*`)).body[0];
-  check(!!vEmp && vEmp.name === 'PESSOA DE TESTE DO BACKUP', 'colaborador voltou', vEmp && vEmp.name);
-  check(!!vDep, 'departamento voltou');
-  // Este é o ponto do teste: a segunda passada devolveu as pontas do ciclo.
-  check(vDep && vDep.manager_id === emp, 'o ciclo foi refeito: departamento -> colaborador', vDep && vDep.manager_id);
-  check(vEmp && vEmp.department_id === dep, 'e colaborador -> departamento', vEmp && vEmp.department_id);
-  check(!!vOrd && Number(vOrd.amount) === 123.45, 'pedido voltou com o valor exato', vOrd && vOrd.amount);
-  check(vOrd && vOrd.status === 'pedido-faturado', 'e com o status', vOrd && vOrd.status);
-  // JSONB tem de voltar como objeto, não como texto do objeto.
-  check(vOrd && Array.isArray(vOrd.items) && vOrd.items[0] && vOrd.items[0].quantity === 2,
-    'o jsonb voltou como estrutura, não como texto', JSON.stringify(vOrd && vOrd.items));
-  check(!!vQte && vQte.status === 'orcamento', 'orçamento voltou', vQte && vQte.status);
+  console.log('--- 1. uma linha marcada, para ter o que procurar depois ---');
+  const { error: erroInsert } = await supabase.from('people').insert({
+    id: MARCA, name: 'PROVA DE BACKUP', kind: 'cliente'
+  });
+  check(!erroInsert, 'linha de prova criada', erroInsert ? erroInsert.message : MARCA);
+  if (erroInsert) { await fecharPool(); process.exit(1); }
 
-  console.log('\n--- 6. restaurar duas vezes dá o mesmo resultado ---');
-  // Restauração que só funciona uma vez é armadilha: no dia do desastre
-  // ninguém acerta de primeira.
-  let segunda = '';
-  try { segunda = rodar([path.join('scripts', 'restaurar-supabase.js'), pasta, '--executar']); }
-  catch (erro) { segunda = String((erro.stdout || '') + (erro.stderr || '')); }
-  check(!/FALHA/.test(segunda), 'a segunda restauração não falha', (segunda.match(/.*FALHA.*/) || [''])[0].slice(0, 120));
-  const vOrd2 = (await api('GET', `orders?id=eq.${ord}&select=amount`)).body[0];
-  check(vOrd2 && Number(vOrd2.amount) === 123.45, 'e o dado continua o mesmo', vOrd2 && vOrd2.amount);
+  console.log('\n--- 2. backup ---');
+  const backup = rodar('backup-banco.js');
+  check(backup.status === 0, 'npm run backup terminou bem', String(backup.status));
+  const arquivo = (backup.stdout.match(/restaurar-banco\.js (\S+)/) || [])[1];
+  check(Boolean(arquivo) && fs.existsSync(path.join(RAIZ, arquivo)), 'o arquivo existe', arquivo);
+  if (!arquivo) { await fecharPool(); process.exit(1); }
 
-  console.log('\n--- 7. o gatilho de status recusa restauração por cima de linha mais nova ---');
-  // Cancela o pedido no banco; o backup ainda o tem como faturado. Restaurar
-  // por cima seria cancelado -> faturado, que a fase-AJ proíbe.
-  await api('PATCH', `orders?id=eq.${ord}`, { status: 'pedido-cancelado' });
-  let porCima = '';
-  try { porCima = rodar([path.join('scripts', 'restaurar-supabase.js'), pasta, '--executar', '--tabelas', 'orders']); }
-  catch (erro) { porCima = String((erro.stdout || '') + (erro.stderr || '')); }
-  const recusou = /Transicao de status invalida/.test(porCima);
-  check(recusou, 'o gatilho recusou, e o script RELATOU em vez de contornar',
-    (porCima.match(/Transicao de status invalida[^"]*/) || [''])[0].slice(0, 90));
-  const depoisDaRecusa = (await api('GET', `orders?id=eq.${ord}&select=status`)).body[0];
-  check(depoisDaRecusa && depoisDaRecusa.status === 'pedido-cancelado', 'e o banco ficou como estava', depoisDaRecusa && depoisDaRecusa.status);
+  console.log('\n--- 3. apaga a linha (e confere que sumiu mesmo) ---');
+  await supabase.from('people').delete().eq('id', MARCA);
+  const sumiu = await supabase.from('people').select('id').eq('id', MARCA).maybeSingle();
+  check(sumiu.data === null, 'a linha não está mais lá');
 
-  console.log('\n--- 8. limpeza ---');
-  await api('PATCH', `hr_employees?id=eq.${emp}`, { department_id: null });
-  await api('DELETE', `hr_departments?id=eq.${dep}`);
-  await api('DELETE', `hr_employees?id=eq.${emp}`);
-  await api('DELETE', `orders?id=eq.${ord}`);
-  await api('DELETE', `quotes?id=eq.${qte}`);
-  const sobrou = (await api('GET', `orders?id=eq.${ord}&select=id`)).body;
-  check(Array.isArray(sobrou) && sobrou.length === 0, 'dados de teste removidos');
-  // A pasta do backup do teste some junto: ela tem uma cópia dos dados reais.
-  fs.rmSync(path.join(RAIZ, pasta), { recursive: true, force: true });
-  check(!fs.existsSync(path.join(RAIZ, pasta)), 'backup do teste removido', pasta);
+  console.log('\n--- 4. restaura ---');
+  const restauro = rodar('restaurar-banco.js', [arquivo, '--confirmo']);
+  check(restauro.status === 0, 'a restauração terminou bem', String(restauro.status));
+  // O restore derruba e recria as tabelas, então o catálogo lido na subida
+  // ficou falando de objetos que não existem mais. Sem esquecê-lo, as
+  // consultas abaixo montariam SQL contra o schema antigo.
+  esquecerCatalogo();
 
-  console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== A VOLTA FUNCIONA =====');
+  console.log('\n--- 5. o DADO voltou ---');
+  const voltou = await supabase.from('people').select('id, name').eq('id', MARCA).maybeSingle();
+  check(voltou.data !== null, 'a linha marcada está de volta', voltou.data ? voltou.data.name : 'sumiu');
+
+  console.log('\n--- 6. a ESTRUTURA voltou junto (o que o backup antigo não trazia) ---');
+  // Função: existia no schema.sql e o backup por PostgREST nunca a levava.
+  const funcao = await supabase.rpc('next_cadastro_code');
+  check(!funcao.error && funcao.data != null, 'a função next_cadastro_code responde', funcao.error ? funcao.error.message : String(funcao.data));
+
+  // Gatilho: a fase-AJ instalou o guarda de transição de status. Se o dump não
+  // trouxesse gatilhos, o banco voltaria aceitando transição inválida em
+  // silêncio — o pior tipo de restauração "bem-sucedida".
+  const idPedido = `zz-teste-backup-ped-${Date.now()}`;
+  await supabase.from('orders').insert({
+    id: idPedido, type: 'order', code: 999996, status: 'pedido-faturado',
+    date: '2026-08-31', customer: 'PROVA DE BACKUP', amount: 10, items: []
+  });
+  const recusa = await supabase.from('orders').update({ status: 'orcamento' }).eq('id', idPedido);
+  check(Boolean(recusa.error), 'o gatilho de status voltou e ainda recusa', recusa.error ? recusa.error.code : 'PASSOU (não deveria)');
+
+  const { rows } = await consultar(`select count(*)::int as n from pg_indexes where schemaname = 'public'`);
+  check(rows[0].n > 50, 'os índices voltaram', `${rows[0].n} índices`);
+
+  const { rows: tabelas } = await consultar(`select count(*)::int as n from information_schema.tables where table_schema = 'public'`);
+  check(tabelas[0].n > 70, 'as tabelas voltaram', `${tabelas[0].n} tabelas`);
+
+  console.log('\n--- 7. limpeza ---');
+  await supabase.from('orders').delete().eq('id', idPedido);
+  await supabase.from('people').delete().eq('id', MARCA);
+  const limpo = await supabase.from('people').select('id').eq('id', MARCA).maybeSingle();
+  check(limpo.data === null, 'as linhas de prova saíram');
+
+  await fecharPool();
+  console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== O BACKUP VOLTA, COM ESTRUTURA E TUDO =====');
   process.exit(falhas ? 1 : 0);
-})().catch((e) => { console.error('EXPLODIU:', e.message); process.exit(1); });
+})().catch(async (e) => { console.error('EXPLODIU:', e.message); await fecharPool().catch(() => {}); process.exit(1); });

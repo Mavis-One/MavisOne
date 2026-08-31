@@ -2,12 +2,25 @@
 //
 // O ponto deste teste não é a fase-af de hoje — é a tabela que alguém vai criar
 // amanhã. RLS é do tipo de proteção que ninguém percebe faltando: a tela
-// funciona igual (o app usa service_role, que ignora RLS), e a tabela nova
-// fica legível para qualquer um com a chave `anon`, que é pública por natureza.
+// funciona igual, e a tabela nova é a que fica aberta.
 //
-// Conferido em 22/08/2026: o schema não tinha um único `enable row level
-// security`. Ou seja, users, people, orders, nfe e certificado_digital estavam
-// abertos no PostgREST.
+// A HISTÓRIA, porque ela muda o que este teste significa hoje:
+//
+//   22/08/2026 — o schema não tinha um único `enable row level security`, e o
+//   Supabase publicava o PostgREST na internet com a chave `anon`, que é
+//   pública por natureza. users, people, orders, nfe e certificado_digital
+//   estavam legíveis para qualquer um com aquela chave. A fase-af fechou.
+//
+//   31/08/2026 — o banco saiu do Supabase e virou Postgres em Docker. Não há
+//   PostgREST, não há chave anon, e a porta fica presa em 127.0.0.1: a porta
+//   que a RLS trancava deixou de existir.
+//
+// Então por que o teste continua? Porque "a porta não existe" é uma propriedade
+// da INFRAESTRUTURA de hoje, e infraestrutura muda por decisão de uma pessoa
+// numa tarde. A RLS é a camada que continua de pé se alguém publicar este banco
+// de novo — e manter todas as tabelas no mesmo padrão é o que faz a proteção
+// valer sem depender de ninguém lembrar. As últimas seções conferem a
+// infraestrutura nova; as primeiras continuam conferindo a camada de baixo.
 const fs = require('fs');
 const path = require('path');
 
@@ -74,13 +87,43 @@ const inexistentes = [...comRls].filter((t) => !declaradas.has(t)).sort();
 check('e nenhuma migração cita tabela que ninguém cria', inexistentes.length === 0,
   inexistentes.length ? 'INVENTADAS: ' + inexistentes.join(', ') : 'ok');
 
-console.log('\n--- o app não depende de RLS para separar empresa ---');
-// Se alguém trocar a service_role por anon achando que "agora tem RLS", tudo
-// para de funcionar de uma vez. A chave continua sendo a de serviço.
+console.log('\n--- a porta que a fase-af fechava não existe mais (Docker) ---');
+// A fase-af ligou RLS para tapar o PostgREST, que o Supabase publica na
+// internet com uma chave "anon" que é pública por natureza. Com o banco em
+// Docker, não há PostgREST, não há chave anon e não há API HTTP nenhuma na
+// frente do Postgres: a porta que a RLS trancava foi removida junto com o
+// Supabase. A RLS fica ligada assim mesmo — ver o comentário da fase-am.
 const cliente = ler('lib/db/client.js');
-check('o cliente usa a service_role', /SUPABASE_SERVICE_ROLE_KEY/.test(cliente));
-check('e não há cliente Supabase no navegador',
-  !/createClient\s*\(/.test(ler('public/app.js')));
+const conexao = ler('lib/db/conexao.js');
+check('o cliente não fala HTTP com o banco', !/https?:\/\/|fetch\(|createClient/.test(cliente));
+check('a conexão é por DATABASE_URL, uma só', /process\.env\.DATABASE_URL/.test(conexao));
+check('e não sobrou chave do Supabase sendo lida', !/SUPABASE_SERVICE_ROLE_KEY|SUPABASE_URL/.test(cliente + conexao));
+
+// A razão de tudo continuar funcionando com RLS ligada: o app conecta como
+// DONO das tabelas, e dono passa por cima de RLS. Se alguém escrever "force row
+// level security" numa migração, o sistema inteiro para de ler o próprio banco
+// — e o erro seria "0 linhas", não uma exceção, que é o pior tipo de quebra.
+// Sem os comentários: a própria fase-am EXPLICA por escrito que não existe
+// "force row level security" em lugar nenhum, e a frase da explicação casaria
+// com a busca. Comentário citando um comando não executa comando — é o mesmo
+// cuidado que scripts/verificar-migracoes.js já toma para não inventar tabela.
+const migracoes = fs.readdirSync(path.join(RAIZ, 'supabase', 'migrations'))
+  .filter((n) => n.endsWith('.sql'))
+  .map((n) => fs.readFileSync(path.join(RAIZ, 'supabase', 'migrations', n), 'utf8'))
+  .join('\n')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*--.*$/gm, '');
+check('nenhuma migração usa "force row level security"', !/force\s+row\s+level\s+security/i.test(migracoes));
+
+// O compose não pode publicar o Postgres na rede. No Linux o Docker escreve
+// direto no iptables e passa por cima do firewall do sistema: "5432:5432" põe
+// o banco na internet sem que nenhuma regra de firewall avise.
+const compose = ler('docker-compose.yml');
+check('a porta do banco está presa em 127.0.0.1', /"127\.0\.0\.1:\$\{POSTGRES_PORT:-5432\}:5432"/.test(compose),
+  (compose.match(/^\s*-\s*"[^"]*:5432"/m) || ['(não achei o mapeamento)'])[0].trim());
+
+check('e não há cliente de banco no navegador',
+  !/createClient\s*\(|DATABASE_URL/.test(ler('public/app.js')));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

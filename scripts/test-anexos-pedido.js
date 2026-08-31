@@ -2,11 +2,11 @@
 //
 // Passo 7 do módulo Vendas. O que este teste guarda:
 //
-//   1. o bucket é PRIVADO e os bytes saem pelo servidor, nunca por URL do
-//      Storage. URL de arquivo vaza fácil — e-mail, print, log de proxy — e
-//      anexo de pedido tem contrato e dado de cliente dentro;
-//   2. o nome do arquivo é saneado antes de virar caminho. "../" na chave
-//      escaparia da pasta do pedido;
+//   1. os bytes saem pelo servidor e NÃO existe URL para o arquivo. URL de
+//      arquivo vaza fácil — e-mail, print, log de proxy — e anexo de pedido tem
+//      contrato e dado de cliente dentro;
+//   2. o binário mora numa tabela SEPARADA (fase AM), não dentro do pedido:
+//      é o que faz listar pedidos não arrastar megabyte de PDF junto;
 //   3. as rotas de anexo vêm ANTES das genéricas de /api/sales/records/:id,
 //      senão o GET genérico engole ".../anexos/<id>";
 //   4. o corpo da requisição tem teto. Sem teto, um upload grande enche a
@@ -27,37 +27,49 @@ const check = (nome, cond, det) => {
 require('dotenv').config();
 const anexos = require('../lib/db/anexos');
 
-console.log('--- o nome do arquivo não vira caminho perigoso ---');
-// "../" na chave escaparia da pasta do pedido e escreveria em outra.
-check('".." é neutralizado', !anexos.nomeTecnico('../../etc/passwd').includes('/'),
-  anexos.nomeTecnico('../../etc/passwd'));
-check('barra some', !anexos.nomeTecnico('a/b/c.pdf').includes('/'), anexos.nomeTecnico('a/b/c.pdf'));
-// Acento e espaço quebram a chave em alguns clientes de Storage.
-check('acento e espaço saem', anexos.nomeTecnico('Proposta Comercial — Ação.pdf') === 'Proposta-Comercial-Acao.pdf',
-  anexos.nomeTecnico('Proposta Comercial — Ação.pdf'));
-check('nome vazio ainda gera algo', anexos.nomeTecnico('') === 'arquivo');
-// A extensão é o que faz o navegador saber abrir o arquivo.
-check('a extensão sobrevive', anexos.nomeTecnico('contrato.final.pdf').endsWith('.pdf'));
-// Nome absurdamente longo estoura o limite de chave do Storage.
-check('nome gigante é aparado', anexos.nomeTecnico('x'.repeat(500)).length <= 80,
-  String(anexos.nomeTecnico('x'.repeat(500)).length));
-
-console.log('\n--- o bucket é privado, e os bytes saem pelo servidor ---');
+console.log('--- não existe caminho, então não existe travessia (fase AM) ---');
 const anexosSrc = semComentarios(ler('lib/db/anexos.js'));
-check('createBucket declara public: false', /public: false/.test(anexosSrc));
-// Se algum dia alguém trocar download por URL assinada, o arquivo passa a ser
-// legível por quem tiver o link, sem sessão.
-check('não devolve URL do Storage', !/getPublicUrl|createSignedUrl/.test(anexosSrc));
-check('baixa os bytes e devolve buffer', /\.download\(ficha\.caminho\)/.test(anexosSrc) && /Buffer\.from\(await data\.arrayBuffer\(\)\)/.test(anexosSrc));
-// Sem upsert: o caminho já é único pelo id, e sobrescrita transformaria uma
-// colisão improvável em perda silenciosa de arquivo.
-check('upload não sobrescreve', /upsert: false/.test(anexosSrc));
-check('o bucket é criado sozinho na primeira vez', /createBucket\(BUCKET/.test(anexosSrc));
-// Dois uploads na primeira vez chegam juntos: "already exists" é sucesso.
-check('e criação concorrente não é tratada como falha', /already exists/.test(anexosSrc));
+// Enquanto o arquivo morava num bucket, o nome dele virava CAMINHO, e "../" na
+// chave escaparia da pasta do pedido — havia um nomeTecnico() só para isso.
+// Agora o binário é uma linha de tabela endereçada pelo id: o nome do arquivo
+// não endereça mais nada. O check mudou de "sanea o nome" para "não há nome
+// nenhum sendo usado como endereço", que é a versão forte da mesma garantia.
+check('nenhum caminho é montado a partir do nome', !/pedidos\/|caminho/.test(anexosSrc));
+check('o binário é achado pelo id da ficha', /\.eq\('id', ficha\.id\)/.test(anexosSrc));
+check('e o nome original é preservado inteiro', /nome,\s*$/m.test(anexosSrc) || /nome\b/.test(anexosSrc));
+
+console.log('\n--- o arquivo é privado, e os bytes saem pelo servidor ---');
+// Se algum dia alguém devolver uma URL daqui, o arquivo passa a ser legível por
+// quem tiver o link, sem sessão. Não pode existir nem a possibilidade.
+check('não devolve URL de espécie alguma', !/getPublicUrl|createSignedUrl|https?:\/\//.test(anexosSrc));
+check('o Storage do Supabase não é mais tocado', !/supabase\.storage|createBucket|\.upload\(/.test(anexosSrc));
+check('baixa os bytes e devolve buffer', /return \{ bytes: hexParaBytes/.test(anexosSrc));
+// INSERT, não upsert: o id já é único, e sobrescrever transformaria uma colisão
+// improvável em perda silenciosa de arquivo. Com insert, colisão vira erro
+// 23505 e alguém fica sabendo.
+check('gravar não sobrescreve (insert, não upsert)', /from\('pedido_anexo'\)\.insert\(/.test(anexosSrc) && !/pedido_anexo'\)\.upsert/.test(anexosSrc));
 check('há limite por arquivo', /LIMITE_BYTES = 10 \* 1024 \* 1024/.test(anexosSrc));
-// Ficha órfã (arquivo já sumiu do Storage) tem de poder ser removida da tela.
-check('remover arquivo ausente não trava', /not found/i.test(anexosSrc));
+// Ficha órfã (arquivo que não veio do Storage antigo) tem de poder ser removida
+// da tela: um DELETE que não acha nada não é erro em SQL, e o código não
+// inventa um.
+check('remover arquivo ausente não trava', /delete\(\)\.eq\('id', ficha\.id\)/.test(anexosSrc));
+check('e baixar ficha órfã explica o que houve', /não está neste banco/.test(ler('lib/db/anexos.js')));
+
+console.log('\n--- o Content-Type volta para um cabeçalho, então passa por peneira ---');
+check('tipo comum passa', anexos.tipoSeguro('application/pdf') === 'application/pdf');
+check('tipo com quebra de linha vira o genérico', anexos.tipoSeguro('text/html\r\nX-Oi: 1') === 'application/octet-stream',
+  anexos.tipoSeguro('text/html\r\nX-Oi: 1'));
+check('tipo vazio vira o genérico', anexos.tipoSeguro('') === 'application/octet-stream');
+
+console.log('\n--- a tabela do binário existe e é separada do pedido ---');
+const faseAm = ler('supabase/migrations/fase-am-anexos-no-banco.sql');
+check('fase-am cria pedido_anexo', /create table if not exists pedido_anexo/.test(faseAm));
+check('o conteúdo é bytea', /conteudo bytea not null/.test(faseAm));
+// O ponto todo: a ficha continua em orders.attachments, então listar pedido não
+// arrasta megabyte de PDF junto. Se a coluna do binário aparecesse em orders, a
+// objeção da fase AI voltaria a valer.
+check('e o binário NÃO foi parar em orders', !/orders add column[^\n]*conteudo|orders[^\n]*bytea/.test(faseAm));
+check('há índice por registro_id (excluir pedido não varre a tabela)', /create index if not exists idx_pedido_anexo_registro/.test(faseAm));
 
 console.log('\n--- o servidor ---');
 const serverSrc = semComentarios(ler('server.js'));
@@ -90,7 +102,7 @@ check('excluir o pedido apaga os anexos do Storage',
 check('  e antes de apagar o registro',
   serverSrc.indexOf('anexosDb.removerAnexo(ficha)') < serverSrc.indexOf('db.deleteOrder(id) : db.deleteQuote(id)'));
 // Um arquivo que falha ao apagar não pode manter o pedido vivo.
-check('  e falha de um arquivo não trava a exclusão', /arquivo orfao no Storage/.test(serverSrc));
+check('  e falha de um arquivo não trava a exclusão', /try \{[\s\S]{0,80}removerAnexo\(ficha\)[\s\S]{0,120}console\.error\('\[anexos\] arquivo orfao/.test(serverSrc));
 
 console.log('\n--- o corpo da requisição tem teto ---');
 // Sem teto, o corpo era acumulado em memória até o cliente parar de mandar.

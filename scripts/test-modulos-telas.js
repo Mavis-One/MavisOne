@@ -16,13 +16,16 @@ const path = require('path');
 
 const RAIZ = path.join(__dirname, '..');
 
-// lib/db/modulos.js carrega o cliente do Supabase, que recusa a subir sem
-// credencial. Este teste não consulta o banco — só lê os DESCRITORES — então
-// entram credenciais de mentira, o suficiente para o módulo carregar. Se
-// alguma consulta escapar daqui, ela falha na hora em vez de tocar num banco
-// de verdade, que é o comportamento desejado num teste offline.
-process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost:54321';
-process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'chave-de-teste';
+// lib/db/modulos.js carrega o cliente do banco. Este teste não consulta nada —
+// só lê os DESCRITORES — e desde a saída do Supabase ele nem precisa fingir
+// credencial: o pool de conexões de lib/db/conexao.js é criado na primeira
+// CONSULTA, não no require. Sem consulta, nenhuma conexão é aberta.
+//
+// A DATABASE_URL de mentira abaixo é o cinto de segurança: se um dia alguma
+// consulta escapar para cá, ela falha na hora contra uma porta que não existe,
+// em vez de tocar num banco de verdade — que é o comportamento desejado num
+// teste offline.
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://teste:teste@127.0.0.1:1/teste-offline';
 
 const RECURSOS = require(path.join(RAIZ, 'lib', 'db', 'modulos')).RECURSOS;
 

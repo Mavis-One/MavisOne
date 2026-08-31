@@ -1,0 +1,96 @@
+# O BANCO DO MAVISONE — Postgres em Docker, no lugar do Supabase.
+#
+# COMO SUBIR (máquina de desenvolvimento)
+#   docker compose up -d
+#   npm run migracoes        # confere que o banco nasceu completo
+#   npm start
+#
+# Na PRIMEIRA subida o Postgres executa sozinho o supabase/RECRIAR-DO-ZERO.sql
+# montado abaixo, e o banco já sobe com as 32 fases dentro. Não existe mais o
+# passo de colar SQL num editor web — e, com ele, some o risco de colar pela
+# metade e descobrir semanas depois que uma coluna nunca existiu.
+#
+# PARA RECOMEÇAR DO ZERO
+#   docker compose down -v && docker compose up -d
+#   O -v APAGA o volume. É o que faz o initdb rodar de novo — o Postgres só
+#   executa os scripts de inicialização com o diretório de dados vazio. Não tem
+#   desfazer: se havia dado real ali, ele se foi.
+#
+# ---------------------------------------------------------------------------
+# POR QUE A IMAGEM NÃO É A `-alpine`
+# ---------------------------------------------------------------------------
+# Por causa da ORDEM ALFABÉTICA das listas do sistema, que é coisa que se vê na
+# tela todo dia. A imagem alpine usa musl e só tem as locales C e C.UTF-8; com
+# collation C, o Postgres ordena por byte, e "Álvaro" vai parar DEPOIS de
+# "Zeca" em toda lista de cliente, produto e vendedor.
+#
+# O Supabase usava en_US.UTF-8, onde acento ordena junto com a letra sem
+# acento. A imagem Debian tem essa locale, então é ela aqui. Mesma ordenação de
+# antes, nenhuma lista muda de cara na mudança de banco.
+#
+# ---------------------------------------------------------------------------
+# POR QUE A PORTA ESTÁ PRESA EM 127.0.0.1
+# ---------------------------------------------------------------------------
+# "5432:5432" abriria o Postgres para a REDE, não só para esta máquina — e no
+# Linux o Docker escreve direto no iptables, passando por cima do firewall do
+# sistema. Postgres exposto na internet é varrido em minutos.
+#
+# Como o servidor Node roda na mesma máquina, prender em 127.0.0.1 não custa
+# nada e fecha a porta da rua. Se um dia o app rodar em outro host, o certo é
+# uma rede Docker entre os dois (ou um túnel), não abrir a porta.
+#
+# ---------------------------------------------------------------------------
+# LEVAR PARA A VPS (Portainer)
+# ---------------------------------------------------------------------------
+#   1. Stacks -> Add stack -> cole este arquivo;
+#   2. em "Environment variables", defina POSTGRES_PASSWORD com uma senha de
+#      verdade. NÃO deixe o padrão de desenvolvimento;
+#   3. o bind mount do RECRIAR-DO-ZERO.sql abaixo NÃO funciona no Portainer (o
+#      repositório não está na VPS). Duas saídas: usar o deploy por Git
+#      Repository do Portainer, que clona o repo antes de subir, ou subir sem o
+#      volume e aplicar o arquivo uma vez com
+#      `psql "$DATABASE_URL" -f RECRIAR-DO-ZERO.sql`;
+#   4. a stack de backup em deploy/backup-supabase/ aponta para cá trocando o
+#      PGDUMP_URL — e agora ela cobre TUDO, inclusive os anexos de pedido, que
+#      passaram a ser tabela na fase AM.
+
+services:
+  banco:
+    # A major precisa bater com o pg_dump da stack de backup (postgres:17).
+    # pg_dump mais VELHO que o servidor recusa a conexão, e o erro só aparece
+    # na primeira execução do backup — de madrugada, sem ninguém olhando.
+    image: postgres:17
+    container_name: mavisone-banco
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mavisone}
+      # Padrão só para desenvolvimento local, onde a porta não sai da máquina.
+      # Na VPS, defina de verdade nas variáveis da stack.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mavisone}
+      POSTGRES_DB: ${POSTGRES_DB:-mavisone}
+      # Ver o bloco sobre ordenação alfabética lá em cima.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+      TZ: ${TZ:-America/Sao_Paulo}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - dados:/var/lib/postgresql/data
+      # Só de leitura: o container não tem por que escrever no repositório, e
+      # um script de inicialização que pode ser alterado de dentro do container
+      # é um jeito de virar root no banco.
+      - ./supabase/RECRIAR-DO-ZERO.sql:/docker-entrypoint-initdb.d/01-recriar-do-zero.sql:ro
+    healthcheck:
+      # Sem -U, o pg_isready pergunta pelo usuário "root" do container e o
+      # healthcheck fica vermelho com o banco funcionando perfeitamente.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mavisone} -d ${POSTGRES_DB:-mavisone}"]
+      interval: 10s
+      timeout: 5s
+      # start_period generoso porque a PRIMEIRA subida roda as 32 fases do
+      # RECRIAR-DO-ZERO antes de aceitar conexão. Curto demais, o Docker
+      # declara o container doente no meio da criação do banco.
+      start_period: 60s
+      retries: 5
+
+volumes:
+  dados:
+    name: mavisone-banco-dados
