@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-08-25 13:48 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-08-31 16:04 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -17,12 +17,13 @@ Dashboard Geral  (dashboard)  —  0 tela(s) no menu
 --------------------------------------------------
   (sem sub-telas: o módulo é uma tela única)
 
-Vendas  (sales)  —  8 tela(s) no menu
+Vendas  (sales)  —  9 tela(s) no menu
 -------------------------------------
   [app] Pedidos e Orçamentos               Lista de pedidos e orçamentos, com filtros, aprovação e faturamento.
   [app] Nova Venda                         Pedido e orçamento na mesma tela — o campo Status define qual dos dois é.
   [app] NF-e Emitidas                      Notas já emitidas, com DANFE, XML e cancelamento.
   [app] Nova NF-e Avulsa                   Emite uma NF-e sem partir de um pedido.
+  [app] Meu Painel                         As vendas que você mesmo realizou, com a NF-e de cada pedido.
   [app] Painel Vendas                      Totais, faturados, pendentes e ticket médio.
   [app] Painel Vendedor                    Desempenho de cada vendedor.
   [app] Logs de Vendas Importadas          Histórico das importações já processadas.
@@ -185,7 +186,7 @@ Cadastros  (cadastros)  —  19 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 121 telas no menu.
+TOTAL: 14 módulos, 122 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -214,6 +215,8 @@ o próprio arquivo dá de si, no comentário de cabeçalho.
       Catálogo de OPERAÇÕES FISCAIS.
   lib/painel-modulos.js
       Painéis por módulo — a CONTA, separada da tela.
+  lib/painel-pessoal-vendas.js
+      MEU PAINEL — as vendas de quem está logado, e só delas.
   lib/permissoes.js
       Regras de controle de acesso — SEM banco e SEM rede, de propósito.
   lib/relatorios-escopo.js
@@ -338,7 +341,7 @@ Tabelas usadas (68)
   user_roles              users
 
 ==============================================================================
-4. ROTAS DA API (96 encontradas no server.js)
+4. ROTAS DA API (97 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -419,6 +422,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/sales/dashboard                                 GET
   /api/sales/import                                    POST
   /api/sales/meta                                      GET
+  /api/sales/meu-painel                                GET
   /api/sales/records                                   GET POST
   /api/sales/records/…                                 
   /api/sales/records/lote                              POST
@@ -481,7 +485,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-57 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+58 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -510,6 +514,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
   [npm test] test-lancamento-vinculado.js       Lançamento gerado por PEDIDO ou por NF-e: o que dá e o que não dá para mudar.
   [npm test] test-lista-vendas.js               Lista de Pedidos e Orçamentos: colunas, ordenação, paginação e URL.
+  [npm test] test-meu-painel.js                 MEU PAINEL — "minhas vendas" tem que ser MINHAS, provado sem subir nada.
   [npm test] test-module-workspace.js           Testa a Área de Trabalho dos módulos contra as listas REAIS do app.js.
   [avulso]  test-modulos-crud.js               CRUD dos módulos Frota, RH, PCP e Contratos contra o Supabase REAL.
   [avulso]  test-modulos-e2e.js                Fluxo real dos módulos novos pelas rotas HTTP, autenticado.

@@ -36,7 +36,7 @@ function getVisibleModules(state) {
     .map((moduleKey) => ({
       key: moduleKey,
       label: moduleLabels[moduleKey] || moduleKey,
-      items: moduleSubItems[moduleKey] || []
+      items: (typeof telasVisiveis === 'function' ? telasVisiveis(moduleKey) : (moduleSubItems[moduleKey] || []))
     }));
 }
 

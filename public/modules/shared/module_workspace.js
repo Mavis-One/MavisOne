@@ -53,7 +53,15 @@ function svgDoTipo(tipo) {
 // undefined — a referência tem que ser pelo nome puro, como o dashboard já faz.
 // Funciona porque este arquivo carrega antes do app.js mas só LÊ as listas na
 // hora de renderizar, quando o app.js já executou.
+// Delega para telasVisiveis() do app.js, que e' quem sabe filtrar por usuario
+// (as telas marcadas `somenteAdmin` somem para quem nao e' administrador).
+//
+// A funcao nova NASCEU chamada `telasDoModulo`, igual a esta, e as duas sao
+// declaracoes globais: module_workspace.js carrega antes, o app.js declara
+// depois e sobrescreve -- entao esta aqui passou a chamar a si mesma e a Area
+// de Trabalho estourou a pilha. Nomes diferentes, e o desvio fica explicito.
 function telasDoModulo(moduleName) {
+  if (typeof telasVisiveis === 'function') return telasVisiveis(moduleName);
   return (typeof moduleSubItems !== 'undefined' && moduleSubItems[moduleName]) || [];
 }
 

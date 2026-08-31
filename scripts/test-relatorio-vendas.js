@@ -210,9 +210,22 @@ const appSrc = ler('public/app.js');
 check('e a tela de Usuários tem o campo de vínculo', /name="sellerId"/.test(appSrc));
 check('  com a lista de vendedores vinda do servidor', /data\.sellers/.test(appSrc));
 check('  e dá para trocar o vínculo de quem já existe', /class="user-seller"/.test(appSrc));
-// Admin não tem vínculo a escolher: ele vê tudo por outro caminho, e um select
-// ali sugeriria que o acesso dele depende disso.
-check('  admin não recebe seletor, e a tela diz por quê', /Admin — vê todas as vendas/.test(appSrc));
+// ESTE CHECK JÁ COBROU O CONTRÁRIO, e vale registrar por quê mudou.
+//
+// Enquanto o vínculo servia só ao Relatório, esconder o seletor do admin era o
+// certo: lá ele é irrestrito, o vínculo não muda nada para ele, e um select ali
+// sugeriria que o acesso dele dependia daquilo. A tela dizia "Admin — vê todas
+// as vendas" no lugar do campo, e era verdade.
+//
+// O Meu Painel quebrou essa premissa. Ele pergunta outra coisa — "o que EU
+// vendi" — e responde a partir deste mesmo vínculo, para admin inclusive. Sem o
+// seletor, um administrador que também vende não tinha por onde se vincular, e
+// o painel pessoal dele ficava vazio para sempre sem explicação nenhuma.
+// Ver lib/relatorios-escopo.js (escopoPessoal) e scripts/test-meu-painel.js.
+check('  o seletor de vendedor aparece para TODO usuário, admin incluído',
+  !/Admin — vê todas as vendas/.test(appSrc));
+check('  e a tela explica ao admin para que serve o vínculo dele',
+  /Meu Painel dele/.test(appSrc));
 // O servidor precisa mandar a lista, senão o select nasce vazio.
 check('o servidor manda os vendedores para a tela de Usuários',
   /sellers: canManageUsers \? getSellersDirectory\(data\)/.test(serverSrc));

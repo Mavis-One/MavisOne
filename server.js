@@ -59,6 +59,8 @@ const salesBulk = require('./public/modules/shared/sales_bulk_actions');
 // dois em funções puras. Ver o cabeçalho de lib/relatorios-escopo.js.
 const escopoLib = require('./lib/relatorios-escopo');
 const relatoriosVendas = require('./lib/relatorios-vendas');
+// Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
+const painelPessoal = require('./lib/painel-pessoal-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
@@ -502,6 +504,34 @@ async function fetchCepData(cep) {
   };
 }
 
+/**
+ * O usuário da requisição, buscado UMA VEZ por requisição.
+ *
+ * POR QUE A MEMÓRIA EXISTE
+ * ------------------------
+ * Esta função é chamada no mínimo duas vezes em toda chamada de API: o portão
+ * central (verificarAcesso) precisa do usuário para decidir a permissão, e
+ * depois a rota chama de novo para usar os dados dele. Cada chamada era um
+ * `select * from users` no Supabase.
+ *
+ * Medido neste projeto: 259ms por consulta ao banco, INDEPENDENTE do tamanho
+ * do resultado — um SELECT que devolve zero linhas custa o mesmo que um que
+ * devolve a tabela toda, porque o tempo é viagem, não dado. Duas buscas do
+ * mesmo usuário eram meio segundo de espera por requisição, para responder
+ * exatamente a mesma coisa duas vezes.
+ *
+ * O WeakMap é chaveado no próprio `req`: a memória nasce e morre com a
+ * requisição, não existe cache entre usuários e não há o que expirar. Um
+ * cache por tempo (como o do RBAC) seria errado aqui — usuário bloqueado no
+ * meio do expediente continuaria entrando até o prazo virar.
+ *
+ * A CHECAGEM DE SESSÃO FICA FORA DA MEMÓRIA, e isso é de propósito: ela é em
+ * memória, custa nada, e é o último ponto em que uma sessão vencida ainda
+ * poderia passar. Memorizar o resultado dela seria trocar o meio segundo por
+ * um buraco.
+ */
+const usuarioDaRequisicao = new WeakMap();
+
 async function getCurrentUser(req) {
   const token = req.headers['x-auth-token'];
   // Confere a virada aqui também, e não só no portão da requisição: qualquer
@@ -510,12 +540,28 @@ async function getCurrentUser(req) {
   if (!token || derrubarSeExpirou(token) || !sessions[token]) {
     return null;
   }
+  if (usuarioDaRequisicao.has(req)) return usuarioDaRequisicao.get(req);
+
   const { userId } = sessions[token];
   const user = await db.getUserById(userId);
   // Bloqueado é como se não estivesse logado — inclusive para quem já tinha
   // sessão aberta quando o acesso foi suspenso.
-  if (!user || user.active === false) return null;
-  return user;
+  const resolvido = !user || user.active === false ? null : user;
+  usuarioDaRequisicao.set(req, resolvido);
+  return resolvido;
+}
+
+/**
+ * Esquece o usuário memorizado desta requisição.
+ *
+ * Só faz falta quando a própria requisição ALTERA a linha do usuário logado e
+ * precisa lê-la de novo depois — trocar o tema, fixar um atalho, editar o
+ * próprio cadastro. Sem isto, a segunda leitura devolveria o estado de antes
+ * da gravação e a tela mostraria o valor velho como se nada tivesse sido
+ * salvo. É o preço da memória, e é barato quando explícito.
+ */
+function esquecerUsuarioDaRequisicao(req) {
+  usuarioDaRequisicao.delete(req);
 }
 
 /**
@@ -1802,9 +1848,44 @@ async function duplicarSalesRecord(serializado, data, user) {
   return gravado;
 }
 
-function buildSalesDashboardSummary(data) {
-  const orders = (data.orders || []).map((record) => serializeSalesRecord(record, data));
-  const quotes = (data.quotes || []).map((record) => serializeSalesRecord(record, data));
+/**
+ * Os números do Painel Vendas e do Painel Vendedor — RECORTADOS PELO ESCOPO.
+ *
+ * O ESCOPO É OBRIGATÓRIO, E A FUNÇÃO QUEBRA SEM ELE
+ * -------------------------------------------------
+ * Esta função já foi `buildSalesDashboardSummary(data)`, sem recorte nenhum, e
+ * o defeito que isso produzia era exatamente o oposto de barulhento: um
+ * vendedor comum abria o Painel Vendedor, escolhia o colega no seletor e lia a
+ * lista de pedidos dele inteira — cliente, valor e data — sem erro nenhum
+ * aparecer, porque a rota entregava `bySeller` com TODO MUNDO e cabia à tela
+ * desenhar só um. Tela não é controle de acesso.
+ *
+ * Deixar o parâmetro opcional, com "sem escopo = mostra tudo", seria repetir o
+ * mesmo defeito na primeira rota nova que esquecesse de passá-lo. Por isso a
+ * ausência é ERRO, e não permissão: quem chama tem que ter decidido de quem são
+ * as vendas antes de pedir os números.
+ *
+ * QUAL ESCOPO ENTRA AQUI
+ * ----------------------
+ * `escopoDeVendas` (o do Relatório), e não `escopoPessoal` (o do Meu Painel).
+ * São perguntas diferentes e a diferença é o administrador: aqui ele PRECISA
+ * ver o time inteiro, porque esta é a tela de gestão. O vendedor comum vê só a
+ * si mesmo, e quem não tem vínculo não vê nada.
+ *
+ * O RECORTE ACONTECE UMA VEZ, NO TOPO
+ * -----------------------------------
+ * Filtrar `orders` e `quotes` logo na entrada faz overview, bySeller e ticket
+ * médio saírem todos do mesmo universo. Recortar só o `bySeller` deixaria o
+ * card "Total vendido" somando a empresa inteira ao lado de uma tabela com
+ * quatro linhas — o descasamento clássico de quem filtra em dois lugares.
+ */
+function buildSalesDashboardSummary(data, escopo) {
+  if (!escopo) {
+    throw new Error('buildSalesDashboardSummary exige um escopo (lib/relatorios-escopo.js). Sem ele a resposta vazaria as vendas de todos os vendedores.');
+  }
+  const visivel = (record) => escopoLib.vendaVisivel(escopo, record.sellerId);
+  const orders = (data.orders || []).filter(visivel).map((record) => serializeSalesRecord(record, data));
+  const quotes = (data.quotes || []).filter(visivel).map((record) => serializeSalesRecord(record, data));
 
   const valorPedidos = Math.round(orders.reduce((sum, o) => sum + Number(o.amount || 0), 0) * 100) / 100;
   const valorOrcamentos = Math.round(quotes.reduce((sum, q) => sum + Number(q.amount || 0), 0) * 100) / 100;
@@ -1827,7 +1908,16 @@ function buildSalesDashboardSummary(data) {
     ticketMedio: orders.length ? Math.round((valorPedidos / orders.length) * 100) / 100 : 0
   };
 
-  const bySeller = getSellersDirectory(data).map((seller) => {
+  // A LISTA DE VENDEDORES TAMBÉM É RECORTADA, e não só os pedidos de cada um.
+  //
+  // Com os pedidos filtrados mas a lista inteira, o seletor do Painel Vendedor
+  // continuaria mostrando o nome de todos os colegas — cada um com zero pedidos.
+  // Vazaria menos (nome, e não valor), mas continuaria vazando: quem é a equipe
+  // de vendas, quantas pessoas são e como se chamam. E a tela ficaria absurda,
+  // com um seletor de dez nomes que sempre devolvem lista vazia.
+  const bySeller = getSellersDirectory(data)
+    .filter((seller) => escopoLib.vendaVisivel(escopo, seller.id))
+    .map((seller) => {
     const sellerOrders = orders.filter((o) => o.sellerId === seller.id);
     const valorTotal = Math.round(sellerOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0) * 100) / 100;
     return {
@@ -4192,14 +4282,24 @@ const server = http.createServer(async (req, res) => {
     // As coleções legadas data.sales/data.purchases do db.json não recebem mais
     // escrita: vendas viraram orders/quotes e compras viraram purchases, ambas no
     // Supabase. Sem estes syncs o painel somava arrays sempre vazios e exibia R$ 0.
-    if (canSales) await syncSalesData(data);
-    if (canPurchases) await syncPurchasesData(data);
- await syncFinanceData(data);
+    // Uma ida so' ao banco. Eram tres syncs em fila mais a consulta de
+    // produtos -- quatro viagens de ~260ms cada (medido) para buscar colecoes
+    // que nao dependem umas das outras. O `if` na frente escondia o custo.
+    const [products] = await Promise.all([
+      canStock ? db.getProducts() : Promise.resolve([]),
+      canSales ? syncSalesData(data) : null,
+      canPurchases ? syncPurchasesData(data) : null,
+      syncFinanceData(data)
+    ]);
 
-    const products = canStock ? await db.getProducts() : [];
-
-    // Reaproveita o mesmo cálculo do Painel de Vendas para que os dois batam.
-    const salesSummary = canSales ? buildSalesDashboardSummary(data).overview : null;
+    // Reaproveita o mesmo cálculo do Painel de Vendas para que os dois batam —
+    // inclusive no recorte. Sem o escopo aqui, o cartão de vendas do Dashboard
+    // Geral mostraria o faturamento da empresa inteira para um vendedor que,
+    // duas telas adiante, só consegue ver os próprios pedidos: os dois números
+    // discordariam, e o maior deles seria o que ele não deveria ver.
+    const salesSummary = canSales
+      ? buildSalesDashboardSummary(data, escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) })).overview
+      : null;
     const salesTotal = salesSummary ? salesSummary.valorPedidos : 0;
 
     // Compra cancelada não é custo — o Histórico de Compras usa o mesmo critério.
@@ -4276,9 +4376,13 @@ const server = http.createServer(async (req, res) => {
       };
 
       const data = loadData();
-      await syncCadastroData(data);
-      if (permissoes.finance) await syncFinanceData(data);
-      if (permissoes.sales) await syncSalesData(data);
+      // Uma ida so': os tres syncs escrevem em chaves distintas de `data` e
+      // nenhum le o do outro, entao esperar um pelo outro era so' latencia.
+      await Promise.all([
+        syncCadastroData(data),
+        permissoes.finance ? syncFinanceData(data) : null,
+        permissoes.sales ? syncSalesData(data) : null
+      ]);
 
       // A tabela fiscal pode não responder (migração pendente, estabelecimento
       // ainda não cadastrado). O painel degrada para as outras fontes em vez
@@ -4813,8 +4917,14 @@ const server = http.createServer(async (req, res) => {
   // ==========================================================================
   async function montarRelatorioDeVendas(req, params) {
     const data = loadData();
-    await syncCadastroData(data);
-    await syncSalesData(data);
+    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 2x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncSalesData(data)
+    ]);
     const user = await getCurrentUser(req);
     if (!user) return { erro: 'Não autenticado', status: 401 };
 
@@ -4889,12 +4999,24 @@ const server = http.createServer(async (req, res) => {
     }
 
     const granularity = url.searchParams.get('granularity') || 'month';
-    await syncCadastroData(data);
-    await syncSalesData(data);
-    await syncFinanceData(data);
+    // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 3x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncSalesData(data),
+      syncFinanceData(data)
+    ]);
     const products = await db.getProducts();
 
-    const vendas = buildSalesDashboardSummary(data);
+    // Mesmo recorte do Painel Vendedor, e pelo mesmo motivo: o bloco
+    // "vendedores" deste relatório mostra o total de cada pessoa da equipe.
+    // Sem escopo, um vendedor comum com acesso a Relatórios lia o faturamento
+    // do colega — sem a lista de pedidos, mas com o número, que é o que
+    // interessa a quem está comparando comissão.
+    const escopoVendas = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+    const vendas = buildSalesDashboardSummary(data, escopoVendas);
     const financeiro = buildFinanceDashboardSummary(data, url.searchParams);
     const lancamentos = (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry));
 
@@ -5005,20 +5127,97 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/sales/dashboard' && req.method === 'GET') {
     const data = loadData();
-    await syncCadastroData(data);
-    await syncSalesData(data);
+    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 2x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncSalesData(data)
+    ]);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    return sendJson(res, buildSalesDashboardSummary(data));
+    // O Painel Vendedor é PRIVADO POR VENDEDOR: o gestor vê o time inteiro, o
+    // vendedor comum vê só a si mesmo, e quem não tem vínculo não vê ninguém.
+    // O escopo vai junto na resposta porque a tela precisa saber se desenha o
+    // seletor de vendedor (gestor) ou o nome fixo de uma pessoa só (vendedor) —
+    // mas quem decide o CONTEÚDO é o recorte aqui, não esse campo.
+    const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+    const resumo = buildSalesDashboardSummary(data, escopo);
+    return sendJson(res, {
+      ...resumo,
+      escopo: {
+        tipo: escopo.tipo,
+        rotulo: escopo.rotulo,
+        motivo: escopo.motivo,
+        podeEscolherVendedor: escopo.podeEscolherVendedor,
+        temAcesso: escopo.tipo !== escopoLib.NENHUM
+      }
+    });
+  }
+
+  // ==========================================================================
+  // MEU PAINEL — as vendas do usuário autenticado, e só delas.
+  //
+  // A diferença para /api/sales/dashboard, que fica logo acima, é toda a razão
+  // desta rota existir: aquela devolve `bySeller` com a lista de pedidos de
+  // TODO MUNDO e deixa a tela escolher qual mostrar. Serve para o Painel
+  // Vendedor, que é uma tela de gestão. Não serve aqui: quem tem acesso ao
+  // módulo Vendas receberia, no corpo da resposta, os pedidos dos colegas — e o
+  // fato de a tela mostrar só um deles não muda o que trafegou.
+  //
+  // Aqui o recorte é feito ANTES de montar a resposta, a partir do usuário da
+  // sessão. Não existe parâmetro de vendedor para mandar: escopoPessoal() não
+  // lê a query string, e o que ela devolve nunca é "sem restrição" — nem para
+  // administrador (ver o cabeçalho em lib/relatorios-escopo.js).
+  //
+  // syncNfeData é obrigatório e não é detalhe: sem ele `data.nfe` vem vazio, o
+  // serializer não acha a nota do pedido e a coluna NF-e — que é metade do que
+  // esta tela existe para mostrar — sai em branco em toda linha, sem erro
+  // nenhum aparecer.
+  // ==========================================================================
+  if (pathname === '/api/sales/meu-painel' && req.method === 'GET') {
+    const data = loadData();
+    // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 3x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncSalesData(data),
+      syncNfeData(data)
+    ]);
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const escopo = escopoLib.escopoPessoal(user);
+    const registros = [...data.orders, ...data.quotes].map((r) => serializeSalesRecord(r, data));
+    return sendJson(res, painelPessoal.montarPainel({
+      registros,
+      escopo,
+      // Só o período vem da tela. Qualquer outro parâmetro na URL é ignorado
+      // por não ser lido — inclusive um `vendedorId` que alguém tente forjar.
+      filtros: {
+        dataDe: url.searchParams.get('dataDe') || '',
+        dataAte: url.searchParams.get('dataAte') || ''
+      }
+    }));
   }
 
   if (pathname === '/api/sales/records' && req.method === 'GET') {
     const data = loadData();
-    await syncCadastroData(data);
-    await syncSalesData(data);
-    await syncNfeData(data);
+    // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 3x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncSalesData(data),
+      syncNfeData(data)
+    ]);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -5079,9 +5278,15 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/records' && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncNfeData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncNfeData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -5190,8 +5395,14 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/records/lote' && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncSalesData(data);
+      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 2x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncSalesData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -5364,8 +5575,14 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/sales/records/') && req.method === 'GET') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncSalesData(data);
+      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 2x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncSalesData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -5382,9 +5599,15 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/sales/records/') && req.method === 'PUT') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncSalesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncSalesData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -6957,8 +7180,14 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/purchases' && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 2x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('purchases')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -7785,9 +8014,15 @@ const server = http.createServer(async (req, res) => {
       // não protege esse caso — são tabelas diferentes das de verdade usadas
       // aqui, orders/quotes/purchases). Checa direto nas duas fontes.
       const data = loadData();
-      await syncSalesData(data);
-      await syncPurchasesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncSalesData(data),
+        syncPurchasesData(data),
+        syncFinanceData(data)
+      ]);
       const emUsoEmVendas = [...data.orders, ...data.quotes].some((record) =>
         (record.items || []).some((item) => item.productId === id));
       const emUsoEmCompras = (data.purchases || []).some((purchase) => purchase.productId === id);
@@ -7809,8 +8044,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     // data.purchases só é populado pelo sync com o Supabase; sem isto vinha vazio.
-    await syncPurchasesData(data);
-    await syncFinanceData(data);
+    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 2x essa latencia por nada.
+    await Promise.all([
+      syncPurchasesData(data),
+      syncFinanceData(data)
+    ]);
     return sendJson(res, { finance: data.finance, sales: data.sales, purchases: data.purchases });
   }
 
@@ -7830,8 +8071,14 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/finance/meta' && req.method === 'GET') {
     const data = loadData();
-    await syncCadastroData(data);
-    await syncFinanceData(data);
+    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 2x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncFinanceData(data)
+    ]);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -7920,9 +8167,15 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/entries' && req.method === 'GET') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncPurchasesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -7941,9 +8194,15 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/entries' && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncPurchasesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -7998,9 +8257,15 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/payments$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncPurchasesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8063,9 +8328,15 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/estorno$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncPurchasesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8101,9 +8372,15 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/entries\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncPurchasesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8131,9 +8408,15 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'PUT') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncPurchasesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8240,9 +8523,15 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'GET') {
     const data = loadData();
-    await syncCadastroData(data);
-    await syncPurchasesData(data);
-    await syncFinanceData(data);
+    // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 3x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncPurchasesData(data),
+      syncFinanceData(data)
+    ]);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8258,8 +8547,14 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/nfe' && req.method === 'GET') {
     try {
       const data = loadData();
-      await syncNfeData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 2x essa latencia por nada.
+      await Promise.all([
+        syncNfeData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8295,8 +8590,14 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/nfe' && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncFinanceData(data);
-      await syncNfeData(data);
+      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 2x essa latencia por nada.
+      await Promise.all([
+        syncFinanceData(data),
+        syncNfeData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8425,8 +8726,14 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/nfe\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncNfeData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 2x essa latencia por nada.
+      await Promise.all([
+        syncNfeData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8480,8 +8787,14 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/finance/nfe/') && req.method === 'GET') {
     const data = loadData();
-    await syncNfeData(data);
-    await syncFinanceData(data);
+    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 2x essa latencia por nada.
+    await Promise.all([
+      syncNfeData(data),
+      syncFinanceData(data)
+    ]);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8593,9 +8906,15 @@ const server = http.createServer(async (req, res) => {
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/matches$/.test(pathname) && req.method === 'GET') {
     const data = loadData();
-    await syncCadastroData(data);
-    await syncPurchasesData(data);
-    await syncFinanceData(data);
+    // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 3x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncPurchasesData(data),
+      syncFinanceData(data)
+    ]);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8611,9 +8930,15 @@ const server = http.createServer(async (req, res) => {
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/conciliar$/.test(pathname) && req.method === 'POST') {
     try {
       const data = loadData();
-      await syncCadastroData(data);
-      await syncPurchasesData(data);
-      await syncFinanceData(data);
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8919,17 +9244,23 @@ const server = http.createServer(async (req, res) => {
     const canManageUsers = await ehAdmin(user);
     const canSeeSales = user.allowedModules.includes('sales');
     const canSeePurchases = user.allowedModules.includes('purchases');
-    // Mesmas coleções legadas vazias do /api/dashboard: precisam vir do Supabase.
-    if (canSeeSales) await syncSalesData(data);
-    if (canSeePurchases) await syncPurchasesData(data);
- await syncFinanceData(data);
-    // people vem do Supabase: sem este sync, a lista de vendedores do vinculo
-    // chega vazia e a tela sugere que ninguem e' vendedor.
-    if (canManageUsers) await syncCadastroData(data);
+    // TUDO NUMA IDA SÓ. Estes syncs eram quatro `await` em fila, cada um atrás
+    // do seu `if` — o que escondia o custo: quem tem os quatro módulos pagava
+    // quatro viagens ao Supabase (~260ms cada, medido) para buscar coleções que
+    // não dependem umas das outras. Esta tela era a mais lenta do sistema por
+    // isso, e não por trazer muito dado.
+    //
+    // Mesmas coleções legadas vazias do /api/dashboard: precisam vir do
+    // Supabase. `people` entra junto porque, sem ele, a lista de vendedores do
+    // vínculo chega vazia e a tela sugere que ninguém é vendedor.
     const [settings, allUsers, products] = await Promise.all([
       db.getSettings(),
       canManageUsers ? db.getUsers() : Promise.resolve([]),
-      user.allowedModules.includes('stock') ? db.getProducts() : Promise.resolve([])
+      user.allowedModules.includes('stock') ? db.getProducts() : Promise.resolve([]),
+      canSeeSales ? syncSalesData(data) : null,
+      canSeePurchases ? syncPurchasesData(data) : null,
+      syncFinanceData(data),
+      canManageUsers ? syncCadastroData(data) : null
     ]);
     const totals = {
       totalUsers: canManageUsers ? allUsers.length : 0,
@@ -9209,6 +9540,12 @@ const server = http.createServer(async (req, res) => {
         // Ausente = nao mexe no vinculo; vazio = desvincula. Ver updateUser.
         sellerId: body.sellerId === undefined ? undefined : String(body.sellerId || '').trim()
       });
+      // O alvo pode ser o próprio requisitante (um admin editando a si mesmo).
+      // Nada nesta rota lê o usuário depois da gravação hoje, mas quem vier
+      // acrescentar um passo aqui embaixo leria a versão de antes do UPDATE,
+      // memorizada no começo da requisição — e o bug seria "salvei e a tela
+      // mostra o valor velho", que ninguém procura no cache.
+      if (id === requester.id) esquecerUsuarioDaRequisicao(req);
       const data = loadData();
       data.auditLogs = data.auditLogs || [];
       await registrarAuditoria({ action: 'updateUser', targetId: id, targetUsername: target.username, byId: requester.id, byName: requester.name });

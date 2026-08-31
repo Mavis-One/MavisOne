@@ -1162,6 +1162,14 @@ button.success:hover { background: var(--success-hover); }
 .checkbox-grid { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; }
 .checkbox-grid label { display: flex; gap: 6px; align-items: center; font-weight: 400; }
 
+/* Botão que mora dentro de célula de tabela e precisa parecer um link, não um
+   botão: a regra global de button dá a ele padding, fundo e borda, e uma coluna
+   inteira de botões cheios (o número do pedido em Meu Painel) vira uma parede
+   que compete com o dado ao lado. Herda o tamanho da célula de propósito — se a
+   tabela mudar de fonte, a coluna não fica fora de escala. */
+.link-button { background: transparent; border: 0; padding: 0; margin: 0; color: var(--primary); font: inherit; cursor: pointer; text-align: left; }
+.link-button:hover { text-decoration: underline; }
+
 .icon-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding: 0; border-radius:8px; background: transparent; border: none; cursor: pointer; color: var(--danger); }
 .icon-button.edit { color: var(--primary); }
 .table-actions td .icon-button + .icon-button { margin-left: 4px; }

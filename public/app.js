@@ -68,6 +68,16 @@ function restoreLastRoute() {
   }
 }
 
+// Admin pelo campo antigo `role` OU pelo papel novo (user_roles), do mesmo
+// jeito que permissoes.ehAdministrador() decide no servidor. Quem foi promovido
+// só na tela de Papéis e Permissões chega aqui com role='user', e checar apenas
+// `role` esconderia dele metade do sistema.
+function usuarioEhAdmin() {
+  if (!state.user) return false;
+  return state.user.role === 'admin'
+    || (Array.isArray(state.user.roles) && state.user.roles.includes('admin'));
+}
+
 function hasModuleAccess(moduleName) {
   if (!state.user) return false;
   if (moduleName === 'dashboard') return true;
@@ -75,8 +85,33 @@ function hasModuleAccess(moduleName) {
   // direto para admin). Sem esta linha os dois discordavam: a API liberava e o
   // menu escondia, então cada módulo novo nascia invisível até alguém marcá-lo
   // à mão em Configurações > Usuários, para cada admin, um por um.
-  if (state.user.role === 'admin' || (Array.isArray(state.user.roles) && state.user.roles.includes('admin'))) return true;
+  if (usuarioEhAdmin()) return true;
   return Array.isArray(state.user.allowedModules) && state.user.allowedModules.includes(moduleName);
+}
+
+/**
+ * As telas de um módulo QUE ESTE USUÁRIO PODE VER.
+ *
+ * A permissão do sistema é por MÓDULO, e isso não basta aqui: Meu Painel e
+ * Painel Vendedor moram os dois dentro de `sales`, e um vendedor precisa do
+ * primeiro sem poder abrir o segundo. `somenteAdmin` na entrada do catálogo é o
+ * recorte mais fino, por TELA.
+ *
+ * Passa a existir UMA função em vez de cinco filtros espalhados porque
+ * moduleSubItems alimenta cinco lugares (menu lateral, submenu, favoritos do
+ * Dashboard, Área de Trabalho e a validação de rota salva). Filtrar em quatro e
+ * esquecer o quinto deixa a tela alcançável por aquele caminho — e o quinto,
+ * historicamente, é sempre a rota salva no navegador.
+ *
+ * ISTO É APRESENTAÇÃO, NÃO É O CONTROLE DE ACESSO. Quem impede de verdade é o
+ * escopo aplicado no servidor (lib/relatorios-escopo.js): mesmo que alguém
+ * force a tela a abrir, a resposta da API vem recortada. Esconder o menu evita
+ * o convite; não é o que segura a porta.
+ */
+function telasVisiveis(moduleName) {
+  const todas = moduleSubItems[moduleName] || [];
+  if (usuarioEhAdmin()) return todas;
+  return todas.filter((item) => !item.somenteAdmin);
 }
 
 function getRouteKey(moduleName, subKey) {
@@ -164,7 +199,7 @@ function goBackToPreviousRoute() {
 // esquecer dele deixava o módulo sem submenu, sem erro nenhum aparecer.
 // Dashboard fica de fora porque não tem sub-telas.
 function getSecondarySidebarConfig(moduleName) {
-  const itens = moduleSubItems[moduleName];
+  const itens = telasVisiveis(moduleName);
   if (!moduleName || moduleName === 'dashboard' || !itens || !itens.length) return null;
   return { module: moduleName, title: moduleLabels[moduleName] || moduleName, subtitle: 'Fluxos', items: itens };
 }
@@ -276,6 +311,11 @@ function getDashboardPinLabel(pinKey) {
   if (!subKey) {
     return moduleLabel;
   }
+  // Catálogo INTEIRO de propósito, e não telasVisiveis: aqui só se traduz uma
+  // chave em nome legível. Um favorito antigo apontando para uma tela que o
+  // usuário deixou de poder abrir deve continuar dizendo "Vendas > Painel
+  // Vendedor" em vez de "vendas > seller_dashboard" — quem impede a abertura é
+  // a lista filtrada e a guarda no render, não o rótulo.
   const subItem = (moduleSubItems[moduleKey] || []).find((item) => item.key === subKey);
   return `${moduleLabel} > ${subItem ? subItem.label : subKey}`;
 }
@@ -1138,7 +1178,7 @@ function renderApp() {
                        se está ao olhar para o módulo. -->
                 </div>
                 <div class="submenu">
-                  ${ (moduleSubItems[module] || []).map((sub) => `
+                  ${ telasVisiveis(module).map((sub) => `
                     <div class="sub-item-row">
                       <button type="button" class="sub-item sub-open-item ${state.activeModule === module && state.activeSub === sub.key ? 'active' : ''}" data-module="${module}" data-sub="${sub.key}">${sub.label}</button>
                     </div>
@@ -1476,8 +1516,18 @@ const moduleSubItems = {
     { key: 'new_sale', label: 'Nova Venda', desc: 'Pedido e orçamento na mesma tela — o campo Status define qual dos dois é.' },
     { key: 'nfes', label: 'NF-e Emitidas', desc: 'Notas já emitidas, com DANFE, XML e cancelamento.' },
     { key: 'new_nfe', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
+    // Meu Painel vem antes dos outros dois de propósito: é a única das três
+    // telas de painel que qualquer vendedor abre para si. As outras duas são de
+    // gestão (mostram o time inteiro), e ficar em cima dá a impressão de que a
+    // pessoa precisa passar por elas para achar as próprias vendas.
+    { key: 'my_panel', label: 'Meu Painel', desc: 'As vendas que você mesmo realizou, com a NF-e de cada pedido.' },
     { key: 'sales_dashboard', label: 'Painel Vendas', desc: 'Totais, faturados, pendentes e ticket médio.' },
-    { key: 'seller_dashboard', label: 'Painel Vendedor', desc: 'Desempenho de cada vendedor.' },
+    // SÓ ADMINISTRADOR. Esta é a tela de gestão: ela compara o desempenho de
+    // uma pessoa com o das outras, e comparar exige ver as outras. Um vendedor
+    // comum já tem o Meu Painel, que responde a mesma pergunta sobre ele
+    // mesmo — abrir esta aqui, mesmo recortada a uma linha só, seria mostrar
+    // um seletor de vendedor com uma opção e o convite de tentar as demais.
+    { key: 'seller_dashboard', label: 'Painel Vendedor', desc: 'Desempenho de cada vendedor.', somenteAdmin: true },
     { key: 'import_logs', label: 'Logs de Vendas Importadas', desc: 'Histórico das importações já processadas.' },
     { key: 'import_sales', label: 'Importar Vendas', desc: 'Carrega vendas em lote a partir de um CSV.' }
   ],
@@ -1998,7 +2048,7 @@ async function loadModule(moduleName) {
         state.salesDraft.novoStatus = rawSub === 'new_quote' ? 'orcamento' : 'pedido';
       }
       const subAlvo = ROTAS_ANTIGAS[rawSub] || rawSub;
-      const sub = moduleSubItems.sales.some((item) => item.key === subAlvo) ? subAlvo : 'orders_quotes';
+      const sub = telasVisiveis('sales').some((item) => item.key === subAlvo) ? subAlvo : 'orders_quotes';
       // Corrige o estado, não só a variável: senão o menu lateral segue sem
       // destacar nada e a rota morta continua sendo gravada.
       if (sub !== rawSub) state.activeSub = sub;
@@ -4647,10 +4697,129 @@ async function loadModule(moduleName) {
         return;
       }
 
+      // Sub-aba: Meu Painel — as vendas de quem está logado.
+      //
+      // A tela NÃO manda vendedor nenhum para o servidor, e não é por
+      // delicadeza: quem decide de quem são as vendas é a sessão, do outro lado
+      // (ver /api/sales/meu-painel e lib/relatorios-escopo.js). Se esta tela um
+      // dia passar a mandar um id, ele será ignorado — o que significa que não
+      // existe defeito aqui capaz de vazar a venda de um colega.
+      //
+      // O único parâmetro é o período, e ele fica em state.salesDraft para
+      // sobreviver ao redesenho: loadModule('sales') refaz a tela inteira, e
+      // sem isso o filtro se apagaria sozinho a cada consulta.
+      if (sub === 'my_panel') {
+        const de = state.salesDraft?.meuPainelDe || '';
+        const ate = state.salesDraft?.meuPainelAte || '';
+        const query = new URLSearchParams();
+        if (de) query.set('dataDe', de);
+        if (ate) query.set('dataAte', ate);
+        const painel = await api(`/api/sales/meu-painel${query.toString() ? `?${query}` : ''}`);
+        const ind = painel.indicadores;
+
+        const filtro = `
+          <div class="panel">
+            <div class="row">
+              <label>De<input type="date" id="meuPainelDe" value="${escapeHtml(de)}" /></label>
+              <label>Até<input type="date" id="meuPainelAte" value="${escapeHtml(ate)}" /></label>
+              <label>&nbsp;<button type="button" id="meuPainelAplicar">Aplicar período</button></label>
+              <label>&nbsp;<button type="button" class="secondary" id="meuPainelLimpar">Ver tudo</button></label>
+            </div>
+          </div>
+        `;
+
+        // Sem vínculo com um vendedor não há "minhas vendas" a mostrar — nem
+        // para administrador. A tela diz o motivo e o caminho da correção em
+        // vez de abrir uma tabela vazia, que passaria a impressão de que a
+        // pessoa não vendeu nada.
+        if (!painel.escopo.temAcesso) {
+          content.innerHTML = `
+            <div class="panel">
+              <h3>Meu Painel</h3>
+              <p class="muted">${escapeHtml(painel.escopo.motivo || 'Sem vendas atribuídas ao seu usuário.')}</p>
+            </div>
+          `;
+          return;
+        }
+
+        content.innerHTML = `
+          ${filtro}
+          <div class="finance-stat-cards">
+            ${financeStatCard({ tone: 'blue', label: 'Meus pedidos', value: String(ind.pedidos), sub: ind.ultimaVenda ? `Última venda em ${salesFormatDate(ind.ultimaVenda)}` : 'Nenhuma venda no período' })}
+            ${financeStatCard({ tone: 'green', label: 'Total vendido', value: salesFormatBRL(ind.valorTotal) })}
+            ${financeStatCard({ tone: 'teal', label: 'Ticket médio', value: salesFormatBRL(ind.ticketMedio) })}
+            ${financeStatCard({ tone: 'purple', label: 'Faturados', value: String(ind.faturados), sub: salesFormatBRL(ind.valorFaturado) })}
+            ${financeStatCard({ tone: 'cyan', label: 'Com NF-e emitida', value: String(ind.comNota), sub: ind.semNota ? `${ind.semNota} ainda sem nota` : 'Todos com nota' })}
+            ${ind.cancelados ? financeStatCard({ tone: 'red', label: 'Cancelados', value: String(ind.cancelados), sub: salesFormatBRL(ind.valorCancelado) }) : ''}
+          </div>
+          <div class="panel">
+            <div class="cadastro-page-head">
+              <div>
+                <h3>Minhas vendas</h3>
+                <p class="muted">${painel.vendas.length} pedido${painel.vendas.length === 1 ? '' : 's'}${de || ate ? ' no período' : ''}. Os cancelados aparecem na lista e ficam de fora dos totais acima.</p>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Pedido</th><th>Cliente</th><th>NF-e</th><th>Valor</th><th>Data</th><th>Status</th></tr></thead>
+                <tbody>
+                  ${painel.vendas.length ? painel.vendas.map((v) => `
+                    <tr>
+                      <td><button type="button" class="link-button meu-painel-abrir" data-id="${escapeHtml(v.id)}">${escapeHtml(v.pedido)}</button></td>
+                      <td>${escapeHtml(v.cliente)}</td>
+                      <td>${v.temNota
+                        ? `<span class="finance-badge finance-badge-success">${escapeHtml(v.nfeNumero || 'emitida')}</span>`
+                        : '<span class="muted">Sem nota</span>'}</td>
+                      <td>${salesFormatBRL(v.valor)}</td>
+                      <td>${salesFormatDate(v.data)}</td>
+                      <td>${salesStatusBadge(v.status)}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="6" class="muted">Nenhuma venda sua neste período.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+
+        const aplicar = (novoDe, novoAte) => {
+          state.salesDraft = { ...state.salesDraft, meuPainelDe: novoDe, meuPainelAte: novoAte };
+          loadModule('sales');
+        };
+        document.getElementById('meuPainelAplicar')?.addEventListener('click', () => {
+          aplicar(document.getElementById('meuPainelDe').value, document.getElementById('meuPainelAte').value);
+        });
+        document.getElementById('meuPainelLimpar')?.addEventListener('click', () => aplicar('', ''));
+
+        // Clicar no número abre o pedido para edição. O registro completo é
+        // buscado aqui, e não mandado junto do painel: a resposta do painel tem
+        // uma linha por pedido de propósito, e embutir o pedido inteiro (itens,
+        // pagamentos, entrega, anexos) em cada uma multiplicaria por vinte o
+        // tamanho de uma tela que quase sempre só é lida.
+        content.querySelectorAll('.meu-painel-abrir').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            try {
+              const { record } = await api(`/api/sales/records/${encodeURIComponent(btn.dataset.id)}`);
+              state.salesDraft = { ...state.salesDraft, editRecord: record, novoStatus: '' };
+              state.activeSub = 'new_sale';
+              renderApp();
+              loadModule('sales');
+            } catch (erro) {
+              showToast(erro.message || 'Não foi possível abrir o pedido.', 'error');
+            }
+          });
+        });
+        return;
+      }
+
       // Sub-aba: Painel Vendas
       if (sub === 'sales_dashboard') {
-        const { overview } = await api('/api/sales/dashboard');
+        const { overview, escopo } = await api('/api/sales/dashboard');
         content.innerHTML = `
+          ${escopo && !escopo.podeEscolherVendedor ? `
+            <div class="panel">
+              <p class="muted">Estes números são <strong>${escapeHtml(escopo.rotulo)}</strong>${escopo.temAcesso ? '' : ` — ${escapeHtml(escopo.motivo)}`}</p>
+            </div>
+          ` : ''}
           <div class="finance-stat-cards">
             ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: String(overview.totalPedidos), sub: salesFormatBRL(overview.valorPedidos) })}
             ${financeStatCard({ tone: 'purple', label: 'Orçamentos', value: String(overview.totalOrcamentos), sub: salesFormatBRL(overview.valorOrcamentos) })}
@@ -4660,7 +4829,7 @@ async function loadModule(moduleName) {
           </div>
           <div class="panel">
             <h3>Painel de Vendas</h3>
-            <p class="muted">Acompanhamento de performance de vendas e indicadores.</p>
+            <p class="muted">Acompanhamento de performance de vendas e indicadores${escopo && !escopo.podeEscolherVendedor ? ', restrito às suas vendas' : ''}.</p>
           </div>
         `;
         return;
@@ -4668,13 +4837,35 @@ async function loadModule(moduleName) {
 
       // Sub-aba: Painel Vendedor
       if (sub === 'seller_dashboard') {
-        const { bySeller } = await api('/api/sales/dashboard');
-
-        if (!bySeller.length) {
+        // A porta dos fundos: `sub` chega da rota salva no navegador, e uma
+        // sessão que já esteve nesta tela como administrador volta apontando
+        // para cá depois de trocar de usuário. Tirar do menu não fecha esse
+        // caminho — esconder link nunca fecha. A API já responderia recortada,
+        // mas a tela abriria com um seletor de um nome só, parecendo defeito.
+        if (!usuarioEhAdmin()) {
           content.innerHTML = `
             <div class="panel">
               <h3>Painel do Vendedor</h3>
-              <p class="muted">Nenhum vendedor cadastrado — em Cadastros, marque uma pessoa com o papel "Vendedor" para que ela apareça aqui.</p>
+              <p class="muted">Esta tela é do gestor: ela compara o desempenho de todos os vendedores. Para acompanhar as suas vendas, use <strong>Meu Painel</strong>.</p>
+              <button type="button" onclick="state.activeSub='my_panel'; renderApp(); loadModule('sales');">Ir para Meu Painel</button>
+            </div>
+          `;
+          return;
+        }
+        const { bySeller, escopo } = await api('/api/sales/dashboard');
+
+        // Lista vazia tem DUAS causas diferentes, e dizer a errada manda a
+        // pessoa procurar o problema no lugar errado: "cadastre um vendedor"
+        // para quem, na verdade, só não tem vínculo, faz cadastrar um segundo
+        // vendedor e continuar sem ver nada.
+        if (!bySeller.length) {
+          const semAcesso = escopo && !escopo.temAcesso;
+          content.innerHTML = `
+            <div class="panel">
+              <h3>Painel do Vendedor</h3>
+              <p class="muted">${semAcesso
+                ? escapeHtml(escopo.motivo)
+                : 'Nenhum vendedor cadastrado — em Cadastros, marque uma pessoa com o papel "Vendedor" para que ela apareça aqui.'}</p>
             </div>
           `;
           return;
@@ -4711,13 +4902,26 @@ async function loadModule(moduleName) {
           </div>
         `;
 
+        // O SELETOR SÓ APARECE PARA QUEM PODE ESCOLHER.
+        //
+        // Isso é apresentação, não segurança: quem manda é o recorte do
+        // servidor, que já devolveu `bySeller` com uma pessoa só para o
+        // vendedor comum. Mas um <select> com uma opção única sugere que
+        // existem outras e convida a tentar trocar — e o nome de quem está
+        // sendo mostrado some, o que numa tela chamada "Painel do Vendedor" é
+        // justamente a informação que falta.
         content.innerHTML = `
           <div class="panel">
-            <label>Vendedor
-              <select id="sellerDashboardSelect">
-                ${bySeller.map((s) => `<option value="${s.sellerId}" ${s.sellerId === selectedSellerId ? 'selected' : ''}>${escapeHtml(s.sellerName)}</option>`).join('')}
-              </select>
-            </label>
+            ${escopo && !escopo.podeEscolherVendedor ? `
+              <h3>${escapeHtml(selected.sellerName)}</h3>
+              <p class="muted">${escapeHtml(escopo.rotulo)} — este painel é privado, só você e o gestor o enxergam.</p>
+            ` : `
+              <label>Vendedor
+                <select id="sellerDashboardSelect">
+                  ${bySeller.map((s) => `<option value="${s.sellerId}" ${s.sellerId === selectedSellerId ? 'selected' : ''}>${escapeHtml(s.sellerName)}</option>`).join('')}
+                </select>
+              </label>
+            `}
           </div>
           <div id="sellerDashboardPanel">${renderSellerPanel()}</div>
         `;
@@ -6839,9 +7043,19 @@ async function loadModule(moduleName) {
             <div class="panel">
               <h3>Usuários cadastrados</h3>
               <table class="table table-actions">
+              <!-- O seletor de vendedor aparece TAMBEM para administrador.
+                   Antes ficava escondido, com a frase "Admin - ve todas as
+                   vendas" no lugar, e a frase estava certa para o Relatorio de
+                   Vendas: la, admin e' irrestrito e o vinculo nao muda nada.
+                   Deixou de ser suficiente quando nasceu o Meu Painel, que
+                   pergunta outra coisa -- "o que EU vendi" -- e responde a
+                   partir deste vinculo, para admin inclusive. Sem o seletor,
+                   um administrador que tambem vende nao tinha como se vincular
+                   por tela nenhuma, e o painel pessoal dele ficaria vazio para
+                   sempre sem explicacao. Ver lib/relatorios-escopo.js. -->
                 <thead><tr><th>Usuário</th><th>Nome</th><th>Função</th><th>Módulos</th><th>Vendedor vinculado</th><th>Ações</th></tr></thead>
                 <tbody>
-                  ${data.users.map((user) => `\n                    <tr data-user-id="${user.id}">\n                      <td>${user.username}</td>\n                      <td>${user.name}</td>\n                      <td>${user.role}</td>\n                      <td>${user.allowedModules.join(', ')}</td>\n                      <td>${user.role === 'admin' ? '<span class="muted">Admin — vê todas as vendas</span>' : `<select class="user-seller" data-id="${escapeHtml(user.id)}"><option value="">Nenhum</option>${(data.sellers || []).map((v) => `<option value="${escapeHtml(v.id)}" ${v.id === user.sellerId ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}</select>`}</td>\n                      <td>\n                      <button class="delete-user icon-button" data-id="${user.id}" title="Excluir usuário" ${state.user?.role !== 'admin' || state.user?.id === user.id ? 'disabled' : ''}>\n                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>\n                        </button>\n                      </td>\n                    </tr>\n                  `).join('') }
+                  ${data.users.map((user) => `\n                    <tr data-user-id="${user.id}">\n                      <td>${user.username}</td>\n                      <td>${user.name}</td>\n                      <td>${user.role}</td>\n                      <td>${user.allowedModules.join(', ')}</td>\n                      <td><select class="user-seller" data-id="${escapeHtml(user.id)}"><option value="">Nenhum</option>${(data.sellers || []).map((v) => `<option value="${escapeHtml(v.id)}" ${v.id === user.sellerId ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}</select>${user.role === 'admin' ? '<div class="muted" style="margin-top:6px">Admin vê todas as vendas nos relatórios; o vínculo aqui é o que enche o Meu Painel dele.</div>' : ''}</td>\n                      <td>\n                      <button class="delete-user icon-button" data-id="${user.id}" title="Excluir usuário" ${state.user?.role !== 'admin' || state.user?.id === user.id ? 'disabled' : ''}>\n                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>\n                        </button>\n                      </td>\n                    </tr>\n                  `).join('') }
                 </tbody>
               </table>
             </div>
@@ -6898,9 +7112,14 @@ async function loadModule(moduleName) {
                     sellerId: select.value
                   })
                 });
+                // O aviso muda conforme o papel porque a CONSEQUENCIA muda: tirar
+                // o vinculo de um usuario comum o deixa sem ver venda nenhuma em
+                // lugar nenhum; tirar o de um administrador so' esvazia o Meu
+                // Painel dele, porque nos relatorios ele continua irrestrito.
+                // Um aviso unico mentiria para um dos dois.
                 showToast(select.value
-                  ? 'Vínculo salvo. Este usuário passa a ver as vendas desse vendedor.'
-                  : 'Vínculo removido. Este usuário deixa de ver vendas nos relatórios.', 'success');
+                  ? 'Vínculo salvo — as vendas desse vendedor passam a ser as deste usuário no Meu Painel.'
+                  : `Vínculo removido — o Meu Painel deste usuário fica vazio${alvo.role === 'admin' ? '.' : ', e ele deixa de ver vendas nos relatórios.'}`, 'success');
                 loadModule('settings');
               } catch (error) {
                 showToast(error.message || 'Erro ao salvar o vínculo.', 'error');
