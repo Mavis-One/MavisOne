@@ -79,35 +79,19 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 // bcrypt) via lib/db/auth.js. O antigo array `users` guardava senha em texto puro e
 // não era lido por nenhuma rota — foi removido, e normalizeData() apaga o resíduo de
 // arquivos db.json antigos.
+// O molde de um data/db.json novo. So' as colecoes que este ARQUIVO ainda e'
+// dono — as outras moram no Postgres e sao recarregadas a cada requisicao (ver
+// NAO_PERSISTIR). Semear as duas coisas dava um arquivo novo ja' nascido com um
+// "Produto Exemplo" que nenhuma tela le' e um settings que db.getSettings()
+// ignora.
 const initialData = {
-  products: [
-    {
-      id: 'prod-1',
-      name: 'Produto Exemplo',
-      sku: 'SKU-001',
-      stockQuantity: 20,
-      costPrice: 50,
-      salePrice: 75
-    }
-  ],
+  // Legado: a venda rapida de /api/sales ainda empilha aqui. Vendas de verdade
+  // sao orders/quotes, no banco.
   sales: [],
-  purchases: [],
-  finance: [],
-  financialPayments: [],
-  financialCategories: [],
-  costCenters: [],
-  bankAccounts: [],
   bankTransactions: [],
-  orders: [],
-  quotes: [],
-  nfes: [],
-  people: [],
-  cnpjs: [],
-  deposits: [],
+  companies: [],
   productCategories: [],
   movementCategories: [],
-  stockMovements: [],
-  stockTransfers: [],
   priceTables: [],
   productCatalogs: [],
   productMeta: {},
@@ -118,14 +102,42 @@ const initialData = {
   productCashbacks: [],
   tasks: [],
   appointments: [],
-  importLogs: [],
-  auditLogs: [],
-  settings: {
-    companyName: 'MavisONE',
-    currency: 'BRL',
-    taxRate: 0
-  }
+  // Fila de saida: trilha que ainda nao subiu para audit_logs (pendenteDeSincronia).
+  auditLogs: []
 };
+
+/**
+ * AS COLECOES QUE NAO MORAM MAIS NESTE ARQUIVO.
+ *
+ * Todas tem dono no Postgres e sao recarregadas por cima logo depois do
+ * loadData() — pelos syncs (syncCadastroData/syncSalesData/syncPurchasesData/
+ * syncNfeData/syncFinanceData), pelo razao da fase AP, ou por uma consulta
+ * direta (db.getProducts/db.getSettings, que nem passam pelo `data`).
+ *
+ * Gravar de volta criava uma SEGUNDA copia que ninguem le e todo mundo
+ * acredita: a que o backup carregava, a que aparecia para quem abrisse o
+ * arquivo, e — o pior — a que uma rota que esquecesse o sync leria como
+ * verdade. Resultado plausivel e errado e' pior que resultado vazio.
+ *
+ * A prova estava no proprio arquivo: ele guardava dois depositos chamados
+ * `zz-razao-origem/destino`, fixtures que um teste criou e apagou do banco. O
+ * banco esqueceu; o db.json nao.
+ *
+ * E' uma lista de EXCLUSAO, nao de inclusao, de proposito: uma colecao nova que
+ * alguem acrescente amanha continua sendo gravada. O preco de errar aqui e' uma
+ * chave a mais no arquivo — nao um dado perdido.
+ */
+const NAO_PERSISTIR = new Set([
+  'people', 'cnpjs', 'deposits',                                          // syncCadastroData
+  'orders', 'quotes', 'importLogs',                                       // syncSalesData
+  'purchases',                                                            // syncPurchasesData
+  'nfes',                                                                 // syncNfeData
+  'finance', 'financialPayments', 'financialCategories',                  // syncFinanceData
+  'costCenters', 'bankAccounts',                                          // syncFinanceData
+  'stockMovements', 'stockTransfers',                                     // fase AP: razao no Postgres
+  'products', 'settings',                                                 // nunca lidos de `data`
+  '__movimentosPendentes'                                                 // fila da requisicao, nao e' dado
+]);
 
 // Cada sessão é { userId, criadaEm, expiraEm }. Guardar o `expiraEm` calculado
 // na criação, em vez de recalcular a cada requisição, é o que faz a sessão
@@ -237,6 +249,13 @@ function assignCadastroCodes(data) {
 }
 
 function normalizeData(data) {
+  // As tres primeiras nao sao mais gravadas no arquivo (ver NAO_PERSISTIR), mas
+  // a CHAVE tem de existir em memoria: ha leitura direta, sem `|| []`, tanto de
+  // data.purchases quanto de data.sales. O arquivo perde a copia; o objeto
+  // mantem a forma.
+  data.products = Array.isArray(data.products) ? data.products : [];
+  data.sales = Array.isArray(data.sales) ? data.sales : [];
+  data.purchases = Array.isArray(data.purchases) ? data.purchases : [];
   data.orders = Array.isArray(data.orders) ? data.orders : [];
   data.quotes = Array.isArray(data.quotes) ? data.quotes : [];
   data.nfes = Array.isArray(data.nfes) ? data.nfes : [];
@@ -265,19 +284,54 @@ function normalizeData(data) {
 
 function loadData() {
   ensureDataFile();
-  const data = normalizeData(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
-  if (data.__needsCodeSave) {
+  const bruto = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  // O arquivo se limpa sozinho na primeira carga depois desta mudanca — aqui e
+  // no servidor de producao, sem depender de alguem lembrar de rodar um script.
+  // Mesmo caminho que o assignCadastroCodes ja' usava para gravar o que
+  // descobriu lendo.
+  const temResiduo = Object.keys(bruto).some((chave) => NAO_PERSISTIR.has(chave));
+  const data = normalizeData(bruto);
+  if (data.__needsCodeSave || temResiduo) {
     delete data.__needsCodeSave;
     saveData(data);
   }
   return data;
 }
 
+/**
+ * GRAVA NUM TEMPORARIO E RENOMEIA — nao escreve por cima do arquivo bom.
+ *
+ * `fs.writeFileSync` abre com O_TRUNC: existe uma janela, entre truncar e
+ * terminar de escrever, em que o db.json esta VAZIO ou pela metade. O arquivo
+ * ja passa de 50 KB e cada rota faz o par loadData()/saveData(), entao a janela
+ * acontece dezenas de vezes por dia.
+ *
+ * Quem cai nela:
+ *   - o proprio sistema, se o processo morrer no meio da escrita (o db.json
+ *     fica invalido e o loadData seguinte nao tem o que ler);
+ *   - o backup, que copia o arquivo enquanto ele esta sendo reescrito e leva
+ *     metade do JSON para dentro do artefato -- descoberto so' no dia em que
+ *     alguem restaurasse.
+ *
+ * O rename e' atomico no mesmo sistema de arquivos (e no Windows o rename do
+ * Node substitui o destino), entao ou o leitor ve o arquivo antigo inteiro, ou
+ * o novo inteiro. Nunca metade.
+ */
 function saveData(data) {
   delete data.__needsCodeSave;
   const normalized = normalizeData(data);
   delete normalized.__needsCodeSave;
-  fs.writeFileSync(DATA_FILE, JSON.stringify(normalized, null, 2));
+  // Copia rasa em vez de apagar as chaves do proprio `data`: quem chamou
+  // continua usando o objeto depois daqui — varias rotas respondem com
+  // `data.orders` LOGO APOS o saveData. Apagar no original devolveria a
+  // resposta sem os dados que a tela pediu.
+  const paraGravar = {};
+  for (const chave of Object.keys(normalized)) {
+    if (!NAO_PERSISTIR.has(chave)) paraGravar[chave] = normalized[chave];
+  }
+  const temporario = `${DATA_FILE}.tmp`;
+  fs.writeFileSync(temporario, JSON.stringify(paraGravar, null, 2));
+  fs.renameSync(temporario, DATA_FILE);
 }
 
 function createId(prefix) {

@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-08-31 16:11 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-01 18:33 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -148,13 +148,12 @@ Contratos  (contracts)  —  8 tela(s) no menu
   [ok]  Modelos de Contrato                Textos-padrão reutilizados na emissão.
   [ok]  Novo Modelo                        Cria um modelo de contrato.
 
-Configurações  (settings)  —  5 tela(s) no menu
+Configurações  (settings)  —  4 tela(s) no menu
 -----------------------------------------------
   [ok]  Usuários                           Usuários do sistema e seus acessos.
   [ok]  Papéis e Permissões                O que cada papel pode ver e fazer.
   [ok]  Auditoria de Acesso                Quem acessou o quê, e quando.
-  [ok]  Empresa                            Dados da empresa, certificado e configuração fiscal.
-  [ok]  Empresas e Estabelecimentos        Cadastro fiscal, token da Focus NFe e regras por estabelecimento.
+  [ok]  Empresa                            CNPJ, regime, certificado digital, estabelecimentos e regras fiscais.
   [+]  users_edit                         (tela interna, fora do menu)
   [+]  users_register                     (tela interna, fora do menu)
 
@@ -186,7 +185,7 @@ Cadastros  (cadastros)  —  19 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 122 telas no menu.
+TOTAL: 14 módulos, 121 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -303,6 +302,8 @@ Arquivos de acesso (lib/db)
   lib/db/entrada-nfe.js
       ENTRADA DE NF-e no banco.
       tabelas: nfe_entrada, nfe_entrada_item
+  lib/db/estoque-razao.js
+      O RAZÃO DE ESTOQUE, EM SQL (fase AP).
   lib/db/estoque.js
       tabelas: products
   lib/db/financeiro.js
@@ -455,7 +456,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-33 arquivo(s) em banco/migrations, em ordem de fase:
+36 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -471,6 +472,9 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-ak-entrada-de-nfe.sql
   fase-al-usuario-vendedor.sql
   fase-am-anexos-no-banco.sql
+  fase-an-telas-por-usuario.sql
+  fase-ao-observacao-padrao-por-empresa.sql
+  fase-ap-razao-de-estoque-no-banco.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -494,7 +498,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-59 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+62 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -540,6 +544,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-permissoes.js                 Regras de controle de acesso (lib/permissoes.js).
   [npm test] test-prazo-cancelamento.js         Prazo de 24 horas para cancelar NF-e.
   [npm test] test-produto-abas.js               Abas do cadastro de produto.
+  [avulso]  test-razao-no-banco.js             O RAZÃO DE ESTOQUE VIVE NO POSTGRES, E É TRANSACIONAL (fase AP).
   [npm test] test-regras-fiscais.js             Modelo de regras fiscais — scripts/seed-regras-fiscais.js Os CFOPs vieram do ERP que o usuário usa hoje: 5102,
   [npm test] test-relatorio-vendas.js           RELATÓRIO DE VENDAS — quem vê o quê, provado com dados de mentira.
   [npm test] test-reserva-estoque.js            Reserva de estoque — a ponte entre "prometido" e "baixado".
@@ -552,6 +557,8 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-sessao-expira.js              Expiração das sessões na virada do dia — lib/sessao.js A conta de "quando esta sessão morre" é fácil de escrev
   [avulso]  test-sessao-unica.js               Sessão única por usuário: entrar numa máquina derruba a outra.
   [npm test] test-sql-compat.js                 A CAMADA COMPATÍVEL — o dialeto do supabase-js virando SQL, provado sem banco.
+  [npm test] test-telas-por-usuario.js          TELAS POR USUÁRIO (fase AN) — o recorte fino dentro de um módulo liberado.
+  [avulso]  test-transferencia-itens.js        TRANSFERÊNCIA COM VÁRIOS ITENS — contra o servidor de verdade.
   [npm test] test-transicoes-status.js          Transições de status e ações em lote.
   [npm test] test-vendas-financeiro.js          Contas a receber geradas por um pedido faturado (lib/vendas-financeiro.js).
   [npm test] test-verificador-migracoes.js      O verificador de migrações precisa estar certo sobre o que ele NÃO sabe.
@@ -560,7 +567,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-110 arquivos JS carregados por public/index.html, nesta ordem.
+109 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -666,7 +673,6 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/cadastros/subs/status_venda.js
   /modules/cadastros/subs/novo_status_venda.js
   /modules/settings/index.js
-  /modules/settings/subs/company.js
   /modules/settings/subs/users_form.js
   /modules/settings/subs/users.js
   /modules/settings/subs/fiscal.js
