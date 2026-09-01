@@ -15,31 +15,63 @@ const SETTINGS_USER_MODULES = [
 // alteração feita de um lado.
 const SETTINGS_FISCAL_PERMISSIONS = window.MavisFiscalPermissoes.CATALOGO;
 
+// LIBERAR MÓDULO DEIXOU DE SER TUDO OU NADA (fase AN)
+// ---------------------------------------------------
+// Marcar "Vendas" dava as 9 telas de Vendas. Quem precisasse liberar o
+// lançamento de pedido sem liberar o Relatório escolhia entre dar tudo ou negar
+// tudo — e na prática dava tudo, porque negar impedia a pessoa de trabalhar.
+//
+// Agora cada módulo marcado abre a lista das telas dele. O que é gravado é a
+// lista das telas DESMARCADAS (ver a migração fase-an): módulo liberado
+// continua trazendo tudo, inclusive as telas que nascerem depois, menos o que
+// alguém tirou de propósito.
+//
+// ISTO É NAVEGAÇÃO, NÃO É A TRANCA. Esconder a tela tira o convite; as rotas do
+// módulo continuam abertas para quem souber chamá-las. Quem barra de verdade é
+// o portão do servidor, que enxerga módulo e AÇÃO (Papéis e Permissões).
+//
 // Cadastro e edição de usuário são o mesmo formulário — só muda se o "Usuário"
 // (login) pode ser editado e se a Senha é obrigatória ou opcional.
 function renderSettingsUserForm(ctx, mode) {
-  const { content, api, showToast, loadModule, moduleLabels, state, escapeHtml } = ctx;
+  const { content, data, api, showToast, loadModule, moduleLabels, state, escapeHtml } = ctx;
+  const vendedores = data?.sellers || [];
   const isEditing = mode === 'edit';
   const editUser = isEditing ? state.settingsDraft?.editUser : null;
+  // Quando se está CRIANDO a partir de "Duplicar", este é o usuário de origem:
+  // ele preenche os acessos, e só os acessos. Ver o botão em users.js.
+  const copiaDe = !isEditing ? state.settingsDraft?.copiarDe : null;
+  const modelo = editUser || copiaDe;
+
+  // Telas bloqueadas em edição, na cópia inteira. O clone é para que fechar o
+  // formulário sem salvar não deixe a alteração pendurada no objeto do estado.
+  let telasBloqueadas = JSON.parse(JSON.stringify(modelo?.blockedSubs || {}));
 
   if (isEditing && !editUser) {
     // Chegou direto nessa tela sem passar por "editar" na lista (ex.: refresh) — volta pra lista.
-    state.activeSub = 'company';
+    state.activeSub = 'users';
     loadModule('settings');
     return;
   }
 
   const goBack = () => {
-    state.settingsDraft = { ...state.settingsDraft, editUser: null };
-    state.activeSub = 'company';
+    state.settingsDraft = { ...state.settingsDraft, editUser: null, copiarDe: null };
+    state.activeSub = 'users';
     loadModule('settings');
   };
 
   content.innerHTML = `
     <div class="cadastro-page-head">
       <div>
-        <h3>${isEditing ? `Editar usuário — ${escapeHtml(editUser.name)}` : 'Novo usuário'}</h3>
-        <p class="muted">${isEditing ? 'O usuário de login não pode ser alterado.' : 'Preencha os dados e os módulos liberados para o novo usuário.'}</p>
+        <h3>${isEditing ? `Editar usuário — ${escapeHtml(editUser.name)}` : (copiaDe ? `Novo usuário — copiando os acessos de ${escapeHtml(copiaDe.name)}` : 'Novo usuário')}</h3>
+        <p class="muted">${isEditing
+          ? 'O usuário de login não pode ser alterado.'
+          // O vínculo com vendedor NÃO é copiado, e dizer isso aqui é mais
+          // barato do que descobrir depois: ele responde "quem esta pessoa é"
+          // no Meu Painel, não "o que ela pode". Dois usuários apontando para o
+          // mesmo vendedor veriam as vendas um do outro como suas.
+          : (copiaDe
+            ? 'Módulos, telas, função e permissões fiscais vieram prontos. Falta o nome, o login e a senha — e o vínculo com vendedor, que não é copiado porque diz quem a pessoa é, não o que ela pode.'
+            : 'Preencha os dados e os módulos liberados para o novo usuário.')}</p>
       </div>
     </div>
 
@@ -53,19 +85,31 @@ function renderSettingsUserForm(ctx, mode) {
         <div class="row">
           <label>Função
             <select name="role">
-              <option value="user" ${(editUser?.role || 'user') === 'user' ? 'selected' : ''}>Usuário</option>
-              <option value="admin" ${editUser?.role === 'admin' ? 'selected' : ''}>Admin</option>
+              <option value="user" ${(modelo?.role || 'user') === 'user' ? 'selected' : ''}>Usuário</option>
+              <option value="admin" ${modelo?.role === 'admin' ? 'selected' : ''}>Admin</option>
+            </select>
+          </label>
+          <!-- O vínculo com o vendedor do Cadastros. É ele que decide quais
+               vendas esta pessoa vê no Relatório de Vendas — sem vínculo, e não
+               sendo admin, ela não vê venda nenhuma. E é dele que o Meu Painel
+               tira "o que EU vendi", para admin inclusive. Ver
+               lib/relatorios-escopo.js. -->
+          <label>Vendedor vinculado
+            <select name="sellerId">
+              <option value="">Nenhum — não vê vendas nos relatórios</option>
+              ${vendedores.map((v) => `<option value="${escapeHtml(v.id)}" ${v.id === editUser?.sellerId ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}
             </select>
           </label>
         </div>
         <div class="checkbox-grid">
-          ${SETTINGS_USER_MODULES.map((module) => `<label><input type="checkbox" name="module" class="user-form-module" value="${module}" ${(editUser?.allowedModules || []).includes(module) ? 'checked' : ''} /> ${moduleLabels[module]}</label>`).join('')}
+          ${SETTINGS_USER_MODULES.map((module) => `<label><input type="checkbox" name="module" class="user-form-module" value="${module}" ${(modelo?.allowedModules || []).includes(module) ? 'checked' : ''} /> ${moduleLabels[module]}</label>`).join('')}
         </div>
+        <div id="telasPorModulo"></div>
         <div id="fiscalPermissionsSection" hidden>
           <h4>Permissões fiscais</h4>
           <p class="muted">Só vale se o usuário tiver acesso a Fiscal, Financeiro ou Configurações — os mesmos módulos que o servidor aceita.</p>
           <div class="checkbox-grid">
-            ${SETTINGS_FISCAL_PERMISSIONS.map((perm) => `<label title="${escapeHtml(perm.descricao || '')}"><input type="checkbox" name="fiscalPermission" value="${perm.value}" ${(editUser?.fiscalPermissions || []).includes(perm.value) ? 'checked' : ''} /> ${perm.label}</label>`).join('')}
+            ${SETTINGS_FISCAL_PERMISSIONS.map((perm) => `<label title="${escapeHtml(perm.descricao || '')}"><input type="checkbox" name="fiscalPermission" value="${perm.value}" ${(modelo?.fiscalPermissions || []).includes(perm.value) ? 'checked' : ''} /> ${perm.label}</label>`).join('')}
           </div>
         </div>
         <div class="row">
@@ -76,13 +120,119 @@ function renderSettingsUserForm(ctx, mode) {
     </div>
   `;
 
+  // As telas de cada módulo, do catálogo do app.js. `somenteAdmin` fica de fora:
+  // são telas que usuário comum nunca vê, e oferecê-las aqui daria a entender
+  // que dá para liberá-las marcando a caixa.
+  function telasDoModulo(modulo) {
+    if (typeof moduleSubItems === 'undefined') return [];
+    return (moduleSubItems[modulo] || []).filter((tela) => !tela.somenteAdmin);
+  }
+
+  function modulosMarcados() {
+    return Array.from(document.querySelectorAll('.user-form-module:checked')).map((el) => el.value);
+  }
+
+  function modulosSemAcesso() {
+    const marcados = modulosMarcados();
+    return Object.keys(telasBloqueadas).filter((modulo) => !marcados.includes(modulo));
+  }
+
+  function atualizarContagem(modulo) {
+    const alvo = document.querySelector(`[data-contagem="${modulo}"]`);
+    if (!alvo) return;
+    const telas = telasDoModulo(modulo);
+    const bloqueadas = telasBloqueadas[modulo] || [];
+    alvo.textContent = `${telas.length - bloqueadas.length} de ${telas.length} telas`;
+  }
+
+  function pintarTelasPorModulo() {
+    const caixa = document.getElementById('telasPorModulo');
+    if (!caixa) return;
+
+    // Admin enxerga tudo por definição (ver telasVisiveis() no app.js), então
+    // oferecer o recorte aqui seria um controle que não controla nada.
+    if (document.querySelector('[name="role"]')?.value === 'admin') {
+      caixa.innerHTML = '<p class="muted">Administrador vê todas as telas dos módulos marcados. O recorte por tela vale para a função "Usuário".</p>';
+      return;
+    }
+
+    // Módulo de uma tela só não tem o que recortar: ou a pessoa tem o módulo,
+    // ou não tem.
+    const modulos = modulosMarcados().filter((m) => telasDoModulo(m).length > 1);
+    if (!modulos.length) {
+      caixa.innerHTML = '<p class="muted">Marque um módulo acima para escolher quais telas dele este usuário vê.</p>';
+      return;
+    }
+
+    caixa.innerHTML = `
+      <h4>Telas liberadas</h4>
+      <p class="muted">Todas as telas vêm marcadas. Desmarque o que este usuário não deve ver — o módulo continua liberado, e tela criada depois nasce visível.</p>
+      ${modulos.map((modulo) => {
+        const telas = telasDoModulo(modulo);
+        const bloqueadas = telasBloqueadas[modulo] || [];
+        const visiveis = telas.length - telas.filter((t) => bloqueadas.includes(t.key)).length;
+        return `
+          <details class="telas-modulo" ${visiveis < telas.length ? 'open' : ''}>
+            <summary>
+              ${escapeHtml(moduleLabels[modulo] || modulo)}
+              <span class="muted" data-contagem="${escapeHtml(modulo)}">${visiveis} de ${telas.length} telas</span>
+            </summary>
+            <div class="telas-modulo-acoes">
+              <button type="button" class="secondary telas-todas" data-modulo="${escapeHtml(modulo)}">Marcar todas</button>
+              <button type="button" class="secondary telas-nenhuma" data-modulo="${escapeHtml(modulo)}">Desmarcar todas</button>
+            </div>
+            <div class="checkbox-grid">
+              ${telas.map((tela) => `
+                <label title="${escapeHtml(tela.desc || '')}">
+                  <input type="checkbox" class="tela-do-modulo" data-modulo="${escapeHtml(modulo)}" value="${escapeHtml(tela.key)}" ${bloqueadas.includes(tela.key) ? '' : 'checked'} />
+                  ${escapeHtml(tela.label)}
+                </label>
+              `).join('')}
+            </div>
+          </details>
+        `;
+      }).join('')}
+    `;
+
+    caixa.querySelectorAll('.tela-do-modulo').forEach((el) => el.addEventListener('change', () => {
+      const modulo = el.dataset.modulo;
+      const bloqueadas = new Set(telasBloqueadas[modulo] || []);
+      if (el.checked) bloqueadas.delete(el.value); else bloqueadas.add(el.value);
+      // Lista vazia é o mesmo que módulo ausente ("vê todas"); guardar a chave
+      // vazia daria dois jeitos de dizer a mesma coisa. O servidor limpa igual,
+      // mas deixar a tela mandar sujeira e confiar na limpeza do outro lado é
+      // exatamente como os dois lados divergem.
+      if (bloqueadas.size) telasBloqueadas[modulo] = [...bloqueadas];
+      else delete telasBloqueadas[modulo];
+      atualizarContagem(modulo);
+    }));
+
+    caixa.querySelectorAll('.telas-todas').forEach((btn) => btn.addEventListener('click', () => {
+      delete telasBloqueadas[btn.dataset.modulo];
+      pintarTelasPorModulo();
+    }));
+    caixa.querySelectorAll('.telas-nenhuma').forEach((btn) => btn.addEventListener('click', () => {
+      telasBloqueadas[btn.dataset.modulo] = telasDoModulo(btn.dataset.modulo).map((t) => t.key);
+      pintarTelasPorModulo();
+    }));
+  }
+
   function atualizarVisibilidadePermissoesFiscais() {
     const marcados = Array.from(document.querySelectorAll('.user-form-module:checked')).map((el) => el.value);
     const secao = document.getElementById('fiscalPermissionsSection');
     if (secao) secao.hidden = !window.MavisFiscalPermissoes.habilitadoPor(marcados);
   }
-  document.querySelectorAll('.user-form-module').forEach((el) => el.addEventListener('change', atualizarVisibilidadePermissoesFiscais));
+  document.querySelectorAll('.user-form-module').forEach((el) => el.addEventListener('change', () => {
+    atualizarVisibilidadePermissoesFiscais();
+    // Desmarcar o módulo apaga o recorte dele: guardar telas bloqueadas de um
+    // módulo que a pessoa nem tem deixaria o bloqueio pendurado, invisível,
+    // para voltar sozinho no dia em que alguém remarcasse o módulo.
+    modulosSemAcesso().forEach((modulo) => delete telasBloqueadas[modulo]);
+    pintarTelasPorModulo();
+  }));
+  document.querySelector('[name="role"]')?.addEventListener('change', pintarTelasPorModulo);
   atualizarVisibilidadePermissoesFiscais();
+  pintarTelasPorModulo();
 
   document.getElementById('userFormCancel')?.addEventListener('click', goBack);
 
@@ -102,6 +252,8 @@ function renderSettingsUserForm(ctx, mode) {
             role: formData.get('role'),
             allowedModules: selectedModules,
             fiscalPermissions: selectedFiscalPermissions,
+            sellerId: formData.get('sellerId') || '',
+            blockedSubs: telasBloqueadas,
             password: password || undefined
           })
         });
@@ -111,7 +263,7 @@ function renderSettingsUserForm(ctx, mode) {
           method: 'POST',
           body: JSON.stringify({
             type: 'user',
-            payload: { name: formData.get('name'), username: formData.get('username'), password, role: formData.get('role'), allowedModules: selectedModules, fiscalPermissions: selectedFiscalPermissions }
+            payload: { name: formData.get('name'), username: formData.get('username'), password, role: formData.get('role'), allowedModules: selectedModules, fiscalPermissions: selectedFiscalPermissions, sellerId: formData.get('sellerId') || '', blockedSubs: telasBloqueadas }
           })
         });
         showToast('Usuário criado com sucesso.', 'success');

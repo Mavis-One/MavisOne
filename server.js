@@ -687,6 +687,33 @@ function normalizeDashboardPins(pins) {
   return uniquePins;
 }
 
+/**
+ * TELAS BLOQUEADAS POR USUÁRIO (fase AN) — { "sales": ["relatorio"] }.
+ *
+ * NÃO confere as chaves contra o catálogo de telas, e isso é decisão, não
+ * esquecimento: o catálogo (`moduleSubItems`) mora no bundle do navegador, e
+ * trazer uma cópia dele para cá criaria a segunda lista que diverge na primeira
+ * tela nova — o problema que fiscal_permissoes.js existe para não repetir. Uma
+ * chave desconhecida aqui é inerte: nenhuma tela casa com ela, nada some.
+ *
+ * O que ESTE código precisa impedir é outra coisa: um POST à mão gravando um
+ * objeto de qualquer tamanho numa coluna jsonb. Daí os tetos abaixo.
+ */
+function sanitizarTelasBloqueadas(valor) {
+  if (!valor || typeof valor !== 'object' || Array.isArray(valor)) return {};
+  const CHAVE_VALIDA = /^[a-z0-9_]{1,64}$/;
+  const limpo = {};
+  for (const [modulo, telas] of Object.entries(valor).slice(0, 40)) {
+    if (!CHAVE_VALIDA.test(modulo) || !Array.isArray(telas)) continue;
+    const lista = [...new Set(telas.filter((t) => typeof t === 'string' && CHAVE_VALIDA.test(t)))].slice(0, 100);
+    // Lista vazia é o mesmo que módulo ausente ("vê todas"). Guardar a chave
+    // vazia só faria a coluna crescer e a leitura ter dois jeitos de dizer a
+    // mesma coisa.
+    if (lista.length) limpo[modulo] = lista;
+  }
+  return limpo;
+}
+
 function serializeUserForClient(user, acesso = null) {
   return {
     id: user.id,
@@ -694,6 +721,10 @@ function serializeUserForClient(user, acesso = null) {
     name: user.name,
     role: user.role,
     allowedModules: user.allowedModules,
+    // Fase AN. Vai para o cliente porque quem monta menu, submenu, favoritos,
+    // Área de Trabalho e a validação da rota salva é ele — todos por
+    // telasVisiveis(), em app.js.
+    blockedSubs: user.blockedSubs || {},
     theme: user.theme,
     dashboardPins: normalizeDashboardPins(user.dashboardPins),
     // Preferencias de tela (fase-ag). Vao junto do usuario para a lista abrir
@@ -9285,7 +9316,10 @@ const server = http.createServer(async (req, res) => {
           // Fase AL: de quem sao as "minhas vendas" deste usuario. Sem isto a
           // tela de Usuarios nao teria como mostrar o vinculo atual, e todo
           // salvamento pareceria estar desvinculando alguem.
-          sellerId: entry.sellerId || ''
+          sellerId: entry.sellerId || '',
+          // Fase AN: sem isto o formulário abriria com todas as telas marcadas
+          // e o primeiro salvamento desfaria os bloqueios sem ninguém pedir.
+          blockedSubs: entry.blockedSubs || {}
         }))
       : [];
     return sendJson(res, {
@@ -9329,7 +9363,9 @@ const server = http.createServer(async (req, res) => {
           // salvaria 'manifestar' na coluna e ela voltaria a aparecer na tela.
           fiscalPermissions: fiscalPermissoes.sanitizar(body.payload.fiscalPermissions),
           // Fase AL: de quem sao as "minhas vendas" deste usuario.
-          sellerId: String(body.payload.sellerId || '').trim()
+          sellerId: String(body.payload.sellerId || '').trim(),
+          // Fase AN: telas que este usuario nao ve dentro dos modulos liberados.
+          blockedSubs: sanitizarTelasBloqueadas(body.payload.blockedSubs)
         });
         const data = loadData();
         data.auditLogs = data.auditLogs || [];
@@ -9540,7 +9576,9 @@ const server = http.createServer(async (req, res) => {
         ),
         password: body.password ? String(body.password) : undefined,
         // Ausente = nao mexe no vinculo; vazio = desvincula. Ver updateUser.
-        sellerId: body.sellerId === undefined ? undefined : String(body.sellerId || '').trim()
+        sellerId: body.sellerId === undefined ? undefined : String(body.sellerId || '').trim(),
+        // Mesma regra: ausente nao mexe, {} libera todas as telas de volta.
+        blockedSubs: body.blockedSubs === undefined ? undefined : sanitizarTelasBloqueadas(body.blockedSubs)
       });
       // O alvo pode ser o próprio requisitante (um admin editando a si mesmo).
       // Nada nesta rota lê o usuário depois da gravação hoje, mas quem vier

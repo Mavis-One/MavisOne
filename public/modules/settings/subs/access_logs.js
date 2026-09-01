@@ -1,7 +1,38 @@
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.settings = window.MavisSubscreenRegistry.settings || {};
 
+// Rótulos das ações da trilha /api/audit. Este mapa veio da tela "Empresa",
+// junto com o painel que ele serve.
+const ACCESS_AUDIT_ACTION_LABELS = {
+  createUser: 'Criação de usuário',
+  updateUser: 'Edição de usuário',
+  deleteUser: 'Exclusão de usuário',
+  criarLancamento: 'Criação de lançamento',
+  editarLancamento: 'Edição de lançamento',
+  baixarLancamento: 'Baixa de lançamento',
+  estornarLancamento: 'Estorno de baixa',
+  cancelarLancamento: 'Cancelamento de lançamento',
+  emitirNfe: 'Emissão de NF-e',
+  cancelarNfe: 'Cancelamento de NF-e',
+  emitirNfeFiscal: 'Emissão de NF-e (Focus)',
+  cancelarNfeFiscal: 'Cancelamento de NF-e (Focus)',
+  emitirCartaCorrecaoFiscal: 'Carta de Correção (Focus)',
+  inutilizarNumeracaoFiscal: 'Inutilização de numeração (Focus)',
+  conciliarTransacao: 'Conciliação de extrato bancário'
+};
+
 // Auditoria de Acesso — quem fez o quê, e o que foi barrado.
+//
+// SÃO DUAS TRILHAS, E AGORA ELAS FICAM NA MESMA TELA
+// --------------------------------------------------
+// `/api/access-logs` (abaixo) registra ACESSO: toda tentativa negada e as
+// ações de escrita, com IP. `/api/audit` registra o que foi FEITO — usuário
+// criado, lançamento baixado, NF-e emitida.
+//
+// A segunda ficava dentro da tela "Empresa", onde ninguém procuraria por ela,
+// enquanto a tela chamada "Auditoria" mostrava só a primeira. Quem investigava
+// um incidente via metade da história e não tinha como saber que faltava a
+// outra metade.
 //
 // O filtro de resultado começa em "Negado" de propósito: numa investigação, a
 // primeira pergunta quase sempre é "quem tentou fazer o que não podia".
@@ -62,7 +93,7 @@ window.MavisSubscreenRegistry.settings.access_logs = async function renderAccess
 
     <div class="panel">
       <div class="table-scroll">
-        <table class="table">
+        <table class="table" id="tabelaAcessos">
           <thead><tr><th>Quando</th><th>Usuário</th><th>Ação</th><th>Recurso</th><th>Resultado</th><th>IP</th><th>Detalhe</th></tr></thead>
           <tbody>
             ${logs.length ? logs.map((log) => `
@@ -80,7 +111,59 @@ window.MavisSubscreenRegistry.settings.access_logs = async function renderAccess
         </table>
       </div>
     </div>
+
+    ${state.user?.role === 'admin' ? `
+    <div class="cadastro-page-head" style="margin-top: 24px;">
+      <div>
+        <h3>Ações registradas</h3>
+        <p class="muted">O que foi feito no sistema — usuário criado, lançamento baixado, nota emitida.</p>
+      </div>
+      <div class="cadastro-list-actions">
+        <button type="button" class="secondary" id="auditRefresh">Atualizar</button>
+        <button type="button" class="secondary" id="auditPrev">Anterior</button>
+        <button type="button" class="secondary" id="auditNext">Próximo</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr><th>Ação</th><th>Alvo</th><th>Por</th><th>Data</th></tr></thead>
+          <tbody id="auditBody"></tbody>
+        </table>
+      </div>
+      <p id="auditEmpty" class="muted">Nenhum registro de auditoria.</p>
+    </div>
+    ` : ''}
   `;
+
+  if (state.user?.role === 'admin') {
+    let auditOffset = 0;
+    const auditLimit = 20;
+    async function loadAudit() {
+      try {
+        const res = await api(`/api/audit?limit=${auditLimit}&offset=${auditOffset}`);
+        const logs = res.auditLogs || [];
+        const auditBody = document.getElementById('auditBody');
+        const auditEmpty = document.getElementById('auditEmpty');
+        if (!auditBody || !auditEmpty) return;
+        auditBody.innerHTML = logs.map((log) => `
+          <tr>
+            <td>${escapeHtml(ACCESS_AUDIT_ACTION_LABELS[log.action] || log.action)}</td>
+            <td>${escapeHtml(log.targetUsername || log.targetId)}</td>
+            <td>${escapeHtml(log.byName || log.byId)}</td>
+            <td>${escapeHtml(new Date(log.at).toLocaleString())}</td>
+          </tr>
+        `).join('');
+        auditEmpty.style.display = logs.length ? 'none' : 'block';
+      } catch (err) {
+        ctx.showToast('Erro ao carregar logs: ' + (err.message || err), 'error');
+      }
+    }
+    document.getElementById('auditRefresh')?.addEventListener('click', () => { auditOffset = 0; loadAudit(); });
+    document.getElementById('auditPrev')?.addEventListener('click', () => { auditOffset = Math.max(0, auditOffset - auditLimit); loadAudit(); });
+    document.getElementById('auditNext')?.addEventListener('click', () => { auditOffset = auditOffset + auditLimit; loadAudit(); });
+    setTimeout(loadAudit, 50);
+  }
 
   document.getElementById('logsFiltro')?.addEventListener('submit', (event) => {
     event.preventDefault();

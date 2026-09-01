@@ -206,10 +206,21 @@ console.log('\n--- o vínculo usuário -> vendedor existe de ponta a ponta ---')
 check('a migração cria a coluna',
   /alter table if exists users\s+add column if not exists seller_id/i.test(ler('banco/migrations/fase-al-usuario-vendedor.sql')));
 check('o usuário lido do banco traz o vínculo', /sellerId: row\.seller_id/.test(ler('lib/db/auth.js')));
-const appSrc = ler('public/app.js');
-check('e a tela de Usuários tem o campo de vínculo', /name="sellerId"/.test(appSrc));
-check('  com a lista de vendedores vinda do servidor', /data\.sellers/.test(appSrc));
-check('  e dá para trocar o vínculo de quem já existe', /class="user-seller"/.test(appSrc));
+// LER A TELA CERTA JÁ FOI METADE DO BUG.
+//
+// Estes checks liam public/app.js, onde havia uma CÓPIA MORTA da tela de
+// Configurações — o roteador atende `settings` antes e nunca chegava lá. Os
+// checks passavam contra código que não rodava, enquanto a tela viva
+// (modules/settings/subs/) não tinha campo de vínculo nenhum: o servidor
+// mandava a lista de vendedores, o banco tinha a coluna, e não havia por onde
+// vincular. O teste dizia "existe de ponta a ponta" e a ponta da tela faltava.
+const usuariosSrc = ler('public/modules/settings/subs/users.js');
+const usuarioFormSrc = ler('public/modules/settings/subs/users_form.js');
+check('e o formulário de usuário tem o campo de vínculo', /name="sellerId"/.test(usuarioFormSrc));
+check('  com a lista de vendedores vinda do servidor', /data\?\.sellers/.test(usuarioFormSrc) && /data\.sellers/.test(usuariosSrc));
+check('  e dá para trocar o vínculo de quem já existe', /class="user-seller"/.test(usuariosSrc));
+check('  e o formulário grava o vínculo junto', /sellerId: formData\.get\('sellerId'\)/.test(usuarioFormSrc));
+const appSrc = usuariosSrc + usuarioFormSrc;
 // ESTE CHECK JÁ COBROU O CONTRÁRIO, e vale registrar por quê mudou.
 //
 // Enquanto o vínculo servia só ao Relatório, esconder o seletor do admin era o

@@ -1142,6 +1142,51 @@ button.success:hover { background: var(--success-hover); }
 .muted { color: var(--muted); }
 .row { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 
+/* ---------------------------------------------------------------------------
+   Transferência entre depósitos: a linha "adicionar produto"
+   ---------------------------------------------------------------------------
+   Não usa .row porque .row distribui colunas IGUAIS (1fr cada), e aqui elas
+   têm pesos muito diferentes: o campo de produto é o que precisa de espaço, a
+   quantidade cabe em 8 caracteres e o botão tem a largura do texto dele. Com
+   colunas iguais, "Adicionar" ficava numa coluna do tamanho do campo de busca,
+   com um botão perdido no meio. */
+.transfer-add-linha {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(0, 1fr) 140px auto;
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+/* Item de grid nasce com min-width:auto (= min-content): sem isto o campo de
+   busca do produto se recusa a encolher e estoura o painel em tela estreita. */
+.transfer-add-linha > * { min-width: 0; }
+.transfer-add-classe:empty { display: none; }
+.transfer-add-botao button { width: 100%; }
+.transfer-classe-aviso { margin: 6px 0 0; font-size: 0.85em; }
+
+@media (max-width: 900px) {
+  .transfer-add-linha { grid-template-columns: 1fr; }
+}
+
+/* O estado vazio da lista de itens. Diz o que fazer, e não só que está vazio:
+   uma tabela com cabeçalho e nenhuma linha faz quem chega procurar o defeito
+   em vez de procurar o botão. */
+.transfer-vazio {
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  padding: 34px 20px;
+  text-align: center;
+  background: var(--panel-alt);
+}
+.transfer-vazio-icone { color: var(--muted); opacity: 0.6; }
+.transfer-vazio-titulo { margin: 10px 0 4px; font-weight: 600; }
+.transfer-vazio p.muted { margin: 0; font-size: 0.9em; }
+
+/* Linha cuja quantidade passa do saldo da origem. O aviso aparece na hora de
+   montar a lista; o servidor recusa de qualquer jeito, mas o erro dele não diz
+   QUAL das dez linhas está errada. */
+.transfer-linha-alerta > td { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+
 /* Campo Status da tela Nova Venda.
    O <select> pede, por conta própria, a largura da MAIOR opção — e
    "Pedido Aprovado Sem Faturamento" é larga o bastante para estourar a coluna
@@ -1390,6 +1435,51 @@ button.success:hover { background: var(--success-hover); }
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   margin-bottom: 16px;
 }
+/* Telas liberadas por módulo, no formulário de usuário (fase AN). O <details>
+   é nativo de propósito: são até 14 blocos na mesma tela, e um acordeão feito à
+   mão aqui seria estado para manter sincronizado com o que já muda sozinho
+   quando se marca ou desmarca um módulo. */
+.telas-modulo {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  background: var(--panel-alt);
+}
+.telas-modulo > summary {
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.telas-modulo > summary > .muted {
+  font-weight: 400;
+  font-size: 0.85em;
+}
+.telas-modulo-acoes {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.telas-modulo-acoes button {
+  padding: 4px 10px;
+  font-size: 0.85em;
+}
+
+/* Cartão de estatística que também é atalho (o de Usuários, em Configurações).
+   O <a> passa a ser o item da grade, então ele precisa virar bloco e devolver a
+   cor herdada: sem isto o cartão sai sublinhado, em azul de link, e com altura
+   diferente da dos vizinhos. */
+.stat-card-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+.stat-card-link:hover .finance-stat-card {
+  border-color: var(--primary);
+}
+
 .finance-stat-card {
   position: relative;
   padding: 18px 18px 16px;

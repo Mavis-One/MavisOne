@@ -334,8 +334,12 @@ check('existe UMA função que filtra o catálogo por usuário',
   /function telasVisiveis\(moduleName\)/.test(tela));
 check('  e ela devolve tudo para o administrador',
   /function telasVisiveis[\s\S]{0,300}if \(usuarioEhAdmin\(\)\) return todas;/.test(tela));
+// Sem o `)` no fim do padrao, de proposito: desde a fase AN o mesmo filtro tem
+// uma segunda condicao (as telas que um admin bloqueou para aquele usuario). O
+// que este check garante continua sendo o mesmo -- que somenteAdmin e' a
+// primeira coisa que sai para quem nao e' administrador.
 check('  e tira as somenteAdmin dos demais',
-  /function telasVisiveis[\s\S]{0,400}filter\(\(item\) => !item\.somenteAdmin\)/.test(tela));
+  /function telasVisiveis[\s\S]{0,700}filter\(\(item\) => !item\.somenteAdmin/.test(tela));
 
 // A ARMADILHA QUE JÁ ESTOUROU A PILHA UMA VEZ.
 //

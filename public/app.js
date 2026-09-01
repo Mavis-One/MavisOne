@@ -86,7 +86,10 @@ function hasModuleAccess(moduleName) {
   // menu escondia, então cada módulo novo nascia invisível até alguém marcá-lo
   // à mão em Configurações > Usuários, para cada admin, um por um.
   if (usuarioEhAdmin()) return true;
-  return Array.isArray(state.user.allowedModules) && state.user.allowedModules.includes(moduleName);
+  if (!Array.isArray(state.user.allowedModules) || !state.user.allowedModules.includes(moduleName)) return false;
+  // Fase AN: módulo liberado, mas com todas as telas bloqueadas, é o mesmo que
+  // módulo não liberado — inclusive para a rota salva no navegador.
+  return moduloTemTelaVisivel(moduleName);
 }
 
 /**
@@ -111,7 +114,28 @@ function hasModuleAccess(moduleName) {
 function telasVisiveis(moduleName) {
   const todas = moduleSubItems[moduleName] || [];
   if (usuarioEhAdmin()) return todas;
-  return todas.filter((item) => !item.somenteAdmin);
+  // Fase AN: telas que um administrador bloqueou para ESTE usuário, dentro de
+  // um módulo que ele continua tendo. Lista ausente ou vazia = vê todas, que é
+  // como todo usuário nasce e como todo usuário anterior à fase AN continua.
+  const bloqueadas = state.user?.blockedSubs?.[moduleName] || [];
+  return todas.filter((item) => !item.somenteAdmin && !bloqueadas.includes(item.key));
+}
+
+/**
+ * O módulo ainda tem alguma tela para este usuário?
+ *
+ * Bloquear TODAS as telas de um módulo (fase AN) é uma forma legítima de dizer
+ * "não quero esta pessoa aqui" — e sem esta checagem o módulo continuaria no
+ * menu, abrindo uma Área de Trabalho sem um cartão sequer. Tela vazia não
+ * comunica nada: quem clica conclui que o sistema quebrou, não que não tem
+ * acesso.
+ *
+ * Módulo sem catálogo de telas (o Dashboard) não tem o que esconder, e por isso
+ * o `length === 0` responde "sim" em vez de "não".
+ */
+function moduloTemTelaVisivel(moduleName) {
+  const todas = moduleSubItems[moduleName] || [];
+  return todas.length === 0 || telasVisiveis(moduleName).length > 0;
 }
 
 function getRouteKey(moduleName, subKey) {
@@ -1164,7 +1188,7 @@ function renderApp() {
         </div>
         <div class="nav-list">
           ${MENU_MODULOS
-            .filter((module) => state.user?.allowedModules?.includes(module))
+            .filter((module) => state.user?.allowedModules?.includes(module) && moduloTemTelaVisivel(module))
             .map((module) => `
               <div class="nav-block">
                 <div class="nav-item-row">
@@ -1684,11 +1708,13 @@ const moduleSubItems = {
     { key: 'users', label: 'Usuários', desc: 'Usuários do sistema e seus acessos.' },
     { key: 'access_control', label: 'Papéis e Permissões', desc: 'O que cada papel pode ver e fazer.' },
     { key: 'access_logs', label: 'Auditoria de Acesso', desc: 'Quem acessou o quê, e quando.' },
-    { key: 'company', label: 'Empresa', desc: 'Dados da empresa, certificado e configuração fiscal.' },
-    // Estava fora desta lista e só era alcançável pelo botão dentro de
-    // "Empresa". Sem a entrada aqui, o título e o caminho no topo saíam em
-    // branco (o label vem justamente daqui), como se a tela não tivesse nome.
-    { key: 'fiscal', label: 'Empresas e Estabelecimentos', desc: 'Cadastro fiscal, token da Focus NFe e regras por estabelecimento.' }
+    // "Empresa" e "Empresas e Estabelecimentos" eram dois cartões para o mesmo
+    // assunto. O primeiro editava três campos (nome, moeda, imposto) que NADA
+    // no sistema lia — só o próprio formulário que os gravava; os dados de
+    // verdade da empresa (CNPJ, razão social, regime, certificado) sempre
+    // estiveram na tela fiscal. Sobrou um cartão, apontando para onde o dado
+    // realmente mora.
+    { key: 'fiscal', label: 'Empresa', desc: 'CNPJ, regime, certificado digital, estabelecimentos e regras fiscais.' }
   ],
 
   // ABA: Cadastros
@@ -6981,208 +7007,17 @@ async function loadModule(moduleName) {
     }
 
     // ========================================================================
-    // ABA: CONFIGURAÇÕES
+    // ABA: CONFIGURAÇÕES — mora em public/modules/settings/
     // ========================================================================
-    if (moduleName === 'settings') {
-      const data = await api('/api/settings');
-          const totals = data.totals || {};
-          const settingsPermissions = data.permissions || {};
-          const canManageCompany = Boolean(settingsPermissions.company);
-          const canManageUsers = Boolean(settingsPermissions.users);
-          content.innerHTML = `
-            <div class="cards">
-              ${canManageUsers ? `<div class="card"><h3>Usuários</h3><p>${totals.totalUsers ?? (data.users || []).length}</p></div>` : ''}
-              <div class="card"><h3>Produtos</h3><p>${totals.totalProducts ?? 0}</p></div>
-              <div class="card"><h3>Vendas</h3><p>${totals.totalSales ?? 0}</p></div>
-              <div class="card"><h3>Compras</h3><p>${totals.totalPurchases ?? 0}</p></div>
-            </div>
-
-            ${canManageCompany ? `
-            <div class="panel">
-              <h3>Configurações da empresa</h3>
-              <form id="companyForm" class="form-grid">
-                <div class="row">
-                  <label>Nome da empresa<input name="companyName" value="${data.settings.companyName}" /></label>
-                  <label>Moeda<input name="currency" value="${data.settings.currency}" /></label>
-                  <label>Imposto (%)<input name="taxRate" type="number" value="${data.settings.taxRate}" /></label>
-                </div>
-                <button type="submit">Salvar</button>
-              </form>
-            </div>
-            ` : '<div class="panel"><p>Sem permissão para visualizar configurações da empresa.</p></div>'}
-
-            ${canManageUsers ? `
-            <div class="panel">
-              <h3>Criar usuário</h3>
-              <form id="userForm" class="form-grid">
-                <div class="row">
-                  <label>Nome<input name="name" required /></label>
-                  <label>Usuário<input name="username" required /></label>
-                  <label>Senha<input name="password" required /></label>
-                </div>
-                <div class="row">
-                  <label>Função<select name="role"><option value="user">Usuário</option><option value="admin">Admin</option></select></label>
-                  <!-- O vínculo com o vendedor do Cadastros. É ele que decide
-                       quais vendas esta pessoa vê no Relatório de Vendas — sem
-                       vínculo, e não sendo admin, ela não vê venda nenhuma (e a
-                       tela diz isso). Ver lib/relatorios-escopo.js. -->
-                  <label>Vendedor vinculado
-                    <select name="sellerId">
-                      <option value="">Nenhum — não vê vendas nos relatórios</option>
-                      ${(data.sellers || []).map((v) => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.name)}</option>`).join('')}
-                    </select>
-                  </label>
-                </div>
-                <div class="checkbox-grid">
-                  ${['dashboard', 'sales', 'purchases', 'stock', 'finance', 'settings', 'cadastros'].map((module) => `<label><input type="checkbox" name="module" value="${module}" /> ${moduleLabels[module]}</label>`).join('')}
-                </div>
-                <button type="submit">Criar usuário</button>
-              </form>
-        </div>
-
-            <div class="panel">
-              <h3>Usuários cadastrados</h3>
-              <table class="table table-actions">
-              <!-- O seletor de vendedor aparece TAMBEM para administrador.
-                   Antes ficava escondido, com a frase "Admin - ve todas as
-                   vendas" no lugar, e a frase estava certa para o Relatorio de
-                   Vendas: la, admin e' irrestrito e o vinculo nao muda nada.
-                   Deixou de ser suficiente quando nasceu o Meu Painel, que
-                   pergunta outra coisa -- "o que EU vendi" -- e responde a
-                   partir deste vinculo, para admin inclusive. Sem o seletor,
-                   um administrador que tambem vende nao tinha como se vincular
-                   por tela nenhuma, e o painel pessoal dele ficaria vazio para
-                   sempre sem explicacao. Ver lib/relatorios-escopo.js. -->
-                <thead><tr><th>Usuário</th><th>Nome</th><th>Função</th><th>Módulos</th><th>Vendedor vinculado</th><th>Ações</th></tr></thead>
-                <tbody>
-                  ${data.users.map((user) => `\n                    <tr data-user-id="${user.id}">\n                      <td>${user.username}</td>\n                      <td>${user.name}</td>\n                      <td>${user.role}</td>\n                      <td>${user.allowedModules.join(', ')}</td>\n                      <td><select class="user-seller" data-id="${escapeHtml(user.id)}"><option value="">Nenhum</option>${(data.sellers || []).map((v) => `<option value="${escapeHtml(v.id)}" ${v.id === user.sellerId ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}</select>${user.role === 'admin' ? '<div class="muted" style="margin-top:6px">Admin vê todas as vendas nos relatórios; o vínculo aqui é o que enche o Meu Painel dele.</div>' : ''}</td>\n                      <td>\n                      <button class="delete-user icon-button" data-id="${user.id}" title="Excluir usuário" ${state.user?.role !== 'admin' || state.user?.id === user.id ? 'disabled' : ''}>\n                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M10 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>\n                        </button>\n                      </td>\n                    </tr>\n                  `).join('') }
-                </tbody>
-              </table>
-            </div>
-            ` : '<div class="panel"><p>Sem permissão para visualizar dados de usuários.</p></div>'}
-          `;
-
-          document.getElementById('companyForm')?.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const formData = new FormData(event.target);
-            try {
-              await api('/api/settings', {
-                method: 'POST',
-                body: JSON.stringify({ type: 'company', payload: { companyName: formData.get('companyName'), currency: formData.get('currency'), taxRate: Number(formData.get('taxRate')) } })
-              });
-              showToast('Configurações da empresa salvas com sucesso.', 'success');
-              loadModule('settings');
-            } catch (error) {
-              showToast(error.message || 'Erro ao salvar configurações da empresa.', 'error');
-            }
-          });
-
-          document.getElementById('userForm')?.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const formData = new FormData(event.target);
-            const selectedModules = formData.getAll('module');
-            try {
-              await api('/api/settings', {
-                method: 'POST',
-                body: JSON.stringify({ type: 'user', payload: { name: formData.get('name'), username: formData.get('username'), password: formData.get('password'), role: formData.get('role'), allowedModules: selectedModules, sellerId: formData.get('sellerId') || '' } })
-              });
-              showToast('Usuário criado com sucesso.', 'success');
-              loadModule('settings');
-            } catch (error) {
-              showToast(error.message || 'Erro ao criar usuário.', 'error');
-            }
-          });
-
-          // Vínculo usuário -> vendedor. Grava na hora, sem botão Salvar: é um
-          // campo só, e um formulário inteiro para uma escolha faria a pessoa
-          // achar que precisa confirmar mais alguma coisa.
-          document.querySelectorAll('.user-seller').forEach((select) => {
-            select.addEventListener('change', async () => {
-              const alvo = (data.users || []).find((u) => u.id === select.dataset.id);
-              if (!alvo) return;
-              try {
-                // Manda os campos que a rota exige junto do vínculo: mandar só
-                // o sellerId faria o servidor recusar por falta de nome.
-                await api(`/api/users/${encodeURIComponent(alvo.id)}`, {
-                  method: 'PUT',
-                  body: JSON.stringify({
-                    name: alvo.name,
-                    role: alvo.role,
-                    allowedModules: alvo.allowedModules,
-                    sellerId: select.value
-                  })
-                });
-                // O aviso muda conforme o papel porque a CONSEQUENCIA muda: tirar
-                // o vinculo de um usuario comum o deixa sem ver venda nenhuma em
-                // lugar nenhum; tirar o de um administrador so' esvazia o Meu
-                // Painel dele, porque nos relatorios ele continua irrestrito.
-                // Um aviso unico mentiria para um dos dois.
-                showToast(select.value
-                  ? 'Vínculo salvo — as vendas desse vendedor passam a ser as deste usuário no Meu Painel.'
-                  : `Vínculo removido — o Meu Painel deste usuário fica vazio${alvo.role === 'admin' ? '.' : ', e ele deixa de ver vendas nos relatórios.'}`, 'success');
-                loadModule('settings');
-              } catch (error) {
-                showToast(error.message || 'Erro ao salvar o vínculo.', 'error');
-                loadModule('settings');
-              }
-            });
-          });
-
-          // delete handlers
-          document.querySelectorAll('.delete-user').forEach((btn) => {
-                      btn.addEventListener('click', async (e) => {
-                        if (btn.disabled) return;
-                        const id = btn.dataset.id;
-                        if (!id) return;
-                        const row = btn.closest('tr');
-                        const username = row?.querySelector('td')?.textContent || id;
-                        const confirmed = await confirmModal(`Confirma exclusão do usuário "${username}"?`);
-                        if (!confirmed) return;
-                        try {
-                          await api('/api/users/delete', { method: 'POST', body: JSON.stringify({ id }) });
-                          showToast('Usuário excluído com sucesso.', 'success');
-                          loadModule('settings');
-                        } catch (err) {
-                          showToast('Erro ao excluir: ' + err.message, 'error');
-                        }
-                      });
-                    });
-
-          // audit logs (admin)
-          if (state.user?.role === 'admin') {
-            let auditOffset = 0;
-            const auditLimit = 20;
-            async function loadAudit() {
-              try {
-                const res = await api(`/api/audit?limit=${auditLimit}&offset=${auditOffset}`);
-                const logs = res.auditLogs || [];
-                const auditBody = document.getElementById('auditBody');
-                const auditEmpty = document.getElementById('auditEmpty');
-                if (!auditBody || !auditEmpty) return;
-                auditBody.innerHTML = logs.map((log) => `
-                  <tr>
-                    <td>${log.action}</td>
-                    <td>${log.targetUsername || log.targetId}</td>
-                    <td>${log.byName || log.byId}</td>
-                    <td>${new Date(log.at).toLocaleString()}</td>
-                  </tr>
-                `).join('');
-                auditEmpty.style.display = logs.length ? 'none' : 'block';
-              } catch (err) {
-                showToast('Erro ao carregar logs: ' + (err.message || err), 'error');
-              }
-            }
-
-            document.getElementById('auditRefresh')?.addEventListener('click', () => { auditOffset = 0; loadAudit(); });
-            document.getElementById('auditPrev')?.addEventListener('click', () => { auditOffset = Math.max(0, auditOffset - auditLimit); loadAudit(); });
-            document.getElementById('auditNext')?.addEventListener('click', () => { auditOffset = auditOffset + auditLimit; loadAudit(); });
-
-            // initial load
-            setTimeout(loadAudit, 50);
-          }
-
-          return;
-        }
+    // Aqui existia uma cópia inteira da tela: dados da empresa, integração da
+    // Focus, lista de usuários e auditoria. Ela nunca renderizava — o
+    // MavisModuleRouter atende `settings` lá em cima e retorna antes de chegar
+    // nesta linha — mas continuava parecendo a tela de verdade para quem
+    // abrisse este arquivo, e ainda oferecia três campos (nome, moeda,
+    // imposto) que o sistema deixou de ter.
+    //
+    // As telas são: subs/users.js, subs/fiscal.js (o cartão "Empresa"),
+    // subs/access_control.js e subs/access_logs.js.
   } catch (error) {
     showToast(error.message || 'Erro ao carregar módulo.', 'error');
     content.innerHTML = `<div class="panel"><p>${error.message}</p></div>`;
