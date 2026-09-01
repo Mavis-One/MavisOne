@@ -241,8 +241,26 @@ check('classe obrigatória exige o valor', /Este produto é controlado por \$\{o
 console.log('\n--- §18: a cor atravessa a transferência ---');
 // Sem isto, transferir 4 pretos tiraria 4 pretos da origem e daria 4 SEM COR
 // ao destino: o total do produto continuaria certo e o preto sumiria.
-check('os dois movimentos levam a cor', /classId: body\.classId \|\| '',\s*\n\s*classValueId: body\.classValueId \|\| ''\s*\n\s*\};/.test(serverSrc));
-check('a transferência valida o saldo da cor na origem', /type: 'saida',\s*\n\s*quantity: body\.quantity,\s*\n\s*classValueId: body\.classValueId/.test(serverSrc));
+// A rota passou a aceitar uma LISTA de itens (a tela virou uma movimentação com
+// vários produtos), então a cor vem de `item`, e não mais de `body`. O que estes
+// dois checks garantem é o mesmo de antes: a cor entra nos dois movimentos e é
+// ela que o saldo da origem confere.
+check('os dois movimentos levam a cor', /classId: item\.classId \|\| '',\s*\n\s*classValueId: item\.classValueId \|\| ''\s*\n\s*\};/.test(serverSrc));
+check('a transferência valida o saldo da cor na origem', /type: 'saida',\s*\n\s*quantity: item\.quantity,\s*\n\s*classValueId: item\.classValueId/.test(serverSrc));
+// Com vários itens na mesma movimentação, o mesmo produto+cor em duas linhas
+// seria conferido duas vezes contra o saldo INTEIRO: com 5 pretos, duas linhas
+// de 3 passariam nas duas validações e a origem terminaria negativa.
+check('  e itens repetidos somam antes de conferir', /const chave = `\$\{productId\}::\$\{classValueId\}`;/.test(serverSrc));
+// Validar-e-gravar item a item deixaria o quinto item sem saldo depois de os
+// quatro primeiros já terem saído da origem: meia movimentação.
+// A ancora mudou com a fase AP: a gravacao deixou de ser um push em array e
+// virou uma transacao. A garantia ficou mais forte — antes "nada e' gravado
+// antes de validar" dependia da ORDEM das linhas; agora, se algo falhar no meio
+// da gravacao, o banco desfaz o que ja tinha entrado.
+check('  e nada é gravado antes de TODOS os itens passarem',
+  serverSrc.indexOf('const validados = [];') < serverSrc.indexOf('await commitStockMovements(data, movimentos, productsById, { transferencias });'));
+check('  e os dois movimentos e a transferência entram na mesma transação',
+  /await commitStockMovements\(data, movimentos, productsById, \{ transferencias \}\)/.test(serverSrc));
 // A tela de transferências lista do registro, não dos movimentos.
 check('o registro da transferência guarda a cor', /tela de transferências lista daqui/.test(serverSrc));
 
@@ -332,13 +350,22 @@ check('a venda avisa pelo mesmo motivo', /mas o item da venda registra apenas/.t
 
 console.log('\n--- §18: escolher a cor na transferência ---');
 const transfSrc = ler('public/modules/stock/subs/new_transfer.js');
-check('a transferência envia a cor', /classValueId: formData\.get\('classValueId'\) \|\| '',/.test(transfSrc));
+// A cor deixou de ser um campo do formulário e passou a ser uma coluna de cada
+// item — um seletor único no cabeçalho valeria para todos os produtos da lista,
+// o que é errado na primeira movimentação que misture dois.
+check('a transferência envia a cor de cada item', /classValueId: item\.classValueId/.test(transfSrc));
 // A tabela de saldo é o que decide de qual depósito tirar. Mostrar o total do
 // depósito com uma cor escolhida sugere um saldo que pode não existir na cor.
 check('a tabela mostra o saldo da cor escolhida', /const linha = \(balance\.classes \|\| \[\]\)\.find\(\(c\) => c\.classValueId === classValueId\);/.test(transfSrc));
-check('e o cabeçalho diz de que cor é o número', /`Saldo de \$\{S\.escape\(cores\.get\(classValueId\)\?\.name \|\| classValueId\)\}`/.test(transfSrc));
-// Redesenhar tudo ao trocar a cor apagaria origem, destino e quantidade.
-check('trocar de cor não apaga o formulário', /Só a tabela é redesenhada/.test(transfSrc));
+// O número e a cor a que ele se refere ficam na MESMA linha, uma coluna ao lado
+// da outra. Antes era um cabeçalho de tabela ("Saldo de Preto") porque a tela
+// tratava um produto por vez; com vários itens, um cabeçalho só mentiria para
+// todas as linhas menos uma.
+check('e cada linha diz de que cor é o número', /<th>Variação<\/th><th>Quantidade<\/th><th>Saldo na origem<\/th>/.test(transfSrc));
+// Redesenhar tudo ao mexer na lista apagaria origem, destino, data e observação
+// que já estavam preenchidos — que é o motivo de o cabeçalho ficar fora do que
+// pintarItens() redesenha.
+check('mexer na lista não apaga o cabeçalho', /function pintarItens\(\)[\s\S]{0,200}getElementById\('transferItens'\)/.test(transfSrc));
 check('o registro devolve a cor para a lista', /classValueId: transfer\.classValueId \|\| '',/.test(ler('lib/stock-core.js')));
 
 console.log('\n--- saldo por cor DENTRO do depósito ---');

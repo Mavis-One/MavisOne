@@ -62,6 +62,9 @@ const relatoriosVendas = require('./lib/relatorios-vendas');
 // Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
 const painelPessoal = require('./lib/painel-pessoal-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
+// Fase AP: o razao de estoque saiu do db.json e virou tabela no Postgres.
+const razaoEstoque = require('./lib/db/estoque-razao');
+const { emTransacao } = require('./lib/db/conexao');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
 const sessaoUtil = require('./lib/sessao');
@@ -1227,9 +1230,10 @@ function registrarMovimentoEstoque(data, { productId, productName, type, quantit
   // branco e productBalances() contabiliza como saldo não alocado.
   const defaultDepositId = stockCore.productMeta(data, productId).defaultDepositId || '';
 
-  data.stockMovements.push({
+  const movimento = {
     id: createId('mov'),
-    code: stockCore.nextSequentialCode(data.stockMovements, 'MOV'),
+    // A sequence do banco numera, no descarregamento. Ver commitStockMovements.
+    code: '',
     type: delta < 0 ? 'saida' : 'entrada',
     date: stockCore.todayStr(),
     productId,
@@ -1252,7 +1256,12 @@ function registrarMovimentoEstoque(data, { productId, productName, type, quantit
     createdBy: user?.id || '',
     createdByName: user?.name || '',
     createdAt: new Date().toISOString()
-  });
+  };
+  // Nos DOIS lugares, de proposito: em data.stockMovements para que qualquer
+  // leitura no resto da requisicao enxergue o movimento (era o comportamento de
+  // antes), e na fila para o descarregamento gravar no banco.
+  data.stockMovements.push(movimento);
+  (data.__movimentosPendentes = data.__movimentosPendentes || []).push(movimento);
 }
 
 // Estoque só é afetado de verdade quando um PEDIDO (não orçamento — orçamento
@@ -1322,7 +1331,10 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
       if (!item.productId) continue;
       const produto = produtos.get(item.productId);
       if (!produto) continue;
-      await db.upsertProduct({ ...produto, stockQuantity: Number(produto.stockQuantity || 0) + Number(item.quantity || 0) });
+      // Fase AP: o total do produto NAO e' mexido aqui. Quem soma e' o
+      // descarregamento, dentro da mesma transacao que grava o razao — assim o
+      // total e o movimento nunca discordam, e a soma passa a ser relativa
+      // (`stock_quantity + delta`), sem a corrida do read-modify-write.
       registrarMovimentoEstoque(data, {
         productId: item.productId, productName: item.name, type: 'estorno',
         quantityDelta: Number(item.quantity || 0), referenceType: 'order', referenceId: record.id,
@@ -1336,9 +1348,10 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
   if (willApply) {
     for (const item of newItems) {
       if (!item.productId) continue;
-      const produtoAtual = await db.getProductById(item.productId); // relê: pode ter mudado no passo do estorno acima
+      // A releitura continua servindo para saber se o produto ainda existe; o
+      // total dele nao e' mais calculado aqui (ver a nota acima).
+      const produtoAtual = await db.getProductById(item.productId);
       if (!produtoAtual) continue;
-      await db.upsertProduct({ ...produtoAtual, stockQuantity: Number(produtoAtual.stockQuantity || 0) - Number(item.quantity || 0) });
       registrarMovimentoEstoque(data, {
         productId: item.productId, productName: item.name, type: 'venda',
         quantityDelta: -Number(item.quantity || 0), referenceType: 'order', referenceId: record.id,
@@ -1347,6 +1360,7 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
       });
     }
   }
+  await descarregarMovimentosPendentes(data);
 }
 
 // Faturar um pedido gera as contas a receber; deixar de faturar cancela o que
@@ -2884,7 +2898,8 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
     const produto = produtos.get(produtoId);
     if (!produto || !variacao) continue;
     const arredondado = Math.round(variacao * 10000) / 10000;
-    await db.upsertProduct({ ...produto, stockQuantity: Number(produto.stockQuantity || 0) + arredondado });
+    // Fase AP: o total do produto e' somado pelo descarregamento, na mesma
+    // transacao do razao. Ver a nota em transitionOrderStockEffect.
     registrarMovimentoEstoque(data, {
       productId: produtoId,
       productName: produto.name,
@@ -2900,6 +2915,7 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
     if (produtoId !== ordem.productId) consumidos.push({ productId: produtoId, name: produto.name, quantidade: -arredondado });
   }
 
+  await descarregarMovimentosPendentes(data);
   return { consumidos, produzido: quantidade };
 }
 
@@ -3843,6 +3859,21 @@ function userCanStock(user) {
 async function loadStockContext({ comReservas = false } = {}) {
   const data = loadData();
   await syncCadastroData(data);
+  // FASE AP: o razao vem do Postgres, nao mais do db.json.
+  //
+  // Continua entrando em `data` com o mesmo nome e no mesmo formato de antes,
+  // de proposito: quem calcula saldo e' lib/stock-core.js, em memoria, e essas
+  // funcoes sao o miolo do modulo. Trocar o ARMAZENAMENTO e a MATEMATICA na
+  // mesma mudanca seria nao saber qual das duas errou o saldo.
+  //
+  // Quando o razao passar de algumas dezenas de milhares de linhas, o saldo
+  // vira agregacao em SQL — os indices por (product_id, deposit_id) e
+  // (product_id, class_value_id) ja estao la esperando esse dia.
+  data.stockMovements = await razaoEstoque.listarMovimentos();
+  data.stockTransfers = await razaoEstoque.listarTransferencias();
+  // Fila dos movimentos que Vendas/Compras/PCP empilham durante a requisicao e
+  // que so viram linha no banco no descarregarMovimentosPendentes().
+  data.__movimentosPendentes = [];
   let reservas = null;
   if (comReservas) {
     try {
@@ -3871,31 +3902,100 @@ function sendStockError(res, error, fallback) {
   return sendJson(res, { error: error && error.status ? error.message : fallback }, (error && error.status) || 400);
 }
 
-// Registra a movimentação no db.json e reflete o novo saldo total no Supabase.
-// As duas escritas não são atômicas: se o Supabase falhar, nada é gravado
-// localmente (por isso o saldo remoto é atualizado ANTES do saveData).
-async function commitStockMovements(data, movements, productsById) {
+/**
+ * GRAVA O RAZAO E O TOTAL DO PRODUTO NA MESMA TRANSACAO (fase AP).
+ *
+ * O QUE ISTO CONSERTA
+ * -------------------
+ * 1. Eram duas escritas em lugares diferentes, sem transacao nenhuma: o total
+ *    do produto ia para o Postgres e os movimentos para o db.json. Processo
+ *    morto entre as duas deixava o total mudado e o razao sem o registro —
+ *    divergencia que nao da erro, so aparece na contagem fisica meses depois.
+ *
+ * 2. O total era read-modify-write: lia stock_quantity, somava no Node e
+ *    gravava o ABSOLUTO. Entre a leitura (feita la atras, no loadStockContext)
+ *    e a gravacao cabia outra requisicao inteira: as duas liam 100, as duas
+ *    gravavam 105, e 5 unidades sumiam sem erro. Agora o `+ delta` e' do
+ *    Postgres, que serializa o UPDATE da mesma linha.
+ *
+ * 3. `saveData(data)` reescrevia o db.json INTEIRO a cada movimentacao, e quem
+ *    tivesse lido o arquivo antes sobrescrevia o que o outro acabara de gravar.
+ *
+ * A TRAVA POR PRODUTO fecha a janela entre VALIDAR o saldo e GRAVAR: sem ela,
+ * duas saidas simultaneas do ultimo item passam as duas na validacao (que soma
+ * o razao lido no comeco da requisicao) e o deposito termina negativo.
+ *
+ * O CODIGO (MOV-0001) sai daqui, da sequence do banco. Era max+1 calculado no
+ * Node lendo a lista inteira: reusava codigo depois de um DELETE e, com duas
+ * requisicoes ao mesmo tempo, gerava o mesmo numero duas vezes.
+ */
+async function commitStockMovements(data, movements, productsById, opcoes = {}) {
+  if (!movements.length && !(opcoes.transferencias || []).length) return;
+  const transferencias = opcoes.transferencias || [];
+
   const deltaByProduct = new Map();
   movements.forEach((movement) => {
     const delta = stockCore.movementSignedQuantity(movement);
     deltaByProduct.set(movement.productId, (deltaByProduct.get(movement.productId) || 0) + delta);
   });
 
-  for (const [productId, delta] of deltaByProduct.entries()) {
-    if (delta === 0) continue;
-    const product = productsById.get(productId);
-    const newTotal = stockCore.toNumber(product.stockQuantity) + delta;
-    await db.updateProductStock(productId, newTotal);
-  }
+  await emTransacao(async (cliente) => {
+    // Ordena os ids antes de travar: duas requisicoes que travem os mesmos dois
+    // produtos em ordens opostas esperam uma pela outra para sempre. Ordem fixa
+    // e' o que garante que uma delas sempre passa.
+    for (const productId of [...deltaByProduct.keys()].sort()) {
+      await razaoEstoque.travarProduto(cliente, productId);
+    }
+    for (const movimento of movements) {
+      if (!movimento.code) movimento.code = await razaoEstoque.proximoCodigo(cliente, 'stock_movements_code_seq', 'MOV');
+    }
+    for (const transferencia of transferencias) {
+      if (!transferencia.code) transferencia.code = await razaoEstoque.proximoCodigo(cliente, 'stock_transfers_code_seq', 'TRA');
+    }
+    await razaoEstoque.inserirMovimentos(cliente, movements);
+    await razaoEstoque.inserirTransferencias(cliente, transferencias);
+    for (const [productId, delta] of deltaByProduct.entries()) {
+      if (delta === 0) continue;
+      await razaoEstoque.somarNoTotalDoProduto(cliente, productId, delta);
+    }
+  });
 
-  movements.forEach((movement) => data.stockMovements.push(movement));
-  saveData(data);
+  // O `data` em memoria e' a foto que a resposta desta requisicao serializa.
+  // Nao ha saveData: o razao nao mora mais no arquivo.
+  if (!opcoes.jaEmMemoria) {
+    movements.forEach((movement) => data.stockMovements.push(movement));
+    transferencias.forEach((t) => data.stockTransfers.push(t));
+  }
+}
+
+/**
+ * Descarrega no banco os movimentos que Vendas/Compras/PCP empilharam.
+ *
+ * registrarMovimentoEstoque continua sendo SINCRONO e continua so empilhando —
+ * mudar isso obrigaria a tornar assincrona meia duzia de funcoes que hoje nao
+ * sao. O que muda e' o destino da pilha: antes era o `saveData` no fim da rota,
+ * agora e' este descarregamento, que grava tudo numa transacao so.
+ *
+ * Chamado no fim de quem TOMA a decisao de mexer no estoque (a transicao de
+ * status do pedido, o consumo de producao, a compra), e nao em cada rota: e' la
+ * que se sabe que a operacao terminou.
+ */
+async function descarregarMovimentosPendentes(data, productsById) {
+  const pendentes = data.__movimentosPendentes || [];
+  if (!pendentes.length) return;
+  data.__movimentosPendentes = [];
+  // jaEmMemoria: o registrarMovimentoEstoque ja empurrou para data.stockMovements
+  // para que qualquer leitura no meio da requisicao enxergue o movimento, como
+  // era antes. Empurrar de novo aqui duplicaria a linha na resposta.
+  await commitStockMovements(data, pendentes, productsById, { jaEmMemoria: true });
 }
 
 function buildMovementRecord(data, { type, productId, depositId, quantity, unitCost, categoryId, date, document, note, transferId, origin, classId, classValueId }, user) {
   return {
     id: stockCore.createId('mov'),
-    code: stockCore.nextSequentialCode(data.stockMovements, 'MOV'),
+    // Vazio de proposito: quem numera e' a sequence do banco, dentro da
+    // transacao do commitStockMovements. Ver o bloco la.
+    code: '',
     type,
     date: date || stockCore.todayStr(),
     productId,
@@ -7117,9 +7217,14 @@ const server = http.createServer(async (req, res) => {
 
       // ---- estoque -------------------------------------------------------
       const movimentados = [];
+      // Fase AP: os movimentos da nota sao juntados e gravados numa transacao
+      // so, no fim. Antes cada um era empurrado no array e o total do produto
+      // era atualizado por fora, num upsert absoluto — nota com 30 itens eram
+      // 30 janelas para o processo morrer com metade do estoque lancado.
+      const movimentosDaNota = [];
       for (const decisao of decisoes.filter((d) => d.movimentarEstoque)) {
         const produto = produtosPorId.get(decisao.produtoId);
-        data.stockMovements.push(buildMovementRecord(data, {
+        movimentosDaNota.push(buildMovementRecord(data, {
           type: 'entrada',
           productId: produto.id,
           depositId: decisao.depositoId,
@@ -7132,7 +7237,9 @@ const server = http.createServer(async (req, res) => {
         }, user));
         await db.upsertProduct({
           ...produto,
-          stockQuantity: Number(produto.stockQuantity || 0) + Number(decisao.item.quantidade || 0),
+          // Fase AP: o total NAO vem daqui. Quem soma e' a transacao do
+          // commitStockMovements, junto com o razao — este upsert ficou so para
+          // o custo, que e' decisao da tela.
           // Custo do produto passa a ser o desta nota quando a tela pediu.
           // vUnCom é o preço da mercadoria: NÃO inclui frete, IPI nem ST. Custo
           // de reposição de verdade sai de rateio, e rateio é decisão de quem
@@ -7141,7 +7248,7 @@ const server = http.createServer(async (req, res) => {
         });
         movimentados.push(produto.name);
       }
-      if (movimentados.length) saveData(data);
+      await commitStockMovements(data, movimentosDaNota, produtosPorId);
 
       // ---- contas a pagar --------------------------------------------------
       const financeiro = [];
@@ -7279,6 +7386,9 @@ const server = http.createServer(async (req, res) => {
       });
       data.finance.push(financeEntry);
 
+      // Fase AP: os movimentos que esta compra empilhou viram linhas do razao
+      // aqui, numa transacao so, junto com o total do produto.
+      await descarregarMovimentosPendentes(data);
       saveData(data);
       return sendJson(res, { success: true, purchase, financeEntry });
     } catch (error) {
@@ -7333,6 +7443,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       const updated = await db.updatePurchase(id, { status: novoStatus });
+      // Fase AP: os movimentos que esta compra empilhou viram linhas do razao
+      // aqui, numa transacao so, junto com o total do produto.
+      await descarregarMovimentosPendentes(data);
       saveData(data);
       return sendJson(res, { success: true, purchase: updated });
     } catch (error) {
@@ -7722,13 +7835,18 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, { error: `Não é possível estornar: o saldo ficaria negativo (disponível ${available}).` }, 409);
         }
       }
+      // Fase AP: apagar a linha e corrigir o total viram uma coisa so. Antes
+      // eram duas escritas em lugares diferentes — o total ia para o Postgres e
+      // a remocao para o db.json —, e um processo morto entre elas deixava o
+      // total ja corrigido com o movimento ainda no razao.
       const reversal = { ...movement, type: movement.type === 'entrada' ? 'saida' : 'entrada' };
-      const product = productsById.get(movement.productId);
-      if (product) {
-        await db.updateProductStock(movement.productId, stockCore.toNumber(product.stockQuantity) + stockCore.movementSignedQuantity(reversal));
-      }
+      const delta = stockCore.movementSignedQuantity(reversal);
+      await emTransacao(async (cliente) => {
+        await razaoEstoque.travarProduto(cliente, movement.productId);
+        await razaoEstoque.apagarMovimento(cliente, id);
+        if (delta !== 0) await razaoEstoque.somarNoTotalDoProduto(cliente, movement.productId, delta);
+      });
       data.stockMovements = data.stockMovements.filter((m) => m.id !== id);
-      saveData(data);
       return sendJson(res, { success: true });
     } catch (error) {
       return sendStockError(res, error, 'Erro ao estornar movimentação');
@@ -7774,79 +7892,149 @@ const server = http.createServer(async (req, res) => {
       if (originDepositId === destinationDepositId) {
         return sendJson(res, { error: 'Origem e destino não podem ser o mesmo depósito.' }, 400);
       }
-      let classesDoProduto = [];
-      try {
-        classesDoProduto = await classesDb.classesDoProduto(body.productId);
-      } catch (erroClasses) {
-        classesDoProduto = [];
-      }
-      const { quantity } = assertMovementIsPossible(data, productsById, {
-        productId: body.productId,
-        depositId: originDepositId,
-        type: 'saida',
-        quantity: body.quantity,
-        classValueId: body.classValueId,
-        classesDoProduto
-      });
       if (!(data.deposits || []).some((d) => d.id === destinationDepositId)) {
         return sendJson(res, { error: 'Depósito de destino não encontrado.' }, 404);
       }
 
-      const transferId = stockCore.createId('tra');
-      const date = body.date || stockCore.todayStr();
-      const shared = {
-        productId: body.productId,
-        quantity,
-        unitCost: body.unitCost,
-        categoryId: body.categoryId || '',
-        document: body.document || '',
-        date,
-        transferId,
-        origin: 'transferencia',
-        // §18: a cor atravessa a transferência. Sem isto, transferir 4 pretos
-        // tiraria 4 pretos da origem e daria 4 SEM COR ao destino — o total do
-        // produto continuaria certo, e o preto teria sumido de um depósito
-        // sem aparecer no outro.
-        classId: body.classId || '',
-        classValueId: body.classValueId || ''
-      };
-      const out = buildMovementRecord(data, {
-        ...shared, type: 'saida', depositId: originDepositId,
-        note: body.note || 'Transferência entre depósitos (saída)'
-      }, user);
-      // O código do segundo lançamento precisa considerar o primeiro, que ainda
-      // não está na lista — por isso o cálculo manual aqui.
-      const into = buildMovementRecord(data, {
-        ...shared, type: 'entrada', depositId: destinationDepositId,
-        note: body.note || 'Transferência entre depósitos (entrada)'
-      }, user);
-      into.code = stockCore.nextSequentialCode([...data.stockMovements, out], 'MOV');
+      // UMA TRANSFERÊNCIA, VÁRIOS ITENS — e o formato antigo continua valendo.
+      //
+      // A tela passou a montar uma lista de produtos antes de enviar (é uma
+      // movimentação com itens, como a da referência), mas `{ productId,
+      // quantity }` solto continua sendo aceito: é o que os testes e qualquer
+      // integração existente mandam, e quebrá-los para mudar o desenho de uma
+      // tela seria trocar um problema de forma por um de funcionamento.
+      const itensBrutos = Array.isArray(body.items) && body.items.length
+        ? body.items
+        : [{ productId: body.productId, quantity: body.quantity, classId: body.classId, classValueId: body.classValueId }];
+      if (!itensBrutos.length) return sendJson(res, { error: 'Adicione ao menos um produto à movimentação.' }, 400);
+      if (itensBrutos.length > 200) return sendJson(res, { error: 'Máximo de 200 itens por movimentação.' }, 400);
 
-      const transfer = {
-        id: transferId,
-        code: stockCore.nextSequentialCode(data.stockTransfers, 'TRA'),
-        date,
-        productId: body.productId,
-        originDepositId,
-        destinationDepositId,
-        // Repetido no registro da transferência, além dos dois movimentos: a
-        // tela de transferências lista daqui e teria de abrir os movimentos
-        // para descobrir qual cor foi transferida.
-        classId: body.classId || '',
-        classValueId: body.classValueId || '',
-        quantity,
-        note: body.note || '',
-        movementOutId: out.id,
-        movementInId: into.id,
-        createdBy: user.id,
-        createdByName: user.name,
-        createdAt: new Date().toISOString()
-      };
-      data.stockTransfers.push(transfer);
+      // O MESMO PRODUTO DUAS VEZES SOMA, NÃO CONCORRE CONSIGO MESMO.
+      //
+      // Sem juntar, cada linha seria conferida contra o saldo INTEIRO da
+      // origem: com 5 em estoque, duas linhas de 3 passariam nas duas
+      // validações e o depósito terminaria com -1. A cor faz parte da chave
+      // porque 3 pretos e 3 brancos são saldos diferentes.
+      const porChave = new Map();
+      for (const item of itensBrutos) {
+        const productId = String(item?.productId || '').trim();
+        const classValueId = String(item?.classValueId || '').trim();
+        if (!productId) return sendJson(res, { error: 'Há um item sem produto na movimentação.' }, 400);
+        const chave = `${productId}::${classValueId}`;
+        const anterior = porChave.get(chave);
+        if (anterior) {
+          anterior.quantity = stockCore.toNumber(anterior.quantity) + stockCore.toNumber(item.quantity);
+        } else {
+          porChave.set(chave, {
+            productId,
+            classValueId,
+            classId: String(item?.classId || '').trim(),
+            quantity: stockCore.toNumber(item.quantity)
+          });
+        }
+      }
+      const itens = [...porChave.values()];
+
+      // TUDO É CONFERIDO ANTES DE QUALQUER COISA SER GRAVADA.
+      //
+      // Validar-e-gravar item a item deixaria o quinto item sem saldo depois de
+      // os quatro primeiros já terem saído da origem: metade de uma
+      // movimentação, com uma mensagem de erro que não diz o que ficou feito.
+      const validados = [];
+      for (const item of itens) {
+        let classesDoProduto = [];
+        try {
+          classesDoProduto = await classesDb.classesDoProduto(item.productId);
+        } catch (erroClasses) {
+          classesDoProduto = [];
+        }
+        const { quantity } = assertMovementIsPossible(data, productsById, {
+          productId: item.productId,
+          depositId: originDepositId,
+          type: 'saida',
+          quantity: item.quantity,
+          classValueId: item.classValueId,
+          classesDoProduto
+        });
+        validados.push({ ...item, quantity });
+      }
+
+      const date = body.date || stockCore.todayStr();
+      // Liga os itens enviados juntos. A lista de transferências continua com
+      // uma linha por produto (é assim que ela sempre foi, e é o que o estorno
+      // por linha espera), mas quem precisar reconstruir a movimentação inteira
+      // tem por onde.
+      const batchId = stockCore.createId('lot');
+      const movimentos = [];
+      const transferencias = [];
+
+      for (const item of validados) {
+        const transferId = stockCore.createId('tra');
+        const shared = {
+          productId: item.productId,
+          quantity: item.quantity,
+          unitCost: body.unitCost,
+          categoryId: body.categoryId || '',
+          document: body.document || '',
+          date,
+          transferId,
+          origin: 'transferencia',
+          // §18: a cor atravessa a transferência. Sem isto, transferir 4 pretos
+          // tiraria 4 pretos da origem e daria 4 SEM COR ao destino — o total do
+          // produto continuaria certo, e o preto teria sumido de um depósito
+          // sem aparecer no outro.
+          classId: item.classId || '',
+          classValueId: item.classValueId || ''
+        };
+        const out = buildMovementRecord(data, {
+          ...shared, type: 'saida', depositId: originDepositId,
+          note: body.note || 'Transferência entre depósitos (saída)'
+        }, user);
+        // Cada código precisa considerar os anteriores, que ainda não estão na
+        // lista — daí o cálculo manual com os pendentes junto.
+        // O codigo sai da sequence do banco, dentro da transacao do
+        // commitStockMovements. Calcular max+1 aqui gerava o mesmo MOV duas
+        // vezes quando duas movimentacoes saiam ao mesmo tempo.
+        movimentos.push(out);
+        const into = buildMovementRecord(data, {
+          ...shared, type: 'entrada', depositId: destinationDepositId,
+          note: body.note || 'Transferência entre depósitos (entrada)'
+        }, user);
+        movimentos.push(into);
+
+        transferencias.push({
+          id: transferId,
+          // Numerada pela sequence stock_transfers_code_seq, no commit.
+          code: '',
+          batchId,
+          date,
+          productId: item.productId,
+          originDepositId,
+          destinationDepositId,
+          // Repetido no registro da transferência, além dos dois movimentos: a
+          // tela de transferências lista daqui e teria de abrir os movimentos
+          // para descobrir qual cor foi transferida.
+          classId: item.classId || '',
+          classValueId: item.classValueId || '',
+          quantity: item.quantity,
+          note: body.note || '',
+          movementOutId: out.id,
+          movementInId: into.id,
+          createdBy: user.id,
+          createdByName: user.name,
+          createdAt: new Date().toISOString()
+        });
+      }
+
       // Saída + entrada de mesma quantidade: o saldo total não muda, só a
-      // distribuição entre depósitos.
-      await commitStockMovements(data, [out, into], productsById);
-      return sendJson(res, { success: true, transfer: stockCore.serializeTransfer(transfer, data, productsById) });
+      // distribuição entre depósitos. Os dois movimentos e o registro da
+      // transferência entram na MESMA transação — antes eram um writeFileSync,
+      // atômico por acidente; agora é atômico por garantia.
+      await commitStockMovements(data, movimentos, productsById, { transferencias });
+      const serializadas = transferencias.map((t) => stockCore.serializeTransfer(t, data, productsById));
+      // `transfer` no singular fica para quem já consumia esta rota antes de ela
+      // aceitar lista.
+      return sendJson(res, { success: true, transfer: serializadas[0], transfers: serializadas });
     } catch (error) {
       return sendStockError(res, error, 'Erro ao transferir entre depósitos');
     }
@@ -7864,9 +8052,13 @@ const server = http.createServer(async (req, res) => {
       if (stockCore.toNumber(transfer.quantity) > available) {
         return sendJson(res, { error: `Não é possível estornar: o depósito de destino ficaria negativo (disponível ${available}).` }, 409);
       }
+      // Os dois movimentos e o registro saem juntos. O total do produto NAO
+      // muda: a transferencia moveu entre depositos, nao criou nem consumiu.
+      await emTransacao(async (cliente) => {
+        await razaoEstoque.apagarTransferencia(cliente, id);
+      });
       data.stockMovements = data.stockMovements.filter((m) => m.transferId !== id);
       data.stockTransfers = data.stockTransfers.filter((t) => t.id !== id);
-      saveData(data);
       return sendJson(res, { success: true });
     } catch (error) {
       return sendStockError(res, error, 'Erro ao estornar transferência');
