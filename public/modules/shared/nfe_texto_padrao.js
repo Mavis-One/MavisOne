@@ -131,10 +131,14 @@ ${RODAPE}`;
    * no meio da garantia, o DANFE pareceria prometer a todo cliente algo
    * combinado num caso só.
    */
-  function montar({ observacaoDoPedido = '' } = {}) {
+  // `base` existe por causa da fase AO: cada CNPJ pode ter a própria mensagem
+  // padrão, e quem sabe qual é o CNPJ emitente é a tela, não este arquivo.
+  // Ausente, continua sendo o texto do sistema — que é o que era antes.
+  function montar({ observacaoDoPedido = '', base } = {}) {
     const extra = String(observacaoDoPedido || '').trim();
     if (ehTextoPadrao(extra)) return extra;
-    return [PADRAO, extra].filter(Boolean).join('\n\n');
+    const inicio = String(base || '').trim() || PADRAO;
+    return [inicio, extra].filter(Boolean).join('\n\n');
   }
 
   /**

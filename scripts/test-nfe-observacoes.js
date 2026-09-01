@@ -127,7 +127,18 @@ check('o campo abre com o que já está no texto', /TextoPadrao\.chassiDoTexto\(
 console.log('\n--- o texto do pedido não é descartado ---');
 // Era perguntado ao gerar a NF-e e depois jogado fora: esta tela não lia o
 // campo. Perguntar e ignorar é pior do que não perguntar.
-check('a observação do pedido entra na nota', /observacaoDoPedido: doPedido\.taxNotes \|\| ''/.test(telaSrc));
+// A nota do pedido deixou de ser lida direto no `montar` e passou a ficar numa
+// variavel (notaDoPedido): desde a fase AO, trocar o CNPJ emitente troca a BASE
+// do texto, e sem guardar a observacao a parte ela seria perdida nessa troca.
+check('a observação do pedido entra na nota', /notaDoPedido = doPedido\.taxNotes \|\| ''/.test(telaSrc)
+  && /observacaoDoPedido: notaDoPedido/.test(telaSrc));
+check('  e sobrevive à troca de CNPJ emitente', /if \(observacoes === anterior\) observacoes = padraoAtual\(\);/.test(telaSrc));
+// Base vazia cai no texto do sistema: empresa sem mensagem propria nao perde a
+// ficha tecnica que sempre saiu na nota.
+check('  base vazia continua caindo no texto do sistema',
+  T.montar({ base: '' }) === T.montar({}) && T.montar({ base: '   ' }) === T.PADRAO);
+check('  e a base da empresa substitui o texto do sistema',
+  T.montar({ base: 'TEXTO DA EMPRESA' }) === 'TEXTO DA EMPRESA');
 const comObs = T.montar({ observacaoDoPedido: 'Entrega em 20/08.' });
 check('e vai por último, depois da garantia', comObs.trim().endsWith('Entrega em 20/08.')
   && comObs.indexOf('GARANTIA') < comObs.indexOf('Entrega em 20/08.'));

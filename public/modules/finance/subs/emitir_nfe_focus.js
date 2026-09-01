@@ -73,6 +73,25 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // inteiro a cada troca de aba: sem isto, escrever o chassi e ir conferir os
   // itens apagaria o que foi escrito.
   const TextoPadrao = window.MavisNfeTextoPadrao;
+  // Fase AO: cada CNPJ pode ter a própria mensagem padrão, definida em
+  // Configurações > Empresa. Ficha técnica e garantia são compromisso comercial
+  // de quem ASSINA a nota — com mais de uma empresa no sistema, um texto único
+  // faria a nota de uma prometer a garantia da outra.
+  let empresasPorId = new Map();
+  function textoPadraoDoEmitente() {
+    const estab = estabelecimentos.find((e) => e.id === selectedEstabelecimentoId);
+    const daEmpresa = estab ? (empresasPorId.get(estab.empresaId) || '').trim() : '';
+    // Vazio na empresa = usa o padrão do sistema. É o comportamento de antes da
+    // fase AO, e é o que vale para quem nunca preencher o campo.
+    return daEmpresa || (TextoPadrao ? TextoPadrao.PADRAO : '');
+  }
+  // A observação que veio do pedido, guardada à parte: ela tem de sobreviver à
+  // troca de emitente, que só substitui a BASE do texto.
+  let notaDoPedido = '';
+  function padraoAtual() {
+    if (!TextoPadrao) return '';
+    return TextoPadrao.montar({ observacaoDoPedido: notaDoPedido, base: textoPadraoDoEmitente() });
+  }
   let observacoes = TextoPadrao ? TextoPadrao.PADRAO : '';
 
 
@@ -91,6 +110,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   try {
     const res = await api('/api/fiscal/estabelecimentos');
     estabelecimentos = (res.estabelecimentos || []).filter((e) => e.ativo && e.emiteNfe);
+    try {
+      // Só a mensagem padrão de cada empresa. Falhar aqui não pode impedir a
+      // emissão: sem a lista, o texto do sistema continua valendo.
+      const resEmpresas = await api('/api/fiscal/empresas');
+      empresasPorId = new Map((resEmpresas.empresas || []).map((emp) => [emp.id, emp.observacaoPadraoNfe || '']));
+    } catch (erroEmpresas) {
+      empresasPorId = new Map();
+    }
   } catch (error) {
     showToast('Não foi possível carregar os estabelecimentos: ' + (error.message || error), 'error');
   }
@@ -133,13 +160,17 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // para a nota. Ele era perguntado e depois DESCARTADO — esta tela não lia o
     // campo. Perguntar e ignorar é pior do que não perguntar.
     if (TextoPadrao) {
-      observacoes = TextoPadrao.montar({ observacaoDoPedido: doPedido.taxNotes || '' });
+      notaDoPedido = doPedido.taxNotes || '';
+      observacoes = TextoPadrao.montar({ observacaoDoPedido: notaDoPedido });
     }
   }
 
   // O que o botão "Restaurar texto padrão" devolve. Vindo de um pedido, é o
   // texto COM as fichas preenchidas — restaurar o modelo em branco obrigaria a
   // redigitar chassi e cor que o pedido já tinha.
+  // Depois de saber qual estabelecimento está selecionado: sem isto, a tela
+  // nasceria com o texto do sistema mesmo quando o CNPJ tem o seu.
+  observacoes = padraoAtual();
   const observacoesIniciais = observacoes;
 
   // Um lugar só para ler o destinatário: a nota comum e a complementar usam os
@@ -666,7 +697,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 
 
     document.getElementById('nfeFocusEstabSelect')?.addEventListener('change', async (event) => {
+      const anterior = padraoAtual();
       selectedEstabelecimentoId = event.target.value;
+      // Trocar de emitente troca a mensagem padrão — mas SÓ se ela ainda era a
+      // do emitente anterior. Sobrescrever um texto escrito à mão porque a
+      // pessoa corrigiu o CNPJ apagaria o trabalho dela sem aviso. A observação
+      // que veio do pedido continua no fim do texto: quem troca é a base.
+      if (observacoes === anterior) observacoes = padraoAtual();
       await loadNotasRecentes();
       renderForm();
     });

@@ -61,6 +61,23 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   let regraForm = null; // null | {} (nova) | objeto regra (edição)
   let certificados = [];
   let certificadoForm = null; // null | {} (novo)
+  // Tabelas oficiais (CFOP, CST, CSOSN, IBS/CBS). São códigos da legislação,
+  // iguais para qualquer empresa, e já vinham do banco por /api/fiscal/tabelas
+  // — só não chegavam até aqui: o formulário de regra pedia os códigos como
+  // texto livre. Digitar "5405" de cabeça funciona; digitar "5450" também
+  // funciona, e a nota só é recusada na SEFAZ.
+  let tabelas = { disponivel: false };
+
+  async function loadTabelas() {
+    try {
+      tabelas = await api('/api/fiscal/tabelas');
+    } catch (error) {
+      // Sem as tabelas a tela continua funcionando com campo de texto, que é o
+      // que ela sempre foi. Perder o formulário inteiro por causa da lista de
+      // apoio seria trocar uma ajuda por um impedimento.
+      tabelas = { disponivel: false };
+    }
+  }
 
   async function loadEmpresas() {
     const res = await api('/api/fiscal/empresas');
@@ -155,6 +172,17 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             <label>Alíquota crédito ICMS SN (%)<input name="aliquotaCreditoIcmsSn" type="number" step="0.0001" min="0" value="${empresaForm.aliquotaCreditoIcmsSn ?? ''}" /></label>
             <label>Vigência da alíquota<input name="aliquotaSnVigencia" type="date" value="${empresaForm.aliquotaSnVigencia || ''}" /></label>
           </div>
+          <!-- Fase AO. Ficha técnica, garantia e instruções são compromisso
+               COMERCIAL de quem assina a nota, e quem assina é este CNPJ. Com
+               mais de uma empresa no sistema, um texto único faria a nota de
+               uma prometer a garantia da outra — e é o que está impresso no
+               DANFE que vale numa discussão com o cliente. -->
+          <label>Observação padrão das notas deste CNPJ
+            <textarea name="observacaoPadraoNfe" rows="5" maxlength="5000"
+              placeholder="Vazio = usa o texto padrão do sistema.">${escapeHtml(empresaForm.observacaoPadraoNfe || '')}</textarea>
+          </label>
+          <p class="muted">Nasce no campo "Observações adicionais" de toda nota emitida por este CNPJ, e continua editável nota a nota. Vai para o campo livre impresso no DANFE (infCpl) — não altera imposto, CFOP nem base de cálculo. Limite da SEFAZ: 5000 caracteres.</p>
+
           <div class="checkbox-grid">
             <label><input type="checkbox" name="opcaoTransferenciaTributada" ${empresaForm.opcaoTransferenciaTributada ? 'checked' : ''} /> Opção por transferência tributada (Convênio ICMS 109/2024)</label>
             <label><input type="checkbox" name="eImportadora" ${empresaForm.eImportadora ? 'checked' : ''} /> É importadora</label>
@@ -357,19 +385,36 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             <label>UF destino (vazio = qualquer)<input name="ufDestino" data-campo="uf" value="${escapeHtml(regraForm.ufDestino || '')}" /></label>
           </div>
           <div class="row">
-            <label>CFOP<input name="cfop" required maxlength="4" value="${escapeHtml(regraForm.cfop || '')}" /></label>
-            <label>CSOSN (Simples Nacional)<input name="csosn" maxlength="3" value="${escapeHtml(regraForm.csosn || '')}" placeholder="ex.: 102" /></label>
-            <label>CST ICMS (Regime Normal)<input name="cstIcms" maxlength="2" value="${escapeHtml(regraForm.cstIcms || '')}" placeholder="ex.: 00" /></label>
+            ${campoDeCodigo({ nome: 'cfop', rotulo: 'CFOP', lista: tabelas.cfop, valor: regraForm.cfop, maxlength: 4, obrigatorio: true, placeholder: 'ex.: 5405' })}
+            ${campoDeCodigo({ nome: 'csosn', rotulo: 'CSOSN (Simples Nacional)', lista: tabelas.csosn, valor: regraForm.csosn, maxlength: 3, placeholder: 'ex.: 102' })}
+            ${campoDeCodigo({ nome: 'cstIcms', rotulo: 'CST ICMS (Regime Normal)', lista: tabelas.cstIcms, valor: regraForm.cstIcms, maxlength: 2, placeholder: 'ex.: 00' })}
           </div>
           <div class="row">
             <label>Alíquota ICMS (%)<input name="aliquotaIcms" type="number" step="0.01" min="0" value="${regraForm.aliquotaIcms ?? ''}" /></label>
-            <label>CST PIS<input name="cstPis" maxlength="2" value="${escapeHtml(regraForm.cstPis || '')}" placeholder="ex.: 49" /></label>
+            ${campoDeCodigo({ nome: 'cstPis', rotulo: 'CST PIS', lista: tabelas.cstPisCofins, valor: regraForm.cstPis, maxlength: 2, placeholder: 'ex.: 49' })}
             <label>Alíquota PIS (%)<input name="aliquotaPis" type="number" step="0.0001" min="0" value="${regraForm.aliquotaPis ?? ''}" /></label>
           </div>
           <div class="row">
-            <label>CST COFINS<input name="cstCofins" maxlength="2" value="${escapeHtml(regraForm.cstCofins || '')}" placeholder="ex.: 49" /></label>
+            ${campoDeCodigo({ nome: 'cstCofins', rotulo: 'CST COFINS', lista: tabelas.cstPisCofins, valor: regraForm.cstCofins, maxlength: 2, placeholder: 'ex.: 49' })}
             <label>Alíquota COFINS (%)<input name="aliquotaCofins" type="number" step="0.0001" min="0" value="${regraForm.aliquotaCofins ?? ''}" /></label>
             <label>Prioridade (desempate)<input name="prioridade" type="number" step="1" value="${regraForm.prioridade ?? 0}" /></label>
+          </div>
+
+          <!-- IBS/CBS (LC 214/2025). As colunas existem no regra_fiscal desde a
+               fase Z e o mapeador de gravação já as escreve; faltava a tela.
+               Enquanto isso, criar uma regra pela tela deixava os campos da
+               reforma sempre nulos, e o nfePayloadBuilder só monta o grupo
+               quando o CST IBS/CBS está preenchido — ou seja, a reforma estava
+               implementada e inalcançável. -->
+          <h4>IBS e CBS (reforma tributária)</h4>
+          <div class="row">
+            ${campoDeCodigo({ nome: 'cstIbsCbs', rotulo: 'CST IBS/CBS', lista: tabelas.cstIbsCbs, valor: regraForm.cstIbsCbs, maxlength: 3, placeholder: 'ex.: 000' })}
+            ${campoDeCodigo({ nome: 'classTrib', rotulo: 'Classificação tributária', lista: tabelas.classificacaoTributaria, valor: regraForm.classTrib, maxlength: 6, placeholder: 'ex.: 000001' })}
+            <label>Alíquota CBS (%)<input name="aliquotaCbs" type="number" step="0.0001" min="0" value="${regraForm.aliquotaCbs ?? ''}" /></label>
+          </div>
+          <div class="row">
+            <label>Alíquota IBS estadual (%)<input name="aliquotaIbsUf" type="number" step="0.0001" min="0" value="${regraForm.aliquotaIbsUf ?? ''}" /></label>
+            <label>Alíquota IBS municipal (%)<input name="aliquotaIbsMun" type="number" step="0.0001" min="0" value="${regraForm.aliquotaIbsMun ?? ''}" /></label>
           </div>
           <div class="row">
             <label>Vigência início<input name="vigenciaInicio" type="date" required value="${regraForm.vigenciaInicio || new Date().toISOString().slice(0, 10)}" /></label>
@@ -471,12 +516,103 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
     `;
   }
 
+  // Token padrao do .env (FOCUS_NFE_TOKEN) — a reserva de quando o
+  // estabelecimento nao tem token proprio. Este painel morava na tela
+  // "Empresa", que deixou de existir: os dados da empresa passaram a ter um
+  // lugar so, e este era o unico conteudo dela que valia a pena trazer junto.
+  function renderFocusPadraoSection() {
+    return `
+      <div class="panel">
+        <div class="cadastro-page-head">
+          <div>
+            <h3>Integração — Focus NFe</h3>
+            <p class="muted">Cada estabelecimento acima tem o seu próprio token. O teste abaixo usa só o token padrão do servidor (FOCUS_NFE_TOKEN no .env), que serve de reserva.</p>
+          </div>
+          <div class="cadastro-list-actions">
+            <button type="button" class="secondary" id="focusNfeRefresh">Testar token padrão</button>
+          </div>
+        </div>
+        <div id="focusNfeStatusBox" class="muted">Verificando conexão...</div>
+      </div>
+    `;
+  }
+
+  async function carregarStatusFocusPadrao() {
+    const box = document.getElementById('focusNfeStatusBox');
+    if (!box) return;
+    box.textContent = 'Verificando conexão...';
+    try {
+      const status = await api('/api/focusnfe/status');
+      const ambienteLabel = status.ambiente === 'producao' ? 'Produção' : 'Homologação';
+      if (!status.configured) {
+        box.innerHTML = `<span class="finance-badge finance-badge-muted">Não configurado</span> Defina <code>FOCUS_NFE_TOKEN</code> no .env do servidor e reinicie-o.`;
+      } else if (status.connected) {
+        box.innerHTML = `<span class="finance-badge finance-badge-success">Conectado</span> Ambiente: ${escapeHtml(ambienteLabel)}.`;
+      } else {
+        box.innerHTML = `<span class="finance-badge finance-badge-danger">Falha na conexão</span> Ambiente: ${escapeHtml(ambienteLabel)}. ${escapeHtml(status.message || '')}`;
+      }
+    } catch (error) {
+      box.textContent = 'Erro ao verificar Focus NFe: ' + (error.message || error);
+    }
+  }
+
+  // UM CAMPO QUE VIRA LISTA QUANDO EXISTE LISTA.
+  //
+  // Com o catálogo carregado, vira busca ("5405" ou "venda de mercadoria" acham
+  // a mesma linha) e o que é gravado continua sendo só o código — o
+  // renderSearchableSelect mantém um <input type="hidden"> com o mesmo `name`,
+  // então o FormData do submit não muda em nada.
+  //
+  // Sem catálogo (migração fiscal pendente), volta a ser o input de texto de
+  // antes. Um campo que some porque a tabela de apoio não existe seria pior do
+  // que o texto livre que ele veio substituir.
+  function campoDeCodigo({ nome, rotulo, lista, valor, placeholder, maxlength, obrigatorio }) {
+    const opcoes = (lista || []).map((linha) => ({
+      value: String(linha.codigo),
+      label: `${linha.codigo} — ${linha.descricao || ''}`.trim().replace(/ —\s*$/, '')
+    }));
+    if (!opcoes.length) {
+      return `<label>${escapeHtml(rotulo)}<input name="${nome}" ${obrigatorio ? 'required' : ''} ${maxlength ? `maxlength="${maxlength}"` : ''} value="${escapeHtml(valor || '')}" placeholder="${escapeHtml(placeholder || '')}" /></label>`;
+    }
+    return `<label>${escapeHtml(rotulo)}
+      ${renderSearchableSelect({
+        id: `regra_${nome}`, name: nome, options: opcoes, selectedValue: valor || '',
+        placeholder: placeholder || 'Buscar código ou descrição...', required: obrigatorio
+      })}
+    </label>`;
+  }
+
+  // Os mesmos campos de código do formulário, num lugar só: a lista alimenta o
+  // render E a religação dos eventos. Ligar quatro e esquecer o quinto deixaria
+  // um campo que abre a lista e não grava nada.
+  function camposDeCodigoDaRegra() {
+    return [
+      { nome: 'cfop', lista: tabelas.cfop },
+      { nome: 'csosn', lista: tabelas.csosn },
+      { nome: 'cstIcms', lista: tabelas.cstIcms },
+      { nome: 'cstPis', lista: tabelas.cstPisCofins },
+      { nome: 'cstCofins', lista: tabelas.cstPisCofins },
+      { nome: 'cstIbsCbs', lista: tabelas.cstIbsCbs },
+      { nome: 'classTrib', lista: tabelas.classificacaoTributaria }
+    ];
+  }
+
+  function ligarCamposDeCodigo() {
+    for (const campo of camposDeCodigoDaRegra()) {
+      const opcoes = (campo.lista || []).map((linha) => ({
+        value: String(linha.codigo),
+        label: `${linha.codigo} — ${linha.descricao || ''}`.trim().replace(/ —\s*$/, '')
+      }));
+      if (opcoes.length) attachSearchableSelect({ id: `regra_${campo.nome}`, options: opcoes });
+    }
+  }
+
   function renderAll() {
     content.innerHTML = `
       <div class="panel">
         <div class="cadastro-page-head">
           <div>
-            <h3>Empresas (fiscal)</h3>
+            <h3>Empresas</h3>
             <p class="muted">Cadastro fiscal completo — usado pra emissão real de NF-e via Focus NFe. Uma linha por raiz de CNPJ.</p>
           </div>
           <div class="cadastro-list-actions">
@@ -488,8 +624,11 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
       ${renderEmpresaForm()}
       ${renderCertificadosSection()}
       ${renderEstabelecimentosSection()}
+      ${renderFocusPadraoSection()}
     `;
     attachHandlers();
+    document.getElementById('focusNfeRefresh')?.addEventListener('click', carregarStatusFocusPadrao);
+    setTimeout(carregarStatusFocusPadrao, 50);
     window.MavisDocumento?.ligarTodos(content);
 
     // Consulta do CNPJ do estabelecimento. O emitente é o dado que mais custa
@@ -530,6 +669,12 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   }
 
   function attachHandlers() {
+    // Os campos de codigo viram busca so' depois de estarem no DOM. Fica aqui,
+    // junto dos outros handlers, porque e' o mesmo momento: tudo o que o
+    // renderAll pinta precisa ser religado, e um lugar so' e' o que evita
+    // religar quatro e esquecer o quinto.
+    ligarCamposDeCodigo();
+
     document.getElementById('fiscalNewEmpresaBtn')?.addEventListener('click', () => {
       empresaForm = { ativo: true };
       renderAll();
@@ -550,6 +695,10 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         aliquotaSnVigencia: formData.get('aliquotaSnVigencia') || null,
         opcaoTransferenciaTributada: formData.get('opcaoTransferenciaTributada') === 'on',
         eImportadora: formData.get('eImportadora') === 'on',
+        // Vazio e' um valor legitimo aqui: significa "usa o texto padrao do
+        // sistema". Por isso vai como string mesmo, sem `|| null` -- quem
+        // decide o que fazer com o vazio e' o mapeador do banco, num lugar so'.
+        observacaoPadraoNfe: String(formData.get('observacaoPadraoNfe') || '').trim(),
         ativo: formData.get('ativo') === 'on'
       };
       try {
@@ -823,6 +972,14 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         aliquotaPis: formData.get('aliquotaPis') || null,
         cstCofins: formData.get('cstCofins') || null,
         aliquotaCofins: formData.get('aliquotaCofins') || null,
+        cstIbsCbs: formData.get('cstIbsCbs') || null,
+        classTrib: formData.get('classTrib') || null,
+        // Sem `|| null`: alíquota 0 é valor legítimo (CST 400 isenção, 410
+        // imunidade) e viraria "não preenchido". O mapeador do banco usa
+        // numeroOuNulo pela mesma razão — os dois lados têm de concordar.
+        aliquotaCbs: formData.get('aliquotaCbs') === '' ? null : formData.get('aliquotaCbs'),
+        aliquotaIbsUf: formData.get('aliquotaIbsUf') === '' ? null : formData.get('aliquotaIbsUf'),
+        aliquotaIbsMun: formData.get('aliquotaIbsMun') === '' ? null : formData.get('aliquotaIbsMun'),
         prioridade: Number(formData.get('prioridade') || 0),
         vigenciaInicio: formData.get('vigenciaInicio'),
         vigenciaFim: formData.get('vigenciaFim') || null
@@ -871,7 +1028,9 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   }
 
   try {
-    await loadEmpresas();
+    // As tabelas oficiais em paralelo com as empresas: são independentes, e uma
+    // depois da outra atrasaria a tela pelo tempo das duas.
+    await Promise.all([loadEmpresas(), loadTabelas()]);
   } catch (error) {
     showToast(error.message || 'Erro ao carregar empresas fiscais.', 'error');
   }
