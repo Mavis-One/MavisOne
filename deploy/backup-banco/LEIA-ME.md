@@ -14,15 +14,20 @@ compose — um banco que já estava na VPS, ou que roda em outra máquina.
 
 | | onde roda | quando | o que cobre |
 |---|---|---|---|
-| serviço `backup` da stack principal | junto com o banco | sozinho, a cada 24h | estrutura + dados |
-| `npm run backup` | sua máquina | quando você manda | estrutura + dados |
-| esta stack | VPS, via Portainer | sozinha, na hora marcada | estrutura + dados |
+| serviço `backup` da stack principal | junto com o banco | sozinho, a cada 24h | banco + estado do app |
+| `npm run backup` | sua máquina | quando você manda | banco + estado do app |
+| esta stack | VPS, via Portainer | sozinha, na hora marcada | banco (+ estado, se enxergar) |
 
-**As três cobrem a mesma coisa.** Antes da saída do Supabase não era assim: o
-backup da máquina de desenvolvimento exportava dados pelo PostgREST e deixava de
-fora função, gatilho, índice e sequência, porque não havia `pg_dump` instalado
-ali. Com o banco em Docker, o `pg_dump` está dentro do container — o backup
-incompleto deixou de existir.
+**As duas primeiras cobrem o sistema; esta aqui costuma cobrir só o banco.** O
+motivo é o que a coluna diz: parte do sistema não mora no Postgres — o razão de
+estoque e os lançamentos do Financeiro vivem no `data/db.json` do app. As stacks
+que rodam ao lado do app leem esse arquivo; esta, que existe justamente para
+rodar longe dele, só o alcança se você apontar `ESTADO_ORIGEM`.
+
+Quando não alcança, o manifesto do artefato **registra a ausência**. É a
+diferença entre "este backup não tem o estado, e sabe disso" e "este backup
+parece incompleto e ninguém sabe por quê" — que é o que se descobre no pior
+momento possível.
 
 A diferença que sobrou é **quem se lembra de rodar**, e as automações não se
 esquecem.
@@ -48,7 +53,7 @@ Isso mudou na fase AM e importa mais do que parece. O binário dos anexos de
 pedido morava no Supabase Storage, fora do alcance do `pg_dump`: eram duas
 coisas para restaurar no mesmo ponto no tempo, e a segunda é sempre a que
 alguém esquece. Hoje o anexo é a tabela `pedido_anexo`, então **um arquivo de
-dump é o sistema inteiro**.
+dump cobre os anexos também**.
 
 ## Subir
 
@@ -95,12 +100,21 @@ de uma automação morta.
 ## Restaurar
 
 ```
-node scripts/restaurar-banco.js data/backup/mavisone-....sql.gz --confirmo
+node scripts/restaurar-banco.js data/backup/mavisone-....tar.gz --confirmo
 ```
 
-Funciona com o arquivo desta stack também: os dois usam as mesmas opções de
-`pg_dump` (`--clean --if-exists`), de propósito, para que exista **um** caminho
-de restauração e não dois.
+Funciona com o arquivo desta stack também: as três geram o mesmo formato e usam
+as mesmas opções de `pg_dump` (`--clean --if-exists`), de propósito, para que
+exista **um** caminho de restauração e não três.
+
+O restaurador lê os `.sql.gz` antigos também — e avisa, antes de perguntar se
+pode, que aquele arquivo cobre só o banco. Um backup que deixa de abrir não é
+compatibilidade, é perda.
+
+Ele **se recusa a rodar com o sistema no ar**. Não é zelo: toda rota do
+`server.js` faz o par `loadData()` / `saveData()`, então uma requisição que
+entrou um segundo antes já leu o estado velho e vai gravá-lo de volta depois —
+apagando a restauração sem uma linha de erro na tela.
 
 O `--confirmo` é obrigatório porque a restauração apaga o banco de destino, e o
 script mostra qual é o destino (sem a senha) antes de aceitar.

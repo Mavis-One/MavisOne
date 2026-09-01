@@ -10,6 +10,14 @@
  * Um backup que nunca foi restaurado não é um backup — é um arquivo. Este
  * teste é o que transforma um no outro.
  *
+ * DESDE QUE O ARTEFATO PASSOU A TER DUAS METADES
+ * ----------------------------------------------
+ * O backup deixou de ser só o Postgres: ele carrega também o data/db.json, onde
+ * moram o razão de estoque e os lançamentos do Financeiro. Provar a volta do
+ * banco e não provar a volta do estado deixaria de fora justamente a metade
+ * nova — e a que ninguém olharia até precisar dela. Por isso o teste marca
+ * DOIS lugares: uma linha no Postgres e uma chave no db.json.
+ *
  * POR QUE ELE FICOU MUITO MENOR
  * -----------------------------
  * A versão anterior exportava tabela por tabela pelo PostgREST e precisava
@@ -28,6 +36,7 @@
  */
 require('dotenv').config();
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { banco, fecharPool } = require('../lib/db/client');
@@ -36,6 +45,7 @@ const { esquecerCatalogo } = require('../lib/db/catalogo');
 
 const RAIZ = path.join(__dirname, '..');
 const MARCA = `zz-teste-backup-${Date.now()}`;
+const ESTADO = path.join(RAIZ, 'data', 'db.json');
 
 let falhas = 0;
 const check = (ok, t, d) => { console.log(`  ${ok ? 'OK ' : 'XX '} ${t}${d !== undefined ? ' -> ' + d : ''}`); if (!ok) falhas++; };
@@ -49,7 +59,35 @@ function rodar(script, argumentos = []) {
   return r;
 }
 
+/**
+ * O sistema precisa estar PARADO — e essa e' uma condicao do teste, nao uma
+ * falha dele.
+ *
+ * O restaurador se recusa a rodar com o MavisONE no ar (uma requisicao em voo
+ * regrava o estado antigo por cima do restaurado). Sem esta checagem aqui, o
+ * teste seguia adiante e imprimia seis linhas vermelhas em cascata — e quem
+ * lesse iria procurar defeito no backup, que esta funcionando.
+ */
+function sistemaNoAr(porta) {
+  return new Promise((resolver) => {
+    const req = http.request({ host: '127.0.0.1', port: porta, path: '/', method: 'HEAD', timeout: 1200 }, () => {
+      req.destroy(); resolver(true);
+    });
+    req.on('error', () => resolver(false));
+    req.on('timeout', () => { req.destroy(); resolver(false); });
+    req.end();
+  });
+}
+
 (async () => {
+  const porta = Number(process.env.PORT) || 3000;
+  if (await sistemaNoAr(porta)) {
+    console.error(`Este teste restaura por cima do banco E do data/db.json, e tem alguem respondendo na porta ${porta}.`);
+    console.error('Pare o MavisONE e rode de novo:  pm2 stop mavisone   (ou encerre o npm start)');
+    console.error('');
+    console.error('(saindo sem falhar: nao ha o que consertar no backup, o sistema so precisa estar parado)');
+    process.exit(0);
+  }
   if (!process.argv.includes('--confirmo')) {
     console.error('Este teste RESTAURA o banco por cima do atual (ver o cabeçalho).');
     console.error('Se for isso mesmo: node scripts/test-backup-restauracao.js --confirmo');
@@ -67,6 +105,17 @@ function rodar(script, argumentos = []) {
   check(!erroInsert, 'linha de prova criada', erroInsert ? erroInsert.message : MARCA);
   if (erroInsert) { await fecharPool(); process.exit(1); }
 
+  console.log('\n--- 1b. e uma marca no ESTADO do app (data/db.json) ---');
+  // O estoque e o Financeiro vivem aqui, não no Postgres. Uma chave própria,
+  // fora das coleções do sistema, prova a volta sem mexer em dado de verdade.
+  const estadoOriginal = fs.existsSync(ESTADO) ? fs.readFileSync(ESTADO, 'utf8') : null;
+  check(estadoOriginal !== null, 'o data/db.json existe para ser copiado');
+  if (estadoOriginal === null) { await fecharPool(); process.exit(1); }
+  const comMarca = JSON.parse(estadoOriginal);
+  comMarca.__provaDeBackup = MARCA;
+  fs.writeFileSync(ESTADO, JSON.stringify(comMarca, null, 2));
+  check(JSON.parse(fs.readFileSync(ESTADO, 'utf8')).__provaDeBackup === MARCA, 'marca gravada no estado');
+
   console.log('\n--- 2. backup ---');
   const backup = rodar('backup-banco.js');
   check(backup.status === 0, 'npm run backup terminou bem', String(backup.status));
@@ -78,6 +127,13 @@ function rodar(script, argumentos = []) {
   await banco.from('people').delete().eq('id', MARCA);
   const sumiu = await banco.from('people').select('id').eq('id', MARCA).maybeSingle();
   check(sumiu.data === null, 'a linha não está mais lá');
+
+  console.log('\n--- 3b. estraga o estado (como um erro humano faria) ---');
+  const estragado = JSON.parse(fs.readFileSync(ESTADO, 'utf8'));
+  delete estragado.__provaDeBackup;
+  estragado.__estragoDoTeste = true;
+  fs.writeFileSync(ESTADO, JSON.stringify(estragado, null, 2));
+  check(JSON.parse(fs.readFileSync(ESTADO, 'utf8')).__provaDeBackup === undefined, 'a marca do estado sumiu');
 
   console.log('\n--- 4. restaura ---');
   const restauro = rodar('restaurar-banco.js', [arquivo, '--confirmo']);
@@ -93,6 +149,20 @@ function rodar(script, argumentos = []) {
   check(Boolean(voltou.data && voltou.data.extra && voltou.data.extra.prova === true),
     '  e o jsonb dela voltou como estrutura, não como texto',
     voltou.data ? JSON.stringify(voltou.data.extra) : '—');
+
+  console.log('\n--- 5b. o ESTADO do app voltou (o que o backup só-Postgres não trazia) ---');
+  const estadoVolta = JSON.parse(fs.readFileSync(ESTADO, 'utf8'));
+  check(estadoVolta.__provaDeBackup === MARCA, 'a marca do data/db.json está de volta', String(estadoVolta.__provaDeBackup));
+  check(estadoVolta.__estragoDoTeste === undefined, '  e o estrago foi desfeito');
+  // O que realmente importa nesse arquivo: sem o razão de estoque, o sistema
+  // volta com o banco certo e o saldo de todo produto zerado.
+  check(Array.isArray(estadoVolta.stockMovements), '  e o razão de estoque veio junto',
+    `${(estadoVolta.stockMovements || []).length} movimentos`);
+  check(Array.isArray(estadoVolta.finance), '  e os lançamentos do Financeiro também',
+    `${(estadoVolta.finance || []).length} lançamentos`);
+  // A cópia de segurança que o restaurador tira antes de trocar o arquivo.
+  const copias = fs.readdirSync(path.dirname(ESTADO)).filter((n) => n.startsWith('db.json.antes-da-restauracao-'));
+  check(copias.length > 0, '  e o estado anterior ficou guardado antes da troca', copias[copias.length - 1] || 'nenhuma');
 
   console.log('\n--- 6. a ESTRUTURA voltou junto (o que o backup antigo não trazia) ---');
   // Função: existia no schema.sql e o backup por PostgREST nunca a levava.
@@ -117,6 +187,17 @@ function rodar(script, argumentos = []) {
   check(tabelas[0].n > 70, 'as tabelas voltaram', `${tabelas[0].n} tabelas`);
 
   console.log('\n--- 7. limpeza ---');
+  // Tira a marca do estado e as cópias de segurança que o teste provocou: o
+  // db.json volta a ser exatamente o que era antes do teste.
+  const estadoLimpo = JSON.parse(fs.readFileSync(ESTADO, 'utf8'));
+  delete estadoLimpo.__provaDeBackup;
+  delete estadoLimpo.__estragoDoTeste;
+  fs.writeFileSync(ESTADO, JSON.stringify(estadoLimpo, null, 2));
+  fs.readdirSync(path.dirname(ESTADO))
+    .filter((n) => n.startsWith('db.json.antes-da-restauracao-'))
+    .forEach((n) => fs.rmSync(path.join(path.dirname(ESTADO), n), { force: true }));
+  check(JSON.parse(fs.readFileSync(ESTADO, 'utf8')).__provaDeBackup === undefined, 'marca do estado removida');
+
   await banco.from('orders').delete().eq('id', idPedido);
   await banco.from('people').delete().eq('id', MARCA);
   const limpo = await banco.from('people').select('id').eq('id', MARCA).maybeSingle();

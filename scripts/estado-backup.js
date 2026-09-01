@@ -95,11 +95,22 @@ function main() {
   }
 
   console.log('\n--- arquivos em data/backup ---');
+  // DOIS FORMATOS CONVIVEM NA PASTA, e a diferença entre eles não é cosmética:
+  //   .tar.gz  banco + estado do app (estoque e Financeiro) — o sistema inteiro
+  //   .sql.gz  só o Postgres — restaurá-lo é restauração pela metade
+  // Um .sql.gz recente satisfaria qualquer checagem de "existe cópia nova" e
+  // esconderia que o que está sendo gerado não cobre mais o sistema.
   const arquivos = (fs.existsSync(PASTA) ? fs.readdirSync(PASTA) : [])
-    .filter((n) => n.endsWith('.sql.gz'))
+    .filter((n) => n.endsWith('.tar.gz') || n.endsWith('.sql.gz'))
     .map((n) => {
       const info = fs.statSync(path.join(PASTA, n));
-      return { nome: n, bytes: info.size, quando: info.mtime, automatico: n.includes('-auto.') };
+      return {
+        nome: n,
+        bytes: info.size,
+        quando: info.mtime,
+        automatico: n.includes('-auto.'),
+        completo: n.endsWith('.tar.gz')
+      };
     })
     .sort((a, b) => b.quando - a.quando);
 
@@ -111,9 +122,20 @@ function main() {
     console.log(`  ${arquivos.length} arquivo(s), ${(total / 1024 / 1024).toFixed(1)} MB no total`);
     arquivos.slice(0, 5).forEach((a, i) => {
       const marca = a.automatico ? 'auto  ' : 'manual';
-      console.log(`  ${i === 0 ? '->' : '  '} ${marca}  ${a.nome}  ${(a.bytes / 1024 / 1024).toFixed(2)} MB  (há ${idadeLegivel(agora - a.quando)})`);
+      const cobertura = a.completo ? 'banco+estado' : 'SÓ BANCO   ';
+      console.log(`  ${i === 0 ? '->' : '  '} ${marca}  ${cobertura}  ${a.nome}  ${(a.bytes / 1024 / 1024).toFixed(2)} MB  (há ${idadeLegivel(agora - a.quando)})`);
     });
     if (arquivos.length > 5) console.log(`     ... e mais ${arquivos.length - 5}`);
+
+    // A pergunta é "existe cópia COMPLETA recente", não "existe arquivo recente".
+    // Medir pelo mais novo qualquer faria um .sql.gz de ontem esconder que o
+    // estoque e o Financeiro pararam de ser copiados.
+    const completos = arquivos.filter((a) => a.completo);
+    if (!completos.length) {
+      aviso('nenhum backup cobre o estado do app (estoque e Financeiro): todos são do formato antigo, só do banco.');
+    } else if (horas(agora - completos[0].quando) > LIMITE_HORAS) {
+      aviso(`o backup COMPLETO mais novo tem ${idadeLegivel(agora - completos[0].quando)} — o que está saindo agora não cobre estoque nem Financeiro.`);
+    }
 
     const idade = horas(agora - arquivos[0].quando);
     if (idade > LIMITE_HORAS) {

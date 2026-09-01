@@ -34,7 +34,16 @@
 # Vem juntos. Antes o binario morava no Supabase Storage e ficava de fora do
 # pg_dump — eram duas coisas para restaurar no mesmo ponto no tempo, e a
 # segunda e a que se esquece. Desde a fase AM o anexo e a tabela `pedido_anexo`,
-# entao o dump cobre o sistema inteiro num arquivo so.
+# entao o dump cobre os anexos tambem.
+#
+# O QUE O DUMP CONTINUA NAO COBRINDO
+# ----------------------------------
+# O razao de ESTOQUE (stockMovements, stockTransfers) e os lancamentos do
+# Financeiro vivem no data/db.json do app — nao ha tabela deles no Postgres. O
+# artefato desta stack passou a ser um .tar.gz e leva esse arquivo junto QUANDO
+# consegue enxerga-lo (variavel ESTADO_ORIGEM). Rodando longe do app, que e o
+# caso normal desta stack, o manifesto do artefato registra a ausencia — em vez
+# de deixar a falta parecer arquivo corrompido na hora de restaurar.
 #
 # COMO SUBIR NO PORTAINER
 #   Stacks -> Add stack -> cole este arquivo
@@ -92,6 +101,19 @@ services:
       TZ: ${TZ:-America/Sao_Paulo}
     volumes:
       - backups:/backups
+      # O ESTADO DO APP, SE ESTA MAQUINA TIVER UM.
+      #
+      # Parte do sistema nao mora no Postgres: o razao de estoque e os
+      # lancamentos do Financeiro vivem no data/db.json do MavisONE. Esta stack
+      # costuma rodar longe do app (e para isso que ela existe), e nesse caso o
+      # artefato sai SO com o banco — e o manifesto diz isso, em vez de deixar a
+      # ausencia parecer arquivo truncado na hora de restaurar.
+      #
+      # Se o app rodar NESTA maquina, aponte para a pasta data/ dele:
+      #   ESTADO_ORIGEM=/caminho/do/clone/data
+      # A PASTA, e nao o arquivo: bind mount para caminho inexistente faz o
+      # Docker criar um DIRETORIO com aquele nome.
+      - ${ESTADO_ORIGEM:-/dev/null}:/estado:ro
     # Laco proprio em vez de cron: a imagem do postgres nao traz cron, e
     # instalar um so para isto acrescenta uma peca que tambem pode falhar
     # calada. O laco dorme ate a hora marcada e roda uma vez por dia.
@@ -102,13 +124,34 @@ services:
     command:
       - |
         set -eu
-        MARCA_DE_FALHA=/tmp/pg_dump-falhou
+        ESTADO=/estado/db.json
+        MARCA_FIM='-- PostgreSQL database dump complete'
+
+        # Os dois formatos: .tar.gz e o artefato novo, .sql.gz o antigo que
+        # continua na pasta e continua valido. Se a busca enxergasse so um, a
+        # rede de seguranca dispararia todo ciclo (nunca acha copia) ou a poda
+        # pararia de podar.
+        achar_backups() {
+          find /backups \( -name 'mavisone-*.tar.gz' -o -name 'mavisone-*.sql.gz' \) "$$@" 2>/dev/null
+        }
+
         echo "[backup] de pe. Alvo: $${HORA}:00 ($${TZ}), retencao $${RETENCAO_DIAS} dias (nunca menos que $${MINIMO_ARQUIVOS} arquivos)."
         echo "[backup] rede de seguranca: se passar de $${LIMITE_HORAS}h sem copia nova, tira uma fora de hora."
+        if [ -f "$${ESTADO}" ]; then
+          echo "[backup] o estado do app ($${ESTADO}) entra no arquivo junto com o banco."
+        else
+          echo "[backup] sem acesso ao estado do app: os arquivos sairao so com o Postgres."
+          echo "[backup] (o estoque e o Financeiro do MavisONE moram no data/db.json — veja ESTADO_ORIGEM.)"
+        fi
+
+        # Montagens orfas de uma execucao interrompida.
+        rm -rf /tmp/montagem.* 2>/dev/null || true
+        rm -f /backups/*.parcial 2>/dev/null || true
+
         while true; do
           agora=$$(date +%H)
           atrasado=nao
-          if [ -z "$$(find /backups -name 'mavisone-*.sql.gz' -mmin "-$$((LIMITE_HORAS * 60))" 2>/dev/null | head -n 1)" ]; then
+          if [ -z "$$(achar_backups -mmin "-$$((LIMITE_HORAS * 60))" | head -n 1)" ]; then
             atrasado=sim
           fi
 
@@ -116,49 +159,99 @@ services:
             if [ "$$atrasado" = "sim" ] && [ "$$agora" != "$${HORA}" ]; then
               echo "[backup] $$(date '+%F %T') sem copia ha mais de $${LIMITE_HORAS}h — tirando fora de hora."
             fi
-            carimbo=$$(date +%Y%m%d-%H%M%S)
-            arquivo="/backups/mavisone-$${carimbo}.sql.gz"
-            echo "[backup] $$(date '+%F %T') gerando $${arquivo}"
 
-            # --no-owner e --no-privileges: os papeis do servidor de origem nao
-            # existem em outro servidor, e sem isto a restauracao falha em toda
-            # linha de GRANT/OWNER TO.
-            # --clean --if-exists: o mesmo que scripts/backup-banco.js usa, para
-            # que os dois backups sejam restauraveis pelo mesmo caminho.
-            #
-            # Nao ha mais --exclude-schema: aquilo tirava os schemas internos da
-            # plataforma Supabase, que nao existem num Postgres comum. Este
-            # banco tem so o schema public, e ele inteiro deve ir.
-            #
-            # O `|| : > MARCA` NAO E ENFEITE. O status de um pipe e o do ULTIMO
-            # comando — o gzip. Com o pg_dump falhando, o gzip comprime nada,
-            # termina com sucesso, e um `if pg_dump ... | gzip; then` daria
-            # CERTO: 20 bytes renomeados como backup bom, descobertos so no dia
-            # em que ele precisasse funcionar. Conferido rodando contra um
-            # Postgres de verdade. A marca em disco atravessa o subshell do pipe.
-            rm -f "$${MARCA_DE_FALHA}"
-            { pg_dump "$${PGDUMP_URL}" --no-owner --no-privileges --clean --if-exists \
-                || : > "$${MARCA_DE_FALHA}"; } | gzip -9 > "$${arquivo}.parcial"
+            # Poda ANTES de gerar: o formato novo precisa do dump descomprimido
+            # em disco antes de empacotar.
+            total=$$(achar_backups | wc -l)
+            for velho in $$(achar_backups -mtime "+$${RETENCAO_DIAS}" | sort); do
+              if [ "$${total}" -le "$${MINIMO_ARQUIVOS}" ]; then break; fi
+              rm -f "$${velho}"
+              total=$$((total - 1))
+              echo "[backup] podado (mais de $${RETENCAO_DIAS} dias): $${velho}"
+            done
 
-            tamanho=$$(wc -c < "$${arquivo}.parcial")
-            if [ ! -f "$${MARCA_DE_FALHA}" ] && [ "$${tamanho}" -gt 1024 ]; then
-              # So vira arquivo final se o dump terminou. Sem isto, um dump
-              # interrompido no meio fica com nome de backup bom e ninguem
-              # descobre ate precisar dele.
+            carimbo=$$(date -u +%Y-%m-%dT%H-%M-%S)
+            arquivo="/backups/mavisone-$${carimbo}.tar.gz"
+            MONTAGEM=$$(mktemp -d /tmp/montagem.XXXXXX)
+            echo "[backup] $$(date '+%F %T') gerando $$(basename "$${arquivo}")"
+            falhou=""
+
+            # O dump vai para um ARQUIVO, nao para um pipe: o status de um pipe e
+            # o do ULTIMO comando, e com `pg_dump | gzip` um dump falho terminava
+            # com sucesso e 20 bytes viravam backup bom.
+            dump_iniciado=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            if ! pg_dump "$${PGDUMP_URL}" --no-owner --no-privileges --clean --if-exists > "$${MONTAGEM}/banco.sql" 2>/tmp/erro-dump; then
+              cat /tmp/erro-dump >&2
+              falhou="pg_dump falhou"
+            fi
+            if [ -z "$${falhou}" ] && [ "$$(wc -c < "$${MONTAGEM}/banco.sql")" -lt 1024 ]; then
+              falhou="o dump saiu com menos de 1 KB"
+            fi
+            # `-e` obrigatorio: o marcador comeca com "--" e o grep do busybox o
+            # leria como lista de opcoes.
+            if [ -z "$${falhou}" ] && ! tail -c 4096 "$${MONTAGEM}/banco.sql" | grep -q -e "$${MARCA_FIM}"; then
+              falhou="o dump nao termina com a marca de conclusao — saiu truncado"
+            fi
+
+            membros="banco.sql"
+            estado_ausente="esta stack nao enxerga o data/db.json do app (veja ESTADO_ORIGEM)"
+            if [ -z "$${falhou}" ] && [ -f "$${ESTADO}" ]; then
+              antes=$$(stat -c '%Y-%s' "$${ESTADO}")
+              cp "$${ESTADO}" "$${MONTAGEM}/estado.json"
+              depois=$$(stat -c '%Y-%s' "$${ESTADO}")
+              if [ "$${antes}" != "$${depois}" ]; then
+                falhou="o estado mudou durante a copia"
+              elif [ "$$(head -c 1 "$${MONTAGEM}/estado.json")" != "{" ] || [ "$$(tail -c 1 "$${MONTAGEM}/estado.json")" != "}" ]; then
+                falhou="o estado copiado nao e um objeto JSON completo"
+              else
+                membros="banco.sql estado.json"
+                estado_ausente=""
+              fi
+            fi
+
+            if [ -z "$${falhou}" ]; then
+              {
+                printf '{\n  "versaoFormato": 1,\n'
+                printf '  "geradoPor": "deploy/backup-banco stack avulsa",\n'
+                printf '  "geradoEm": "%s",\n' "$$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                printf '  "dumpIniciadoEm": "%s",\n' "$${dump_iniciado}"
+                if [ -n "$${estado_ausente}" ]; then
+                  printf '  "estadoAusente": "%s",\n' "$${estado_ausente}"
+                else
+                  printf '  "estadoAusente": null,\n'
+                fi
+                printf '  "membros": [\n'
+                primeiro=1
+                for m in $${membros}; do
+                  [ "$${primeiro}" = "1" ] || printf ',\n'
+                  primeiro=0
+                  printf '    { "nome": "%s", "bytes": %s, "sha256": "%s" }' \
+                    "$${m}" "$$(wc -c < "$${MONTAGEM}/$${m}")" "$$(sha256sum "$${MONTAGEM}/$${m}" | cut -d' ' -f1)"
+                done
+                printf '\n  ]\n}\n'
+              } > "$${MONTAGEM}/manifesto.json"
+
+              if ! (cd "$${MONTAGEM}" && tar -czf artefato.tar.gz $${membros} manifesto.json); then
+                falhou="o tar nao empacotou"
+              fi
+            fi
+
+            # Ler de volta antes de promover: um tar.gz truncado passa em
+            # qualquer teste de tamanho, e listar valida o CRC do gzip.
+            if [ -z "$${falhou}" ] && ! tar -tzf "$${MONTAGEM}/artefato.tar.gz" > /dev/null 2>&1; then
+              falhou="o arquivo gerado nao abre para leitura"
+            fi
+
+            if [ -z "$${falhou}" ]; then
+              cp "$${MONTAGEM}/artefato.tar.gz" "$${arquivo}.parcial"
               mv "$${arquivo}.parcial" "$${arquivo}"
-              echo "[backup] ok — $$(du -h "$${arquivo}" | cut -f1)"
-
-              total=$$(find /backups -name 'mavisone-*.sql.gz' | wc -l)
-              for velho in $$(find /backups -name 'mavisone-*.sql.gz' -mtime "+$${RETENCAO_DIAS}" | sort); do
-                if [ "$${total}" -le "$${MINIMO_ARQUIVOS}" ]; then break; fi
-                rm -f "$${velho}"
-                total=$$((total - 1))
-                echo "[backup] podado (mais de $${RETENCAO_DIAS} dias): $${velho}"
-              done
+              echo "[backup] ok — $$(du -h "$${arquivo}" | cut -f1) ($${membros})"
             else
               rm -f "$${arquivo}.parcial"
-              echo "[backup] FALHOU — nada foi gravado. Veja o erro acima." >&2
+              echo "[backup] FALHOU: $${falhou}. Nada foi gravado." >&2
             fi
+            rm -rf "$${MONTAGEM}"
+
             # Dorme uma hora e um pouco para nao rodar duas vezes na mesma hora.
             sleep 3700
           fi
@@ -173,7 +266,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          find /backups -name 'mavisone-*.sql.gz'
+          find /backups \( -name 'mavisone-*.tar.gz' -o -name 'mavisone-*.sql.gz' \)
           -mmin "-$$(( ($${LIMITE_HORAS:-36} + 6) * 60 ))" | grep -q .
       interval: 15m
       timeout: 10s

@@ -100,6 +100,17 @@
 #   banco sobe VAZIO — nesse caso aplique o arquivo uma vez, à mão, com
 #   `psql "$DATABASE_URL" -f RECRIAR-DO-ZERO.sql`.
 #
+# O QUE O BACKUP COBRE, E O QUE ELE NÃO COBRIA
+#   O artefato é um .tar.gz com banco.sql (o pg_dump) + estado.json (o
+#   data/db.json) + manifesto.json. As duas metades porque parte do sistema não
+#   está no Postgres: o razão de estoque e os lançamentos do Financeiro vivem no
+#   db.json, e não existe tabela stock_movements no banco. Enquanto o backup era
+#   só o pg_dump, ele se anunciava como o sistema inteiro e copiava o Postgres
+#   inteiro — que é outra coisa.
+#
+#   Os .sql.gz antigos continuam restauráveis, e o restaurador avisa que eles
+#   cobrem só o banco.
+#
 # TIRAR AS CÓPIAS DE DENTRO DA VPS
 #   BACKUP_DESTINO tira os arquivos de dentro do clone, mas não os tira da
 #   máquina: se a VPS morrer, eles morrem junto. Quem resolve isso é o serviço
@@ -234,6 +245,26 @@ services:
       # Backup dentro da pasta do projeto morre junto com a pasta do projeto, e
       # a hora em que se descobre isso e a hora em que ele fazia falta.
       - ${BACKUP_DESTINO:-./data/backup}:/backups
+      # O ESTADO DO APP, QUE NAO ESTA NO POSTGRES.
+      #
+      # O razao de estoque (stockMovements, stockTransfers) e os lancamentos do
+      # Financeiro vivem em data/db.json — nao existe tabela stock_movements no
+      # banco. Sem este mount o pg_dump copia o Postgres inteiro e o backup se
+      # anuncia como "o sistema inteiro", que e outra coisa.
+      #
+      # Variavel PROPRIA, e nao o BACKUP_DESTINO: na VPS o destino aponta para
+      # /mnt/backups, fora do clone, enquanto o db.json fica SEMPRE dentro do
+      # clone (o server.js fixa path.join(__dirname,'data','db.json'), sem
+      # variavel de ambiente para mudar isso).
+      #
+      # A PASTA, e nao o arquivo: bind mount apontado para um caminho que ainda
+      # nao existe faz o Docker criar um DIRETORIO com aquele nome — e um
+      # diretorio chamado db.json deixaria o sistema sem estado. Mesma armadilha
+      # do rclone.conf, la embaixo.
+      #
+      # So-leitura: um container que pode escrever no data/ e um container que
+      # pode corromper o razao de estoque.
+      - ${BACKUP_ESTADO_ORIGEM:-./data}:/estado:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -245,12 +276,33 @@ services:
         # Ate onde a espera pela hora marcada pode ir. Depois disto o laco
         # desiste de esperar e copia fora de hora.
         LIMITE=$$((INTERVALO + 12))
-        MARCA_DE_FALHA=/tmp/pg_dump-falhou
+        ESTADO=/estado/db.json
+        # pg_dump termina o arquivo com esta linha. O `\unrestrict` do PG 17 vem
+        # DEPOIS dela, entao olhar so a ultima linha nao serve.
+        MARCA_FIM='-- PostgreSQL database dump complete'
 
-        # "Existe copia com menos de $$1 horas?" — a pergunta que este laco faz
-        # o tempo todo, em vez de "que horas sao".
+        # OS DOIS FORMATOS, EM UM LUGAR SO.
+        #
+        # .tar.gz e o artefato novo (banco + estado); .sql.gz e o antigo, que
+        # continua na pasta e continua sendo backup valido. Este `find` alimenta
+        # a pergunta "existe copia recente?", a poda e a contagem do piso — se
+        # um deles enxergasse so um formato, o laco passaria a copiar a cada 15
+        # minutos (nunca acha recente) ou a poda pararia de podar.
+        achar_backups() {
+          find /backups \( -name 'mavisone-*.tar.gz' -o -name 'mavisone-*.sql.gz' \) "$$@" 2>/dev/null
+        }
         copia_recente() {
-          [ -n "$$(find /backups -name 'mavisone-*.sql.gz' -mmin "-$$(($$1 * 60))" 2>/dev/null | head -n 1)" ]
+          [ -n "$$(achar_backups -mmin "-$$(($$1 * 60))" | head -n 1)" ]
+        }
+
+        podar() {
+          total=$$(achar_backups | wc -l)
+          for velho in $$(achar_backups -mtime "+$${RETENCAO}" | sort); do
+            if [ "$${total}" -le "$${MINIMO}" ]; then break; fi
+            rm -f "$${velho}"
+            total=$$((total - 1))
+            echo "[backup] podado (mais de $${RETENCAO} dias): $$(basename "$${velho}")"
+          done
         }
 
         echo "[backup] de pe em $$(date '+%F %T') ($${TZ})."
@@ -260,6 +312,19 @@ services:
           echo "[backup] um backup a cada $${INTERVALO}h, sem hora marcada (defina BACKUP_HORA para fixar uma)."
         fi
         echo "[backup] guardando $${RETENCAO} dias em /backups, e nunca menos que $${MINIMO} arquivos."
+        if [ -f "$${ESTADO}" ]; then
+          echo "[backup] o estado do app ($${ESTADO}) entra no arquivo junto com o banco."
+        else
+          echo "[backup] AVISO: nao enxergo $${ESTADO} — os backups sairao SO com o Postgres." >&2
+          echo "[backup] o estoque e o Financeiro moram nesse arquivo. Confira o mount BACKUP_ESTADO_ORIGEM." >&2
+        fi
+
+        # Montagens orfas de uma execucao interrompida (container parado no meio,
+        # maquina desligada as 18h). Sem esta varredura, o banco.sql de ontem
+        # ficaria em /tmp ocupando disco — e um nome de montagem fixo faria pior:
+        # entraria no artefato de hoje.
+        rm -rf /tmp/montagem.* 2>/dev/null || true
+        rm -f /backups/*.parcial 2>/dev/null || true
 
         while true; do
           if copia_recente "$${INTERVALO}"; then
@@ -274,36 +339,125 @@ services:
             continue
           fi
 
+          # PODA ANTES DE GERAR, e nao depois.
+          #
+          # O formato novo obriga o banco.sql a existir DESCOMPRIMIDO na area de
+          # montagem antes de virar tar.gz. Podar depois significaria precisar do
+          # espaco do dump inteiro justamente quando o disco esta mais cheio.
+          podar
+
           carimbo=$$(date -u +%Y-%m-%dT%H-%M-%S)
-          arquivo="/backups/mavisone-$${carimbo}-auto.sql.gz"
+          arquivo="/backups/mavisone-$${carimbo}-auto.tar.gz"
+          MONTAGEM=$$(mktemp -d /tmp/montagem.XXXXXX)
           echo "[backup] $$(date '+%F %T') gerando $$(basename "$${arquivo}")"
+          falhou=""
 
-          # O STATUS DE UM PIPE E O DO ULTIMO COMANDO — que aqui e o gzip.
-          # Se o pg_dump falhar, o gzip comprime nada, termina feliz, e sem
-          # este cuidado o arquivo vazio seria renomeado como backup bom. A
-          # marca no disco atravessa o subshell do pipe e diz a verdade.
-          rm -f "$${MARCA_DE_FALHA}"
-          { pg_dump --no-owner --no-privileges --clean --if-exists || : > "$${MARCA_DE_FALHA}"; } \
-            | gzip -9 > "$${arquivo}.parcial"
+          # O DUMP VAI PARA UM ARQUIVO, NAO PARA UM PIPE.
+          #
+          # Antes era `pg_dump | gzip > destino`, e o status de um pipe e o do
+          # ULTIMO comando: com o pg_dump falhando, o gzip comprimia nada,
+          # terminava feliz, e 20 bytes eram renomeados como backup bom. Com o
+          # dump indo para um arquivo o status volta a ser o dele.
+          dump_iniciado=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          if ! pg_dump --no-owner --no-privileges --clean --if-exists > "$${MONTAGEM}/banco.sql" 2>/tmp/erro-dump; then
+            cat /tmp/erro-dump >&2
+            falhou="pg_dump falhou"
+          fi
 
-          tamanho=$$(wc -c < "$${arquivo}.parcial")
-          if [ ! -f "$${MARCA_DE_FALHA}" ] && [ "$${tamanho}" -gt 1024 ]; then
-            # So vira nome definitivo depois de pronto: um dump interrompido no
-            # meio ficaria com cara de backup bom, e isso so se descobre no dia
-            # em que ele precisa funcionar.
+          # TAMANHO POR MEMBRO, e nao do artefato.
+          #
+          # O piso de 1024 bytes protegia enquanto o .gz continha SO o dump. Um
+          # tar.gz com manifesto e estado.json e um banco.sql VAZIO passa folgado
+          # desse piso: a conferencia tem de ser aqui, membro a membro.
+          if [ -z "$${falhou}" ] && [ "$$(wc -c < "$${MONTAGEM}/banco.sql")" -lt 1024 ]; then
+            falhou="o dump saiu com menos de 1 KB"
+          fi
+          # Dump interrompido no meio (lock, disco cheio, container reiniciado)
+          # sai grande e bem formado ate onde chegou. So a marca de fim distingue.
+          # `-e` obrigatorio: o marcador comeca com "--" e o grep do busybox o
+          # leria como lista de opcoes, imprimindo o proprio help e falhando com
+          # "o dump nao termina com a marca" em TODO backup bom.
+          if [ -z "$${falhou}" ] && ! tail -c 4096 "$${MONTAGEM}/banco.sql" | grep -q -e "$${MARCA_FIM}"; then
+            falhou="o dump nao termina com a marca de conclusao — saiu truncado"
+          fi
+
+          membros="banco.sql"
+          estado_ausente=""
+          if [ -z "$${falhou}" ]; then
+            if [ -f "$${ESTADO}" ]; then
+              antes=$$(stat -c '%Y-%s' "$${ESTADO}")
+              cp "$${ESTADO}" "$${MONTAGEM}/estado.json"
+              depois=$$(stat -c '%Y-%s' "$${ESTADO}")
+              # O server.js grava o db.json com temporario + rename, entao o
+              # leitor ve sempre um arquivo inteiro. Esta conferencia continua
+              # porque um servidor mais ANTIGO, ainda rodando, pode estar usando
+              # o writeFileSync direto — e ai a copia pegaria metade do JSON.
+              if [ "$${antes}" != "$${depois}" ]; then
+                falhou="o estado mudou durante a copia"
+              elif [ "$$(head -c 1 "$${MONTAGEM}/estado.json")" != "{" ] || [ "$$(tail -c 1 "$${MONTAGEM}/estado.json")" != "}" ]; then
+                falhou="o estado copiado nao e um objeto JSON completo"
+              else
+                membros="banco.sql estado.json"
+              fi
+            else
+              estado_ausente="o container nao enxerga $${ESTADO} (mount BACKUP_ESTADO_ORIGEM)"
+              echo "[backup] AVISO: $${estado_ausente}" >&2
+            fi
+          fi
+
+          if [ -z "$${falhou}" ]; then
+            # O manifesto diz o que o artefato TEM. O restaurador recusa o que
+            # nao bater com ele, entao um membro faltando deixa de ser
+            # indistinguivel de um arquivo truncado.
+            {
+              printf '{\n  "versaoFormato": 1,\n'
+              printf '  "geradoPor": "docker-compose.yml servico backup",\n'
+              printf '  "geradoEm": "%s",\n' "$$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              printf '  "dumpIniciadoEm": "%s",\n' "$${dump_iniciado}"
+              if [ -n "$${estado_ausente}" ]; then
+                printf '  "estadoAusente": "%s",\n' "$${estado_ausente}"
+              else
+                printf '  "estadoAusente": null,\n'
+              fi
+              printf '  "membros": [\n'
+              primeiro=1
+              for m in $${membros}; do
+                [ "$${primeiro}" = "1" ] || printf ',\n'
+                primeiro=0
+                printf '    { "nome": "%s", "bytes": %s, "sha256": "%s" }' \
+                  "$${m}" "$$(wc -c < "$${MONTAGEM}/$${m}")" "$$(sha256sum "$${MONTAGEM}/$${m}" | cut -d' ' -f1)"
+              done
+              printf '\n  ]\n}\n'
+            } > "$${MONTAGEM}/manifesto.json"
+
+            if ! (cd "$${MONTAGEM}" && tar -czf artefato.tar.gz $${membros} manifesto.json); then
+              falhou="o tar nao empacotou"
+            fi
+          fi
+
+          # LER DE VOLTA ANTES DE PROMOVER A BACKUP BOM.
+          #
+          # Um .tar.gz truncado (container parado entre a escrita e o mv, disco
+          # cheio no meio do gzip) fica bem acima de qualquer piso de tamanho.
+          # Listar o conteudo descomprime tudo e valida o CRC do gzip de quebra.
+          if [ -z "$${falhou}" ] && ! tar -tzf "$${MONTAGEM}/artefato.tar.gz" > /dev/null 2>&1; then
+            falhou="o arquivo gerado nao abre para leitura"
+          fi
+
+          if [ -z "$${falhou}" ]; then
+            # O .parcial e o mv acontecem DENTRO de /backups, no mesmo sistema de
+            # arquivos: e o que torna a troca de nome atomica. Um artefato so
+            # ganha nome de backup depois de estar inteiro.
+            cp "$${MONTAGEM}/artefato.tar.gz" "$${arquivo}.parcial"
             mv "$${arquivo}.parcial" "$${arquivo}"
-            echo "[backup] ok — $$(du -h "$${arquivo}" | cut -f1)"
-
-            total=$$(find /backups -name 'mavisone-*.sql.gz' | wc -l)
-            for velho in $$(find /backups -name 'mavisone-*.sql.gz' -mtime "+$${RETENCAO}" | sort); do
-              if [ "$${total}" -le "$${MINIMO}" ]; then break; fi
-              rm -f "$${velho}"
-              total=$$((total - 1))
-              echo "[backup] podado (mais de $${RETENCAO} dias): $$(basename "$${velho}")"
-            done
+            echo "[backup] ok — $$(du -h "$${arquivo}" | cut -f1) ($${membros})"
           else
             rm -f "$${arquivo}.parcial"
-            echo "[backup] FALHOU — nada foi gravado. O erro do pg_dump esta acima." >&2
+            echo "[backup] FALHOU: $${falhou}. Nada foi gravado." >&2
+          fi
+
+          rm -rf "$${MONTAGEM}"
+          if [ -n "$${falhou}" ]; then
             # Erra rapido de novo: se for coisa passageira (banco reiniciando),
             # 5 minutos resolvem; se nao for, o healthcheck fica vermelho.
             sleep 300
@@ -324,7 +478,7 @@ services:
         - CMD-SHELL
         - >-
           if [ -n "$${BACKUP_HORA:-}" ]; then folga=18; else folga=6; fi;
-          find /backups -name 'mavisone-*.sql.gz'
+          find /backups \( -name 'mavisone-*.tar.gz' -o -name 'mavisone-*.sql.gz' \)
           -mmin "-$$(( ($${BACKUP_INTERVALO_HORAS:-24} + folga) * 60 ))" | grep -q .
       interval: 5m
       timeout: 10s
@@ -411,7 +565,11 @@ services:
         INTERVALO=$${ENVIO_INTERVALO_MINUTOS:-30}
         RETENCAO=$${ENVIO_RETENCAO_DIAS:-}
         MARCA=/estado/ultimo-envio
-        FILTRO="mavisone-*.sql.gz"
+        # OS DOIS FORMATOS. Com o filtro so no .sql.gz, o rclone continuaria
+        # copiando e CONFERINDO os antigos com sucesso — verde na tela, e o
+        # artefato novo nunca saindo da maquina.
+        FILTRO="mavisone-*.tar.gz"
+        FILTRO_LEGADO="mavisone-*.sql.gz"
 
         echo "[envio] de pe em $$(date '+%F %T') ($${TZ})."
 
@@ -444,18 +602,19 @@ services:
         fi
 
         while true; do
-          if rclone copy /backups "$${REMOTO}" --include "$${FILTRO}" --stats-one-line --stats 1m; then
+          if rclone copy /backups "$${REMOTO}" --include "$${FILTRO}" --include "$${FILTRO_LEGADO}" --stats-one-line --stats 1m; then
             # COPIAR NAO E TER CHEGADO. O `copy` termina bem em casos em que o
             # arquivo la fora ficou diferente do daqui, e um backup fora da
             # maquina que ninguem conferiu nao e backup, e esperanca. O `check
             # --one-way` compara hash (ou tamanho, se o destino nao tiver hash)
             # de cada arquivo daqui contra o de la.
-            if rclone check /backups "$${REMOTO}" --include "$${FILTRO}" --one-way; then
+            if rclone check /backups "$${REMOTO}" --include "$${FILTRO}" --include "$${FILTRO_LEGADO}" --one-way; then
               date '+%F %T' > "$${MARCA}"
               echo "[envio] $$(date '+%F %T') tudo o que esta aqui esta la fora tambem."
 
               if [ -n "$${RETENCAO}" ]; then
                 rclone delete "$${REMOTO}" --include "$${FILTRO}" --min-age "$${RETENCAO}d" || true
+                rclone delete "$${REMOTO}" --include "$${FILTRO_LEGADO}" --min-age "$${RETENCAO}d" || true
               fi
             else
               echo "[envio] A CONFERENCIA FALHOU — o que esta la fora nao bate com o que esta aqui." >&2
