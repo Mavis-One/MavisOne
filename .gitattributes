@@ -1,0 +1,11 @@
+# FIM DE LINHA: LF NO REPOSITÓRIO E NO DISCO.
+#
+# Sem este arquivo, o core.autocrlf=true do Windows entrega tudo em CRLF no
+# checkout — e 49 dos testes leem o código-fonte e casam padrões que contêm
+# `\n`. Num clone novo eles reprovavam código correto, e só passavam na máquina
+# de quem, por acaso, tivesse editado o arquivo com uma ferramenta que grava LF.
+# Um teste que depende de como a máquina fez o checkout não está testando o
+# código.
+#
+# Não há .bat/.cmd/.ps1 no repositório, então nada aqui precisa de CRLF.
+* text=auto eol=lf
