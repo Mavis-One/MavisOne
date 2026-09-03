@@ -113,10 +113,19 @@ check('a linha de diferença mantém o complemento',
   faltando.some((p) => /Diferença não coberta/.test(p.description) && /Receita de venda/.test(p.description)),
   faltando.map((p) => p.description).join(' | '));
 
-console.log('\n--- 5. as quatro origens passam pelo catálogo ---');
+console.log('\n--- 5. as origens passam pelo catálogo ---');
 const servidor = ler('server.js');
+// ERA "as quatro origens", E ERAM CINCO. A NF-e MANUAL do Financeiro continuava
+// escrevendo a própria frase; a fase AX não a viu e este número não a cobrava.
+// Achada quando um teste da fase BB criou uma nota manual e o lançamento saiu
+// como "NF-e 999001", sem dizer se era dinheiro entrando ou saindo.
+//
+// O número exato existe para uma origem NOVA não passar em silêncio: quem
+// acrescentar uma tem que vir aqui e dizer quantas são.
 const usos = (servidor.match(/descricaoLancamento\.montar\(/g) || []).length;
-check('server.js monta descrição pelo catálogo em 3 origens', usos === 3, `${usos} usos`);
+check('server.js monta descrição pelo catálogo em 4 origens', usos === 4, `${usos} usos`);
+check('  a NF-e manual entre elas',
+  !/description: installments\.length > 1 \? `NF-e/.test(servidor));
 check('  nenhuma origem escreve "Ordem de Compra " + code na descrição',
   !/description: 'Ordem de Compra ' \+/.test(servidor));
 check('  nem "NF-e ${nota.numero} — "',

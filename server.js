@@ -75,6 +75,10 @@ const categoriasVendaDb = require('./lib/db/categorias-venda');
 // Fase AZ: origem da VENDA (Balcao, Televendas, E-commerce). Era uma lista
 // fixa dentro do public/app.js, sem tela — ver o cabecalho da migracao.
 const origensVendaDb = require('./lib/db/origens-venda');
+// Fase BB: equipamentos sairam do db.json. A garantia e' contada a partir da
+// NF-e que vendeu a maquina — ver o cabecalho de lib/db/equipamentos.js.
+const equipamentosDb = require('./lib/db/equipamentos');
+const garantia = require('./public/modules/shared/garantia');
 // Fase AR: as notas que emitiram CONTRA o nosso CNPJ (Distribuicao de DF-e).
 const dfeDb = require('./lib/db/dfe');
 const manifestacao = require('./public/modules/shared/manifestacao');
@@ -152,6 +156,7 @@ const NAO_PERSISTIR = new Set([
   'finance', 'financialPayments', 'financialCategories',                  // syncFinanceData
   'costCenters', 'bankAccounts',                                          // syncFinanceData
   'stockMovements', 'stockTransfers',                                     // fase AP: razao no Postgres
+  'equipments',                                                           // fase BB: equipamentos no Postgres
   'products', 'settings',                                                 // nunca lidos de `data`
   '__movimentosPendentes'                                                 // fila da requisicao, nao e' dado
 ]);
@@ -932,6 +937,132 @@ function sumFinanceAmount(entries) {
 // precisa desses dados populada data.people/data.cnpjs/data.deposits com o
 // conteúdo atual do Supabase logo após loadData() (ver syncCadastroData()) —
 // as funções abaixo continuam exatamente como eram antes da migração.
+/**
+ * A METADE DAS GUARDAS QUE MORA NO BANCO (fase BB).
+ *
+ * `cadastrosCore.counterpartyInUse` e `depositInUse` liam `data.finance`,
+ * `data.stockMovements` e `data.equipments` — tres colecoes que foram para o
+ * Postgres e desde entao chegavam VAZIAS. As checagens nao falhavam: respondiam
+ * "ninguem usa", sempre.
+ *
+ * Foi provado contra a API: excluir um deposito com movimentacao no razao
+ * devolvia `success: true`. Ha um deposito assim no banco (`ssa5yc`, 3
+ * movimentos) de antes desta descoberta — o razao aponta para um deposito que
+ * nao existe mais.
+ *
+ * As duas funcoes abaixo perguntam ao BANCO, e cada uma junta a sua metade com
+ * a que o cadastros-core ainda responde (contatos, tarefas, agendamentos,
+ * produtos). Contagem, e nao varredura: nenhuma delas carrega o razao inteiro
+ * na memoria para responder "tem algum?".
+ */
+async function contrapartidaEmUso(id) {
+  const dados = loadData();
+  const [comFinanceiro, comEquipamento] = await Promise.all([
+    (async () => {
+      await syncFinanceData(dados);
+      return (dados.finance || []).some((entry) => entry.clientSupplierId === id);
+    })(),
+    equipamentosDb.contarPor('pessoa', id).catch(() => 0)
+  ]);
+  if (comFinanceiro) return 'Existem lançamentos financeiros vinculados a este cadastro.';
+  if (comEquipamento > 0) return 'Existem equipamentos vinculados a este cadastro.';
+  return cadastrosCore.counterpartyInUse(dados, id);
+}
+
+async function depositoEmUso(id) {
+  const dados = loadData();
+  const [movimentos, equipamentos] = await Promise.all([
+    razaoEstoque.contarPorDeposito(id).catch(() => 0),
+    equipamentosDb.contarPor('deposito', id).catch(() => 0)
+  ]);
+  if (movimentos > 0) {
+    return `Existem ${movimentos} ${movimentos === 1 ? 'movimentação' : 'movimentações'} de estoque neste depósito.`;
+  }
+  if (equipamentos > 0) return 'Existem equipamentos alocados neste depósito.';
+  return cadastrosCore.depositInUse(dados, id);
+}
+
+/**
+ * As NF-e que um equipamento pode apontar como origem (fase BB).
+ *
+ * As DUAS tabelas de nota, ordenadas da mais recente para a mais antiga — quem
+ * acabou de vender a maquina procura a nota de hoje, nao a de 2024.
+ *
+ * FICAM DE FORA as canceladas, denegadas e as que terminaram em erro: elas nao
+ * venderam nada, e contar garantia a partir de uma delas seria contar a partir
+ * de uma venda que nao existiu.
+ */
+function notasParaEquipamento(data) {
+  const morta = (status) => ['CANCELADO', 'DENEGADO', 'ERRO', 'INUTILIZADA', 'cancelada', 'denegada', 'erro', 'inutilizada']
+    .includes(String(status || ''));
+  const rotulo = (numero, dataEmissao, para) => {
+    const partes = [`NF-e ${numero || 's/n'}`];
+    if (dataEmissao) partes.push(garantia.formatarBR(dataEmissao));
+    if (para) partes.push(para);
+    return partes.join(' · ');
+  };
+  const fiscais = (data.nfe || [])
+    .filter((n) => !morta(n.status))
+    .map((n) => ({
+      id: n.id,
+      name: rotulo(n.numero, String(n.dataEmissao || '').slice(0, 10), n.destinatarioNome),
+      date: String(n.dataEmissao || '').slice(0, 10)
+    }));
+  const manuais = (data.nfes || [])
+    .filter((n) => !morta(n.status))
+    .map((n) => ({
+      id: n.id,
+      name: rotulo(n.number, String(n.date || '').slice(0, 10), n.customer),
+      date: String(n.date || '').slice(0, 10)
+    }));
+  return [...fiscais, ...manuais].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+/**
+ * A NF-e de um equipamento: { id, numero, data }, ou null.
+ *
+ * DUAS TABELAS DE NOTA, de novo: `nfe` (a fiscal, que sai pela Focus) e `nfes`
+ * (a manual). Sao duas porque nasceram em fases diferentes — ver a fase AE — e
+ * por isso `equipments.nfe_id` nao tem chave estrangeira.
+ */
+function notaDoEquipamento(nfeId, data) {
+  const id = String(nfeId || '').trim();
+  if (!id) return null;
+  const fiscal = (data.nfe || []).find((n) => n.id === id);
+  if (fiscal) {
+    return { id, numero: String(fiscal.numero || ''), data: String(fiscal.dataEmissao || '').slice(0, 10) };
+  }
+  const manual = (data.nfes || []).find((n) => n.id === id);
+  if (manual) {
+    return { id, numero: String(manual.number || ''), data: String(manual.date || '').slice(0, 10) };
+  }
+  return null;
+}
+
+/**
+ * O equipamento como a tela precisa dele.
+ *
+ * A GARANTIA VEM COM O PORQUE. Sem ele o usuario ve "vence em 03/09/2027" e nao
+ * tem como conferir se esta certo — e data que ninguem consegue conferir volta
+ * a ser data em que ninguem confia. Ver public/modules/shared/garantia.js.
+ */
+function serializarEquipamento(equipamento, data) {
+  const nota = notaDoEquipamento(equipamento.nfeId, data);
+  const calculada = equipamentosDb.resolverGarantia(equipamento, nota);
+  const ate = equipamento.warrantyUntil || calculada.ate;
+  return {
+    ...equipamento,
+    personName: cadastrosCore.directoryName(data, equipamento.personId),
+    depositName: resolveById(data.deposits, equipamento.depositId),
+    nfeNumero: nota ? nota.numero : '',
+    nfeData: nota ? nota.data : '',
+    warrantyUntil: ate,
+    warrantyPorque: calculada.porque,
+    warrantySituacao: garantia.situacao(ate),
+    warrantyDiasRestantes: garantia.diasRestantes(ate)
+  };
+}
+
 async function syncCadastroData(data) {
   const [people, cnpjs, deposits] = await Promise.all([db.getPeople(), db.getCnpjs(), db.getDeposits()]);
   data.people = people;
@@ -7595,10 +7726,10 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Pessoa não encontrada' }, 404);
     }
 
-    // Vínculos (lançamentos, contatos, equipamentos, tarefas, agendamentos,
-    // movimentações) ainda moram no db.json, então a checagem lê de lá; a
-    // exclusão em si é no Supabase, que é onde a pessoa mora.
-    const pessoaEmUso = cadastrosCore.counterpartyInUse(loadData(), id);
+    // Fase BB: a checagem pergunta ao BANCO o que mora no banco (lançamentos,
+    // equipamentos) e ao db.json o que mora nele (contatos, tarefas,
+    // agendamentos). Ver contrapartidaEmUso.
+    const pessoaEmUso = await contrapartidaEmUso(id);
     if (pessoaEmUso) {
       return sendJson(res, { error: pessoaEmUso }, 409);
     }
@@ -7762,7 +7893,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'CNPJ não encontrado' }, 404);
     }
 
-    const cnpjEmUso = cadastrosCore.counterpartyInUse(loadData(), id);
+    const cnpjEmUso = await contrapartidaEmUso(id);
     if (cnpjEmUso) {
       return sendJson(res, { error: cnpjEmUso }, 409);
     }
@@ -7776,7 +7907,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/cadastros/meta' && req.method === 'GET') {
     try {
       const data = loadData();
-      await syncFinanceData(data);
+      // syncNfeData tambem: o cadastro de equipamento escolhe a NF-e que vendeu
+      // a maquina, e e' dela que sai a data de inicio da garantia (fase BB).
+      await Promise.all([syncFinanceData(data), syncNfeData(data)]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -7795,7 +7928,17 @@ const server = http.createServer(async (req, res) => {
         paymentMethods: data.paymentMethods,
         saleStatuses: data.saleStatuses,
         companies: data.companies,
-        users: (data.users || []).map((u) => ({ id: u.id, name: u.name }))
+        users: (data.users || []).map((u) => ({ id: u.id, name: u.name })),
+        // Fase BB: as notas que o cadastro de equipamento pode escolher.
+        //
+        // SO AS QUE VALEM COMO DOCUMENTO. Nota cancelada, denegada ou que
+        // terminou em erro nao vendeu nada — contar garantia a partir dela seria
+        // contar a partir de uma venda que nao existiu.
+        //
+        // O rotulo carrega numero, data e destinatario porque e' assim que
+        // alguem acha a nota certa numa lista: pelo cliente e pelo dia, nao pelo
+        // uuid.
+        notasFiscais: notasParaEquipamento(data)
       });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao carregar dados dos cadastros' }, 500);
@@ -7849,7 +7992,7 @@ const server = http.createServer(async (req, res) => {
   // Postgres — entao saveData removia a colecao e ninguem gravava no banco. A
   // rota respondia `success: true` com o registro completo e a conta nao
   // existia em lugar nenhum. As rotas proprias estao logo abaixo.
-  const cadastroCollectionMatch = pathname.match(/^\/api\/cadastros\/(contacts|equipments|payment-methods|sale-statuses|product-cashbacks|tasks|appointments|companies)(?:\/([^/]+))?$/);
+  const cadastroCollectionMatch = pathname.match(/^\/api\/cadastros\/(contacts|payment-methods|sale-statuses|product-cashbacks|tasks|appointments|companies)(?:\/([^/]+))?$/);
   if (cadastroCollectionMatch) {
     try {
       const data = loadData();
@@ -7934,6 +8077,85 @@ const server = http.createServer(async (req, res) => {
   // Cadastros > Contas Bancarias, montada pela fabrica makeListScreen. Mudou
   // onde o dado mora, nao o contrato.
   // =========================================================================
+
+  // =========================================================================
+  // EQUIPAMENTOS (fase BB). Postgres, e a garantia CONTADA a partir da NF-e.
+  //
+  // A forma da resposta e' a mesma da rota generica de cadastros (`equipments`
+  // na lista, `equipment` no item): a tela e' a mesma, montada pela fabrica
+  // makeListScreen. Mudou onde o dado mora e de onde a garantia sai — nao o
+  // contrato.
+  // =========================================================================
+
+  const equipamentoMatch = pathname.match(/^\/api\/cadastros\/equipments(?:\/([^/]+))?$/);
+  if (equipamentoMatch) {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = equipamentoMatch[1] ? decodeURIComponent(equipamentoMatch[1]) : '';
+
+      // As notas, para resolver numero e data de cada equipamento. Uma vez por
+      // requisicao, e nao uma consulta por linha da lista.
+      const dados = loadData();
+      await Promise.all([syncCadastroData(dados), syncNfeData(dados)]);
+
+      if (req.method === 'GET' && !id) {
+        const lista = await equipamentosDb.listar();
+        return sendJson(res, { equipments: lista.map((e) => serializarEquipamento(e, dados)) });
+      }
+
+      if (req.method === 'GET') {
+        const item = await equipamentosDb.obter(id);
+        if (!item) return sendJson(res, { error: 'Equipamento não encontrado.' }, 404);
+        return sendJson(res, { equipment: serializarEquipamento(item, dados) });
+      }
+
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const atual = id ? await equipamentosDb.obter(id) : null;
+        if (id && !atual) return sendJson(res, { error: 'Equipamento não encontrado.' }, 404);
+        const body = await readBody(req);
+
+        // A MONTAGEM E VALIDACAO CONTINUAM NO cadastros-core: e' o mesmo
+        // formulario, com as mesmas regras. Copiar aqui deixaria as duas
+        // metades divergirem na primeira mudanca.
+        const config = cadastrosCore.CADASTRO_COLLECTIONS.equipments;
+        const helpers = { sanitizeDigits, isValidCnpj, isValidCpf, isValidDocument };
+        const built = config.build(body, atual, dados, helpers);
+
+        // Codigo interno repetido — a rota generica conferia isto para todas as
+        // colecoes, e a conferencia veio junto. Contra o BANCO, e nao contra
+        // `data.equipments`, que nesta rota chega vazio de proposito.
+        const todos = await equipamentosDb.listar();
+        if (built.code && todos.some((e) => e.id !== id
+          && String(e.code || '').toLowerCase() === String(built.code).toLowerCase())) {
+          return sendJson(res, { error: 'Já existe um registro com este código.' }, 409);
+        }
+
+        // A NOTA PRECISA EXISTIR. Sem isto, um id errado deixaria a garantia
+        // sendo contada a partir de lugar nenhum, sem nada na tela explicando.
+        const nota = notaDoEquipamento(built.nfeId, dados);
+        if (built.nfeId && !nota) {
+          return sendJson(res, { error: 'NF-e não encontrada.' }, 404);
+        }
+
+        const equipamento = id
+          ? await equipamentosDb.atualizar(id, built, nota)
+          : await equipamentosDb.criar(built, nota, user);
+        return sendJson(res, { success: true, equipment: serializarEquipamento(equipamento, dados) });
+      }
+
+      if (req.method === 'DELETE' && id) {
+        const item = await equipamentosDb.obter(id);
+        if (!item) return sendJson(res, { error: 'Equipamento não encontrado.' }, 404);
+        await equipamentosDb.excluir(id);
+        return sendJson(res, { success: true });
+      }
+    } catch (error) {
+      return sendJson(res, { error: error.status ? error.message : 'Erro ao salvar o equipamento' }, error.status || 400);
+    }
+  }
 
   const contaBancariaMatch = pathname.match(/^\/api\/cadastros\/bank-accounts(?:\/([^/]+))?$/);
   if (contaBancariaMatch) {
@@ -8116,9 +8338,9 @@ const server = http.createServer(async (req, res) => {
     if (!deposits.some((entry) => entry.id === id)) {
       return sendJson(res, { error: 'Depósito não encontrado' }, 404);
     }
-    const depositoEmUso = cadastrosCore.depositInUse(loadData(), id);
-    if (depositoEmUso) {
-      return sendJson(res, { error: depositoEmUso }, 409);
+    const bloqueio = await depositoEmUso(id);
+    if (bloqueio) {
+      return sendJson(res, { error: bloqueio }, 409);
     }
     await db.deleteDeposit(id);
     return sendJson(res, { success: true });
@@ -10231,7 +10453,17 @@ const server = http.createServer(async (req, res) => {
           date: nfe.date,
           dueDate: inst.dueDate,
           amount: inst.amount,
-          description: installments.length > 1 ? `NF-e ${nfe.number} · Parcela ${inst.number}/${installments.length}` : `NF-e ${nfe.number}`,
+          // A QUINTA ORIGEM. A fase AX disse "as quatro origens" e passou por
+          // esta: a NF-e MANUAL do Financeiro continuava escrevendo a propria
+          // frase. Achada quando um teste da fase BB criou uma nota manual e o
+          // lancamento saiu como "NF-e 999001", sem dizer o que a linha e'.
+          description: descricaoLancamento.montar({
+            qual: 'receita',
+            tipo: 'venda',
+            nota: nfe.number,
+            parcela: inst.number,
+            parcelas: installments.length
+          }),
           document: nfe.number,
           clientSupplierId: nfe.clientSupplierId || '',
           clientSupplierName: nfe.customer,

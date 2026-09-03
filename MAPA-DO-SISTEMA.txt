@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-03 17:40 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-03 17:56 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -261,6 +261,8 @@ regra só, para tela e servidor nunca discordarem.
       Permissões do módulo Fiscal — FONTE ÚNICA.
   forma_pagamento.js   [também no servidor]
       COMO CADA FORMA DE PAGAMENTO VIRA DINHEIRO — FONTE ÚNICA.
+  garantia.js   [também no servidor]
+      A GARANTIA DO EQUIPAMENTO — FONTE ÚNICA.
   lancamento_codigo.js   [também no servidor]
       O NÚMERO DO LANÇAMENTO FINANCEIRO — FONTE ÚNICA.
   manifestacao.js   [também no servidor]
@@ -330,6 +332,9 @@ Arquivos de acesso (lib/db)
   lib/db/entrada-nfe.js
       ENTRADA DE NF-e no banco.
       tabelas: nfe_entrada, nfe_entrada_item
+  lib/db/equipamentos.js
+      EQUIPAMENTOS no banco.
+      tabelas: equipments
   lib/db/estoque-razao.js
       O RAZÃO DE ESTOQUE, EM SQL (fase AP).
   lib/db/estoque.js
@@ -354,7 +359,7 @@ Arquivos de acesso (lib/db)
   lib/db/vendas-compras.js
       tabelas: import_logs, orders, purchases, quotes, sales
 
-Tabelas usadas (74)
+Tabelas usadas (75)
 -------------------
   access_logs             account_balances        audit_logs
   bank_accounts           bank_cards              bank_transactions
@@ -362,25 +367,25 @@ Tabelas usadas (74)
   cnpjs                   contract_templates      contract_types
   contracts               cost_centers            crm_connection
   deposits                dfe_nsu                 empresa
-  estabelecimento         financial_categories    financial_entries
-  financial_institutions  financial_payments      fleet_maintenances
-  fleet_refuels           fleet_vehicles          hr_departments
-  hr_employee_categories  hr_employee_types       hr_employees
-  hr_leaves               hr_positions            hr_time_entries
-  hr_work_schedules       import_logs             nfe
-  nfe_arquivos            nfe_distribuicao        nfe_entrada
-  nfe_entrada_item        nfe_eventos             nfe_items
-  nfes                    open_finance_audit_logs open_finance_connections
-  open_finance_webhook_eventsorders                  pcp_bom
-  pcp_entries             pcp_orders              pcp_quality_checks
-  pcp_sectors             pcp_statuses            pedido_anexo
-  people                  permissions             product_class_assignments
-  product_class_value_assignmentsproduct_class_values    product_classes
-  products                purchase_orders         purchases
-  quotes                  regra_fiscal            role_permissions
-  roles                   sales                   sales_categories
-  sales_origins           settings                user_permissions
-  user_roles              users
+  equipments              estabelecimento         financial_categories
+  financial_entries       financial_institutions  financial_payments
+  fleet_maintenances      fleet_refuels           fleet_vehicles
+  hr_departments          hr_employee_categories  hr_employee_types
+  hr_employees            hr_leaves               hr_positions
+  hr_time_entries         hr_work_schedules       import_logs
+  nfe                     nfe_arquivos            nfe_distribuicao
+  nfe_entrada             nfe_entrada_item        nfe_eventos
+  nfe_items               nfes                    open_finance_audit_logs
+  open_finance_connectionsopen_finance_webhook_eventsorders
+  pcp_bom                 pcp_entries             pcp_orders
+  pcp_quality_checks      pcp_sectors             pcp_statuses
+  pedido_anexo            people                  permissions
+  product_class_assignmentsproduct_class_value_assignmentsproduct_class_values
+  product_classes         products                purchase_orders
+  purchases               quotes                  regra_fiscal
+  role_permissions        roles                   sales
+  sales_categories        sales_origins           settings
+  user_permissions        user_roles              users
 
 ==============================================================================
 4. ROTAS DA API (106 encontradas no server.js)
@@ -498,7 +503,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-47 arquivo(s) em banco/migrations, em ordem de fase:
+48 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -528,6 +533,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-ay-documento-e-descricao-padronizados.sql
   fase-az-origem-da-venda-vira-cadastro.sql
   fase-ba-conta-bancaria-do-cadastro.sql
+  fase-bb-equipamento-e-garantia-pela-nota.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -551,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-73 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+74 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -581,6 +587,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [avulso]  test-faturar-exige-nota.js         FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
   [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
+  [npm test] test-garantia-equipamento.js       A GARANTIA DO EQUIPAMENTO É CONTADA, NÃO DIGITADA (fase BB).
   [avulso]  test-gate-openfinance.js           O portão central alcança mesmo o Open Finance? A regra de permissão dizia '/api/openfinance', mas a rota é '/a
   [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
   [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
@@ -631,7 +638,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-122 arquivos JS carregados por public/index.html, nesta ordem.
+123 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -682,6 +689,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/manifestacao.js
   /modules/shared/lancamento_codigo.js
   /modules/shared/descricao_lancamento.js
+  /modules/shared/garantia.js
   /modules/shared/forma_pagamento.js
   /modules/shared/sales_bulk_actions.js
   /modules/shared/fiscal_permissoes.js
