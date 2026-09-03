@@ -54,8 +54,17 @@
     },
     {
       // O caminho normal: saiu mercadoria e nasceu conta a receber.
+      //
+      // E EXIGE DOCUMENTO FISCAL (fase AV). Faturar e emitir passaram a ser um
+      // ato só: chegar aqui sem NF-e é recusado. Antes o pedido podia ficar
+      // faturado para sempre sem nota, e nada avisava — neste banco eram 8
+      // pedidos e R$ 26.033,80 nessa situação.
+      //
+      // A saída que não tem nota tem status próprio ("Pedido Aprovado Sem
+      // Faturamento", logo abaixo). A que precisa faturar antes da nota usa a
+      // dispensa registrada, com motivo — ver a migração fase-av.
       value: 'pedido-faturado', label: 'Pedido Faturado', tipo: 'order',
-      tom: 'success', baixaEstoque: true, geraFinanceiro: true
+      tom: 'success', baixaEstoque: true, geraFinanceiro: true, exigeDocumento: true
     },
     {
       // Sai mercadoria, NÃO nasce financeiro. Transferência entre depósitos,
@@ -213,6 +222,9 @@
   const tipoDoStatus = (status) => meta(status).tipo;
   const baixaEstoque = (status, tipoRegistro) => Boolean(meta(status, tipoRegistro).baixaEstoque);
   const geraFinanceiro = (status, tipoRegistro) => Boolean(meta(status, tipoRegistro).geraFinanceiro);
+  // Fase AV: o status exige documento fiscal para ser alcançado. Mesma
+  // assinatura das irmãs — é `meta` quem normaliza status legado.
+  const exigeDocumento = (status, tipoRegistro) => Boolean(meta(status, tipoRegistro).exigeDocumento);
   const ehCancelado = (status, tipoRegistro) => Boolean(meta(status, tipoRegistro).cancelado);
   const rotulo = (status, tipoRegistro) => meta(status, tipoRegistro).label;
 
@@ -261,6 +273,7 @@
     baixaEstoque,
     reservaEstoque,
     geraFinanceiro,
+    exigeDocumento,
     ehCancelado,
     TRANSICOES,
     podeTransicionar,

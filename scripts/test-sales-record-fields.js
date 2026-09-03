@@ -106,7 +106,10 @@ check('serializeSalesRecord encontrado em server.js', inicio > 0 && corpoSeriali
 
 // Renomeados de propósito na resposta da API, e campos internos que a tela não usa.
 const RENOMEADOS = { clientSupplierName: 'customer', totalAmount: 'amount' };
-const INTERNOS = ['createdBy', 'stockApplied'];
+// `dispensaPor` entra aqui pelo mesmo motivo de `createdBy`: é o ID do usuário,
+// e a tela mostra o NOME (`dispensaPorNome`, esse sim repassado). Mandar o id
+// junto não ajudaria ninguém e é dado de usuário viajando à toa.
+const INTERNOS = ['createdBy', 'stockApplied', 'dispensaPor'];
 Object.keys(lido)
   .filter((campo) => !INTERNOS.includes(campo))
   .forEach((campo) => {

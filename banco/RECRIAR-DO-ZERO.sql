@@ -72,6 +72,10 @@
 --   35. banco/migrations/fase-ap-razao-de-estoque-no-banco.sql
 --   36. banco/migrations/fase-aq-compras-cotacao-e-ordem.sql
 --   37. banco/migrations/fase-ar-notas-contra-cnpj.sql
+--   38. banco/migrations/fase-as-categorias-de-vendas.sql
+--   39. banco/migrations/fase-at-numero-do-lancamento-financeiro.sql
+--   40. banco/migrations/fase-au-venda-a-vista-nasce-quitada.sql
+--   41. banco/migrations/fase-av-faturar-exige-documento.sql
 -- ============================================================================
 
 
@@ -5076,4 +5080,322 @@ create index if not exists idx_nfe_distribuicao_entrada on nfe_distribuicao (ent
 -- RLS: ver o cabeçalho da fase-af.
 alter table if exists dfe_nsu enable row level security;
 alter table if exists nfe_distribuicao enable row level security;
+
+
+-- ============================================================================
+-- >>> banco/migrations/fase-as-categorias-de-vendas.sql
+-- ============================================================================
+
+-- ============================================================================
+-- FASE AS — Categoria de venda vira cadastro próprio
+-- ============================================================================
+--
+-- O QUE HAVIA
+-- -----------
+-- O campo "Categoria" do pedido era preenchido com a lista de CATEGORIAS DE
+-- PRODUTO do Estoque:
+--
+--   options: (meta.productCategories || []).map((c) => ({ value: c.name, ... }))
+--
+-- Não foi descuido: o comentário na rota conta que antes era texto livre, e
+-- apontar para um cadastro existente foi o que se tinha à mão. Só que os dois
+-- catálogos respondem perguntas diferentes. "Parafusos" classifica o que se
+-- vende; "Varejo", "Atacado", "Bonificação", "Garantia" classificam a venda.
+-- Misturados, nenhum relatório fecha por nenhum dos dois critérios — e a lista
+-- de categorias de produto cresce com nomes que não são produto nenhum.
+--
+-- POR QUE UMA TABELA, E NÃO MAIS UMA COLEÇÃO NO data/db.json
+-- -----------------------------------------------------------
+-- As irmãs dela (productCategories, priceTables, saleStatuses) moram no
+-- db.json, então a consistência pediria o arquivo. A correção pede o banco.
+--
+-- Esta categoria é referenciada por `orders`, que é tabela do Postgres. Catálogo
+-- em arquivo referenciado por linha em tabela é exatamente a divisão que a fase
+-- AP desfez no razão de estoque: sem transação, sem o pg_dump enxergar, e com
+-- duas requisições simultâneas apagando o trabalho uma da outra ao reescrever o
+-- arquivo inteiro.
+--
+-- POR QUE `orders.category` CONTINUA GUARDANDO O NOME
+-- ----------------------------------------------------
+-- Porque já guarda, e há pedidos gravados assim. Trocar para o id exigiria
+-- reescrever o histórico e mudar o filtro da lista de vendas, que compara
+-- texto — duas mudanças que não têm a ver com o pedido "criar a tela".
+--
+-- O preço disso está dito em voz alta: renomear uma categoria NÃO renomeia nos
+-- pedidos antigos. A tela avisa quem for renomear.
+--
+-- A SEMEADURA VEM DOS PEDIDOS, NÃO DAS CATEGORIAS DE PRODUTO
+-- -----------------------------------------------------------
+-- Copiar productCategories para cá levaria junto o erro que esta fase corrige.
+-- O que se copia é o que os pedidos REALMENTE usam hoje — e só isso, porque é
+-- só isso que precisa continuar aparecendo no formulário. Sem essa semeadura,
+-- um pedido categorizado "Parafusos" abriria com o campo em branco (o valor
+-- sobrevive no campo oculto, mas quem edita vê vazio e acha que se perdeu).
+
+create table if not exists sales_categories (
+  id            text primary key,
+  name          text not null,
+  code          text not null default '',
+  -- 'ativo' | 'inativo'. Inativa some do formulário e continua no histórico —
+  -- excluir uma categoria em uso deixaria pedidos apontando para um nome que
+  -- ninguém mais sabe de onde veio.
+  status        text not null default 'ativo',
+  notes         text not null default '',
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- "Varejo" e "varejo" são a mesma categoria, e é justamente a duplicata por
+-- caixa que o texto livre criava. O índice é sobre lower(name) porque comparar
+-- no aplicativo deixaria passar as duas quando gravadas ao mesmo tempo.
+create unique index if not exists idx_sales_categories_nome
+  on sales_categories (lower(name));
+
+create index if not exists idx_sales_categories_status on sales_categories (status);
+
+-- ----------------------------------------------------------------------------
+-- Semeadura: o que os pedidos já usam
+-- ----------------------------------------------------------------------------
+-- `on conflict do nothing` contra o índice de nome: rodar a migração duas vezes
+-- não pode duplicar nem falhar. E o distinct é sobre o nome em minúsculas para
+-- que "Revenda" e "revenda", se existirem os dois no histórico, virem UMA.
+insert into sales_categories (id, name, notes)
+select
+  'cat-venda-' || md5(lower(trim(o.category))),
+  min(trim(o.category)),
+  'Criada a partir dos pedidos que já usavam este nome (fase AS).'
+from orders o
+where coalesce(trim(o.category), '') <> ''
+group by lower(trim(o.category))
+on conflict do nothing;
+
+-- RLS: ver o cabeçalho da fase-af.
+alter table if exists sales_categories enable row level security;
+
+
+-- ============================================================================
+-- >>> banco/migrations/fase-at-numero-do-lancamento-financeiro.sql
+-- ============================================================================
+
+-- ============================================================================
+-- FASE AT — o lançamento financeiro ganha número próprio (LF)
+-- ============================================================================
+--
+-- O QUE HAVIA
+-- -----------
+-- O lançamento não tinha número. A tela de edição se identificava assim:
+--
+--   <p>Editando ${String(editEntry.id).slice(-8)}</p>
+--
+-- Isto é, os oito últimos caracteres do id interno: "41196-9q1". Não é número
+-- de nada — é um pedaço de um identificador que ninguém dita ao telefone, não
+-- ordena, não se procura e não cabe num comprovante.
+--
+-- `document` NÃO SERVIA PARA ISSO, e continua não servindo: ele guarda o
+-- documento de FORA (o boleto do fornecedor, a nota, o contrato). Reaproveitá-lo
+-- como número interno apagaria a informação que só existe ali.
+--
+-- POR QUE UMA SEQUENCE, E NÃO max(code)+1
+-- ----------------------------------------
+-- Mesma correção que a fase AP fez no razão de estoque e a AQ nas compras:
+-- max+1 lido no Node reusa número depois de uma exclusão e gera o mesmo duas
+-- vezes quando dois lançamentos nascem ao mesmo tempo. Número de documento
+-- repetido é pior do que número nenhum: dois papéis diferentes dizendo ser o
+-- mesmo.
+--
+-- A ORDEM DO BACKFILL É CRONOLÓGICA, e a escolha importa
+-- -------------------------------------------------------
+-- Numerar histórico é decidir o que o número significa. Ordenar por `created_at`
+-- (quando o lançamento entrou no sistema) faz LF0001 ser o primeiro lançamento
+-- registrado — que é o que qualquer pessoa espera de um número sequencial, e o
+-- que mantém a ordem estável se alguém corrigir uma data de vencimento depois.
+--
+-- Ordenar por `date` ou `due_date` seria numerar por competência, e aí um
+-- lançamento retroativo criado hoje receberia um número do meio da série,
+-- deslocando os outros — ou, pior, criando um segundo LF0001.
+--
+-- O desempate é por `id`, que é único: sem ele, dois lançamentos criados no
+-- mesmo instante trocariam de número a cada vez que a migração rodasse.
+
+-- Nulo é permitido de propósito: o backfill logo abaixo preenche os que
+-- existem, e o `not null` só poderia entrar depois de garantir que TODA rota de
+-- criação passou a numerar. Uma coluna obrigatória numa tabela viva derruba a
+-- gravação de quem ainda não foi atualizado — e a gravação que derruba aqui é a
+-- de contas a pagar.
+alter table if exists financial_entries
+  add column if not exists code integer;
+
+create sequence if not exists financial_entries_code_seq as integer start with 1;
+
+-- O número é único, e é o índice que garante. Conferir na aplicação deixaria
+-- duas requisições simultâneas passarem pela checagem antes de qualquer uma
+-- gravar. `where code is not null` para os lançamentos antigos que porventura
+-- fiquem sem número não colidirem entre si.
+create unique index if not exists idx_financial_entries_code
+  on financial_entries (code) where code is not null;
+
+-- ----------------------------------------------------------------------------
+-- Backfill: numera o que já existe, em ordem de entrada no sistema
+-- ----------------------------------------------------------------------------
+-- `where code is null` faz a migração ser repetível: rodar duas vezes não
+-- renumera o que já tem número.
+with ordenados as (
+  select id, row_number() over (order by created_at, id) as n
+  from financial_entries
+  where code is null
+)
+update financial_entries e
+set code = o.n
+from ordenados o
+where e.id = o.id;
+
+-- A sequence continua DEPOIS do último número entregue. Sem isto, o próximo
+-- lançamento nasceria com LF0001 e esbarraria no índice único — e o erro
+-- apareceria na primeira conta a pagar de quem aplicou a migração, não aqui.
+select setval(
+  'financial_entries_code_seq',
+  greatest(coalesce((select max(code) from financial_entries), 0), 1),
+  (select count(*) > 0 from financial_entries where code is not null)
+);
+
+
+-- ============================================================================
+-- >>> banco/migrations/fase-au-venda-a-vista-nasce-quitada.sql
+-- ============================================================================
+
+-- ============================================================================
+-- FASE AU — a baixa sabe se foi o sistema ou uma pessoa que a registrou
+-- ============================================================================
+--
+-- POR QUE ESTA COLUNA EXISTE
+-- --------------------------
+-- Até agora toda conta a receber de venda nascia `pending`, fixo no código: a
+-- venda paga em DINHEIRO, no balcão, virava conta a receber em aberto.
+--
+-- Não é hipótese. A auditoria do ERP anterior (ViperERP, 02/09/2026) mediu o
+-- estrago no mesmo desenho: R$ 140.375,77 "a receber" e R$ 0,00 "realizado" em
+-- dois dias, com todo cliente que comprou aparecendo no relatório de
+-- Inadimplentes, e o saldo das contas bancárias virando ficção. Quatro
+-- relatórios passaram a mentir sem que nenhuma tela desse erro.
+--
+-- A correção faz a venda à vista nascer QUITADA, com a baixa registrada. E é aí
+-- que aparece a necessidade desta coluna.
+--
+-- O QUE ELA RESOLVE
+-- -----------------
+-- Cancelar um pedido faturado já tinha uma regra deliberada: parcela recebida
+-- NÃO é cancelada em silêncio, porque o dinheiro entrou de verdade e some da
+-- vista de quem precisava decidir o que fazer.
+--
+-- Essa regra continua certa — para a baixa que uma PESSOA registrou. Mas a
+-- baixa que o próprio faturamento criou é parte do faturamento: desfazer um
+-- sem o outro deixaria dinheiro "recebido" de um pedido que não existe mais.
+--
+-- Sem a coluna, distinguir as duas exigiria ler o texto da observação — e teste
+-- (ou regra) que depende de uma frase ensina a mudar a frase.
+--
+--   'manual'     — alguém abriu o lançamento e deu baixa. Fato humano, fica.
+--   'automatica' — nasceu com o faturamento de uma venda à vista. Sai com ele.
+--
+-- O PADRÃO É 'manual', e é a escolha conservadora: toda baixa que já existe foi
+-- registrada por uma pessoa, e nenhuma delas pode passar a sumir sozinha por
+-- causa desta migração.
+alter table if exists financial_payments
+  add column if not exists origem text not null default 'manual';
+
+-- Só os dois valores. Um terceiro valor entraria em silêncio e o cancelamento
+-- não saberia o que fazer com ele — e "não sei" aqui significa apagar ou manter
+-- dinheiro por engano.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'financial_payments_origem_check'
+  ) then
+    alter table financial_payments
+      add constraint financial_payments_origem_check
+      check (origem in ('manual', 'automatica'));
+  end if;
+end $$;
+
+-- O cancelamento procura as baixas automáticas de um lançamento; sem índice
+-- isso é varredura na tabela que mais cresce no sistema.
+create index if not exists idx_financial_payments_origem
+  on financial_payments (entry_id, origem);
+
+
+-- ============================================================================
+-- >>> banco/migrations/fase-av-faturar-exige-documento.sql
+-- ============================================================================
+
+-- ============================================================================
+-- FASE AV — faturar e emitir viram um ato só
+-- ============================================================================
+--
+-- O QUE HAVIA
+-- -----------
+-- Faturar e emitir eram passos independentes, e nada ligava um ao outro. Um
+-- pedido podia ficar "Pedido Faturado" — com estoque baixado e conta a receber
+-- criada — sem nenhum documento fiscal, para sempre, sem que nada avisasse.
+--
+-- Não é hipótese: neste banco havia 8 pedidos faturados sem nota, R$ 26.033,80,
+-- de abril a agosto. O alerta que os encontraria existia e estava ligado na
+-- coleção errada (corrigido na mesma leva).
+--
+-- A auditoria do ERP anterior achou o mesmo padrão lá, e com a mesma
+-- consequência: mercadoria saindo da loja sem documento, descoberto só quando
+-- alguém audita.
+--
+-- O QUE MUDA
+-- ----------
+-- O catálogo de status passa a declarar `exigeDocumento`, e "Pedido Faturado" o
+-- declara. Chegar nesse status sem NF-e é recusado.
+--
+-- MAS NEM TODA SAÍDA TEM NOTA, e ignorar isso quebraria a operação:
+-- transferência entre depósitos da mesma empresa, remessa para conserto,
+-- bonificação, amostra, brinde. O sistema já tem o status certo para esses
+-- casos — "Pedido Aprovado Sem Faturamento", que baixa estoque e não gera
+-- financeiro — e ele NÃO exige documento.
+--
+-- Sobra o caso real que não cabe em nenhum dos dois: a venda que precisa ser
+-- faturada agora e cuja nota sai depois (SEFAZ fora do ar, certificado vencendo,
+-- contingência). Para esse existe a DISPENSA — e ela é registrada, com motivo e
+-- autor, em vez de acontecer em silêncio.
+--
+-- POR QUE MOTIVO OBRIGATÓRIO
+-- --------------------------
+-- Uma dispensa sem motivo é o mesmo "faturado sem nota" de antes, com um clique
+-- a mais. O motivo é o que permite, depois, separar a contingência de ontem do
+-- hábito que virou regra — e é o que o painel de Atenção usa para distinguir o
+-- pedido resolvido do esquecido.
+
+alter table if exists orders
+  add column if not exists dispensa_documento_fiscal boolean not null default false;
+
+alter table if exists orders
+  add column if not exists dispensa_motivo text not null default '';
+
+-- Quem dispensou e quando. Sem isto a dispensa é uma opinião sem dono — e é
+-- justamente a informação que falta quando alguém pergunta, meses depois, por
+-- que aquela venda saiu sem nota.
+alter table if exists orders
+  add column if not exists dispensa_por text;
+
+alter table if exists orders
+  add column if not exists dispensa_por_nome text not null default '';
+
+alter table if exists orders
+  add column if not exists dispensa_em timestamptz;
+
+-- O painel de Atenção procura os faturados sem nota; este índice é o que evita
+-- varrer a tabela de pedidos a cada abertura do hub.
+create index if not exists idx_orders_sem_documento
+  on orders (status) where nfe_id is null or nfe_id = '';
+
+-- NÃO HÁ BACKFILL, e é decisão.
+--
+-- Os 8 pedidos faturados sem nota que já existem NÃO são marcados como
+-- dispensados: marcá-los inventaria uma justificativa que ninguém deu e os
+-- faria sumir do painel — apagando exatamente o problema que esta fase existe
+-- para tornar visível. Eles continuam aparecendo até alguém emitir a nota ou
+-- registrar o motivo.
 

@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-03 12:29 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-03 12:30 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -17,10 +17,12 @@ Dashboard Geral  (dashboard)  —  0 tela(s) no menu
 --------------------------------------------------
   (sem sub-telas: o módulo é uma tela única)
 
-Vendas  (sales)  —  9 tela(s) no menu
--------------------------------------
+Vendas  (sales)  —  11 tela(s) no menu
+--------------------------------------
   [app] Pedidos e Orçamentos               Lista de pedidos e orçamentos, com filtros, aprovação e faturamento.
   [app] Nova Venda                         Pedido e orçamento na mesma tela — o campo Status define qual dos dois é.
+  [ok]  Categorias de Vendas               Como a venda é classificada: varejo, atacado, bonificação.
+  [ok]  Nova Categoria de Vendas           Cria uma categoria de venda.
   [app] NF-e Emitidas                      Notas já emitidas, com DANFE, XML e cancelamento.
   [app] Nova NF-e Avulsa                   Emite uma NF-e sem partir de um pedido.
   [app] Meu Painel                         As vendas que você mesmo realizou, com a NF-e de cada pedido.
@@ -188,7 +190,7 @@ Cadastros  (cadastros)  —  19 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 124 telas no menu.
+TOTAL: 14 módulos, 126 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -253,6 +255,10 @@ regra só, para tela e servidor nunca discordarem.
       CPF e CNPJ — implementação ÚNICA, usada por todas as telas.
   fiscal_permissoes.js   [também no servidor]
       Permissões do módulo Fiscal — FONTE ÚNICA.
+  forma_pagamento.js   [também no servidor]
+      COMO CADA FORMA DE PAGAMENTO VIRA DINHEIRO — FONTE ÚNICA.
+  lancamento_codigo.js   [também no servidor]
+      O NÚMERO DO LANÇAMENTO FINANCEIRO — FONTE ÚNICA.
   manifestacao.js   [também no servidor]
       MANIFESTAÇÃO DO DESTINATÁRIO — catálogo dos quatro eventos.
   module_workspace.js
@@ -295,6 +301,9 @@ Arquivos de acesso (lib/db)
       tabelas: cnpjs, deposits, people
   lib/db/catalogo.js
       O CATÁLOGO — o que o banco sabe sobre si mesmo, lido uma vez.
+  lib/db/categorias-venda.js
+      CATEGORIAS DE VENDA no banco.
+      tabelas: sales_categories
   lib/db/classes.js
       Classes de produto (COR, e amanhã VOLTAGEM, TAMANHO...).
       tabelas: product_class_assignments, product_class_value_assignments, product_class_values, product_classes
@@ -338,7 +347,7 @@ Arquivos de acesso (lib/db)
   lib/db/vendas-compras.js
       tabelas: import_logs, orders, purchases, quotes, sales
 
-Tabelas usadas (72)
+Tabelas usadas (73)
 -------------------
   access_logs             account_balances        audit_logs
   bank_accounts           bank_cards              bank_transactions
@@ -362,11 +371,12 @@ Tabelas usadas (72)
   product_class_value_assignmentsproduct_class_values    product_classes
   products                purchase_orders         purchases
   quotes                  regra_fiscal            role_permissions
-  roles                   sales                   settings
-  user_permissions        user_roles              users
+  roles                   sales                   sales_categories
+  settings                user_permissions        user_roles
+  users
 
 ==============================================================================
-4. ROTAS DA API (102 encontradas no server.js)
+4. ROTAS DA API (104 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -449,6 +459,8 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/reports/vendas                                  GET
   /api/reports/vendas/export                           GET
   /api/sales                                           GET POST
+  /api/sales/categories                                GET POST
+  /api/sales/categories/…                              
   /api/sales/dashboard                                 GET
   /api/sales/import                                    POST
   /api/sales/meta                                      GET
@@ -477,7 +489,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-38 arquivo(s) em banco/migrations, em ordem de fase:
+42 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -498,6 +510,10 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-ap-razao-de-estoque-no-banco.sql
   fase-aq-compras-cotacao-e-ordem.sql
   fase-ar-notas-contra-cnpj.sql
+  fase-as-categorias-de-vendas.sql
+  fase-at-numero-do-lancamento-financeiro.sql
+  fase-au-venda-a-vista-nasce-quitada.sql
+  fase-av-faturar-exige-documento.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -521,7 +537,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-64 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+68 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -534,6 +550,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-calcular-tributos.js          Aba Impostos e calcularTributos.
   [npm test] test-campo-busca.js                Campo de busca com sugestão (renderSearchableSelect / attachSearchableSelect).
   [npm test] test-campos-padronizados.js        Um telefone é um telefone em toda tela do sistema.
+  [avulso]  test-categorias-venda.js           CATEGORIAS DE VENDA (fase AS).
   [npm test] test-chassi-item.js                Chassi na linha do item de venda.
   [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
   [npm test] test-complemento-icms.js           NF-e COMPLEMENTAR EXCLUSIVA DE ICMS.
@@ -544,6 +561,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-documento.js                  CPF e CNPJ — modules/shared/documento.js.
   [npm test] test-emissao-abas.js               A tela de emissão de NF-e: estrutura das abas e o que acontece ao clicar em "Emitir NF-e" com campo obrigatóri
   [npm test] test-entrada-nfe.js                ENTRADA DE NF-e — o XML do fornecedor, o fornecedor que falta e o que a nota não pode fazer sozinha.
+  [avulso]  test-faturar-exige-nota.js         FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
   [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
   [avulso]  test-gate-openfinance.js           O portão central alcança mesmo o Open Finance? A regra de permissão dizia '/api/openfinance', mas a rota é '/a
@@ -563,6 +581,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-nfe-payload.js                Montagem do payload de NF-e — lib/nfePayloadBuilder.js É conta de imposto: errado aqui não dá erro de tela, dá
   [npm test] test-nfe-unificada.js              A lista de NF-e passou a mostrar as duas origens.
   [npm test] test-notas-contra-cnpj.js          NOTAS EMITIDAS CONTRA O NOSSO CNPJ — Distribuição de DF-e (fase AR).
+  [npm test] test-numero-lancamento.js          O NÚMERO DO LANÇAMENTO FINANCEIRO — LF0001 (fase AT).
   [npm test] test-paineis-modulos.js            Painéis por módulo — a conta de cada indicador, e o que eles se recusam a afirmar.
   [npm test] test-permissoes-fiscais.js         Permissões do módulo Fiscal — a tela e o portão do servidor têm de falar a mesma língua.
   [avulso]  test-permissoes-tela.js            A tela de Papéis e Permissões contra as permissões REAIS do banco.
@@ -585,6 +604,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-telas-por-usuario.js          TELAS POR USUÁRIO (fase AN) — o recorte fino dentro de um módulo liberado.
   [avulso]  test-transferencia-itens.js        TRANSFERÊNCIA COM VÁRIOS ITENS — contra o servidor de verdade.
   [npm test] test-transicoes-status.js          Transições de status e ações em lote.
+  [avulso]  test-venda-a-vista.js              VENDA À VISTA NASCE QUITADA (fase AU).
   [npm test] test-vendas-financeiro.js          Contas a receber geradas por um pedido faturado (lib/vendas-financeiro.js).
   [npm test] test-verificador-migracoes.js      O verificador de migrações precisa estar certo sobre o que ele NÃO sabe.
   [npm test] test-vinculo-pedido-nfe.js         Vínculo pedido <-> NF-e: existe nos DOIS sentidos, e um pedido não emite duas notas.
@@ -592,7 +612,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-114 arquivos JS carregados por public/index.html, nesta ordem.
+119 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -602,6 +622,9 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/module_workspace.js
   /modules/dashboard/index.js
   /modules/purchases/index.js
+  /modules/sales/index.js
+  /modules/sales/subs/sales_categories.js
+  /modules/sales/subs/new_sales_category.js
   /modules/purchases/subs/purchase_documents.js
   /modules/purchases/subs/new_purchase_order.js
   /modules/purchases/subs/entrada_nfe.js
@@ -636,6 +659,8 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/purchase_totals.js
   /modules/shared/purchase_status.js
   /modules/shared/manifestacao.js
+  /modules/shared/lancamento_codigo.js
+  /modules/shared/forma_pagamento.js
   /modules/shared/sales_bulk_actions.js
   /modules/shared/fiscal_permissoes.js
   /modules/shared/cst_icms.js

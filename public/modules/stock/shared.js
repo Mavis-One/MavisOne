@@ -160,6 +160,11 @@ window.MavisStock = window.MavisStock || {};
   // config: { title, subtitle, endpoint, listKey, newSub, editStateKey,
   //           columns: [{ label, render(item, meta) }], searchFields, canDelete }
   Stock.makeListScreen = function makeListScreen(config) {
+    // A que módulo voltar ao navegar entre lista e formulário. Era 'stock'
+    // fixo, e a fábrica é genérica: a fase AS reusou o par lista+formulário
+    // para as Categorias de Venda, que vivem no módulo Vendas. Sem isto, salvar
+    // uma categoria de venda levava o usuário para o Estoque.
+    const modulo = config.modulo || 'stock';
     return async function renderList(ctx) {
       const { content, api, showToast, state, loadModule, confirmModal } = ctx;
       const meta = config.needsMeta ? await Stock.loadMeta(api, showToast) : null;
@@ -217,7 +222,7 @@ window.MavisStock = window.MavisStock || {};
         document.getElementById('stockListNew')?.addEventListener('click', () => {
           state[config.editStateKey] = null;
           state.activeSub = config.newSub;
-          loadModule('stock');
+          loadModule(modulo);
         });
 
         const searchInput = document.getElementById('stockListSearch');
@@ -234,7 +239,7 @@ window.MavisStock = window.MavisStock || {};
           btn.addEventListener('click', () => {
             state[config.editStateKey] = btn.dataset.edit;
             state.activeSub = config.newSub;
-            loadModule('stock');
+            loadModule(modulo);
           });
         });
 
@@ -246,7 +251,7 @@ window.MavisStock = window.MavisStock || {};
             try {
               await api(`${config.endpoint}/${btn.dataset.delete}`, { method: 'DELETE' });
               showToast('Registro excluído.', 'success');
-              loadModule('stock');
+              loadModule(modulo);
             } catch (error) {
               showToast(error.message || 'Erro ao excluir.', 'error');
             }
@@ -263,6 +268,11 @@ window.MavisStock = window.MavisStock || {};
   // --------------------------------------------------------------------------
   // config: { title, endpoint, itemKey, fields, listSub, editStateKey, rows }
   Stock.makeFormScreen = function makeFormScreen(config) {
+    // A que módulo voltar ao navegar entre lista e formulário. Era 'stock'
+    // fixo, e a fábrica é genérica: a fase AS reusou o par lista+formulário
+    // para as Categorias de Venda, que vivem no módulo Vendas. Sem isto, salvar
+    // uma categoria de venda levava o usuário para o Estoque.
+    const modulo = config.modulo || 'stock';
     return async function renderForm(ctx) {
       const { content, api, showToast, state, loadModule } = ctx;
       const meta = config.needsMeta ? await Stock.loadMeta(api, showToast) : null;
@@ -296,7 +306,7 @@ window.MavisStock = window.MavisStock || {};
 
       document.getElementById('stockFormCancel')?.addEventListener('click', () => {
         state.activeSub = config.listSub;
-        loadModule('stock');
+        loadModule(modulo);
       });
 
       document.getElementById('stockEntityForm')?.addEventListener('submit', async (event) => {
@@ -313,7 +323,7 @@ window.MavisStock = window.MavisStock || {};
           }
           showToast(current ? 'Registro atualizado.' : 'Registro criado.', 'success');
           state.activeSub = config.listSub;
-          loadModule('stock');
+          loadModule(modulo);
         } catch (error) {
           showToast(error.message || 'Erro ao salvar.', 'error');
           if (submitBtn) submitBtn.disabled = false;

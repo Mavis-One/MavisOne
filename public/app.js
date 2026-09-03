@@ -1538,6 +1538,10 @@ const moduleSubItems = {
     // Tela única: eram duas ("Novo Pedido" e "Novo Orçamento") com o mesmo
     // formulário e só o tipo mudando. Agora quem decide é o campo Status.
     { key: 'new_sale', label: 'Nova Venda', desc: 'Pedido e orçamento na mesma tela — o campo Status define qual dos dois é.' },
+    // Fase AS. O par lista+formulário, como nos outros cadastros de apoio do
+    // sistema. Classifica a VENDA — a categoria do PRODUTO continua no Estoque.
+    { key: 'sales_categories', label: 'Categorias de Vendas', desc: 'Como a venda é classificada: varejo, atacado, bonificação.' },
+    { key: 'new_sales_category', label: 'Nova Categoria de Vendas', desc: 'Cria uma categoria de venda.' },
     { key: 'nfes', label: 'NF-e Emitidas', desc: 'Notas já emitidas, com DANFE, XML e cancelamento.' },
     { key: 'new_nfe', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     // Meu Painel vem antes dos outros dois de propósito: é a única das três
@@ -1779,6 +1783,25 @@ const LUPA_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" st
  * de propósito. É o mesmo comportamento de antes, agora sob demanda — e é ela
  * que diz, olhando, que o campo é de busca e não um texto qualquer.
  */
+/**
+ * As opções do campo Categoria da venda (fase AS).
+ *
+ * São as categorias ATIVAS do cadastro, mais — quando faz falta — a que o
+ * próprio pedido já tem gravada. A segunda parte existe porque `orders.category`
+ * guarda o NOME: um pedido categorizado antes do cadastro existir, ou com uma
+ * categoria que depois foi inativada, abriria com o campo vazio. O valor não se
+ * perderia (ele fica no input oculto), mas quem está editando veria em branco e
+ * acreditaria que perdeu — e a próxima escolha apagaria o histórico de verdade.
+ */
+function opcoesDeCategoriaDeVenda(meta, valorAtual) {
+  const opcoes = (meta.salesCategories || []).map((c) => ({ value: c.name, label: c.name }));
+  const atual = String(valorAtual || '').trim();
+  if (atual && !opcoes.some((o) => o.value === atual)) {
+    opcoes.unshift({ value: atual, label: `${atual} (fora do cadastro)` });
+  }
+  return opcoes;
+}
+
 function renderSearchableSelect({ id, name, options, selectedValue, placeholder, required }) {
   const selected = options.find((o) => String(o.value) === String(selectedValue || ''));
   return `
@@ -3554,7 +3577,16 @@ async function loadModule(moduleName) {
                     </select>
                   </label>
                   <label>Categoria
-                    ${renderSearchableSelect({ id: 'salesCategory', name: 'category', options: (meta.productCategories || []).map((c) => ({ value: c.name, label: c.name })), selectedValue: formState.category, placeholder: 'Buscar categoria...' })}
+                    ${/* Fase AS: categorias de VENDA, cadastro próprio. Antes esta
+                         lista vinha de meta.productCategories — o cadastro que havia
+                         à mão —, e classificar uma venda como "Parafusos" é usar um
+                         catálogo que responde outra pergunta. Ver a migração fase-as.
+
+                         `opcoesDeCategoriaDeVenda` inclui o valor já gravado no
+                         pedido mesmo que ele não esteja mais no cadastro: sem isso,
+                         abrir um pedido antigo mostraria o campo em branco — o valor
+                         sobrevive no campo oculto, mas quem edita acha que sumiu. */''}
+                    ${renderSearchableSelect({ id: 'salesCategory', name: 'category', options: opcoesDeCategoriaDeVenda(meta, formState.category), selectedValue: formState.category, placeholder: 'Buscar categoria...' })}
                   </label>
                 </div>
 

@@ -184,5 +184,21 @@ check('falha do fiscal não derruba o painel', /catch \(erroFiscal\)/.test(rota)
 check('é rota própria, não campo do dashboard', /pathname === '\/api\/dashboard\/atencao'/.test(serverSrc));
 check('e o motivo está escrito', /a parte cara da tela/.test(serverSrc));
 
+console.log('\n--- a rota varre as vendas DE VERDADE ---');
+// O CHECK QUE FALTAVA, e o defeito que ele encontrou.
+//
+// Os testes acima alimentam pedidosSemNota() direto, com pedidos de mentira —
+// então passavam com a função certa ligada na coleção errada. A rota entregava
+// `data.sales`, a coleção LEGADA, que não recebe escrita desde que as vendas
+// viraram orders/quotes e está sempre vazia. O alerta nunca disparou: nos dados
+// reais deste banco eram 8 pedidos e R$ 26.033,80 sem documento fiscal.
+//
+// Função certa + teste verde + ligação errada é o defeito que mais custa a
+// achar, porque nada nele parece errado.
+check('o painel recebe data.orders', /pedidos: data\.orders/.test(rota));
+check('  e NÃO a coleção legada data.sales', !/pedidos: data\.sales/.test(rota));
+// Sem o sync, data.orders chega vazio e o efeito é o mesmo de antes.
+check('  com syncSalesData chamado antes', /syncSalesData\(data\)/.test(rota));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

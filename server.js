@@ -65,6 +65,10 @@ const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 // Fase AP: o razao de estoque saiu do db.json e virou tabela no Postgres.
 const razaoEstoque = require('./lib/db/estoque-razao');
 const { emTransacao } = require('./lib/db/conexao');
+// Fase AT: o numero do lancamento financeiro (LF0001) — mesmo formato na tela.
+const lancamentoCodigo = require('./public/modules/shared/lancamento_codigo');
+// Fase AS: categoria da VENDA (Varejo, Atacado, Bonificacao) — nao a do produto.
+const categoriasVendaDb = require('./lib/db/categorias-venda');
 // Fase AR: as notas que emitiram CONTRA o nosso CNPJ (Distribuicao de DF-e).
 const dfeDb = require('./lib/db/dfe');
 const manifestacao = require('./public/modules/shared/manifestacao');
@@ -1187,7 +1191,13 @@ function salesInfoFields(body) {
     approvalDate: texto(body.approvalDate),
     relatedOrderCode: Math.max(0, Number(body.relatedOrderCode || 0)),
     revisionNumber: Math.max(0, Number(body.revisionNumber || 0)),
-    generateServiceOrder: Boolean(body.generateServiceOrder)
+    generateServiceOrder: Boolean(body.generateServiceOrder),
+    // Fase AV: faturar exige documento fiscal, e esta é a saída registrada para
+    // a venda cuja nota sai depois. Só a INTENÇÃO vem da tela; quem dispensou e
+    // quando são carimbados na rota, com o usuário autenticado — pelo mesmo
+    // motivo que "Alterado por" não sai daqui.
+    dispensaDocumentoFiscal: Boolean(body.dispensaDocumentoFiscal),
+    dispensaMotivo: String(body.dispensaMotivo || '').trim().slice(0, 300)
   };
 }
 
@@ -1442,9 +1452,25 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
     const vinculadas = (data.finance || []).filter((entry) => entry.referenceId === record.id && entry.type === 'RECEITA');
     let canceladas = 0;
     for (const entry of vinculadas) {
-      // Parcela já recebida (ou parcialmente) não é cancelada em silêncio: o
-      // dinheiro entrou de verdade. Fica para alguém decidir o que fazer.
-      if (entry.status === 'pending') {
+      // BAIXA AUTOMÁTICA SAI COM O FATURAMENTO; baixa de gente, não.
+      //
+      // A regra antiga — "parcela já recebida não é cancelada em silêncio,
+      // porque o dinheiro entrou de verdade" — continua valendo, e é ela que
+      // protege a baixa que uma PESSOA registrou. Mas desde que a venda à vista
+      // passou a nascer quitada (fase AU), existe uma baixa que o próprio
+      // faturamento criou: desfazer um sem o outro deixaria dinheiro
+      // "recebido" de um pedido que não existe mais.
+      const baixas = getFinanceEntryPayments(data, entry.id);
+      const automaticas = baixas.filter((baixa) => baixa.origem === 'automatica');
+      const humanas = baixas.filter((baixa) => baixa.origem !== 'automatica');
+
+      if (humanas.length) continue; // alguém recebeu de verdade: fica.
+
+      for (const baixa of automaticas) {
+        await db.deleteFinancialPayment(baixa.id);
+        data.financialPayments = (data.financialPayments || []).filter((p) => p.id !== baixa.id);
+      }
+      if (entry.status === 'pending' || automaticas.length) {
         entry.status = 'cancelado';
         entry.updatedAt = new Date().toISOString();
         await db.updateFinancialEntry(entry.id, { status: 'cancelado' });
@@ -1454,7 +1480,17 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
     return { criadas: 0, canceladas, mantidas: vinculadas.length - canceladas };
   }
 
-  const parcelas = parcelasDoPedido(record);
+  // A FORMA DE PAGAMENTO DECIDE SE A PARCELA NASCE QUITADA.
+  //
+  // Era `status: 'pending'` fixo — a venda paga em dinheiro, no balcão, nascia
+  // como conta a receber em aberto. A auditoria do ERP anterior mostrou aonde
+  // isso chega: R$ 140 mil "a receber" e R$ 0,00 "realizado" em dois dias, com
+  // todo cliente que comprou no cartão listado como inadimplente. O cadastro de
+  // formas de pagamento já sabia a resposta (type, daysToReceive, conta); o
+  // código é que não perguntava. Ver public/modules/shared/forma_pagamento.js.
+  const formasPorId = new Map((data.paymentMethods || []).map((forma) => [forma.id, forma]));
+  const parcelas = parcelasDoPedido(record, formasPorId);
+  let quitadas = 0;
   for (const parcela of parcelas) {
     const entry = await db.createFinancialEntry({
       type: 'RECEITA',
@@ -1468,13 +1504,36 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
       // referenceId é o que amarra a parcela ao pedido — é por ele que o
       // cancelamento acima encontra o que desfazer.
       referenceId: record.id,
-      status: 'pending',
+      bankAccountId: parcela.bankAccountId || '',
+      status: parcela.quitaNaHora ? 'paid' : 'pending',
       createdBy: user?.id,
       createdByName: user?.name
     });
     data.finance.push(entry);
+
+    // A BAIXA TAMBÉM, e não só o status. Sem a linha em financial_payments o
+    // painel continua somando R$ 0,00 em "realizado" e o extrato da conta não
+    // enxerga o dinheiro — o problema só teria mudado de lugar.
+    if (parcela.quitaNaHora) {
+      const baixa = await db.createFinancialPayment({
+        entryId: entry.id,
+        amount: parcela.amount,
+        date: record.date,
+        bankAccountId: parcela.bankAccountId || '',
+        // A marca que o cancelamento procura — ver a migração fase-au. É coluna,
+        // e não o texto da observação: regra que depende de uma frase ensina a
+        // mudar a frase.
+        origem: 'automatica',
+        note: 'Baixa automática: venda à vista.',
+        createdBy: user?.id,
+        createdByName: user?.name
+      });
+      data.financialPayments = data.financialPayments || [];
+      data.financialPayments.push(baixa);
+      quitadas += 1;
+    }
   }
-  return { criadas: parcelas.length, canceladas: 0, mantidas: 0 };
+  return { criadas: parcelas.length, canceladas: 0, mantidas: 0, quitadas };
 }
 
 // Pedidos/orçamentos antigos (importados via CSV ou criados antes desta fase) não têm
@@ -1563,6 +1622,12 @@ function serializeSalesRecord(record, data) {
     financeApplied: Boolean(record.financeApplied),
     // Qual NF-e saiu deste pedido; vazio enquanto não houver emissão.
     nfeId: record.nfeId || '',
+    // Fase AV. A tela precisa mostrar POR QUE um pedido faturado não tem nota —
+    // sem isso a dispensa fica registrada no banco e invisível para quem abre.
+    dispensaDocumentoFiscal: Boolean(record.dispensaDocumentoFiscal),
+    dispensaMotivo: record.dispensaMotivo || '',
+    dispensaPorNome: record.dispensaPorNome || '',
+    dispensaEm: record.dispensaEm || null,
     // O NÚMERO da nota, não o id: a coluna "NF-e" da lista mostra "1042", e o
     // id é um uuid que não diz nada a quem lê. Resolvido aqui porque é aqui que
     // se tem `data` em mãos — na tela seria uma varredura por linha.
@@ -1784,6 +1849,46 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
   const vaiBaixarEstoque = tipoNovo === 'order' && salesStatus.baixaEstoque(statusNovo);
   const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.geraFinanceiro(statusNovo);
 
+  // FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
+  //
+  // Faturar e emitir eram passos soltos: o pedido ficava "Pedido Faturado", com
+  // estoque baixado e conta a receber criada, sem nota nenhuma — e nada avisava.
+  // Neste banco eram 8 pedidos, R$ 26.033,80, de abril a agosto.
+  //
+  // A recusa é AQUI, e não na rota, porque este é o ponto por onde passam a
+  // edição do pedido E as ações em lote. Na rota, a ação em lote continuaria
+  // faturando sem nota — que é a pior forma de ter a regra: a que vale só no
+  // caminho que alguém lembrou de proteger.
+  //
+  // Três saídas legítimas, e nenhuma delas é "deixar passar":
+  //   - a nota já existe (nfeId preenchido);
+  //   - a saída não tem nota por natureza — aí o status é "Pedido Aprovado Sem
+  //     Faturamento", que não exige documento;
+  //   - a nota sai depois (SEFAZ fora, contingência) — aí a dispensa, COM
+  //     motivo, fica registrada no pedido.
+  if (tipoNovo === 'order' && salesStatus.exigeDocumento(statusNovo)) {
+    const temNota = Boolean(updated.nfeId || current.nfeId);
+    const dispensado = Boolean(updated.dispensaDocumentoFiscal);
+    const motivo = String(updated.dispensaMotivo || '').trim();
+    if (!temNota && !dispensado) {
+      const erro = new Error(
+        'Este pedido não tem NF-e. Emita a nota (a emissão já fatura o pedido), '
+        + 'ou use "Pedido Aprovado Sem Faturamento" se a saída não tem documento, '
+        + 'ou registre a dispensa com o motivo.'
+      );
+      erro.status = 400;
+      throw erro;
+    }
+    if (!temNota && dispensado && motivo.length < 10) {
+      const erro = new Error(
+        'Informe o motivo da dispensa de documento fiscal (pelo menos 10 caracteres). '
+        + 'Dispensa sem motivo é faturar sem nota com um clique a mais.'
+      );
+      erro.status = 400;
+      throw erro;
+    }
+  }
+
   // Roda sempre — inclusive quando o registro DEIXA de ser pedido: virar
   // orçamento tem que devolver ao estoque o que o pedido reservava. A
   // função sai na hora se não havia nem passa a haver reserva.
@@ -1927,6 +2032,14 @@ async function duplicarSalesRecord(serializado, data, user) {
     // A NF-e é do documento original. A cópia é outro documento e ainda não
     // tem nota.
     nfeId: '',
+    // Nem a dispensa: ela foi dada para AQUELA venda, com aquele motivo e
+    // aquele autor. Herdá-la faria a cópia nascer autorizada a faturar sem nota
+    // por uma razão que ninguém deu para ela.
+    dispensaDocumentoFiscal: false,
+    dispensaMotivo: '',
+    dispensaPor: null,
+    dispensaPorNome: '',
+    dispensaEm: null,
     // Anexos não são copiados: o arquivo está gravado sob o id do anexo
     // original, e duas fichas apontando para a mesma linha fariam excluir uma
     // quebrar a outra.
@@ -2120,6 +2233,11 @@ function serializeFinanceEntry(entry, data) {
   const payments = getFinanceEntryPayments(data, entry.id);
   return {
     id: entry.id,
+    // Fase AT: o numero do lancamento e o codigo pronto (LF0042). Os dois vao
+    // para a tela — o numero para ordenar e buscar, o codigo para mostrar, sem
+    // cada tela reimplementar o padding e uma delas escrever "LF42".
+    code: entry.code == null ? null : Number(entry.code),
+    codigo: lancamentoCodigo.formatar(entry.code),
     type: classifyFinanceEntry(entry),
     date: entry.date,
     dueDate: financeEntryDueDate(entry),
@@ -3177,6 +3295,37 @@ function condicaoPagamentoDoBody(body) {
   };
 }
 
+/**
+ * O pedido de origem da nota passa a "Pedido Faturado" (fase AV).
+ *
+ * FALHAR AQUI NÃO DESFAZ A NOTA, e não pode mesmo: a NF-e está autorizada na
+ * SEFAZ, é fato consumado e não se desfaz por erro nosso. O pedido fica como
+ * estava, com o vínculo gravado — e o painel de Atenção o mostra, porque um
+ * pedido com nota e sem faturar é exatamente o tipo de meia-operação que este
+ * sistema não deve esconder.
+ *
+ * Só avança quem PODE avançar: um pedido já faturado, cancelado ou que seja
+ * orçamento não é tocado. Quem responde isso é o catálogo de status, não um
+ * `if` escrito aqui.
+ */
+async function faturarPedidoDaNota(nfe, pedidoId, user) {
+  // O id do pedido vem por parâmetro, e não de `nfe.orderId`: quem chama já o
+  // tem em mãos, e depender do mapeamento da nota seria depender de um segundo
+  // caminho para a mesma informação.
+  if (!pedidoId) return;
+  if (String(nfe && nfe.status || '').toUpperCase() !== 'AUTORIZADO') return;
+  try {
+    const dataVendas = loadData();
+    await syncSalesData(dataVendas);
+    const pedido = (dataVendas.orders || []).find((o) => o.id === pedidoId);
+    if (!pedido) return;
+    if (!salesStatus.podeTransicionar(pedido.status, 'pedido-faturado')) return;
+    await mudarStatusSalesRecord({ id: pedido.id, code: pedido.code }, 'pedido-faturado', dataVendas, user);
+  } catch (erro) {
+    console.error('NF-e autorizada, mas nao consegui faturar o pedido', pedidoId, erro.message);
+  }
+}
+
 async function emitirNfeFiscal(body, user) {
   const estabelecimento = await fiscalDb.getEstabelecimentoById(body.estabelecimentoId);
   if (!estabelecimento) {
@@ -3458,6 +3607,16 @@ async function emitirNfeFiscal(body, user) {
     data.auditLogs = data.auditLogs || [];
     await registrarAuditoria({ action: 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referencia, byId: user.id, byName: user.name });
     saveData(data);
+    // EMITIR FATURA O PEDIDO (fase AV) — a outra metade da unificação.
+    //
+    // Faturar passou a exigir documento fiscal; sem isto, o usuário emitiria a
+    // nota e ainda teria de voltar ao pedido para mudar o status à mão. Emitir
+    // é o ato que prova que a venda saiu: é ele que fatura.
+    //
+    // DEPOIS DA AUTORIZAÇÃO, e não antes: nota rejeitada não baixa estoque nem
+    // cria conta a receber. O vínculo (nfe_id) é gravado antes porque serve de
+    // guarda contra clique duplo; o faturamento só quando a SEFAZ disse sim.
+    await faturarPedidoDaNota(nfe, pedidoDaNota, user);
     return nfe;
   } catch (error) {
     await fiscalDb.updateNfeAposResposta(nfe.id, {
@@ -4837,7 +4996,18 @@ const server = http.createServer(async (req, res) => {
       const painel = atencao.montarAtencao({
         entradas: data.finance || [],
         notasFiscais,
-        pedidos: data.sales || [],
+        // `data.orders`, e NÃO `data.sales`.
+        //
+        // O painel varria a coleção LEGADA, que não recebe escrita desde que as
+        // vendas viraram orders/quotes — está sempre vazia. O alerta "pedidos
+        // faturados sem NF-e" existia, tinha teste e nunca disparou: com os
+        // dados reais deste banco eram 8 pedidos e R$ 26.033,80 sem documento
+        // fiscal, invisíveis.
+        //
+        // É o defeito mais difícil de achar: o código está certo, o teste passa,
+        // e a ligação é que aponta para o lugar errado. O syncSalesData logo
+        // acima já enche `data.orders` nesta mesma rota.
+        pedidos: data.orders || [],
         produtos,
         statusQueFaturam,
         permissoes
@@ -5514,10 +5684,19 @@ const server = http.createServer(async (req, res) => {
       deposits: data.deposits,
       directory: getCadastroDirectory(data),
       products,
-      // Categoria e Tabela de Preços eram texto livre na tela de venda, mesmo
-      // existindo cadastro dos dois no Estoque. Digitar à mão gera "Revenda",
-      // "revenda" e "Revensa" como se fossem coisas diferentes, e aí nenhum
-      // relatório por categoria fecha.
+      // Categoria e Tabela de Preços eram texto livre na tela de venda. Digitar
+      // à mão gera "Revenda", "revenda" e "Revensa" como se fossem coisas
+      // diferentes, e aí nenhum relatório por categoria fecha.
+      //
+      // FASE AS: a categoria da VENDA passou a ter cadastro proprio. Antes o
+      // campo era preenchido com as categorias de PRODUTO — o cadastro que
+      // havia à mão —, e os dois respondem perguntas diferentes: "Parafusos"
+      // classifica o que se vende, "Varejo" classifica a venda. Misturados,
+      // nenhum dos dois relatórios fecha.
+      //
+      // productCategories continua indo: outras partes da tela de venda a usam.
+      salesCategories: (await categoriasVendaDb.listar({ apenasAtivas: true }))
+        .map((c) => ({ id: c.id, name: c.name })),
       productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo'),
       priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type })),
       // Abas Pagamentos e Entrega: formas de pagamento e transportadoras vêm do
@@ -5997,6 +6176,92 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Método não permitido' }, 405);
     } catch (error) {
       return sendJson(res, { error: error.message || 'Erro ao tratar o anexo' }, error.status || 400);
+    }
+  }
+
+  // =========================================================================
+  // CATEGORIAS DE VENDA (fase AS)
+  //
+  // Antes de /api/sales/records/ so por clareza de leitura: os prefixos nao se
+  // cruzam ('categories' nao e 'records'), mas manter o catalogo junto e no
+  // topo poupa quem for procurar por ele.
+  // =========================================================================
+
+  if (pathname === '/api/sales/categories' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissao' }, 403);
+    }
+    const categorias = await categoriasVendaDb.listar();
+    // Quantos pedidos usam cada uma. A lista mostra isso para quem for excluir
+    // saber ANTES de clicar por que o sistema vai recusar — e porque "esta
+    // categoria nao e usada por ninguem" e a informacao que decide se ela pode
+    // sumir ou se deve so ser inativada.
+    const comUso = [];
+    for (const categoria of categorias) {
+      comUso.push({ ...categoria, pedidos: await categoriasVendaDb.pedidosQueUsam(categoria.name) });
+    }
+    return sendJson(res, { categories: comUso });
+  }
+
+  if (pathname === '/api/sales/categories' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissao' }, 403);
+      }
+      const body = await readBody(req);
+      const category = await categoriasVendaDb.criar(body);
+      return sendJson(res, { success: true, category });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao criar a categoria' }, erro.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/sales/categories/') && req.method === 'PUT') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissao' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/sales/categories/', ''));
+      const atual = await categoriasVendaDb.obter(id);
+      if (!atual) return sendJson(res, { error: 'Categoria nao encontrada' }, 404);
+
+      const body = await readBody(req);
+      const category = await categoriasVendaDb.atualizar(id, body);
+
+      // RENOMEAR NAO RENOMEIA NOS PEDIDOS, e quem renomeou precisa saber disso
+      // na hora. `orders.category` guarda o NOME (ver o cabecalho da migracao),
+      // entao os pedidos antigos continuam com o nome velho — e some do
+      // formulario a opcao que os explicava. O aviso vai na resposta em vez de
+      // um `console.log` que ninguem le.
+      let aviso = '';
+      if (category.name !== atual.name) {
+        const presos = await categoriasVendaDb.pedidosQueUsam(atual.name);
+        if (presos > 0) {
+          aviso = `${presos} ${presos === 1 ? 'pedido continua' : 'pedidos continuam'} com o nome antigo `
+            + `("${atual.name}"): a categoria e gravada por nome no pedido, e renomear aqui nao os reescreve.`;
+        }
+      }
+      return sendJson(res, { success: true, category, aviso });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao salvar a categoria' }, erro.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/sales/categories/') && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissao' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/sales/categories/', ''));
+      const apagou = await categoriasVendaDb.excluir(id);
+      if (!apagou) return sendJson(res, { error: 'Categoria nao encontrada' }, 404);
+      return sendJson(res, { success: true });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao excluir' }, erro.status || 400);
     }
   }
 

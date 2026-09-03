@@ -65,8 +65,21 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       <div class="panel">
         <div class="cadastro-page-head">
           <div>
-            <h3>${editEntry ? 'Editar Lançamento' : 'Novo Lançamento'}</h3>
-            <p class="muted">${editEntry ? `Editando ${escapeHtml(String(editEntry.id).slice(-8))}` : 'Registre uma receita, despesa ou transferência.'}</p>
+            ${/* Fase AT. O título dizia só "Editar Lançamento", e o subtítulo
+                 mostrava os oito últimos caracteres do id interno ("41196-9q1")
+                 — um pedaço de identificador que ninguém dita ao telefone, não
+                 ordena e não se procura. Agora é o número do próprio lançamento.
+
+                 `rotulo` devolve só "Editar Lançamento" quando o lançamento não
+                 tem número (registro anterior à migração): melhor do que
+                 "Editar Lançamento (sem número)", que faz procurar defeito onde
+                 só há registro antigo. Ver shared/lancamento_codigo.js. */''}
+            <h3>${editEntry
+              ? escapeHtml(window.MavisLancamentoCodigo.rotulo(editEntry.code, 'Editar Lançamento'))
+              : 'Novo Lançamento'}</h3>
+            <p class="muted">${editEntry
+              ? 'Mesma tela do lançamento novo: o que muda é o que a origem já preencheu.'
+              : 'Registre uma receita, despesa ou transferência.'}</p>
           </div>
         </div>
         ${vinculado ? `
