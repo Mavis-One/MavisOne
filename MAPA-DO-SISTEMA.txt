@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-03 17:56 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-03 21:13 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -557,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-74 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+75 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -627,6 +627,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-sessao-expira.js              Expiração das sessões na virada do dia — lib/sessao.js A conta de "quando esta sessão morre" é fácil de escrev
   [avulso]  test-sessao-unica.js               Sessão única por usuário: entrar numa máquina derruba a outra.
   [npm test] test-sql-compat.js                 A CAMADA COMPATÍVEL — o dialeto do supabase-js virando SQL, provado sem banco.
+  [npm test] test-sync-obrigatorio.js           NENHUMA ROTA CONSOME COLEÇÃO DO POSTGRES SEM SINCRONIZAR (fase BC).
   [npm test] test-telas-por-usuario.js          TELAS POR USUÁRIO (fase AN) — o recorte fino dentro de um módulo liberado.
   [avulso]  test-transferencia-itens.js        TRANSFERÊNCIA COM VÁRIOS ITENS — contra o servidor de verdade.
   [npm test] test-transicoes-status.js          Transições de status e ações em lote.

@@ -5102,6 +5102,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/dashboard') {
     const data = loadData();
+    await Promise.all([syncNfeData(data), syncCadastroData(data)]);
     const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
@@ -5424,6 +5425,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const dados = loadData();
       await syncSalesData(dados);
+      await syncNfeData(dados);
       const pedido = [...(dados.orders || []), ...(dados.quotes || [])].find((r) => r.id === body.recordId);
       if (!pedido) return sendJson(res, { error: 'Pedido não encontrado' }, 404);
       if (pedido.type !== 'order') {
@@ -5834,6 +5836,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/reports/overview' && req.method === 'GET') {
     const data = loadData();
+    await Promise.all([syncNfeData(data), syncPurchasesData(data)]);
     // Sem checagem de permissão aqui: o portão central já traduziu esta rota
     // para reports.ler e decidiu. Repetir com allowedModules seria MAIS
     // restrito que o portão — administrador passa por lá e era barrado aqui.
@@ -5904,6 +5907,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sales/meta' && req.method === 'GET') {
     const data = loadData();
     await syncCadastroData(data);
+    await syncNfeData(data);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -5989,7 +5993,8 @@ const server = http.createServer(async (req, res) => {
     // Em sequencia, a rota pagava 2x essa latencia por nada.
     await Promise.all([
       syncCadastroData(data),
-      syncSalesData(data)
+      syncSalesData(data),
+      syncNfeData(data)
     ]);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
@@ -6255,9 +6260,17 @@ const server = http.createServer(async (req, res) => {
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
       // Em sequencia, a rota pagava 2x essa latencia por nada.
+      //
+      // syncFinanceData entra porque a acao em lote pode DESFATURAR, e
+      // transitionOrderFinanceEffect procura em `data.finance` as parcelas a
+      // cancelar. Sem ele a lista chegava vazia: o pedido voltava a nao
+      // faturado e as contas a receber dele continuavam de pe, cobrando um
+      // faturamento que nao existe mais (fase BC).
       await Promise.all([
         syncCadastroData(data),
-        syncSalesData(data)
+        syncSalesData(data),
+        syncNfeData(data),
+        syncFinanceData(data)
       ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
@@ -6604,9 +6617,14 @@ const server = http.createServer(async (req, res) => {
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
       // Em sequencia, a rota pagava 2x essa latencia por nada.
+      //
+      // syncNfeData entra na onda porque serializeSalesRecord resolve o NUMERO
+      // da nota do pedido em `data.nfe`/`data.nfes` — sem ele, abrir um pedido
+      // faturado mostrava o campo NF-e em branco (fase BC).
       await Promise.all([
         syncCadastroData(data),
-        syncSalesData(data)
+        syncSalesData(data),
+        syncNfeData(data)
       ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
@@ -6631,7 +6649,8 @@ const server = http.createServer(async (req, res) => {
       await Promise.all([
         syncCadastroData(data),
         syncSalesData(data),
-        syncFinanceData(data)
+        syncFinanceData(data),
+        syncNfeData(data)
       ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
@@ -7907,6 +7926,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/cadastros/meta' && req.method === 'GET') {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       // syncNfeData tambem: o cadastro de equipamento escolhe a NF-e que vendeu
       // a maquina, e e' dela que sai a data de inicio da garantia (fase BB).
       await Promise.all([syncFinanceData(data), syncNfeData(data)]);
@@ -7928,7 +7948,19 @@ const server = http.createServer(async (req, res) => {
         paymentMethods: data.paymentMethods,
         saleStatuses: data.saleStatuses,
         companies: data.companies,
-        users: (data.users || []).map((u) => ({ id: u.id, name: u.name })),
+        // OS USUARIOS VEM DO BANCO, e nao de `data.users` (fase BC).
+        //
+        // `normalizeData` APAGA data.users em toda carga, de proposito: era
+        // residuo do modelo pre-Supabase, guardava senha em texto puro e nunca
+        // foi lido. Este `map` sobre ele sempre devolveu [] — e os selects
+        // "Responsavel" de Tarefas e de Agendamentos nunca tiveram uma opcao
+        // sequer, sem nada na tela dizendo por que.
+        //
+        // So id e nome saem daqui: e' um select, e o resto do cadastro de
+        // usuario (papel, permissoes, hash de senha) nao tem por que trafegar.
+        users: (await db.getUsers().catch(() => []))
+          .filter((u) => u.active !== false)
+          .map((u) => ({ id: u.id, name: u.name })),
         // Fase BB: as notas que o cadastro de equipamento pode escolher.
         //
         // SO AS QUE VALEM COMO DOCUMENTO. Nota cancelada, denegada ou que
@@ -7996,6 +8028,7 @@ const server = http.createServer(async (req, res) => {
   if (cadastroCollectionMatch) {
     try {
       const data = loadData();
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -9631,8 +9664,94 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // =========================================================================
+  // DEPOSITOS PELO MODULO ESTOQUE (fase BC). Postgres, e nao db.json.
+  //
+  // A forma da resposta e' a mesma da rota generica (`deposits` na lista,
+  // `deposit` no item) porque a tela e' a mesma, montada por makeListScreen.
+  // Mudou onde o dado mora, nao o contrato.
+  //
+  // POR QUE NAO REDIRECIONAR PARA /api/cadastros/deposits: aquelas rotas exigem
+  // o modulo `cadastros`, e quem abre Estoque > Depositos pode ter so `stock`.
+  // Duas portas para a mesma tabela, cada uma com a permissao do seu modulo.
+  // =========================================================================
+
+  const depositoEstoqueMatch = pathname.match(/^\/api\/stock\/deposits(?:\/([^/]+))?$/);
+  if (depositoEstoqueMatch) {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = depositoEstoqueMatch[1] ? decodeURIComponent(depositoEstoqueMatch[1]) : '';
+
+      if (req.method === 'GET' && !id) {
+        const lista = await db.getDeposits();
+        return sendJson(res, { deposits: lista.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))) });
+      }
+
+      if (req.method === 'GET') {
+        const deposito = (await db.getDeposits()).find((d) => d.id === id);
+        if (!deposito) return sendJson(res, { error: 'Depósito não encontrado.' }, 404);
+        return sendJson(res, { deposit: deposito });
+      }
+
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const todos = await db.getDeposits();
+        const atual = id ? todos.find((d) => d.id === id) : null;
+        if (id && !atual) return sendJson(res, { error: 'Depósito não encontrado.' }, 404);
+        const body = await readBody(req);
+
+        // A montagem e validacao continuam no stock-core: e' o mesmo
+        // formulario, e copiar as regras aqui deixaria as duas metades
+        // divergirem na primeira mudanca.
+        const built = stockCore.STOCK_COLLECTIONS.deposits.build(body, atual);
+
+        // Codigo repetido conferido contra o BANCO — contra `data.deposits` a
+        // checagem leria vazio, que era parte do mesmo bug.
+        if (built.code && todos.some((d) => d.id !== id
+          && String(d.code || '').toLowerCase() === String(built.code).toLowerCase())) {
+          return sendJson(res, { error: 'Já existe um registro com este código.' }, 409);
+        }
+
+        // Fase AW: a loja do deposito. Mesma conferencia da rota de Cadastros.
+        const companyId = String(body.companyId ?? (atual ? atual.companyId : '') ?? '').trim();
+        if (companyId && !(loadData().companies || []).some((c) => c.id === companyId)) {
+          return sendJson(res, { error: 'Empresa não encontrada.' }, 404);
+        }
+
+        const deposit = id
+          ? await db.updateDeposit(id, { ...built, companyId })
+          : await db.createDeposit({ ...built, companyId });
+        return sendJson(res, { success: true, deposit });
+      }
+
+      if (req.method === 'DELETE' && id) {
+        const deposito = (await db.getDeposits()).find((d) => d.id === id);
+        if (!deposito) return sendJson(res, { error: 'Depósito não encontrado.' }, 404);
+        // A MESMA guarda da fase BB, que pergunta ao banco em vez de a uma
+        // colecao vazia — ver depositoEmUso.
+        const bloqueio = await depositoEmUso(id);
+        if (bloqueio) return sendJson(res, { error: bloqueio }, 409);
+        await db.deleteDeposit(id);
+        return sendJson(res, { success: true });
+      }
+    } catch (error) {
+      return sendStockError(res, error, 'Erro ao salvar o depósito');
+    }
+  }
+
   // CRUD genérico dos cadastros auxiliares do estoque.
-  const stockCollectionMatch = pathname.match(/^\/api\/stock\/(product-categories|movement-categories|deposits|price-tables|catalogs)(?:\/([^/]+))?$/);
+  // `deposits` SAIU DESTA LISTA (fase BC), pelo mesmo motivo que
+  // `bank-accounts` saiu da rota generica de cadastros na fase BA: esta rota
+  // grava em data[colecao] e chama saveData, e `deposits` esta em
+  // NAO_PERSISTIR desde que os depositos passaram para o Postgres.
+  //
+  // Provado contra a API antes de mexer:
+  //   POST /api/stock/deposits -> 200 {"success":true,"deposit":{"id":"dep-..."}}
+  //   GET  /api/stock/deposits -> {"deposits":[]}
+  //
+  // A tela Estoque > Depositos nao listava e nao gravava. As rotas proprias
+  // estao logo abaixo.
+  const stockCollectionMatch = pathname.match(/^\/api\/stock\/(product-categories|movement-categories|price-tables|catalogs)(?:\/([^/]+))?$/);
   if (stockCollectionMatch) {
     try {
       const user = await getCurrentUser(req);
@@ -9782,6 +9901,21 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/summary' && req.method === 'GET') {
     try {
       const data = loadData();
+      // O DASHBOARD DO FINANCEIRO SAIA TODO ZERADO (fase BC). Esta rota nao
+      // sincronizava nada: `finance`, `financialPayments` e `bankAccounts` estao
+      // em NAO_PERSISTIR e chegavam vazios, entao Contas a Pagar, Contas a
+      // Receber, saldo, previsao e grafico saiam R$ 0,00 com HTTP 200 e sem erro
+      // nenhum na tela — enquanto a lista de lancamentos, que sincroniza,
+      // mostrava os titulos. As duas telas do MESMO modulo discordavam.
+      //
+      // syncCadastroData e syncPurchasesData entram porque
+      // resolveFinanceCounterparty le people/cnpjs/purchases para escrever o
+      // nome do cliente/fornecedor de cada linha.
+      await Promise.all([
+        syncFinanceData(data),
+        syncCadastroData(data),
+        syncPurchasesData(data)
+      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -10361,7 +10495,8 @@ const server = http.createServer(async (req, res) => {
       // Em sequencia, a rota pagava 2x essa latencia por nada.
       await Promise.all([
         syncFinanceData(data),
-        syncNfeData(data)
+        syncNfeData(data),
+        syncSalesData(data)
       ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
@@ -10585,6 +10720,12 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/bank-transactions' && req.method === 'GET') {
     try {
       const data = loadData();
+      // serializeBankTransaction resolve, para cada transacao, o lancamento a
+      // que ela foi conciliada e a conta bancaria — os dois em `data.finance` e
+      // `data.bankAccounts`, que estao em NAO_PERSISTIR. Sem o sync, a coluna
+      // Conta sai vazia e a transacao conciliada aparece sem a descricao do
+      // lancamento, como se nao estivesse conciliada.
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -10608,6 +10749,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/finance/bank-transactions' && req.method === 'POST') {
     try {
       const data = loadData();
+      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
