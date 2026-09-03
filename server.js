@@ -7842,7 +7842,14 @@ const server = http.createServer(async (req, res) => {
   // CRUD genérico dos cadastros auxiliares (contatos, equipamentos, formas de
   // pagamento, status de venda, cashback, agenda, agendamentos, contas e
   // empresas). Pessoas/CNPJs continuam com as rotas próprias.
-  const cadastroCollectionMatch = pathname.match(/^\/api\/cadastros\/(contacts|equipments|payment-methods|sale-statuses|product-cashbacks|tasks|appointments|bank-accounts|companies)(?:\/([^/]+))?$/);
+  // `bank-accounts` SAIU DESTA LISTA (fase BA), e e' o unico que saiu.
+  //
+  // Esta rota grava em data[colecao] e chama saveData. `bankAccounts` esta em
+  // NAO_PERSISTIR desde que o db.json parou de guardar copia do que e' do
+  // Postgres — entao saveData removia a colecao e ninguem gravava no banco. A
+  // rota respondia `success: true` com o registro completo e a conta nao
+  // existia em lugar nenhum. As rotas proprias estao logo abaixo.
+  const cadastroCollectionMatch = pathname.match(/^\/api\/cadastros\/(contacts|equipments|payment-methods|sale-statuses|product-cashbacks|tasks|appointments|companies)(?:\/([^/]+))?$/);
   if (cadastroCollectionMatch) {
     try {
       const data = loadData();
@@ -7916,6 +7923,93 @@ const server = http.createServer(async (req, res) => {
       }
     } catch (error) {
       return sendJson(res, { error: error.status ? error.message : 'Erro ao salvar cadastro' }, error.status || 400);
+    }
+  }
+
+  // =========================================================================
+  // CONTAS BANCARIAS (fase BA). Postgres, e nao db.json.
+  //
+  // A forma da resposta e' identica a da rota generica de cadastros
+  // (`bankAccounts` na lista, `bankAccount` no item) porque a tela e' a mesma:
+  // Cadastros > Contas Bancarias, montada pela fabrica makeListScreen. Mudou
+  // onde o dado mora, nao o contrato.
+  // =========================================================================
+
+  const contaBancariaMatch = pathname.match(/^\/api\/cadastros\/bank-accounts(?:\/([^/]+))?$/);
+  if (contaBancariaMatch) {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = contaBancariaMatch[1] ? decodeURIComponent(contaBancariaMatch[1]) : '';
+
+      if (req.method === 'GET' && !id) {
+        return sendJson(res, { bankAccounts: await db.getBankAccounts() });
+      }
+
+      if (req.method === 'GET') {
+        const conta = await db.getBankAccountById(id);
+        if (!conta) return sendJson(res, { error: 'Conta bancária não encontrada.' }, 404);
+        return sendJson(res, { bankAccount: conta });
+      }
+
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const atual = id ? await db.getBankAccountById(id) : null;
+        if (id && !atual) return sendJson(res, { error: 'Conta bancária não encontrada.' }, 404);
+        const body = await readBody(req);
+
+        // A MONTAGEM E VALIDACAO CONTINUAM NO cadastros-core, e nao copiadas
+        // aqui: e' o mesmo formulario, com as mesmas regras (nome obrigatorio,
+        // CPF/CNPJ do titular valido, tipo e status dentro da lista). Duplicar
+        // deixaria as duas metades divergirem na primeira mudanca.
+        const config = cadastrosCore.CADASTRO_COLLECTIONS['bank-accounts'];
+        const helpers = { sanitizeDigits, isValidCnpj, isValidCpf, isValidDocument };
+        const built = config.build(body, atual, loadData(), helpers);
+
+        // Duplicata: mesma conta (banco + agencia + numero) ja cadastrada. A
+        // checagem e' contra o BANCO, e nao contra `data.bankAccounts`, que
+        // nesta rota chegaria vazio — era parte do mesmo bug.
+        const todas = await db.getBankAccounts();
+        if (built.agency && built.number) {
+          const igual = todas.find((c) => c.id !== id
+            && String(c.bank || '').toLowerCase() === String(built.bank || '').toLowerCase()
+            && String(c.agency || '') === built.agency
+            && String(c.number || '') === built.number);
+          if (igual) {
+            return sendJson(res, { error: 'Já existe uma conta com este banco, agência e número.' }, 409);
+          }
+        }
+
+        // `status` do formulario e' ativo/inativo (o CADASTRO). A coluna
+        // `status` da tabela guarda o estado da CONEXAO Open Finance — ver a
+        // migracao fase-ba. Por isso vira `ativo`, e o `status` nao e' mandado.
+        const payload = { ...built, ativo: built.status !== 'inativo' };
+        delete payload.status;
+
+        const bankAccount = id
+          ? await db.updateBankAccount(id, payload)
+          : await db.createBankAccount(payload);
+        return sendJson(res, { success: true, bankAccount });
+      }
+
+      if (req.method === 'DELETE' && id) {
+        const conta = await db.getBankAccountById(id);
+        if (!conta) return sendJson(res, { error: 'Conta bancária não encontrada.' }, 404);
+
+        // Conta usada em lancamento, baixa ou extrato nao pode sumir sem
+        // quebrar o Financeiro. A conferencia le o BANCO — a mesma regra do
+        // cadastros-core, sobre a fonte certa.
+        const dados = loadData();
+        await syncFinanceData(dados);
+        const bloqueio = cadastrosCore.CADASTRO_COLLECTIONS['bank-accounts'].inUse(id, dados);
+        if (bloqueio) return sendJson(res, { error: bloqueio }, 409);
+
+        await db.deleteBankAccount(id);
+        return sendJson(res, { success: true });
+      }
+    } catch (error) {
+      return sendJson(res, { error: error.status ? error.message : 'Erro ao salvar a conta bancária' }, error.status || 400);
     }
   }
 
