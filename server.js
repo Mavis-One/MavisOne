@@ -67,6 +67,9 @@ const razaoEstoque = require('./lib/db/estoque-razao');
 const { emTransacao } = require('./lib/db/conexao');
 // Fase AT: o numero do lancamento financeiro (LF0001) — mesmo formato na tela.
 const lancamentoCodigo = require('./public/modules/shared/lancamento_codigo');
+// Fase AX: a descricao do lancamento financeiro. Quatro origens escreviam
+// quatro frases diferentes para a mesma coisa — ver o cabecalho do catalogo.
+const descricaoLancamento = require('./public/modules/shared/descricao_lancamento');
 // Fase AS: categoria da VENDA (Varejo, Atacado, Bonificacao) — nao a do produto.
 const categoriasVendaDb = require('./lib/db/categorias-venda');
 // Fase AR: as notas que emitiram CONTRA o nosso CNPJ (Distribuicao de DF-e).
@@ -1067,7 +1070,24 @@ async function syncPurchasesData(data) {
 // NF-e no Supabase (Fase N). Separado de syncFinanceData porque a nota traz os
 // itens junto (duas consultas): rota que só mexe em lançamento não paga por isso.
 async function syncNfeData(data) {
-  data.nfes = await db.getNfes();
+  // AS DUAS TABELAS DE NF-e, e nao so uma.
+  //
+  // `nfes` e a NF-e manual (o registro que alguem digita); `nfe` e a fiscal, a
+  // que sai pela Focus. Sao duas tabelas porque nasceram em fases diferentes —
+  // ver a fase AE.
+  //
+  // ERRO CORRIGIDO AQUI (fase AX): so `data.nfes` era populado. O serializer do
+  // pedido procura a nota primeiro em `data.nfe` e depois em `data.nfes`, e o
+  // comentario da rota /meu-painel ja dizia "sem syncNfeData, data.nfe vem
+  // vazio e a coluna NF-e sai em branco" — estava certo sobre a consequencia e
+  // errado sobre a causa: `data.nfe` vinha vazio SEMPRE. Toda nota emitida pelo
+  // Fiscal aparecia sem numero na lista de pedidos, sem erro nenhum na tela.
+  const [manuais, fiscais] = await Promise.all([
+    db.getNfes(),
+    fiscalDb.getNfeRecords().catch(() => [])
+  ]);
+  data.nfes = manuais;
+  data.nfe = fiscais;
 }
 
 async function syncFinanceData(data) {
@@ -1445,6 +1465,67 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
 // perder informação; conta a receber, não — apagar e recriar jogaria fora as
 // baixas já registradas. Editar um pedido já faturado, portanto, não mexe nas
 // parcelas: quem precisar corrigir valor estorna a baixa e edita o lançamento.
+/**
+ * O NÚMERO da nota deste pedido — o que se dita ao telefone, não o uuid.
+ *
+ * Procura em memória primeiro (as listas que a rota já carregou) e só então vai
+ * ao banco: faturar roda dentro de `syncSalesData`, que traz pedidos e
+ * orçamentos e mais nada. Sem a ida ao banco, o pedido faturado pela emissão da
+ * própria nota — o caminho normal — sairia com a descrição sem número.
+ *
+ * Vazio quando não há nota, e vazio é resposta legítima: pedido com dispensa
+ * registrada (fase AV) não tem número, e o catálogo escreve "Sem NF-e
+ * (dispensada)" nesse caso.
+ */
+async function numeroDaNotaDoPedido(data, record) {
+  if (!record || !record.nfeId) return '';
+  const fiscal = (data.nfe || []).find((n) => n.id === record.nfeId);
+  if (fiscal) return String(fiscal.numero || '');
+  const manual = (data.nfes || []).find((n) => n.id === record.nfeId);
+  if (manual) return String(manual.number || '');
+  const doBanco = await fiscalDb.getNfeById(record.nfeId).catch(() => null);
+  return doBanco ? String(doBanco.numero || '') : '';
+}
+
+/**
+ * A nota chegou DEPOIS do faturamento: completa a descrição das parcelas.
+ *
+ * Acontece de verdade — pedido faturado com dispensa registrada (SEFAZ fora,
+ * contingência) e a nota emitida no dia seguinte. As contas a receber já
+ * existem e dizem "Sem NF-e (dispensada)", que a partir daqui é mentira.
+ *
+ * SÓ REESCREVE O QUE ELE MESMO ESCREVEU. Compara a descrição gravada com a que
+ * este código produziria sem a nota; se bater caractere a caractere, troca pela
+ * versão com o número. Se alguém tiver editado o texto à mão, não bate e fica —
+ * corrigir o dado de um usuário porque o formato mudou é pior do que a
+ * descrição desatualizada.
+ */
+async function anotarNotaNoFinanceiroDoPedido(data, record, numeroDaNota) {
+  const numero = String(numeroDaNota || '').trim();
+  if (!numero || !record || !record.id) return 0;
+  const vinculadas = (data.finance || [])
+    .filter((entry) => entry.referenceId === record.id && entry.status !== 'cancelado');
+  if (!vinculadas.length) return 0;
+
+  // As formas não entram na descrição (o nome da forma vem da própria linha de
+  // pagamento), então o mapa vazio reproduz o mesmo texto.
+  const semNota = parcelasDoPedido(record, new Map(), { nfeNumero: '' });
+  const comNota = parcelasDoPedido(record, new Map(), { nfeNumero: numero });
+  const usados = new Set();
+  let ajustadas = 0;
+
+  for (const entry of vinculadas) {
+    const i = semNota.findIndex((p, idx) => !usados.has(idx) && p.description === entry.description);
+    if (i < 0) continue;
+    usados.add(i);
+    entry.description = comNota[i].description;
+    entry.updatedAt = new Date().toISOString();
+    await db.updateFinancialEntry(entry.id, { description: entry.description });
+    ajustadas += 1;
+  }
+  return ajustadas;
+}
+
 async function transitionOrderFinanceEffect(data, { record, wasApplied, willApply, user }) {
   if (wasApplied === willApply) return { criadas: 0, canceladas: 0, mantidas: 0 };
 
@@ -1489,7 +1570,11 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
   // formas de pagamento já sabia a resposta (type, daysToReceive, conta); o
   // código é que não perguntava. Ver public/modules/shared/forma_pagamento.js.
   const formasPorId = new Map((data.paymentMethods || []).map((forma) => [forma.id, forma]));
-  const parcelas = parcelasDoPedido(record, formasPorId);
+  // Fase AX: a descrição da parcela diz de onde ela veio — natureza, tipo,
+  // pedido e nota. O número da nota é o único que não está no registro.
+  const parcelas = parcelasDoPedido(record, formasPorId, {
+    nfeNumero: await numeroDaNotaDoPedido(data, record)
+  });
   let quitadas = 0;
   for (const parcela of parcelas) {
     const entry = await db.createFinancialEntry({
@@ -2244,6 +2329,11 @@ function serializeFinanceEntry(entry, data) {
     description: entry.description,
     document: entry.document || '',
     note: entry.note || '',
+    // Fase AX: por que foi cancelado. A tela mostra isto no lugar dos botoes de
+    // baixa — quem abre um lancamento cancelado quer exatamente esta resposta.
+    cancelReason: entry.cancelReason || '',
+    cancelledAt: entry.cancelledAt || null,
+    cancelledByName: entry.cancelledByName || '',
     category: entry.category || '',
     categoryName: resolveById(data.financialCategories, entry.category),
     costCenter: entry.costCenter || '',
@@ -3319,7 +3409,16 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
     await syncSalesData(dataVendas);
     const pedido = (dataVendas.orders || []).find((o) => o.id === pedidoId);
     if (!pedido) return;
-    if (!salesStatus.podeTransicionar(pedido.status, 'pedido-faturado')) return;
+    if (!salesStatus.podeTransicionar(pedido.status, 'pedido-faturado')) {
+      // JÁ FATURADO ANTES DA NOTA — é o caso da dispensa (fase AV): SEFAZ fora,
+      // o pedido faturou com o motivo registrado, a nota saiu no dia seguinte.
+      // As contas a receber existem e dizem "Sem NF-e (dispensada)", que a
+      // partir de agora é mentira. Nada de novo a criar; só a descrição a
+      // completar. Ver anotarNotaNoFinanceiroDoPedido.
+      await syncFinanceData(dataVendas);
+      await anotarNotaNoFinanceiroDoPedido(dataVendas, pedido, nfe.numero);
+      return;
+    }
     await mudarStatusSalesRecord({ id: pedido.id, code: pedido.code }, 'pedido-faturado', dataVendas, user);
   } catch (erro) {
     console.error('NF-e autorizada, mas nao consegui faturar o pedido', pedidoId, erro.message);
@@ -3714,14 +3813,22 @@ async function gerarFinanceiroDaNfeAvulsa(nfe, user) {
     installmentIntervalDays: condicao.intervaloDias
   });
 
-  const rotulo = nfe.numero ? `NF-e ${nfe.numero}` : `NF-e ${nfe.referencia}`;
+  // Sem número, a referência: a nota existe e precisa ser achável mesmo antes
+  // de a SEFAZ devolver o número.
+  const numeroOuReferencia = nfe.numero || nfe.referencia;
   for (const parcela of parcelas) {
     await db.createFinancialEntry({
       type: 'RECEITA',
       date: emissao,
       dueDate: parcela.dueDate,
       amount: parcela.amount,
-      description: parcelas.length > 1 ? `${rotulo} · Parcela ${parcela.number}/${parcelas.length}` : rotulo,
+      description: descricaoLancamento.montar({
+        qual: 'receita',
+        tipo: 'venda',
+        nota: numeroOuReferencia,
+        parcela: parcela.number,
+        parcelas: parcelas.length
+      }),
       document: String(nfe.numero || ''),
       clientSupplierId: '',
       clientSupplierName: nfe.destinatarioNome || '',
@@ -4249,7 +4356,13 @@ async function transicionarDocumentoDeCompra(data, { id, novoStatus, user }) {
       clientSupplierId: documento.supplierId || '',
       clientSupplierName: documento.supplierName,
       date: documento.deliveryDate || documento.date,
-      description: 'Ordem de Compra ' + (documento.code || documento.id) + ' - ' + documento.supplierName,
+      // O nome do fornecedor sai daqui e fica em clientSupplierName, que a
+      // lista já mostra em coluna própria — ver o cabeçalho do catálogo.
+      description: descricaoLancamento.montar({
+        qual: 'despesa',
+        tipo: 'compra',
+        ordem: documento.code || documento.id
+      }),
       amount: documento.totalAmount,
       status: 'pending',
       createdBy: user?.id,
@@ -8137,7 +8250,13 @@ const server = http.createServer(async (req, res) => {
             referenceId: entrada.id,
             date: nota.dataEmissao,
             dueDate: parcela.vencimento || nota.dataEmissao,
-            description: `NF-e ${nota.numero} — ${nota.emitente.nome} (${i + 1}/${parcelas.length})`,
+            description: descricaoLancamento.montar({
+              qual: 'despesa',
+              tipo: 'compra',
+              nota: nota.numero,
+              parcela: i + 1,
+              parcelas: parcelas.length
+            }),
             amount: Number(parcela.valor || 0),
             // A chave no campo Documento é o que liga a conta a pagar à nota na
             // conciliação — nome de fornecedor muda, chave não.
@@ -9594,11 +9713,46 @@ const server = http.createServer(async (req, res) => {
       if (entry.status === 'paid' || entry.status === 'parcial') {
         return sendJson(res, { error: 'Lançamento com baixa registrada (parcial ou total) não pode ser cancelado. Estorne as baixas primeiro.' }, 400);
       }
+      if (entry.status === 'cancelado') {
+        return sendJson(res, { error: 'Este lançamento já está cancelado.' }, 400);
+      }
 
+      // FASE AX: MOTIVO OBRIGATÓRIO.
+      //
+      // Cancelar era um clique e um "confirma?". Meses depois, um lançamento
+      // cancelado de R$ 8.400 é um registro que ninguém explica: a trilha de
+      // auditoria diz quem cancelou, e o porquê — que é o que decide se foi
+      // erro de digitação, venda desfeita ou cobrança abandonada — não existia
+      // em lugar nenhum.
+      //
+      // O MÍNIMO É 10, o mesmo da dispensa de documento fiscal (fase AV). Não
+      // impede um "aaaaaaaaaa", e não é isso que ele faz: impede a tecla
+      // apertada sem querer e a letra solta, que é o que aparece quando o campo
+      // aceita qualquer coisa. Um número maior só ensinaria a repetir letra.
+      const body = await readBody(req);
+      const motivo = String(body.motivo || body.reason || '').trim();
+      if (motivo.length < 10) {
+        return sendJson(res, {
+          error: 'Informe o motivo do cancelamento (pelo menos 10 caracteres). '
+            + 'Lançamento cancelado sem motivo é um valor que some do caixa sem explicação.'
+        }, 400);
+      }
+
+      const agora = new Date().toISOString();
       entry.status = 'cancelado';
-      entry.updatedAt = new Date().toISOString();
-      await db.updateFinancialEntry(entry.id, { status: 'cancelado' });
-      await addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name });
+      entry.cancelReason = motivo;
+      entry.cancelledAt = agora;
+      entry.cancelledByName = user.name || '';
+      entry.updatedAt = agora;
+      await db.updateFinancialEntry(entry.id, {
+        status: 'cancelado',
+        cancelReason: motivo,
+        cancelledAt: agora,
+        cancelledByName: user.name || ''
+      });
+      // A trilha continua sendo a prova (ninguém a edita); as colunas acima são
+      // a leitura, onde quem abre o lançamento procura. Ver a migração fase-ax.
+      await addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name, details: { motivo } });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {

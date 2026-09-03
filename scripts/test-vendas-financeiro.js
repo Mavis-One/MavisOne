@@ -15,7 +15,11 @@ const unica = parcelasDoPedido(pedido());
 check('gera uma parcela', unica.length === 1);
 check('no valor total', unica[0].amount === 1000);
 check('vence na data do pedido', unica[0].dueDate === '2026-08-06');
-check('descrição identifica o pedido', unica[0].description === 'Pedido 1234', unica[0].description);
+// Fase AX: a descricao passou a dizer tambem o que a linha E — receita ou
+// despesa, e de que. Quem le "Pedido 1234" no Financeiro nao sabe se e dinheiro
+// entrando ou saindo sem cruzar com outra coluna. Ver shared/descricao_lancamento.js.
+check('descrição identifica o pedido e a natureza',
+  unica[0].description === 'Receita de venda · Pedido 1234', unica[0].description);
 
 console.log('\n--- validade do orçamento vira vencimento quando existe ---');
 const comVencimento = parcelasDoPedido(pedido({ dueDate: '2026-09-06' }));
@@ -31,7 +35,9 @@ const parcelado = parcelasDoPedido(pedido({
 check('uma conta a receber por linha', parcelado.length === 2);
 check('a soma bate com o total', soma(parcelado) === 1000, String(soma(parcelado)));
 check('vencimentos preservados', parcelado[0].dueDate === '2026-09-06' && parcelado[1].dueDate === '2026-10-06');
-check('descrição numera e nomeia a forma', parcelado[0].description === 'Pedido 1234 · Parcela 1/2 · Boleto', parcelado[0].description);
+check('descrição numera e nomeia a forma',
+  parcelado[0].description === 'Receita de venda · Pedido 1234 · Parcela 1/2 · Boleto',
+  parcelado[0].description);
 
 console.log('\n--- linhas zeradas ou vazias não viram conta a receber ---');
 const comZeros = parcelasDoPedido(pedido({

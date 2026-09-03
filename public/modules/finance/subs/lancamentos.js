@@ -237,7 +237,13 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
             <tbody>
               ${result.entries.length ? result.entries.map((entry) => `
                 <tr class="cadastro-row-clickable finance-entry-row" data-id="${escapeHtml(entry.id)}">
-                  <td>${escapeHtml(String(entry.id).slice(-8))}</td>
+                  ${/* ERRO CORRIGIDO AQUI (fase AX). A coluna "Código" mostrava os oito
+                       últimos caracteres do id interno — "41196-9q1" — que não é
+                       número, não ordena e ninguém dita ao telefone. A fase AT criou
+                       o número do lançamento (LF0042) e ligou o título da tela de
+                       edição; ESTA coluna, que é onde o número é procurado, continuou
+                       com o pedaço de uuid. Ver shared/lancamento_codigo.js. */''}
+                  <td>${escapeHtml(entry.codigo || '-')}</td>
                   <td>${financeFormatDate(entry.date)}</td>
                   <td>${financeFormatDate(entry.dueDate)}</td>
                   <td>${escapeHtml(entry.description || '-')}</td>
@@ -301,7 +307,7 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
         <div class="finance-modal-head">
           <div>
             <h3>${escapeHtml(entry.description || 'Lançamento')}</h3>
-            <p class="muted">${escapeHtml(String(entry.id).slice(-8))} · ${FINANCE_TYPE_LABEL[entry.type] || entry.type} ${financeStatusBadge(entry.status)}</p>
+            <p class="muted">${entry.codigo ? `${escapeHtml(entry.codigo)} · ` : ''}${FINANCE_TYPE_LABEL[entry.type] || entry.type} ${financeStatusBadge(entry.status)}</p>
           </div>
           <button type="button" class="icon-button" id="financeModalClose" title="Fechar">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
@@ -321,6 +327,20 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
           <div><span class="muted">Saldo em aberto</span><strong>${financeFormatBRL(saldoRestante)}</strong></div>
         </div>
         ${entry.note ? `<p class="muted">Obs: ${escapeHtml(entry.note)}</p>` : ''}
+
+        ${/* Fase AX: por que este lançamento foi cancelado. Fica junto do valor
+             porque é a primeira pergunta de quem abre um lançamento cancelado, e
+             a resposta vivia só na trilha de auditoria — outra tela, outra busca.
+
+             "Motivo não registrado" para os cancelados antes desta fase: é a
+             verdade, e melhor do que uma frase inventada que parece motivo. */''}
+        ${entry.rawStatus === 'cancelado' ? `
+          <p class="prompt-aviso">
+            <strong>Lançamento cancelado${entry.cancelledByName ? ` por ${escapeHtml(entry.cancelledByName)}` : ''}${entry.cancelledAt ? ` em ${financeFormatDate(String(entry.cancelledAt).slice(0, 10))}` : ''}.</strong>
+            ${entry.cancelReason
+              ? `Motivo: ${escapeHtml(entry.cancelReason)}`
+              : 'Motivo não registrado — o cancelamento é anterior à exigência de motivo.'}
+          </p>` : ''}
 
         ${entry.payments.length ? `
           <h4>Histórico de baixas</h4>
@@ -416,10 +436,22 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
     });
 
     document.getElementById('financeModalCancel')?.addEventListener('click', async () => {
-      const confirmed = await confirmModal('Confirma o cancelamento deste lançamento? O histórico será mantido.');
-      if (!confirmed) return;
+      // MOTIVO, E NÃO SÓ "CONFIRMA?" (fase AX). O mesmo promptModal do
+      // cancelamento de NF-e: conta os caracteres enquanto se escreve e só
+      // libera o botão quando o texto serve, em vez de deixar escrever, enviar
+      // e receber o erro do servidor de volta.
+      const motivo = await promptModal({
+        titulo: `Cancelar ${entry.codigo || 'lançamento'}`,
+        descricao: 'O lançamento continua na lista, marcado como cancelado, com o motivo registrado. O histórico não se perde.',
+        rotulo: 'Motivo do cancelamento',
+        placeholder: 'Ex.: pedido devolvido pelo cliente em 03/09',
+        minimo: 10,
+        maximo: 300,
+        confirmar: 'Cancelar lançamento'
+      });
+      if (!motivo) return;
       try {
-        await api(`/api/finance/entries/${entry.id}/cancelar`, { method: 'POST' });
+        await api(`/api/finance/entries/${entry.id}/cancelar`, { method: 'POST', body: JSON.stringify({ motivo }) });
         showToast('Lançamento cancelado.', 'success');
         closeEntryModal();
         await load();
