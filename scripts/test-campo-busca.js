@@ -95,7 +95,14 @@ check('as duas são ligadas', /attachSearchableSelect\(\{ id: 'salesCategory'/.t
   && /attachSearchableSelect\(\{ id: 'salesPriceTable'/.test(appSrc));
 // Guardam o NOME, não um id: é o que a venda sempre gravou. Trocar para id
 // exigiria migrar as vendas antigas.
-check('Categoria guarda o nome, não id', /id: 'salesCategory'[\s\S]{0,180}value: c\.name, label: c\.name/.test(appSrc));
+// O MAPEAMENTO SAIU DE LINHA E VIROU FUNÇÃO na fase AS, quando a categoria de
+// venda ganhou cadastro próprio: `opcoesDeCategoriaDeVenda` monta as opções e
+// acrescenta a que o pedido já tem gravada, mesmo que ela tenha saído do
+// cadastro. O que este check garante é o mesmo — o valor é o NOME —, mas agora
+// dentro da função, que é onde a decisão passou a morar.
+const fonteOpcoes = (appSrc.match(/function opcoesDeCategoriaDeVenda[\s\S]*?\n\}/) || [''])[0];
+check('Categoria guarda o nome, não id', /value: c\.name, label: c\.name/.test(fonteOpcoes));
+check('  e o campo usa essa função', /id: 'salesCategory'[\s\S]{0,200}opcoesDeCategoriaDeVenda/.test(appSrc));
 check('Tabela guarda o nome, não id', /id: 'salesPriceTable'[\s\S]{0,180}value: t\.name, label: t\.name/.test(appSrc));
 
 console.log('\n--- o servidor manda as duas listas ---');

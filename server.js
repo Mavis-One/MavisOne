@@ -7742,9 +7742,17 @@ const server = http.createServer(async (req, res) => {
       if (code && deposits.some((entry) => entry.code && entry.code.toLowerCase() === code.toLowerCase())) {
         return sendJson(res, { error: 'Já existe um depósito com este código interno.' }, 409);
       }
+      // Fase AW: a loja do deposito. Conferida contra o cadastro em vez de
+      // aceita crua — id de empresa que nao existe deixaria o deposito orfao de
+      // um jeito que nenhuma tela explica.
+      const companyId = String(body.companyId ?? '' ?? '').trim();
+      if (companyId && !(loadData().companies || []).some((c) => c.id === companyId)) {
+        return sendJson(res, { error: 'Empresa não encontrada.' }, 404);
+      }
       const created = await db.createDeposit({
         name,
         code,
+        companyId,
         status: String(body.status || 'ativo').trim() || 'ativo',
         address: body.address || '',
         city: body.city || '',
@@ -7779,9 +7787,17 @@ const server = http.createServer(async (req, res) => {
       if (code && deposits.some((entry) => entry.id !== id && entry.code && entry.code.toLowerCase() === code.toLowerCase())) {
         return sendJson(res, { error: 'Já existe um depósito com este código interno.' }, 409);
       }
+      // Fase AW: a loja do deposito. Conferida contra o cadastro em vez de
+      // aceita crua — id de empresa que nao existe deixaria o deposito orfao de
+      // um jeito que nenhuma tela explica.
+      const companyId = String(body.companyId ?? current.companyId ?? '').trim();
+      if (companyId && !(loadData().companies || []).some((c) => c.id === companyId)) {
+        return sendJson(res, { error: 'Empresa não encontrada.' }, 404);
+      }
       const updated = await db.updateDeposit(id, {
         name,
         code,
+        companyId,
         status: String(body.status ?? current.status ?? 'ativo').trim() || 'ativo',
         address: body.address ?? current.address ?? '',
         city: body.city ?? current.city ?? '',

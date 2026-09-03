@@ -1,0 +1,56 @@
+-- ============================================================================
+-- FASE AW — o depósito passa a saber de que loja é
+-- ============================================================================
+--
+-- O QUE HAVIA
+-- -----------
+-- Nada ligava depósito a empresa. O pedido escolhe a empresa e escolhe o
+-- depósito, um do lado do outro, sem relação nenhuma entre os dois campos: dá
+-- para faturar pela Filial 02 tirando mercadoria do depósito da Filial 07 sem
+-- que nada estranhe.
+--
+-- A auditoria do ERP anterior achou o mesmo buraco e mostrou onde ele chega:
+-- lá o depósito "FILIAL 004 (TIMBO)" pertence à empresa "FILIAL 05 (TIMBO)", e
+-- três depósitos da matriz se chamam "FILIAL 010 ( )", "011 ( )", "012 ( )".
+-- A numeração dos depósitos e a das filiais divergiram, e viraram fonte
+-- permanente de erro em relatório e transferência.
+--
+-- POR QUE O VÍNCULO VAI NO DEPÓSITO, E NÃO UM "DEPÓSITO PADRÃO" NA EMPRESA
+-- ------------------------------------------------------------------------
+-- Porque é o sentido em que o mundo é: uma loja pode ter dois depósitos (o do
+-- salão e o do galpão), e um depósito pertence a uma loja só.
+--
+-- `empresa.deposito_padrao` modelaria o mesmo fato de forma mais fraca e
+-- quebraria no primeiro caso de dois depósitos — a segunda unidade ficaria sem
+-- casa e sem ninguém para reclamar dela.
+--
+-- Com o vínculo, a exigência de "nome do depósito = nome da loja" some: não é
+-- preciso disciplina de nomenclatura para saber a quem o depósito pertence,
+-- porque o sistema sabe. A lista passa a mostrar a loja ao lado do nome.
+--
+-- POR QUE NÃO HÁ CHAVE ESTRANGEIRA
+-- ---------------------------------
+-- Duas razões, e a segunda é desconfortável:
+--
+-- 1. Depósito é histórico: movimento antigo aponta para ele, e excluir a
+--    empresa não pode apagar em cascata a prova de onde a mercadoria estava.
+--    Mesma decisão das fases AP, AQ e AR.
+--
+-- 2. `companies` NÃO É UMA TABELA. As empresas que Vendas usa vivem em
+--    data/db.json; as que o Fiscal usa vivem em `empresa`/`estabelecimento`, no
+--    Postgres. São dois cadastros da mesma coisa do mundo real, e este vínculo
+--    aponta para o primeiro — que é o que o pedido já usa em `orders.company_id`.
+--
+--    Não é o certo, é o consistente: `orders.company_id` já aponta para lá. Unir
+--    os dois cadastros é uma fase própria, e fazê-la de carona aqui misturaria
+--    uma migração de dados com uma correção de processo.
+--
+-- NULO É PERMITIDO, e é o estado de todo depósito que já existe: nenhum deles
+-- foi cadastrado com loja, e inventar uma agora seria adivinhar. Depósito sem
+-- loja continua funcionando como sempre — o que ele perde é o preenchimento
+-- automático, não a operação.
+alter table if exists deposits
+  add column if not exists company_id text;
+
+-- A pergunta que a tela faz o tempo todo: "quais depósitos são desta loja?".
+create index if not exists idx_deposits_company on deposits (company_id);

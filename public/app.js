@@ -1784,6 +1784,51 @@ const LUPA_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" st
  * que diz, olhando, que o campo é de busca e não um texto qualquer.
  */
 /**
+ * Os depósitos que a loja escolhida pode usar (fase AW).
+ *
+ * Escolher a empresa passou a filtrar o depósito: dava para faturar pela Filial
+ * 02 tirando mercadoria do depósito da Filial 07, porque os dois campos ficavam
+ * um do lado do outro sem relação nenhuma.
+ *
+ * DEPÓSITO SEM LOJA ENTRA SEMPRE. Nenhum dos que já existem foi cadastrado com
+ * empresa (a coluna nasceu nula — ver a migração fase-aw), e esconder todos
+ * eles deixaria o campo vazio para quem só quer vender. Sem loja significa
+ * "serve para qualquer uma", e não "não serve para nenhuma".
+ *
+ * O QUE ESTÁ GRAVADO NUNCA SOME DA LISTA, pelo mesmo motivo do campo Categoria:
+ * o pedido antigo abriria com o depósito em branco e a próxima escolha apagaria
+ * o histórico de verdade.
+ */
+function depositosDaLoja(meta, companyId, depositoAtual) {
+  const todos = meta.deposits || [];
+  const escolhida = String(companyId || '').trim();
+  const doGrupo = escolhida
+    ? todos.filter((d) => !d.companyId || d.companyId === escolhida)
+    : todos;
+  const atual = String(depositoAtual || '').trim();
+  if (atual && !doGrupo.some((d) => d.id === atual)) {
+    const achado = todos.find((d) => d.id === atual);
+    if (achado) return [{ ...achado, name: `${achado.name} (de outra loja)` }, ...doGrupo];
+  }
+  return doGrupo;
+}
+
+/**
+ * O depósito que a loja escolhida sugere.
+ *
+ * SÓ SUGERE QUANDO NÃO HÁ DÚVIDA — um depósito e um só. Com dois, escolher um
+ * deles seria o sistema decidindo por quem vende, e é o tipo de palpite que
+ * ninguém confere: a mercadoria sai do galpão quando devia sair do salão e a
+ * diferença aparece no inventário.
+ */
+function depositoSugeridoDaLoja(meta, companyId) {
+  const escolhida = String(companyId || '').trim();
+  if (!escolhida) return '';
+  const daLoja = (meta.deposits || []).filter((d) => d.companyId === escolhida);
+  return daLoja.length === 1 ? daLoja[0].id : '';
+}
+
+/**
  * As opções do campo Categoria da venda (fase AS).
  *
  * São as categorias ATIVAS do cadastro, mais — quando faz falta — a que o
@@ -3595,7 +3640,9 @@ async function loadModule(moduleName) {
                     ${renderSearchableSelect({ id: 'salesPriceTable', name: 'priceTable', options: (meta.priceTables || []).map((t) => ({ value: t.name, label: t.name })), selectedValue: formState.priceTable, placeholder: 'Buscar tabela...' })}
                   </label>
                   <label>Depósito
-                    ${renderSearchableSelect({ id: 'salesDeposit', name: 'depositId', options: meta.deposits.map((d) => ({ value: d.id, label: d.name })), selectedValue: formState.depositId, placeholder: 'Buscar depósito...' })}
+                    ${/* Fase AW: só os depósitos da loja escolhida (mais os sem loja,
+                         que servem a qualquer uma). Ver depositosDaLoja. */''}
+                    ${renderSearchableSelect({ id: 'salesDeposit', name: 'depositId', options: depositosDaLoja(meta, formState.companyId, formState.depositId).map((d) => ({ value: d.id, label: d.name })), selectedValue: formState.depositId, placeholder: 'Buscar depósito...' })}
                   </label>
                   <label>Vendedor
                     ${renderSearchableSelect({ id: 'salesSeller', name: 'sellerId', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })), selectedValue: formState.sellerId, placeholder: 'Buscar vendedor...' })}
@@ -4237,13 +4284,46 @@ async function loadModule(moduleName) {
           }, salesRecordActionsContext());
 
           attachSearchableSelect({ id: 'salesClientSupplier', options: meta.directory.map((entry) => ({ value: entry.id, label: entry.name })) });
-          attachSearchableSelect({ id: 'salesCompany', options: meta.companies.map((c) => ({ value: c.id, label: c.name })) });
+          // Fase AW: trocar a loja mexe no depósito. `onSelect` religa o campo
+          // de depósito com as opções da loja nova e sugere a dela quando não
+          // há dúvida — ver depositoSugeridoDaLoja.
+          attachSearchableSelect({
+            id: 'salesCompany',
+            options: meta.companies.map((c) => ({ value: c.id, label: c.name })),
+            onSelect: (valor) => {
+              formState.companyId = valor;
+              const sugerido = depositoSugeridoDaLoja(meta, valor);
+              const atual = document.getElementById('salesDepositValue')?.value || '';
+              const permitidos = depositosDaLoja(meta, valor, atual);
+              // Troca o depósito quando o que estava lá não é da loja nova. Se
+              // for, fica: o usuário pode ter escolhido de propósito.
+              const precisaTrocar = !atual || !permitidos.some((d) => d.id === atual);
+              const escolhido = precisaTrocar ? sugerido : atual;
+              const campoTexto = document.getElementById('salesDepositInput');
+              const campoValor = document.getElementById('salesDepositValue');
+              if (campoValor) campoValor.value = escolhido;
+              if (campoTexto) {
+                const achado = permitidos.find((d) => d.id === escolhido);
+                campoTexto.value = achado ? achado.name : '';
+              }
+              formState.depositId = escolhido;
+              attachSearchableSelect({
+                id: 'salesDeposit',
+                options: permitidos.map((d) => ({ value: d.id, label: d.name }))
+              });
+            }
+          });
           attachSearchableSelect({ id: 'salesSeller', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })) });
-          attachSearchableSelect({ id: 'salesDeposit', options: meta.deposits.map((d) => ({ value: d.id, label: d.name })) });
+          attachSearchableSelect({ id: 'salesDeposit', options: depositosDaLoja(meta, formState.companyId, formState.depositId).map((d) => ({ value: d.id, label: d.name })) });
           // Categoria e Tabela de Preços guardam o NOME, não um id: é o que o
           // registro da venda sempre gravou, e trocar para id exigiria migrar
           // as vendas antigas.
-          attachSearchableSelect({ id: 'salesCategory', options: (meta.productCategories || []).map((c) => ({ value: c.name, label: c.name })) });
+          // ERRO CORRIGIDO AQUI: este dropdown continuava listando as categorias
+          // de PRODUTO depois de a fase AS dar cadastro próprio à categoria de
+          // venda. O campo RENDERIZAVA do cadastro novo e a busca oferecia o
+          // antigo — as duas metades do mesmo campo discordando, e a que o
+          // usuário usa é a da busca.
+          attachSearchableSelect({ id: 'salesCategory', options: opcoesDeCategoriaDeVenda(meta, formState.category) });
           attachSearchableSelect({ id: 'salesPriceTable', options: (meta.priceTables || []).map((t) => ({ value: t.name, label: t.name })) });
           // Preenche o campo Cor a partir do produto escolhido. O saldo entra
           // no rótulo pelo mesmo motivo do rótulo do produto: escolher a cor
