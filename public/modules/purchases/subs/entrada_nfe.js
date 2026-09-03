@@ -94,6 +94,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       depositoId: '',
       gerarFinanceiro: true,
       atualizarCusto: true,
+      // Fase AQ: qual ordem de compra esta nota fecha. Vazio = nenhuma.
+      ordemCompraId: '',
       analisando: false,
       lancando: false,
       entradas: []
@@ -343,6 +345,44 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       `;
     }
 
+    /**
+     * A ORDEM DE COMPRA QUE ESTA NOTA MATERIALIZA (fase AQ).
+     *
+     * So aparece quando ha ordem em aberto DESTE fornecedor — o servidor as
+     * manda junto da analise, porque e la que ele descobre de quem e a nota.
+     * Sem ordens, o bloco nao existe: um seletor vazio so faz perguntar se a
+     * pessoa esqueceu de alguma coisa.
+     *
+     * Ligar a nota a ordem NAO muda o que entra no estoque. Quem movimenta e a
+     * nota, sempre — a ordem era o compromisso, a nota e a prova de que chegou.
+     * O que a ligacao faz e fechar a ordem e impedir que alguem a receba de
+     * novo mais tarde, lancando a mesma mercadoria duas vezes.
+     */
+    function blocoOrdemDeCompra() {
+      const ordens = tela.conferencia.ordensAbertas || [];
+      if (!ordens.length) return '';
+      return `
+        <div class="row">
+          <label>Ordem de compra que esta nota atende
+            <select id="entradaOrdemCompra">
+              <option value="">— nenhuma —</option>
+              ${ordens.map((o) => `
+                <option value="${escapeHtml(o.id)}" ${tela.ordemCompraId === o.id ? 'selected' : ''}>
+                  Nº ${escapeHtml(String(o.code || '-'))} · ${escapeHtml(String(o.date || '').slice(0, 10))}
+                  · ${o.itens} ${o.itens === 1 ? 'item' : 'itens'} · R$ ${Number(o.totalAmount || 0).toFixed(2)}
+                </option>
+              `).join('')}
+            </select>
+          </label>
+        </div>
+        <p class="muted entrada-nota-custo">
+          A ordem escolhida ficará marcada como recebida por esta nota. O estoque entra
+          pelos dados da NOTA, não pelos da ordem — e a ordem não poderá mais ser recebida
+          por conta própria, o que evitaria lançar a mesma mercadoria duas vezes.
+        </p>
+      `;
+    }
+
     function blocoRodape() {
       const bloqueado = tela.conferencia.bloqueios.length > 0;
       const semDeposito = !tela.depositos.length;
@@ -360,6 +400,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
               <span>Atualizar o custo dos produtos com o valor da nota</span>
             </label>
           </div>
+          ${blocoOrdemDeCompra()}
           <p class="muted entrada-nota-custo">
             O custo gravado é o valor unitário da mercadoria (vUnCom). Não inclui frete, IPI nem ST —
             ratear isso é decisão de quem apura, não de quem lança a nota.
@@ -518,6 +559,13 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       document.getElementById('entradaGerarFinanceiro')?.addEventListener('change', (e) => {
         tela.gerarFinanceiro = e.target.checked;
       });
+      // Fase AQ. Sem redesenhar a tela: trocar a ordem escolhida nao muda mais
+      // nada do que esta em volta, e um redesenho aqui perderia os vinculos de
+      // item que a pessoa acabou de fazer na mao.
+      document.getElementById('entradaOrdemCompra')?.addEventListener('change', (e) => {
+        tela.ordemCompraId = e.target.value || '';
+      });
+
       document.getElementById('entradaAtualizarCusto')?.addEventListener('change', (e) => {
         tela.atualizarCusto = e.target.checked;
       });
@@ -685,7 +733,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             itens,
             depositoId: tela.depositoId,
             gerarFinanceiro: tela.gerarFinanceiro,
-            atualizarCusto: tela.atualizarCusto
+            atualizarCusto: tela.atualizarCusto,
+            purchaseOrderId: tela.ordemCompraId
           })
         });
         const partes = [`Entrada lançada (${resposta.status === 'LANCADA' ? 'completa' : 'a revisar'})`];

@@ -262,9 +262,17 @@ check('o índice de cadastros também é completo',
 
 console.log('\n--- só a emissão pede escriturais ---');
 const pedidos = (serverSrc.match(/getProducts\(\{ incluirEscriturais: true \}\)/g) || []).length;
-// Três: a resolução do item escritural, o contexto de estoque e o índice de
-// cadastros. Qualquer outro é uma lista vazando.
-check('poucos pontos pedem escriturais', pedidos === 3, `${pedidos} ponto(s)`);
+// QUATRO, e o número é o teste: a resolução do item escritural, o contexto de
+// estoque, o índice de cadastros e — desde a fase AQ — o recebimento de uma
+// ordem de compra. Qualquer outro é uma lista vazando para uma tela.
+//
+// O quarto é ÍNDICE, não lista: o recebimento resolve productId -> produto para
+// montar os movimentos, e uma ordem antiga que aponte para um escritural
+// precisa continuar resolvendo — mesma razão pela qual o productsById do
+// loadStockContext também os inclui enquanto a lista `products` não. Ele não
+// chega a tela nenhuma, e a entrada e o estorno compartilham o mesmo índice em
+// vez de montar um cada.
+check('poucos pontos pedem escriturais', pedidos === 4, `${pedidos} ponto(s)`);
 check('a resolução do item escritural pede', /O ÚNICO lugar que pede escriturais/.test(serverSrc));
 // A lista de mercadoria nunca pode pedir.
 const metaVenda = serverSrc.slice(serverSrc.indexOf("pathname === '/api/sales/meta'"), serverSrc.indexOf("pathname === '/api/sales/dashboard'"));

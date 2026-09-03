@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-01 18:33 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-03 12:28 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -29,11 +29,13 @@ Vendas  (sales)  —  9 tela(s) no menu
   [app] Logs de Vendas Importadas          Histórico das importações já processadas.
   [app] Importar Vendas                    Carrega vendas em lote a partir de um CSV.
 
-Compras  (purchases)  —  5 tela(s) no menu
+Compras  (purchases)  —  7 tela(s) no menu
 ------------------------------------------
   [ok]  Painel de Compras                  Quanto entrou, de quem e a que preço.
-  [ok]  Nova Compra                        Lança uma compra e dá entrada no estoque.
-  [ok]  Entrada de NF-e                    Lê o XML do fornecedor, reconhece quem emitiu e dá entrada com os dados da nota.
+  [ok]  Cotações                           Preços pedidos aos fornecedores. Aprovar uma cotação a transforma em ordem, sem virar outro documento.
+  [ok]  Ordens de Compra                   O que foi pedido ao fornecedor, o que já chegou e o que está atrasado.
+  [ok]  Nova Compra                        Cotação e ordem na mesma tela — o campo Status define qual dos dois é.
+  [ok]  Notas de Entrada                   Lê o XML do fornecedor, reconhece quem emitiu e dá entrada com os dados da nota.
   [ok]  Histórico de Compras               Compras registradas, por período e fornecedor.
   [ok]  Fornecedores                       Fornecedores cadastrados e seus dados.
 
@@ -185,7 +187,7 @@ Cadastros  (cadastros)  —  19 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 121 telas no menu.
+TOTAL: 14 módulos, 123 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -258,6 +260,10 @@ regra só, para tela e servidor nunca discordarem.
       Kit de painel — os blocos que TODO dashboard de módulo usa.
   prazo_cancelamento.js   [também no servidor]
       Prazo de cancelamento da NF-e: 24 horas contadas da AUTORIZAÇÃO.
+  purchase_status.js   [também no servidor]
+      Catálogo de Status de Compra — FONTE ÚNICA.
+  purchase_totals.js   [também no servidor]
+      Totais do documento de compra — FONTE ÚNICA.
   sales_bulk_actions.js   [também no servidor]
       Menu "Mais Ações" da LISTA — as ações em lote.
   sales_record_actions.js
@@ -291,6 +297,9 @@ Arquivos de acesso (lib/db)
       tabelas: product_class_assignments, product_class_value_assignments, product_class_values, product_classes
   lib/db/client.js
       O CLIENTE DO BANCO — mesma porta, fundação nova.
+  lib/db/compras.js
+      O DOCUMENTO DE COMPRA no banco.
+      tabelas: purchase_orders
   lib/db/conexao.js
       A CONEXÃO COM O POSTGRES — e os tipos que ela devolve.
   lib/db/consulta.js
@@ -323,7 +332,7 @@ Arquivos de acesso (lib/db)
   lib/db/vendas-compras.js
       tabelas: import_logs, orders, purchases, quotes, sales
 
-Tabelas usadas (69)
+Tabelas usadas (70)
 -------------------
   access_logs             account_balances        audit_logs
   bank_accounts           bank_cards              bank_transactions
@@ -344,13 +353,14 @@ Tabelas usadas (69)
   pcp_quality_checks      pcp_sectors             pcp_statuses
   pedido_anexo            people                  permissions
   product_class_assignmentsproduct_class_value_assignmentsproduct_class_values
-  product_classes         products                purchases
-  quotes                  regra_fiscal            role_permissions
-  roles                   sales                   settings
-  user_permissions        user_roles              users
+  product_classes         products                purchase_orders
+  purchases               quotes                  regra_fiscal
+  role_permissions        roles                   sales
+  settings                user_permissions        user_roles
+  users
 
 ==============================================================================
-4. ROTAS DA API (97 encontradas no server.js)
+4. ROTAS DA API (99 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -421,6 +431,8 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/preferencias                                    
   /api/purchases                                       GET POST
   /api/purchases/…                                     
+  /api/purchases/documentos                            GET POST
+  /api/purchases/documentos/…                          
   /api/purchases/entrada-nfe                           GET POST
   /api/purchases/entrada-nfe/…                         
   /api/purchases/entrada-nfe/analisar                  POST
@@ -456,7 +468,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-36 arquivo(s) em banco/migrations, em ordem de fase:
+37 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -475,6 +487,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-an-telas-por-usuario.sql
   fase-ao-observacao-padrao-por-empresa.sql
   fase-ap-razao-de-estoque-no-banco.sql
+  fase-aq-compras-cotacao-e-ordem.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -498,7 +511,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-62 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+63 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -514,6 +527,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-chassi-item.js                Chassi na linha do item de venda.
   [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
   [npm test] test-complemento-icms.js           NF-e COMPLEMENTAR EXCLUSIVA DE ICMS.
+  [avulso]  test-compras-documento.js          A CADEIA DE COMPRAS: COTACAO -> ORDEM -> RECEBIMENTO (fase AQ).
   [npm test] test-contrato-financeiro.js        Geração das parcelas de um contrato — parcelasDoContrato / vencimentoDoPeriodo.
   [npm test] test-cst-icms.js                   O CST decide QUAIS campos a nota carrega — não é um rótulo.
   [npm test] test-dashboard-hub.js              Desenho do hub — public/modules/dashboard/index.js O que este teste guarda: 1.
@@ -567,7 +581,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-109 arquivos JS carregados por public/index.html, nesta ordem.
+112 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -577,7 +591,8 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/module_workspace.js
   /modules/dashboard/index.js
   /modules/purchases/index.js
-  /modules/purchases/subs/new_purchase.js
+  /modules/purchases/subs/purchase_documents.js
+  /modules/purchases/subs/new_purchase_order.js
   /modules/purchases/subs/entrada_nfe.js
   /modules/purchases/subs/painel.js
   /modules/purchases/subs/purchase_history.js
@@ -607,6 +622,8 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/atalhos.js
   /modules/shared/sales_totals.js
   /modules/shared/sales_status.js
+  /modules/shared/purchase_totals.js
+  /modules/shared/purchase_status.js
   /modules/shared/sales_bulk_actions.js
   /modules/shared/fiscal_permissoes.js
   /modules/shared/cst_icms.js

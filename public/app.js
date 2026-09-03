@@ -1559,8 +1559,15 @@ const moduleSubItems = {
   // ABA: Compras
   purchases: [
     { key: 'painel', label: 'Painel de Compras', desc: 'Quanto entrou, de quem e a que preço.' },
-    { key: 'new_purchase', label: 'Nova Compra', desc: 'Lança uma compra e dá entrada no estoque.' },
-    { key: 'entrada_nfe', label: 'Entrada de NF-e', desc: 'Lê o XML do fornecedor, reconhece quem emitiu e dá entrada com os dados da nota.' },
+    // A cadeia, na ordem em que ela acontece: cota-se, vira ordem, a mercadoria
+    // chega. As duas primeiras são a MESMA tela com filtros diferentes (o
+    // documento é um só, o status decide o tipo), e por isso não há "Nova
+    // Cotação" separada de "Nova Ordem": o formulário é um. Ver o cabeçalho de
+    // public/modules/shared/purchase_status.js.
+    { key: 'purchase_quotes', label: 'Cotações', desc: 'Preços pedidos aos fornecedores. Aprovar uma cotação a transforma em ordem, sem virar outro documento.' },
+    { key: 'purchase_orders', label: 'Ordens de Compra', desc: 'O que foi pedido ao fornecedor, o que já chegou e o que está atrasado.' },
+    { key: 'new_purchase_order', label: 'Nova Compra', desc: 'Cotação e ordem na mesma tela — o campo Status define qual dos dois é.' },
+    { key: 'entrada_nfe', label: 'Notas de Entrada', desc: 'Lê o XML do fornecedor, reconhece quem emitiu e dá entrada com os dados da nota.' },
     { key: 'purchase_history', label: 'Histórico de Compras', desc: 'Compras registradas, por período e fornecedor.' },
     { key: 'suppliers', label: 'Fornecedores', desc: 'Fornecedores cadastrados e seus dados.' }
   ],
@@ -6799,101 +6806,16 @@ async function loadModule(moduleName) {
       return;
     }
 
-    // ========================================================================
-    // ABA: COMPRAS (sub-abas: Nova Compra, Histórico de Compras, Fornecedores)
-    // ========================================================================
-    if (moduleName === 'purchases') {
-      const data = await api('/api/purchases');
-      const sub = state.activeSub || 'new_purchase';
-
-      const renderPage = () => {
-        // Sub-aba: Histórico de Compras
-        if (sub === 'purchase_history') {
-          return `
-            <div class="panel">
-              <h3>Histórico de Compras</h3>
-              <table class="table">
-                <thead><tr><th>ID</th><th>Fornecedor</th><th>Data</th><th>Total</th><th>Status</th></tr></thead>
-                <tbody>
-                  ${data.purchases.map((purchase) => `<tr><td>${escapeHtml(purchase.id)}</td><td>${escapeHtml(purchase.supplier)}</td><td>${escapeHtml(purchase.date)}</td><td>R$ ${Number(purchase.total || 0).toFixed(2)}</td><td>${escapeHtml(purchase.status)}</td></tr>`).join('')}
-                </tbody>
-              </table>
-            </div>
-          `;
-        }
-
-        // Sub-aba: Fornecedores
-        if (sub === 'suppliers') {
-          const suppliers = [...new Map(data.purchases.map((purchase) => [purchase.supplier, { name: purchase.supplier, purchases: 0, total: 0 }])).values()];
-          data.purchases.forEach((purchase) => {
-            const supplier = suppliers.find((entry) => entry.name === purchase.supplier);
-            if (supplier) {
-              supplier.purchases += 1;
-              supplier.total += Number(purchase.total || 0);
-            }
-          });
-
-          return `
-            <div class="panel">
-              <h3>Fornecedores</h3>
-              <table class="table">
-                <thead><tr><th>Fornecedor</th><th>Compras</th><th>Total</th></tr></thead>
-                <tbody>
-                  ${suppliers.map((supplier) => `<tr><td>${escapeHtml(supplier.name)}</td><td>${supplier.purchases}</td><td>R$ ${supplier.total.toFixed(2)}</td></tr>`).join('')}
-                </tbody>
-              </table>
-            </div>
-          `;
-        }
-
-        // Sub-aba: Nova compra (padrão)
-        return `
-          <div class="panel">
-            <h3>Nova compra</h3>
-            <form id="purchaseForm" class="form-grid">
-              <div class="row">
-                <label>Fornecedor<input name="supplier" required /></label>
-                <label>Data<input name="date" type="date" /></label>
-              </div>
-              <div class="row">
-                <label>Produto<select name="productId">${data.products.map((product) => `<option value="${product.id}">${escapeHtml(product.name)}</option>`).join('')}</select></label>
-                <label>Quantidade<input name="quantity" type="number" min="1" required value="1" /></label>
-                <label>Custo unitário<input name="costPrice" type="number" step="0.01" required value="${Number(data.products[0]?.costPrice || 0).toFixed(2)}" /></label>
-              </div>
-              <button type="submit">Registrar compra</button>
-            </form>
-          </div>
-        `;
-      };
-
-      content.innerHTML = renderPage();
-
-      if (sub === 'new_purchase') {
-        document.getElementById('purchaseForm').addEventListener('submit', async (event) => {
-          event.preventDefault();
-          const formData = new FormData(event.target);
-          try {
-            await api('/api/purchases', {
-              method: 'POST',
-              body: JSON.stringify({
-                supplier: formData.get('supplier'),
-                date: formData.get('date'),
-                productId: formData.get('productId'),
-                quantity: Number(formData.get('quantity')),
-                costPrice: Number(formData.get('costPrice'))
-              })
-            });
-            showToast('Compra registrada com sucesso.', 'success');
-            state.activeSub = 'purchase_history';
-            renderApp();
-            loadModule('purchases');
-          } catch (error) {
-            showToast(error.message || 'Erro ao registrar compra.', 'error');
-          }
-        });
-      }
-      return;
-    }
+    // ABA: COMPRAS — desenhada por public/modules/purchases/, não daqui.
+    //
+    // Havia aqui 95 linhas que renderizavam Compras: Nova Compra, Histórico e
+    // Fornecedores. Nenhuma delas rodava. O router chama
+    // MavisModuleRegistry.purchases (modules/purchases/index.js), que nunca
+    // devolve false, e este `if` ficava depois — inalcançável desde que o
+    // módulo ganhou pasta própria.
+    //
+    // É a MESMA cópia morta que existia para Configurações, e o mesmo estrago:
+    // enquanto ela esteve aqui, editá-la parecia mexer no sistema e não mexia.
 
     // ========================================================================
     // ABA: ESTOQUE

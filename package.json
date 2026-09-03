@@ -25,6 +25,7 @@
     "meu-painel": "node scripts/test-meu-painel.js",
     "telas": "node scripts/test-telas-por-usuario.js",
     "transferencia": "node scripts/test-transferencia-itens.js",
+    "compras": "node scripts/test-compras-documento.js",
     "prova-meu-painel": "node scripts/prova-meu-painel.js",
     "liberar-admin": "node scripts/liberar-admin.js",
     "semear-vendas": "node scripts/semear-vendas-teste.js",

@@ -65,6 +65,10 @@ const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 // Fase AP: o razao de estoque saiu do db.json e virou tabela no Postgres.
 const razaoEstoque = require('./lib/db/estoque-razao');
 const { emTransacao } = require('./lib/db/conexao');
+// Fase AQ: cotacao e ordem de compra sao o mesmo documento — o status decide.
+const comprasDb = require('./lib/db/compras');
+const purchaseStatus = require('./public/modules/shared/purchase_status');
+const purchaseTotals = require('./public/modules/shared/purchase_totals');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
 const sessaoUtil = require('./lib/sessao');
@@ -3910,6 +3914,216 @@ function userCanStock(user) {
  * ela — registrar movimentação, por exemplo, não precisa saber o que está
  * prometido, e cobrar a consulta ali seria custo sem uso.
  */
+/**
+ * Monta o documento de compra a partir do que a tela mandou.
+ *
+ * O TIPO NAO VEM DA TELA: vem do status, pelo catalogo. Aceitar um `type` do
+ * corpo permitiria gravar uma cotacao marcada como ordem — dois campos dizendo
+ * coisas diferentes sobre o mesmo registro, e nenhuma tela saberia qual dos
+ * dois obedecer.
+ *
+ * Os TOTAIS tambem nao vem da tela: sao recalculados aqui pelo mesmo modulo que
+ * a tela usou para mostra-los. A tela mostra; o servidor decide.
+ */
+function montarDocumentoDeCompra(body, data, user) {
+  const status = String(body.status || 'cotacao');
+  if (!purchaseStatus.CATALOGO.some((s) => s.value === status)) {
+    const erro = new Error('Status de compra desconhecido: ' + status);
+    erro.status = 400;
+    throw erro;
+  }
+
+  // Fornecedor: o id aponta pro Cadastro; o nome viaja junto para a lista
+  // continuar legivel se o cadastro for excluido depois. Mesmo par que Vendas
+  // usa em clientSupplierId/clientSupplierName.
+  let supplierName = String(body.supplierName || '').trim();
+  if (body.supplierId) {
+    const achado = getCadastroDirectory(data).find((entry) => entry.id === body.supplierId);
+    if (achado) supplierName = achado.name;
+  }
+  if (!supplierName) {
+    const erro = new Error('Informe o fornecedor.');
+    erro.status = 400;
+    throw erro;
+  }
+
+  const totais = purchaseTotals.calcular(body);
+  if (!totais.items.length) {
+    const erro = new Error('Inclua ao menos um item com produto e quantidade.');
+    erro.status = 400;
+    throw erro;
+  }
+
+  return {
+    type: purchaseStatus.tipoDoStatus(status),
+    status,
+    supplierId: body.supplierId || '',
+    supplierName,
+    companyId: body.companyId || '',
+    depositId: body.depositId || '',
+    date: body.date || new Date().toISOString().slice(0, 10),
+    deliveryDate: body.deliveryDate || null,
+    note: String(body.note || ''),
+    ...totais,
+    createdBy: user?.id || '',
+    createdByName: user?.name || ''
+  };
+}
+
+/**
+ * MUDA O STATUS DO DOCUMENTO E APLICA O QUE O STATUS NOVO DECLARA.
+ *
+ * E o equivalente de transitionOrderStockEffect em Vendas, e a diferenca
+ * importante esta no primeiro paragrafo abaixo.
+ *
+ * A ENTRADA EM DOBRO E O RISCO DESTE MODULO. A mesma mercadoria pode chegar por
+ * dois caminhos: receber a ordem, ou lancar a Nota de Entrada do fornecedor
+ * (XML). Se os dois movimentarem, o saldo dobra — e dobra em silencio, porque
+ * cada tela, sozinha, esta certa. Quem impede e `entradaNfeId`: ordem com nota
+ * ligada nao movimenta por conta propria, porque a nota ja movimentou.
+ *
+ * OS EFEITOS SAO GRAVADOS NO DOCUMENTO (stockApplied/financeApplied), e nao
+ * deduzidos do status. Status muda; o que ja aconteceu nao desacontece. Sem
+ * essas duas colunas, receber -> cancelar -> receber lancaria a mercadoria duas
+ * vezes, e cada passo pareceria correto.
+ */
+async function transicionarDocumentoDeCompra(data, { id, novoStatus, user }) {
+  const documento = await comprasDb.obterDocumento(id);
+  if (!documento) {
+    const erro = new Error('Documento nao encontrado');
+    erro.status = 404;
+    throw erro;
+  }
+  const alvo = purchaseStatus.CATALOGO.find((s) => s.value === novoStatus);
+  if (!alvo) {
+    const erro = new Error('Status de compra desconhecido: ' + novoStatus);
+    erro.status = 400;
+    throw erro;
+  }
+
+  const deveEntrarNoEstoque = alvo.entraEstoque && !documento.stockApplied;
+  const deveSairDoEstoque = !alvo.entraEstoque && documento.stockApplied;
+
+  // O INDICE de produtos, montado uma vez e passado adiante. Inclui os
+  // escriturais de proposito: e indice de RESOLUCAO, nao lista de mercadoria —
+  // um documento antigo que aponte para um escritural precisa continuar
+  // resolvendo, do mesmo jeito que o productsById do loadStockContext. Nao vai
+  // para tela nenhuma.
+  let productsById = null;
+  if (deveEntrarNoEstoque || deveSairDoEstoque) {
+    const todos = await db.getProducts({ incluirEscriturais: true });
+    productsById = new Map(todos.map((produto) => [produto.id, produto]));
+  }
+
+  // --- estorno: o documento tinha entrado e agora nao entra mais ------------
+  if (deveSairDoEstoque) {
+    await estornarRecebimentoDeCompra(data, { documento, novoStatus: alvo, user, productsById });
+    return comprasDb.obterDocumento(id);
+  }
+
+  // --- entrada -------------------------------------------------------------
+  if (deveEntrarNoEstoque) {
+    if (documento.entradaNfeId) {
+      const erro = new Error(
+        'Esta ordem ja tem uma Nota de Entrada lancada, e foi ela que deu entrada no estoque. '
+        + 'Receber de novo lancaria a mesma mercadoria duas vezes.'
+      );
+      erro.status = 400;
+      throw erro;
+    }
+    const faltando = documento.items.filter((item) => !productsById.has(item.productId));
+    if (faltando.length) {
+      const erro = new Error(
+        'Produto nao encontrado: ' + faltando.map((i) => i.name || i.productId).join(', ')
+        + '. A ordem nao foi recebida.'
+      );
+      erro.status = 400;
+      throw erro;
+    }
+
+    const movimentos = documento.items.map((item) => buildMovementRecord(data, {
+      type: 'entrada',
+      productId: item.productId,
+      depositId: documento.depositId,
+      quantity: item.quantity,
+      unitCost: item.unitCost,
+      classId: item.classId,
+      classValueId: item.classValueId,
+      referenceType: 'purchase-order',
+      referenceId: documento.id,
+      document: 'Ordem de Compra ' + (documento.code || documento.id),
+      note: 'Recebimento da ordem de ' + documento.supplierName,
+      origin: 'ordem-de-compra'
+    }, user));
+
+    // O estoque e a marca de recebido entram JUNTOS: ver o gancho
+    // tambemNaTransacao em commitStockMovements.
+    await commitStockMovements(data, movimentos, productsById, {
+      tambemNaTransacao: (cliente) => comprasDb.atualizarStatus(id, {
+        status: alvo.value, type: alvo.tipo, stockApplied: true
+      }, cliente)
+    });
+  } else {
+    await comprasDb.atualizarStatus(id, { status: alvo.value, type: alvo.tipo });
+  }
+
+  // --- financeiro ----------------------------------------------------------
+  // Fora da transacao do estoque de proposito: o financeiro tem tabela e rotina
+  // proprias, e falhar ao criar a conta a pagar nao pode desfazer a entrada da
+  // mercadoria — a mercadoria chegou de verdade. O documento guarda
+  // financeApplied, entao a conta nao nasce duas vezes.
+  if (alvo.geraFinanceiro && !documento.financeApplied) {
+    const lancamento = await db.createFinancialEntry({
+      type: 'purchase',
+      referenceId: documento.id,
+      clientSupplierId: documento.supplierId || '',
+      clientSupplierName: documento.supplierName,
+      date: documento.deliveryDate || documento.date,
+      description: 'Ordem de Compra ' + (documento.code || documento.id) + ' - ' + documento.supplierName,
+      amount: documento.totalAmount,
+      status: 'pending',
+      createdBy: user?.id,
+      createdByName: user?.name
+    });
+    data.finance.push(lancamento);
+    await comprasDb.atualizarStatus(id, { status: alvo.value, type: alvo.tipo, financeApplied: true });
+  }
+
+  return comprasDb.obterDocumento(id);
+}
+
+/**
+ * Desfaz o recebimento: tira a mercadoria que entrou e desmarca o documento.
+ *
+ * Nao apaga os movimentos originais — lanca os CONTRARIOS. Apagar deixaria o
+ * razao sem a prova de que a mercadoria chegou e voltou, e e justamente essa
+ * prova que a conferencia fisica procura quando o saldo nao bate.
+ */
+async function estornarRecebimentoDeCompra(data, { documento, novoStatus, user, productsById }) {
+  const estornos = documento.items
+    .filter((item) => productsById.has(item.productId))
+    .map((item) => buildMovementRecord(data, {
+      type: 'saida',
+      productId: item.productId,
+      depositId: documento.depositId,
+      quantity: item.quantity,
+      unitCost: item.unitCost,
+      classId: item.classId,
+      classValueId: item.classValueId,
+      referenceType: 'purchase-order-estorno',
+      referenceId: documento.id,
+      document: 'Ordem de Compra ' + (documento.code || documento.id),
+      note: 'Estorno do recebimento da ordem de ' + documento.supplierName,
+      origin: 'ordem-de-compra'
+    }, user));
+
+  await commitStockMovements(data, estornos, productsById, {
+    tambemNaTransacao: (cliente) => comprasDb.atualizarStatus(documento.id, {
+      status: novoStatus.value, type: novoStatus.tipo, stockApplied: false
+    }, cliente)
+  });
+}
+
 async function loadStockContext({ comReservas = false } = {}) {
   const data = loadData();
   await syncCadastroData(data);
@@ -4012,6 +4226,15 @@ async function commitStockMovements(data, movements, productsById, opcoes = {}) 
       if (delta === 0) continue;
       await razaoEstoque.somarNoTotalDoProduto(cliente, productId, delta);
     }
+    // Gancho para quem precisa gravar MAIS COISA no mesmo instante do razão.
+    // Quem usa hoje: o recebimento de uma ordem de compra, que marca o
+    // documento como recebido. Fora daqui, a marca sobreviveria a um rollback
+    // que desfez a entrada — a ordem diria "recebida" com o estoque intacto,
+    // e essa é a divergência que ninguém confere porque as duas telas estão
+    // certas separadamente.
+    if (typeof opcoes.tambemNaTransacao === 'function') {
+      await opcoes.tambemNaTransacao(cliente);
+    }
   });
 
   // O `data` em memoria e' a foto que a resposta desta requisicao serializa.
@@ -4044,7 +4267,7 @@ async function descarregarMovimentosPendentes(data, productsById) {
   await commitStockMovements(data, pendentes, productsById, { jaEmMemoria: true });
 }
 
-function buildMovementRecord(data, { type, productId, depositId, quantity, unitCost, categoryId, date, document, note, transferId, origin, classId, classValueId }, user) {
+function buildMovementRecord(data, { type, productId, depositId, quantity, unitCost, categoryId, date, document, note, transferId, origin, classId, classValueId, referenceType, referenceId }, user) {
   return {
     id: stockCore.createId('mov'),
     // Vazio de proposito: quem numera e' a sequence do banco, dentro da
@@ -4066,6 +4289,13 @@ function buildMovementRecord(data, { type, productId, depositId, quantity, unitC
     note: note || '',
     transferId: transferId || '',
     origin: origin || 'manual',
+    // De onde este movimento veio, por id e nao so por texto. As colunas ja
+    // existiam (a fase AP as criou) e o outro construtor ja as gravava; este
+    // aqui as descartava calado, entao a entrada de uma ordem de compra chegava
+    // ao razao sem dizer de que ordem era. Rastrear virava leitura do campo
+    // `document`, que e frase, nao chave.
+    referenceType: referenceType || '',
+    referenceId: referenceId || '',
     createdBy: user.id,
     createdByName: user.name,
     createdAt: new Date().toISOString()
@@ -7093,8 +7323,28 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Envie o XML da NF-e.' }, 400);
       }
       const { conferencia, data, produtos } = await conferirEntradaDeNfe(body.xml);
+      // AS ORDENS EM ABERTO DESTE FORNECEDOR (fase AQ).
+      //
+      // Vai junto da analise porque e aqui que o sistema descobre de QUEM e a
+      // nota. Pedir ao usuario para procurar a ordem numa segunda tela seria
+      // devolver a ele um trabalho que o XML ja fez.
+      //
+      // So as nao recebidas e nao canceladas: ligar a nota a uma ordem ja
+      // recebida seria oferecer justamente a entrada em dobro que a ligacao
+      // existe para impedir.
+      const ordensDoFornecedor = conferencia.fornecedor.cadastro
+        ? (await comprasDb.listarDocumentos({ tipo: 'order' })).filter((doc) =>
+            doc.supplierId === conferencia.fornecedor.cadastro.id
+            && !doc.stockApplied
+            && !doc.entradaNfeId
+            && !purchaseStatus.ehCancelado(doc.status))
+        : [];
       return sendJson(res, {
         ...conferencia,
+        ordensAbertas: ordensDoFornecedor.map((doc) => ({
+          id: doc.id, code: doc.code, date: doc.date, deliveryDate: doc.deliveryDate,
+          totalAmount: doc.totalAmount, itens: doc.items.length, status: doc.status
+        })),
         // A tela precisa da lista para vincular item na mão. Vai daqui, e não
         // de /api/stock/products, para que quem tem só Compras consiga
         // conferir a nota inteira — cadastrar produto novo continua sendo
@@ -7289,22 +7539,60 @@ const server = http.createServer(async (req, res) => {
           note: `Entrada da NF-e ${nota.numero} de ${nota.emitente.nome}`,
           origin: 'entrada-nfe'
         }, user));
-        await db.upsertProduct({
-          ...produto,
-          // Fase AP: o total NAO vem daqui. Quem soma e' a transacao do
-          // commitStockMovements, junto com o razao — este upsert ficou so para
-          // o custo, que e' decisao da tela.
-          // Custo do produto passa a ser o desta nota quando a tela pediu.
-          // vUnCom é o preço da mercadoria: NÃO inclui frete, IPI nem ST. Custo
-          // de reposição de verdade sai de rateio, e rateio é decisão de quem
-          // apura — não de quem lança a nota.
-          ...(body.atualizarCusto === false ? {} : { costPrice: Number(decisao.item.valorUnitario || 0) })
-        });
+        // O total NÃO se mexe aqui: quem soma é a transação do
+        // commitStockMovements, junto com o razão. E não dá para usar
+        // upsertProduct nem "só para o custo" — ele grava a linha inteira, e o
+        // `...produto` levaria de volta o saldo lido ANTES desta nota.
+        //
+        // Custo do produto passa a ser o desta nota quando a tela pediu.
+        // vUnCom é o preço da mercadoria: NÃO inclui frete, IPI nem ST. Custo
+        // de reposição de verdade sai de rateio, e rateio é decisão de quem
+        // apura — não de quem lança a nota.
+        if (body.atualizarCusto !== false) {
+          await db.atualizarCusto(produto.id, Number(decisao.item.valorUnitario || 0));
+        }
         movimentados.push(produto.name);
       }
       await commitStockMovements(data, movimentosDaNota, produtosPorId);
 
+      // ---- a ordem de compra que esta nota materializa (fase AQ) ------------
+      //
+      // Quem move o estoque e a NOTA, nunca as duas. A ordem e o compromisso; a
+      // nota e a prova de que a mercadoria chegou. Por isso aqui o documento e
+      // marcado como recebido SEM lancar movimento nenhum: o
+      // commitStockMovements logo acima ja lancou, com os dados da nota, que
+      // sao os que valem.
+      //
+      // A gravacao de entrada_nfe_id e o que fecha a porta do outro lado:
+      // transicionarDocumentoDeCompra recusa receber uma ordem que ja tem nota.
+      let ordemLigada = null;
+      if (body.purchaseOrderId) {
+        const ordem = await comprasDb.obterDocumento(body.purchaseOrderId);
+        if (!ordem) {
+          return sendJson(res, { error: 'A ordem de compra escolhida nao existe mais.' }, 400);
+        }
+        if (ordem.stockApplied) {
+          return sendJson(res, {
+            error: `A ordem ${ordem.code || ordem.id} ja deu entrada no estoque por conta propria. `
+              + 'Estorne o recebimento dela antes de ligar esta nota.'
+          }, 400);
+        }
+        ordemLigada = await comprasDb.atualizarStatus(body.purchaseOrderId, {
+          status: 'ordem-recebida',
+          type: 'order',
+          // stockApplied fica TRUE mesmo tendo sido a nota a movimentar: a
+          // coluna responde "esta ordem ja virou estoque?", e a resposta e sim.
+          // Fosse false, receber a ordem depois lancaria tudo de novo.
+          stockApplied: true,
+          entradaNfeId: entrada.id
+        });
+      }
+
       // ---- contas a pagar --------------------------------------------------
+      // Nota ligada a uma ordem gera o financeiro DELA, pelas duplicatas do
+      // XML — que e o valor que o fornecedor vai cobrar de fato. A ordem nao
+      // gera o seu: o total dela era estimativa, e duas contas a pagar para a
+      // mesma mercadoria e pior do que uma com o valor errado.
       const financeiro = [];
       if (querFinanceiro) {
         await syncFinanceData(data);
@@ -7360,6 +7648,103 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // =========================================================================
+  // O DOCUMENTO DE COMPRA (fase AQ) — cotação e ordem, o mesmo registro.
+  //
+  // Estas rotas vêm ANTES da `/api/purchases/` genérica de propósito: aquela
+  // casa com startsWith e engoliria `PUT /api/purchases/documentos/<id>`,
+  // tratando o documento como se fosse uma linha da tabela `purchases` antiga.
+  // =========================================================================
+
+  if (pathname === '/api/purchases/documentos' && req.method === 'GET') {
+    const data = loadData();
+    await syncCadastroData(data);
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('purchases')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const tipo = url.searchParams.get('tipo') || '';
+    const documentos = await comprasDb.listarDocumentos(tipo ? { tipo } : {});
+    return sendJson(res, { documentos });
+  }
+
+  if (pathname === '/api/purchases/documentos' && req.method === 'POST') {
+    try {
+      const data = loadData();
+      await syncCadastroData(data);
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      const documento = await comprasDb.criarDocumento(
+        montarDocumentoDeCompra(body, data, user)
+      );
+      return sendJson(res, { success: true, documento });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao gravar o documento' }, error.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/purchases/documentos/') && pathname.endsWith('/status') && req.method === 'POST') {
+    try {
+      const data = loadData();
+      await Promise.all([syncCadastroData(data), syncFinanceData(data)]);
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.slice('/api/purchases/documentos/'.length, -('/status'.length)));
+      const body = await readBody(req);
+      const documento = await transicionarDocumentoDeCompra(data, {
+        id, novoStatus: body.status, user
+      });
+      return sendJson(res, { success: true, documento });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao mudar o status' }, error.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/purchases/documentos/') && req.method === 'PUT') {
+    try {
+      const data = loadData();
+      await syncCadastroData(data);
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/purchases/documentos/', ''));
+      const atual = await comprasDb.obterDocumento(id);
+      if (!atual) return sendJson(res, { error: 'Documento não encontrado' }, 404);
+      // Documento que já deu entrada no estoque não se edita: os itens dele já
+      // viraram linhas do razão, e mudar a quantidade aqui deixaria a ordem
+      // dizendo 8 com 10 unidades lançadas. Estorne o recebimento primeiro.
+      if (atual.stockApplied) {
+        return sendJson(res, { error: 'Esta ordem já deu entrada no estoque. Estorne o recebimento antes de editar.' }, 400);
+      }
+      const body = await readBody(req);
+      const documento = await comprasDb.atualizarDocumento(id, montarDocumentoDeCompra(body, data, user));
+      return sendJson(res, { success: true, documento });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao gravar o documento' }, error.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/purchases/documentos/') && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/purchases/documentos/', ''));
+      const apagou = await comprasDb.excluirDocumento(id);
+      if (!apagou) return sendJson(res, { error: 'Documento não encontrado' }, 404);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendJson(res, { error: error.message || 'Erro ao excluir' }, error.status || 400);
+    }
+  }
+
   if (pathname === '/api/purchases' && req.method === 'GET') {
     const data = loadData();
     await syncCadastroData(data);
@@ -7368,7 +7753,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     const [products, purchases] = await Promise.all([db.getProducts(), db.getPurchases()]);
-    return sendJson(res, { purchases, products, directory: getCadastroDirectory(data) });
+    // `deposits` veio junto na fase AQ: a ordem de compra diz em QUE depósito a
+    // mercadoria entra, e sem a lista o formulário só ofereceria "sem depósito".
+    // syncCadastroData já os carregou logo acima — é dado que já está na mão.
+    return sendJson(res, {
+      purchases, products,
+      directory: getCadastroDirectory(data),
+      deposits: data.deposits || []
+    });
   }
 
   if (pathname === '/api/purchases' && req.method === 'POST') {
@@ -7417,11 +7809,12 @@ const server = http.createServer(async (req, res) => {
         status: 'pendente'
       });
 
-      await db.upsertProduct({
-        ...product,
-        stockQuantity: Number(product.stockQuantity || 0) + quantity,
-        costPrice
-      });
+      // O SALDO NÃO É SOMADO AQUI. Quem soma é a transação do
+      // descarregamento, com `stock_quantity + delta` (fase AP). Esta linha
+      // gravava o total absoluto ANTES daquela fase existir, e depois dela
+      // passou a somar a mesma compra duas vezes: comprar 10 subia o total para
+      // 20 enquanto o razão, corretamente, dizia 10.
+      await db.atualizarCusto(product.id, costPrice);
       registrarMovimentoEstoque(data, {
         productId: product.id, productName: product.name, type: 'compra',
         quantityDelta: quantity, referenceType: 'purchase', referenceId: purchase.id,
@@ -7483,7 +7876,8 @@ const server = http.createServer(async (req, res) => {
             err.status = 409;
             throw err;
           }
-          await db.upsertProduct({ ...product, stockQuantity: Number(product.stockQuantity || 0) - Number(purchase.quantity || 0) });
+          // Mesma correção do lançamento: o estorno empilha o movimento e é
+          // a transação que subtrai. Subtrair aqui também tirava em dobro.
           registrarMovimentoEstoque(data, {
             productId: purchase.productId, productName: product.name, type: 'estorno',
             quantityDelta: -Number(purchase.quantity || 0), referenceType: 'purchase', referenceId: purchase.id,
