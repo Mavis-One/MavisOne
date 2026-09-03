@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A DESCRIÇÃO DO LANÇAMENTO E O MOTIVO DO CANCELAMENTO (fase AX).
+ * A DESCRIÇÃO, O MOTIVO DO CANCELAMENTO E O CAMPO DOCUMENTO (fases AX e AY).
  *
  * Roda no `npm test`: o catálogo é função pura, e o resto se mede lendo a
  * fonte — o comportamento de rede tem verificação contra a API quando há
@@ -24,6 +24,11 @@
  *
  * 4. A COLUNA "CÓDIGO" MOSTRA O NÚMERO. Ela mostrava os oito últimos caracteres
  *    do id interno — o erro que este teste encontrou. Ver a seção 4.
+ *
+ * 5. O CAMPO DOCUMENTO COMEÇA COM LF{número} (fase AY) E NÃO PERDE o documento
+ *    externo que já estava lá. O número da NF-e e a chave de acesso de 44
+ *    dígitos são o único lugar onde a ligação com a nota do fornecedor está
+ *    escrita; substituí-los pelo LF apagaria essa ligação. Ver as seções 10-13.
  */
 const fs = require('fs');
 const path = require('path');
@@ -177,6 +182,64 @@ check('o faturamento resolve o número da nota',
 // pedido procura em data.nfe (fiscal) primeiro — e ela vinha sempre vazia.
 check('syncNfeData popula as DUAS tabelas de NF-e',
   /data\.nfes = manuais;/.test(servidor) && /data\.nfe = fiscais;/.test(servidor));
+
+console.log('\n--- 10. o campo Documento comeca com LF (fase AY) ---');
+const codigoLanc = require('../public/modules/shared/lancamento_codigo');
+check('prefixa sem apagar o documento externo',
+  codigoLanc.documento(42, '000000123') === 'LF0042 \u00b7 000000123',
+  codigoLanc.documento(42, '000000123'));
+check('sem documento externo, so o numero',
+  codigoLanc.documento(42, '') === 'LF0042', codigoLanc.documento(42, ''));
+// Reeditar e salvar o texto inteiro nao pode virar "LF0042 . LF0042 . 123".
+check('nunca duplica o prefixo',
+  codigoLanc.documento(42, 'LF0042 \u00b7 000000123') === 'LF0042 \u00b7 000000123',
+  codigoLanc.documento(42, 'LF0042 \u00b7 000000123'));
+check('lancamento sem numero devolve so o externo',
+  codigoLanc.documento(null, '123') === '123', codigoLanc.documento(null, '123'));
+// A chave de acesso tem 44 digitos e e' o que liga a conta a pagar a nota.
+const CHAVE = '42260812345678000199550010000001231000001238';
+check('a chave de acesso sobrevive inteira',
+  codigoLanc.documento(7, CHAVE).endsWith(CHAVE), codigoLanc.documento(7, CHAVE));
+
+console.log('\n--- 11. o caminho de volta (a tela de edicao) ---');
+check('tira o prefixo para o campo',
+  codigoLanc.referencia(42, 'LF0042 \u00b7 000000123') === '000000123',
+  codigoLanc.referencia(42, 'LF0042 \u00b7 000000123'));
+check('so o numero vira campo vazio',
+  codigoLanc.referencia(42, 'LF0042') === '', `"${codigoLanc.referencia(42, 'LF0042')}"`);
+check('ida e volta nao perde nada',
+  codigoLanc.referencia(42, codigoLanc.documento(42, CHAVE)) === CHAVE);
+// O lpad do Postgres TRUNCA; o padStart do JS nao. Os dois geram o MESMO campo,
+// entao a partir de LF10000 eles discordariam — "LF1000" e' outro lancamento.
+check('acima de 9999 nao trunca',
+  codigoLanc.documento(10000, 'x') === 'LF10000 \u00b7 x', codigoLanc.documento(10000, 'x'));
+
+console.log('\n--- 12. o prefixo e gravado, nao so desenhado ---');
+const dadosFin2 = ler('lib/db/financeiro.js');
+check('a criacao monta o documento pelo catalogo',
+  /document: lancamentoCodigo\.documento\(code, payload\.document/.test(dadosFin2));
+// Sem isto, o usuario apagaria o prefixo no campo e ele nao voltaria.
+const reaplica = (servidor.match(/entry\.document = lancamentoCodigo\.documento\(entry\.code, body\.document\)/g) || []).length;
+check('a edicao reaplica o prefixo nas DUAS metades da rota PUT', reaplica === 2, `${reaplica} lugar(es)`);
+const telaNovo = ler('public/modules/finance/subs/novo_lancamento.js');
+check('a tela mostra o prefixo ao lado, e nao dentro do campo',
+  /finance-documento-prefixo/.test(telaNovo)
+  && /MavisLancamentoCodigo\.referencia\(editEntry\.code, editEntry\.document\)/.test(telaNovo));
+check('  e o estilo existe', /\.finance-documento-prefixo/.test(ler('public/app.css')));
+
+console.log('\n--- 13. a migracao da fase AY ---');
+const migAy = ler('banco/migrations/fase-ay-documento-e-descricao-padronizados.sql');
+check('numera quem ficou sem numero', /set code = nextval\('financial_entries_code_seq'\)/.test(migAy));
+// lpad(x, 4) TRUNCA no Postgres: LF10000 viraria LF1000.
+check('o lpad nao trunca acima de 9999',
+  /lpad\(code::text, greatest\(4, length\(code::text\)\), '0'\)/.test(migAy));
+check('rodar duas vezes nao duplica o prefixo',
+  /not like n\.codigo \|\| ' \u00b7 %'/.test(migAy));
+check('  nem a natureza na descricao',
+  (migAy.match(/!~ '\^\(Receita\|Despesa\|Transfer\u00eancia\) '/g) || []).length === 2);
+// Descricao digitada por gente nao e' do sistema para reescrever.
+check('so reescreve descricao de lancamento vinculado',
+  (migAy.match(/coalesce\(reference_id, ''\) <> '' or coalesce\(nfe_id, ''\) <> ''/g) || []).length === 2);
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

@@ -25,6 +25,10 @@
 (function (raiz) {
   const PREFIXO = 'LF';
   const DIGITOS = 4;
+  // O mesmo separador da descrição (shared/descricao_lancamento.js): não aparece
+  // dentro de número de documento nem de chave de acesso, então nunca vira
+  // ambiguidade na hora de ler onde termina o número e começa a referência.
+  const SEPARADOR = ' · ';
 
   /**
    * Número -> código. Sem número, devolve string vazia.
@@ -61,7 +65,49 @@
     return codigo ? `${base}${base ? ' ' : ''}${codigo}` : base;
   }
 
-  const api = { PREFIXO, DIGITOS, formatar, numero, rotulo };
+  /**
+   * O CAMPO "DOCUMENTO" DO LANÇAMENTO (fase AY).
+   *
+   * Foi pedido assim: "para cada lançamento financeiro o documento comece com
+   * LF{número} para manter padronizado".
+   *
+   * COMEÇA com o número, e não SÓ o número. O que estava lá antes — o código do
+   * pedido, o número da NF-e, a chave de acesso de 44 dígitos — é o documento
+   * EXTERNO, e é por ele que uma pessoa liga a conta a pagar à nota do
+   * fornecedor na conferência. Substituir apagaria o único lugar onde essa
+   * ligação está escrita.
+   *
+   *   LF0042 · 000000123
+   *   LF0042 · 42260812345678000199550010000001231000001238
+   *   LF0042                      (quando não há documento externo)
+   *
+   * NUNCA DUPLICA O PREFIXO: quem editar o campo e salvar de volta o texto
+   * inteiro recebe o mesmo texto, e não "LF0042 · LF0042 · 123".
+   */
+  function documento(code, referenciaExterna) {
+    const codigo = formatar(code);
+    const externo = String(referenciaExterna || '').trim();
+    if (!codigo) return externo;
+    if (externo === codigo || externo.startsWith(codigo + SEPARADOR)) return externo;
+    return externo ? codigo + SEPARADOR + externo : codigo;
+  }
+
+  /**
+   * O caminho de volta: só o documento externo, sem o LF.
+   *
+   * É o que a tela de edição põe dentro do campo — o prefixo aparece ao lado,
+   * fixo, porque ele não é do usuário para editar. Sem isto, o campo abriria com
+   * "LF0042 · 123" e a primeira correção seria alguém apagando o prefixo à mão.
+   */
+  function referencia(code, documentoCompleto) {
+    const codigo = formatar(code);
+    const texto = String(documentoCompleto || '').trim();
+    if (!codigo) return texto;
+    if (texto === codigo) return '';
+    return texto.startsWith(codigo + SEPARADOR) ? texto.slice((codigo + SEPARADOR).length) : texto;
+  }
+
+  const api = { PREFIXO, DIGITOS, SEPARADOR, formatar, numero, rotulo, documento, referencia };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisLancamentoCodigo = api;
 })(typeof window !== 'undefined' ? window : globalThis);

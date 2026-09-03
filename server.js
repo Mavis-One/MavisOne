@@ -9830,7 +9830,10 @@ const server = http.createServer(async (req, res) => {
 
         // Só o que o pedido/NF-e não possui.
         if (body.dueDate !== undefined) entry.dueDate = body.dueDate;
-        if (body.document !== undefined) entry.document = body.document;
+        // Fase AY: o numero volta na frente mesmo que o usuario o apague do campo —
+        // e' o que faz "padronizado" valer tambem depois da edicao. `documento`
+        // nunca duplica o prefixo (ver shared/lancamento_codigo.js).
+        if (body.document !== undefined) entry.document = lancamentoCodigo.documento(entry.code, body.document);
         if (body.note !== undefined) entry.note = body.note;
         if (body.category !== undefined) entry.category = body.category;
         if (body.costCenter !== undefined) entry.costCenter = body.costCenter;
@@ -9855,7 +9858,10 @@ const server = http.createServer(async (req, res) => {
       if (body.amount !== undefined) entry.amount = Number(body.amount || 0);
       if (body.date !== undefined) entry.date = body.date;
       if (body.dueDate !== undefined) entry.dueDate = body.dueDate;
-      if (body.document !== undefined) entry.document = body.document;
+      // Fase AY: o numero volta na frente mesmo que o usuario o apague do campo —
+      // e' o que faz "padronizado" valer tambem depois da edicao. `documento`
+      // nunca duplica o prefixo (ver shared/lancamento_codigo.js).
+      if (body.document !== undefined) entry.document = lancamentoCodigo.documento(entry.code, body.document);
       if (body.note !== undefined) entry.note = body.note;
       if (body.category !== undefined) entry.category = body.category;
       if (body.costCenter !== undefined) entry.costCenter = body.costCenter;

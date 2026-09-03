@@ -41,9 +41,15 @@ check('achei o trecho do PUT', put.length > 500, `${put.length} caracteres`);
 check('reconhece vínculo com pedido', /const vinculadoAoPedido = Boolean\(entry\.referenceId\)/.test(put));
 check('e vínculo com NF-e', /const vinculadoANfe = Boolean\(entry\.nfeId\)/.test(put));
 // Estes seis eram o passo seguinte do faturamento e estavam bloqueados.
-['dueDate', 'document', 'note', 'category', 'costCenter', 'bankAccountId'].forEach((campo) => {
+['dueDate', 'note', 'category', 'costCenter', 'bankAccountId'].forEach((campo) => {
   check(`  ${campo} é gravado no lançamento vinculado`, new RegExp(`if \\(body\\.${campo} !== undefined\\) entry\\.${campo} = body\\.${campo}`).test(put));
 });
+// O documento também é editável — o que mudou (fase AY) é que ele passa pelo
+// catálogo antes de ser gravado, para o número do lançamento voltar à frente
+// mesmo que o usuário apague o prefixo do campo. Continua sendo o valor que o
+// usuário mandou; o que se acrescenta é o LF.
+check('  document é gravado no lançamento vinculado, com o número na frente',
+  /if \(body\.document !== undefined\) entry\.document = lancamentoCodigo\.documento\(entry\.code, body\.document\)/.test(put));
 
 console.log('\n--- e recusa o que ela possui, em vez de ignorar calado ---');
 // Aceitar e manter o valor antigo seria pior do que negar: a tela diria

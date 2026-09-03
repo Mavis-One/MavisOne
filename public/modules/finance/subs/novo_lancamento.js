@@ -155,7 +155,18 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           `}
 
           <div class="row">
-            <label>Documento<input name="document" value="${editEntry ? escapeHtml(editEntry.document || '') : ''}" /></label>
+            ${/* Fase AY: o campo Documento comeca com o numero do lancamento. O
+                 prefixo aparece AO LADO do campo, fixo, e nao dentro dele: e' do
+                 sistema, nao do usuario. Sem isto o campo abriria com
+                 "LF0042 · 123" e a primeira correcao seria alguem apagando o
+                 prefixo a mao — que o servidor recolocaria, num vai e volta que
+                 so confunde. Ver shared/lancamento_codigo.js. */''}
+            <label>Documento
+              <div class="finance-documento-campo">
+                ${editEntry && editEntry.codigo ? `<span class="finance-documento-prefixo" title="Numero do lancamento">${escapeHtml(editEntry.codigo)} &middot;</span>` : ''}
+                <input name="document" placeholder="NF-e, chave de acesso, pedido..." value="${editEntry ? escapeHtml(window.MavisLancamentoCodigo.referencia(editEntry.code, editEntry.document)) : ''}" />
+              </div>
+            </label>
             <label>Descrição<input name="description" required value="${editEntry ? escapeHtml(editEntry.description || '') : ''}" ${travado('description')} /></label>
           </div>
           <label>Observação<textarea name="note" rows="3">${editEntry ? escapeHtml(editEntry.note || '') : ''}</textarea></label>

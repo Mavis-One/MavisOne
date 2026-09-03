@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-03 14:15 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-03 14:36 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -491,7 +491,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-44 arquivo(s) em banco/migrations, em ordem de fase:
+45 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -518,6 +518,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-av-faturar-exige-documento.sql
   fase-aw-deposito-pertence-a-loja.sql
   fase-ax-motivo-do-cancelamento.sql
+  fase-ay-documento-e-descricao-padronizados.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -563,7 +564,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-cst-icms.js                   O CST decide QUAIS campos a nota carrega — não é um rótulo.
   [npm test] test-dashboard-hub.js              Desenho do hub — public/modules/dashboard/index.js O que este teste guarda: 1.
   [npm test] test-deposito-da-loja.js           O DEPÓSITO PERTENCE A UMA LOJA (fase AW).
-  [avulso]  test-descricao-e-motivo.js         A DESCRIÇÃO DO LANÇAMENTO E O MOTIVO DO CANCELAMENTO (fase AX).
+  [npm test] test-descricao-e-motivo.js         A DESCRIÇÃO, O MOTIVO DO CANCELAMENTO E O CAMPO DOCUMENTO (fases AX e AY).
   [npm test] test-documento.js                  CPF e CNPJ — modules/shared/documento.js.
   [npm test] test-emissao-abas.js               A tela de emissão de NF-e: estrutura das abas e o que acontece ao clicar em "Emitir NF-e" com campo obrigatóri
   [npm test] test-entrada-nfe.js                ENTRADA DE NF-e — o XML do fornecedor, o fornecedor que falta e o que a nota não pode fazer sozinha.

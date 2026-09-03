@@ -1701,6 +1701,18 @@ tr[data-detail] { cursor: pointer; }
 .finance-inline-select { display: flex; gap: 6px; align-items: center; }
 .finance-inline-select select { flex: 1; }
 .finance-inline-add { display: flex; gap: 8px; align-items: center; margin-top: -6px; margin-bottom: 6px; }
+
+/* Fase AY: o campo Documento do lancamento. O numero (LF0042) fica ao lado do
+   campo, fixo — ele e' do sistema. O input cresce e ocupa o resto da linha. */
+.finance-documento-campo { display: flex; gap: 8px; align-items: center; }
+.finance-documento-campo input { flex: 1; min-width: 0; }
+.finance-documento-prefixo {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.72;
+  white-space: nowrap;
+}
 .finance-inline-add input { flex: 1; }
 
 .finance-extrato-actions { display: flex; flex-wrap: wrap; gap: 6px; }
