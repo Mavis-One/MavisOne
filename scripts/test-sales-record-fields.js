@@ -175,6 +175,80 @@ const colunasAplicadas = db.FASES_OPCIONAIS
   check('e as duas rotas usam a mensagem certa',
     (serverSrc.match(/mensagemItensInvalidos\(body\.items\)/g) || []).length === 2);
 
+  // =========================================================================
+  // TODA COLUNA QUE O BUILDER MANDA EXISTE NA TABELA DE DESTINO
+  // =========================================================================
+  //
+  // O CHECK QUE FALTAVA, e a falha que ele pega e' de bloqueio total.
+  //
+  // `orders` e `quotes` NAO tem as mesmas colunas: nfe_id (fase P) e as cinco
+  // dispensa_* (fase AV) so existem em `orders`, porque so pedido fatura. O
+  // builder e' um so para os dois, e mandar uma coluna que a tabela nao tem faz
+  // o INSERT inteiro falhar:
+  //
+  //   createQuote: column "dispensa_documento_fiscal" of relation "quotes"
+  //   does not exist
+  //
+  // Aconteceu de verdade: a fase AV deixou as cinco colunas sem guarda e NENHUM
+  // orcamento pode ser salvo — o modulo inteiro fora do ar, com a suite verde,
+  // porque os testes so exercitavam buildOrderQuoteRow em memoria e nunca o
+  // INSERT. Este check fecha a distancia entre as duas coisas SEM precisar de
+  // banco: le as colunas de banco/RECRIAR-DO-ZERO.sql, que e' gerado do
+  // schema + todas as migracoes e por isso esta sempre em dia.
+  console.log('\n--- as colunas do builder existem na tabela ---');
+
+  const sqlDoZero = fs.readFileSync(path.join(__dirname, '..', 'banco', 'RECRIAR-DO-ZERO.sql'), 'utf8');
+
+  // Colunas de uma tabela: as do `create table` mais as de todo
+  // `alter table ... add column` que a nomeie.
+  function colunasDe(tabela) {
+    const colunas = new Set();
+    const criacao = new RegExp(`create table if not exists ${tabela}\\s*\\(([\\s\\S]*?)\\n\\);`, 'i').exec(sqlDoZero);
+    if (criacao) {
+      criacao[1].split('\n').forEach((l) => {
+        const m = /^\s{2}([a-z_][a-z0-9_]*)\s/.exec(l);
+        if (m && !['primary', 'unique', 'foreign', 'constraint', 'check'].includes(m[1])) colunas.add(m[1]);
+      });
+    }
+    // `alter table ... add column` — um alter pode acrescentar varias, separadas
+    // por virgula, ate o `;`.
+    const alteres = new RegExp(`alter table (?:if exists )?${tabela}\\b([\\s\\S]*?);`, 'gi');
+    let a;
+    while ((a = alteres.exec(sqlDoZero)) !== null) {
+      const corpo = a[1];
+      const adds = /add column (?:if not exists )?([a-z_][a-z0-9_]*)/gi;
+      let c;
+      while ((c = adds.exec(corpo)) !== null) colunas.add(c[1].toLowerCase());
+    }
+    return colunas;
+  }
+
+  const colunasOrders = colunasDe('orders');
+  const colunasQuotes = colunasDe('quotes');
+  check('achei as colunas de orders', colunasOrders.size > 20, `${colunasOrders.size}`);
+  check('achei as colunas de quotes', colunasQuotes.size > 20, `${colunasQuotes.size}`);
+
+  // `updated_at` e as colunas de sistema entram pelo create table; o builder
+  // tambem manda `type`, que existe nas duas.
+  const conferir = (tipo, colunas, nomeTabela) => {
+    const geradas = Object.keys(db.buildOrderQuoteRow(tipo, pedido));
+    const faltando = geradas.filter((c) => !colunas.has(c));
+    check(`buildOrderQuoteRow('${tipo}') so manda coluna que ${nomeTabela} tem`,
+      faltando.length === 0,
+      faltando.length ? `NAO EXISTE(M) em ${nomeTabela}: ${faltando.join(', ')}` : `${geradas.length} colunas conferidas`);
+  };
+  conferir('order', colunasOrders, 'orders');
+  conferir('quote', colunasQuotes, 'quotes');
+
+  // E o contrario tambem importa: uma coluna que so `orders` tem nao pode
+  // escapar para o caminho do orcamento.
+  const soDeOrders = [...colunasOrders].filter((c) => !colunasQuotes.has(c));
+  const noQuote = Object.keys(db.buildOrderQuoteRow('quote', pedido));
+  const vazadas = soDeOrders.filter((c) => noQuote.includes(c));
+  check('nenhuma coluna exclusiva de orders vaza para o orcamento',
+    vazadas.length === 0,
+    vazadas.length ? vazadas.join(', ') : `${soDeOrders.length} exclusiva(s) de orders: ${soDeOrders.join(', ')}`);
+
   console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
   process.exit(falhas === 0 ? 0 : 1);
 })();
