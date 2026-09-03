@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-03 12:28 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-03 12:29 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -73,7 +73,7 @@ Financeiro  (finance)  —  8 tela(s) no menu
   [ok]  Extrato Open Finance               Extrato bancário puxado via Open Finance.
   [ok]  Bancos Conectados                  Bancos ligados e situação de cada conexão.
 
-Fiscal  (fiscal)  —  10 tela(s) no menu
+Fiscal  (fiscal)  —  11 tela(s) no menu
 ---------------------------------------
   [ok]  Painel Fiscal                      Notas transmitidas, autorizadas e o que a SEFAZ recusou.
   [ok]  NF-e Emitidas                      Notas emitidas, com DANFE, XML e cancelamento.
@@ -81,6 +81,7 @@ Fiscal  (fiscal)  —  10 tela(s) no menu
   [ok]  Nova NF-e Avulsa                   Emite uma NF-e sem partir de um pedido.
   [ok]  NF-e Inutilizadas                  Faixas de numeração queimadas na SEFAZ.
   [ok]  Inutilizar NF-e                    Declara que uma faixa de números não virará nota.
+  [ok]  Notas contra CNPJ                  O que terceiros emitiram contra os nossos CNPJs, com manifestação do destinatário.
   [ok]  Eventos NF-e                       Cartas de correção, cancelamentos e inutilizações.
   [ok]  Logs NF-e                          O que foi enviado à SEFAZ e o que ela respondeu.
   [ok]  Tabelas Fiscais                    Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.
@@ -187,7 +188,7 @@ Cadastros  (cadastros)  —  19 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 123 telas no menu.
+TOTAL: 14 módulos, 124 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -252,6 +253,8 @@ regra só, para tela e servidor nunca discordarem.
       CPF e CNPJ — implementação ÚNICA, usada por todas as telas.
   fiscal_permissoes.js   [também no servidor]
       Permissões do módulo Fiscal — FONTE ÚNICA.
+  manifestacao.js   [também no servidor]
+      MANIFESTAÇÃO DO DESTINATÁRIO — catálogo dos quatro eventos.
   module_workspace.js
       (sem descrição)
   nfe_texto_padrao.js
@@ -308,6 +311,9 @@ Arquivos de acesso (lib/db)
   lib/db/crm.js
       Conexão com o CRM externo.
       tabelas: crm_connection
+  lib/db/dfe.js
+      AS NOTAS EMITIDAS CONTRA O NOSSO CNPJ no banco.
+      tabelas: dfe_nsu, nfe_distribuicao
   lib/db/entrada-nfe.js
       ENTRADA DE NF-e no banco.
       tabelas: nfe_entrada, nfe_entrada_item
@@ -332,35 +338,35 @@ Arquivos de acesso (lib/db)
   lib/db/vendas-compras.js
       tabelas: import_logs, orders, purchases, quotes, sales
 
-Tabelas usadas (70)
+Tabelas usadas (72)
 -------------------
   access_logs             account_balances        audit_logs
   bank_accounts           bank_cards              bank_transactions
   card_transactions       certificado_digital     cfop
   cnpjs                   contract_templates      contract_types
   contracts               cost_centers            crm_connection
-  deposits                empresa                 estabelecimento
-  financial_categories    financial_entries       financial_institutions
-  financial_payments      fleet_maintenances      fleet_refuels
-  fleet_vehicles          hr_departments          hr_employee_categories
-  hr_employee_types       hr_employees            hr_leaves
-  hr_positions            hr_time_entries         hr_work_schedules
-  import_logs             nfe                     nfe_arquivos
-  nfe_entrada             nfe_entrada_item        nfe_eventos
-  nfe_items               nfes                    open_finance_audit_logs
-  open_finance_connectionsopen_finance_webhook_eventsorders
-  pcp_bom                 pcp_entries             pcp_orders
-  pcp_quality_checks      pcp_sectors             pcp_statuses
-  pedido_anexo            people                  permissions
-  product_class_assignmentsproduct_class_value_assignmentsproduct_class_values
-  product_classes         products                purchase_orders
-  purchases               quotes                  regra_fiscal
-  role_permissions        roles                   sales
-  settings                user_permissions        user_roles
-  users
+  deposits                dfe_nsu                 empresa
+  estabelecimento         financial_categories    financial_entries
+  financial_institutions  financial_payments      fleet_maintenances
+  fleet_refuels           fleet_vehicles          hr_departments
+  hr_employee_categories  hr_employee_types       hr_employees
+  hr_leaves               hr_positions            hr_time_entries
+  hr_work_schedules       import_logs             nfe
+  nfe_arquivos            nfe_distribuicao        nfe_entrada
+  nfe_entrada_item        nfe_eventos             nfe_items
+  nfes                    open_finance_audit_logs open_finance_connections
+  open_finance_webhook_eventsorders                  pcp_bom
+  pcp_entries             pcp_orders              pcp_quality_checks
+  pcp_sectors             pcp_statuses            pedido_anexo
+  people                  permissions             product_class_assignments
+  product_class_value_assignmentsproduct_class_values    product_classes
+  products                purchase_orders         purchases
+  quotes                  regra_fiscal            role_permissions
+  roles                   sales                   settings
+  user_permissions        user_roles              users
 
 ==============================================================================
-4. ROTAS DA API (99 encontradas no server.js)
+4. ROTAS DA API (102 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -403,6 +409,9 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/fiscal/…                                        
   /api/fiscal/certificados                             GET POST
   /api/fiscal/certificados/…                           
+  /api/fiscal/dfe                                      GET
+  /api/fiscal/dfe/…                                    
+  /api/fiscal/dfe/buscar                               POST
   /api/fiscal/empresas                                 GET POST
   /api/fiscal/empresas/…                               
   /api/fiscal/estabelecimentos                         GET POST
@@ -468,7 +477,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-37 arquivo(s) em banco/migrations, em ordem de fase:
+38 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -488,6 +497,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-ao-observacao-padrao-por-empresa.sql
   fase-ap-razao-de-estoque-no-banco.sql
   fase-aq-compras-cotacao-e-ordem.sql
+  fase-ar-notas-contra-cnpj.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -511,7 +521,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-63 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+64 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -552,6 +562,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-nfe-observacoes.js            Observações adicionais da NF-e — o texto padrão da empresa.
   [npm test] test-nfe-payload.js                Montagem do payload de NF-e — lib/nfePayloadBuilder.js É conta de imposto: errado aqui não dá erro de tela, dá
   [npm test] test-nfe-unificada.js              A lista de NF-e passou a mostrar as duas origens.
+  [npm test] test-notas-contra-cnpj.js          NOTAS EMITIDAS CONTRA O NOSSO CNPJ — Distribuição de DF-e (fase AR).
   [npm test] test-paineis-modulos.js            Painéis por módulo — a conta de cada indicador, e o que eles se recusam a afirmar.
   [npm test] test-permissoes-fiscais.js         Permissões do módulo Fiscal — a tela e o portão do servidor têm de falar a mesma língua.
   [avulso]  test-permissoes-tela.js            A tela de Papéis e Permissões contra as permissões REAIS do banco.
@@ -581,7 +592,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-112 arquivos JS carregados por public/index.html, nesta ordem.
+114 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -624,6 +635,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/sales_status.js
   /modules/shared/purchase_totals.js
   /modules/shared/purchase_status.js
+  /modules/shared/manifestacao.js
   /modules/shared/sales_bulk_actions.js
   /modules/shared/fiscal_permissoes.js
   /modules/shared/cst_icms.js
@@ -644,6 +656,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/fiscal/shared.js
   /modules/fiscal/subs/tabelas.js
   /modules/fiscal/subs/painel.js
+  /modules/fiscal/subs/notas_contra_cnpj.js
   /modules/fiscal/subs/eventos.js
   /modules/fiscal/subs/inutilizar.js
   /modules/fiscal/subs/logs.js

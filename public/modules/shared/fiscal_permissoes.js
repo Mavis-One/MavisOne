@@ -24,9 +24,17 @@
 //
 // FUNCIONALIDADE AUSENTE x PERMISSÃO AUSENTE
 // ------------------------------------------
-// Documentos recebidos e manifestação do destinatário (DFe) não existem no
-// sistema. A permissão volta junto com a funcionalidade — antes disso, ela é
-// só uma promessa na tela.
+// Documentos recebidos e manifestação do destinatário (DFe) não existiam no
+// sistema, e por isso as duas permissões tinham sido removidas daqui: a
+// permissão volta junto com a funcionalidade, e antes disso é só uma promessa
+// na tela.
+//
+// A fase AR construiu as duas — a tela "Notas contra CNPJ" consulta a
+// Distribuição de DF-e e manifesta o destinatário —, então elas voltaram. São
+// SEPARADAS de propósito: consultar o que emitiram contra o nosso CNPJ é
+// leitura, e manifestar é um evento fiscal com efeito jurídico. Quem confere as
+// notas que chegaram não deveria, pelo mesmo clique, poder declarar à Receita
+// que a empresa DESCONHECE uma operação.
 (function (raiz) {
   const CATALOGO = [
     { value: 'visualizar', label: 'Visualizar', descricao: 'Ver notas, regras, empresas e tabelas fiscais.' },
@@ -37,6 +45,8 @@
     { value: 'configurar', label: 'Configurar empresa/estabelecimento', descricao: 'CNPJ, regime tributário, série, token e webhook.' },
     { value: 'regras', label: 'Regras fiscais', descricao: 'Criar e alterar as regras de tributação.' },
     { value: 'certificado', label: 'Certificado digital', descricao: 'Enviar e substituir o certificado A1.' },
+    { value: 'documentos_recebidos', label: 'Documentos recebidos (DF-e)', descricao: 'Consultar na SEFAZ as notas que terceiros emitiram contra o nosso CNPJ.' },
+    { value: 'manifestar', label: 'Manifestar documento', descricao: 'Declarar à SEFAZ ciência, confirmação, desconhecimento ou operação não realizada.' },
     { value: 'xml', label: 'Baixar XML', descricao: 'Baixar o XML da nota autorizada.' },
     { value: 'danfe', label: 'Baixar DANFE', descricao: 'Baixar o PDF da DANFE.' }
   ];
@@ -56,7 +66,10 @@
   // Permissões que já foram oferecidas na tela e nunca chegaram a existir. Ficam
   // nomeadas para que um usuário antigo, salvo com elas marcadas, não as veja
   // reaparecer — e para o teste conseguir provar que sumiram.
-  const REMOVIDAS = ['criar', 'editar', 'documentos_recebidos', 'manifestar', 'auditoria'];
+  // `documentos_recebidos` e `manifestar` saíram desta lista na fase AR, quando
+  // a funcionalidade passou a existir — ver o cabeçalho. As três que restam
+  // continuam sem rota que as exija.
+  const REMOVIDAS = ['criar', 'editar', 'auditoria'];
 
   function valida(valor) {
     return VALORES.includes(valor);

@@ -65,6 +65,9 @@ const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 // Fase AP: o razao de estoque saiu do db.json e virou tabela no Postgres.
 const razaoEstoque = require('./lib/db/estoque-razao');
 const { emTransacao } = require('./lib/db/conexao');
+// Fase AR: as notas que emitiram CONTRA o nosso CNPJ (Distribuicao de DF-e).
+const dfeDb = require('./lib/db/dfe');
+const manifestacao = require('./public/modules/shared/manifestacao');
 // Fase AQ: cotacao e ordem de compra sao o mesmo documento — o status decide.
 const comprasDb = require('./lib/db/compras');
 const purchaseStatus = require('./public/modules/shared/purchase_status');
@@ -3104,6 +3107,14 @@ function resolveFiscalPermission(pathname, method) {
   // consulta não conseguiria descobrir por que uma emissão foi recusada.
   if (pathname === '/api/fiscal/regras/simular') return 'visualizar';
   if (pathname.startsWith('/api/fiscal/regras/')) return 'regras';
+
+  // DISTRIBUIÇÃO DE DF-e (fase AR). Antes de /api/fiscal/nfe porque manifestar
+  // termina em /manifestar, e o endsWith('/eventos') logo abaixo não o pega —
+  // mas a ordem explícita é o que impede que um sufixo novo mude a regra desta
+  // rota sem ninguém perceber.
+  if (pathname.endsWith('/manifestar')) return 'manifestar';
+  if (pathname === '/api/fiscal/dfe' || pathname === '/api/fiscal/dfe/buscar') return 'documentos_recebidos';
+  if (pathname.startsWith('/api/fiscal/dfe/')) return 'documentos_recebidos';
 
   if (pathname === '/api/fiscal/nfe') return 'visualizar';
   if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
@@ -6473,6 +6484,242 @@ const server = http.createServer(async (req, res) => {
     try {
       // Tabelas de referência (CFOP, CST, CSOSN, origem). São códigos oficiais,
       // iguais para qualquer empresa — só leitura, sem parâmetro.
+      // =========================================================================
+      // NOTAS EMITIDAS CONTRA O NOSSO CNPJ — Distribuicao de DF-e (fase AR)
+      //
+      // O portao fiscal la em cima ja conferiu a permissao (documentos_recebidos
+      // para consultar, manifestar para o evento) — ver resolveFiscalPermission.
+      // =========================================================================
+
+      if (pathname === '/api/fiscal/dfe' && req.method === 'GET') {
+        const cnpj = url.searchParams.get('cnpj') || '';
+        const [documentos, estabelecimentos] = await Promise.all([
+          dfeDb.listarDocumentos(cnpj ? { cnpj } : {}),
+          fiscalDb.getEstabelecimentos()
+        ]);
+        // O ponteiro de NSU de cada empresa vai junto: e ele que a tela mostra para
+        // dizer ate onde ja sincronizou, e sem isso "a partir do ultimo NSU" seria
+        // um botao que nao diz de onde parte.
+        const ponteiros = {};
+        for (const estabelecimento of estabelecimentos) {
+          const documento = String(empresa.cnpj || '').replace(/\D/g, '');
+          if (documento) ponteiros[documento] = await dfeDb.obterNsu(documento);
+        }
+        return sendJson(res, {
+          documentos,
+          // A tela chama de "empresa", que e como o usuario pensa. Aqui sao
+          // ESTABELECIMENTOS: `empresa` guarda so a raiz do CNPJ (8 digitos), e
+          // a SEFAZ consulta o CNPJ inteiro — que so o estabelecimento tem,
+          // junto com as credenciais da Focus.
+          empresas: estabelecimentos.map((e) => ({ id: e.id, nome: e.razaoSocial || e.nomeFantasia || '', cnpj: e.cnpj })),
+          ponteiros,
+          manifestacoes: manifestacao.CATALOGO,
+          focusConfigurado: focusNfe.isConfigured()
+        });
+      }
+
+      if (pathname === '/api/fiscal/dfe/buscar' && req.method === 'POST') {
+        try {
+          const user = await getCurrentUser(req);
+          const body = await readBody(req);
+          const estabelecimentos = await fiscalDb.getEstabelecimentos();
+          const estabelecimento = estabelecimentos.find((e) => e.id === body.empresaId);
+          if (!estabelecimento) {
+            return sendJson(res, { error: 'Escolha a empresa cujo CNPJ sera consultado na SEFAZ.' }, 400);
+          }
+          const cnpj = String(empresa.cnpj || '').replace(/\D/g, '');
+          const nomeEmpresa = empresa.razaoSocial || empresa.nomeFantasia || '';
+
+          const modo = String(body.modo || 'ultimo-nsu');
+          const ponteiro = await dfeDb.obterNsu(cnpj);
+
+          // DE ONDE CADA MODO PARTE.
+          //
+          // 'tres-meses' comeca do ZERO, e nao de uma data: a SEFAZ nao filtra por
+          // periodo — ela pagina por NSU. O recorte de tres meses e feito DEPOIS,
+          // sobre o que voltou. Fingir um filtro que o servico nao tem devolveria
+          // silenciosamente menos notas do que o usuario pediu.
+          let nsuInicial = 0;
+          if (modo === 'ultimo-nsu') nsuInicial = ponteiro.ultimoNsu;
+          if (modo === 'nsu') {
+            const pedido = Number(body.nsu || 0);
+            if (!pedido) return sendJson(res, { error: 'Informe o NSU que deseja consultar.' }, 400);
+            // Menos 1 porque a SEFAZ devolve os documentos SEGUINTES ao NSU pedido:
+            // pedir exatamente o NSU 4131 traria do 4132 em diante, e o usuario
+            // que digitou 4131 receberia tudo menos o que procurava.
+            nsuInicial = Math.max(0, pedido - 1);
+          }
+
+          const resultado = await focusNfe.distribuicaoDfe({
+            cnpj, modo, nsu: nsuInicial, chave: body.chave
+          }, await focusNfe.forEstabelecimento(estabelecimento.id));
+
+          // O recorte de data, quando o modo pede.
+          let documentos = resultado.documentos;
+          if (modo === 'tres-meses') {
+            const limite = new Date();
+            limite.setMonth(limite.getMonth() - 3);
+            documentos = documentos.filter((d) => !d.dataEmissao || new Date(d.dataEmissao) >= limite);
+          }
+
+          let novos = 0;
+          let maiorNsu = nsuInicial;
+          for (const documento of documentos) {
+            const gravado = await dfeDb.gravarDocumento({
+              cnpjDestinatario: cnpj, empresaNome: nomeEmpresa, documento
+            });
+            if (gravado.novo) novos += 1;
+            if (documento.nsu > maiorNsu) maiorNsu = documento.nsu;
+          }
+
+          // O ponteiro so avanca nos modos que VARREM. Buscar uma chave ou um NSU
+          // antigo nao pode mover o marcador de "ja sincronizei ate aqui" — seria
+          // pular tudo o que existe entre o antigo e o atual.
+          let ponteiroFinal = ponteiro;
+          if (modo === 'ultimo-nsu' || modo === 'tres-meses') {
+            ponteiroFinal = await dfeDb.avancarNsu(cnpj, {
+              ultimoNsu: maiorNsu, maxNsu: resultado.maxNsu
+            });
+          }
+
+          await db.rbac.registrarAcesso({
+            userId: user?.id, userName: user?.name, action: 'fiscal.documentos_recebidos',
+            resourceType: 'dfe', result: 'PERMITIDO', ip: ipDaRequisicao(req),
+            detail: { cnpj, modo, encontrados: documentos.length, novos }
+          });
+
+          return sendJson(res, {
+            success: true,
+            encontrados: documentos.length,
+            novos,
+            ponteiro: ponteiroFinal,
+            // A SEFAZ entrega no maximo 50 por consulta: dizer que ainda falta e o
+            // que evita alguem achar que sincronizou tudo com uma clicada.
+            faltaBuscar: ponteiroFinal.maxNsu > ponteiroFinal.ultimoNsu,
+            documentos: await dfeDb.listarDocumentos({ cnpj })
+          });
+        } catch (erro) {
+          return sendJson(res, { error: erro.message || 'Erro ao consultar a SEFAZ' }, erro.status || 400);
+        }
+      }
+
+      if (pathname.startsWith('/api/fiscal/dfe/') && pathname.endsWith('/manifestar') && req.method === 'POST') {
+        try {
+          const user = await getCurrentUser(req);
+          const id = decodeURIComponent(pathname.slice('/api/fiscal/dfe/'.length, -('/manifestar'.length)));
+          const documento = await dfeDb.obterDocumento(id);
+          if (!documento) return sendJson(res, { error: 'Documento nao encontrado' }, 404);
+
+          const body = await readBody(req);
+          // AS CREDENCIAIS SAO DO CNPJ CONTRA O QUAL A NOTA FOI EMITIDA, e o
+          // documento ja o guarda. Pedir o estabelecimento a tela abriria a
+          // porta para manifestar uma nota de um CNPJ usando o certificado de
+          // outro — a SEFAZ recusaria, mas com um codigo numerico que ninguem
+          // liga a essa causa.
+          const estabelecimentos = await fiscalDb.getEstabelecimentos();
+          const estabelecimento = estabelecimentos.find(
+            (e) => String(e.cnpj || '').replace(/\D/g, '') === documento.cnpjDestinatario
+          );
+          if (!estabelecimento) {
+            return sendJson(res, {
+              error: `Nao ha estabelecimento cadastrado com o CNPJ ${documento.cnpjDestinatario}. `
+                + 'Manifestar exige o certificado desse CNPJ.'
+            }, 400);
+          }
+
+          const evento = manifestacao.obter(body.tipo);
+          if (!manifestacao.CATALOGO.some((m) => m.value === evento.value)) {
+            return sendJson(res, { error: 'Escolha o tipo de manifestacao.' }, 400);
+          }
+          if (documento.manifestacaoCodigo) {
+            return sendJson(res, {
+              error: `Esta nota ja foi manifestada como "${manifestacao.rotulo(documento.manifestacaoCodigo)}". `
+                + 'Manifestacao e evento fiscal: para mudar, o caminho e a SEFAZ, nao esta tela.'
+            }, 400);
+          }
+
+          // A SEFAZ PRIMEIRO, o banco depois. Gravar antes e depois falhar deixaria
+          // a tela dizendo "manifestada" sobre uma nota que a Receita continua
+          // esperando — e o usuario nao tentaria de novo.
+          const resposta = await focusNfe.manifestarNfe({
+            chave: documento.chave,
+            codigo: evento.codigo,
+            justificativa: body.justificativa,
+            cnpj: documento.cnpjDestinatario
+          }, await focusNfe.forEstabelecimento(estabelecimento.id));
+
+          const atualizado = await dfeDb.registrarManifestacao(id, {
+            codigo: evento.codigo, usuarioId: user?.id, usuarioNome: user?.name
+          });
+
+          // O XML COMPLETO SO EXISTE DEPOIS DA MANIFESTACAO. Buscar agora, na mesma
+          // requisicao, e o que permite lancar a entrada em seguida sem uma segunda
+          // ida a SEFAZ. Falhar aqui NAO desfaz a manifestacao (ela ja aconteceu, e
+          // nao se desfaz): a nota fica manifestada e sem XML, e a tela oferece
+          // buscar de novo.
+          let temXml = documento.tipoDocumento === 'completo';
+          if (evento.liberaXml && !temXml) {
+            try {
+              const completo = await focusNfe.distribuicaoDfe({
+                cnpj: documento.cnpjDestinatario, modo: 'chave', chave: documento.chave
+              }, await focusNfe.forEstabelecimento(estabelecimento.id));
+              const achado = completo.documentos.find((d) => d.chave === documento.chave && d.xml);
+              if (achado) {
+                await dfeDb.guardarXml(id, achado.xml);
+                temXml = true;
+              }
+            } catch (erroXml) {
+              temXml = false;
+            }
+          }
+
+          await db.rbac.registrarAcesso({
+            userId: user?.id, userName: user?.name, action: 'fiscal.manifestar',
+            resourceType: 'dfe', resourceId: id, result: 'PERMITIDO', ip: ipDaRequisicao(req),
+            detail: { chave: documento.chave, evento: evento.codigo }
+          });
+
+          return sendJson(res, {
+            success: true,
+            documento: { ...atualizado, tipoDocumento: temXml ? 'completo' : atualizado.tipoDocumento },
+            // A tela usa os dois para decidir se encadeia a entrada.
+            geraEntrada: evento.geraEntrada,
+            temXml,
+            sefaz: resposta
+          });
+        } catch (erro) {
+          return sendJson(res, { error: erro.message || 'Erro ao manifestar' }, erro.status || 400);
+        }
+      }
+
+      if (pathname.startsWith('/api/fiscal/dfe/') && pathname.endsWith('/xml') && req.method === 'GET') {
+        const id = decodeURIComponent(pathname.slice('/api/fiscal/dfe/'.length, -('/xml'.length)));
+        const xml = await dfeDb.obterXml(id);
+        if (!xml) {
+          return sendJson(res, {
+            error: 'O XML completo desta nota ainda nao foi liberado. Manifeste ciencia ou confirmacao para a SEFAZ libera-lo.'
+          }, 404);
+        }
+        return sendJson(res, { xml });
+      }
+
+      if (pathname.startsWith('/api/fiscal/dfe/') && pathname.endsWith('/entrada') && req.method === 'POST') {
+        try {
+          const id = decodeURIComponent(pathname.slice('/api/fiscal/dfe/'.length, -('/entrada'.length)));
+          const documento = await dfeDb.obterDocumento(id);
+          if (!documento) return sendJson(res, { error: 'Documento nao encontrado' }, 404);
+          const body = await readBody(req);
+          if (!body.entradaId) return sendJson(res, { error: 'Falta o id da entrada lancada.' }, 400);
+          // Registra que esta nota virou aquela entrada. E o que faz a tela parar de
+          // oferecer o lancamento e o que responde "essa nota ja entrou?" sem
+          // varrer nfe_entrada por chave.
+          const atualizado = await dfeDb.ligarEntrada(id, String(body.entradaId));
+          return sendJson(res, { success: true, documento: atualizado });
+        } catch (erro) {
+          return sendJson(res, { error: erro.message || 'Erro ao ligar a entrada' }, erro.status || 400);
+        }
+      }
+
       if (pathname === '/api/fiscal/tabelas' && req.method === 'GET') {
         return sendJson(res, await fiscalDb.getTabelasFiscais());
       }

@@ -53,12 +53,28 @@ check('nenhuma permissão oferecida sem rota que a exija', oferecidasSemUso.leng
 const exigidasSemCaixa = exigidas.filter((v) => !P.VALORES.includes(v));
 check('nenhuma rota exige permissão que não existe na tela', exigidasSemCaixa.length === 0, exigidasSemCaixa.join(', '));
 
-console.log('\n--- as cinco permissões fantasma não voltam ---');
+console.log('\n--- as permissões fantasma não voltam ---');
 P.REMOVIDAS.forEach((valor) => {
   check(`'${valor}' saiu do catálogo`, !P.VALORES.includes(valor));
 });
-// Usuário salvo antes da limpeza ainda tem 'manifestar' na coluna do banco.
-check('permissão antiga é filtrada na leitura', JSON.stringify(P.sanitizar(['emitir', 'manifestar', 'auditoria', 'xml'])) === '["emitir","xml"]');
+// FANTASMA E REMOVIDA NÃO SÃO A MESMA COISA, e este check já confundiu as duas.
+//
+// Ele usava 'manifestar' como exemplo de permissão que a tela oferecia sem
+// nenhuma rota exigir. Na fase AR a funcionalidade foi construída (a tela
+// "Notas contra CNPJ" consulta a Distribuição de DF-e e manifesta o
+// destinatário), então 'manifestar' voltou ao catálogo — que é exatamente o que
+// o cabeçalho de fiscal_permissoes.js promete: "a permissão volta junto com a
+// funcionalidade".
+//
+// O que este check protege continua sendo o mesmo: uma permissão que NENHUMA
+// rota exige tem de sumir da leitura, para o administrador não ver marcado um
+// controle que não controla nada. O exemplo agora é 'auditoria', que segue sem
+// rota. E 'manifestar' entra do outro lado, provando que ela sobrevive.
+check('permissão sem rota é filtrada na leitura',
+  JSON.stringify(P.sanitizar(['emitir', 'auditoria', 'criar', 'xml'])) === '["emitir","xml"]');
+check('  e a que ganhou funcionalidade sobrevive',
+  P.sanitizar(['manifestar', 'documentos_recebidos']).length === 2,
+  P.sanitizar(['manifestar', 'documentos_recebidos']).join(', '));
 check('e duplicata não passa', JSON.stringify(P.sanitizar(['xml', 'xml'])) === '["xml"]');
 check('lista inválida vira vazia', JSON.stringify(P.sanitizar(null)) === '[]');
 // Sanitizar só na tela deixaria um POST à mão gravar o que quisesse.

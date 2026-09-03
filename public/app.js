@@ -1622,6 +1622,9 @@ const moduleSubItems = {
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     { key: 'inutilizadas', label: 'NF-e Inutilizadas', desc: 'Faixas de numeração queimadas na SEFAZ.' },
     { key: 'inutilizar', label: 'Inutilizar NF-e', desc: 'Declara que uma faixa de números não virará nota.' },
+    // Fase AR. Fica junto de Eventos e Logs porque é a mesma natureza: conversa
+    // com a SEFAZ. O que ela encontra segue para Compras como Nota de Entrada.
+    { key: 'notas_contra_cnpj', label: 'Notas contra CNPJ', desc: 'O que terceiros emitiram contra os nossos CNPJs, com manifestação do destinatário.' },
     { key: 'eventos', label: 'Eventos NF-e', desc: 'Cartas de correção, cancelamentos e inutilizações.' },
     { key: 'logs', label: 'Logs NF-e', desc: 'O que foi enviado à SEFAZ e o que ela respondeu.' },
     { key: 'tabelas', label: 'Tabelas Fiscais', desc: 'Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.' },

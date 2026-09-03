@@ -172,10 +172,11 @@ TODAS_PRONTAS.forEach((m) => {
 });
 
 const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
-// 10 desde que o Painel Fiscal entrou. O número está escrito de propósito:
-// tela nova sem renderizador cai como "pendente" e este check já pegaria — mas
-// tela nova que ninguém registrou no menu passaria batido sem ele.
-check('fiscal tem as 10 telas reais', reais('fiscal') === 10, `${reais('fiscal')} real(is)`);
+// 11 desde a fase AR, que acrescentou "Notas contra CNPJ" (Distribuição de
+// DF-e). O número está escrito de propósito: tela nova sem renderizador cai
+// como "pendente" e o check acima já pegaria — mas tela nova que ninguém
+// registrou no menu passaria batido sem este.
+check('fiscal tem as 11 telas reais', reais('fiscal') === 11, `${reais('fiscal')} real(is)`);
 // Sem nenhuma tela pendente em lugar nenhum, o menu não pode mais oferecer um
 // destino que não abre.
 const pendentesNoSistema = Object.entries(moduleSubItems)
