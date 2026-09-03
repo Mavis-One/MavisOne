@@ -72,6 +72,9 @@ const lancamentoCodigo = require('./public/modules/shared/lancamento_codigo');
 const descricaoLancamento = require('./public/modules/shared/descricao_lancamento');
 // Fase AS: categoria da VENDA (Varejo, Atacado, Bonificacao) — nao a do produto.
 const categoriasVendaDb = require('./lib/db/categorias-venda');
+// Fase AZ: origem da VENDA (Balcao, Televendas, E-commerce). Era uma lista
+// fixa dentro do public/app.js, sem tela — ver o cabecalho da migracao.
+const origensVendaDb = require('./lib/db/origens-venda');
 // Fase AR: as notas que emitiram CONTRA o nosso CNPJ (Distribuicao de DF-e).
 const dfeDb = require('./lib/db/dfe');
 const manifestacao = require('./public/modules/shared/manifestacao');
@@ -5808,6 +5811,9 @@ const server = http.createServer(async (req, res) => {
       // nenhum dos dois relatórios fecha.
       //
       // productCategories continua indo: outras partes da tela de venda a usam.
+      // So as ATIVAS: inativar existe para a origem sumir do formulario sem
+      // sumir do historico. A lista de manutencao (rota /origins) traz todas.
+      salesOrigins: (await origensVendaDb.listar({ apenasAtivas: true })).map((o) => o.name),
       salesCategories: (await categoriasVendaDb.listar({ apenasAtivas: true }))
         .map((c) => ({ id: c.id, name: c.name })),
       productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo'),
@@ -6372,6 +6378,88 @@ const server = http.createServer(async (req, res) => {
       const id = decodeURIComponent(pathname.replace('/api/sales/categories/', ''));
       const apagou = await categoriasVendaDb.excluir(id);
       if (!apagou) return sendJson(res, { error: 'Categoria nao encontrada' }, 404);
+      return sendJson(res, { success: true });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao excluir' }, erro.status || 400);
+    }
+  }
+
+  // =========================================================================
+  // ORIGENS DE VENDA (fase AZ). Mesma forma das categorias acima, e de
+  // proposito: sao dois cadastros de apoio da mesma tela, e quem mexer num vai
+  // procurar o outro do lado.
+  // =========================================================================
+
+  if (pathname === '/api/sales/origins' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissao' }, 403);
+    }
+    const origens = await origensVendaDb.listar();
+    // Quantos registros usam cada uma — e' o que decide se a origem pode ser
+    // excluida ou se deve so ser inativada. Mostrar o numero aqui evita o
+    // clique que ja nasce recusado.
+    const comUso = [];
+    for (const origem of origens) {
+      const uso = await origensVendaDb.registrosQueUsam(origem.name);
+      comUso.push({ ...origem, pedidos: uso.pedidos, orcamentos: uso.orcamentos, usos: uso.total });
+    }
+    return sendJson(res, { origins: comUso });
+  }
+
+  if (pathname === '/api/sales/origins' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissao' }, 403);
+      }
+      const body = await readBody(req);
+      const origin = await origensVendaDb.criar(body);
+      return sendJson(res, { success: true, origin });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao criar a origem' }, erro.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/sales/origins/') && req.method === 'PUT') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissao' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/sales/origins/', ''));
+      const atual = await origensVendaDb.obter(id);
+      if (!atual) return sendJson(res, { error: 'Origem nao encontrada' }, 404);
+
+      const body = await readBody(req);
+      const origin = await origensVendaDb.atualizar(id, body);
+
+      // RENOMEAR NAO RENOMEIA NOS REGISTROS. `sale_origin` guarda o NOME (ver o
+      // cabecalho da migracao), entao os pedidos e orcamentos antigos continuam
+      // com o nome velho — e some do formulario a opcao que os explicava.
+      let aviso = '';
+      if (origin.name !== atual.name) {
+        const presos = await origensVendaDb.registrosQueUsam(atual.name);
+        if (presos.total > 0) {
+          aviso = `${presos.total} ${presos.total === 1 ? 'registro continua' : 'registros continuam'} com o nome antigo `
+            + `("${atual.name}"): a origem e gravada por nome no pedido, e renomear aqui nao os reescreve.`;
+        }
+      }
+      return sendJson(res, { success: true, origin, aviso });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao salvar a origem' }, erro.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/sales/origins/') && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissao' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/sales/origins/', ''));
+      const apagou = await origensVendaDb.excluir(id);
+      if (!apagou) return sendJson(res, { error: 'Origem nao encontrada' }, 404);
       return sendJson(res, { success: true });
     } catch (erro) {
       return sendJson(res, { error: erro.message || 'Erro ao excluir' }, erro.status || 400);

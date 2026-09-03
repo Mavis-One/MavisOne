@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-03 14:36 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-03 17:03 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -17,12 +17,14 @@ Dashboard Geral  (dashboard)  —  0 tela(s) no menu
 --------------------------------------------------
   (sem sub-telas: o módulo é uma tela única)
 
-Vendas  (sales)  —  11 tela(s) no menu
+Vendas  (sales)  —  13 tela(s) no menu
 --------------------------------------
   [app] Pedidos e Orçamentos               Lista de pedidos e orçamentos, com filtros, aprovação e faturamento.
   [app] Nova Venda                         Pedido e orçamento na mesma tela — o campo Status define qual dos dois é.
   [ok]  Categorias de Vendas               Como a venda é classificada: varejo, atacado, bonificação.
   [ok]  Nova Categoria de Vendas           Cria uma categoria de venda.
+  [ok]  Origens de Venda                   Por onde a venda chegou: balcão, televendas, e-commerce, indicação.
+  [ok]  Nova Origem de Venda               Cria uma origem de venda.
   [app] NF-e Emitidas                      Notas já emitidas, com DANFE, XML e cancelamento.
   [app] Nova NF-e Avulsa                   Emite uma NF-e sem partir de um pedido.
   [app] Meu Painel                         As vendas que você mesmo realizou, com a NF-e de cada pedido.
@@ -190,7 +192,7 @@ Cadastros  (cadastros)  —  19 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 126 telas no menu.
+TOTAL: 14 módulos, 128 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -342,6 +344,9 @@ Arquivos de acesso (lib/db)
   lib/db/openfinance.js
       Acesso a dados do módulo Open Finance (tabelas da Fase E em banco/schema.sql).
       tabelas: account_balances, bank_cards, card_transactions, financial_institutions, open_finance_audit_logs, open_finance_connections, open_finance_webhook_events
+  lib/db/origens-venda.js
+      ORIGENS DA VENDA no banco.
+      tabelas: sales_origins
   lib/db/rbac.js
       tabelas: access_logs, permissions, role_permissions, roles, user_permissions, user_roles
   lib/db/settings.js
@@ -349,7 +354,7 @@ Arquivos de acesso (lib/db)
   lib/db/vendas-compras.js
       tabelas: import_logs, orders, purchases, quotes, sales
 
-Tabelas usadas (73)
+Tabelas usadas (74)
 -------------------
   access_logs             account_balances        audit_logs
   bank_accounts           bank_cards              bank_transactions
@@ -374,11 +379,11 @@ Tabelas usadas (73)
   products                purchase_orders         purchases
   quotes                  regra_fiscal            role_permissions
   roles                   sales                   sales_categories
-  settings                user_permissions        user_roles
-  users
+  sales_origins           settings                user_permissions
+  user_roles              users
 
 ==============================================================================
-4. ROTAS DA API (104 encontradas no server.js)
+4. ROTAS DA API (106 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -467,6 +472,8 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/sales/import                                    POST
   /api/sales/meta                                      GET
   /api/sales/meu-painel                                GET
+  /api/sales/origins                                   GET POST
+  /api/sales/origins/…                                 
   /api/sales/records                                   GET POST
   /api/sales/records/…                                 
   /api/sales/records/lote                              POST
@@ -491,7 +498,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-45 arquivo(s) em banco/migrations, em ordem de fase:
+46 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -519,6 +526,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-aw-deposito-pertence-a-loja.sql
   fase-ax-motivo-do-cancelamento.sql
   fase-ay-documento-e-descricao-padronizados.sql
+  fase-az-origem-da-venda-vira-cadastro.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -542,7 +550,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-70 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+72 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -589,6 +597,8 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-nfe-unificada.js              A lista de NF-e passou a mostrar as duas origens.
   [npm test] test-notas-contra-cnpj.js          NOTAS EMITIDAS CONTRA O NOSSO CNPJ — Distribuição de DF-e (fase AR).
   [npm test] test-numero-lancamento.js          O NÚMERO DO LANÇAMENTO FINANCEIRO — LF0001 (fase AT).
+  [npm test] test-ordem-dos-scripts.js          OS <script> DO index.html CARREGAM NA ORDEM SEM QUEBRAR.
+  [npm test] test-origem-da-venda.js            ORIGEM DA VENDA VIRA CADASTRO (fase AZ).
   [npm test] test-paineis-modulos.js            Painéis por módulo — a conta de cada indicador, e o que eles se recusam a afirmar.
   [npm test] test-permissoes-fiscais.js         Permissões do módulo Fiscal — a tela e o portão do servidor têm de falar a mesma língua.
   [avulso]  test-permissoes-tela.js            A tela de Papéis e Permissões contra as permissões REAIS do banco.
@@ -619,7 +629,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-120 arquivos JS carregados por public/index.html, nesta ordem.
+122 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -627,18 +637,20 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/campos.js
   /modules/shared/painel.js
   /modules/shared/module_workspace.js
+  /modules/stock/shared.js
   /modules/dashboard/index.js
   /modules/purchases/index.js
   /modules/sales/index.js
   /modules/sales/subs/sales_categories.js
   /modules/sales/subs/new_sales_category.js
+  /modules/sales/subs/sales_origins.js
+  /modules/sales/subs/new_sales_origin.js
   /modules/purchases/subs/purchase_documents.js
   /modules/purchases/subs/new_purchase_order.js
   /modules/purchases/subs/entrada_nfe.js
   /modules/purchases/subs/painel.js
   /modules/purchases/subs/purchase_history.js
   /modules/purchases/subs/suppliers.js
-  /modules/stock/shared.js
   /modules/stock/index.js
   /modules/stock/subs/price_manager.js
   /modules/stock/subs/painel.js

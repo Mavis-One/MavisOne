@@ -139,9 +139,19 @@ check('lista vazia se explica em vez de virar select oco', /nenhuma cadastrada/.
 console.log('\n--- uma lista só de origens de venda ---');
 // Em duas cópias, filtrar por "Balcão" deixaria de achar as vendas de balcão
 // no dia em que uma das listas mudasse.
-check('ORIGENS_VENDA é declarada uma vez só',
-  (appLimpo.match(/const ORIGENS_VENDA = \[/g) || []).length === 1);
-check('e é global, não local do cadastro', /^const ORIGENS_VENDA = \[/m.test(appLimpo));
+//
+// A FONTE MUDOU NA FASE AZ: a origem virou cadastro (sales_origins), e as duas
+// pontas passaram a ler o mesmo `opcoesDeOrigemDeVenda`. O que este teste
+// protege continua sendo o mesmo — filtro e formulário não podem discordar —
+// mas agora a lista não mora mais no código, e sim no banco.
+check('o filtro e o formulário leem a MESMA função',
+  (appLimpo.match(/opcoesDeOrigemDeVenda\(meta, filters\.saleOrigin\)/g) || []).length === 1
+  && (appLimpo.match(/opcoesDeOrigemDeVenda\(meta, formState\.saleOrigin\)/g) || []).length === 1);
+// A lista antiga sobreviveu só como rede de segurança para cadastro vazio —
+// duas cópias DELA trariam de volta exatamente a divergência de antes.
+check('e a rede de segurança é declarada uma vez só',
+  (appLimpo.match(/const ORIGENS_VENDA_PADRAO = \[/g) || []).length === 1
+  && /^const ORIGENS_VENDA_PADRAO = \[/m.test(appLimpo));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

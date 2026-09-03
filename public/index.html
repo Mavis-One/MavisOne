@@ -19,18 +19,31 @@
          apelido financeBuildChartSvg é definido no fim deste arquivo. -->
     <script src="/modules/shared/painel.js"></script>
     <script src="/modules/shared/module_workspace.js"></script>
+    <!-- ERRO CORRIGIDO AQUI. Este arquivo define window.MavisStock, e as
+         fabricas makeListScreen/makeFormScreen dele sao chamadas NO TOPO das
+         telas de cadastro — inclusive fora do Estoque (Categorias e Origens
+         de Venda). Ele vinha no meio do bloco do Estoque, DEPOIS dessas
+         telas: as quatro morriam com "Cannot read properties of undefined
+         (reading 'makeListScreen')" antes de registrar, e o menu abria
+         numa tela que nao existia. O navegador nao reclama alto — o erro
+         fica no console e a tela so nao aparece.
+
+         Guardado por scripts/test-ordem-dos-scripts.js, que carrega todos
+         os <script> desta pagina NA ORDEM e falha se algum quebrar. -->
+    <script src="/modules/stock/shared.js"></script>
     <script src="/modules/dashboard/index.js"></script>
     <script src="/modules/purchases/index.js"></script>
     <script src="/modules/sales/index.js"></script>
     <script src="/modules/sales/subs/sales_categories.js"></script>
     <script src="/modules/sales/subs/new_sales_category.js"></script>
+    <script src="/modules/sales/subs/sales_origins.js"></script>
+    <script src="/modules/sales/subs/new_sales_origin.js"></script>
     <script src="/modules/purchases/subs/purchase_documents.js"></script>
     <script src="/modules/purchases/subs/new_purchase_order.js"></script>
     <script src="/modules/purchases/subs/entrada_nfe.js"></script>
     <script src="/modules/purchases/subs/painel.js"></script>
     <script src="/modules/purchases/subs/purchase_history.js"></script>
     <script src="/modules/purchases/subs/suppliers.js"></script>
-    <script src="/modules/stock/shared.js"></script>
     <script src="/modules/stock/index.js"></script>
     <script src="/modules/stock/subs/price_manager.js"></script>
     <script src="/modules/stock/subs/painel.js"></script>

@@ -413,7 +413,38 @@ const SALES_POR_PAGINA = [15, 30, 50, 100];
 // A mesma lista serve ao cadastro (o campo Origem da Venda) e ao filtro. Em
 // duas cópias, filtrar por "Balcão" deixaria de achar as vendas de balcão no
 // dia em que uma das listas mudasse.
-const ORIGENS_VENDA = ['Venda Direta', 'Televendas', 'E-commerce', 'Marketplace', 'Representante', 'Balcão'];
+// AS SEIS QUE ERAM A LISTA INTEIRA (até a fase AZ).
+//
+// Elas não são mais a fonte: a origem virou cadastro (`meta.salesOrigins`, tabela
+// sales_origins), e a migração fase-az semeou exatamente estes seis nomes para
+// que nada sumisse do formulário no dia da virada.
+//
+// O QUE SOBROU AQUI é a rede de segurança: se o cadastro vier vazio — banco novo
+// sem a migração, ou alguém que inativou todas as origens — o campo mostraria um
+// <select> sem nenhuma opção, e uma venda ficaria impossível de registrar por
+// causa de um cadastro de apoio. Com a rede, o pior caso é voltar ao que era.
+const ORIGENS_VENDA_PADRAO = ['Venda Direta', 'Televendas', 'E-commerce', 'Marketplace', 'Representante', 'Balcão'];
+
+/**
+ * As opções do campo Origem da Venda (fase AZ).
+ *
+ * Mesma regra do campo Categoria: as origens ATIVAS do cadastro, mais — quando
+ * faz falta — a que o próprio registro já tem gravada. `sale_origin` guarda o
+ * NOME, então um pedido com origem inativada depois abriria com o campo vazio;
+ * o valor não se perderia (fica no campo), mas quem edita veria em branco e
+ * acreditaria que perdeu — e a próxima escolha apagaria o histórico de verdade.
+ */
+function opcoesDeOrigemDeVenda(meta, valorAtual) {
+  const doCadastro = (meta && Array.isArray(meta.salesOrigins) && meta.salesOrigins.length)
+    ? meta.salesOrigins.slice()
+    : ORIGENS_VENDA_PADRAO.slice();
+  const opcoes = doCadastro.map((nome) => ({ value: nome, label: nome }));
+  const atual = String(valorAtual || '').trim();
+  if (atual && !opcoes.some((o) => o.value === atual)) {
+    opcoes.unshift({ value: atual, label: `${atual} (fora do cadastro)` });
+  }
+  return opcoes;
+}
 
 const SALES_FILTROS = [
   'search', 'type', 'status', 'companyId', 'sellerId', 'clientSupplierId',
@@ -1542,6 +1573,10 @@ const moduleSubItems = {
     // sistema. Classifica a VENDA — a categoria do PRODUTO continua no Estoque.
     { key: 'sales_categories', label: 'Categorias de Vendas', desc: 'Como a venda é classificada: varejo, atacado, bonificação.' },
     { key: 'new_sales_category', label: 'Nova Categoria de Vendas', desc: 'Cria uma categoria de venda.' },
+    // Fase AZ. Ao lado da categoria de propósito: são as duas classificações da
+    // venda, e respondem perguntas diferentes — O QUE ela é e POR ONDE chegou.
+    { key: 'sales_origins', label: 'Origens de Venda', desc: 'Por onde a venda chegou: balcão, televendas, e-commerce, indicação.' },
+    { key: 'new_sales_origin', label: 'Nova Origem de Venda', desc: 'Cria uma origem de venda.' },
     { key: 'nfes', label: 'NF-e Emitidas', desc: 'Notas já emitidas, com DANFE, XML e cancelamento.' },
     { key: 'new_nfe', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     // Meu Painel vem antes dos outros dois de propósito: é a única das três
@@ -2368,7 +2403,7 @@ async function loadModule(moduleName) {
                       <span>Origem da Venda</span>
                       <select name="saleOrigin">
                         <option value="">Todas</option>
-                        ${ORIGENS_VENDA.map((o) => `<option value="${escapeHtml(o)}" ${filters.saleOrigin === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+                        ${opcoesDeOrigemDeVenda(meta, filters.saleOrigin).map((o) => `<option value="${escapeHtml(o.value)}" ${filters.saleOrigin === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
                       </select>
                     </label>
                     <!-- "Status" (do cliente) é texto livre no cadastro, então
@@ -3040,7 +3075,10 @@ async function loadModule(moduleName) {
           ...Object.fromEntries(CAMPOS_PAGAMENTO.map((campo) => [campo, infoPagamento[campo] ?? ''])),
           ...Object.fromEntries(CAMPOS_ENTREGA.map((campo) => [campo, infoEntrega[MAPA_ENTREGA[campo]] ?? ''])),
           salesTerms: origem?.salesTerms || '',
-          saleOrigin: origem?.saleOrigin || ORIGENS_VENDA[0],
+          // O PADRÃO SAI DO CADASTRO, e não de um nome escrito aqui: quem
+          // renomear "Venda Direta" no cadastro não pode continuar recebendo o
+          // nome antigo em toda venda nova. Ver opcoesDeOrigemDeVenda.
+          saleOrigin: origem?.saleOrigin || (opcoesDeOrigemDeVenda(meta, '')[0] || {}).value || '',
           printDocument: infoPagamento.printDocument || DOCUMENTOS_IMPRESSAO[0],
           addressType: infoEntrega.addressType || TIPOS_ENDERECO[0],
           shippingMethod: infoEntrega.shippingMethod || MEIOS_ENVIO[0],
@@ -3618,7 +3656,7 @@ async function loadModule(moduleName) {
                   </label>
                   <label>Origem da Venda *
                     <select name="saleOrigin">
-                      ${ORIGENS_VENDA.map((origemVenda) => `<option value="${escapeHtml(origemVenda)}" ${formState.saleOrigin === origemVenda ? 'selected' : ''}>${escapeHtml(origemVenda)}</option>`).join('')}
+                      ${opcoesDeOrigemDeVenda(meta, formState.saleOrigin).map((o) => `<option value="${escapeHtml(o.value)}" ${formState.saleOrigin === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
                     </select>
                   </label>
                   <label>Categoria
