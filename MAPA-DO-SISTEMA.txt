@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-04 18:19 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 19:07 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -557,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-83 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+84 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -593,6 +593,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
   [npm test] test-garantia-equipamento.js       A GARANTIA DO EQUIPAMENTO É CONTADA, NÃO DIGITADA (fase BB).
   [avulso]  test-gate-openfinance.js           O portão central alcança mesmo o Open Finance? A regra de permissão dizia '/api/openfinance', mas a rota é '/a
+  [npm test] test-guardas-de-exclusao.js        AS GUARDAS DE EXCLUSÃO PERGUNTAM À FONTE CERTA (fase BO).
   [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
   [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
   [npm test] test-lancamento-vinculado.js       Lançamento gerado por PEDIDO ou por NF-e: o que dá e o que não dá para mudar.

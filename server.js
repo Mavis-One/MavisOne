@@ -66,7 +66,7 @@ const painelPessoal = require('./lib/painel-pessoal-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 // Fase AP: o razao de estoque saiu do db.json e virou tabela no Postgres.
 const razaoEstoque = require('./lib/db/estoque-razao');
-const { emTransacao } = require('./lib/db/conexao');
+const { emTransacao, consultar: consultarBanco } = require('./lib/db/conexao');
 // Fase AT: o numero do lancamento financeiro (LF0001) — mesmo formato na tela.
 const lancamentoCodigo = require('./public/modules/shared/lancamento_codigo');
 // Fase AX: a descricao do lancamento financeiro. Quatro origens escreviam
@@ -960,16 +960,79 @@ function sumFinanceAmount(entries) {
  */
 async function contrapartidaEmUso(id) {
   const dados = loadData();
-  const [comFinanceiro, comEquipamento] = await Promise.all([
+  const [comFinanceiro, comEquipamento, documentos] = await Promise.all([
     (async () => {
       await syncFinanceData(dados);
       return (dados.finance || []).some((entry) => entry.clientSupplierId === id);
     })(),
-    equipamentosDb.contarPor('pessoa', id).catch(() => 0)
+    equipamentosDb.contarPor('pessoa', id).catch(() => 0),
+    // FASE BO: as quatro referencias que ficaram de fora da fase BB. Nenhuma
+    // delas tem chave estrangeira (sao colunas text apontando para pessoas OU
+    // cnpjs, duas tabelas), entao o banco nao recusa a exclusao: o cliente some
+    // e o pedido fica apontando para um id que nao existe mais. A tela passa a
+    // mostrar o nome gravado no proprio documento, que e' o `customer` — ou
+    // seja, o estrago e' invisivel ate alguem tentar reabrir o cadastro.
+    contarDocumentosDaContrapartida(id).catch(() => null)
   ]);
   if (comFinanceiro) return 'Existem lançamentos financeiros vinculados a este cadastro.';
   if (comEquipamento > 0) return 'Existem equipamentos vinculados a este cadastro.';
+  if (documentos && documentos.total > 0) {
+    return `${documentos.descricao} ${documentos.total === 1 ? 'aponta' : 'apontam'} para este cadastro. `
+      + 'Marque como inativo em vez de excluir: assim ele some dos formulários e o histórico continua explicável.';
+  }
   return cadastrosCore.counterpartyInUse(dados, id);
+}
+
+/**
+ * Pedidos, orçamentos, compras e contratos que apontam para uma contrapartida.
+ *
+ * Uma consulta só, com quatro subselects: quatro idas ao banco para responder
+ * "dá para excluir?" custariam quatro vezes a latência por um botão.
+ */
+async function contarDocumentosDaContrapartida(id) {
+  const { rows } = await consultarBanco(
+    `select
+       (select count(*) from orders where client_supplier_id = $1)::int as pedidos,
+       (select count(*) from quotes where client_supplier_id = $1)::int as orcamentos,
+       (select count(*) from purchases where supplier_id = $1)::int as compras,
+       (select count(*) from contracts where party_id = $1)::int as contratos`,
+    [String(id || '')]
+  );
+  const { pedidos, orcamentos, compras, contratos } = rows[0];
+  const total = pedidos + orcamentos + compras + contratos;
+  const partes = [];
+  if (pedidos) partes.push(`${pedidos} ${pedidos === 1 ? 'pedido' : 'pedidos'}`);
+  if (orcamentos) partes.push(`${orcamentos} ${orcamentos === 1 ? 'orçamento' : 'orçamentos'}`);
+  if (compras) partes.push(`${compras} ${compras === 1 ? 'compra' : 'compras'}`);
+  if (contratos) partes.push(`${contratos} ${contratos === 1 ? 'contrato' : 'contratos'}`);
+  return { pedidos, orcamentos, compras, contratos, total, descricao: partes.join(', ') };
+}
+
+/**
+ * Documentos de venda e depósitos ligados a uma EMPRESA (loja).
+ *
+ * A guarda que existia (cadastrosCore.companies.inUse) varre data.orders e
+ * data.quotes — coleções que estão em NAO_PERSISTIR e que a rota genérica de
+ * cadastros nunca sincroniza. Ela respondia SEMPRE "não está em uso", e a
+ * empresa saía levando junto a explicação de todo pedido faturado por ela.
+ */
+async function empresaEmUso(id) {
+  const { rows } = await consultarBanco(
+    `select
+       (select count(*) from orders where company_id = $1)::int as pedidos,
+       (select count(*) from quotes where company_id = $1)::int as orcamentos,
+       (select count(*) from deposits where company_id = $1)::int as depositos`,
+    [String(id || '')]
+  );
+  const { pedidos, orcamentos, depositos } = rows[0];
+  const total = pedidos + orcamentos + depositos;
+  if (!total) return null;
+  const partes = [];
+  if (pedidos) partes.push(`${pedidos} ${pedidos === 1 ? 'pedido' : 'pedidos'}`);
+  if (orcamentos) partes.push(`${orcamentos} ${orcamentos === 1 ? 'orçamento' : 'orçamentos'}`);
+  if (depositos) partes.push(`${depositos} ${depositos === 1 ? 'depósito' : 'depósitos'}`);
+  return `${partes.join(', ')} ${total === 1 ? 'pertence' : 'pertencem'} a esta empresa. `
+    + 'Marque como inativa em vez de excluir: assim ela some dos formulários e o histórico continua explicável.';
 }
 
 async function depositoEmUso(id) {
@@ -979,7 +1042,7 @@ async function depositoEmUso(id) {
     equipamentosDb.contarPor('deposito', id).catch(() => 0)
   ]);
   if (movimentos > 0) {
-    return `Existem ${movimentos} ${movimentos === 1 ? 'movimentação' : 'movimentações'} de estoque neste depósito.`;
+    return `${movimentos === 1 ? 'Existe 1 movimentação' : `Existem ${movimentos} movimentações`} de estoque neste depósito.`;
   }
   if (equipamentos > 0) return 'Existem equipamentos alocados neste depósito.';
   return cadastrosCore.depositInUse(dados, id);
@@ -8543,6 +8606,20 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'DELETE' && id) {
         const index = list.findIndex((entry) => entry.id === id);
         if (index < 0) return sendJson(res, { error: config.notFound }, 404);
+        // A GUARDA DA EMPRESA PERGUNTA AO BANCO (fase BO).
+        //
+        // config.inUse varre data.orders e data.quotes, que estao em
+        // NAO_PERSISTIR e que esta rota nunca sincroniza — ela respondia
+        // SEMPRE "nao esta em uso". A empresa saia levando junto a
+        // explicacao de todo pedido faturado por ela, e os depositos dela
+        // ficavam apontando para um id que nao existe mais.
+        //
+        // Mesmo caminho de contrapartidaEmUso e depositoEmUso: contagem no
+        // Postgres, e nao varredura de colecao em memoria.
+        if (cadastroCollectionMatch[1] === 'companies') {
+          const emUso = await empresaEmUso(id);
+          if (emUso) return sendJson(res, { error: emUso }, 409);
+        }
         const blocked = config.inUse(id, data);
         if (blocked) return sendJson(res, { error: blocked }, 409);
         list.splice(index, 1);
@@ -10146,9 +10223,29 @@ const server = http.createServer(async (req, res) => {
       const { data } = await loadStockContext();
       const transfer = (data.stockTransfers || []).find((t) => t.id === id);
       if (!transfer) return sendJson(res, { error: 'Transferência não encontrada' }, 404);
-      const available = stockCore.depositBalance(data, transfer.productId, transfer.destinationDepositId);
+      // O SALDO CONFERIDO E' O DA COR, quando a transferencia tem cor (fase BO).
+      //
+      // depositBalance soma o deposito INTEIRO, sem olhar classValueId. Com 10
+      // Pretos e 10 Brancos no destino, estornar os Pretos depois de eles ja
+      // terem saido passava — porque os 10 Brancos cobriam a conta —, e o
+      // destino ficava com Preto -10 enquanto a origem recebia de volta 10
+      // Pretos que ja tinham sido consumidos. A partir dai o sistema autoriza
+      // vender esses 10 fantasmas, porque a validacao de saida olha justamente
+      // esse saldo por cor agora inflado.
+      //
+      // A rota irma — o estorno de MOVIMENTACAO, logo acima — ja fazia assim.
+      const cor = transfer.classValueId || '';
+      const available = cor
+        ? stockCore.classValueBalance(data, transfer.productId, cor, transfer.destinationDepositId)
+        : stockCore.depositBalance(data, transfer.productId, transfer.destinationDepositId);
       if (stockCore.toNumber(transfer.quantity) > available) {
-        return sendJson(res, { error: `Não é possível estornar: o depósito de destino ficaria negativo (disponível ${available}).` }, 409);
+        // Nomear a cor: "disponivel 0" num deposito visivelmente cheio nao
+        // explica nada a quem esta olhando a tela.
+        const nomeDaCor = cor ? ` de ${await classesDb.nomeDoValor(cor)}` : '';
+        return sendJson(res, {
+          error: `Não é possível estornar: o depósito de destino ficaria negativo${nomeDaCor} `
+            + `(disponível ${available}).`
+        }, 409);
       }
       // Os dois movimentos e o registro saem juntos. O total do produto NAO
       // muda: a transferencia moveu entre depositos, nao criou nem consumiu.
@@ -10368,6 +10465,26 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'DELETE' && id) {
         const index = list.findIndex((entry) => entry.id === id);
         if (index < 0) return sendJson(res, { error: config.notFound }, 404);
+        // A CATEGORIA DE MOVIMENTACAO PERGUNTA AO RAZAO (fase BO).
+        //
+        // config.inUse varre data.stockMovements, que saiu do db.json na
+        // fase AP: a lista chega vazia e a guarda respondia sempre "pode
+        // excluir". As movimentacoes ficavam com category_id apontando para
+        // uma categoria que nao existe, e a coluna Categoria da tela de
+        // Movimentacoes passava a sair em branco no historico inteiro.
+        //
+        // Contagem, e nao varredura: o razao nao entra em memoria para
+        // responder "tem algum?".
+        if (stockCollectionMatch[1] === 'movement-categories') {
+          const movimentos = await razaoEstoque.contarPorCategoria(id).catch(() => 0);
+          if (movimentos > 0) {
+            return sendJson(res, {
+              error: `${movimentos === 1 ? 'Existe 1 movimentação' : `Existem ${movimentos} movimentações`} `
+                + 'usando esta categoria. Marque como inativa em vez de excluir: assim ela some '
+                + 'do formulário e o histórico continua explicável.'
+            }, 409);
+          }
+        }
         const blocked = config.inUse(id, data);
         if (blocked) return sendJson(res, { error: blocked }, 409);
         list.splice(index, 1);
