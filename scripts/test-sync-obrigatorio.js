@@ -64,24 +64,18 @@ const check = (nome, cond, det) => {
 // ---------------------------------------------------------------------------
 // Chave: "rota|coleção". Valor: por que ainda não foi corrigido.
 const PENDENTES = {
-  // O SALDO POR COR/DEPÓSITO. Todas estas leem o razão (data.stockMovements)
-  // para projetar saldo antes de baixar estoque. Corrigir muda o comportamento
-  // do faturamento de item com classe, e é mudança que precisa ser combinada
-  // antes — está reportada e aguardando decisão.
-  '/api/dashboard|stockMovements': 'saldo por depósito — aguardando decisão',
-  '/api/dashboard/atencao GET|stockMovements': 'saldo por depósito — aguardando decisão',
-  '/api/sales/records POST|stockMovements': 'saldo por cor no faturamento — aguardando decisão',
-  '/api/sales/records/lote POST|stockMovements': 'saldo por cor no faturamento — aguardando decisão',
-  '/api/sales/records/ PUT|stockMovements': 'saldo por cor no faturamento — aguardando decisão',
-  '/api/sales/records/ DELETE|stockMovements': 'saldo por cor no faturamento — aguardando decisão',
-  '/api/sales/records/ DELETE|deposits': 'saldo por depósito — aguardando decisão',
-  '/api/fiscal/|stockMovements': 'saldo por cor no faturamento pela NF-e — aguardando decisão',
-  '/api/fiscal/|deposits': 'saldo por depósito — aguardando decisão',
-  '/api/purchases/entrada-nfe POST|stockMovements': 'saldo por cor na entrada — aguardando decisão',
-  '/api/purchases POST|stockMovements': 'saldo por depósito na compra — aguardando decisão',
-  '/api/purchases/ PUT|stockMovements': 'saldo por depósito na compra — aguardando decisão',
-  '/api/purchases/ PUT|deposits': 'saldo por depósito na compra — aguardando decisão',
-  '/api/stock/classes|stockMovements': 'saldo por cor na tela de Classes — aguardando decisão'
+  // VAZIA desde a fase BD. Era aqui que morava a família do saldo por
+  // cor/depósito: catorze leituras do razão em rotas que nunca o carregavam.
+  //
+  // O que aquilo causava, reproduzido num banco de prova antes de mexer: com 10
+  // unidades Brancas no razão, um pedido de 1 Branca era recusado com
+  // "Estoque insuficiente (disponível: 0)", o mesmo pedido SEM cor passava, e a
+  // mesma baixa passava pela tela de Estoque > Movimentações. Item sem cor
+  // escapava porque projeta contra products.stock_quantity, que vem do banco.
+  //
+  // Deixar vazia é deliberado: uma entrada nova aqui precisa vir com o motivo
+  // escrito e com a decisão de quem podia decidir, nunca como atalho para o
+  // teste passar.
 };
 
 // ---------------------------------------------------------------------------
@@ -96,7 +90,10 @@ const POPULA = {
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
   // loadStockContext chama syncCadastroData por dentro (server.js), então quem
   // o chama já tem pessoas, cnpjs e depósitos além do razão.
-  loadStockContext: ['stockMovements', 'stockTransfers', 'people', 'cnpjs', 'deposits']
+  loadStockContext: ['stockMovements', 'stockTransfers', 'people', 'cnpjs', 'deposits'],
+  // Fase BD: o razão sozinho, para quem já tem o próprio `data` na mão e não
+  // pode trocar por outro (Vendas, Compras, Fiscal, os painéis).
+  sincronizarRazao: ['stockMovements', 'stockTransfers']
 };
 const SYNC_DE = {};
 Object.entries(POPULA).forEach(([fn, cols]) => cols.forEach((c) => { (SYNC_DE[c] = SYNC_DE[c] || []).push(fn); }));
@@ -105,13 +102,15 @@ Object.entries(POPULA).forEach(([fn, cols]) => cols.forEach((c) => { (SYNC_DE[c]
 // memória falha. Quem os chama não precisa ter sincronizado antes.
 const RESOLVE_SOZINHO = {
   numeroDaNotaDoPedido: ['nfes', 'nfe'],
-  conferirEntradaDeNfe: ['people', 'cnpjs', 'deposits']
+  // Fase BD: passou a carregar o razão também, porque quem chama grava a
+  // entrada com o MESMO `data` e confere saldo por cor em cima dele.
+  conferirEntradaDeNfe: ['people', 'cnpjs', 'deposits', 'stockMovements', 'stockTransfers']
 };
 
 const INFRA = new Set([
   'loadData', 'saveData', 'normalizeData', 'ensureCadastroCollections',
   'syncCadastroData', 'syncSalesData', 'syncPurchasesData', 'syncNfeData',
-  'syncFinanceData', 'loadStockContext', 'ensureStockCollections'
+  'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao'
 ]);
 
 const ARQUIVOS = [

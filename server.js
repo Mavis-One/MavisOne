@@ -158,7 +158,8 @@ const NAO_PERSISTIR = new Set([
   'stockMovements', 'stockTransfers',                                     // fase AP: razao no Postgres
   'equipments',                                                           // fase BB: equipamentos no Postgres
   'products', 'settings',                                                 // nunca lidos de `data`
-  '__movimentosPendentes'                                                 // fila da requisicao, nao e' dado
+  '__movimentosPendentes',                                                // fila da requisicao, nao e' dado
+  '__razaoCarregado'                                                      // marca da requisicao, nao e' dado
 ]);
 
 // Cada sessão é { userId, criadaEm, expiraEm }. Guardar o `expiraEm` calculado
@@ -1449,11 +1450,23 @@ function computeSalesTotals(items, body = {}) {
 //
 // `motivo` guarda a semântica antiga ('venda'/'compra'/'estorno'), que se
 // perderia no mapeamento para entrada/saída.
-function registrarMovimentoEstoque(data, { productId, productName, type, quantityDelta, referenceType, referenceId, note, user, classId, classValueId }) {
+function registrarMovimentoEstoque(data, { productId, productName, type, quantityDelta, referenceType, referenceId, note, user, classId, classValueId, depositId }) {
   const delta = Number(quantityDelta || 0);
-  // Sem depósito informado, usa o padrão do produto; se não houver, fica em
-  // branco e productBalances() contabiliza como saldo não alocado.
-  const defaultDepositId = stockCore.productMeta(data, productId).defaultDepositId || '';
+  // FASE BD: O DEPÓSITO DE QUEM ORIGINOU O MOVIMENTO VEM PRIMEIRO.
+  //
+  // Até aqui só existia o padrão do produto, e o depósito escolhido no
+  // PEDIDO nunca chegava ao razão: o pedido dizia "Central", o movimento
+  // nascia com depósito vazio, e a mercadoria saía de lugar nenhum enquanto
+  // o Central seguia com o saldo cheio. Reproduzido num banco de prova:
+  // pedido gravado com deposit_id preenchido gerou
+  //   MOV-0002 | saida | prod-1 | 1.0000 | (VAZIO) | venda
+  //
+  // A ordem é deliberada: o depósito do documento é uma ESCOLHA de quem fez
+  // a venda ou a compra; o padrão do produto é só um palpite de cadastro.
+  // Sem nenhum dos dois fica em branco e productBalances() contabiliza como
+  // saldo não alocado, como sempre foi.
+  const defaultDepositId = String(depositId || '').trim()
+    || stockCore.productMeta(data, productId).defaultDepositId || '';
 
   const movimento = {
     id: createId('mov'),
@@ -1489,6 +1502,26 @@ function registrarMovimentoEstoque(data, { productId, productName, type, quantit
   (data.__movimentosPendentes = data.__movimentosPendentes || []).push(movimento);
 }
 
+/**
+ * De qual depósito o movimento original deste documento saiu (ou entrou).
+ *
+ * Pergunta ao PRÓPRIO razão, casando documento, produto, cor e motivo. É a única
+ * fonte que sabe a verdade: o campo do pedido ou da compra diz onde ele está
+ * apontando HOJE, não de onde a mercadoria saiu quando foi faturada.
+ *
+ * Devolve '' quando não acha — documento movimentado antes da fase BD, quando
+ * nenhum movimento de venda ou compra guardava depósito. Quem chama cai no
+ * depósito do documento.
+ */
+function depositoDoMovimentoDeOrigem(data, { referenceType, referenceId, productId, classValueId, motivo }) {
+  const movimento = (data.stockMovements || []).find((m) => m.referenceType === referenceType
+    && m.referenceId === referenceId
+    && m.productId === productId
+    && String(m.classValueId || '') === String(classValueId || '')
+    && m.motivo === motivo);
+  return movimento ? movimento.depositId || '' : '';
+}
+
 // Estoque só é afetado de verdade quando um PEDIDO (não orçamento — orçamento
 // é só proposta) está ou passa a estar "faturado". Cobre os 4 casos de uma
 // vez (criar já faturado, faturar depois, deixar de ser faturado, continuar
@@ -1498,6 +1531,18 @@ function registrarMovimentoEstoque(data, { productId, productName, type, quantit
 // projetado não fica negativo em nenhum produto.
 async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied, willApply, record, user }) {
   if (!wasApplied && !willApply) return;
+
+  // FASE BD: O RAZÃO PRECISA ESTAR EM MEMÓRIA ANTES DA PROJEÇÃO.
+  //
+  // A projeção abaixo pergunta o saldo POR COR a classValueBalance, que soma
+  // `data.stockMovements`. Essa coleção está em NAO_PERSISTIR desde a fase
+  // AP, então loadData() a devolve VAZIA — e somar zero linhas dava
+  // "disponível: 0" para toda cor, sempre. Item sem cor escapava porque
+  // projeta contra products.stock_quantity, que vem do banco de verdade.
+  //
+  // Fica AQUI, e não em cada rota, porque são nove caminhos (Vendas POST,
+  // PUT, DELETE, lote, Fiscal, PCP) e o próximo que nascer também esqueceria.
+  await sincronizarRazao(data);
 
   const idsEnvolvidos = new Set([
     ...(wasApplied ? oldItems : []).map((item) => item.productId),
@@ -1566,6 +1611,15 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
         // O estorno devolve para a MESMA cor que a venda tirou. Devolver ao
         // saldo sem cor deixaria a cor eternamente devendo.
         classId: item.classId, classValueId: item.classValueId,
+        // E para o MESMO depósito, pelo mesmo motivo. Não é sempre o
+        // depósito atual do pedido: quem editou um pedido faturado pode ter
+        // trocado o campo depois da baixa, e devolver ao novo encheria um
+        // depósito que nunca entregou a mercadoria enquanto o outro ficaria
+        // devendo para sempre. Por isso a busca no razão vem antes.
+        depositId: depositoDoMovimentoDeOrigem(data, {
+          referenceType: 'order', referenceId: record.id, motivo: 'venda',
+          productId: item.productId, classValueId: item.classValueId
+        }) || record.depositId,
         note: `Estorno do pedido ${record.code || record.id}`, user
       });
     }
@@ -1581,6 +1635,9 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
         productId: item.productId, productName: item.name, type: 'venda',
         quantityDelta: -Number(item.quantity || 0), referenceType: 'order', referenceId: record.id,
         classId: item.classId, classValueId: item.classValueId,
+        // O depósito escolhido no pedido. Sem isto a baixa nascia "não
+        // alocada" e o depósito seguia com o saldo cheio (fase BD).
+        depositId: record.depositId,
         note: `Pedido ${record.code || record.id}`, user
       });
     }
@@ -3540,7 +3597,9 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
   if (String(nfe && nfe.status || '').toUpperCase() !== 'AUTORIZADO') return;
   try {
     const dataVendas = loadData();
-    await syncSalesData(dataVendas);
+    // syncCadastroData tambem: faturar baixa estoque, e a baixa resolve nome
+    // de deposito por productBalances.
+    await Promise.all([syncSalesData(dataVendas), syncCadastroData(dataVendas)]);
     const pedido = (dataVendas.orders || []).find((o) => o.id === pedidoId);
     if (!pedido) return;
     if (!salesStatus.podeTransicionar(pedido.status, 'pedido-faturado')) {
@@ -4541,24 +4600,55 @@ async function estornarRecebimentoDeCompra(data, { documento, novoStatus, user, 
   });
 }
 
-async function loadStockContext({ comReservas = false } = {}) {
-  const data = loadData();
-  await syncCadastroData(data);
-  // FASE AP: o razao vem do Postgres, nao mais do db.json.
-  //
-  // Continua entrando em `data` com o mesmo nome e no mesmo formato de antes,
-  // de proposito: quem calcula saldo e' lib/stock-core.js, em memoria, e essas
-  // funcoes sao o miolo do modulo. Trocar o ARMAZENAMENTO e a MATEMATICA na
-  // mesma mudanca seria nao saber qual das duas errou o saldo.
-  //
-  // Quando o razao passar de algumas dezenas de milhares de linhas, o saldo
-  // vira agregacao em SQL — os indices por (product_id, deposit_id) e
-  // (product_id, class_value_id) ja estao la esperando esse dia.
+/**
+ * Poe o razao de estoque dentro de `data` — o que loadStockContext fazia
+ * sozinho ate a fase BD.
+ *
+ * FASE AP: o razao vem do Postgres, nao mais do db.json.
+ *
+ * Continua entrando em `data` com o mesmo nome e no mesmo formato de antes,
+ * de proposito: quem calcula saldo e' lib/stock-core.js, em memoria, e essas
+ * funcoes sao o miolo do modulo. Trocar o ARMAZENAMENTO e a MATEMATICA na
+ * mesma mudanca seria nao saber qual das duas errou o saldo.
+ *
+ * POR QUE VIROU FUNCAO SEPARADA (fase BD)
+ * ---------------------------------------
+ * Quem projeta saldo nao e' so o modulo Estoque. Vendas, Compras, Fiscal e os
+ * paineis tambem projetam — e chamavam `loadData()`, que devolve
+ * `stockMovements: []` porque a colecao esta em NAO_PERSISTIR. Com a lista
+ * vazia, `classValueBalance` somava zero linhas e TODO item com cor era
+ * recusado com "disponivel: 0", mesmo com saldo no razao. Reproduzido num banco
+ * de prova: 10 unidades Brancas no razao, pedido de 1 Branca recusado, o mesmo
+ * pedido sem cor aceito, e a mesma baixa aceita pela tela de Estoque.
+ *
+ * Nao da' para essas rotas chamarem loadStockContext: ela cria o proprio
+ * `data`, e a rota ja mexeu no dela (pedido gravado, financeiro gerado).
+ *
+ * A BANDEIRA. Chamar duas vezes na mesma requisicao trocaria `stockMovements`
+ * por uma releitura do banco — e levaria junto os movimentos que
+ * registrarMovimentoEstoque ja empilhou em memoria mas ainda nao descarregou.
+ * Por isso a segunda chamada sai calada.
+ *
+ * Quando o razao passar de algumas dezenas de milhares de linhas, o saldo vira
+ * agregacao em SQL — os indices por (product_id, deposit_id) e
+ * (product_id, class_value_id) ja estao la esperando esse dia.
+ */
+async function sincronizarRazao(data) {
+  if (data.__razaoCarregado) return data;
   data.stockMovements = await razaoEstoque.listarMovimentos();
   data.stockTransfers = await razaoEstoque.listarTransferencias();
   // Fila dos movimentos que Vendas/Compras/PCP empilham durante a requisicao e
-  // que so viram linha no banco no descarregarMovimentosPendentes().
-  data.__movimentosPendentes = [];
+  // que so viram linha no banco no descarregarMovimentosPendentes(). So' nasce
+  // aqui se ainda nao existir, pelo mesmo motivo da bandeira.
+  if (!Array.isArray(data.__movimentosPendentes)) data.__movimentosPendentes = [];
+  data.__razaoCarregado = true;
+  return data;
+}
+
+async function loadStockContext({ comReservas = false } = {}) {
+  const data = loadData();
+  await syncCadastroData(data);
+  await sincronizarRazao(data);
   let reservas = null;
   if (comReservas) {
     try {
@@ -4847,7 +4937,9 @@ function traduzirErroDaEntrada(error) {
 async function conferirEntradaDeNfe(xml) {
   const nota = entradaNfe.lerNotaDeEntrada(xml);
   const data = loadData();
-  await syncCadastroData(data);
+  // O razão vem junto porque quem chama grava a entrada com este mesmo
+  // `data`, e assertMovementIsPossible confere saldo por cor em cima dele.
+  await Promise.all([syncCadastroData(data), sincronizarRazao(data)]);
 
   const produtos = await db.getProducts();
   const vinculosAnteriores = await entradaNfeDb.vinculosDoFornecedor(nota.emitente.documento);
@@ -5102,7 +5194,9 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/dashboard') {
     const data = loadData();
-    await Promise.all([syncNfeData(data), syncCadastroData(data)]);
+    // sincronizarRazao entra na mesma onda: o painel mostra saldo por
+    // depósito, e sem o razão em memória todo depósito aparecia zerado.
+    await Promise.all([syncNfeData(data), syncCadastroData(data), sincronizarRazao(data)]);
     const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
@@ -5210,12 +5304,16 @@ const server = http.createServer(async (req, res) => {
       };
 
       const data = loadData();
-      // Uma ida so': os tres syncs escrevem em chaves distintas de `data` e
+      // Uma ida so': os syncs escrevem em chaves distintas de `data` e
       // nenhum le o do outro, entao esperar um pelo outro era so' latencia.
       await Promise.all([
         syncCadastroData(data),
         permissoes.finance ? syncFinanceData(data) : null,
-        permissoes.sales ? syncSalesData(data) : null
+        permissoes.sales ? syncSalesData(data) : null,
+        // O aviso de estoque baixo compara saldo por depósito; sem o razão
+        // em memória todo produto parecia zerado e o painel ou gritava por
+        // tudo ou por nada, dependendo do limite cadastrado.
+        permissoes.stock ? sincronizarRazao(data) : null
       ]);
 
       // A tabela fiscal pode não responder (migração pendente, estabelecimento
@@ -6747,6 +6845,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/sales/records/') && req.method === 'DELETE') {
     try {
       const data = loadData();
+      // Excluir um pedido faturado devolve estoque, e a devolução resolve
+      // nome de depósito por productBalances.
+      await syncCadastroData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8856,7 +8957,10 @@ const server = http.createServer(async (req, res) => {
       // Em sequencia, a rota pagava 2x essa latencia por nada.
       await Promise.all([
         syncCadastroData(data),
-        syncFinanceData(data)
+        syncFinanceData(data),
+        // O razão precisa estar em memória porque a compra empilha movimento
+        // e o descarregamento soma saldo por depósito em cima dele.
+        sincronizarRazao(data)
       ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('purchases')) {
@@ -8902,6 +9006,12 @@ const server = http.createServer(async (req, res) => {
       registrarMovimentoEstoque(data, {
         productId: product.id, productName: product.name, type: 'compra',
         quantityDelta: quantity, referenceType: 'purchase', referenceId: purchase.id,
+        // Direto do corpo da requisição, e não do registro: a tabela
+        // `purchases` não tem coluna de depósito (quem tem é purchase_orders,
+        // outra tabela, usada pela entrada por NF-e). A tela de compra rápida
+        // ainda não pergunta o depósito; quando perguntar, chega aqui. Quem
+        // guarda a resposta é o razão — e é dele que o estorno a lê.
+        depositId: body.depositId || '',
         note: `Compra de ${purchase.supplier}`, user
       });
 
@@ -8930,7 +9040,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/api/purchases/') && req.method === 'PUT') {
     try {
       const data = loadData();
-      await syncFinanceData(data);
+      // Cancelar a compra estorna o estoque, e o estorno precisa saber de
+      // qual depósito a compra entrou — quem sabe isso é o razão.
+      await Promise.all([syncFinanceData(data), syncCadastroData(data), sincronizarRazao(data)]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('purchases')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -8965,6 +9077,11 @@ const server = http.createServer(async (req, res) => {
           registrarMovimentoEstoque(data, {
             productId: purchase.productId, productName: product.name, type: 'estorno',
             quantityDelta: -Number(purchase.quantity || 0), referenceType: 'purchase', referenceId: purchase.id,
+            // Tira do depósito em que a compra ENTROU, não do saldo geral.
+            depositId: depositoDoMovimentoDeOrigem(data, {
+              referenceType: 'purchase', referenceId: purchase.id, motivo: 'compra',
+              productId: purchase.productId, classValueId: ''
+            }),
             note: `Cancelamento da compra de ${purchase.supplier}`, user
           });
         }
@@ -9109,7 +9226,12 @@ const server = http.createServer(async (req, res) => {
         // escolher o depósito às cegas. Derivado do razão, como sempre — aqui
         // não existe tabela de saldo por cor para consultar.
         const depositId = url.searchParams.get('depositId') || '';
-        const quebra = stockCore.classBalances(loadData(), productId, depositId);
+        // loadData() sozinho devolvia `stockMovements: []` e o quadro de cores
+        // aparecia VAZIO logo depois de uma entrada. Reproduzido: 10 Brancas
+        // no razao, `saldos: {}` na resposta desta rota.
+        const dadosDoSaldo = loadData();
+        await sincronizarRazao(dadosDoSaldo);
+        const quebra = stockCore.classBalances(dadosDoSaldo, productId, depositId);
         const saldos = {};
         for (const linha of quebra.valores) saldos[linha.classValueId] = linha.quantity;
         return sendJson(res, { classes, saldos, semClasse: quebra.semClasse });

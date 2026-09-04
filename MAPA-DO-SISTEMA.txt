@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-03 21:13 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 10:10 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -557,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-75 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+76 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -619,6 +619,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-relatorio-vendas.js           RELATÓRIO DE VENDAS — quem vê o quê, provado com dados de mentira.
   [npm test] test-reserva-estoque.js            Reserva de estoque — a ponte entre "prometido" e "baixado".
   [npm test] test-rls.js                        RLS: toda tabela do schema precisa estar na fase-af.
+  [npm test] test-saldo-por-cor.js              O SALDO POR COR E O DEPÓSITO DO MOVIMENTO (fase BD).
   [npm test] test-sales-actions.js              Regras do menu "Mais Ações" da tela de Pedidos e Orçamentos.
   [npm test] test-sales-record-fields.js        Campos do Pedido/Orçamento: ida e volta entre o formulário e o banco.
   [npm test] test-sales-status.js               Catálogo de status de Pedido/Orçamento — public/modules/shared/sales_status.js O que este teste protege: 1.
