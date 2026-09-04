@@ -355,7 +355,16 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
           method: 'POST',
           body: JSON.stringify({ bankAccountId: formData.get('bankAccountId'), text: formData.get('csvText') })
         });
-        showToast(`${result.count} movimentação(ões) importada(s)${result.skipped ? `, ${result.skipped} linha(s) inválida(s) ignorada(s)` : ''}.`, 'success');
+        // `repetidas` (fase BR) precisa aparecer: sem ele, reimportar o mesmo
+        // arquivo mostraria "0 importadas" e pareceria falha, quando na verdade
+        // o extrato ja estava todo la.
+        showToast(
+          `${result.count} movimentação(ões) importada(s)`
+          + (result.repetidas ? `, ${result.repetidas} já existia(m)` : '')
+          + (result.skipped ? `, ${result.skipped} linha(s) inválida(s) ignorada(s)` : '')
+          + '.',
+          result.count === 0 && result.repetidas ? 'info' : 'success'
+        );
         closeExtratoModal();
         load();
       } catch (error) {

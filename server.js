@@ -5925,6 +5925,17 @@ const server = http.createServer(async (req, res) => {
   // não qual é. Enviar o segredo de volta a cada carregamento o deixaria no
   // histórico do navegador e em qualquer log de rede pelo caminho.
   // ==========================================================================
+  if (pathname.startsWith('/api/crm/')) {
+    // Mesma defesa em profundidade do bloco de Frota/RH/PCP/Contratos logo
+    // abaixo: o portão central autoriza pelo PAPEL, e a caixa "CRM" da tela
+    // de Usuários não fechava nada. Aqui a conexão guarda credencial de um
+    // sistema externo — quem não tem o módulo não precisa ler nem gravar.
+    const usuarioDoCrm = await getCurrentUser(req);
+    if (!usuarioDoCrm || !usuarioDoCrm.allowedModules.includes('crm')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+  }
+
   if (pathname === '/api/crm/connection') {
     try {
       if (req.method === 'GET') return sendJson(res, { connection: await crmDb.getConexao() });
@@ -5948,9 +5959,12 @@ const server = http.createServer(async (req, res) => {
   //   PUT    /api/<modulo>/<recurso>/:id    edita
   //   DELETE /api/<modulo>/<recurso>/:id    exclui
   //
-  // Permissão: o portão central (verificarAcesso, lá em cima) já traduziu o
-  // caminho para fleet.criar, hr.editar e assim por diante antes de chegar
-  // aqui — por isso este bloco não repete a checagem.
+  // Permissão em DOIS eixos, como em todo o resto do sistema: o portão central
+  // (verificarAcesso, lá em cima) traduz o caminho para fleet.criar, hr.editar
+  // e assim por diante, e diz o que o PAPEL permite; e a checagem de
+  // allowedModules aqui dentro diz o que aquele USUÁRIO tem liberado. Este
+  // bloco não tinha o segundo eixo, e as caixas de módulo da tela de Usuários
+  // não fechavam nada para estes cinco módulos (fase BR).
   //
   // O 404 quando o recurso não existe é deliberado: assim uma rota digitada
   // errado falha na hora, em vez de cair silenciosamente no `next` e devolver
@@ -6193,6 +6207,23 @@ const server = http.createServer(async (req, res) => {
   const rotaModulo = pathname.match(/^\/api\/(fleet|hr|pcp|contracts)\/([a-z-]+)(?:\/([^/?]+))?$/);
   if (rotaModulo) {
     const [, modulo, nomeRecurso, idBruto] = rotaModulo;
+
+    // AS CAIXAS DE MÓDULO DA TELA DE USUÁRIOS PRECISAM VALER AQUI TAMBÉM (fase BR).
+    //
+    // Todo o resto do sistema confere `allowedModules` na própria rota, além do
+    // portão central. Este bloco — Frota, RH, PCP e Contratos — não conferia em
+    // ponto nenhum: o portão autoriza pelo PAPEL, e o papel 'Usuário' já traz
+    // fleet.*, pcp.*, hr.ler e contracts.ler. Ou seja, o admin desmarcava esses
+    // cinco módulos em Configurações > Usuários, salvava, e não fechava nada:
+    // as telas somem do menu (que é montado por allowedModules) e as rotas
+    // continuam abertas para quem souber o endereço.
+    //
+    // Defesa em profundidade, igual às vizinhas: o portão diz o que o PAPEL
+    // permite, e a rota diz o que aquele USUÁRIO tem liberado.
+    const usuarioDoModulo = await getCurrentUser(req);
+    if (!usuarioDoModulo || !usuarioDoModulo.allowedModules.includes(modulo)) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
 
     // /api/<modulo>/meta — as listas que os SELECTS dos formulários precisam
     // (o veículo da manutenção, o cargo do colaborador, o produto da ordem).
@@ -11653,8 +11684,31 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Nenhuma linha para importar. Verifique o CSV (cabeçalho: data,descricao,valor,tipo).' }, 400);
       }
 
+      // IMPORTAR O MESMO EXTRATO DUAS VEZES NÃO DUPLICA (fase BR).
+      //
+      // Não havia checagem nenhuma: reimportar o CSV dobrava cada linha, a
+      // resposta dizia "N importadas" com a mesma alegria da primeira vez, e a
+      // conciliação passava a oferecer duas transações candidatas idênticas para
+      // o mesmo lançamento. Reimportar é o que se faz quando a primeira
+      // importação parece ter falhado — justamente a hora em que duplicar dói.
+      //
+      // A identidade é conta + data + descrição normalizada + valor + tipo. Duas
+      // compras iguais no mesmo dia, no mesmo valor, no mesmo estabelecimento
+      // são indistinguíveis num extrato CSV — e importar uma só é melhor do que
+      // importar as duas toda vez que alguém reimporta o arquivo. A linha que
+      // faltar entra pelo lançamento manual, que é explicitíssimo.
+      //
+      // Mesmo desenho do Set de chaves que /api/contracts/billing já usa.
+      const chaveDaTransacao = (tx) => [
+        tx.bankAccountId, tx.date,
+        String(tx.description || '').trim().toLowerCase().replace(/\s+/g, ' '),
+        Number(tx.amount || 0).toFixed(2), tx.type
+      ].join('|');
+      const jaExistem = new Set((data.bankTransactions || []).map(chaveDaTransacao));
+
       const created = [];
       let skipped = 0;
+      let repetidas = 0;
       rows.forEach((row) => {
         const description = String(row.description || row.descricao || row.Descricao || row['Descrição'] || '').trim();
         const rawAmount = row.amount ?? row.valor ?? row.Valor ?? 0;
@@ -11667,6 +11721,14 @@ const server = http.createServer(async (req, res) => {
         const typeRaw = String(row.type || row.tipo || row.Tipo || '').toLowerCase();
         const type = (typeRaw.startsWith('sa') || Number(String(rawAmount).replace(',', '.')) < 0) ? 'saida' : 'entrada';
         const tx = buildBankTransaction({ bankAccountId, date, description, amount, type }, user, 'csv');
+        const chave = chaveDaTransacao(tx);
+        // O Set recebe a chave junto: duas linhas iguais DENTRO do mesmo
+        // arquivo também são uma só.
+        if (jaExistem.has(chave)) {
+          repetidas += 1;
+          return;
+        }
+        jaExistem.add(chave);
         data.bankTransactions.push(tx);
         created.push(tx);
       });
@@ -11676,6 +11738,9 @@ const server = http.createServer(async (req, res) => {
         success: true,
         count: created.length,
         skipped,
+        // A tela precisa poder dizer "N importadas, M já existiam": só o
+        // número de importadas faria a segunda importação parecer ter falhado.
+        repetidas,
         transactions: created.map((tx) => serializeBankTransaction(tx, data))
       });
     } catch (error) {

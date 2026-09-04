@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-04 20:28 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 20:40 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -388,7 +388,7 @@ Tabelas usadas (75)
   user_permissions        user_roles              users
 
 ==============================================================================
-4. ROTAS DA API (106 encontradas no server.js)
+4. ROTAS DA API (107 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -411,6 +411,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/cep/…                                           
   /api/cnpj/…                                          
   /api/contracts/billing                               POST
+  /api/crm/…                                           
   /api/crm/connection                                  
   /api/crm/test                                        POST
   /api/dashboard                                       
@@ -503,7 +504,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-48 arquivo(s) em banco/migrations, em ordem de fase:
+49 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -534,6 +535,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-az-origem-da-venda-vira-cadastro.sql
   fase-ba-conta-bancaria-do-cadastro.sql
   fase-bb-equipamento-e-garantia-pela-nota.sql
+  fase-br-sequence-do-codigo-de-venda.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -557,7 +559,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-86 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+87 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -602,6 +604,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-meu-painel.js                 MEU PAINEL — "minhas vendas" tem que ser MINHAS, provado sem subir nada.
   [npm test] test-module-workspace.js           Testa a Área de Trabalho dos módulos contra as listas REAIS do app.js.
   [avulso]  test-modulos-crud.js               CRUD dos módulos Frota, RH, PCP e Contratos contra o Supabase REAL.
+  [npm test] test-modulos-e-duplicidade.js      AS CAIXAS DE MÓDULO VALEM, E O QUE JÁ ENTROU NÃO ENTRA DE NOVO (fase BR).
   [avulso]  test-modulos-e2e.js                Fluxo real dos módulos novos pelas rotas HTTP, autenticado.
   [npm test] test-modulos-telas.js              Telas de Frota, RH, PCP e Contratos x descritores de lib/db/modulos.js.
   [npm test] test-navegacao.js                  Barra lateral — abertura por CLIQUE, nome por hover.
