@@ -3590,11 +3590,25 @@ function condicaoPagamentoDoBody(body) {
  * `if` escrito aqui.
  */
 async function faturarPedidoDaNota(nfe, pedidoId, user) {
-  // O id do pedido vem por parâmetro, e não de `nfe.orderId`: quem chama já o
-  // tem em mãos, e depender do mapeamento da nota seria depender de um segundo
-  // caminho para a mesma informação.
   if (!pedidoId) return;
   if (String(nfe && nfe.status || '').toUpperCase() !== 'AUTORIZADO') return;
+  // QUEM FATURA QUANDO NINGUÉM ESTÁ LOGADO (fase BE).
+  //
+  // A autorização pode chegar pelo WEBHOOK da Focus, e aí não existe sessão:
+  // quem chamou foi a Focus, não uma pessoa. mudarStatusSalesRecord lê
+  // `user.name` e `user.id` direto, então sem isto a chamada estourava em
+  // TypeError e morria no catch abaixo, calada: nota autorizada, pedido nunca
+  // faturado, estoque parado e nenhuma conta a receber.
+  //
+  // O nome vai para a auditoria e para `updatedByName` do pedido, então diz o
+  // que de fato aconteceu em vez de fingir um usuário.
+  //
+  // O id fica VAZIO, e não com um 'sistema' inventado: financial_entries.
+  // created_by tem chave estrangeira para users, e um id que não existe lá
+  // derruba a criação da conta a receber. Provado: com um id fictício o pedido
+  // ficava faturado, o estoque baixava e o recebível não nascia — metade
+  // aplicada, que é pior do que nada. Vazio vira NULL na coluna e passa.
+  const quemFatura = user && user.id ? user : { id: '', name: 'Autorização da NF-e' };
   try {
     const dataVendas = loadData();
     // syncCadastroData tambem: faturar baixa estoque, e a baixa resolve nome
@@ -3612,9 +3626,24 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
       await anotarNotaNoFinanceiroDoPedido(dataVendas, pedido, nfe.numero);
       return;
     }
-    await mudarStatusSalesRecord({ id: pedido.id, code: pedido.code }, 'pedido-faturado', dataVendas, user);
+    await mudarStatusSalesRecord({ id: pedido.id, code: pedido.code }, 'pedido-faturado', dataVendas, quemFatura);
   } catch (erro) {
+    // A EXCEÇÃO NÃO SOBE, MAS TAMBÉM NÃO SOME.
+    //
+    // Não sobe porque a nota já existe para a SEFAZ: derrubar a autorização
+    // por causa do faturamento deixaria o sistema em desacordo com o Fisco,
+    // que é pior. Mas um console.error num servidor é o mesmo que nada — a
+    // nota fica autorizada, o pedido não fatura e ninguém descobre até o
+    // cliente não receber a cobrança.
     console.error('NF-e autorizada, mas nao consegui faturar o pedido', pedidoId, erro.message);
+    await registrarAuditoria({
+      action: 'falhaAoFaturarPedidoDaNota',
+      targetId: pedidoId,
+      targetUsername: String(nfe.numero || nfe.referencia || nfe.id || ''),
+      byId: quemFatura.id,
+      byName: quemFatura.name,
+      details: { erro: erro.message, nfeId: nfe.id || '', status: nfe.status || '' }
+    });
   }
 }
 
@@ -3894,21 +3923,24 @@ async function emitirNfeFiscal(body, user) {
   try {
     const client = await focusNfe.forEstabelecimento(estabelecimento.id);
     const resposta = await client.emitirNfe(referencia, payload);
+    // EMITIR FATURA O PEDIDO (fase AV) — a outra metade da unificação.
+    // Faturar passou a exigir documento fiscal; sem isto, o usuário emitiria a
+    // nota e ainda teria de voltar ao pedido para mudar o status à mão. Emitir
+    // é o ato que prova que a venda saiu: é ele que fatura.
+    //
+    // A CHAMADA MUDOU DE LUGAR NA FASE BE: está dentro de
+    // aplicarRespostaFocusNaNfe, no ramo da AUTORIZAÇÃO. Aqui embaixo ela só
+    // pegava a resposta síncrona, e o caminho normal da Focus é assíncrono — a
+    // nota voltava PROCESSANDO e o faturamento nunca acontecia.
+    //
+    // DEPOIS DA AUTORIZAÇÃO, e não antes: nota rejeitada não baixa estoque nem
+    // cria conta a receber. O vínculo (nfe_id) é gravado antes porque serve de
+    // guarda contra clique duplo; o faturamento só quando a SEFAZ disse sim.
     nfe = await aplicarRespostaFocusNaNfe(nfe, resposta, user);
     const data = loadData();
     data.auditLogs = data.auditLogs || [];
     await registrarAuditoria({ action: 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referencia, byId: user.id, byName: user.name });
     saveData(data);
-    // EMITIR FATURA O PEDIDO (fase AV) — a outra metade da unificação.
-    //
-    // Faturar passou a exigir documento fiscal; sem isto, o usuário emitiria a
-    // nota e ainda teria de voltar ao pedido para mudar o status à mão. Emitir
-    // é o ato que prova que a venda saiu: é ele que fatura.
-    //
-    // DEPOIS DA AUTORIZAÇÃO, e não antes: nota rejeitada não baixa estoque nem
-    // cria conta a receber. O vínculo (nfe_id) é gravado antes porque serve de
-    // guarda contra clique duplo; o faturamento só quando a SEFAZ disse sim.
-    await faturarPedidoDaNota(nfe, pedidoDaNota, user);
     return nfe;
   } catch (error) {
     await fiscalDb.updateNfeAposResposta(nfe.id, {
@@ -4084,6 +4116,24 @@ async function aplicarRespostaFocusNaNfe(nfe, resposta, user) {
     } catch (error) {
       console.error('Falha ao gerar o financeiro da NF-e avulsa', atualizada.id, error.message);
     }
+
+    // AUTORIZAR FATURA O PEDIDO — E É AQUI, NÃO NA EMISSÃO (fase BE).
+    //
+    // Estava em emitirNfeFiscal, logo depois da resposta SÍNCRONA da Focus.
+    // Só que o caminho normal da Focus é assíncrono: ela devolve 202 e a nota
+    // fica PROCESSANDO. Nesse instante faturarPedidoDaNota via status
+    // "PROCESSANDO" e saia na primeira linha. A autorização chegava depois,
+    // pelo webhook ou por uma reconsulta — e as duas passam por AQUI, que
+    // não faturava. Resultado: NF-e autorizada na SEFAZ, pedido em aberto,
+    // mercadoria em estoque e nenhuma conta a receber.
+    //
+    // Esta função é o ÚNICO lugar que decide que uma nota passou a AUTORIZADO,
+    // e só entra aqui quando o status MUDOU (a guarda no topo). Por isso o
+    // faturamento acontece uma vez, venha a autorização por onde vier.
+    //
+    // `orderId` e não um parâmetro: o webhook só tem a referência da nota nas
+    // mãos, e é a própria nota que guarda de qual pedido ela nasceu.
+    await faturarPedidoDaNota(atualizada, atualizada.orderId, user);
   }
 
   return atualizada;

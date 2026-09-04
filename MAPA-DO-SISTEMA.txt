@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-04 10:10 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 10:25 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -557,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-76 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+77 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -601,6 +601,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-navegacao.js                  Barra lateral — abertura por CLIQUE, nome por hover.
   [npm test] test-nfe-actions.js                Testa as regras de habilitação do painel de ações fiscais nos 4 cenários que importam: nada selecionado, 1 not
   [npm test] test-nfe-avulsa.js                 NF-e AVULSA: nota emitida SEM pedido de origem.
+  [npm test] test-nfe-fatura-o-pedido.js        A NF-e AUTORIZADA FATURA O PEDIDO — VENHA A AUTORIZAÇÃO POR ONDE VIER (fase BE).
   [npm test] test-nfe-observacoes.js            Observações adicionais da NF-e — o texto padrão da empresa.
   [npm test] test-nfe-payload.js                Montagem do payload de NF-e — lib/nfePayloadBuilder.js É conta de imposto: errado aqui não dá erro de tela, dá
   [npm test] test-nfe-unificada.js              A lista de NF-e passou a mostrar as duas origens.
