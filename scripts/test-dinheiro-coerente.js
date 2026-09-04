@@ -92,6 +92,39 @@ check('  dizendo os dois números', /1000\.00/.test(recusou) && /900\.00/.test(r
 const centavo = parcelasDoPedido({ ...pedido, totalAmount: 900.02, payments: [{ amount: 900 }] }, new Map(), {});
 check('e um centavo continua sendo ajuste, não recusa', centavo.length === 1);
 
+// A RECUSA TEM DE CHEGAR ANTES DO ESTOQUE.
+//
+// A primeira versao desta correcao punha a recusa so dentro de parcelasDoPedido
+// — que roda DEPOIS de o estoque ter sido baixado e de o pedido ter sido gravado
+// como faturado. Medido, com o codigo daquela versao:
+//
+//   POST pedido faturado, pagamentos 1200 num total de 1000
+//     -> 400 na tela
+//     -> pedido 1001 gravado como pedido-faturado, stock_applied=t
+//     -> estoque 20 -> 10, e ZERO recebiveis
+//
+// Trocar um numero errado por uma transicao pela metade e piorar. A conta passou
+// para antes de qualquer efeito, ao lado da guarda de documento fiscal; a recusa
+// dentro de parcelasDoPedido fica como ultima linha de defesa.
+const guarda = corpoDe('pagamentosCabemNoPedido');
+check('pagamentosCabemNoPedido existe', guarda.length > 0);
+check('  com a mesma tolerancia de 5 centavos de parcelasDoPedido', /somado - total <= 0\.05/.test(guarda));
+// Pedido sem linhas de pagamento nao tem o que conferir.
+check('  e sai calada quando nao ha linhas de pagamento', /if \(!linhas\.length\) return '';/.test(guarda));
+
+// Na CRIACAO e na EDICAO, antes do efeito de estoque nos dois.
+const posGuardaEdicao = src.indexOf('const pagamentosInvalidos = pagamentosCabemNoPedido(updated);');
+const posEstoqueEdicao = src.indexOf('await transitionOrderStockEffect(data, {', posGuardaEdicao);
+check('a edicao confere ANTES do efeito de estoque',
+  posGuardaEdicao > 0 && posEstoqueEdicao > posGuardaEdicao);
+const posGuardaCriacao = src.indexOf('const pagamentosInvalidos = pagamentosCabemNoPedido(record);');
+const posEstoqueCriacao = src.indexOf('await transitionOrderStockEffect(data, { oldItems: [], newItems: items', posGuardaCriacao);
+check('e a criacao tambem', posGuardaCriacao > 0 && posEstoqueCriacao > posGuardaCriacao);
+// Um pedido antigo com pagamentos invalidos (gravavel antes desta fase) nao pode
+// impedir que o numero da nota seja anotado num financeiro que ja existe.
+check('anotar a nota nao quebra por pedido antigo invalido',
+  /catch \(erroDasParcelas\) \{[\s\S]{0,240}?return 0;/.test(corpoDe('anotarNotaNoFinanceiroDoPedido')));
+
 console.log('--- 3. a NF-e sai pelo valor da venda ---');
 const appSrc = ler('public/app.js');
 const telaSrc = ler('public/modules/finance/subs/emitir_nfe_focus.js');

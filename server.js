@@ -1765,8 +1765,21 @@ async function anotarNotaNoFinanceiroDoPedido(data, record, numeroDaNota) {
 
   // As formas não entram na descrição (o nome da forma vem da própria linha de
   // pagamento), então o mapa vazio reproduz o mesmo texto.
-  const semNota = parcelasDoPedido(record, new Map(), { nfeNumero: '' });
-  const comNota = parcelasDoPedido(record, new Map(), { nfeNumero: numero });
+  //
+  // AQUI SE QUER SÓ O TEXTO, não criar parcela nenhuma: um pedido antigo cujas
+  // linhas de pagamento somam mais que o total (gravável antes da fase BQ)
+  // faria parcelasDoPedido recusar, e a recusa impediria de anotar o número da
+  // nota num financeiro que já existe. Sem os textos, nada é anotado — que é a
+  // mesma degradação de quando as descrições não casam.
+  let semNota;
+  let comNota;
+  try {
+    semNota = parcelasDoPedido(record, new Map(), { nfeNumero: '' });
+    comNota = parcelasDoPedido(record, new Map(), { nfeNumero: numero });
+  } catch (erroDasParcelas) {
+    console.error('Nao consegui remontar as descricoes das parcelas do pedido', record.id, erroDasParcelas.message);
+    return 0;
+  }
   const usados = new Set();
   let ajustadas = 0;
 
@@ -1780,6 +1793,37 @@ async function anotarNotaNoFinanceiroDoPedido(data, record, numeroDaNota) {
     ajustadas += 1;
   }
   return ajustadas;
+}
+
+/**
+ * AS LINHAS DE PAGAMENTO CABEM NO TOTAL DO PEDIDO?
+ *
+ * Devolve a recusa, ou vazio quando esta tudo certo.
+ *
+ * A fase BQ fez parcelasDoPedido RECUSAR quando os pagamentos somam mais que o
+ * pedido — antes disso a diferenca virava uma conta a receber NEGATIVA, que
+ * subtrai do total a receber em vez de somar. A recusa esta certa, mas o lugar
+ * estava errado: parcelasDoPedido roda DEPOIS de o estoque ja ter sido baixado e
+ * de o pedido ja ter sido gravado como faturado. O pedido ficava faturado, o
+ * estoque ia embora, o recebivel nao nascia, e a tela mostrava erro. Trocar um
+ * numero errado por uma transicao pela metade e piorar.
+ *
+ * Por isso a mesma conta acontece AQUI, antes de qualquer efeito, ao lado da
+ * guarda de documento fiscal. A recusa dentro de parcelasDoPedido fica como
+ * ultima linha de defesa, para quem chamar por outro caminho.
+ *
+ * A tolerancia de 5 centavos e a mesma de la: 1000/3 nao fecha exato, e isso e
+ * arredondamento de parcela, nao erro de digitacao.
+ */
+function pagamentosCabemNoPedido(record) {
+  const linhas = Array.isArray(record && record.payments) ? record.payments : [];
+  if (!linhas.length) return '';
+  const total = Number(record.totalAmount || 0);
+  if (!(total > 0)) return '';
+  const somado = Math.round(linhas.reduce((soma, linha) => soma + Number(linha.amount || 0), 0) * 100) / 100;
+  if (somado - total <= 0.05) return '';
+  return `As linhas de pagamento somam ${somado.toFixed(2)}, mais que o total do pedido `
+    + `(${total.toFixed(2)}). Corrija os valores das parcelas ou o total antes de faturar.`;
 }
 
 async function transitionOrderFinanceEffect(data, { record, wasApplied, willApply, user }) {
@@ -2265,6 +2309,18 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
         + 'Desfaturar com a nota de pé deixaria mercadoria em estoque e nota válida na SEFAZ.'
       );
       erro.status = 409;
+      throw erro;
+    }
+  }
+
+  // ANTES DE QUALQUER EFEITO: as linhas de pagamento têm de caber no total.
+  // Conferir isso só na hora de montar as parcelas deixaria o estoque já
+  // baixado e o pedido já gravado como faturado quando a recusa chegasse.
+  if (tipoNovo === 'order' && vaiGerarFinanceiro) {
+    const pagamentosInvalidos = pagamentosCabemNoPedido(updated);
+    if (pagamentosInvalidos) {
+      const erro = new Error(pagamentosInvalidos);
+      erro.status = 400;
       throw erro;
     }
   }
@@ -6915,6 +6971,12 @@ const server = http.createServer(async (req, res) => {
         //
         // Os dois efeitos são decididos SEPARADAMENTE pelo catálogo: "Pedido
         // Aprovado Sem Faturamento" baixa estoque e não gera financeiro.
+        // Mesma conferência da edição, e pelo mesmo motivo: recusar depois de
+        // o estoque ter saído deixaria o pedido gravado e sem recebível.
+        if (type === 'order' && salesStatus.geraFinanceiro(status)) {
+          const pagamentosInvalidos = pagamentosCabemNoPedido(record);
+          if (pagamentosInvalidos) return sendJson(res, { error: pagamentosInvalidos }, 400);
+        }
         if (type === 'order' && salesStatus.baixaEstoque(status)) {
           await transitionOrderStockEffect(data, { oldItems: [], newItems: items, wasApplied: false, willApply: true, record, user });
           record.stockApplied = true;
