@@ -4753,6 +4753,17 @@ async function loadModule(moduleName) {
 
           form.addEventListener('submit', async (event) => {
             event.preventDefault();
+            // CLIQUE DUPLO NÃO GRAVA DOIS PEDIDOS (fase BS).
+            //
+            // Não havia guarda: dois cliques em Salvar criavam dois documentos.
+            // O número agora vem de sequence, então eles não colidem mais — mas
+            // continuam sendo dois pedidos idênticos, e se o status já baixa
+            // estoque os DOIS baixam.
+            //
+            // Mesmo padrão de stock/subs/new_movement.js. O botão só volta quando
+            // a gravação falha: no sucesso a tela troca para a lista.
+            const botaoSalvar = form.querySelector('button[type="submit"]');
+            if (botaoSalvar?.disabled) return;
             // O `required` do campo de busca só garante que existe TEXTO digitado.
             // Digitar sem escolher na lista deixa o id vazio e o registro nascia
             // sem cliente ("-" na listagem) — por isso a checagem é no id.
@@ -4768,6 +4779,7 @@ async function loadModule(moduleName) {
             // Mesmo construtor usado pelas ações do menu — evita que um campo
             // novo entre num caminho e falte no outro.
             const payload = buildPayload();
+            if (botaoSalvar) botaoSalvar.disabled = true;
             try {
               if (isEditing) {
                 await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(payload) });
@@ -4781,6 +4793,8 @@ async function loadModule(moduleName) {
               renderApp();
               loadModule('sales');
             } catch (error) {
+              // Só aqui o botão volta: quem falhou precisa poder tentar de novo.
+              if (botaoSalvar) botaoSalvar.disabled = false;
               showToast(error.message || `Erro ao salvar ${title.toLowerCase()}.`, 'error');
             }
           });

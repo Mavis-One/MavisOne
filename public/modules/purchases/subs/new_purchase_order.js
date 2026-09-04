@@ -209,6 +209,18 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
 
     document.getElementById('compraForm')?.addEventListener('submit', async (evento) => {
       evento.preventDefault();
+      // CLIQUE DUPLO NÃO GRAVA DOIS DOCUMENTOS (fase BS).
+      //
+      // Não havia guarda nenhuma: dois cliques em "Gravar" criavam duas ordens
+      // idênticas, cada uma com o seu número (o código vem de sequence, então os
+      // números diferem — o que duplica é o documento). Se as duas forem
+      // recebidas depois, a mercadoria entra duas vezes e nascem duas contas a
+      // pagar para a mesma compra.
+      //
+      // Mesmo padrão de stock/subs/new_movement.js. O botão só volta a valer
+      // quando a gravação falha: no sucesso a tela troca de lista.
+      const botao = evento.target.querySelector('button[type="submit"]');
+      if (botao?.disabled) return;
       const fornecedorId = document.getElementById('compraFornecedor')?.value || '';
       if (!fornecedorId) {
         showToast('Escolha o fornecedor.', 'warning');
@@ -218,6 +230,7 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
         showToast('Inclua ao menos um item.', 'warning');
         return;
       }
+      if (botao) botao.disabled = true;
       const corpo = {
         status: document.getElementById('compraStatus')?.value || statusInicial,
         supplierId: fornecedorId,
@@ -246,6 +259,8 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
         renderApp();
         loadModule('purchases');
       } catch (erro) {
+        // Só aqui o botão volta: quem falhou precisa poder tentar de novo.
+        if (botao) botao.disabled = false;
         showToast(erro.message || 'Erro ao gravar o documento.', 'error');
       }
     });

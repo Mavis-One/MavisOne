@@ -103,5 +103,25 @@ check('a resposta conta as repetidas', /repetidas,/.test(src));
 check('e a tela mostra esse número',
   /result\.repetidas \? `, \$\{result\.repetidas\} já existia\(m\)` : ''/.test(ler('public/modules/finance/subs/extrato_open_finance.js')));
 
+console.log('--- 4. clique duplo não grava dois documentos ---');
+
+// O número agora vem de sequence, então dois cliques não colidem mais no código
+// — mas continuam sendo dois documentos idênticos, e se o status já baixa
+// estoque os DOIS baixam. Mesmo padrão de stock/subs/new_movement.js.
+const formPedido = ler('public/app.js');
+check('o formulário de venda trava o botão',
+  /const botaoSalvar = form\.querySelector\('button\[type="submit"\]'\);\s*\n\s*if \(botaoSalvar\?\.disabled\) return;/.test(formPedido));
+// Travar ANTES das validações deixaria o botão morto quando faltasse o cliente.
+check('  só depois das validações de tela',
+  formPedido.indexOf('if (botaoSalvar) botaoSalvar.disabled = true;')
+  > formPedido.indexOf('Adicione ao menos um produto.'));
+check('  e o devolve quando a gravação falha',
+  /if \(botaoSalvar\) botaoSalvar\.disabled = false;/.test(formPedido));
+
+const formCompra = ler('public/modules/purchases/subs/new_purchase_order.js');
+check('o formulário de ordem de compra também trava',
+  /const botao = evento\.target\.querySelector\('button\[type="submit"\]'\);\s*\n\s*if \(botao\?\.disabled\) return;/.test(formCompra));
+check('  e o devolve quando falha', /if \(botao\) botao\.disabled = false;/.test(formCompra));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);
