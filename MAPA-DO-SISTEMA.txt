@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-04 20:19 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 20:28 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -557,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-85 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+86 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -583,6 +583,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-dashboard-hub.js              Desenho do hub — public/modules/dashboard/index.js O que este teste guarda: 1.
   [npm test] test-deposito-da-loja.js           O DEPÓSITO PERTENCE A UMA LOJA (fase AW).
   [npm test] test-descricao-e-motivo.js         A DESCRIÇÃO, O MOTIVO DO CANCELAMENTO E O CAMPO DOCUMENTO (fases AX e AY).
+  [npm test] test-dinheiro-coerente.js          O DINHEIRO NÃO SE PERDE NEM TROCA DE SINAL (fase BQ).
   [npm test] test-documento.js                  CPF e CNPJ — modules/shared/documento.js.
   [npm test] test-edicao-lancamento.js          EDITAR UM LANÇAMENTO OBEDECE ÀS MESMAS REGRAS DE CRIÁ-LO (fase BG).
   [npm test] test-emissao-abas.js               A tela de emissão de NF-e: estrutura das abas e o que acontece ao clicar em "Emitir NF-e" com campo obrigatóri

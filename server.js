@@ -2401,8 +2401,25 @@ async function duplicarSalesRecord(serializado, data, user) {
   // a cópia já nascer faturada baixaria estoque e criaria contas a receber de
   // uma venda que ninguém fez.
   const status = salesStatus.padraoDoTipo(tipo);
+  // OS TOTAIS SAO RECALCULADOS, NAO COPIADOS (fase BQ).
+  //
+  // O que chega aqui e' o registro SERIALIZADO, e o serializer publica o
+  // total no campo `amount` — nao em `totalAmount`, que e' o nome que
+  // buildOrderQuoteRow le. O spread trazia `totalAmount: undefined` e a copia
+  // era gravada com total_amount 0: a lista mostrava R$ 0,00 numa copia cujos
+  // itens somavam R$ 4.770,00, e o Painel de Vendas e os relatorios contavam
+  // esse pedido como zero.
+  //
+  // Recalcular com computeSalesTotals, e nao so traduzir o nome do campo: e' a
+  // MESMA conta que a criacao e a edicao fazem, entao a copia nasce coerente
+  // com os proprios itens mesmo que o serializado esteja desatualizado.
+  const totaisDaCopia = computeSalesTotals(serializado.items || [], serializado);
   const copia = {
     ...serializado,
+    ...salesFinanceFields(serializado, totaisDaCopia),
+    // O serializer chama o cliente de `customer`; a gravacao le
+    // `clientSupplierName`. Sem isto a coluna Cliente da copia nasce vazia.
+    clientSupplierName: serializado.clientSupplierName || serializado.customer || '',
     id: createId(tipo === 'order' ? 'ord' : 'qte'),
     code: await db.getNextSalesCode(),
     status,

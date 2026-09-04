@@ -62,9 +62,27 @@ check('a linha diz o que é', /Diferença/.test(faltando[1].description), faltan
 check('a soma fecha com o pedido', soma(faltando) === 1000);
 
 console.log('\n--- pagamentos acima do total ---');
-const sobrando = parcelasDoPedido(pedido({ payments: [{ amount: 1200 }] }));
-check('a diferença negativa aparece', sobrando.length === 2 && sobrando[1].amount === -200, String(sobrando[1]?.amount));
-check('a soma volta ao total do pedido', soma(sobrando) === 1000);
+// FASE BQ: era uma parcela de -R$ 200,00. Um título negativo SUBTRAI do total a
+// receber do período em vez de somar, e ninguém procura um valor com o sinal
+// trocado — o painel fechava menor que a soma das parcelas visíveis, sem nada
+// explicando a falta. A soma "voltava ao total do pedido" justamente porque a
+// linha negativa cancelava o excesso: a conta fechava e o dinheiro sumia.
+//
+// Recusar, e não aparar: se as linhas somam mais que o pedido, uma das duas
+// coisas está errada, e aparar em silêncio escolheria qual sem perguntar.
+let recusa = null;
+try {
+  parcelasDoPedido(pedido({ payments: [{ amount: 1200 }] }));
+} catch (erro) {
+  recusa = erro;
+}
+check('pagar mais que o pedido é recusado', Boolean(recusa), recusa ? recusa.message.slice(0, 60) : 'NÃO RECUSOU');
+check('  com status 400', recusa && recusa.status === 400);
+check('  dizendo os dois números', recusa && /1200\.00/.test(recusa.message) && /1000\.00/.test(recusa.message));
+// Um centavo de diferença continua sendo arredondamento de parcela, não erro:
+// vai na última parcela em vez de virar linha ou recusa.
+const centavoASobrar = parcelasDoPedido(pedido({ totalAmount: 999.98, payments: [{ amount: 1000 }] }));
+check('e um centavo a mais continua sendo ajuste', centavoASobrar.length === 1);
 
 console.log('\n--- pedido sem valor não gera nada ---');
 check('total zero', parcelasDoPedido(pedido({ totalAmount: 0 })).length === 0);

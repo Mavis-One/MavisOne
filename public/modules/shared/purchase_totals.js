@@ -57,13 +57,26 @@
     const itemsTotal = dinheiro(items.reduce((soma, item) => soma + item.total, 0));
     const freight = dinheiro(documento.freight);
     const otherExpenses = dinheiro(documento.otherExpenses);
-    const discountAmount = dinheiro(documento.discountAmount);
+    // O DESCONTO NAO PASSA DO QUE HA PARA DESCONTAR (fase BQ).
+    //
+    // Sem o teto, um desconto maior que a nota deixava o total NEGATIVO — e
+    // o recebimento gerava uma conta a PAGAR negativa, que diminui o total a
+    // pagar do periodo em vez de somar. A tela mostrava "Total: R$ -400,00"
+    // e deixava salvar.
+    //
+    // Vendas ja fazia assim (sales_totals.js). `aparado` sobe para a tela
+    // poder avisar em vez de mudar o numero em silencio.
+    const descontoPedido = dinheiro(documento.discountAmount);
+    const teto = dinheiro(itemsTotal + freight + otherExpenses);
+    const discountAmount = Math.min(Math.max(0, descontoPedido), teto);
     return {
       items,
       itemsTotal,
       freight,
       otherExpenses,
       discountAmount,
+      descontoAparado: descontoPedido !== discountAmount,
+      descontoPedido,
       totalAmount: dinheiro(itemsTotal + freight + otherExpenses - discountAmount)
     };
   }

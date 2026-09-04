@@ -3458,6 +3458,7 @@ async function loadModule(moduleName) {
               : false;
 
             // A tela de emissão lê isto e nasce preenchida com o pedido.
+            const totaisDaNota = computeTotals();
             state.nfeFromOrder = {
               orderId: editRecord.id,
               code: editRecord.code,
@@ -3472,7 +3473,28 @@ async function loadModule(moduleName) {
               })),
               taxNotes: copiarObservacoes ? formState.note : '',
               payments: payments.map((linha) => ({ ...linha })),
-              totalAmount: computeTotals().totalAmount
+              totalAmount: totaisDaNota.totalAmount,
+              // FASE BQ: O QUE NÃO ESTÁ NAS LINHAS DE ITEM TAMBÉM É A NOTA.
+              //
+              // Só os itens viajavam para cá, e a tela de emissão somava as
+              // linhas: um pedido de R$ 1.000,00 com 10% de desconto virava uma
+              // conta a receber de R$ 900,00 e uma NF-e de R$ 1.000,00. A nota
+              // sai por um valor que a venda não teve, e a conferência entre o
+              // fiscal e o financeiro nunca fecha.
+              //
+              // O frete só vai quando é COBRADO DO COMPRADOR: frete por conta do
+              // emitente não entra no valor da nota.
+              // Direto do cálculo, e não remontado do formState: é a MESMA
+              // conta que grava o total do pedido, então os dois números não
+              // têm como divergir. `freteCobrado` já vem zero quando o frete é
+              // por conta do emitente — esse não entra no valor da nota.
+              //
+              // Serviços ficam de fora de propósito: eles não são item de NF-e
+              // de mercadoria, e mandá-los como despesa faria a nota cobrar por
+              // algo que não está declarado em item nenhum.
+              desconto: totaisDaNota.descontoTotal || 0,
+              frete: totaisDaNota.freteCobrado || 0,
+              outrasDespesas: (totaisDaNota.despesasGerais || 0) + (totaisDaNota.taxaMontagem || 0)
             };
             state.activeModule = 'finance';
             state.activeSub = 'nova_nfe_avulsa';

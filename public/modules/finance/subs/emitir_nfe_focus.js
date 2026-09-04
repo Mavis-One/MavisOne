@@ -132,6 +132,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   const doPedido = state.nfeFromOrder || null;
   if (doPedido) delete state.nfeFromOrder;
   let orderIdOrigem = doPedido ? doPedido.orderId || '' : '';
+  // FASE BQ: desconto, frete cobrado e despesas do PEDIDO. Zero na nota
+  // avulsa, que não tem pedido por trás. O servidor já sabia recebê-los (o
+  // montador do payload tem os três campos); era esta tela que não os mandava,
+  // e a nota saía pelo valor BRUTO dos itens.
+  const desconto = doPedido ? Number(doPedido.desconto || 0) : 0;
+  const frete = doPedido ? Number(doPedido.frete || 0) : 0;
+  const outrasDespesas = doPedido ? Number(doPedido.outrasDespesas || 0) : 0;
 
   try {
     const res = await api('/api/fiscal/estabelecimentos');
@@ -226,8 +233,16 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     return Math.round(Number(item.quantidade || 0) * Number(item.valorUnitario || 0) * 100) / 100;
   }
 
-  function grandTotal() {
+  // O total dos ITENS, sem o que vem do pedido.
+  function totalDosItens() {
     return itens.reduce((sum, item) => sum + itemTotal(item), 0);
+  }
+
+  // O VALOR DA NOTA. Some frete e despesas, subtrai desconto — a mesma conta
+  // que o montador do payload faz do outro lado. Antes daqui a tela anunciava
+  // "Valor total" somando só as linhas de item, e a nota saía por esse número.
+  function grandTotal() {
+    return Math.round((totalDosItens() + frete + outrasDespesas - desconto) * 100) / 100;
   }
 
   async function loadNotasRecentes() {
@@ -1041,6 +1056,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         // parcela única com o total: o parcelamento é condição comercial e
         // vira contas a receber, não N formas de pagamento na nota.
         pagamentos: [{ forma: formData.get('formaPagamento') || '99', valor: grandTotal() }],
+        // Desconto, frete e despesas do pedido de origem (fase BQ). Sem eles a
+        // nota sai pelo bruto dos itens e diverge da conta a receber.
+        ...(desconto ? { desconto } : {}),
+        ...(frete ? { frete, modalidadeFrete: 0 } : {}),
+        ...(outrasDespesas ? { outrasDespesas } : {}),
         // Com pedido de origem, o servidor NÃO gera contas a receber: quem
         // gerou foi o pedido, e um segundo recebível pelo mesmo valor só
         // apareceria quando a conciliação não fechasse.
