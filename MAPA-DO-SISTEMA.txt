@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-04 12:34 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 13:29 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -557,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-79 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+82 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -575,6 +575,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-chassi-item.js                Chassi na linha do item de venda.
   [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
   [npm test] test-complemento-icms.js           NF-e COMPLEMENTAR EXCLUSIVA DE ICMS.
+  [npm test] test-compra-cancelada-financeiro.js CANCELAR A COMPRA MATA A CONTA A PAGAR QUE ELA CRIOU (fase BI).
   [avulso]  test-compras-documento.js          A CADEIA DE COMPRAS: COTACAO -> ORDEM -> RECEBIMENTO (fase AQ).
   [npm test] test-conta-bancaria.js             A CONTA BANCÁRIA DO CADASTRO GRAVA DE VERDADE (fase BA).
   [npm test] test-contrato-financeiro.js        Geração das parcelas de um contrato — parcelasDoContrato / vencimentoDoPeriodo.
@@ -585,6 +586,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-documento.js                  CPF e CNPJ — modules/shared/documento.js.
   [npm test] test-edicao-lancamento.js          EDITAR UM LANÇAMENTO OBEDECE ÀS MESMAS REGRAS DE CRIÁ-LO (fase BG).
   [npm test] test-emissao-abas.js               A tela de emissão de NF-e: estrutura das abas e o que acontece ao clicar em "Emitir NF-e" com campo obrigatóri
+  [npm test] test-entrada-nfe-atomica.js        A ENTRADA DE NF-e É INTEIRA OU NÃO É (fase BH).
   [npm test] test-entrada-nfe.js                ENTRADA DE NF-e — o XML do fornecedor, o fornecedor que falta e o que a nota não pode fazer sozinha.
   [avulso]  test-faturar-exige-nota.js         FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
   [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
@@ -618,6 +620,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-prazo-cancelamento.js         Prazo de 24 horas para cancelar NF-e.
   [npm test] test-produto-abas.js               Abas do cadastro de produto.
   [avulso]  test-razao-no-banco.js             O RAZÃO DE ESTOQUE VIVE NO POSTGRES, E É TRANSACIONAL (fase AP).
+  [npm test] test-regra-fiscal-parcial.js       SALVAR UMA REGRA FISCAL NÃO APAGA O QUE O FORMULÁRIO NÃO MOSTRA (fase BJ).
   [npm test] test-regras-fiscais.js             Modelo de regras fiscais — scripts/seed-regras-fiscais.js Os CFOPs vieram do ERP que o usuário usa hoje: 5102,
   [npm test] test-relatorio-vendas.js           RELATÓRIO DE VENDAS — quem vê o quê, provado com dados de mentira.
   [npm test] test-reserva-estoque.js            Reserva de estoque — a ponte entre "prometido" e "baixado".

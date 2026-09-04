@@ -4698,6 +4698,11 @@ async function transicionarDocumentoDeCompra(data, { id, novoStatus, user }) {
 
   const deveEntrarNoEstoque = alvo.entraEstoque && !documento.stockApplied;
   const deveSairDoEstoque = !alvo.entraEstoque && documento.stockApplied;
+  // CANCELAR e o unico gatilho, de proposito (fase BI). Cobrar
+  // `!alvo.geraFinanceiro` cancelaria o pagavel tambem ao ir de "Ordem
+  // Recebida" para "Recebida Parcialmente", que nao e o mesmo assunto — la a
+  // divida continua existindo, so o recebimento e que foi parcial.
+  const deveCancelarFinanceiro = Boolean(alvo.cancelado) && documento.financeApplied;
 
   // O INDICE de produtos, montado uma vez e passado adiante. Inclui os
   // escriturais de proposito: e indice de RESOLUCAO, nao lista de mercadoria —
@@ -4713,7 +4718,23 @@ async function transicionarDocumentoDeCompra(data, { id, novoStatus, user }) {
   // --- estorno: o documento tinha entrado e agora nao entra mais ------------
   if (deveSairDoEstoque) {
     await estornarRecebimentoDeCompra(data, { documento, novoStatus: alvo, user, productsById });
+    // ANTES do return: era exatamente este atalho que deixava a conta a pagar
+    // viva. O bloco de financeiro fica la embaixo e nunca era alcancado por
+    // um cancelamento de ordem ja recebida.
+    if (deveCancelarFinanceiro) {
+      await cancelarFinanceiroDaCompra(data, { documentoId: id, user });
+      await comprasDb.atualizarStatus(id, { status: alvo.value, type: alvo.tipo, financeApplied: false });
+    }
     return comprasDb.obterDocumento(id);
+  }
+
+  // Cancelar sem estorno de estoque tambem passa por aqui: uma ordem com
+  // financeApplied e stockApplied false (recebida por Nota de Entrada, ou
+  // "Recebida Sem Financeiro") nao entra no ramo acima e mesmo assim tem
+  // conta a pagar para matar.
+  if (deveCancelarFinanceiro) {
+    await cancelarFinanceiroDaCompra(data, { documentoId: id, user });
+    await comprasDb.atualizarStatus(id, { status: alvo.value, type: alvo.tipo, financeApplied: false });
   }
 
   // --- entrada -------------------------------------------------------------
@@ -4800,6 +4821,55 @@ async function transicionarDocumentoDeCompra(data, { id, novoStatus, user }) {
  * razao sem a prova de que a mercadoria chegou e voltou, e e justamente essa
  * prova que a conferencia fisica procura quando o saldo nao bate.
  */
+/**
+ * CANCELAR A COMPRA MATA A CONTA A PAGAR QUE ELA CRIOU (fase BI).
+ *
+ * O espelho de transitionOrderFinanceEffect no lado das compras, e ele faltava
+ * inteiro. Os dois caminhos de compra deixavam o pagavel vivo, por motivos
+ * diferentes:
+ *
+ *   - purchase_orders: transicionarDocumentoDeCompra estornava o estoque e dava
+ *     `return` ANTES do bloco de financeiro. A conta a pagar do recebimento
+ *     ficava 'pending' e financeApplied continuava true.
+ *
+ *   - purchases (compra rapida): o codigo PARECIA tratar — havia um
+ *     `financeEntry.status = 'cancelado'` — mas so mudava o objeto em memoria.
+ *     Faltava o db.updateFinancialEntry, e `financial_entries` mora no Postgres:
+ *     a mutacao nunca chegava la, e o proximo syncFinanceData a sobrescrevia
+ *     com o que o banco ainda dizia.
+ *
+ * Nos dois casos a mercadoria voltava e o fornecedor continuava sendo cobrado
+ * pelo Contas a Pagar, sem nenhum documento por tras.
+ *
+ * BAIXA REGISTRADA NAO SOME. Se alguem ja pagou, o dinheiro saiu de verdade:
+ * cancelar o lancamento apagaria o rastro do pagamento. E a mesma regra do lado
+ * das vendas. Quem chama recebe a lista do que ficou, para poder avisar.
+ */
+async function cancelarFinanceiroDaCompra(data, { documentoId, user }) {
+  const vinculadas = (data.finance || []).filter((entry) => entry.referenceId === documentoId
+    && entry.status !== 'cancelado');
+  const canceladas = [];
+  const mantidas = [];
+  for (const entry of vinculadas) {
+    if (getFinanceEntryPayments(data, entry.id).length) {
+      mantidas.push(entry);
+      continue;
+    }
+    entry.status = 'cancelado';
+    entry.updatedAt = new Date().toISOString();
+    await db.updateFinancialEntry(entry.id, { status: 'cancelado' });
+    await addFinanceAuditLog(data, {
+      action: 'cancelarContaAPagarDaCompra',
+      entry,
+      byId: user?.id,
+      byName: user?.name,
+      details: { documentoId }
+    });
+    canceladas.push(entry);
+  }
+  return { canceladas, mantidas };
+}
+
 async function estornarRecebimentoDeCompra(data, { documento, novoStatus, user, productsById }) {
   const estornos = documento.items
     .filter((item) => productsById.has(item.productId))
@@ -4930,7 +5000,12 @@ function sendStockError(res, error, fallback) {
  * requisicoes ao mesmo tempo, gerava o mesmo numero duas vezes.
  */
 async function commitStockMovements(data, movements, productsById, opcoes = {}) {
-  if (!movements.length && !(opcoes.transferencias || []).length) return;
+  // O GANCHO TAMBÉM É MOTIVO PARA ABRIR A TRANSAÇÃO (fase BH). Uma nota de
+  // entrada em que nenhum item movimenta estoque ainda precisa marcar a ordem
+  // de compra vinculada; sem esta condição a função saía na primeira linha e a
+  // ordem ficava por marcar, em silêncio.
+  if (!movements.length && !(opcoes.transferencias || []).length
+    && typeof opcoes.tambemNaTransacao !== 'function') return;
   const transferencias = opcoes.transferencias || [];
 
   const deltaByProduct = new Map();
@@ -8877,6 +8952,36 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // A ORDEM DE COMPRA VINCULADA É CONFERIDA AQUI (fase BH).
+      //
+      // Estava depois do commitStockMovements, e as duas recusas devolviam 400
+      // sem desfazer nada. O que ficava no banco depois de um "A ordem de
+      // compra escolhida nao existe mais": a nota gravada como LANCADA com
+      // movimentouEstoque e gerouFinanceiro em true, o razão lançado, o custo do
+      // produto sobrescrito — e nenhuma conta a pagar, porque o bloco do
+      // financeiro vem depois e nunca era alcançado. O próprio registro dizia
+      // que o financeiro tinha sido gerado, então nenhuma conferência acusava a
+      // falta. E refazer a nota era impossível: o reenvio do mesmo XML bate no
+      // bloqueio de duplicidade por chave.
+      //
+      // A conferência aqui não dispensa a de dentro da transação, mais abaixo:
+      // entre este ponto e o commit a ordem pode mudar. Esta existe para o
+      // caso comum — recusar com o banco ainda intacto e uma mensagem que o
+      // usuário pode agir sobre.
+      let ordemDaNota = null;
+      if (body.purchaseOrderId) {
+        ordemDaNota = await comprasDb.obterDocumento(body.purchaseOrderId);
+        if (!ordemDaNota) {
+          return sendJson(res, { error: 'A ordem de compra escolhida não existe mais.' }, 400);
+        }
+        if (ordemDaNota.stockApplied) {
+          return sendJson(res, {
+            error: `A ordem ${ordemDaNota.code || ordemDaNota.id} já deu entrada no estoque por conta própria. `
+              + 'Estorne o recebimento dela antes de ligar esta nota.'
+          }, 400);
+        }
+      }
+
       const querFinanceiro = body.gerarFinanceiro !== false;
       const vaiMovimentar = decisoes.some((d) => d.movimentarEstoque);
       const status = decisoes.some((d) => !d.produtoId) ? 'REVISAR' : 'LANCADA';
@@ -8957,40 +9062,82 @@ const server = http.createServer(async (req, res) => {
         }
         movimentados.push(produto.name);
       }
-      await commitStockMovements(data, movimentosDaNota, produtosPorId);
-
-      // ---- a ordem de compra que esta nota materializa (fase AQ) ------------
+      // ---- o razão E a marca na ordem, no MESMO instante (fase AQ + BH) -----
       //
       // Quem move o estoque e a NOTA, nunca as duas. A ordem e o compromisso; a
-      // nota e a prova de que a mercadoria chegou. Por isso aqui o documento e
+      // nota e a prova de que a mercadoria chegou. Por isso o documento e
       // marcado como recebido SEM lancar movimento nenhum: o
-      // commitStockMovements logo acima ja lancou, com os dados da nota, que
-      // sao os que valem.
+      // commitStockMovements ja lancou, com os dados da nota, que sao os que
+      // valem.
       //
       // A gravacao de entrada_nfe_id e o que fecha a porta do outro lado:
       // transicionarDocumentoDeCompra recusa receber uma ordem que ja tem nota.
-      let ordemLigada = null;
-      if (body.purchaseOrderId) {
-        const ordem = await comprasDb.obterDocumento(body.purchaseOrderId);
-        if (!ordem) {
-          return sendJson(res, { error: 'A ordem de compra escolhida nao existe mais.' }, 400);
-        }
-        if (ordem.stockApplied) {
-          return sendJson(res, {
-            error: `A ordem ${ordem.code || ordem.id} ja deu entrada no estoque por conta propria. `
-              + 'Estorne o recebimento dela antes de ligar esta nota.'
-          }, 400);
-        }
-        ordemLigada = await comprasDb.atualizarStatus(body.purchaseOrderId, {
-          status: 'ordem-recebida',
-          type: 'order',
-          // stockApplied fica TRUE mesmo tendo sido a nota a movimentar: a
-          // coluna responde "esta ordem ja virou estoque?", e a resposta e sim.
-          // Fosse false, receber a ordem depois lancaria tudo de novo.
-          stockApplied: true,
-          entradaNfeId: entrada.id
+      //
+      // FASE BH: A MARCA ENTRA PELO GANCHO `tambemNaTransacao`, como na rota
+      // irma (transicionarDocumentoDeCompra). Antes eram duas escritas soltas:
+      // o razão commitava, e só depois a ordem era lida e marcada. Se a marca
+      // falhasse — erro de banco, ou a ordem tendo sumido no meio — o estoque
+      // ficava lançado com a ordem intacta, e recebê-la depois lançaria a mesma
+      // mercadoria uma segunda vez. Juntas, ou nenhuma das duas.
+      //
+      // O `for update` e a reconferência aqui dentro fecham a janela entre a
+      // validação lá de cima e este commit: duas notas apontando para a mesma
+      // ordem, ao mesmo tempo, esperam uma pela outra e a segunda é recusada.
+      try {
+        await commitStockMovements(data, movimentosDaNota, produtosPorId, {
+          tambemNaTransacao: body.purchaseOrderId
+            ? async (cliente) => {
+              await comprasDb.travarDocumento(cliente, body.purchaseOrderId);
+              const { rows } = await cliente.query(
+                'select stock_applied from purchase_orders where id = $1', [body.purchaseOrderId]
+              );
+              if (!rows.length) {
+                const erro = new Error('A ordem de compra escolhida não existe mais.');
+                erro.status = 400;
+                throw erro;
+              }
+              if (rows[0].stock_applied) {
+                const erro = new Error(
+                  `A ordem ${ordemDaNota.code || body.purchaseOrderId} já deu entrada no estoque por conta própria. `
+                  + 'Estorne o recebimento dela antes de ligar esta nota.'
+                );
+                erro.status = 400;
+                throw erro;
+              }
+              await comprasDb.atualizarStatus(body.purchaseOrderId, {
+                status: 'ordem-recebida',
+                type: 'order',
+                // stockApplied fica TRUE mesmo tendo sido a nota a movimentar: a
+                // coluna responde "esta ordem ja virou estoque?", e a resposta e sim.
+                // Fosse false, receber a ordem depois lancaria tudo de novo.
+                stockApplied: true,
+                entradaNfeId: entrada.id
+              }, cliente);
+            }
+            : undefined
         });
+      } catch (erroDoRazao) {
+        // A NOTA VOLTA A NÃO EXISTIR (fase BH).
+        //
+        // A transação desfez o razão sozinha, mas a nota foi gravada ANTES dela
+        // e sobreviveria — dizendo LANCADA, com movimentouEstoque em true, sem
+        // um movimento sequer. E a chave de acesso é única: a nota ficaria
+        // queimada, impossível de relançar, inclusive por quem quisesse
+        // corrigir. Mesmo raciocínio do desfazer que criarEntrada já faz
+        // quando os itens falham.
+        try {
+          await entradaNfeDb.desfazerEntrada(entrada.id);
+        } catch (erroAoDesfazer) {
+          console.error('Entrada de NF-e falhou e nao consegui desfaze-la', entrada.id, erroAoDesfazer.message);
+        }
+        return sendJson(res, { error: erroDoRazao.message || 'Erro ao lançar o estoque da nota.' }, erroDoRazao.status || 400);
       }
+
+      // Relido DEPOIS do commit: dentro da transação atualizarStatus devolve
+      // null de propósito (a linha ainda não está visível para outra conexão).
+      const ordemLigada = body.purchaseOrderId
+        ? await comprasDb.obterDocumento(body.purchaseOrderId)
+        : null;
 
       // ---- contas a pagar --------------------------------------------------
       // Nota ligada a uma ordem gera o financeiro DELA, pelas duplicatas do
@@ -9003,37 +9150,55 @@ const server = http.createServer(async (req, res) => {
         // Sem duplicata na nota (à vista, ou emissor que não preencheu cobr),
         // vira uma parcela só vencendo na emissão — melhor do que sumir com a
         // dívida porque o XML não detalhou o parcelamento.
-        const parcelas = nota.duplicatas.length
-          ? nota.duplicatas
-          : [{ numero: '001', vencimento: nota.dataEmissao, valor: nota.totais.nota || 0 }];
-        for (let i = 0; i < parcelas.length; i += 1) {
-          const parcela = parcelas[i];
-          const lancamento = await db.createFinancialEntry({
-            type: 'purchase',
-            referenceId: entrada.id,
-            date: nota.dataEmissao,
-            dueDate: parcela.vencimento || nota.dataEmissao,
-            description: descricaoLancamento.montar({
-              qual: 'despesa',
-              tipo: 'compra',
-              nota: nota.numero,
-              parcela: i + 1,
-              parcelas: parcelas.length
-            }),
-            amount: Number(parcela.valor || 0),
-            // A chave no campo Documento é o que liga a conta a pagar à nota na
-            // conciliação — nome de fornecedor muda, chave não.
-            document: nota.chave,
-            clientSupplierId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
-            clientSupplierName: nota.emitente.nome,
-            status: 'pending',
-            createdBy: user.id,
-            createdByName: user.name
+        try {
+          const parcelas = nota.duplicatas.length
+            ? nota.duplicatas
+            : [{ numero: '001', vencimento: nota.dataEmissao, valor: nota.totais.nota || 0 }];
+          for (let i = 0; i < parcelas.length; i += 1) {
+            const parcela = parcelas[i];
+            const lancamento = await db.createFinancialEntry({
+              type: 'purchase',
+              referenceId: entrada.id,
+              date: nota.dataEmissao,
+              dueDate: parcela.vencimento || nota.dataEmissao,
+              description: descricaoLancamento.montar({
+                qual: 'despesa',
+                tipo: 'compra',
+                nota: nota.numero,
+                parcela: i + 1,
+                parcelas: parcelas.length
+              }),
+              amount: Number(parcela.valor || 0),
+              // A chave no campo Documento é o que liga a conta a pagar à nota na
+              // conciliação — nome de fornecedor muda, chave não.
+              document: nota.chave,
+              clientSupplierId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
+              clientSupplierName: nota.emitente.nome,
+              status: 'pending',
+              createdBy: user.id,
+              createdByName: user.name
+            });
+            data.finance.push(lancamento);
+            financeiro.push(lancamento);
+          }
+          saveData(data);
+        } catch (erroDoFinanceiro) {
+          // A MERCADORIA CHEGOU: o estoque NÃO se desfaz aqui — mesmo
+          // raciocínio da rota irmã de recebimento de ordem. Mas a nota parava
+          // de contar a verdade: ficava com gerouFinanceiro em true e sem
+          // conta a pagar nenhuma, e era esse `true` que impedia qualquer
+          // conferência de apontar a falta.
+          console.error('Entrada de NF-e lancada, mas o financeiro falhou', entrada.id, erroDoFinanceiro.message);
+          await entradaNfeDb.atualizarSinalizadores(entrada.id, { gerouFinanceiro: false, status: 'REVISAR' });
+          await registrarAuditoria({
+            action: 'falhaAoGerarFinanceiroDaEntrada',
+            targetId: entrada.id,
+            targetUsername: nota.emitente.nome,
+            byId: user.id,
+            byName: user.name,
+            details: { erro: erroDoFinanceiro.message, chave: nota.chave, parcelasCriadas: financeiro.length }
           });
-          data.finance.push(lancamento);
-          financeiro.push(lancamento);
         }
-        saveData(data);
       }
 
       await registrarAuditoria({
@@ -9310,10 +9475,13 @@ const server = http.createServer(async (req, res) => {
             note: `Cancelamento da compra de ${purchase.supplier}`, user
           });
         }
-        const financeEntry = data.finance.find((entry) => entry.referenceId === purchase.id && entry.type === 'purchase');
-        if (financeEntry && financeEntry.status === 'pending') {
-          financeEntry.status = 'cancelado';
-        }
+        // A MUTACAO EM MEMORIA NAO BASTAVA (fase BI). Aqui havia
+        // `financeEntry.status = 'cancelado'` e mais nada: faltava o
+        // db.updateFinancialEntry, e `financial_entries` mora no Postgres. A
+        // mudanca nunca chegava la, e o syncFinanceData da requisicao seguinte
+        // trazia o 'pending' de volta. A compra era cancelada, a mercadoria
+        // saia do estoque e o fornecedor seguia sendo cobrado.
+        await cancelarFinanceiroDaCompra(data, { documentoId: purchase.id, user });
       }
 
       const updated = await db.updatePurchase(id, { status: novoStatus });
@@ -11485,6 +11653,24 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // A PORTA DOS FUNDOS DO FINANCEIRO (fase BK).
+  //
+  // Esta rota nao validava NADA: aceitava `type` fora do conjunto (o padrao
+  // era 'sale', vocabulario aposentado ha fases), valor qualquer, e trocava
+  // descricao vazia por "Lancamento" em silencio — dado inventado, que e pior
+  // do que dado faltando. Tambem nao gravava trilha de auditoria.
+  //
+  // Ela e o par legado do /api/finance/entries. O unico cliente era a tela
+  // "Conciliacao financeira" dentro de loadModule('finance') em public/app.js,
+  // que ficou INALCANCAVEL quando o modulo Financeiro passou a ser servido
+  // pelo registry (public/modules/finance/index.js): MavisModuleRegistry.finance
+  // sempre renderiza algo e nunca devolve false, entao loadModule retorna antes
+  // daquele ramo.
+  //
+  // NAO FOI APAGADA porque apagar rota e decisao de quem opera o sistema — pode
+  // haver integracao externa batendo aqui. O que se fez foi tirar dela o poder
+  // de gravar coisa que a rota viva recusa: as MESMAS regras, pelo MESMO
+  // validador. Duas copias da regra foi o que criou o problema.
   if (pathname === '/api/finance' && req.method === 'POST') {
     try {
       const data = loadData();
@@ -11495,16 +11681,33 @@ const server = http.createServer(async (req, res) => {
       }
 
       const body = await readBody(req);
+      // 'sale'/'purchase' continuam sendo aceitos e traduzidos: e o que os
+      // registros antigos e o cliente legado mandam, e recusa-los quebraria
+      // quem ainda usa a rota sem ganhar nada.
+      const LEGADOS = { sale: 'RECEITA', purchase: 'DESPESA' };
+      const bruto = String(body.type || '').toLowerCase();
+      const type = (LEGADOS[bruto] || String(body.type || 'DESPESA')).toUpperCase();
+      if (!['RECEITA', 'DESPESA', 'TRANSFERENCIA'].includes(type)) {
+        return sendJson(res, { error: 'Tipo de lançamento inválido' }, 400);
+      }
+      const amount = Number(body.amount || 0);
+      // Sem o `|| 'Lançamento'`: a rota inventava a descricao em vez de cobrar.
+      const invalido = validarLancamentoFinanceiro({ ...body, type, amount });
+      if (invalido) return sendJson(res, { error: invalido }, 400);
+
       const entry = await db.createFinancialEntry({
-        type: body.type || 'sale',
+        type,
         referenceId: body.referenceId || '',
         date: body.date || new Date().toISOString().slice(0, 10),
-        description: body.description || 'Lançamento',
-        amount: Number(body.amount || 0),
+        description: String(body.description).trim(),
+        amount,
         status: body.status || 'pending',
         createdBy: user.id,
         createdByName: user.name
       });
+      data.finance.push(entry);
+      await addFinanceAuditLog(data, { action: 'criarLancamento', entry, byId: user.id, byName: user.name });
+      saveData(data);
       return sendJson(res, { success: true, entry });
     } catch (error) {
       return sendJson(res, { error: 'Erro ao salvar financeiro' }, 400);

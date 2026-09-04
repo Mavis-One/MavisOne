@@ -88,7 +88,8 @@ check('  mas o POST continua conferindo',
 
 console.log('--- 4. as duas rotas usam o mesmo validador ---');
 const chamadas = (src.match(/validarLancamentoFinanceiro\(/g) || []).length;
-// Uma na declaração, uma no POST, uma no PUT.
+// Uma na declaração, uma no POST, uma no PUT — e, desde a fase BK, uma na rota
+// legada /api/finance também.
 check('POST e PUT chamam o validador', chamadas >= 3, `${chamadas} ocorrência(s)`);
 check('o PUT confere o estado PROPOSTO, com o registro atual por baixo',
   /const proposto = \{[\s\S]{0,600}?description: body\.description !== undefined \? body\.description : entry\.description,/.test(src));
@@ -98,6 +99,35 @@ const posValida = put.indexOf('const invalido = validarLancamentoFinanceiro(prop
 const posRamo = put.indexOf('const vinculadoAoPedido');
 check('  e confere ANTES de separar vinculado de livre',
   posValida >= 0 && posRamo >= 0 && posValida < posRamo);
+
+console.log('--- 5. a porta dos fundos também obedece (fase BK) ---');
+
+// POST /api/finance é o par legado de /api/finance/entries. Não validava nada:
+// aceitava `type` fora do conjunto (o padrão era 'sale', vocabulário aposentado),
+// valor qualquer, e trocava descrição vazia por "Lançamento" em silêncio — dado
+// inventado, que é pior do que dado faltando. Também não gravava auditoria.
+//
+// O único cliente era a tela "Conciliação financeira" em public/app.js, que
+// ficou inalcançável quando o módulo Financeiro passou para o registry. A rota,
+// porém, continuou aberta a qualquer usuário com o módulo.
+const rotaLegada = src.slice(
+  src.indexOf("if (pathname === '/api/finance' && req.method === 'POST')"),
+  src.indexOf("if (pathname === '/api/settings' && req.method === 'GET')")
+);
+check('achei a rota legada', rotaLegada.length > 200, `${rotaLegada.length} caracteres`);
+check('  ela usa o MESMO validador', /validarLancamentoFinanceiro\(\{ \.\.\.body, type, amount \}\)/.test(rotaLegada));
+check('  e confere o tipo, como a rota viva',
+  /\['RECEITA', 'DESPESA', 'TRANSFERENCIA'\]\.includes\(type\)/.test(rotaLegada));
+// 'sale'/'purchase' são o que o cliente legado manda. Recusá-los quebraria quem
+// ainda usa a rota sem ganhar nada; traduzi-los custa uma linha.
+check('  traduz o vocabulário antigo em vez de recusar',
+  /const LEGADOS = \{ sale: 'RECEITA', purchase: 'DESPESA' \};/.test(rotaLegada));
+// A descrição vai como veio, já barrada se estiver vazia. Casa com a gravação,
+// e não com a menção: o comentário da própria correção cita o `|| 'Lançamento'`
+// que saiu, e casar com ele mediria o texto em vez do código.
+check('  para de inventar descrição',
+  /description: String\(body\.description\)\.trim\(\),/.test(rotaLegada));
+check('  e passa a deixar trilha de auditoria', /addFinanceAuditLog\(/.test(rotaLegada));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);
