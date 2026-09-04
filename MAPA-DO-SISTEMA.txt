@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-04 11:09 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 12:34 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -557,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-78 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+79 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -570,7 +570,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-calcular-tributos.js          Aba Impostos e calcularTributos.
   [npm test] test-campo-busca.js                Campo de busca com sugestão (renderSearchableSelect / attachSearchableSelect).
   [npm test] test-campos-padronizados.js        Um telefone é um telefone em toda tela do sistema.
-  [avulso]  test-cancelamento-desfatura.js     CANCELAR A NF-e DESFAZ O FATURAMENTO QUE ELA CAUSOU (fase BF).
+  [npm test] test-cancelamento-desfatura.js     CANCELAR A NF-e DESFAZ O FATURAMENTO QUE ELA CAUSOU (fase BF).
   [avulso]  test-categorias-venda.js           CATEGORIAS DE VENDA (fase AS).
   [npm test] test-chassi-item.js                Chassi na linha do item de venda.
   [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
@@ -583,6 +583,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-deposito-da-loja.js           O DEPÓSITO PERTENCE A UMA LOJA (fase AW).
   [npm test] test-descricao-e-motivo.js         A DESCRIÇÃO, O MOTIVO DO CANCELAMENTO E O CAMPO DOCUMENTO (fases AX e AY).
   [npm test] test-documento.js                  CPF e CNPJ — modules/shared/documento.js.
+  [npm test] test-edicao-lancamento.js          EDITAR UM LANÇAMENTO OBEDECE ÀS MESMAS REGRAS DE CRIÁ-LO (fase BG).
   [npm test] test-emissao-abas.js               A tela de emissão de NF-e: estrutura das abas e o que acontece ao clicar em "Emitir NF-e" com campo obrigatóri
   [npm test] test-entrada-nfe.js                ENTRADA DE NF-e — o XML do fornecedor, o fornecedor que falta e o que a nota não pode fazer sozinha.
   [avulso]  test-faturar-exige-nota.js         FATURAR EXIGE DOCUMENTO FISCAL (fase AV).

@@ -2482,6 +2482,46 @@ function financeEntryPaidTotal(payments) {
   return sumBy(payments, 'amount');
 }
 
+/**
+ * O QUE UM LANÇAMENTO PRECISA RESPEITAR — AO NASCER E AO SER EDITADO (fase BG).
+ *
+ * As regras existiam só no POST. O PUT não repetia nenhuma delas, e o
+ * formulário confiava em `required` e `min="0.01"` no HTML, que valem só dentro
+ * do navegador. Provado contra a API:
+ *
+ *   POST {"description":"","amount":0}       -> 400 "Informe a descrição"
+ *   PUT  {"description":"   ","amount":-500} -> 200, gravado com valor -500
+ *   POST transferência com origem = destino  -> 400
+ *   PUT  destino := a conta de origem        -> 200, transferência para si mesma
+ *
+ * Um lançamento com valor negativo não é uma despesa a mais: ele SUBTRAI do
+ * total a pagar e some da conferência, porque ninguém procura um título com o
+ * sinal trocado. E lançamento sem descrição é uma linha em branco na lista.
+ *
+ * O TIPO NÃO ESTÁ AQUI, de propósito. É conferência de ENTRADA, e só o POST
+ * recebe tipo — o PUT nunca o altera. Cobrar tipo válido na edição recusaria
+ * salvar um lançamento antigo por um campo que a tela nem mostra: a pessoa
+ * abriria para mudar o vencimento e ficaria presa sem saída. Ele continua sendo
+ * conferido no POST, onde chega do formulário.
+ *
+ * Recebe o estado PROPOSTO (o registro já com a edição aplicada por cima), e não
+ * o corpo da requisição: um PUT que manda só `amount` precisa ser conferido
+ * contra a descrição que já estava lá.
+ */
+function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, type }) {
+  if (!String(description == null ? '' : description).trim()) {
+    return 'Informe a descrição do lançamento';
+  }
+  if (!(Number(amount || 0) > 0)) {
+    return 'Informe um valor maior que zero';
+  }
+  if (String(type || '').toUpperCase() === 'TRANSFERENCIA'
+    && bankAccountId && targetBankAccountId && bankAccountId === targetBankAccountId) {
+    return 'A conta de origem e a conta de destino da transferência não podem ser a mesma.';
+  }
+  return '';
+}
+
 function recomputeFinanceEntryStatus(entry, data) {
   if (entry.status === 'cancelado') return 'cancelado';
   const payments = getFinanceEntryPayments(data, entry.id);
@@ -10377,16 +10417,9 @@ const server = http.createServer(async (req, res) => {
       if (!['RECEITA', 'DESPESA', 'TRANSFERENCIA'].includes(type)) {
         return sendJson(res, { error: 'Tipo de lançamento inválido' }, 400);
       }
-      if (!body.description || !String(body.description).trim()) {
-        return sendJson(res, { error: 'Informe a descrição do lançamento' }, 400);
-      }
       const amount = Number(body.amount || 0);
-      if (!(amount > 0)) {
-        return sendJson(res, { error: 'Informe um valor maior que zero' }, 400);
-      }
-      if (type === 'TRANSFERENCIA' && body.bankAccountId && body.targetBankAccountId && body.bankAccountId === body.targetBankAccountId) {
-        return sendJson(res, { error: 'A conta de origem e a conta de destino da transferência não podem ser a mesma.' }, 400);
-      }
+      const invalido = validarLancamentoFinanceiro({ ...body, type, amount });
+      if (invalido) return sendJson(res, { error: invalido }, 400);
       const today = new Date().toISOString().slice(0, 10);
       const entry = await db.createFinancialEntry({
         type,
@@ -10631,6 +10664,25 @@ const server = http.createServer(async (req, res) => {
       }
 
       const body = await readBody(req);
+
+      // AS MESMAS REGRAS DO POST, sobre o estado PROPOSTO (fase BG).
+      //
+      // Vem antes dos dois ramos porque vale para os dois: o vinculado protege
+      // valor e descrição, mas deixa as contas bancárias editáveis, e era por
+      // aí que a transferência para si mesma passava.
+      //
+      // O merge com o registro atual é o ponto: um PUT que manda só `amount`
+      // precisa ser conferido contra a descrição que já estava gravada.
+      const proposto = {
+        type: entry.type,
+        description: body.description !== undefined ? body.description : entry.description,
+        amount: body.amount !== undefined ? body.amount : entry.amount,
+        bankAccountId: body.bankAccountId !== undefined ? body.bankAccountId : entry.bankAccountId,
+        targetBankAccountId: body.targetBankAccountId !== undefined
+          ? body.targetBankAccountId : entry.targetBankAccountId
+      };
+      const invalido = validarLancamentoFinanceiro(proposto);
+      if (invalido) return sendJson(res, { error: invalido }, 400);
 
       // LANÇAMENTO VINCULADO a um pedido (referenceId) ou a uma NF-e (nfeId).
       //
