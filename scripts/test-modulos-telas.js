@@ -175,7 +175,11 @@ check('aplica a perda do processo', /1 \+ Number\(linha\.lossPercent \|\| 0\) \/
 // Projeta tudo antes de gravar: faltando componente, nada é aplicado — senão a
 // ordem fica pela metade, com uns produtos baixados e outros não.
 check('valida o saldo ANTES de gravar qualquer coisa', /Monta o efeito de cada produto antes de gravar/.test(serverSrc));
-check('recusa com o nome do componente e o quanto falta', /Estoque insuficiente de "\$\{produto\.name\}"/.test(serverSrc));
+// A frase ganhou uma ramificação na fase BP: a MESMA verificação cobre produto
+// final e componente, e chamar os dois de "componente" mandava o usuário dar
+// entrada no que ele acabou de produzir. Ver scripts/test-pcp-estoque.js.
+check('recusa com o nome do componente e o quanto falta',
+  /Estoque insuficiente de \$\{ehProdutoFinal \? 'produto' : 'componente'\} "\$\{produto\.name\}"/.test(serverSrc));
 // Uma função só para produzir e estornar: o estorno é a mesma conta com o
 // sinal trocado, e duas funções divergiriam na primeira correção.
 check('estorno é o mesmo caminho com sinal trocado', /delta.*positivo produz, negativo/is.test(serverSrc));

@@ -3506,18 +3506,87 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
     produtos.set(produtoId, await db.getProductById(produtoId));
   }
 
-  for (const [produtoId, variacao] of efeitos) {
+  // ---- classe (cor): o PCP ainda não sabe de qual cor produz (fase BP) ----
+  //
+  // A ficha técnica não tem coluna de cor e a ordem também não. O movimento
+  // saía com classValueId vazio, e o saldo por cor deixava de acompanhar o
+  // total: o Estoque mostrava 100 Azuis DEPOIS de a produção ter consumido 10,
+  // a venda de 100 Azuis era aceita e o total do produto ia a -10.
+  //
+  // A recusa é a mesma resposta que a entrada por NF-e já dá para o mesmo
+  // problema — o XML também não traz cor. Produzir com cor exige a ficha e a
+  // ordem saberem qual, e isso é assunto de outra fase; até lá, recusar é o
+  // único jeito honesto de não corromper o saldo em silêncio.
+  for (const produtoId of efeitos.keys()) {
     const produto = produtos.get(produtoId);
     if (!produto) continue;
-    const projetado = Number(produto.stockQuantity || 0) + variacao;
-    if (projetado < 0) {
+    let classes = [];
+    try {
+      classes = await classesDb.classesDoProduto(produtoId);
+    } catch (erroClasses) {
+      classes = [];
+    }
+    const obrigatoria = (classes || []).find((c) => c.required);
+    if (obrigatoria) {
       const err = new Error(
-        `Estoque insuficiente de "${produto.name}" para apontar esta produção: ` +
-        `disponível ${Number(produto.stockQuantity || 0)}, necessário ${Math.abs(Math.round(variacao * 10000) / 10000)}. ` +
-        'Dê entrada no componente antes de apontar.'
+        `"${produto.name}" é controlado por ${obrigatoria.name}, e a ficha técnica da ordem `
+        + `não diz qual ${String(obrigatoria.name).toLowerCase()}. Apontar assim faria o saldo por `
+        + `${String(obrigatoria.name).toLowerCase()} parar de fechar com o total. `
+        + 'Lance a produção pela tela de Movimentações, onde dá para escolher.'
       );
       err.status = 400;
       throw err;
+    }
+  }
+
+  for (const [produtoId, variacao] of efeitos) {
+    const produto = produtos.get(produtoId);
+    if (!produto) continue;
+    const disponivel = Number(produto.stockQuantity || 0);
+    const projetado = disponivel + variacao;
+    if (projetado < 0) {
+      // A MENSAGEM DEPENDE DO SENTIDO. Estornar (excluir ou reduzir um
+      // apontamento) também cai aqui, e mandava "dê entrada no componente
+      // antes de apontar" para quem estava EXCLUINDO um apontamento cujo
+      // produto acabado já foi vendido. Nome errado, ação errada, saída errada.
+      const desfazendo = quantidade < 0;
+      const ehProdutoFinal = produtoId === ordem.productId;
+      const err = new Error(desfazendo
+        ? `Não dá para desfazer esta produção: "${produto.name}" tem ${disponivel} em estoque e `
+          + `seria preciso retirar ${Math.abs(Math.round(variacao * 10000) / 10000)}. `
+          + 'O que foi produzido já saiu do estoque — estorne a saída antes de desfazer o apontamento.'
+        : `Estoque insuficiente de ${ehProdutoFinal ? 'produto' : 'componente'} "${produto.name}" `
+          + `para apontar esta produção: disponível ${disponivel}, `
+          + `necessário ${Math.abs(Math.round(variacao * 10000) / 10000)}. `
+          + 'Dê entrada no componente antes de apontar.');
+      err.status = 400;
+      throw err;
+    }
+
+    // ---- e o DEPÓSITO para onde o movimento vai (fase BP) ----------------
+    //
+    // A ordem de produção não tem depósito, então o movimento nasce no depósito
+    // PADRÃO do produto. A suficiência, porém, era conferida contra o total do
+    // produto: com 10 unidades no Galpão B e nenhuma no padrão, o consumo
+    // passava e o depósito padrão ficava com saldo NEGATIVO enquanto o B
+    // seguia cheio. Daí em diante qualquer saída daquele depósito era recusada.
+    //
+    // SÓ quando há depósito padrão: sem ele o movimento cai no saldo não
+    // alocado, e cobrar um depósito que não existe travaria quem nunca usou o
+    // campo.
+    const depositoDoMovimento = stockCore.productMeta(data, produtoId).defaultDepositId || '';
+    if (depositoDoMovimento && variacao < 0) {
+      const noDeposito = stockCore.depositBalance(data, produtoId, depositoDoMovimento);
+      if (noDeposito + variacao < 0) {
+        const nomeDoDeposito = resolveById(data.deposits, depositoDoMovimento) || depositoDoMovimento;
+        const err = new Error(
+          `"${produto.name}" tem ${noDeposito} em ${nomeDoDeposito}, que é o depósito padrão dele, `
+          + `e a produção precisa de ${Math.abs(Math.round(variacao * 10000) / 10000)}. `
+          + 'Transfira para o depósito padrão ou troque o padrão no cadastro do produto.'
+        );
+        err.status = 400;
+        throw err;
+      }
     }
   }
 
@@ -3550,11 +3619,41 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
 // Casca de gravação do efeito acima: carrega a ordem, aplica e persiste o
 // ledger local (data.stockMovements). Sai calada quando não há o que fazer —
 // delta zero, ordem inexistente — para o chamador não precisar se defender.
+/**
+ * A ordem ainda aceita apontamento? Devolve a recusa, ou vazio quando aceita.
+ *
+ * Ordem CANCELADA continuava aparecendo no select de Novo Apontamento e
+ * aceitando produção: os insumos baixavam e a ordem passava a exibir
+ * "Produzido: 50" com a etiqueta Cancelada ao lado. Concluir também é desfecho:
+ * apontar depois refaz o total e desmente o fechamento.
+ *
+ * Ordem inexistente NÃO é recusada aqui — quem trata disso é o próprio
+ * mexerNoEstoqueDaProducao, que sai calado, e o banco, pela chave estrangeira.
+ */
+async function ordemAceitaApontamento(ordemId) {
+  if (!ordemId) return '';
+  const ordem = await modulosDb.obter('pcp/orders', ordemId);
+  if (!ordem) return '';
+  const status = String(ordem.status || '').toLowerCase();
+  if (status === 'cancelada') {
+    return `A ordem ${ordem.code || ordemId} está cancelada e não aceita apontamento. `
+      + 'Reabra a ordem antes de apontar produção nela.';
+  }
+  if (status === 'concluida') {
+    return `A ordem ${ordem.code || ordemId} já está concluída. `
+      + 'Reabra a ordem antes de apontar mais produção nela.';
+  }
+  return '';
+}
+
 async function mexerNoEstoqueDaProducao(ordemId, delta, user) {
   if (!ordemId || !Number(delta)) return null;
   const ordem = await modulosDb.obter('pcp/orders', ordemId);
   if (!ordem) return null;
   const data = loadData();
+  // O razão e os depósitos: a projeção por depósito da fase BP soma
+  // data.stockMovements, e o nome do depósito na mensagem sai de data.deposits.
+  await Promise.all([sincronizarRazao(data), syncCadastroData(data)]);
   const efeito = await aplicarConsumoDeProducao(data, { ordem, delta: Number(delta), user });
   saveData(data);
   return efeito;
@@ -6182,6 +6281,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST') {
         const corpo = await readBody(req);
+        if (recurso === 'pcp/entries') {
+          const recusa = await ordemAceitaApontamento(corpo.orderId);
+          if (recusa) return sendJson(res, { error: recusa }, 400);
+        }
         // Estoque ANTES de gravar o apontamento: faltando componente, nada é
         // criado, em vez de sobrar um apontamento que não baixou nada.
         const efeito = recurso === 'pcp/entries'
@@ -6202,13 +6305,37 @@ const server = http.createServer(async (req, res) => {
         if (anterior) {
           const novaOrdem = corpo.orderId ?? anterior.orderId;
           const novaQtd = corpo.quantity === undefined ? Number(anterior.quantity || 0) : Number(corpo.quantity || 0);
+          const recusa = await ordemAceitaApontamento(novaOrdem);
+          if (recusa) return sendJson(res, { error: recusa }, 400);
           if (novaOrdem === anterior.orderId) {
             // Mesma ordem: aplica só a diferença.
             await mexerNoEstoqueDaProducao(novaOrdem, novaQtd - Number(anterior.quantity || 0), usuarioDaRequisicao);
           } else {
-            // Trocou de ordem: desfaz inteiro na antiga e aplica inteiro na nova.
+            // TROCOU DE ORDEM: duas escritas, e a segunda pode recusar.
+            //
+            // Eram dois mexerNoEstoqueDaProducao soltos: o estorno da ordem
+            // antiga commitava, o consumo da nova era recusado por falta de
+            // componente, a rota devolvia 400 — e o estorno FICAVA. A tela
+            // mostrava o apontamento intacto na ordem antiga, com o estoque já
+            // mexido pelas costas.
+            //
+            // Refazer o estorno é possível porque ele é exatamente simétrico: o
+            // movimento contrário do que acabou de ser gravado, com os mesmos
+            // números. Se nem isso passar, o erro diz as duas coisas — melhor
+            // do que uma mensagem que esconde metade do estrago.
             await mexerNoEstoqueDaProducao(anterior.orderId, -Number(anterior.quantity || 0), usuarioDaRequisicao);
-            await mexerNoEstoqueDaProducao(novaOrdem, novaQtd, usuarioDaRequisicao);
+            try {
+              await mexerNoEstoqueDaProducao(novaOrdem, novaQtd, usuarioDaRequisicao);
+            } catch (erroDaNova) {
+              try {
+                await mexerNoEstoqueDaProducao(anterior.orderId, Number(anterior.quantity || 0), usuarioDaRequisicao);
+              } catch (erroAoRefazer) {
+                console.error('PCP: nao consegui refazer o estorno da ordem antiga', anterior.orderId, erroAoRefazer.message);
+                erroDaNova.message += ' ATENÇÃO: o estorno na ordem anterior já tinha sido gravado e '
+                  + 'não consegui desfazê-lo — confira o estoque dos itens dessa ordem.';
+              }
+              throw erroDaNova;
+            }
           }
         }
         const registro = await modulosDb.atualizar(recurso, id, corpo);
@@ -6225,6 +6352,29 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { [def.item]: registro });
       }
       if (req.method === 'DELETE' && id) {
+        // EXCLUIR A ORDEM NÃO PODE LEVAR O ESTOQUE JUNTO (fase BP).
+        //
+        // pcp_entries tem `on delete cascade` para pcp_orders: apagar a ordem
+        // apagava todos os apontamentos SEM estornar nada. O produto acabado
+        // ficava no estoque, os insumos continuavam consumidos, e o razão ficava
+        // com linhas "Produção da OP 42" apontando para uma ordem que sumiu.
+        //
+        // RECUSAR, e não estornar por conta própria: excluir os apontamentos um
+        // a um já estorna, e é o caminho em que a pessoa vê o que está desfazendo.
+        // Estornar em cascata esconderia a mesma decisão atrás de um clique.
+        if (recurso === 'pcp/orders') {
+          const apontamentos = (await modulosDb.listar('pcp/entries'))
+            .filter((entrada) => entrada.orderId === id);
+          if (apontamentos.length) {
+            const total = apontamentos.reduce((soma, e) => soma + Number(e.quantity || 0), 0);
+            return sendJson(res, {
+              error: `Esta ordem tem ${apontamentos.length} `
+                + `${apontamentos.length === 1 ? 'apontamento' : 'apontamentos'} (${total} produzido). `
+                + 'Exclua os apontamentos primeiro — cada um devolve ao estoque o que consumiu — '
+                + 'ou cancele a ordem em vez de excluí-la.'
+            }, 409);
+          }
+        }
         // Lê ANTES de apagar: depois não há como saber de que ordem era.
         const removido = recurso === 'pcp/entries' ? await modulosDb.obter(recurso, id) : null;
         if (removido) {
