@@ -154,7 +154,17 @@
     'pedido-pre-faturado': ['pedido-faturado', 'pedido-parcialmente-faturado',
       'pedido-nao-faturado', 'pedido-cancelado'],
     'pedido-parcialmente-faturado': ['pedido-faturado', 'pedido-cancelado'],
-    'pedido-faturado': ['pedido-cancelado'],
+    // 'pedido-nao-faturado' e a porta de VOLTA, aberta na fase BF: cancelar
+    // a NF-e desfaz o faturamento que ela mesma causou. Cancelar uma nota
+    // quase nunca quer dizer cancelar a venda -- cancela-se por erro de
+    // dados, para reemitir -- e mandar o pedido para 'pedido-cancelado'
+    // mataria a venda junto.
+    //
+    // Quem impede o uso indevido desta porta nao e o catalogo: e a guarda
+    // do servidor, que so' deixa sair de 'pedido-faturado' quando nenhuma
+    // NF-e viva sustenta o faturamento. O catalogo diz o que E POSSIVEL; a
+    // regra fiscal diz QUANDO.
+    'pedido-faturado': ['pedido-cancelado', 'pedido-nao-faturado'],
     'pedido-aprovado-sem-faturamento': ['pedido-cancelado'],
     'pedido-cancelado': []
   };

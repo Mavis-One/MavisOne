@@ -99,6 +99,7 @@ insert into sales_status_transicao (de, para) values
   ('pedido-parcialmente-faturado', 'pedido-faturado'),
   ('pedido-parcialmente-faturado', 'pedido-cancelado'),
   ('pedido-faturado', 'pedido-cancelado'),
+  ('pedido-faturado', 'pedido-nao-faturado'),
   ('pedido-aprovado-sem-faturamento', 'pedido-cancelado');
 
 drop function if exists sales_status_transicao_valida(text, text);

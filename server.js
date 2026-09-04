@@ -2143,7 +2143,14 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
   //   - a nota sai depois (SEFAZ fora, contingência) — aí a dispensa, COM
   //     motivo, fica registrada no pedido.
   if (tipoNovo === 'order' && salesStatus.exigeDocumento(statusNovo)) {
-    const temNota = Boolean(updated.nfeId || current.nfeId);
+    // A NOTA PRECISA VALER, NÃO SÓ EXISTIR (fase BF). `nfeId` preenchido
+    // respondia sim para uma nota CANCELADA — e ela fica gravada para
+    // sempre, porque documento fiscal não se apaga. Sem isto, um pedido
+    // desfaturado pelo cancelamento da nota poderia ser faturado de novo
+    // apontando para a mesma nota morta.
+    const temNota = Boolean(await notaQueSustentaOFaturamento({
+      id, nfeId: updated.nfeId || current.nfeId
+    }));
     const dispensado = Boolean(updated.dispensaDocumentoFiscal);
     const motivo = String(updated.dispensaMotivo || '').trim();
     if (!temNota && !dispensado) {
@@ -2161,6 +2168,38 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
         + 'Dispensa sem motivo é faturar sem nota com um clique a mais.'
       );
       erro.status = 400;
+      throw erro;
+    }
+  }
+
+  // A PORTA DE VOLTA, E QUEM A GUARDA (fase BF).
+  //
+  // 'pedido-faturado' -> 'pedido-nao-faturado' passou a existir para que
+  // CANCELAR A NF-e desfaça o faturamento que ela mesma causou: a mercadoria
+  // volta, o recebível em aberto é cancelado e o pedido fica pronto para uma
+  // nota nova. Antes disso o único caminho para fora era 'pedido-cancelado',
+  // que mataria a venda — e cancelar uma nota quase nunca quer dizer cancelar a
+  // venda: cancela-se por erro de dados, para reemitir.
+  //
+  // Mas a porta não pode ficar escancarada na tela. Desfaturar um pedido cuja
+  // NF-e continua AUTORIZADA produz o inverso exato do problema que a fase AV
+  // resolveu: nota válida para a SEFAZ, mercadoria de volta na prateleira e
+  // nenhuma conta a receber. É a mesma regra lida ao contrário — faturar exige
+  // documento; desfaturar exige que o documento não valha mais.
+  //
+  // A recusa fica AQUI pelo mesmo motivo que a de cima: é por este ponto que
+  // passam a edição do pedido E as ações em lote.
+  if (tipoNovo === 'order'
+    && salesStatus.normalizar(current.status) === 'pedido-faturado'
+    && statusNovo === 'pedido-nao-faturado') {
+    const notaViva = await notaQueSustentaOFaturamento(current);
+    if (notaViva) {
+      const erro = new Error(
+        `A NF-e ${notaViva.numero || notaViva.referencia || ''} deste pedido continua ${notaViva.status}. `
+        + 'Cancele a nota primeiro — o cancelamento já devolve o pedido para "Pedido Não Faturado". '
+        + 'Desfaturar com a nota de pé deixaria mercadoria em estoque e nota válida na SEFAZ.'
+      );
+      erro.status = 409;
       throw erro;
     }
   }
@@ -3589,6 +3628,96 @@ function condicaoPagamentoDoBody(body) {
  * orçamento não é tocado. Quem responde isso é o catálogo de status, não um
  * `if` escrito aqui.
  */
+/**
+ * A NF-e que SUSTENTA o faturamento deste pedido, ou null.
+ *
+ * "Sustenta" e' um estado, nao a existencia da linha: uma nota CANCELADA ficou
+ * gravada em orders.nfe_id e continua la para sempre, porque documento fiscal
+ * nao se apaga. Perguntar so' "tem nfeId?" respondia sim para uma nota que a
+ * SEFAZ ja' nao reconhece.
+ *
+ * PROCESSANDO conta junto com AUTORIZADO de proposito: a nota esta em voo e
+ * pode virar autorizada a qualquer momento, inclusive pelo webhook. Tratar como
+ * "nao sustenta" abriria a janela para desfaturar um pedido segundos antes de a
+ * autorizacao chegar.
+ *
+ * Olha TODAS as notas do pedido, e nao so' orders.nfe_id: o pedido pode ter uma
+ * nota cancelada e outra emitida depois, e o campo guarda uma so'.
+ */
+async function notaQueSustentaOFaturamento(pedido) {
+  const VIVOS = new Set(['AUTORIZADO', 'PROCESSANDO']);
+  const candidatas = [];
+  try {
+    const doPedido = await fiscalDb.getNfesPorPedido(pedido.id);
+    if (Array.isArray(doPedido)) candidatas.push(...doPedido);
+  } catch (erro) {
+    // Tabela fiscal indisponivel nao pode travar a edicao de pedido: cai para
+    // o vinculo direto, que e' o que existia antes de haver consulta por pedido.
+    console.error('Falha ao consultar as NF-e do pedido', pedido.id, erro.message);
+  }
+  if (!candidatas.length && pedido.nfeId) {
+    const nota = await fiscalDb.getNfeById(pedido.nfeId).catch(() => null);
+    if (nota) candidatas.push(nota);
+  }
+  return candidatas.find((n) => VIVOS.has(String(n.status || '').toUpperCase())) || null;
+}
+
+/**
+ * CANCELAR A NOTA DESFAZ O FATURAMENTO QUE ELA CAUSOU (fase BF).
+ *
+ * Ate aqui cancelarNfeFiscal falava com a SEFAZ, gravava o evento e a
+ * auditoria — e nao tocava no pedido. A nota ficava cancelada e o pedido seguia
+ * "Pedido Faturado": mercadoria baixada que voltou para a prateleira, e conta a
+ * receber cobrando por uma nota que nao existe mais.
+ *
+ * O destino e' 'pedido-nao-faturado', e nao 'pedido-cancelado': cancelar uma
+ * nota quase nunca quer dizer cancelar a venda. Cancela-se por erro de dados,
+ * para reemitir — e o pedido precisa ficar pronto para a nota nova.
+ *
+ * Quem confere se NENHUMA outra nota ainda sustenta o faturamento e' a guarda
+ * em aplicarEfeitosDeStatus, por onde esta transicao passa. Se sustentar, a
+ * mudanca e' recusada e a recusa vira registro de auditoria aqui embaixo — que
+ * e' a resposta certa: duas notas para um pedido e caso de gente olhar.
+ */
+async function desfaturarPedidoDaNota(nfe, user) {
+  const pedidoId = nfe && nfe.orderId;
+  if (!pedidoId) return;
+  if (String(nfe.status || '').toUpperCase() !== 'CANCELADO') return;
+  // Mesmo substituto de faturarPedidoDaNota, e pelo mesmo motivo: o
+  // cancelamento tambem pode chegar sem sessao. Ver a nota la.
+  const quemDesfatura = user && user.id ? user : { id: '', name: 'Cancelamento da NF-e' };
+  try {
+    const dataVendas = loadData();
+    // syncFinanceData também: desfaturar CANCELA as parcelas em aberto, e
+    // transitionOrderFinanceEffect as procura em `data.finance`. Sem o sync a
+    // lista chega vazia, nenhuma parcela é encontrada e o pedido volta a não
+    // faturado com a conta a receber cobrando por uma nota cancelada.
+    // Provado: o estoque voltava (18 -> 20) e o lançamento seguia 'pending'.
+    // Quem apontou foi scripts/test-sync-obrigatorio.js, pelo nome da função.
+    await Promise.all([syncSalesData(dataVendas), syncCadastroData(dataVendas), syncFinanceData(dataVendas)]);
+    const pedido = (dataVendas.orders || []).find((o) => o.id === pedidoId);
+    if (!pedido) return;
+    // So' desfaz o que a nota fez. Pedido que nunca chegou a faturado, ou que
+    // ja' foi cancelado por outro caminho, nao e' assunto deste cancelamento.
+    if (salesStatus.normalizar(pedido.status) !== 'pedido-faturado') return;
+    await mudarStatusSalesRecord({ id: pedido.id, code: pedido.code }, 'pedido-nao-faturado', dataVendas, quemDesfatura);
+  } catch (erro) {
+    // A EXCECAO NAO SOBE. A nota ja' esta cancelada na SEFAZ; derrubar a
+    // resposta por causa do pedido deixaria o sistema achando que o
+    // cancelamento falhou, e a proxima tentativa bateria numa nota que a SEFAZ
+    // ja' nao aceita cancelar de novo.
+    console.error('NF-e cancelada, mas nao consegui desfaturar o pedido', pedidoId, erro.message);
+    await registrarAuditoria({
+      action: 'falhaAoDesfaturarPedidoDaNota',
+      targetId: pedidoId,
+      targetUsername: String(nfe.numero || nfe.referencia || nfe.id || ''),
+      byId: quemDesfatura.id,
+      byName: quemDesfatura.name,
+      details: { erro: erro.message, nfeId: nfe.id || '' }
+    });
+  }
+}
+
 async function faturarPedidoDaNota(nfe, pedidoId, user) {
   if (!pedidoId) return;
   if (String(nfe && nfe.status || '').toUpperCase() !== 'AUTORIZADO') return;
@@ -3611,9 +3740,13 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
   const quemFatura = user && user.id ? user : { id: '', name: 'Autorização da NF-e' };
   try {
     const dataVendas = loadData();
-    // syncCadastroData tambem: faturar baixa estoque, e a baixa resolve nome
-    // de deposito por productBalances.
-    await Promise.all([syncSalesData(dataVendas), syncCadastroData(dataVendas)]);
+    // syncCadastroData: faturar baixa estoque, e a baixa resolve nome de
+    // depósito por productBalances. syncFinanceData: as parcelas nascem em
+    // `data.finance`, e o ramo da dispensa mais abaixo também as lê. Estava
+    // só dentro daquele ramo — uma onda só aqui cobre os dois.
+    await Promise.all([
+      syncSalesData(dataVendas), syncCadastroData(dataVendas), syncFinanceData(dataVendas)
+    ]);
     const pedido = (dataVendas.orders || []).find((o) => o.id === pedidoId);
     if (!pedido) return;
     if (!salesStatus.podeTransicionar(pedido.status, 'pedido-faturado')) {
@@ -3622,7 +3755,6 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
       // As contas a receber existem e dizem "Sem NF-e (dispensada)", que a
       // partir de agora é mentira. Nada de novo a criar; só a descrição a
       // completar. Ver anotarNotaNoFinanceiroDoPedido.
-      await syncFinanceData(dataVendas);
       await anotarNotaNoFinanceiroDoPedido(dataVendas, pedido, nfe.numero);
       return;
     }
@@ -4269,6 +4401,9 @@ async function cancelarNfeFiscal(id, justificativa, user, opcoes = {}) {
   data.auditLogs = data.auditLogs || [];
   await registrarAuditoria({ action: 'cancelarNfeFiscal', targetId: nfe.id, targetUsername: nfe.referencia, byId: user.id, byName: user.name, details: { justificativa } });
   saveData(data);
+  // DEPOIS de a SEFAZ confirmar e de o evento estar gravado: se o
+  // cancelamento nao vingou, nao ha faturamento a desfazer.
+  await desfaturarPedidoDaNota(updated, user);
   return updated;
 }
 

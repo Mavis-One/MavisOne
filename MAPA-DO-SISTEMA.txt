@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-04 10:25 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 11:09 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -557,7 +557,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-77 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+78 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -570,6 +570,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-calcular-tributos.js          Aba Impostos e calcularTributos.
   [npm test] test-campo-busca.js                Campo de busca com sugestão (renderSearchableSelect / attachSearchableSelect).
   [npm test] test-campos-padronizados.js        Um telefone é um telefone em toda tela do sistema.
+  [avulso]  test-cancelamento-desfatura.js     CANCELAR A NF-e DESFAZ O FATURAMENTO QUE ELA CAUSOU (fase BF).
   [avulso]  test-categorias-venda.js           CATEGORIAS DE VENDA (fase AS).
   [npm test] test-chassi-item.js                Chassi na linha do item de venda.
   [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
