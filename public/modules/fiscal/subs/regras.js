@@ -449,7 +449,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                   </label>
                 </div>
                 <label>Observação para o fisco
-                  <textarea name="observacaoFisco" rows="2" placeholder="Texto exigido por lei, vai no campo de informações adicionais do item.">${escapeHtml(form.observacaoFisco || '')}</textarea>
+                  <textarea name="observacaoFisco" rows="2" maxlength="500" placeholder="Texto exigido por lei, vai no campo de informações adicionais do item (máx. 500).">${escapeHtml(form.observacaoFisco || '')}</textarea>
                 </label>
               </div>
             </div>

@@ -31,6 +31,12 @@
 (function (raiz) {
   const LIMITE_INFCPL = 5000;
 
+  // infAdProd, o texto que vai no ITEM (a observacao do fisco da regra
+  // fiscal). Limite diferente e MUITO menor que o do rodape — e o estrago e
+  // maior: uma regra com texto longo demais rejeita TODA nota que casar com
+  // ela, nao uma so.
+  const LIMITE_INFADPROD = 500;
+
   /**
    * A ficha do equipamento. Repete uma vez por unidade quando a nota vem de um
    * pedido com vários — cada equipamento tem chassi, modelo e cor próprios, e
@@ -167,9 +173,14 @@ ${RODAPE}`;
     return String(texto || '').length > LIMITE_INFCPL;
   }
 
+  function excedeLimiteDoItem(texto) {
+    return String(texto || '').length > LIMITE_INFADPROD;
+  }
+
   const api = {
-    PADRAO, FICHA, RODAPE, LIMITE_INFCPL, CAMPOS_A_PREENCHER,
-    ficha, montar, comChassi, chassiDoTexto, ehTextoPadrao, camposVazios, excedeLimite
+    PADRAO, FICHA, RODAPE, LIMITE_INFCPL, LIMITE_INFADPROD, CAMPOS_A_PREENCHER,
+    ficha, montar, comChassi, chassiDoTexto, ehTextoPadrao, camposVazios,
+    excedeLimite, excedeLimiteDoItem
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -10,7 +10,9 @@ const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
 const modulosDb = require('./lib/db/modulos');
 const crmDb = require('./lib/db/crm');
-const { buildNfePayload } = require('./lib/nfePayloadBuilder');
+const { buildNfePayload, conferirLimitesDeTexto } = require('./lib/nfePayloadBuilder');
+// Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
+const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
 // Catálogo de operações fiscais: é ele que diz se a nota movimenta estoque,
 // gera financeiro e exige documento referenciado — em vez de `if` de
 // finalidade espalhado pelo código de emissão.
@@ -3343,6 +3345,30 @@ function serveStatic(res, filePath, req) {
   });
 }
 
+/**
+ * A OBSERVAÇÃO DO FISCO CABE NO CAMPO DO ITEM? (fase BL)
+ *
+ * Este texto vai para infAdProd, que a SEFAZ limita a 500 caracteres — dez
+ * vezes menos que o rodé da nota. Não havia limite em lugar nenhum: nem na
+ * textarea, nem aqui.
+ *
+ * A recusa é NA GRAVAÇÃO DA REGRA, e não só na emissão. Barrar só na emissão
+ * chega tarde: a regra já está salva, e ela vale para TODO produto que casar
+ * com ela. Uma linha errada aqui derruba a emissão de notas que nada têm a ver
+ * com quem digitou o texto — e a mensagem de rejeição chega na tela de quem
+ * está vendendo, no fim do dia, sem pista da origem.
+ *
+ * A conferiência na emissão continua existindo, para as regras gravadas antes
+ * desta guarda.
+ */
+function conferirObservacaoDoFisco(body) {
+  const texto = String(body.observacaoFisco || '');
+  if (!textoNfe.excedeLimiteDoItem(texto)) return '';
+  return `A observação do fisco tem ${texto.length} caracteres. Ela vai no campo de `
+    + `informações adicionais do ITEM, que a SEFAZ limita a ${textoNfe.LIMITE_INFADPROD} — `
+    + 'e toda nota que casar com esta regra seria rejeitada.';
+}
+
 function mapFocusStatusToNfeStatus(focusStatus) {
   const map = {
     autorizado: 'AUTORIZADO',
@@ -4035,6 +4061,27 @@ async function emitirNfeFiscal(body, user) {
     // o vínculo com a nota devolvida.
     referencias
   });
+
+  // OS TEXTOS CABEM? ANTES DE GRAVAR QUALQUER COISA (fase BL).
+  //
+  // A tela ja media as observacoes, mas so no navegador — e media a string
+  // ERRADA: em homologacao o builder acrescenta ao rodape o aviso obrigatorio
+  // de teste com o nome do destinatario, 75 a 123 caracteres que a tela nao
+  // conta. Um texto de exatamente 5000, aprovado na tela, chega a SEFAZ com
+  // 5081 e volta rejeitado.
+  //
+  // E a observacao do fisco da REGRA FISCAL, que vai no campo do item, nao
+  // tinha limite nenhum em lugar nenhum. Ali o estrago e maior: uma regra com
+  // texto longo demais rejeita TODA nota que casar com ela.
+  //
+  // Aqui, e nao depois: passar deste ponto consome numeracao, e nota rejeitada
+  // por texto longo nao se conserta — a numeracao ja foi.
+  const textoLongo = conferirLimitesDeTexto(payload, { informacoesAdicionais: body.informacoesAdicionais });
+  if (textoLongo) {
+    const err = new Error(textoLongo);
+    err.status = 400;
+    throw err;
+  }
 
   const nfeExistente = await encontrarNfeIdempotente(estabelecimento.id, payload);
   if (nfeExistente) {
@@ -7867,6 +7914,8 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/fiscal/regras' && req.method === 'POST') {
         const body = await readBody(req);
+        const textoDoFisco = conferirObservacaoDoFisco(body);
+        if (textoDoFisco) return sendJson(res, { error: textoDoFisco }, 400);
         const regra = await fiscalDb.createRegraFiscal(body);
         return sendJson(res, { success: true, regra });
       }
@@ -7874,6 +7923,8 @@ const server = http.createServer(async (req, res) => {
       if (pathname.startsWith('/api/fiscal/regras/') && req.method === 'PUT') {
         const id = decodeURIComponent(pathname.replace('/api/fiscal/regras/', ''));
         const body = await readBody(req);
+        const textoDoFisco = conferirObservacaoDoFisco(body);
+        if (textoDoFisco) return sendJson(res, { error: textoDoFisco }, 400);
         const regra = await fiscalDb.updateRegraFiscal(id, body);
         return sendJson(res, { success: true, regra });
       }

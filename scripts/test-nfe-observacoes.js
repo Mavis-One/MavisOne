@@ -154,5 +154,95 @@ check('carregado antes da tela de emissão',
   htmlSrc.indexOf('shared/nfe_texto_padrao.js') < htmlSrc.indexOf('finance/subs/emitir_nfe_focus.js'));
 check('e serve ao navegador e ao teste', /if \(raiz\) raiz\.MavisNfeTextoPadrao = api;/.test(ler('public/modules/shared/nfe_texto_padrao.js')));
 
+
+// ---------------------------------------------------------------------------
+// FASE BL — O LIMITE VALIA SÓ NO NAVEGADOR, E MEDIA A STRING ERRADA
+//
+// Os dois checks acima ("a tela barra o envio antes de transmitir") continuam
+// certos e continuam insuficientes: eles olham para public/, e public/ só vale
+// para quem passa pelo navegador. O preço de escapar é o que o cabeçalho deste
+// arquivo descreve — rejeição DEPOIS de transmitir, com a numeração consumida.
+//
+// E havia um erro pior, que nem pelo navegador era pego: em homologação o
+// builder ACRESCENTA ao rodapé o aviso obrigatório de teste com o nome do
+// destinatário real, 75 a 123 caracteres que a tela não conta.
+//
+// Medido contra a API, com estabelecimento em homologação:
+//   texto de 5000 (a tela aprova) -> payload com 5081 -> a SEFAZ rejeitaria
+//   depois da correção            -> 400 antes de gravar, explicando o aviso
+//   texto de 4800                 -> passa e segue para a Focus
+//
+// E a observação do fisco da REGRA FISCAL, que vai no campo do ITEM, não tinha
+// limite em lugar nenhum: nem na textarea, nem no servidor. infAdProd é 500,
+// dez vezes menos que o rodapé — e o estrago é maior, porque uma regra ruim
+// rejeita TODA nota que casar com ela, não uma.
+const builderSrc = ler('lib/nfePayloadBuilder.js');
+const serverSrc = ler('server.js');
+const { buildNfePayload, conferirLimitesDeTexto } = require(path.join(RAIZ, 'lib/nfePayloadBuilder'));
+
+console.log('\n--- o limite também vale fora do navegador ---');
+check('o catálogo conhece o limite do ITEM', T.LIMITE_INFADPROD === 500);
+check('  e sabe medi-lo', T.excedeLimiteDoItem('y'.repeat(501)) && !T.excedeLimiteDoItem('y'.repeat(500)));
+// Um número só. Dois faria a tela dizer "cabe" para o que o servidor recusa.
+check('o builder usa o MESMO catálogo da tela',
+  /require\('\.\.\/public\/modules\/shared\/nfe_texto_padrao'\)/.test(builderSrc));
+
+// Payload mínimo, montado pelo builder de verdade: é a string final que importa.
+const cenario = (informacoesAdicionais, observacaoFisco) => buildNfePayload({
+  estabelecimento: {
+    cnpj: '12345678000199', razaoSocial: 'X', uf: 'SC', municipio: 'Fpolis',
+    codigoMunicipio: '4205407', logradouro: 'R', numero: '1', bairro: 'C',
+    cep: '88000000', inscricaoEstadual: 'ISENTO'
+  },
+  empresa: { crt: 1, regimeTributario: 'SIMPLES_NACIONAL' },
+  destinatario: { nome: 'Cliente Teste Ltda', documento: '11122233344', uf: 'SP', contribuinte: false },
+  itens: [{
+    codigoProduto: 'P1', descricao: 'Produto Um', ncm: '73181500', quantidade: 1,
+    valorUnitario: 100, regraFiscal: { cfop: '6102', observacaoFisco }
+  }],
+  naturezaOperacao: 'Venda', ambiente: 'homologacao', informacoesAdicionais
+});
+
+const noLimite = 'x'.repeat(T.LIMITE_INFCPL);
+const payloadNoLimite = cenario(noLimite, 'ok');
+check('em homologação o rodapé cresce depois de a tela contar',
+  String(payloadNoLimite.informacoes_adicionais_contribuinte).length > noLimite.length,
+  `${noLimite.length} digitados -> ${String(payloadNoLimite.informacoes_adicionais_contribuinte).length} no payload`);
+const erroRodape = conferirLimitesDeTexto(payloadNoLimite, { informacoesAdicionais: noLimite });
+check('  e a conferência pega isso', Boolean(erroRodape));
+// Mandar encurtar um texto que sozinho cabe deixaria o operador cortando
+// conteúdo sem entender por quê.
+check('  dizendo que a culpa é do aviso de teste, e não do texto',
+  /aviso de teste/.test(erroRodape));
+check('texto que cabe com o aviso junto passa',
+  conferirLimitesDeTexto(cenario('x'.repeat(4800), 'ok'), { informacoesAdicionais: 'x'.repeat(4800) }) === '');
+
+console.log('\n--- a observação do fisco do item ---');
+const erroItem = conferirLimitesDeTexto(cenario('curto', 'y'.repeat(501)), { informacoesAdicionais: 'curto' });
+check('501 caracteres no item é recusado', Boolean(erroItem));
+// Sem o nome do item ninguém acha de onde saiu: o texto não foi digitado na
+// tela de emissão, veio da regra que casou com o produto.
+check('  nomeando o item', /Produto Um/.test(erroItem));
+check('  e dizendo onde corrigir', /regra fiscal/.test(erroItem));
+check('500 passa', conferirLimitesDeTexto(cenario('curto', 'y'.repeat(500)), { informacoesAdicionais: 'curto' }) === '');
+
+console.log('\n--- onde as guardas ficam ---');
+// Passar do ponto da emissão consome numeração; nota rejeitada por texto longo
+// não se conserta, porque a numeração já foi.
+const posConfere = serverSrc.indexOf('const textoLongo = conferirLimitesDeTexto(payload');
+const posRascunho = serverSrc.indexOf('let nfe = await fiscalDb.createNfeRascunho(');
+check('a emissão confere ANTES de gravar o rascunho',
+  posConfere > 0 && posRascunho > posConfere);
+// Barrar só na emissão chega tarde: a regra já está salva e vale para todo
+// produto que casar com ela.
+check('a regra fiscal é barrada já na gravação',
+  /const textoDoFisco = conferirObservacaoDoFisco\(body\);/.test(serverSrc));
+// A CHAMADA, e não o nome: a declaração da função casaria com o mesmo padrão e
+// faria 2 virar 3 sem que nenhuma rota a mais estivesse protegida.
+check('  nas duas rotas, criar e editar',
+  (serverSrc.match(/const textoDoFisco = conferirObservacaoDoFisco\(body\);/g) || []).length === 2);
+check('e a textarea da regra mostra o limite',
+  /name="observacaoFisco"[^>]*maxlength="500"/.test(ler('public/modules/fiscal/subs/regras.js')));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

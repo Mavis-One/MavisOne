@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-04 13:29 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-04 14:05 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -269,7 +269,7 @@ regra só, para tela e servidor nunca discordarem.
       MANIFESTAÇÃO DO DESTINATÁRIO — catálogo dos quatro eventos.
   module_workspace.js
       (sem descrição)
-  nfe_texto_padrao.js
+  nfe_texto_padrao.js   [também no servidor]
       Texto padrão das observações adicionais da NF-e.
   painel.js
       Kit de painel — os blocos que TODO dashboard de módulo usa.
