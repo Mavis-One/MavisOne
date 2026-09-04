@@ -63,8 +63,10 @@ check('o padrão cabe com folga', !T.excedeLimite(T.PADRAO) && T.PADRAO.length <
 check('acima do limite é detectado', T.excedeLimite('x'.repeat(5001)));
 // Barrar só na tela deixaria a rejeição acontecer; barrar antes de montar o
 // corpo poupa a numeração.
-check('a tela barra o envio antes de transmitir', /TextoPadrao\.excedeLimite\(observacoes\)/.test(telaSrc));
-check('e diz quanto passou', /a SEFAZ aceita no máximo \$\{TextoPadrao\.LIMITE_INFCPL\}/.test(telaSrc));
+// Contra o ORÇAMENTO, e não contra o limite bruto: em homologação o aviso de
+// teste ocupa parte do mesmo campo (ver a seção da fase BL, mais abaixo).
+check('a tela barra o envio antes de transmitir', /if \(observacoes\.length > orcamentoObs\)/.test(telaSrc));
+check('e diz quanto cabia', /cabem \$\{orcamentoObs\}/.test(telaSrc));
 
 console.log('\n--- a tela ---');
 check('há uma aba de Observações', /data-tab="observacoes"/.test(telaSrc));
@@ -75,7 +77,7 @@ check('nascendo com o texto padrão', /let observacoes = TextoPadrao \? TextoPad
 check('o texto sobrevive à troca de aba', /observacoes = campoObs\.value;/.test(telaSrc));
 check('o envio usa a variável, não o formData', /informacoesAdicionais: observacoes/.test(telaSrc));
 check('dá para restaurar o padrão', /id="nfeFocusObsRestaurar"/.test(telaSrc));
-check('o contador de caracteres aparece', /de \$\{TextoPadrao\.LIMITE_INFCPL\} caracteres/.test(telaSrc));
+check('o contador de caracteres aparece', /de \$\{orcamento\} caracteres/.test(telaSrc));
 check('e os campos em branco são listados', /Ainda em branco: \$\{vazios\.join\(', '\)\}/.test(telaSrc));
 
 console.log('\n--- a complementar NÃO leva este texto ---');
@@ -225,6 +227,45 @@ check('501 caracteres no item é recusado', Boolean(erroItem));
 check('  nomeando o item', /Produto Um/.test(erroItem));
 check('  e dizendo onde corrigir', /regra fiscal/.test(erroItem));
 check('500 passa', conferirLimitesDeTexto(cenario('curto', 'y'.repeat(500)), { informacoesAdicionais: 'curto' }) === '');
+
+console.log('\n--- o contador da tela conta o mesmo que o servidor ---');
+// Era aqui que a tela mentia: contava só o que o usuário digitou e aprovava
+// 5000 caracteres que chegavam à SEFAZ como 5081.
+check('o orçamento desconta o aviso em homologação',
+  T.orcamentoDoRodape({ ambiente: 'homologacao', destinatarioNome: 'Cliente Teste Ltda' }) < T.LIMITE_INFCPL);
+check('  e em produção devolve o limite inteiro',
+  T.orcamentoDoRodape({ ambiente: 'producao', destinatarioNome: 'Cliente Teste Ltda' }) === T.LIMITE_INFCPL);
+// O nome do destinatário entra no aviso, então o orçamento MUDA de nota para
+// nota — não dá para ser uma constante.
+check('  e varia com o nome do destinatário',
+  T.orcamentoDoRodape({ ambiente: 'homologacao', destinatarioNome: 'A' })
+  > T.orcamentoDoRodape({ ambiente: 'homologacao', destinatarioNome: 'A'.repeat(60) }));
+// Nome absurdo zera o campo em vez de devolver um limite negativo.
+check('  e nunca fica negativo',
+  T.orcamentoDoRodape({ ambiente: 'homologacao', destinatarioNome: 'x'.repeat(9000) }) === 0);
+
+// A prova que fecha o círculo: um texto exatamente no orçamento produz um
+// payload exatamente no limite, e um caractere a mais estoura.
+const orcamentoAqui = T.orcamentoDoRodape({ ambiente: 'homologacao', destinatarioNome: 'Cliente Teste Ltda' });
+check('texto no orçamento chega à SEFAZ exatamente no limite',
+  String(cenario('x'.repeat(orcamentoAqui), 'ok').informacoes_adicionais_contribuinte).length === T.LIMITE_INFCPL,
+  `${orcamentoAqui} digitados`);
+check('  e um caractere a mais já estoura',
+  String(cenario('x'.repeat(orcamentoAqui + 1), 'ok').informacoes_adicionais_contribuinte).length === T.LIMITE_INFCPL + 1);
+
+check('o builder e a tela usam o MESMO aviso', /textoNfe\.avisoDeHomologacao\(destinatario\.nome\)/.test(builderSrc));
+check('  e o mesmo separador', /\.join\(textoNfe\.SEPARADOR_RODAPE\)/.test(builderSrc));
+// A trava do servidor rebaixa produção para homologação. Contar pelo valor
+// salvo no estabelecimento daria orçamento cheio numa nota que leva o aviso.
+check('a tela pergunta o ambiente EFETIVO, não o salvo',
+  /if \(travadoEmHomologacao\) return 'homologacao';/.test(telaSrc));
+check('  e recebe a trava do servidor', /travadoEmHomologacao = Boolean\(res\.travadoEmHomologacao\)/.test(telaSrc));
+// Sem este ouvinte o contador só acertaria depois de voltar à aba de
+// Observações e digitar alguma coisa.
+check('digitar o destinatário recalcula o contador',
+  /\[name="destNome"\]'\)\?\.addEventListener\('input', atualizarAvisosObs\)/.test(telaSrc));
+check('  e o contador explica por que o número é menor',
+  /em homologação o aviso de teste ocupa o resto/.test(telaSrc));
 
 console.log('\n--- onde as guardas ficam ---');
 // Passar do ponto da emissão consome numeração; nota rejeitada por texto longo

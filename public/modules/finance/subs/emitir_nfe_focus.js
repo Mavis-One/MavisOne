@@ -78,6 +78,32 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // de quem ASSINA a nota — com mais de uma empresa no sistema, um texto único
   // faria a nota de uma prometer a garantia da outra.
   let empresasPorId = new Map();
+  let travadoEmHomologacao = false;
+
+  // O ambiente que a nota VAI usar, e não o que está salvo no estabelecimento:
+  // a trava do servidor rebaixa produção em silêncio.
+  function ambienteEfetivoDaTela() {
+    if (travadoEmHomologacao) return 'homologacao';
+    const estab = estabelecimentos.find((e) => e.id === selectedEstabelecimentoId);
+    return String((estab && estab.focusAmbiente) || 'homologacao').toLowerCase();
+  }
+
+  // Quantos caracteres sobram DE VERDADE para as observações.
+  //
+  // Em homologação a SEFAZ exige um aviso de teste no MESMO campo, com o nome
+  // do destinatário dentro — o servidor o acrescenta na montagem. Contar só o
+  // que o usuário digitou aprovava 5000 caracteres e mandava 5081 para a
+  // SEFAZ. O nome vem do CAMPO, e não do objeto: quem está digitando o
+  // destinatário agora muda o orçamento agora.
+  function orcamentoDasObservacoes() {
+    if (!TextoPadrao || !TextoPadrao.orcamentoDoRodape) return 5000;
+    const campoNome = document.querySelector('[name="destNome"]');
+    return TextoPadrao.orcamentoDoRodape({
+      ambiente: ambienteEfetivoDaTela(),
+      destinatarioNome: (campoNome && campoNome.value) || destinatario.nome
+    });
+  }
+
   function textoPadraoDoEmitente() {
     const estab = estabelecimentos.find((e) => e.id === selectedEstabelecimentoId);
     const daEmpresa = estab ? (empresasPorId.get(estab.empresaId) || '').trim() : '';
@@ -110,6 +136,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   try {
     const res = await api('/api/fiscal/estabelecimentos');
     estabelecimentos = (res.estabelecimentos || []).filter((e) => e.ativo && e.emiteNfe);
+    // A trava rebaixa produção para homologação no servidor. Sem saber dela, o
+    // contador de observações daria o orçamento cheio numa nota que vai levar o
+    // aviso de teste no rodapé — ver orcamentoDasObservacoes.
+    travadoEmHomologacao = Boolean(res.travadoEmHomologacao);
     try {
       // Só a mensagem padrão de cada empresa. Falhar aqui não pode impedir a
       // emissão: sem a lista, o texto do sistema continua valendo.
@@ -833,8 +863,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       const contador = document.getElementById('nfeFocusObsContador');
       const pendentes = document.getElementById('nfeFocusObsPendentes');
       if (contador) {
-        contador.textContent = `${texto.length} de ${TextoPadrao.LIMITE_INFCPL} caracteres`;
-        contador.classList.toggle('finance-negative', TextoPadrao.excedeLimite(texto));
+        const orcamento = orcamentoDasObservacoes();
+        // Quando o orçamento é menor que o limite, dizer POR QUÊ: um contador
+        // que para em 4919 sem explicação parece defeito.
+        const porque = orcamento < TextoPadrao.LIMITE_INFCPL
+          ? ` (a SEFAZ aceita ${TextoPadrao.LIMITE_INFCPL}; em homologação o aviso de teste ocupa o resto)`
+          : '';
+        contador.textContent = `${texto.length} de ${orcamento} caracteres${porque}`;
+        contador.classList.toggle('finance-negative', texto.length > orcamento);
       }
       if (pendentes) {
         const vazios = TextoPadrao.camposVazios(texto);
@@ -853,6 +889,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       if (campoChassi && TextoPadrao) campoChassi.value = TextoPadrao.chassiDoTexto(observacoes);
     });
     atualizarAvisosObs();
+
+    // O nome do destinatário entra no aviso de teste de homologação, então
+    // digitá-lo MUDA quantos caracteres sobram para as observações. Sem este
+    // ouvinte o contador só acertaria depois de a pessoa voltar à aba de
+    // Observações e digitar alguma coisa. Trocar de emitente não precisa de
+    // ouvinte: aquele caminho já chama renderForm().
+    document.querySelector('[name="destNome"]')?.addEventListener('input', atualizarAvisosObs);
 
     // O campo escreve na linha "CHASSI:" do texto, sem tocar no resto — o
     // operador pode ter editado as observações antes, e remontar do modelo
@@ -941,8 +984,16 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 
       // Estourar o limite de infCpl não dá erro de digitação — dá REJEIÇÃO
       // depois de transmitir, com a numeração já consumida. Barra aqui.
-      if (TextoPadrao && TextoPadrao.excedeLimite(observacoes)) {
-        showToast(`As observações têm ${observacoes.length} caracteres; a SEFAZ aceita no máximo ${TextoPadrao.LIMITE_INFCPL}.`, 'error');
+      //
+      // Contra o ORÇAMENTO, e não contra o limite bruto: em homologação o aviso
+      // de teste ocupa parte do campo. O servidor confere a string final, que é
+      // a palavra final; isto aqui existe para o erro aparecer antes do clique.
+      const orcamentoObs = TextoPadrao ? orcamentoDasObservacoes() : Infinity;
+      if (observacoes.length > orcamentoObs) {
+        const extra = orcamentoObs < TextoPadrao.LIMITE_INFCPL
+          ? ` (a SEFAZ aceita ${TextoPadrao.LIMITE_INFCPL}, e em homologação o aviso de teste ocupa o resto)`
+          : '';
+        showToast(`As observações têm ${observacoes.length} caracteres; cabem ${orcamentoObs}${extra}.`, 'error');
         if (submitBtn) submitBtn.disabled = false;
         return;
       }

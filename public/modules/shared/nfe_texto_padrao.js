@@ -177,10 +177,48 @@ ${RODAPE}`;
     return String(texto || '').length > LIMITE_INFADPROD;
   }
 
+  /**
+   * O aviso que a SEFAZ EXIGE no rodapé de toda nota de homologação.
+   *
+   * Mora aqui, e não no montador do payload, porque a TELA precisa saber que
+   * ele existe para contar direito. Enquanto só o montador sabia, a tela
+   * aprovava 5000 caracteres e a SEFAZ recebia 5081.
+   *
+   * O nome do destinatário entra no texto, então o tamanho VARIA de nota para
+   * nota — de 75 a 123 caracteres nos casos reais. Por isso o orçamento é
+   * calculado, e não uma constante.
+   */
+  function avisoDeHomologacao(destinatarioNome) {
+    return `TESTE EM HOMOLOGACAO - SEM VALOR FISCAL. Destinatario real: ${destinatarioNome || ''}`;
+  }
+
+  // O separador que o montador usa entre o texto do usuário e o aviso.
+  const SEPARADOR_RODAPE = ' | ';
+
+  /**
+   * Quantos caracteres sobram DE VERDADE para o texto do usuário.
+   *
+   * Em produção é o limite inteiro. Em homologação desconta o aviso obrigatório
+   * e o separador, porque eles entram no mesmo campo e contam igual.
+   *
+   * `ambiente` deve ser o EFETIVO, não o que está salvo no estabelecimento: a
+   * trava FOCUS_NFE_SOMENTE_HOMOLOGACAO rebaixa produção para homologação, e
+   * contar pelo valor salvo daria orçamento cheio numa nota que vai levar o
+   * aviso. A tela recebe essa informação em `travadoEmHomologacao`.
+   */
+  function orcamentoDoRodape({ ambiente, destinatarioNome } = {}) {
+    if (String(ambiente || '').toLowerCase() !== 'homologacao') return LIMITE_INFCPL;
+    const reserva = SEPARADOR_RODAPE.length + avisoDeHomologacao(destinatarioNome).length;
+    // Nunca negativo: um nome absurdamente longo zeraria o campo em vez de
+    // devolver um limite sem sentido.
+    return Math.max(0, LIMITE_INFCPL - reserva);
+  }
+
   const api = {
     PADRAO, FICHA, RODAPE, LIMITE_INFCPL, LIMITE_INFADPROD, CAMPOS_A_PREENCHER,
+    SEPARADOR_RODAPE,
     ficha, montar, comChassi, chassiDoTexto, ehTextoPadrao, camposVazios,
-    excedeLimite, excedeLimiteDoItem
+    excedeLimite, excedeLimiteDoItem, avisoDeHomologacao, orcamentoDoRodape
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
