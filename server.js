@@ -11867,6 +11867,30 @@ const server = http.createServer(async (req, res) => {
         const data = loadData();
         data.auditLogs = data.auditLogs || [];
         await registrarAuditoria({ action: 'createUser', targetId: newUser.id, targetUsername: newUser.username, byId: user.id, byName: user.name });
+        // O USUÁRIO NOVO PRECISA DE UM PAPEL, OU NÃO ENTRA EM LUGAR NENHUM.
+        //
+        // Com o RBAC instalado, o portão central decide por
+        // permissoes.usuarioPode, e quem não tem linha em user_roles chega lá
+        // com o conjunto de permissões VAZIO — e leva 403 em toda rota de
+        // módulo. As caixas de módulo desta mesma tela não salvam: elas
+        // alimentam podePeloModulo, que só é consultado quando o RBAC NÃO
+        // existe. O admin criava o usuário, marcava os módulos, e a pessoa
+        // entrava para ver "Sem permissão" em tudo.
+        //
+        // É o mesmo papel que a migração da fase L deu a todo mundo que existia
+        // na época (banco/migrations/fase-l-controle-de-acesso.sql): admin para
+        // quem é admin, 'usuario' para o resto. Quem quiser afinar depois usa a
+        // tela de Controle de Acesso.
+        //
+        // Falhar aqui NÃO desfaz o usuário: ele existe, e o admin consegue dar
+        // o papel pela outra tela. Mas tem de aparecer no log.
+        try {
+          await db.rbac.definirPapeisDoUsuario(
+            newUser.id, [newUser.role === 'admin' ? 'admin' : 'usuario'], user.id
+          );
+        } catch (erroPapel) {
+          console.error('Usuario criado, mas nao consegui dar o papel padrao', newUser.id, erroPapel.message);
+        }
         saveData(data);
         return sendJson(res, { success: true, user: newUser });
       }
@@ -11946,8 +11970,16 @@ const server = http.createServer(async (req, res) => {
       // Trava de segurança: ninguém tira o próprio acesso de administrador nem
       // se bloqueia sozinho — seria preciso outro admin para desfazer, e se for
       // o único admin do sistema não haveria volta.
+      //
+      // OS PAPÉIS PRECISAM SER CARREGADOS. `getCurrentUser` devolve a linha de
+      // `users`, sem `roles`, então ehAdministrador só enxergava o campo antigo
+      // `role`. Quem virou admin POR PAPÉL nesta mesma tela (users.role segue
+      // 'user') passava batido pela trava e conseguia tirar o próprio admin —
+      // e se fosse o único, trancava todo mundo para fora.
+      const acessoDoRequisitante = await db.rbac.carregarAcessoDoUsuario(requester.id);
+      const requisitanteComPapeis = { ...requester, roles: (acessoDoRequisitante && acessoDoRequisitante.roles) || [] };
       if (requester.id === id) {
-        if (permissoes.ehAdministrador(requester) && !papeis.includes('admin')) {
+        if (permissoes.ehAdministrador(requisitanteComPapeis) && !papeis.includes('admin')) {
           return sendJson(res, { error: 'Não é permitido remover o próprio papel de administrador.' }, 400);
         }
         if (body.active === false) {
@@ -12077,6 +12109,33 @@ const server = http.createServer(async (req, res) => {
         // Mesma regra: ausente nao mexe, {} libera todas as telas de volta.
         blockedSubs: body.blockedSubs === undefined ? undefined : sanitizarTelasBloqueadas(body.blockedSubs)
       });
+      // PROMOVER E REBAIXAR TEM DE CHEGAR AO PAPEL, NÃO SÓ À COLUNA.
+      //
+      // `users.role` e `user_roles` são duas fontes da mesma verdade enquanto a
+      // migração do RBAC conviver com o modelo antigo, e ehAdministrador
+      // aceita QUALQUER uma das duas. Rebaixar só a coluna deixava a pessoa
+      // administradora pelo papel: a tela de Usuários passava a dizer
+      // "Usuário" e ela continuava podendo tudo.
+      //
+      // SÓ QUANDO O CAMPO MUDA, e mexendo SÓ no papel 'admin': esta tela não
+      // gerencia papéis: quem faz isso é Controle de Acesso. Reescrever a lista
+      // inteira apagaria um 'gerente' concedido lá toda vez que alguém
+      // corrigisse o nome do usuário aqui.
+      if (role !== target.role) {
+        try {
+          const acessoAlvo = await db.rbac.carregarAcessoDoUsuario(id);
+          const atuais = new Set((acessoAlvo && acessoAlvo.roles) || []);
+          if (role === 'admin') atuais.add('admin');
+          else atuais.delete('admin');
+          // Sem papel nenhum o portão central nega tudo — ver a criação de
+          // usuário. Rebaixar não pode virar bloqueio total.
+          if (!atuais.size) atuais.add('usuario');
+          await db.rbac.definirPapeisDoUsuario(id, [...atuais], requester.id);
+        } catch (erroPapel) {
+          console.error('Papel do usuario nao acompanhou a mudanca de role', id, erroPapel.message);
+        }
+      }
+
       // O alvo pode ser o próprio requisitante (um admin editando a si mesmo).
       // Nada nesta rota lê o usuário depois da gravação hoje, mas quem vier
       // acrescentar um passo aqui embaixo leria a versão de antes do UPDATE,
