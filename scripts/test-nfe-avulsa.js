@@ -57,7 +57,13 @@ console.log('\n--- emitir sem pedido é o caso normal, não a exceção ---');
 // exigir, a NF-e avulsa morre em silêncio.
 // Termina no gerador, que fica logo antes de aplicarRespostaFocusNaNfe: sem
 // isso o recorte engoliria a definição dele e o teste abaixo se enganaria.
-const emissao = serverSrc.slice(serverSrc.indexOf('async function emitirNfeFiscal'), serverSrc.indexOf('async function gerarFinanceiroDaNfeAvulsa'));
+//
+// COMEÇA EM prepararNfeParaTransmitir, e não em emitirNfeFiscal (fase BY): a
+// validação saiu da emissão e virou função própria para o pré-check dos pedidos
+// do dia rodar EXATAMENTE a mesma conferência, em vez de uma segunda lista que
+// envelheceria. As duas funções são o mesmo caminho — `emitirNfeFiscal` abre
+// chamando aquela —, então o recorte precisa cobrir as duas.
+const emissao = serverSrc.slice(serverSrc.indexOf('async function prepararNfeParaTransmitir'), serverSrc.indexOf('async function gerarFinanceiroDaNfeAvulsa'));
 check('a emissão não exige orderId', !/if \(!body\.orderId/.test(emissao) && !/orderId.*obrigat/i.test(emissao));
 check('exige destinatário', /Preencha os dados do destinatário/.test(emissao));
 check('exige ao menos um item', /Adicione ao menos um item/.test(emissao));

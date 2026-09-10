@@ -25,8 +25,16 @@ const check = (nome, cond, det) => {
 
 const serverSrc = ler('server.js');
 const fiscalDbSrc = ler('lib/db/fiscal.js');
+// COMEÇA EM prepararNfeParaTransmitir (fase BY): a guarda "um pedido, uma nota"
+// é CONFERÊNCIA, e a conferência inteira saiu de emitirNfeFiscal para uma função
+// própria, que o pré-check dos pedidos do dia também chama. Recortar só a partir
+// de emitirNfeFiscal deixaria de ver a guarda — e o teste diria que ela sumiu
+// quando ela apenas mudou de lado do mesmo caminho.
+//
+// Isso também prova uma coisa boa de graça: o pré-check avisa quando um pedido
+// já tem NF-e viva, porque roda esta mesma guarda.
 const emissao = serverSrc.slice(
-  serverSrc.indexOf('async function emitirNfeFiscal'),
+  serverSrc.indexOf('async function prepararNfeParaTransmitir'),
   serverSrc.indexOf('async function cfopsDaNfeGeramFinanceiro'));
 
 console.log('--- a consulta que sustenta a regra ---');

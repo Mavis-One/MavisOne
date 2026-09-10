@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-10 18:13 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-10 20:35 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -77,11 +77,12 @@ Financeiro  (finance)  —  8 tela(s) no menu
   [ok]  Extrato Open Finance               Extrato bancário puxado via Open Finance.
   [ok]  Bancos Conectados                  Bancos ligados e situação de cada conexão.
 
-Fiscal  (fiscal)  —  11 tela(s) no menu
+Fiscal  (fiscal)  —  12 tela(s) no menu
 ---------------------------------------
   [ok]  Painel Fiscal                      Notas transmitidas, autorizadas e o que a SEFAZ recusou.
   [ok]  NF-e Emitidas                      Notas emitidas, com DANFE, XML e cancelamento.
   [ok]  Emitir NF-e (SEFAZ)                Transmite a nota à SEFAZ usando a regra fiscal e o cadastro do produto.
+  [ok]  Pré-check Fiscal                   Quais pedidos do dia seriam recusados se fossem transmitidos agora.
   [ok]  Nova NF-e Avulsa                   Emite uma NF-e sem partir de um pedido.
   [ok]  NF-e Inutilizadas                  Faixas de numeração queimadas na SEFAZ.
   [ok]  Inutilizar NF-e                    Declara que uma faixa de números não virará nota.
@@ -194,7 +195,7 @@ Cadastros  (cadastros)  —  21 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 130 telas no menu.
+TOTAL: 14 módulos, 131 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -396,7 +397,7 @@ Tabelas usadas (76)
   users
 
 ==============================================================================
-4. ROTAS DA API (109 encontradas no server.js)
+4. ROTAS DA API (110 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -454,6 +455,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/fiscal/nfe                                      GET
   /api/fiscal/nfe/…                                    
   /api/fiscal/nfe/emitir                               POST
+  /api/fiscal/pre-check                                GET
   /api/fiscal/regras                                   GET POST
   /api/fiscal/regras/…                                 
   /api/fiscal/regras/simular                           GET
@@ -571,7 +573,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-91 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+92 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -640,6 +642,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [avulso]  test-permissoes-tela.js            A tela de Papéis e Permissões contra as permissões REAIS do banco.
   [npm test] test-permissoes.js                 Regras de controle de acesso (lib/permissoes.js).
   [npm test] test-prazo-cancelamento.js         Prazo de 24 horas para cancelar NF-e.
+  [npm test] test-pre-check-fiscal.js           PRÉ-CHECK FISCAL DOS PEDIDOS DO DIA (fase BY, OBS-21).
   [npm test] test-produto-abas.js               Abas do cadastro de produto.
   [avulso]  test-razao-no-banco.js             O RAZÃO DE ESTOQUE VIVE NO POSTGRES, E É TRANSACIONAL (fase AP).
   [npm test] test-regra-fiscal-parcial.js       SALVAR UMA REGRA FISCAL NÃO APAGA O QUE O FORMULÁRIO NÃO MOSTRA (fase BJ).
@@ -669,7 +672,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-126 arquivos JS carregados por public/index.html, nesta ordem.
+127 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -747,6 +750,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/fiscal/subs/eventos.js
   /modules/fiscal/subs/inutilizar.js
   /modules/fiscal/subs/logs.js
+  /modules/fiscal/subs/pre_check.js
   /modules/fiscal/subs/regras.js
   /modules/fiscal/subs/nfe_espelho.js
   /modules/reports/index.js

@@ -1658,6 +1658,10 @@ const moduleSubItems = {
     // versão para manter.
     { key: 'nfe_emitidas', label: 'NF-e Emitidas', desc: 'Notas emitidas, com DANFE, XML e cancelamento.' },
     { key: 'emitir_nfe_focus', label: 'Emitir NF-e (SEFAZ)', desc: 'Transmite a nota à SEFAZ usando a regra fiscal e o cadastro do produto.' },
+    // ANTES de emitir, e por isso logo depois de "Emitir" no menu: a pergunta
+    // "isto vai passar?" só tinha uma resposta possível, que era transmitir e
+    // ver — e nota recusada consome a numeração, que não volta.
+    { key: 'pre_check', label: 'Pré-check Fiscal', desc: 'Quais pedidos do dia seriam recusados se fossem transmitidos agora.' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     { key: 'inutilizadas', label: 'NF-e Inutilizadas', desc: 'Faixas de numeração queimadas na SEFAZ.' },
     { key: 'inutilizar', label: 'Inutilizar NF-e', desc: 'Declara que uma faixa de números não virará nota.' },

@@ -11,7 +11,8 @@ const fiscalDb = require('./lib/db/fiscal');
 const modulosDb = require('./lib/db/modulos');
 const crmDb = require('./lib/db/crm');
 const {
-  buildNfePayload, conferirLimitesDeTexto, conferirPagamentosDaNota, conferirCartoesDaNota
+  buildNfePayload, conferirLimitesDeTexto, conferirPagamentosDaNota, conferirCartoesDaNota,
+  conferirDestinatarioDaNota
 } = require('./lib/nfePayloadBuilder');
 // Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
 const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
@@ -90,6 +91,10 @@ const manifestacao = require('./public/modules/shared/manifestacao');
 // A tabela tBand da NF-e. O MESMO catalogo que a tela oferece na linha de
 // pagamento e que o cadastro de credenciadoras valida.
 const bandeiraCartao = require('./public/modules/shared/bandeira_cartao');
+// tPag por forma de pagamento. O MESMO catalogo que a tela de vendas usa para
+// traduzir a linha do pedido — montar a nota no servidor sem ele faria duas
+// traducoes do mesmo de-para, e uma envelheceria.
+const formaPagamento = require('./public/modules/shared/forma_pagamento');
 // Fase AQ: cotacao e ordem de compra sao o mesmo documento — o status decide.
 const comprasDb = require('./lib/db/compras');
 const purchaseStatus = require('./public/modules/shared/purchase_status');
@@ -4064,6 +4069,10 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname.startsWith('/api/fiscal/dfe/')) return 'documentos_recebidos';
 
   if (pathname === '/api/fiscal/nfe') return 'visualizar';
+  // PRE-CHECK e' LEITURA, e por isso pede 'visualizar' e nao 'emitir': quem
+  // confere os pedidos do dia de manha nao precisa poder transmitir. Exigir
+  // 'emitir' faria a conferencia so' existir para quem ja' pode errar caro.
+  if (pathname === '/api/fiscal/pre-check') return 'visualizar';
   if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
   if (pathname.endsWith('/cancelar')) return 'cancelar';
   if (pathname.endsWith('/cce')) return 'cce';
@@ -4288,7 +4297,133 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
   }
 }
 
-async function emitirNfeFiscal(body, user) {
+/**
+ * O ENDERECO DE UMA PESSOA CADASTRADA, dita como a NF-e precisa.
+ *
+ * As chaves do cadastro NAO SAO UNIFORMES: o formulario de pessoa grava
+ * `street`/`number`/`district`, o de empresa grava `address`/`addressNumber`/
+ * `neighborhood`, e cidade, UF e CEP sao colunas. Sao dois formularios que
+ * cresceram separados sobre a mesma tabela (`people.extra` e' jsonb).
+ *
+ * Ler todas as variantes AQUI, num lugar so', e' o que evita a terceira: quem
+ * montar a nota nao precisa saber por qual tela o cliente foi cadastrado.
+ * Uniformizar o cadastro seria melhor e e' outra fase — envolve migrar dados.
+ */
+function enderecoDaPessoa(pessoa) {
+  const p = pessoa || {};
+  const primeiro = (...valores) => valores.map((v) => String(v || '').trim()).find(Boolean) || '';
+  return {
+    logradouro: primeiro(p.street, p.address, p.logradouro),
+    numero: primeiro(p.number, p.addressNumber, p.numero),
+    complemento: primeiro(p.complement, p.addressComplement, p.complemento),
+    bairro: primeiro(p.district, p.neighborhood, p.bairro),
+    municipio: primeiro(p.city, p.municipio),
+    uf: primeiro(p.state, p.uf),
+    cep: String(primeiro(p.zipCode, p.cep, p.zip_code)).replace(/\D/g, ''),
+    codigoMunicipio: primeiro(p.cityCode, p.codigoMunicipio, p.ibge)
+  };
+}
+
+/**
+ * A NOTA QUE ESTE PEDIDO GERARIA — montada NO SERVIDOR (fase BY).
+ *
+ * A traducao pedido -> NF-e vivia inteira no navegador: `state.nfeFromOrder`
+ * em app.js montava o pacote, a tela de emissao o completava, e so' entao o
+ * servidor via alguma coisa. Isso tem duas consequencias.
+ *
+ *   1. So' funciona por AQUELA tela. Nada mais no sistema consegue perguntar
+ *      "que nota este pedido geraria?" — nem um pre-check, nem um lote.
+ *   2. Uma regra de traducao nova precisa ser escrita nos dois lugares no dia
+ *      em que o servidor tambem precisar dela.
+ *
+ * Esta funcao e' a traducao no servidor. Ela NAO EMITE: devolve o corpo, e quem
+ * chama decide se transmite ou so' confere.
+ *
+ * O ESTABELECIMENTO VEM DE FORA porque o pedido nao sabe qual e': `orders.
+ * company_id` aponta para as empresas do db.json, que nao tem ponte com o
+ * cadastro fiscal (`estabelecimento`, no Postgres). Inventar a ponte por CNPJ
+ * aqui seria adivinhar; quem confere escolhe a loja, como quem emite escolhe.
+ */
+function montarNfeDoPedido(pedido, estabelecimentoId, data) {
+  const pessoa = (data.people || []).concat(data.cnpjs || [])
+    .find((p) => p.id === pedido.clientSupplierId) || null;
+  const endereco = enderecoDaPessoa(pessoa);
+  const totais = computeSalesTotals(pedido.items || [], pedido);
+  const formasPorId = new Map((data.paymentMethods || []).map((f) => [f.id, f]));
+
+  return {
+    estabelecimentoId,
+    tipoOperacao: 'VENDA',
+    naturezaOperacao: 'Venda de mercadoria',
+    orderId: pedido.id,
+    destinatario: {
+      nome: pessoa ? pessoa.name : (pedido.clientSupplierName || ''),
+      documento: pessoa ? String(pessoa.document || '') : '',
+      inscricaoEstadual: pessoa ? String(pessoa.stateRegistration || '') : '',
+      // Contribuinte se tem inscricao estadual: e' o que decide indicador_ie e,
+      // com ele, se a operacao tem DIFAL.
+      contribuinte: Boolean(pessoa && pessoa.stateRegistration),
+      ...endereco
+    },
+    // NCM, CEST e origem NAO vao daqui: prepararNfeParaTransmitir os rele' do
+    // CADASTRO do produto pelo produtoId. Mandar palpite faria duas notas do
+    // mesmo produto sairem com classificacoes diferentes.
+    itens: (Array.isArray(pedido.items) ? pedido.items : []).map((item) => ({
+      produtoId: item.productId || '',
+      descricao: item.name || item.description || '',
+      codigoProduto: item.sku || item.code || '',
+      quantidade: Number(item.quantity || 0),
+      valorUnitario: Number(item.unitPrice || 0),
+      unidadeComercial: item.unit || 'UN'
+    })),
+    // As linhas reais do pedido, com o grupo `card` quando e' cartao — a mesma
+    // traducao da fase BU/BW, agora no servidor.
+    pagamentos: (Array.isArray(pedido.payments) ? pedido.payments : [])
+      .filter((linha) => Number(linha.amount || 0) > 0)
+      .map((linha) => {
+        const forma = formasPorId.get(String(linha.methodId || '')) || null;
+        const ehCartao = Boolean(forma) && formaPagamento.ehCartao(forma.type);
+        return {
+          forma: formaPagamento.codigoNfe(forma ? forma.type : ''),
+          valor: Number(linha.amount || 0),
+          methodId: linha.methodId || '',
+          ...(ehCartao ? {
+            bandeira: linha.cardBrand || '',
+            integracao: linha.cardIntegration || '2',
+            autorizacao: String(linha.cardAuthorization || '').trim()
+          } : {})
+        };
+      }),
+    // Fase BQ: o que nao esta nas linhas de item tambem e' a nota. Frete so'
+    // quando COBRADO do comprador; servico fica de fora, que nao e' mercadoria.
+    desconto: totais.descontoTotal || 0,
+    frete: totais.freteCobrado || 0,
+    outrasDespesas: (totais.despesasGerais || 0) + (totais.taxaMontagem || 0)
+  };
+}
+
+/**
+ * TUDO O QUE PRECISA ESTAR CERTO ANTES DE TRANSMITIR — e nada que grave nada.
+ *
+ * POR QUE ISTO E UMA FUNCAO SEPARADA (fase BY)
+ * --------------------------------------------
+ * O pre-check dos pedidos do dia precisa responder "esta nota seria aceita?"
+ * SEM emitir. A tentacao e escrever uma segunda lista de conferencias, mais
+ * curta, so' para a tela. E' a pior coisa possivel: as duas listas convergem
+ * enquanto ninguem mexe e divergem no dia em que uma regra nova entra so' na
+ * emissao. Ai o pre-check diz "tudo certo" para uma nota que a SEFAZ recusa —
+ * pior do que nao ter pre-check, porque agora alguem confia nele.
+ *
+ * Entao nao ha duas listas. Ha esta funcao, e os dois caminhos a chamam.
+ *
+ * ELA LE O BANCO (estabelecimento, empresa, produtos, regras fiscais, notas ja'
+ * emitidas do pedido) e NAO ESCREVE NADA. E' o que a torna segura de rodar em
+ * lote, sobre trinta pedidos, sem consumir numeracao nem criar rascunho.
+ *
+ * Lanca `Error` com `status` no primeiro problema — quem emite deixa subir,
+ * quem faz o pre-check pega e mostra.
+ */
+async function prepararNfeParaTransmitir(body) {
   const estabelecimento = await fiscalDb.getEstabelecimentoById(body.estabelecimentoId);
   if (!estabelecimento) {
     const err = new Error('Estabelecimento não encontrado.');
@@ -4544,6 +4679,32 @@ async function emitirNfeFiscal(body, user) {
     err.status = 400;
     throw err;
   }
+
+  // E o ENDERECO do destinatario? So' nome, documento e UF eram conferidos la'
+  // em cima; o resto do grupo enderDest ia em branco para a SEFAZ e voltava
+  // rejeitado, sem a tela dizer qual campo faltava.
+  const enderecoIncompleto = conferirDestinatarioDaNota(payload);
+  if (enderecoIncompleto) {
+    const err = new Error(enderecoIncompleto);
+    err.status = 400;
+    throw err;
+  }
+
+  // O que a emissao precisa daqui para frente. Tudo ja' conferido.
+  return {
+    estabelecimento, destinatario, payload, referencia, naturezaOperacao,
+    tipoDocumento, finalidadeEmissao, dataEmissao, tipoOperacao, valorTotal,
+    valorIcmsComplementar, chaveOriginal, pedidoDaNota
+  };
+}
+
+async function emitirNfeFiscal(body, user) {
+  // A MESMA conferencia que o pre-check roda. Ver prepararNfeParaTransmitir.
+  const {
+    estabelecimento, destinatario, payload, referencia, naturezaOperacao,
+    tipoDocumento, finalidadeEmissao, dataEmissao, tipoOperacao, valorTotal,
+    valorIcmsComplementar, chaveOriginal, pedidoDaNota
+  } = await prepararNfeParaTransmitir(body);
 
   const nfeExistente = await encontrarNfeIdempotente(estabelecimento.id, payload);
   if (nfeExistente) {
@@ -8573,6 +8734,90 @@ const server = http.createServer(async (req, res) => {
         const id = decodeURIComponent(pathname.replace('/api/fiscal/regras/', ''));
         await fiscalDb.deleteRegraFiscal(id);
         return sendJson(res, { success: true });
+      }
+
+      // ----------------------------------------------------------------
+      // PRE-CHECK DOS PEDIDOS DO DIA (fase BY, OBS-21)
+      //
+      // "Quais dos pedidos de hoje seriam RECUSADOS se eu transmitisse agora?"
+      //
+      // Sem isto a resposta so' aparece uma nota por vez, DEPOIS de transmitir
+      // — e nota rejeitada consumiu numeracao. Na observacao do ViperERP o
+      // operador descobriu o defeito do cadastro assim: emitiu, foi recusado,
+      // corrigiu a nota a' mao, emitiu a seguinte, foi recusado igual.
+      //
+      // RODA O MESMO CODIGO DA EMISSAO (prepararNfeParaTransmitir) sobre a
+      // nota que cada pedido geraria (montarNfeDoPedido). Nao ha uma segunda
+      // lista de conferencias — se houvesse, ela diria "tudo certo" para notas
+      // que a SEFAZ recusa, no dia em que uma regra entrasse so' na emissao.
+      //
+      // NAO GRAVA NADA: nenhum rascunho, nenhuma numeracao, nenhuma chamada a'
+      // Focus. E' seguro rodar sobre trinta pedidos.
+      // ----------------------------------------------------------------
+      if (pathname === '/api/fiscal/pre-check' && req.method === 'GET') {
+        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
+        if (!estabelecimentoId) {
+          return sendJson(res, { error: 'Escolha o estabelecimento que vai emitir.' }, 400);
+        }
+        const hoje = new Date().toISOString().slice(0, 10);
+        const de = url.searchParams.get('de') || hoje;
+        const ate = url.searchParams.get('ate') || de;
+
+        const dados = loadData();
+        await Promise.all([syncSalesData(dados), syncCadastroData(dados)]);
+
+        // OS QUE AINDA VAO VIRAR NOTA. Quem ja' faturou, ja' cancelou ou e'
+        // orcamento nao entra: conferir o que nao vai ser transmitido enche a
+        // lista de ruido e esconde o que importa.
+        const candidatos = (dados.orders || [])
+          .filter((p) => String(p.type || '') !== 'orcamento')
+          .filter((p) => {
+            const dia = String(p.date || '').slice(0, 10);
+            return dia >= de && dia <= ate;
+          })
+          .filter((p) => salesStatus.podeTransicionar(p.status, 'pedido-faturado'))
+          .sort((a, b) => Number(a.code || 0) - Number(b.code || 0));
+
+        const resultados = [];
+        for (const pedido of candidatos) {
+          const linha = {
+            id: pedido.id,
+            code: pedido.code,
+            date: pedido.date,
+            // O CADASTRO PRIMEIRO, e nao o nome gravado no pedido.
+            //
+            // `clientSupplierName` do registro cai em `orders.customer`, coluna
+            // legada cujo DEFAULT e' a string '-'. Ela e' truthy: usa-la como
+            // primeira opcao curto-circuita qualquer fallback e a coluna Cliente
+            // sai com um tracinho em todo pedido que nao gravou o nome. Alem
+            // disso o cadastro e' a fonte certa do nome — quem renomeou um
+            // cliente quer ver o nome novo aqui.
+            cliente: cadastrosCore.directoryName(dados, pedido.clientSupplierId)
+              || (pedido.clientSupplierName === '-' ? '' : pedido.clientSupplierName)
+              || '',
+            valor: Number(pedido.totalAmount || 0),
+            status: pedido.status
+          };
+          try {
+            const corpo = montarNfeDoPedido(pedido, estabelecimentoId, dados);
+            await prepararNfeParaTransmitir(corpo);
+            resultados.push({ ...linha, ok: true, problema: '' });
+          } catch (erro) {
+            // A MENSAGEM DA EMISSAO, INTEIRA. Resumir aqui produziria um texto
+            // que nao existe em lugar nenhum e que ninguem consegue procurar;
+            // e' a mesma frase que a pessoa veria ao tentar emitir.
+            resultados.push({ ...linha, ok: false, problema: erro.message || 'Erro desconhecido.' });
+          }
+        }
+
+        return sendJson(res, {
+          de,
+          ate,
+          estabelecimentoId,
+          total: resultados.length,
+          comProblema: resultados.filter((r) => !r.ok).length,
+          pedidos: resultados
+        });
       }
 
       if (pathname === '/api/fiscal/nfe' && req.method === 'GET') {

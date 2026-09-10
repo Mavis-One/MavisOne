@@ -156,9 +156,15 @@ check('a emissão usa a versão resolvida',
   /pagamentos: await pagamentosComCredenciadora\(body\.pagamentos\),/.test(src));
 // Antes de gravar rascunho e antes de falar com a Focus: passar deste ponto
 // consome numeração, e nota rejeitada não se conserta.
-const emissao = src.slice(src.indexOf('async function emitirNfeFiscal'));
-const trechoEmissao = emissao.slice(0, emissao.indexOf('createNfeRascunho'));
-check('a conferência do cartão roda ANTES do rascunho', /conferirCartoesDaNota\(payload\)/.test(trechoEmissao));
+//
+// Desde a fase BY isso é estrutural, e não mais uma questão de ordem das
+// linhas: a conferência inteira mora em `prepararNfeParaTransmitir`, que não
+// grava NADA (scripts/test-pre-check-fiscal.js prova campo a campo), e
+// `emitirNfeFiscal` abre chamando aquela. Não há como a conferência do cartão
+// rodar depois do rascunho sem alguém mover a função de lugar.
+const preparar = src.slice(src.indexOf('async function prepararNfeParaTransmitir'), src.indexOf('async function emitirNfeFiscal'));
+check('a conferência do cartão roda ANTES do rascunho',
+  /conferirCartoesDaNota\(payload\)/.test(preparar) && !preparar.includes('createNfeRascunho'));
 check('o meta de vendas leva a credenciadora junto', /paymentMethods: await formasComCredenciadora\(data\),/.test(src));
 // O CNPJ NÃO vai para o navegador — só nome e bandeiras.
 const helper = (/async function formasComCredenciadora\(data\) \{[\s\S]*?\n\}/.exec(src) || [''])[0];
