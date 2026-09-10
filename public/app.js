@@ -1785,6 +1785,8 @@ const moduleSubItems = {
     { key: 'nova_conta_bancaria', label: 'Nova Conta Bancária', desc: 'Cadastra uma conta bancária.' },
     { key: 'formas_pagamento', label: 'Formas de Pagamento', desc: 'Formas aceitas e suas condições.' },
     { key: 'nova_forma_pagamento', label: 'Nova Forma de Pagamento', desc: 'Cadastra uma forma de pagamento.' },
+    { key: 'credenciadoras', label: 'Credenciadoras de Cartão', desc: 'Rede, Cielo, Stone — o CNPJ que a NF-e exige no grupo do cartão.' },
+    { key: 'nova_credenciadora', label: 'Nova Credenciadora', desc: 'Cadastra uma credenciadora de cartão.' },
     { key: 'status_venda', label: 'Status de Venda', desc: 'Situações que um pedido pode assumir.' },
     { key: 'deposits', label: 'Depósitos', desc: 'Depósitos cadastrados, os mesmos do Estoque.' }
   ]

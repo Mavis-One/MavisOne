@@ -79,6 +79,7 @@ const categoriasVendaDb = require('./lib/db/categorias-venda');
 // Fase AZ: origem da VENDA (Balcao, Televendas, E-commerce). Era uma lista
 // fixa dentro do public/app.js, sem tela — ver o cabecalho da migracao.
 const origensVendaDb = require('./lib/db/origens-venda');
+const adquirentesDb = require('./lib/db/adquirentes');
 // Fase BB: equipamentos sairam do db.json. A garantia e' contada a partir da
 // NF-e que vendeu a maquina — ver o cabecalho de lib/db/equipamentos.js.
 const equipamentosDb = require('./lib/db/equipamentos');
@@ -960,6 +961,51 @@ function sumFinanceAmount(entries) {
  * produtos). Contagem, e nao varredura: nenhuma delas carrega o razao inteiro
  * na memoria para responder "tem algum?".
  */
+/**
+ * Quais formas de pagamento usam esta credenciadora.
+ *
+ * LÊ O db.json, que é onde as formas de pagamento moram — não o Postgres. É a
+ * lição da fase BB dita ao contrário: lá as guardas perguntavam ao db.json o que
+ * tinha ido para o banco e respondiam sempre vazio; aqui perguntar ao banco
+ * responderia vazio pelo motivo oposto. A guarda serve para a fonte certa.
+ *
+ * `paymentMethods` NÃO está em NAO_PERSISTIR, então loadData() basta.
+ */
+/**
+ * As bandeiras que a TELA manda viram o array `brands` que a API guarda.
+ *
+ * A fábrica de formulários dos Cadastros não tem multi-seleção — conhece texto,
+ * número, select, textarea e checkbox. A tela usa uma caixa por bandeira
+ * (`bandeira01`, `bandeira02`, ...) e a conversão acontece aqui, num lugar só.
+ *
+ * Quem chamar a API direto com `brands: ['01','06']` continua funcionando: o
+ * array explícito vence, e as caixas só entram quando ele não veio.
+ */
+function bandeirasDoCorpo(body) {
+  if (Array.isArray(body.brands)) return body;
+  const marcadas = Object.keys(body)
+    .filter((chave) => /^bandeira\d{2}$/.test(chave) && body[chave])
+    .map((chave) => chave.slice(-2));
+  return { ...body, brands: marcadas };
+}
+
+/**
+ * O caminho de volta: o registro guardado vira as caixas que a tela desenha.
+ * Sem isto, abrir uma credenciadora para editar mostraria todas as bandeiras
+ * desmarcadas e salvar apagaria o que estava lá.
+ */
+function bandeirasParaATela(adquirente) {
+  const marcadas = {};
+  for (const codigo of (adquirente.brands || [])) marcadas[`bandeira${codigo}`] = true;
+  return { ...adquirente, ...marcadas };
+}
+
+function formasQueUsamAdquirente(id) {
+  if (!id) return [];
+  const data = loadData();
+  return (data.paymentMethods || []).filter((forma) => forma.cardAcquirerId === id);
+}
+
 async function contrapartidaEmUso(id) {
   const dados = loadData();
   const [comFinanceiro, comEquipamento, documentos] = await Promise.all([
@@ -7308,6 +7354,93 @@ const server = http.createServer(async (req, res) => {
   }
 
   // =========================================================================
+  // CREDENCIADORAS DE CARTAO (fase BV).
+  //
+  // Mora sob /api/cadastros/ e nao sob /api/fiscal/ de proposito: e um cadastro
+  // de apoio, como forma de pagamento e conta bancaria, e quem o mantem e quem
+  // mantem os outros. O CNPJ daqui e' que vira dado fiscal na hora da emissao.
+  //
+  // Permissao por `cadastros`, como os vizinhos. O portao central ja traduziu o
+  // caminho para cadastros.* antes de chegar aqui; esta e a segunda metade, que
+  // diz o que ESTE usuario tem liberado.
+  // =========================================================================
+
+  if (pathname === '/api/cadastros/card-acquirers' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('cadastros')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const adquirentes = await adquirentesDb.listar();
+    // Quantas formas usam cada uma — e' o que decide se da' para excluir ou se
+    // e' caso de inativar. Mostrar o numero aqui evita o clique que ja nasce
+    // recusado, como na tela de origens de venda.
+    const comUso = adquirentes.map((adq) => ({
+      ...bandeirasParaATela(adq),
+      formas: formasQueUsamAdquirente(adq.id).map((f) => f.name),
+      usos: formasQueUsamAdquirente(adq.id).length
+    }));
+    return sendJson(res, { cardAcquirers: comUso, brands: adquirentesDb.BANDEIRAS });
+  }
+
+  if (pathname === '/api/cadastros/card-acquirers' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const cardAcquirer = await adquirentesDb.criar(bandeirasDoCorpo(await readBody(req)));
+      return sendJson(res, { success: true, cardAcquirer });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao criar a credenciadora' }, erro.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/cadastros/card-acquirers/') && req.method === 'PUT') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/cadastros/card-acquirers/', ''));
+      if (!(await adquirentesDb.obter(id))) {
+        return sendJson(res, { error: 'Credenciadora não encontrada' }, 404);
+      }
+      const cardAcquirer = await adquirentesDb.atualizar(id, bandeirasDoCorpo(await readBody(req)));
+      return sendJson(res, { success: true, cardAcquirer });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao salvar a credenciadora' }, erro.status || 400);
+    }
+  }
+
+  if (pathname.startsWith('/api/cadastros/card-acquirers/') && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/cadastros/card-acquirers/', ''));
+      const adquirente = await adquirentesDb.obter(id);
+      if (!adquirente) return sendJson(res, { error: 'Credenciadora não encontrada' }, 404);
+
+      // A guarda ANTES do delete, e lendo o db.json — ver formasQueUsamAdquirente.
+      const emUso = formasQueUsamAdquirente(id);
+      if (emUso.length) {
+        const nomes = emUso.map((f) => `"${f.name}"`).join(', ');
+        return sendJson(res, {
+          error: `${emUso.length === 1 ? 'A forma de pagamento' : 'As formas de pagamento'} ${nomes} `
+            + `${emUso.length === 1 ? 'usa' : 'usam'} a credenciadora "${adquirente.name}". `
+            + 'Marque como inativa em vez de excluir: assim ela some do formulário e as notas '
+            + 'antigas continuam explicáveis.'
+        }, 409);
+      }
+      await adquirentesDb.excluir(id);
+      return sendJson(res, { success: true });
+    } catch (erro) {
+      return sendJson(res, { error: erro.message || 'Erro ao excluir' }, erro.status || 400);
+    }
+  }
+
+  // =========================================================================
   // ORIGENS DE VENDA (fase AZ). Mesma forma das categorias acima, e de
   // proposito: sao dois cadastros de apoio da mesma tela, e quem mexer num vai
   // procurar o outro do lado.
@@ -8732,6 +8865,9 @@ const server = http.createServer(async (req, res) => {
         deposits: data.deposits,
         bankAccounts: data.bankAccounts,
         paymentMethods: data.paymentMethods,
+        // As credenciadoras alimentam o select da forma de pagamento (fase BV).
+        // Só as ATIVAS: a inativa some do formulário e continua no histórico.
+        cardAcquirers: await adquirentesDb.listar({ apenasAtivas: true }),
         saleStatuses: data.saleStatuses,
         companies: data.companies,
         // OS USUARIOS VEM DO BANCO, e nao de `data.users` (fase BC).
@@ -8821,6 +8957,13 @@ const server = http.createServer(async (req, res) => {
       }
       const config = cadastrosCore.CADASTRO_COLLECTIONS[cadastroCollectionMatch[1]];
       const id = cadastroCollectionMatch[2] ? decodeURIComponent(cadastroCollectionMatch[2]) : '';
+      // A FORMA DE PAGAMENTO APONTA PARA UMA CREDENCIADORA, e ela mora no
+      // Postgres (fase BV). O `build` valida referências contra `data`, como já
+      // faz com conta bancária e depósito — então a lista entra em `data` aqui.
+      // Só para este cadastro: carregar em todos seria ida ao banco por nada.
+      if (cadastroCollectionMatch[1] === 'payment-methods') {
+        data.cardAcquirers = await adquirentesDb.listar();
+      }
       const list = data[config.key];
       const helpers = { sanitizeDigits, isValidCnpj, isValidCpf, isValidDocument };
       const serialize = (item) => (config.serialize ? config.serialize(item, data) : item);

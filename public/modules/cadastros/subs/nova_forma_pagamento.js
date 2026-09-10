@@ -43,6 +43,15 @@ window.MavisSubscreenRegistry.cadastros.nova_forma_pagamento = window.MavisCadas
       title: 'Destino e situação',
       fields: [
         { name: 'bankAccountId', label: 'Conta bancária', type: 'select', empty: 'Nenhuma', options: (meta) => meta.bankAccounts },
+        {
+          // O CNPJ da credenciadora e' o que a NF-e exige no grupo do cartao
+          // (fase BV). Fica na FORMA porque e' ela que representa o contrato:
+          // "Cartao de Credito Rede 2-6x" tem uma credenciadora, uma taxa e um
+          // prazo. O vendedor escolhe a forma; o CNPJ vai junto.
+          name: 'cardAcquirerId', label: 'Credenciadora do cartão', type: 'select',
+          empty: 'Nenhuma', options: (meta) => meta.cardAcquirers || [],
+          hint: 'Só para cartão. Sem ela, a NF-e não pode declarar o pagamento como integrado.'
+        },
         { name: 'status', label: 'Status', type: 'select', empty: null, default: 'ativo', options: [{ id: 'ativo', name: 'Ativo' }, { id: 'inativo', name: 'Inativo' }] },
         { name: 'isDefault', label: 'Forma de pagamento padrão', type: 'checkbox' }
       ]

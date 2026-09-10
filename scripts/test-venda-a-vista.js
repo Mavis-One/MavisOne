@@ -223,6 +223,17 @@ async function faturar(pedidoId) {
     }
     if (lixo.deposito) await consultar('delete from deposits where id = $1', [lixo.deposito]);
     if (lixo.pessoa) await consultar('delete from people where id = $1', [lixo.pessoa]);
+    // AS FORMAS DE PAGAMENTO TAMBEM. `lixo.formas` era preenchido la em cima e
+    // nunca lido aqui: quatro execucoes deste teste deixaram OITO formas
+    // "zz Dinheiro <carimbo>" / "zz Cartao <carimbo>" na tela de Cadastros do
+    // usuario, todas ativas e oferecidas no select do pedido.
+    //
+    // Vai pela API, e nao por SQL como o resto: `paymentMethods` mora no
+    // db.json, nao no Postgres — e foi exatamente por isso que passou batido
+    // num bloco de limpeza escrito todo em `delete from`.
+    for (const id of lixo.formas.filter(Boolean)) {
+      await pedir('DELETE', `/api/cadastros/payment-methods/${encodeURIComponent(id)}`);
+    }
     ok('cenario removido', true);
     console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
     await fecharPool();
