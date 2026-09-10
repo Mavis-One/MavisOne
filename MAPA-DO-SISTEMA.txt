@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-10 14:41 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-10 17:04 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -251,6 +251,8 @@ regra só, para tela e servidor nunca discordarem.
       Barra de ações do topo dos formulários: [ Mais Ações ▾ ] [ Salvar ] [ Voltar ] Componente genérico — a tela passa o catálogo de ações dela.
   atalhos.js
       Botão "Atalhos" da barra superior.
+  bandeira_cartao.js   [também no servidor]
+      AS BANDEIRAS DE CARTÃO DA NF-e (campo `tBand`) — FONTE ÚNICA.
   campos.js
       Telefone, CEP, UF e placa — comportamento ÚNICO, usado por todas as telas.
   cst_icms.js
@@ -568,7 +570,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-89 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+90 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -606,6 +608,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
   [npm test] test-garantia-equipamento.js       A GARANTIA DO EQUIPAMENTO É CONTADA, NÃO DIGITADA (fase BB).
   [avulso]  test-gate-openfinance.js           O portão central alcança mesmo o Open Finance? A regra de permissão dizia '/api/openfinance', mas a rota é '/a
+  [npm test] test-grupo-card-da-nfe.js          O GRUPO `card` DA NF-e (fase BW) — INTEIRO OU NENHUM.
   [npm test] test-guardas-de-exclusao.js        AS GUARDAS DE EXCLUSÃO PERGUNTAM À FONTE CERTA (fase BO).
   [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
   [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
@@ -664,7 +667,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-125 arquivos JS carregados por public/index.html, nesta ordem.
+126 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -717,6 +720,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/shared/descricao_lancamento.js
   /modules/shared/garantia.js
   /modules/shared/forma_pagamento.js
+  /modules/shared/bandeira_cartao.js
   /modules/shared/sales_bulk_actions.js
   /modules/shared/fiscal_permissoes.js
   /modules/shared/cst_icms.js

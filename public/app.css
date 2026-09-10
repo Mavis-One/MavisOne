@@ -4156,3 +4156,27 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   .sidebar, .secondary-sidebar, .topbar, .rel-filtros-acoes, .rel-visoes { display: none !important; }
   .panel { break-inside: avoid; box-shadow: none; }
 }
+
+/* A LINHA DE DETALHE DO CARTÃO na aba Pagamentos do pedido (fase BW).
+   É uma segunda <tr> que só existe quando a forma escolhida é cartão — em vez
+   de quatro colunas a mais em toda linha, que ficariam vazias no dinheiro, no
+   PIX e no boleto. */
+.sales-payment-cartao > td {
+  background: var(--panel-alt);
+  border-top: none;
+  padding-top: 4px;
+}
+.sales-payment-cartao-campos {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;
+  font-size: 12.5px;
+}
+.sales-payment-cartao-campos label { display: flex; flex-direction: column; gap: 4px; }
+.sales-payment-cartao-campos select,
+.sales-payment-cartao-campos input { min-width: 160px; }
+.sales-payment-cartao-adquirente { color: var(--muted); padding-bottom: 8px; }
+.sales-payment-cartao-sem-adquirente {
+  padding: 6px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  color: var(--warning-text);
+}

@@ -532,16 +532,22 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                   de dizer como a venda foi paga de verdade.</p></div>
               <div class="cadastro-section-body">
                 <table class="data-table">
-                  <thead><tr><th>Forma</th><th>Código SEFAZ</th><th class="num">Valor</th></tr></thead>
+                  <thead><tr><th>Forma</th><th>Código SEFAZ</th><th>Cartão</th><th class="num">Valor</th></tr></thead>
                   <tbody>
                     ${pagamentosDoPedido.map((linha) => `<tr>
                       <td>${escapeHtml(linha.rotulo || NFE_FORMAS_PAGAMENTO.find((f) => f.value === linha.forma)?.label || linha.forma)}</td>
                       <td>${escapeHtml(linha.forma)}</td>
+                      <td>${linha.integracao ? [
+                        linha.credenciadora ? escapeHtml(linha.credenciadora) : '<span class="finance-negative">sem credenciadora</span>',
+                        linha.bandeira ? escapeHtml(window.MavisBandeiraCartao.nome(linha.bandeira) || linha.bandeira) : '',
+                        String(linha.integracao) === '1' ? 'integrado' : 'não integrado',
+                        linha.autorizacao ? `NSU ${escapeHtml(linha.autorizacao)}` : ''
+                      ].filter(Boolean).join(' · ') : '<span class="muted">—</span>'}</td>
                       <td class="num">${financeFormatBRL(linha.valor)}</td>
                     </tr>`).join('')}
                   </tbody>
                   <tfoot><tr>
-                    <th colspan="2">Soma dos pagamentos</th>
+                    <th colspan="3">Soma dos pagamentos</th>
                     <th class="num ${somaDosPagamentos() === grandTotal() ? '' : 'finance-negative'}">
                       ${financeFormatBRL(somaDosPagamentos())}</th>
                   </tr></tfoot>
@@ -1110,8 +1116,20 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         // vale para a nota avulsa, que não tem pagamentos lançados em lugar
         // nenhum. Mandar "99 Outros" pelo total de uma venda paga em cartão e
         // dinheiro fecha o valor e mente sobre o meio de pagamento.
+        // O CARTÃO VAI JUNTO (fase BW): methodId, bandeira, integração e
+        // autorização. O CNPJ da credenciadora NÃO — quem o resolve é o
+        // servidor, pelo methodId, no momento da emissão.
         pagamentos: pagamentosDoPedido.length
-          ? pagamentosDoPedido.map((linha) => ({ forma: linha.forma, valor: linha.valor }))
+          ? pagamentosDoPedido.map((linha) => ({
+            forma: linha.forma,
+            valor: linha.valor,
+            methodId: linha.methodId || '',
+            ...(linha.integracao ? {
+              bandeira: linha.bandeira || '',
+              integracao: linha.integracao,
+              autorizacao: linha.autorizacao || ''
+            } : {})
+          }))
           : [{ forma: formData.get('formaPagamento') || '99', valor: grandTotal() }],
         // Desconto, frete e despesas do pedido de origem (fase BQ). Sem eles a
         // nota sai pelo bruto dos itens e diverge da conta a receber.

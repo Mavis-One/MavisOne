@@ -75,6 +75,11 @@
     <script src="/modules/shared/descricao_lancamento.js"></script>
     <script src="/modules/shared/garantia.js"></script>
     <script src="/modules/shared/forma_pagamento.js"></script>
+    <!-- Tabela tBand da NF-e. Antes do modulo de Cadastros (o formulario de
+         credenciadora desenha uma caixa por bandeira a partir dela) e antes do
+         app.js, que monta o select de bandeira na linha de pagamento do pedido.
+         O server.js faz require() do MESMO arquivo. -->
+    <script src="/modules/shared/bandeira_cartao.js"></script>
     <script src="/modules/shared/sales_bulk_actions.js"></script>
     <script src="/modules/shared/fiscal_permissoes.js"></script>
     <!-- O que cada CST do ICMS admite. Carregado antes do modulo Fiscal:

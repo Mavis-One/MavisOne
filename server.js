@@ -11,7 +11,7 @@ const fiscalDb = require('./lib/db/fiscal');
 const modulosDb = require('./lib/db/modulos');
 const crmDb = require('./lib/db/crm');
 const {
-  buildNfePayload, conferirLimitesDeTexto, conferirPagamentosDaNota
+  buildNfePayload, conferirLimitesDeTexto, conferirPagamentosDaNota, conferirCartoesDaNota
 } = require('./lib/nfePayloadBuilder');
 // Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
 const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
@@ -87,6 +87,9 @@ const garantia = require('./public/modules/shared/garantia');
 // Fase AR: as notas que emitiram CONTRA o nosso CNPJ (Distribuicao de DF-e).
 const dfeDb = require('./lib/db/dfe');
 const manifestacao = require('./public/modules/shared/manifestacao');
+// A tabela tBand da NF-e. O MESMO catalogo que a tela oferece na linha de
+// pagamento e que o cadastro de credenciadoras valida.
+const bandeiraCartao = require('./public/modules/shared/bandeira_cartao');
 // Fase AQ: cotacao e ordem de compra sao o mesmo documento — o status decide.
 const comprasDb = require('./lib/db/compras');
 const purchaseStatus = require('./public/modules/shared/purchase_status');
@@ -1006,6 +1009,70 @@ function formasQueUsamAdquirente(id) {
   return (data.paymentMethods || []).filter((forma) => forma.cardAcquirerId === id);
 }
 
+/**
+ * AS FORMAS DE PAGAMENTO ATIVAS, cada uma sabendo quem processa o cartão.
+ *
+ * A linha de pagamento do pedido precisa de duas coisas que só a credenciadora
+ * tem: o NOME (para mostrar de quem se está falando, e para avisar quando não
+ * há nenhuma) e as BANDEIRAS que ela aceita (para o select oferecer só o que o
+ * contrato cobre — é o que o cadastro promete em texto).
+ *
+ * O CNPJ NÃO VAI JUNTO, de propósito. Ele é resolvido no servidor na hora de
+ * emitir, a partir do `methodId` da linha — ver montarPagamentosDaNota. Mandar
+ * o CNPJ para o navegador convidaria a nota a sair com o número que estava na
+ * tela quando o pedido foi aberto, e não com o do cadastro no momento da
+ * emissão: corrigir uma credenciadora errada não consertaria as notas
+ * seguintes enquanto alguém não recarregasse a página.
+ *
+ * Lista TODAS as credenciadoras, e não só as ativas: uma forma antiga pode
+ * apontar para uma que já foi inativada, e o pedido tem de continuar dizendo
+ * qual era.
+ */
+/**
+ * O CNPJ DA CREDENCIADORA ENTRA NAS LINHAS DE PAGAMENTO — AQUI, NO SERVIDOR.
+ *
+ * O navegador manda o `methodId` de cada linha; o CNPJ e buscado pela forma de
+ * pagamento -> credenciadora, no momento da emissao. Aceitar o CNPJ vindo da
+ * tela seria emitir com o numero que estava carregado quando o pedido foi
+ * aberto: corrigir uma credenciadora cadastrada errado nao consertaria as notas
+ * seguintes ate alguem recarregar a pagina — e um CNPJ errado no grupo `card` e
+ * a rejeicao 225, depois de a nota ter sido transmitida.
+ *
+ * Devolve as linhas como vieram quando nenhuma tem forma identificada: quem
+ * chama a API direto, sem passar pela tela, continua funcionando.
+ */
+async function pagamentosComCredenciadora(pagamentos) {
+  const linhas = Array.isArray(pagamentos) ? pagamentos : null;
+  if (!linhas || !linhas.some((p) => p && p.methodId)) return linhas;
+  const dados = loadData();
+  const formasPorId = new Map((dados.paymentMethods || []).map((f) => [f.id, f]));
+  const adquirentesPorId = new Map((await adquirentesDb.listar()).map((a) => [a.id, a]));
+  return linhas.map((p) => {
+    if (!p || !p.methodId) return p;
+    const forma = formasPorId.get(String(p.methodId));
+    const adquirente = forma && forma.cardAcquirerId ? adquirentesPorId.get(forma.cardAcquirerId) : null;
+    // Sem credenciadora o campo fica vazio e o grupo `card` sai sem o CNPJ —
+    // que e valido enquanto a linha nao declarar integracao. Quem declarar e
+    // barrado por conferirCartoesDaNota, antes de consumir numeracao.
+    return { ...p, cnpjCredenciadora: adquirente ? adquirente.cnpj : '' };
+  });
+}
+
+async function formasComCredenciadora(data) {
+  const ativas = (data.paymentMethods || []).filter((forma) => forma.status !== 'inativo');
+  // Nenhuma forma usa credenciadora: não vale uma ida ao banco.
+  if (!ativas.some((forma) => forma.cardAcquirerId)) return ativas;
+  const porId = new Map((await adquirentesDb.listar()).map((a) => [a.id, a]));
+  return ativas.map((forma) => {
+    const adquirente = forma.cardAcquirerId ? porId.get(forma.cardAcquirerId) : null;
+    return {
+      ...forma,
+      cardAcquirerName: adquirente ? adquirente.name : '',
+      cardAcquirerBrands: adquirente ? adquirente.brands : []
+    };
+  });
+}
+
 async function contrapartidaEmUso(id) {
   const dados = loadData();
   const [comFinanceiro, comEquipamento, documentos] = await Promise.all([
@@ -1505,7 +1572,18 @@ function salesPaymentLines(body) {
       methodName: texto200(linha.methodName),
       dueDate: texto200(linha.dueDate),
       amount: Math.max(0, Number(linha.amount || 0)),
-      note: texto200(linha.note)
+      note: texto200(linha.note),
+      // O CARTAO (fase BW). Esta funcao MONTA a linha campo a campo, entao o
+      // que nao estiver listado aqui e descartado em silencio ao salvar: a
+      // tela mostraria bandeira e NSU preenchidos e o pedido reabriria vazio.
+      //
+      // Cada um e conferido pelo que a SEFAZ aceita, e nao so copiado:
+      //   bandeira      — tem de estar na tabela tBand; fora dela, nao vai
+      //   integracao    — tpIntegra so admite 1 ou 2
+      //   autorizacao   — cAut vai ate 128 caracteres
+      cardBrand: bandeiraCartao.existe(linha.cardBrand) ? String(linha.cardBrand) : '',
+      cardIntegration: ['1', '2'].includes(String(linha.cardIntegration || '')) ? String(linha.cardIntegration) : '',
+      cardAuthorization: texto200(linha.cardAuthorization).slice(0, 128)
     }))
     .filter((linha) => linha.amount > 0 || linha.methodName)
     .slice(0, 120);
@@ -4329,7 +4407,8 @@ async function emitirNfeFiscal(body, user) {
     // Grupo de pagamento é obrigatório no layout 4.0 da NF-e. Sem nada
     // informado, o builder monta uma parcela única "Outros" — a nota passa,
     // e fica visível na tela que ninguém escolheu a forma.
-    pagamentos: Array.isArray(body.pagamentos) ? body.pagamentos : null,
+    // Com o CNPJ da credenciadora resolvido pelo servidor (fase BW).
+    pagamentos: await pagamentosComCredenciadora(body.pagamentos),
     frete: body.frete,
     seguro: body.seguro,
     desconto: body.desconto,
@@ -4371,6 +4450,15 @@ async function emitirNfeFiscal(body, user) {
   const pagamentosNaoFecham = conferirPagamentosDaNota(payload);
   if (pagamentosNaoFecham) {
     const err = new Error(pagamentosNaoFecham);
+    err.status = 400;
+    throw err;
+  }
+
+  // E o grupo do cartao esta INTEIRO? Mesma janela, mesmo motivo: e o grupo
+  // `card` pela metade que volta como rejeicao 225, e a numeracao ja foi.
+  const cartaoIncompleto = conferirCartoesDaNota(payload);
+  if (cartaoIncompleto) {
+    const err = new Error(cartaoIncompleto);
     err.status = 400;
     throw err;
   }
@@ -6774,7 +6862,10 @@ const server = http.createServer(async (req, res) => {
       priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type })),
       // Abas Pagamentos e Entrega: formas de pagamento e transportadoras vêm do
       // Cadastro, não de lista fixa no formulário.
-      paymentMethods: (data.paymentMethods || []).filter((forma) => forma.status !== 'inativo'),
+      //
+      // Com quem processa o cartão junto (fase BW): a linha de pagamento em
+      // cartão mostra a credenciadora e oferece as bandeiras dela.
+      paymentMethods: await formasComCredenciadora(data),
       carriers: getCarriersDirectory(data)
     });
   }

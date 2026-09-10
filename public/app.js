@@ -3490,10 +3490,27 @@ async function loadModule(moduleName) {
                 .filter((linha) => Number(linha.amount || 0) > 0)
                 .map((linha) => {
                   const forma = meta.paymentMethods.find((f) => f.id === linha.methodId);
+                  const ehCartao = Boolean(forma) && window.MavisFormaPagamento.ehCartao(forma.type);
                   return {
                     forma: window.MavisFormaPagamento.codigoNfe(forma?.type),
                     rotulo: forma?.name || linha.methodName || '',
-                    valor: Number(linha.amount || 0)
+                    valor: Number(linha.amount || 0),
+                    // O methodId VIAJA JUNTO (fase BW). É por ele que o servidor
+                    // busca a credenciadora da forma e o CNPJ dela na hora de
+                    // emitir. O CNPJ não vem daqui de propósito: se viesse, a
+                    // nota sairia com o número que estava na tela quando o pedido
+                    // foi aberto, e corrigir um cadastro errado não consertaria as
+                    // notas seguintes até alguém recarregar a página.
+                    methodId: linha.methodId || '',
+                    // O grupo `card`: bandeira (tBand), integração (tpIntegra) e
+                    // autorização (cAut). Só na linha de cartão — mandar em PIX
+                    // seria oferecer à SEFAZ um grupo que não existe ali.
+                    ...(ehCartao ? {
+                      bandeira: linha.cardBrand || '',
+                      integracao: linha.cardIntegration || '2',
+                      autorizacao: String(linha.cardAuthorization || '').trim(),
+                      credenciadora: forma.cardAcquirerName || ''
+                    } : {})
                   };
                 }),
               totalAmount: totaisDaNota.totalAmount,
@@ -4087,7 +4104,22 @@ async function loadModule(moduleName) {
                         <table class="table table-actions">
                           <thead><tr><th>Forma de pagamento</th><th>Vencimento</th><th>Valor</th><th>Observação</th><th>Ações</th></tr></thead>
                           <tbody>
-                            ${payments.length ? payments.map((linha, index) => `
+                            ${payments.length ? payments.map((linha, index) => {
+                              // A LINHA E DE CARTAO? Quem responde e o catalogo
+                              // compartilhado — testar o texto do tipo aqui faria a
+                              // lista de tipos existir em mais um lugar.
+                              const formaDaLinha = meta.paymentMethods.find((f) => f.id === linha.methodId);
+                              const ehCartao = Boolean(formaDaLinha) && window.MavisFormaPagamento.ehCartao(formaDaLinha.type);
+                              // Credenciadora sem bandeira marcada nao restringe: e o que
+                              // o cadastro promete em texto no proprio formulario.
+                              const bandeiras = ehCartao ? window.MavisBandeiraCartao.ofertadas(formaDaLinha.cardAcquirerBrands) : [];
+                              // Padrao 2 (maquininha POS), e nao 1. Declarar "integrado"
+                              // obriga CNPJ da credenciadora e numero de autorizacao; foi
+                              // exatamente o grupo pela metade que rendeu a rejeicao 225
+                              // no ERP observado.
+                              const integrado = String(linha.cardIntegration || '2') === '1';
+                              const faltaAutorizacao = integrado && !String(linha.cardAuthorization || '').trim();
+                              return `
                               <tr>
                                 <td>
                                   <select class="sales-payment-method" data-index="${index}">
@@ -4100,7 +4132,38 @@ async function loadModule(moduleName) {
                                 <td><input class="sales-payment-note" data-index="${index}" value="${escapeHtml(linha.note || '')}" /></td>
                                 <td><button type="button" class="icon-button sales-remove-payment" data-index="${index}" title="Remover">×</button></td>
                               </tr>
-                            `).join('') : '<tr><td colspan="5" class="muted">Nenhum pagamento adicionado</td></tr>'}
+                              ${ehCartao ? `
+                              <tr class="sales-payment-cartao">
+                                <td colspan="5">
+                                  <div class="sales-payment-cartao-campos">
+                                    ${formaDaLinha.cardAcquirerName
+                                      ? `<span class="sales-payment-cartao-adquirente" title="Vem do cadastro da forma de pagamento. O CNPJ dela vai em pag/detPag/card/CNPJ da NF-e.">Credenciadora: <strong>${escapeHtml(formaDaLinha.cardAcquirerName)}</strong></span>`
+                                      : `<span class="sales-payment-cartao-sem-adquirente">Esta forma de pagamento nao tem credenciadora no cadastro — a NF-e vai sair sem o grupo do cartao.</span>`}
+                                    <label>Bandeira
+                                      <select class="sales-payment-brand" data-index="${index}">
+                                        <option value="">Nao informada</option>
+                                        ${bandeiras.map((b) => `<option value="${b.codigo}" ${linha.cardBrand === b.codigo ? 'selected' : ''}>${escapeHtml(b.nome)}</option>`).join('')}
+                                      </select>
+                                    </label>
+                                    <label>Integracao
+                                      <select class="sales-payment-integration" data-index="${index}">
+                                        <option value="2" ${integrado ? '' : 'selected'}>Nao integrado (maquininha POS)</option>
+                                        <option value="1" ${integrado ? 'selected' : ''}>Integrado (TEF / e-commerce)</option>
+                                      </select>
+                                    </label>
+                                    <label>NSU / Autorizacao
+                                      <input class="sales-payment-auth" data-index="${index}" value="${escapeHtml(linha.cardAuthorization || '')}"
+                                             placeholder="${integrado ? 'Obrigatorio' : 'Opcional'}" />
+                                    </label>
+                                  </div>
+                                  ${faltaAutorizacao ? `<p class="sales-totals-alerta">
+                                    Pagamento integrado exige o numero de autorizacao (NSU). Sem ele a nota nao pode
+                                    sair declarando integracao — e declarar integracao sem os campos e a rejeicao 225.
+                                  </p>` : ''}
+                                </td>
+                              </tr>` : ''}
+                            `;
+                            }).join('') : '<tr><td colspan="5" class="muted">Nenhum pagamento adicionado</td></tr>'}
                           </tbody>
                         </table>
                       </div>
@@ -4692,6 +4755,29 @@ async function loadModule(moduleName) {
           });
 
           // --- Aba Pagamentos: linhas de pagamento ------------------------------
+          //
+          // OS CAMPOS DE CARTÃO SEGUEM A FORMA ESCOLHIDA (fase BW).
+          //
+          // Trocar "Cartão Rede" por "Dinheiro" e deixar bandeira e NSU para trás
+          // faria a linha viajar para a NF-e carregando os dados de um cartão que
+          // não existe mais na venda. E o inverso também importa: a bandeira que a
+          // credenciadora NOVA não aceita não sobrevive à troca — seria mandar no
+          // XML uma bandeira que o contrato dela não cobre.
+          const ajustarCamposDeCartao = (linha, forma) => {
+            if (forma && window.MavisFormaPagamento.ehCartao(forma.type)) {
+              // Padrão "não integrado": é o que uma maquininha POS é. Declarar
+              // integração obriga CNPJ da credenciadora e número de autorização,
+              // e é o grupo pela metade que a SEFAZ recusa com o código 225.
+              if (!linha.cardIntegration) linha.cardIntegration = '2';
+              const aceitas = window.MavisBandeiraCartao.ofertadas(forma.cardAcquirerBrands).map((b) => b.codigo);
+              if (linha.cardBrand && !aceitas.includes(linha.cardBrand)) linha.cardBrand = '';
+              return;
+            }
+            delete linha.cardIntegration;
+            delete linha.cardBrand;
+            delete linha.cardAuthorization;
+          };
+
           document.getElementById('salesAddPaymentBtn')?.addEventListener('click', () => {
             syncFormState();
             const forma = meta.paymentMethods.find((f) => f.id === formState.paymentMethodId);
@@ -4701,13 +4787,17 @@ async function loadModule(moduleName) {
             // forma escolhida (0 dias na forma "à vista" dá a própria data).
             const vencimento = new Date(`${formState.date || new Date().toISOString().slice(0, 10)}T00:00:00`);
             vencimento.setDate(vencimento.getDate() + Number(forma?.daysToReceive || 0));
-            payments.push({
+            const nova = {
               methodId: forma?.id || '',
               methodName: forma?.name || '',
               dueDate: vencimento.toISOString().slice(0, 10),
               amount: restante,
               note: ''
-            });
+            };
+            // A linha já nasce com a integração declarada quando a forma é
+            // cartão — em branco, o payload teria de adivinhar.
+            ajustarCamposDeCartao(nova, forma);
+            payments.push(nova);
             renderForm();
           });
 
@@ -4726,6 +4816,7 @@ async function loadModule(moduleName) {
               // O nome vai junto: se a forma for renomeada ou excluída do
               // cadastro depois, o pedido antigo ainda mostra o que foi usado.
               linha.methodName = forma?.name || '';
+              ajustarCamposDeCartao(linha, forma);
               syncFormState();
               renderForm();
             });
@@ -4733,7 +4824,12 @@ async function loadModule(moduleName) {
           const camposLinhaPagamento = [
             ['.sales-payment-due', (linha, valor) => { linha.dueDate = valor; }],
             ['.sales-payment-amount', (linha, valor) => { linha.amount = Math.max(0, Number(valor || 0)); }],
-            ['.sales-payment-note', (linha, valor) => { linha.note = valor; }]
+            ['.sales-payment-note', (linha, valor) => { linha.note = valor; }],
+            // Os três do cartão (fase BW). Vão para o grupo `card` da NF-e:
+            // bandeira é tBand, integração é tpIntegra e a autorização é o cAut.
+            ['.sales-payment-brand', (linha, valor) => { linha.cardBrand = valor; }],
+            ['.sales-payment-integration', (linha, valor) => { linha.cardIntegration = valor; }],
+            ['.sales-payment-auth', (linha, valor) => { linha.cardAuthorization = valor; }]
           ];
           camposLinhaPagamento.forEach(([seletor, aplicar]) => {
             content.querySelectorAll(seletor).forEach((campo) => {

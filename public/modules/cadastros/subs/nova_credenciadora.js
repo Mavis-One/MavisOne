@@ -5,12 +5,13 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 // formulários dos Cadastros não tem esse tipo de campo — ela conhece texto,
 // número, select, textarea e checkbox. Dez caixas resolvem sem mexer na
 // fábrica, e o servidor remonta o array `brands` a partir delas (ver a rota).
-const CREDENCIADORA_CAIXAS_DE_BANDEIRA = [
-  ['bandeira01', 'Visa'], ['bandeira02', 'Mastercard'], ['bandeira03', 'American Express'],
-  ['bandeira04', 'Sorocred'], ['bandeira05', 'Diners Club'], ['bandeira06', 'Elo'],
-  ['bandeira07', 'Hipercard'], ['bandeira08', 'Aura'], ['bandeira09', 'Cabal'],
-  ['bandeira99', 'Outros']
-].map(([name, label]) => ({ name, label, type: 'checkbox' }));
+//
+// A LISTA VEM DO CATÁLOGO COMPARTILHADO, e não escrita aqui. Ela estava
+// duplicada — esta cópia e a de lib/db/adquirentes.js, que valida o que entra.
+// Acrescentar uma bandeira em uma só faria o cadastro descartar em silêncio o
+// que a tela oferece, ou a tela não saber desenhar o que o cadastro aceita.
+const CREDENCIADORA_CAIXAS_DE_BANDEIRA = window.MavisBandeiraCartao.CATALOGO
+  .map(({ codigo, nome }) => ({ name: `bandeira${codigo}`, label: nome, type: 'checkbox' }));
 
 window.MavisSubscreenRegistry.cadastros.nova_credenciadora = window.MavisCadastros.makeFormScreen({
   title: 'Nova Credenciadora de Cartão',

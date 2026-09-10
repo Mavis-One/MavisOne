@@ -66,14 +66,14 @@
       // Débito cai na conta no mesmo dia ou no seguinte. Tratar como recebível
       // de 1 dia seria precisão que ninguém usa e ruído que todo mundo vê.
       value: 'cartao-debito', label: 'Cartão de Débito', tPag: '04',
-      quitaNaHora: true, recebivelDe: ''
+      quitaNaHora: true, recebivelDe: '', cartao: true
     },
     {
       // O CLIENTE JÁ PAGOU. O que falta é a credenciadora repassar, e é dela que
       // se cobra. Manter como dívida do cliente é o que fazia o relatório de
       // inadimplentes listar quem comprou no cartão ontem.
       value: 'cartao-credito', label: 'Cartão de Crédito', tPag: '03',
-      quitaNaHora: false, recebivelDe: 'operadora'
+      quitaNaHora: false, recebivelDe: 'operadora', cartao: true
     },
     {
       value: 'boleto', label: 'Boleto', tPag: '15',
@@ -115,6 +115,13 @@
   const rotulo = (tipo) => obter(tipo).label;
   // Forma desconhecida cai em '99 Outros' pela mesma queda de obter().
   const codigoNfe = (tipo) => obter(tipo).tPag;
+  // ESTA FORMA PEDE O GRUPO `card` DA NF-e? (fase BW)
+  //
+  // Só o cartão tem credenciadora, bandeira e NSU. Perguntar ao catálogo, e não
+  // testar o texto do tipo em cada tela, é o que evita a lista de tipos ser
+  // reescrita em três lugares e ficar desencontrada quando entrar uma forma
+  // nova de cartão — foi assim que a tabela de bandeiras acabou duplicada.
+  const ehCartao = (tipo) => Boolean(obter(tipo).cartao);
 
   /**
    * O vencimento da parcela, dado o que a forma de pagamento promete.
@@ -132,7 +139,7 @@
     return d.toISOString().slice(0, 10);
   }
 
-  const api = { CATALOGO, obter, quitaNaHora, recebivelDe, rotulo, codigoNfe, vencimento };
+  const api = { CATALOGO, obter, quitaNaHora, recebivelDe, rotulo, codigoNfe, ehCartao, vencimento };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisFormaPagamento = api;
 })(typeof window !== 'undefined' ? window : globalThis);
