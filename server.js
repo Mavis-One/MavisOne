@@ -1999,7 +1999,12 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
   // Fase AX: a descrição da parcela diz de onde ela veio — natureza, tipo,
   // pedido e nota. O número da nota é o único que não está no registro.
   const parcelas = parcelasDoPedido(record, formasPorId, {
-    nfeNumero: await numeroDaNotaDoPedido(data, record)
+    nfeNumero: await numeroDaNotaDoPedido(data, record),
+    // QUEM PROCESSA O CARTAO, para o titulo guardar o NOME junto do id (fase
+    // BX). Sem isto o titulo teria o id de uma credenciadora e a tela nao
+    // saberia de quem e — e o extrato dela casa por NSU e bandeira, nao por
+    // numero de pedido.
+    credenciadorasPorId: new Map((await adquirentesDb.listar()).map((a) => [a.id, a]))
   });
   let quitadas = 0;
   for (const parcela of parcelas) {
@@ -2017,6 +2022,16 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
       referenceId: record.id,
       bankAccountId: parcela.bankAccountId || '',
       status: parcela.quitaNaHora ? 'paid' : 'pending',
+      // A TAXA DA MAQUININHA E QUEM PROCESSA (fase BX). `amount` continua
+      // sendo o bruto; isto e o que a conciliacao precisa para casar o
+      // extrato, que traz o LIQUIDO.
+      cardAcquirerId: parcela.cardAcquirerId,
+      cardAcquirerName: parcela.cardAcquirerName,
+      cardBrand: parcela.cardBrand,
+      cardAuthorization: parcela.cardAuthorization,
+      feePercent: parcela.feePercent,
+      feeAmount: parcela.feeAmount,
+      netAmount: parcela.netAmount,
       createdBy: user?.id,
       createdByName: user?.name
     });
@@ -2026,16 +2041,28 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
     // painel continua somando R$ 0,00 em "realizado" e o extrato da conta não
     // enxerga o dinheiro — o problema só teria mudado de lugar.
     if (parcela.quitaNaHora) {
+      // A BAIXA AUTOMATICA ENTRA PELO LIQUIDO (fase BX).
+      //
+      // O debito quita na hora e TAMBEM tem taxa. Baixar pelo bruto creditava
+      // na conta bancaria um dinheiro que nao chegou: o extrato traz o
+      // liquido, e a diferenca era exatamente a taxa, em toda venda no
+      // debito. A taxa vai no campo `discount` da baixa — que ja existia e
+      // ja aparece no historico —, entao o titulo fecha pelo bruto e a conta
+      // recebe o que recebeu de verdade.
+      const taxa = parcela.feeAmount == null ? 0 : parcela.feeAmount;
       const baixa = await db.createFinancialPayment({
         entryId: entry.id,
-        amount: parcela.amount,
+        amount: parcela.netAmount == null ? parcela.amount : parcela.netAmount,
         date: record.date,
         bankAccountId: parcela.bankAccountId || '',
+        discount: taxa,
         // A marca que o cancelamento procura — ver a migração fase-au. É coluna,
         // e não o texto da observação: regra que depende de uma frase ensina a
         // mudar a frase.
         origem: 'automatica',
-        note: 'Baixa automática: venda à vista.',
+        note: taxa > 0
+          ? `Baixa automática: venda à vista. Taxa da forma de pagamento (${parcela.feePercent}%) no desconto.`
+          : 'Baixa automática: venda à vista.',
         createdBy: user?.id,
         createdByName: user?.name
       });
@@ -2897,6 +2924,20 @@ function serializeFinanceEntry(entry, data) {
     rawStatus: entry.status,
     createdByName: entry.createdByName || '',
     createdAt: entry.createdAt || '',
+    // O CARTAO E A TAXA (fase BX). `amountPrevisto` acima continua sendo o
+    // BRUTO — e o que o cliente pagou. `netAmount` e o que a credenciadora
+    // credita, e e por ele que a conciliacao casa com o extrato.
+    //
+    // NULO e "nao se aplica" (nao e cartao, ou e anterior a esta fase); zero
+    // seria "taxa zero contratada". A tela mostra uma coisa e nao a outra.
+    cardAcquirerId: entry.cardAcquirerId || '',
+    cardAcquirerName: entry.cardAcquirerName || '',
+    cardBrand: entry.cardBrand || '',
+    cardBrandName: entry.cardBrand ? bandeiraCartao.nome(entry.cardBrand) : '',
+    cardAuthorization: entry.cardAuthorization || '',
+    feePercent: entry.feePercent == null ? null : Number(entry.feePercent),
+    feeAmount: entry.feeAmount == null ? null : Number(entry.feeAmount),
+    netAmount: entry.netAmount == null ? null : Number(entry.netAmount),
     payments: payments
       .slice()
       .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
@@ -3173,6 +3214,46 @@ function buildBankTransaction(body, user, source) {
   };
 }
 
+/**
+ * O QUE SE ESPERA VER NO EXTRATO — que não é o bruto do título (fase BX).
+ *
+ * A credenciadora credita JÁ DESCONTADA A TAXA: um título de cartão de
+ * R$ 1.000,00 a 3,5% chega ao extrato como R$ 965,00. Procurar pelo bruto erra
+ * por exatamente a taxa, em toda venda no cartão — e o casamento nunca é
+ * exato, que é o "Conc. ✗" da observação do ViperERP (OBS-28).
+ *
+ * Só vale enquanto NADA foi baixado. Com uma baixa parcial no meio, o que falta
+ * já não é o líquido inteiro, e supor que é inventaria um número.
+ */
+function esperadoNoExtrato(entry, restante, jaPago) {
+  if (jaPago > 0.005) return restante;
+  const liquido = Number(entry.netAmount || 0);
+  if (!(liquido > 0)) return restante;
+  return Math.round(liquido * 100) / 100;
+}
+
+/**
+ * QUANTO DA TAXA ABATER PARA O TÍTULO DE CARTÃO FECHAR (fase BX).
+ *
+ * Sem isto, conciliar os R$ 965,00 do extrato contra o título de R$ 1.000,00
+ * deixava o lançamento em "parcial" com R$ 35,00 em aberto PARA SEMPRE — é
+ * literalmente o "o contas a receber nunca é baixado" do OBS-28. A taxa vai no
+ * campo `discount` da baixa, que já existia e já aparece no histórico: o título
+ * fecha pelo número certo e o abatimento fica visível, não escondido.
+ *
+ * SÓ quando o valor da transação É o líquido, e só na primeira baixa. Um
+ * crédito de outro valor não é essa taxa, e abater seria inventar um desconto
+ * que ninguém deu.
+ */
+function descontoDaTaxaDoCartao(entry, baixasAnteriores, valorDaTransacao) {
+  if (baixasAnteriores.length) return 0;
+  const taxa = Number(entry.feeAmount || 0);
+  const liquido = Number(entry.netAmount || 0);
+  if (!(taxa > 0) || !(liquido > 0)) return 0;
+  if (Math.abs(liquido - Number(valorDaTransacao || 0)) > 0.01) return 0;
+  return Math.round(taxa * 100) / 100;
+}
+
 function findBankTransactionMatches(tx, data) {
   const wantedType = tx.type === 'entrada' ? 'receita' : 'despesa';
   const txDate = parseDateOnly(tx.date);
@@ -3194,7 +3275,8 @@ function findBankTransactionMatches(tx, data) {
       const due = financeEntryEffectiveDue(entry, payments);
       const paid = financeEntryPaidTotal(payments);
       const remaining = Math.round((due - paid) * 100) / 100;
-      const amountDiff = Math.abs(remaining - Number(tx.amount || 0));
+      // Contra o LÍQUIDO no título de cartão: é o que a credenciadora credita.
+      const amountDiff = Math.abs(esperadoNoExtrato(entry, remaining, paid) - Number(tx.amount || 0));
       const daysDiff = Math.abs((parseDateOnly(financeEntryDueDate(entry)) - txDate) / 86400000);
 
       const entryDocument = sanitizeDigits(resolveFinanceCounterpartyDocument(entry, data));
@@ -12124,6 +12206,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: `O valor da transação (${tx.amount.toFixed(2)}) é maior que o saldo em aberto do lançamento (${Math.max(0, maxAllowed).toFixed(2)}).` }, 400);
       }
 
+      const taxaDoCartao = descontoDaTaxaDoCartao(entry, existingPayments, tx.amount);
       const payment = await db.createFinancialPayment({
         entryId: entry.id,
         amount: tx.amount,
@@ -12131,8 +12214,13 @@ const server = http.createServer(async (req, res) => {
         bankAccountId: tx.bankAccountId,
         interest: 0,
         fine: 0,
-        discount: 0,
-        note: `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)})`,
+        // A taxa da maquininha, quando o crédito é exatamente o líquido. Sem
+        // ela o título ficava "parcial" com a taxa em aberto para sempre.
+        discount: taxaDoCartao,
+        note: taxaDoCartao > 0
+          ? `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)}). `
+            + `Taxa da credenciadora (${entry.feePercent}%) abatida como desconto.`
+          : `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)})`,
         createdBy: user.id,
         createdByName: user.name
       });

@@ -298,6 +298,16 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
     const canCancel = entry.rawStatus !== 'paid' && entry.rawStatus !== 'cancelado';
     const canEstorno = entry.payments.length > 0;
     const saldoRestante = Math.max(0, entry.amountPrevisto - entry.amountRealizado);
+    // A TAXA DA MAQUININHA (fase BX). Só na PRIMEIRA baixa: com uma baixa
+    // parcial no meio, o que falta já não é o líquido inteiro, e sugerir que é
+    // colocaria um número errado no campo.
+    const taxaAAbater = entry.feeAmount != null && entry.netAmount != null && !entry.payments.length
+      ? entry.feeAmount
+      : 0;
+    // O que a credenciadora credita de fato. É este valor que vai aparecer no
+    // extrato — baixar pelo bruto deixa o título em "parcial" pela taxa, para
+    // sempre.
+    const valorSugerido = taxaAAbater > 0 ? entry.netAmount : saldoRestante;
 
     const overlay = document.createElement('div');
     overlay.id = 'financeEntryModal';
@@ -326,6 +336,23 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
           <div><span class="muted">Valor realizado</span><strong>${financeFormatBRL(entry.amountRealizado)}</strong></div>
           <div><span class="muted">Saldo em aberto</span><strong>${financeFormatBRL(saldoRestante)}</strong></div>
         </div>
+        ${entry.cardAcquirerName || entry.feeAmount != null ? `
+          <div class="finance-cartao-box">
+            <h4>Cartão e taxa</h4>
+            <div class="finance-modal-info-grid">
+              ${entry.cardAcquirerName ? `<div><span class="muted">Credenciadora</span><strong>${escapeHtml(entry.cardAcquirerName)}</strong></div>` : ''}
+              ${entry.cardBrand ? `<div><span class="muted">Bandeira</span><strong>${escapeHtml(entry.cardBrandName || entry.cardBrand)}</strong></div>` : ''}
+              ${entry.cardAuthorization ? `<div><span class="muted">NSU / Autorização</span><strong>${escapeHtml(entry.cardAuthorization)}</strong></div>` : ''}
+              ${entry.feePercent != null ? `<div><span class="muted">Taxa</span><strong>${Number(entry.feePercent).toFixed(2)}%</strong></div>` : ''}
+              ${entry.feeAmount != null ? `<div><span class="muted">Taxa em reais</span><strong>${financeFormatBRL(entry.feeAmount)}</strong></div>` : ''}
+              ${entry.netAmount != null ? `<div><span class="muted">Crédito previsto</span><strong>${financeFormatBRL(entry.netAmount)} em ${financeFormatDate(entry.dueDate)}</strong></div>` : ''}
+            </div>
+            ${entry.netAmount != null ? `<p class="muted">
+              O valor previsto acima é o BRUTO da venda — é o que o cliente pagou. A credenciadora
+              credita ${financeFormatBRL(entry.netAmount)}, já descontada a taxa. É esse o número que vai
+              aparecer no extrato.
+            </p>` : ''}
+          </div>` : ''}
         ${entry.note ? `<p class="muted">Obs: ${escapeHtml(entry.note)}</p>` : ''}
 
         ${/* Fase AX: por que este lançamento foi cancelado. Fica junto do valor
@@ -368,15 +395,20 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
           <h4>${isReceita ? 'Recebimento' : 'Pagamento'}</h4>
           <form id="financePaymentForm" class="form-grid">
             <div class="row">
-              <label>Valor<input type="number" step="0.01" name="amount" required value="${saldoRestante.toFixed(2)}" /></label>
+              <label>Valor<input type="number" step="0.01" name="amount" required value="${Number(valorSugerido).toFixed(2)}" /></label>
               <label>Data<input type="date" name="date" required value="${new Date().toISOString().slice(0, 10)}" /></label>
               <label>Conta bancária<select name="bankAccountId"><option value="">Selecione</option>${optionListInline(entry, 'bankAccounts')}</select></label>
             </div>
             <div class="row">
               <label>Juros<input type="number" step="0.01" name="interest" value="0" /></label>
               <label>Multa<input type="number" step="0.01" name="fine" value="0" /></label>
-              <label>Desconto<input type="number" step="0.01" name="discount" value="0" /></label>
+              <label>Desconto<input type="number" step="0.01" name="discount" value="${Number(taxaAAbater).toFixed(2)}" /></label>
             </div>
+            ${taxaAAbater > 0 ? `<p class="muted">
+              Já preenchido com o crédito líquido e a taxa da credenciadora no desconto: assim o título
+              fecha pelo bruto e a conta recebe o que recebeu. Sem o desconto, sobrariam
+              ${financeFormatBRL(taxaAAbater)} em aberto para sempre.
+            </p>` : ''}
             <label>Observação<input name="note" /></label>
             <button type="submit">Registrar ${isReceita ? 'recebimento' : 'pagamento'}</button>
           </form>

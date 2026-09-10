@@ -4180,3 +4180,15 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
   color: var(--warning-text);
 }
+
+/* CARTÃO E TAXA no lançamento financeiro (fase BX). Bloco próprio, e não mais
+   uma linha na grade de informações: a taxa muda o número que vai aparecer no
+   extrato, e essa é a informação que faz a conciliação fechar. */
+.finance-cartao-box {
+  margin: 14px 0 0; padding: 12px 14px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.finance-cartao-box h4 { margin: 0 0 10px; font-size: 13px; }
+.finance-cartao-box p { margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; }
