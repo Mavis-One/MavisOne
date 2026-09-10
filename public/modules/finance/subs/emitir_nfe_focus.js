@@ -137,6 +137,12 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // montador do payload tem os três campos); era esta tela que não os mandava,
   // e a nota saía pelo valor BRUTO dos itens.
   const desconto = doPedido ? Number(doPedido.desconto || 0) : 0;
+  // AS LINHAS DE PAGAMENTO DO PEDIDO, já traduzidas para tPag lá na tela de
+  // Vendas (fase BU). Vazio na nota avulsa, que não tem pedido por trás — lá
+  // continua valendo o select de forma única.
+  const pagamentosDoPedido = Array.isArray(doPedido && doPedido.pagamentosDaNota)
+    ? doPedido.pagamentosDaNota.filter((linha) => Number(linha.valor || 0) > 0)
+    : [];
   const frete = doPedido ? Number(doPedido.frete || 0) : 0;
   const outrasDespesas = doPedido ? Number(doPedido.outrasDespesas || 0) : 0;
 
@@ -241,6 +247,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // O VALOR DA NOTA. Some frete e despesas, subtrai desconto — a mesma conta
   // que o montador do payload faz do outro lado. Antes daqui a tela anunciava
   // "Valor total" somando só as linhas de item, e a nota saía por esse número.
+  // A soma das linhas de pagamento que vieram do pedido.
+  function somaDosPagamentos() {
+    return Math.round(pagamentosDoPedido.reduce((soma, l) => soma + Number(l.valor || 0), 0) * 100) / 100;
+  }
+
   function grandTotal() {
     return Math.round((totalDosItens() + frete + outrasDespesas - desconto) * 100) / 100;
   }
@@ -513,12 +524,41 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                 hora de enviar, para uma nota rejeitada não deixar recebível para trás.
               </p>
             `}
+            ${pagamentosDoPedido.length ? `
+            <div class="cadastro-section">
+              <div class="cadastro-section-header"><h4>Pagamentos da venda</h4>
+                <p>São estas as linhas que vão no grupo <code>pag</code> da NF-e, como foram
+                  lançadas no pedido. Para mudar, altere os pagamentos do pedido — a nota tem
+                  de dizer como a venda foi paga de verdade.</p></div>
+              <div class="cadastro-section-body">
+                <table class="data-table">
+                  <thead><tr><th>Forma</th><th>Código SEFAZ</th><th class="num">Valor</th></tr></thead>
+                  <tbody>
+                    ${pagamentosDoPedido.map((linha) => `<tr>
+                      <td>${escapeHtml(linha.rotulo || NFE_FORMAS_PAGAMENTO.find((f) => f.value === linha.forma)?.label || linha.forma)}</td>
+                      <td>${escapeHtml(linha.forma)}</td>
+                      <td class="num">${financeFormatBRL(linha.valor)}</td>
+                    </tr>`).join('')}
+                  </tbody>
+                  <tfoot><tr>
+                    <th colspan="2">Soma dos pagamentos</th>
+                    <th class="num ${somaDosPagamentos() === grandTotal() ? '' : 'finance-negative'}">
+                      ${financeFormatBRL(somaDosPagamentos())}</th>
+                  </tr></tfoot>
+                </table>
+                ${somaDosPagamentos() === grandTotal() ? '' : `<p class="form-error">
+                  Os pagamentos somam ${financeFormatBRL(somaDosPagamentos())} e a nota tem
+                  ${financeFormatBRL(grandTotal())}. A SEFAZ recusa assim — corrija os pagamentos do pedido.
+                </p>`}
+              </div>
+            </div>
+            ` : ''}
             <div class="row">
-              <label>Forma de pagamento
+              ${pagamentosDoPedido.length ? '' : `<label>Forma de pagamento
                 <select name="formaPagamento">
                   ${NFE_FORMAS_PAGAMENTO.map((f) => `<option value="${f.value}" ${f.value === '99' ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
                 </select>
-              </label>
+              </label>`}
               <label>Condição
                 <select name="paymentType" id="nfeFocusPaymentType">
                   <option value="avista" selected>À vista</option>
@@ -1003,6 +1043,17 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // Contra o ORÇAMENTO, e não contra o limite bruto: em homologação o aviso
       // de teste ocupa parte do campo. O servidor confere a string final, que é
       // a palavra final; isto aqui existe para o erro aparecer antes do clique.
+      // A SEFAZ confere vPag contra vNF. Barrar aqui poupa a viagem; o
+      // servidor confere de novo, e é ele a palavra final.
+      if (pagamentosDoPedido.length && somaDosPagamentos() !== grandTotal()) {
+        showToast(
+          `Os pagamentos do pedido somam ${financeFormatBRL(somaDosPagamentos())} e a nota tem `
+          + `${financeFormatBRL(grandTotal())}. Corrija os pagamentos do pedido antes de emitir.`,
+          'error'
+        );
+        if (submitBtn) submitBtn.disabled = false;
+        return;
+      }
       const orcamentoObs = TextoPadrao ? orcamentoDasObservacoes() : Infinity;
       if (observacoes.length > orcamentoObs) {
         const extra = orcamentoObs < TextoPadrao.LIMITE_INFCPL
@@ -1055,7 +1106,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         // Grupo obrigatório do layout 4.0 — nota sem ele é rejeitada. Uma
         // parcela única com o total: o parcelamento é condição comercial e
         // vira contas a receber, não N formas de pagamento na nota.
-        pagamentos: [{ forma: formData.get('formaPagamento') || '99', valor: grandTotal() }],
+        // AS LINHAS DO PEDIDO, quando há pedido. O select de forma única só
+        // vale para a nota avulsa, que não tem pagamentos lançados em lugar
+        // nenhum. Mandar "99 Outros" pelo total de uma venda paga em cartão e
+        // dinheiro fecha o valor e mente sobre o meio de pagamento.
+        pagamentos: pagamentosDoPedido.length
+          ? pagamentosDoPedido.map((linha) => ({ forma: linha.forma, valor: linha.valor }))
+          : [{ forma: formData.get('formaPagamento') || '99', valor: grandTotal() }],
         // Desconto, frete e despesas do pedido de origem (fase BQ). Sem eles a
         // nota sai pelo bruto dos itens e diverge da conta a receber.
         ...(desconto ? { desconto } : {}),

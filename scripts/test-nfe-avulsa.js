@@ -99,7 +99,13 @@ check('à vista é 1 parcela', /parcelado \? .* : 1/.test(cond));
 console.log('\n--- o grupo de pagamento vai na nota ---');
 // Obrigatório no layout 4.0: nota sem ele é rejeitada, e é a rejeição mais
 // provável de uma primeira integração.
-check('a tela envia pagamentos', /pagamentos: \[\{ forma: formData\.get\('formaPagamento'\)/.test(focusSrc));
+// FASE BU: a nota que nasce de PEDIDO leva as linhas de pagamento da venda; o
+// select de forma única ficou sendo o caminho da nota AVULSA, que é o assunto
+// deste arquivo. Ver scripts/test-pagamentos-da-nfe.js para o outro lado.
+check('a tela envia pagamentos',
+  /pagamentos: pagamentosDoPedido\.length/.test(focusSrc));
+check('  e a avulsa continua usando o select de forma única',
+  /: \[\{ forma: formData\.get\('formaPagamento'\) \|\| '99', valor: grandTotal\(\) \}\],/.test(focusSrc));
 check('tem aba de pagamento', /data-tab="pagamento"/.test(focusSrc));
 check('formas oficiais declaradas', /const NFE_FORMAS_PAGAMENTO/.test(focusSrc));
 // Códigos que o builder aceita; qualquer outro vira '99' sem ninguém saber.

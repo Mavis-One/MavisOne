@@ -39,51 +39,66 @@
 // de um adquirente paga em 30 dias, a de outro em 14), então o vencimento do
 // cartão é `data da venda + daysToReceive`. Antes o vencimento era o da venda —
 // e a parcela nascia vencida no mesmo dia.
+//
+// O CODIGO tPag TAMBEM MORA AQUI (fase BU)
+// ----------------------------------------
+// `tPag` e o codigo da forma de pagamento no grupo `pag` da NF-e. Existiam
+// duas listas sem ponte entre elas: este catalogo, que o pedido usa, e a
+// tabela FORMAS_PAGAMENTO do montador do payload. Sem a traducao, o grupo
+// `pag` da nota nao tinha como saber que forma foi usada na venda — e saia
+// com uma linha unica "99 Outros" pelo total, qualquer que fosse o pagamento.
+//
+// Fica no catalogo, e nao numa tabela de-para separada, pelo mesmo motivo de
+// `quitaNaHora` e `recebivelDe`: quem acrescentar uma forma nova acrescenta
+// tudo o que ela significa num lugar so, em vez de descobrir depois que
+// esqueceu metade.
 (function (raiz) {
   const CATALOGO = [
     {
-      value: 'dinheiro', label: 'Dinheiro',
+      value: 'dinheiro', label: 'Dinheiro', tPag: '01',
       quitaNaHora: true, recebivelDe: ''
     },
     {
-      value: 'pix', label: 'PIX',
+      value: 'pix', label: 'PIX', tPag: '17',
       quitaNaHora: true, recebivelDe: ''
     },
     {
       // Débito cai na conta no mesmo dia ou no seguinte. Tratar como recebível
       // de 1 dia seria precisão que ninguém usa e ruído que todo mundo vê.
-      value: 'cartao-debito', label: 'Cartão de Débito',
+      value: 'cartao-debito', label: 'Cartão de Débito', tPag: '04',
       quitaNaHora: true, recebivelDe: ''
     },
     {
       // O CLIENTE JÁ PAGOU. O que falta é a credenciadora repassar, e é dela que
       // se cobra. Manter como dívida do cliente é o que fazia o relatório de
       // inadimplentes listar quem comprou no cartão ontem.
-      value: 'cartao-credito', label: 'Cartão de Crédito',
+      value: 'cartao-credito', label: 'Cartão de Crédito', tPag: '03',
       quitaNaHora: false, recebivelDe: 'operadora'
     },
     {
-      value: 'boleto', label: 'Boleto',
+      value: 'boleto', label: 'Boleto', tPag: '15',
       quitaNaHora: false, recebivelDe: 'cliente'
     },
     {
       // Transferência/TED costuma ser combinada e conferida depois, não no ato.
-      value: 'transferencia', label: 'Transferência',
+      value: 'transferencia', label: 'Transferência', tPag: '18',
       quitaNaHora: false, recebivelDe: 'cliente'
     },
     {
-      value: 'cheque', label: 'Cheque',
+      value: 'cheque', label: 'Cheque', tPag: '02',
       quitaNaHora: false, recebivelDe: 'cliente'
     },
     {
-      value: 'crediario', label: 'Crediário',
+      // 05 e "Credito Loja" na tabela da SEFAZ: e exatamente o crediario da
+      // propria loja, sem banco nem cartao no meio.
+      value: 'crediario', label: 'Crediário', tPag: '05',
       quitaNaHora: false, recebivelDe: 'cliente'
     },
     {
       // Forma que ninguém classificou. NÃO quita na hora, de propósito: o erro
       // de deixar em aberto o que já foi pago é visível e alguém corrige; o de
       // dar por paga uma venda que não foi apaga a dívida em silêncio.
-      value: 'outro', label: 'Outro',
+      value: 'outro', label: 'Outro', tPag: '99',
       quitaNaHora: false, recebivelDe: 'cliente'
     }
   ];
@@ -98,6 +113,8 @@
   const quitaNaHora = (tipo) => Boolean(obter(tipo).quitaNaHora);
   const recebivelDe = (tipo) => obter(tipo).recebivelDe;
   const rotulo = (tipo) => obter(tipo).label;
+  // Forma desconhecida cai em '99 Outros' pela mesma queda de obter().
+  const codigoNfe = (tipo) => obter(tipo).tPag;
 
   /**
    * O vencimento da parcela, dado o que a forma de pagamento promete.
@@ -115,7 +132,7 @@
     return d.toISOString().slice(0, 10);
   }
 
-  const api = { CATALOGO, obter, quitaNaHora, recebivelDe, rotulo, vencimento };
+  const api = { CATALOGO, obter, quitaNaHora, recebivelDe, rotulo, codigoNfe, vencimento };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisFormaPagamento = api;
 })(typeof window !== 'undefined' ? window : globalThis);

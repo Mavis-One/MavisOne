@@ -10,7 +10,9 @@ const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
 const modulosDb = require('./lib/db/modulos');
 const crmDb = require('./lib/db/crm');
-const { buildNfePayload, conferirLimitesDeTexto } = require('./lib/nfePayloadBuilder');
+const {
+  buildNfePayload, conferirLimitesDeTexto, conferirPagamentosDaNota
+} = require('./lib/nfePayloadBuilder');
 // Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
 const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
 // Catálogo de operações fiscais: é ele que diz se a nota movimenta estoque,
@@ -4314,6 +4316,15 @@ async function emitirNfeFiscal(body, user) {
   const textoLongo = conferirLimitesDeTexto(payload, { informacoesAdicionais: body.informacoesAdicionais });
   if (textoLongo) {
     const err = new Error(textoLongo);
+    err.status = 400;
+    throw err;
+  }
+
+  // E os pagamentos fecham com o total? Mesma janela e mesmo motivo: passar
+  // deste ponto consome numeracao, e a SEFAZ recusa vPag != vNF.
+  const pagamentosNaoFecham = conferirPagamentosDaNota(payload);
+  if (pagamentosNaoFecham) {
+    const err = new Error(pagamentosNaoFecham);
     err.status = 400;
     throw err;
   }

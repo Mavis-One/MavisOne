@@ -3473,6 +3473,27 @@ async function loadModule(moduleName) {
               })),
               taxNotes: copiarObservacoes ? formState.note : '',
               payments: payments.map((linha) => ({ ...linha })),
+              // AS LINHAS DE PAGAMENTO, TRADUZIDAS PARA O GRUPO `pag` (fase BU).
+              //
+              // A tela de emissão mandava UMA linha só, com a forma vinda de um
+              // select que nascia em "99 — Outros". Uma venda de R$ 7.637,11 paga
+              // metade em cartão e metade em dinheiro ia para a SEFAZ como uma
+              // linha "Outros" pelo total: o valor fechava e o meio de pagamento
+              // era falso.
+              //
+              // A tradução acontece aqui porque é aqui que `meta.paymentMethods`
+              // existe — a tela de emissão não carrega o cadastro de formas.
+              // methodId -> forma cadastrada -> `type` -> tPag do catálogo.
+              pagamentosDaNota: payments
+                .filter((linha) => Number(linha.amount || 0) > 0)
+                .map((linha) => {
+                  const forma = meta.paymentMethods.find((f) => f.id === linha.methodId);
+                  return {
+                    forma: window.MavisFormaPagamento.codigoNfe(forma?.type),
+                    rotulo: forma?.name || linha.methodName || '',
+                    valor: Number(linha.amount || 0)
+                  };
+                }),
               totalAmount: totaisDaNota.totalAmount,
               // FASE BQ: O QUE NÃO ESTÁ NAS LINHAS DE ITEM TAMBÉM É A NOTA.
               //
