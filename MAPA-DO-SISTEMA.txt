@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-11 19:31 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-11 20:01 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -531,7 +531,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-52 arquivo(s) em banco/migrations, em ordem de fase:
+53 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -566,6 +566,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-bv-adquirentes-de-cartao.sql
   fase-bx-titulo-de-cartao.sql
   fase-cd-contas-por-estabelecimento.sql
+  fase-ce-codigo-de-cadastro-sem-corte.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -589,7 +590,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-98 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+99 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -607,6 +608,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [avulso]  test-categorias-venda.js           CATEGORIAS DE VENDA (fase AS).
   [npm test] test-chassi-item.js                Chassi na linha do item de venda.
   [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
+  [npm test] test-codigo-de-cadastro.js         O CÓDIGO DE CADASTRO NÃO PODE SER CORTADO (fase CE).
   [npm test] test-complemento-icms.js           NF-e COMPLEMENTAR EXCLUSIVA DE ICMS.
   [npm test] test-compra-cancelada-financeiro.js CANCELAR A COMPRA MATA A CONTA A PAGAR QUE ELA CRIOU (fase BI).
   [avulso]  test-compras-documento.js          A CADEIA DE COMPRAS: COTACAO -> ORDEM -> RECEBIMENTO (fase AQ).
