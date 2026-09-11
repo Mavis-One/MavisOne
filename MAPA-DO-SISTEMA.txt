@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-11 17:50 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-11 18:08 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -216,6 +216,8 @@ o próprio arquivo dá de si, no comentário de cabeçalho.
       COMPARAR SEGREDO SEM DIZER O QUANTO ERROU (fase CB — achado 09).
   lib/entradaNfe.js
       ENTRADA DE NF-e — ler o XML do fornecedor e dizer o que dele já existe aqui.
+  lib/erro-para-o-usuario.js
+      O QUE O USUARIO VE QUANDO ALGO DA ERRADO (fase CC — achado 08).
   lib/focusnfe.js
       Cliente para a API da Focus NFe (https://doc.focusnfe.com.br).
   lib/kpis.js
@@ -579,7 +581,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-96 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+97 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -614,6 +616,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-endurecimento.js              OS QUATRO PONTOS PEQUENOS DA VARREDURA (fase CB — achados 09, 11, 12 e 13).
   [npm test] test-entrada-nfe-atomica.js        A ENTRADA DE NF-e É INTEIRA OU NÃO É (fase BH).
   [npm test] test-entrada-nfe.js                ENTRADA DE NF-e — o XML do fornecedor, o fornecedor que falta e o que a nota não pode fazer sozinha.
+  [npm test] test-erro-sem-vazamento.js         O ERRO QUE CHEGA NA TELA (fase CC — achado 08 da varredura de 11/09/2026).
   [avulso]  test-faturar-exige-nota.js         FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
   [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.

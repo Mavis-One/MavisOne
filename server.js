@@ -108,6 +108,7 @@ const painelModulos = require('./lib/painel-modulos');
 const sessaoUtil = require('./lib/sessao');
 const { segredosIguais } = require('./lib/comparar-segredo');
 const { dentroDaPasta } = require('./lib/caminho-seguro');
+const { respostaDeErro } = require('./lib/erro-para-o-usuario');
 
 // EM QUE INTERFACE O SERVIDOR ESCUTA (fase CB — achado 13).
 //
@@ -2606,7 +2607,14 @@ async function mudarStatusSalesRecord(serializado, destino, data, user) {
   const isOrder = (data.orders || []).some((o) => o.id === serializado.id);
   const lista = isOrder ? data.orders : data.quotes;
   const current = lista.find((r) => r.id === serializado.id);
-  if (!current) throw new Error('Registro não encontrado.');
+  if (!current) {
+    // Sem `.status`, esta mensagem — escrita para a pessoa ler — cairia no
+    // texto de reserva do sendErro junto com os erros de banco. O status e' a
+    // marca de "fui eu que lancei, de proposito".
+    const erro = new Error('Registro não encontrado.');
+    erro.status = 404;
+    throw erro;
+  }
 
   const statusNovo = salesStatus.normalizar(destino, undefined);
   if (!salesStatus.podeTransicionar(current.status, statusNovo)) {
@@ -2649,7 +2657,11 @@ async function excluirSalesRecord(id, data, user) {
   const order = await db.getOrderById(id);
   const isOrder = Boolean(order);
   const record = order || await db.getQuoteById(id);
-  if (!record) throw new Error('Registro não encontrado.');
+  if (!record) {
+    const erro = new Error('Registro não encontrado.');
+    erro.status = 404;
+    throw erro;
+  }
   if (isOrder && record.stockApplied) {
     // Excluir um pedido que reservava estoque devolve a reserva — sumir com o
     // registro e deixar a reserva de pé travaria a mercadoria para sempre.
@@ -5709,8 +5721,19 @@ async function loadStockContext({ comReservas = false } = {}) {
   };
 }
 
-function sendStockError(res, error, fallback) {
-  return sendJson(res, { error: error && error.status ? error.message : fallback }, (error && error.status) || 400);
+/**
+ * Responde um erro. A DECISAO — mostrar a mensagem ou esconder — esta em
+ * lib/erro-para-o-usuario.js, com o porque e o que foi medido. Aqui fica so' o
+ * que precisa do servidor: escrever no log e responder.
+ */
+function sendErro(res, error, reserva, statusPadrao = 400) {
+  const resposta = respostaDeErro(error, reserva, statusPadrao);
+  // So' o que foi ESCONDIDO vai para o log. Erro nosso, com mensagem que a
+  // pessoa leu inteira, nao precisa de linha nenhuma.
+  if (resposta.codigo) {
+    console.error(`[erro ${resposta.codigo}] ${reserva}:`, (error && error.stack) || error);
+  }
+  return sendJson(res, { error: resposta.mensagem }, resposta.status);
 }
 
 /**
@@ -6184,7 +6207,7 @@ const server = http.createServer(async (req, res) => {
         user: serializeUserForClient(user, acesso)
       });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao autenticar' }, 400);
+      return sendErro(res, error, 'Erro ao autenticar', 400);
     }
   }
 
@@ -6237,7 +6260,7 @@ const server = http.createServer(async (req, res) => {
       await db.updateUserTheme(user.id, theme);
       return sendJson(res, { success: true, theme });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar preferência de tema' }, 400);
+      return sendErro(res, error, 'Erro ao salvar preferência de tema', 400);
     }
   }
 
@@ -6261,7 +6284,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, { error: 'Método não permitido' }, 405);
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar favoritos do dashboard' }, 400);
+      return sendErro(res, error, 'Erro ao salvar favoritos do dashboard', 400);
     }
   }
 
@@ -6301,7 +6324,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, { error: 'Método não permitido' }, 405);
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar a preferência' }, 400);
+      return sendErro(res, error, 'Erro ao salvar a preferência', 400);
     }
   }
 
@@ -6481,7 +6504,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, painel);
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao montar o painel de atenção' }, 500);
+      return sendErro(res, error, 'Erro ao montar o painel de atenção', 500);
     }
   }
 
@@ -6537,7 +6560,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'PUT') return sendJson(res, { connection: await crmDb.salvarConexao(await readBody(req)) });
       return sendJson(res, { error: 'Método não suportado' }, 405);
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro na conexão do CRM' }, 400);
+      return sendErro(res, erro, 'Erro na conexão do CRM', 400);
     }
   }
 
@@ -6638,7 +6661,7 @@ const server = http.createServer(async (req, res) => {
         previstas: linhas.length
       });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao gerar o financeiro do contrato' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao gerar o financeiro do contrato', 400);
     }
   }
 
@@ -6695,7 +6718,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, { success: true, criadas, ignorados, jaExistiam: existentes.length });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao gerar ordens de produção' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao gerar ordens de produção', 400);
     }
   }
 
@@ -6898,7 +6921,7 @@ const server = http.createServer(async (req, res) => {
         }
         return sendJson(res, apoio);
       } catch (erro) {
-        return sendJson(res, { error: erro.message || 'Erro ao carregar dados de apoio' }, 400);
+        return sendErro(res, erro, 'Erro ao carregar dados de apoio', 400);
       }
     }
 
@@ -7032,7 +7055,7 @@ const server = http.createServer(async (req, res) => {
       // A mensagem do Postgres é o que explica a recusa (placa repetida, status
       // fora da lista, vínculo obrigatório). Engolir isso deixaria a tela com
       // "erro ao salvar" e ninguém saberia o quê.
-      return sendJson(res, { error: erro.message || 'Erro ao processar a requisição' }, 400);
+      return sendErro(res, erro, 'Erro ao processar a requisição', 400);
     }
   }
 
@@ -7120,7 +7143,7 @@ const server = http.createServer(async (req, res) => {
       if (erro) return sendJson(res, { error: erro }, status);
       return sendJson(res, relatorio);
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao montar o relatório de vendas' }, 400);
+      return sendErro(res, error, 'Erro ao montar o relatório de vendas', 400);
     }
   }
 
@@ -7148,7 +7171,7 @@ const server = http.createServer(async (req, res) => {
       });
       return res.end(csv);
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao exportar' }, 400);
+      return sendErro(res, error, 'Erro ao exportar', 400);
     }
   }
 
@@ -7313,7 +7336,7 @@ const server = http.createServer(async (req, res) => {
       }, { resolverRegraFiscal: fiscalDb.resolverRegraFiscal });
       return sendJson(res, { tributos: resultado, contexto: contexto.resumo });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Não foi possível calcular os tributos.' }, error.status || 400);
+      return sendErro(res, error, 'Não foi possível calcular os tributos.', 400);
     }
   }
 
@@ -7582,7 +7605,7 @@ const server = http.createServer(async (req, res) => {
       const responseRecord = (type === 'order' || type === 'quote') ? serializeSalesRecord(record, data) : record;
       return sendJson(res, { success: true, record: responseRecord });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao salvar venda' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao salvar venda', 400);
     }
   }
 
@@ -7672,7 +7695,7 @@ const server = http.createServer(async (req, res) => {
         resultados
       });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao executar a ação em lote' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao executar a ação em lote', 400);
     }
   }
 
@@ -7784,7 +7807,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, { error: 'Método não permitido' }, 405);
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao tratar o anexo' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao tratar o anexo', 400);
     }
   }
 
@@ -7823,7 +7846,7 @@ const server = http.createServer(async (req, res) => {
       const category = await categoriasVendaDb.criar(body);
       return sendJson(res, { success: true, category });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao criar a categoria' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao criar a categoria', 400);
     }
   }
 
@@ -7855,7 +7878,7 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, { success: true, category, aviso });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao salvar a categoria' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao salvar a categoria', 400);
     }
   }
 
@@ -7870,7 +7893,7 @@ const server = http.createServer(async (req, res) => {
       if (!apagou) return sendJson(res, { error: 'Categoria nao encontrada' }, 404);
       return sendJson(res, { success: true });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao excluir' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao excluir', 400);
     }
   }
 
@@ -7912,7 +7935,7 @@ const server = http.createServer(async (req, res) => {
       const cardAcquirer = await adquirentesDb.criar(bandeirasDoCorpo(await readBody(req)));
       return sendJson(res, { success: true, cardAcquirer });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao criar a credenciadora' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao criar a credenciadora', 400);
     }
   }
 
@@ -7929,7 +7952,7 @@ const server = http.createServer(async (req, res) => {
       const cardAcquirer = await adquirentesDb.atualizar(id, bandeirasDoCorpo(await readBody(req)));
       return sendJson(res, { success: true, cardAcquirer });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao salvar a credenciadora' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao salvar a credenciadora', 400);
     }
   }
 
@@ -7957,7 +7980,7 @@ const server = http.createServer(async (req, res) => {
       await adquirentesDb.excluir(id);
       return sendJson(res, { success: true });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao excluir' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao excluir', 400);
     }
   }
 
@@ -7994,7 +8017,7 @@ const server = http.createServer(async (req, res) => {
       const origin = await origensVendaDb.criar(body);
       return sendJson(res, { success: true, origin });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao criar a origem' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao criar a origem', 400);
     }
   }
 
@@ -8024,7 +8047,7 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, { success: true, origin, aviso });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao salvar a origem' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao salvar a origem', 400);
     }
   }
 
@@ -8039,7 +8062,7 @@ const server = http.createServer(async (req, res) => {
       if (!apagou) return sendJson(res, { error: 'Origem nao encontrada' }, 404);
       return sendJson(res, { success: true });
     } catch (erro) {
-      return sendJson(res, { error: erro.message || 'Erro ao excluir' }, erro.status || 400);
+      return sendErro(res, erro, 'Erro ao excluir', 400);
     }
   }
 
@@ -8068,7 +8091,7 @@ const server = http.createServer(async (req, res) => {
       if (!registro) return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       return sendJson(res, { record: serializeSalesRecord(registro, data) });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao carregar o registro' }, 500);
+      return sendErro(res, error, 'Erro ao carregar o registro', 500);
     }
   }
 
@@ -8173,7 +8196,7 @@ const server = http.createServer(async (req, res) => {
         financeiro: { ...efeitoFinanceiro, entryIds: lancamentosDoPedido }
       });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao atualizar pedido/orçamento' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao atualizar pedido/orçamento', 400);
     }
   }
 
@@ -8197,7 +8220,7 @@ const server = http.createServer(async (req, res) => {
         await excluirSalesRecord(id, data, user);
       } catch (erro) {
         if (/não encontrado/.test(erro.message)) {
-          return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+          return sendErro(res, erro, 'Pedido/orçamento não encontrado', 404);
         }
         throw erro;
       }
@@ -8206,7 +8229,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao excluir pedido/orçamento' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao excluir pedido/orçamento', 400);
     }
   }
 
@@ -8264,7 +8287,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, created, count: created.length });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao importar vendas' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao importar vendas', 400);
     }
   }
 
@@ -8329,7 +8352,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, sale, financeEntry });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao criar venda' }, 400);
+      return sendErro(res, error, 'Erro ao criar venda', 400);
     }
   }
 
@@ -8377,8 +8400,7 @@ const server = http.createServer(async (req, res) => {
       const officialData = await fetchCnpjOfficialData(cnpj);
       return sendJson(res, { valid: true, officialData });
     } catch (error) {
-      const status = error.status || 502;
-      return sendJson(res, { error: error.message || 'Erro ao consultar API de CNPJ' }, status);
+      return sendErro(res, error, 'Erro ao consultar API de CNPJ', 502);
     }
   }
 
@@ -8400,8 +8422,7 @@ const server = http.createServer(async (req, res) => {
       const address = await fetchCepData(cep);
       return sendJson(res, { valid: true, address });
     } catch (error) {
-      const status = error.status || 502;
-      return sendJson(res, { error: error.message || 'Erro ao consultar CEP' }, status);
+      return sendErro(res, error, 'Erro ao consultar CEP', 502);
     }
   }
 
@@ -8440,7 +8461,7 @@ const server = http.createServer(async (req, res) => {
       await aplicarRespostaFocusNaNfe(nfe, body);
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao processar webhook' }, error.status || 500);
+      return sendErro(res, error, 'Erro ao processar webhook', 500);
     }
   }
 
@@ -8485,7 +8506,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao processar webhook' }, error.status || 500);
+      return sendErro(res, error, 'Erro ao processar webhook', 500);
     }
   }
 
@@ -8653,7 +8674,7 @@ const server = http.createServer(async (req, res) => {
             documentos: await dfeDb.listarDocumentos({ cnpj })
           });
         } catch (erro) {
-          return sendJson(res, { error: erro.message || 'Erro ao consultar a SEFAZ' }, erro.status || 400);
+          return sendErro(res, erro, 'Erro ao consultar a SEFAZ', 400);
         }
       }
 
@@ -8742,7 +8763,7 @@ const server = http.createServer(async (req, res) => {
             sefaz: resposta
           });
         } catch (erro) {
-          return sendJson(res, { error: erro.message || 'Erro ao manifestar' }, erro.status || 400);
+          return sendErro(res, erro, 'Erro ao manifestar', 400);
         }
       }
 
@@ -8770,7 +8791,7 @@ const server = http.createServer(async (req, res) => {
           const atualizado = await dfeDb.ligarEntrada(id, String(body.entradaId));
           return sendJson(res, { success: true, documento: atualizado });
         } catch (erro) {
-          return sendJson(res, { error: erro.message || 'Erro ao ligar a entrada' }, erro.status || 400);
+          return sendErro(res, erro, 'Erro ao ligar a entrada', 400);
         }
       }
 
@@ -9111,8 +9132,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { nfe });
       }
     } catch (error) {
-      const status = error.status || 500;
-      return sendJson(res, { error: error.message || 'Erro ao processar dados fiscais' }, status);
+      return sendErro(res, error, 'Erro ao processar dados fiscais', 500);
     }
   }
 
@@ -9179,7 +9199,7 @@ const server = http.createServer(async (req, res) => {
       const created = await db.createPerson(person);
       return sendJson(res, { success: true, person: created });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao salvar pessoa' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao salvar pessoa', 400);
     }
   }
 
@@ -9255,7 +9275,7 @@ const server = http.createServer(async (req, res) => {
       const updated = await db.updatePerson(id, person);
       return sendJson(res, { success: true, person: updated });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao atualizar pessoa' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao atualizar pessoa', 400);
     }
   }
 
@@ -9346,7 +9366,7 @@ const server = http.createServer(async (req, res) => {
       const created = await db.createCnpj(company);
       return sendJson(res, { success: true, company: created });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao salvar CNPJ' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao salvar CNPJ', 400);
     }
   }
 
@@ -9422,7 +9442,7 @@ const server = http.createServer(async (req, res) => {
       const updated = await db.updateCnpj(id, company);
       return sendJson(res, { success: true, company: updated });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao atualizar CNPJ' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao atualizar CNPJ', 400);
     }
   }
 
@@ -9502,7 +9522,7 @@ const server = http.createServer(async (req, res) => {
         notasFiscais: notasParaEquipamento(data)
       });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao carregar dados dos cadastros' }, 500);
+      return sendErro(res, error, 'Erro ao carregar dados dos cadastros', 500);
     }
   }
 
@@ -9539,7 +9559,7 @@ const server = http.createServer(async (req, res) => {
         .sort((a, b) => String(a.productName).localeCompare(String(b.productName)));
       return sendJson(res, { cashbacks });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao listar cashback' }, 500);
+      return sendErro(res, error, 'Erro ao listar cashback', 500);
     }
   }
 
@@ -9648,7 +9668,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { success: true });
       }
     } catch (error) {
-      return sendJson(res, { error: error.status ? error.message : 'Erro ao salvar cadastro' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao salvar cadastro', 400);
     }
   }
 
@@ -9736,7 +9756,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { success: true });
       }
     } catch (error) {
-      return sendJson(res, { error: error.status ? error.message : 'Erro ao salvar o equipamento' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao salvar o equipamento', 400);
     }
   }
 
@@ -9814,7 +9834,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { success: true });
       }
     } catch (error) {
-      return sendJson(res, { error: error.status ? error.message : 'Erro ao salvar a conta bancária' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao salvar a conta bancária', 400);
     }
   }
 
@@ -9862,7 +9882,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, { success: true, deposit: created });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao salvar depósito' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao salvar depósito', 400);
     }
   }
 
@@ -9907,7 +9927,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, { success: true, deposit: updated });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao atualizar depósito' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao atualizar depósito', 400);
     }
   }
 
@@ -9986,7 +10006,7 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
-      return sendJson(res, { error: traduzido.message || 'Não consegui ler o XML.' }, traduzido.status || 400);
+      return sendErro(res, traduzido, 'Não consegui ler o XML.', 400);
     }
   }
 
@@ -9999,7 +10019,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { entradas: await entradaNfeDb.listarEntradas({}) });
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
-      return sendJson(res, { error: traduzido.message || 'Erro ao listar entradas' }, traduzido.status || 400);
+      return sendErro(res, traduzido, 'Erro ao listar entradas', 400);
     }
   }
 
@@ -10021,7 +10041,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(registro.xml || '');
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
-      return sendJson(res, { error: traduzido.message || 'Erro ao baixar o XML' }, traduzido.status || 400);
+      return sendErro(res, traduzido, 'Erro ao baixar o XML', 400);
     }
   }
 
@@ -10037,7 +10057,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { entrada });
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
-      return sendJson(res, { error: traduzido.message || 'Erro ao abrir a entrada' }, traduzido.status || 400);
+      return sendErro(res, traduzido, 'Erro ao abrir a entrada', 400);
     }
   }
 
@@ -10097,6 +10117,13 @@ const server = http.createServer(async (req, res) => {
           // O XML não traz cor/voltagem: produto controlado por classe não tem
           // como entrar direto da nota. Dizer QUAL item trava é o que permite
           // desmarcar só ele e lançar o resto.
+          //
+          // ÚNICO PONTO QUE NÃO PASSA PELO sendErro (fase CC), e de propósito: a
+          // mensagem é COMPOSTA com o rótulo do item, e o sendErro entrega uma
+          // mensagem só. Aqui é seguro porque `assertMovementIsPossible` é uma
+          // checagem em memória — todo erro que ela lança vem de
+          // `stockCore.stockError`, que já nasce com status e com texto escrito
+          // para a pessoa. Banco nenhum passa por aqui.
           return sendJson(res, { error: `${rotulo}: ${erroMovimento.message}` }, erroMovimento.status || 400);
         }
       }
@@ -10279,7 +10306,7 @@ const server = http.createServer(async (req, res) => {
         } catch (erroAoDesfazer) {
           console.error('Entrada de NF-e falhou e nao consegui desfaze-la', entrada.id, erroAoDesfazer.message);
         }
-        return sendJson(res, { error: erroDoRazao.message || 'Erro ao lançar o estoque da nota.' }, erroDoRazao.status || 400);
+        return sendErro(res, erroDoRazao, 'Erro ao lançar o estoque da nota.', 400);
       }
 
       // Relido DEPOIS do commit: dentro da transação atualizarStatus devolve
@@ -10368,7 +10395,7 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
-      return sendJson(res, { error: traduzido.message || 'Erro ao lançar a entrada' }, traduzido.status || 400);
+      return sendErro(res, traduzido, 'Erro ao lançar a entrada', 400);
     }
   }
 
@@ -10406,7 +10433,7 @@ const server = http.createServer(async (req, res) => {
       );
       return sendJson(res, { success: true, documento });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao gravar o documento' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao gravar o documento', 400);
     }
   }
 
@@ -10425,7 +10452,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, { success: true, documento });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao mudar o status' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao mudar o status', 400);
     }
   }
 
@@ -10450,7 +10477,7 @@ const server = http.createServer(async (req, res) => {
       const documento = await comprasDb.atualizarDocumento(id, montarDocumentoDeCompra(body, data, user));
       return sendJson(res, { success: true, documento });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao gravar o documento' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao gravar o documento', 400);
     }
   }
 
@@ -10465,7 +10492,7 @@ const server = http.createServer(async (req, res) => {
       if (!apagou) return sendJson(res, { error: 'Documento não encontrado' }, 404);
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao excluir' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao excluir', 400);
     }
   }
 
@@ -10572,7 +10599,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, purchase, financeEntry });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao criar compra' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao criar compra', 400);
     }
   }
 
@@ -10640,7 +10667,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, purchase: updated });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao atualizar compra' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao atualizar compra', 400);
     }
   }
 
@@ -10677,7 +10704,7 @@ const server = http.createServer(async (req, res) => {
         products: products.map((p) => ({ id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice, salePrice: p.salePrice, stockQuantity: p.stockQuantity }))
       });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao carregar dados do estoque' }, 500);
+      return sendErro(res, error, 'Erro ao carregar dados do estoque', 500);
     }
   }
 
@@ -10745,7 +10772,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, { error: 'Rota não encontrada' }, 404);
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro nas classes de produto' }, error.status || 500);
+      return sendErro(res, error, 'Erro nas classes de produto', 500);
     }
   }
 
@@ -10785,7 +10812,7 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, { error: 'Método não suportado' }, 405);
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao salvar as classes do produto' }, error.status || 500);
+      return sendErro(res, error, 'Erro ao salvar as classes do produto', 500);
     }
   }
 
@@ -10813,7 +10840,7 @@ const server = http.createServer(async (req, res) => {
       list.sort((a, b) => a.name.localeCompare(b.name));
       return sendJson(res, { products: list });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao listar produtos' }, 500);
+      return sendErro(res, error, 'Erro ao listar produtos', 500);
     }
   }
 
@@ -10845,7 +10872,7 @@ const server = http.createServer(async (req, res) => {
         movements
       });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao carregar produto' }, 500);
+      return sendErro(res, error, 'Erro ao carregar produto', 500);
     }
   }
 
@@ -10924,7 +10951,7 @@ const server = http.createServer(async (req, res) => {
       const refreshed = await db.getProductById(product.id);
       return sendJson(res, { success: true, product: stockCore.serializeProduct(refreshed, loadData()) });
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao salvar produto');
+      return sendErro(res, error, 'Erro ao salvar produto');
     }
   }
 
@@ -10950,7 +10977,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao excluir produto');
+      return sendErro(res, error, 'Erro ao excluir produto');
     }
   }
 
@@ -10970,7 +10997,7 @@ const server = http.createServer(async (req, res) => {
         limit
       });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao listar movimentações' }, 500);
+      return sendErro(res, error, 'Erro ao listar movimentações', 500);
     }
   }
 
@@ -11004,7 +11031,7 @@ const server = http.createServer(async (req, res) => {
       await commitStockMovements(data, [movement], productsById);
       return sendJson(res, { success: true, movement: stockCore.serializeMovement(movement, data, productsById) });
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao registrar movimentação');
+      return sendErro(res, error, 'Erro ao registrar movimentação');
     }
   }
 
@@ -11045,7 +11072,7 @@ const server = http.createServer(async (req, res) => {
       data.stockMovements = data.stockMovements.filter((m) => m.id !== id);
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao estornar movimentação');
+      return sendErro(res, error, 'Erro ao estornar movimentação');
     }
   }
 
@@ -11070,7 +11097,7 @@ const server = http.createServer(async (req, res) => {
       list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       return sendJson(res, { transfers: list.map((t) => stockCore.serializeTransfer(t, data, productsById)) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao listar transferências' }, 500);
+      return sendErro(res, error, 'Erro ao listar transferências', 500);
     }
   }
 
@@ -11232,7 +11259,7 @@ const server = http.createServer(async (req, res) => {
       // aceitar lista.
       return sendJson(res, { success: true, transfer: serializadas[0], transfers: serializadas });
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao transferir entre depósitos');
+      return sendErro(res, error, 'Erro ao transferir entre depósitos');
     }
   }
 
@@ -11277,7 +11304,7 @@ const server = http.createServer(async (req, res) => {
       data.stockTransfers = data.stockTransfers.filter((t) => t.id !== id);
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao estornar transferência');
+      return sendErro(res, error, 'Erro ao estornar transferência');
     }
   }
 
@@ -11299,7 +11326,7 @@ const server = http.createServer(async (req, res) => {
       list.sort((a, b) => a.name.localeCompare(b.name));
       return sendJson(res, { products: list, priceTables: data.priceTables, priceTableId });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao carregar gestor de preços' }, 500);
+      return sendErro(res, error, 'Erro ao carregar gestor de preços', 500);
     }
   }
 
@@ -11344,7 +11371,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, { success: true, updated: updates.length });
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao salvar preços');
+      return sendErro(res, error, 'Erro ao salvar preços');
     }
   }
 
@@ -11419,7 +11446,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { success: true });
       }
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao salvar o depósito');
+      return sendErro(res, error, 'Erro ao salvar o depósito');
     }
   }
 
@@ -11513,7 +11540,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { success: true });
       }
     } catch (error) {
-      return sendStockError(res, error, 'Erro ao salvar cadastro do estoque');
+      return sendErro(res, error, 'Erro ao salvar cadastro do estoque');
     }
   }
 
@@ -11545,7 +11572,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, { success: true, product });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar produto' }, 400);
+      return sendErro(res, error, 'Erro ao salvar produto', 400);
     }
   }
 
@@ -11580,7 +11607,7 @@ const server = http.createServer(async (req, res) => {
       await db.deleteProduct(id);
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao excluir produto' }, error.status || 400);
+      return sendErro(res, error, 'Erro ao excluir produto', 400);
     }
   }
 
@@ -11627,7 +11654,7 @@ const server = http.createServer(async (req, res) => {
       const summary = buildFinanceDashboardSummary(data, url.searchParams);
       return sendJson(res, summary);
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao carregar o resumo financeiro' }, 500);
+      return sendErro(res, error, 'Erro ao carregar o resumo financeiro', 500);
     }
   }
 
@@ -11677,7 +11704,7 @@ const server = http.createServer(async (req, res) => {
       const category = await db.createFinancialCategory({ name, type: body.type || 'ambos' });
       return sendJson(res, { success: true, category });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao criar categoria' }, 400);
+      return sendErro(res, error, 'Erro ao criar categoria', 400);
     }
   }
 
@@ -11697,7 +11724,7 @@ const server = http.createServer(async (req, res) => {
       const costCenter = await db.createCostCenter({ name });
       return sendJson(res, { success: true, costCenter });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao criar centro de custo' }, 400);
+      return sendErro(res, error, 'Erro ao criar centro de custo', 400);
     }
   }
 
@@ -11722,7 +11749,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, { success: true, bankAccount });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao criar conta bancária' }, 400);
+      return sendErro(res, error, 'Erro ao criar conta bancária', 400);
     }
   }
 
@@ -11749,7 +11776,7 @@ const server = http.createServer(async (req, res) => {
       const pageEntries = filtered.slice(start, start + limit).map((entry) => serializeFinanceEntry(entry, data));
       return sendJson(res, { entries: pageEntries, total: filtered.length, page, limit });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao listar lançamentos' }, 500);
+      return sendErro(res, error, 'Erro ao listar lançamentos', 500);
     }
   }
 
@@ -11805,7 +11832,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao criar lançamento' }, 400);
+      return sendErro(res, error, 'Erro ao criar lançamento', 400);
     }
   }
 
@@ -11876,7 +11903,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao registrar pagamento' }, 400);
+      return sendErro(res, error, 'Erro ao registrar pagamento', 400);
     }
   }
 
@@ -11920,7 +11947,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao estornar lançamento' }, 400);
+      return sendErro(res, error, 'Erro ao estornar lançamento', 400);
     }
   }
 
@@ -11991,7 +12018,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao cancelar lançamento' }, 400);
+      return sendErro(res, error, 'Erro ao cancelar lançamento', 400);
     }
   }
 
@@ -12132,7 +12159,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao editar lançamento' }, 400);
+      return sendErro(res, error, 'Erro ao editar lançamento', 400);
     }
   }
 
@@ -12198,7 +12225,7 @@ const server = http.createServer(async (req, res) => {
       const pageItems = filtered.slice(start, start + limit);
       return sendJson(res, { nfes: pageItems, total: filtered.length, page, limit });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao listar NF-e' }, 500);
+      return sendErro(res, error, 'Erro ao listar NF-e', 500);
     }
   }
 
@@ -12345,7 +12372,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, nfe: serializeNfe(nfe, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao emitir NF-e' }, 400);
+      return sendErro(res, error, 'Erro ao emitir NF-e', 400);
     }
   }
 
@@ -12407,7 +12434,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, nfe: serializeNfe(nfe, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao cancelar NF-e' }, 400);
+      return sendErro(res, error, 'Erro ao cancelar NF-e', 400);
     }
   }
 
@@ -12458,7 +12485,7 @@ const server = http.createServer(async (req, res) => {
       };
       return sendJson(res, { transactions: pageItems, total: filtered.length, page, limit, summary });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao listar extrato' }, 500);
+      return sendErro(res, error, 'Erro ao listar extrato', 500);
     }
   }
 
@@ -12486,7 +12513,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao registrar movimentação' }, 400);
+      return sendErro(res, error, 'Erro ao registrar movimentação', 400);
     }
   }
 
@@ -12567,7 +12594,7 @@ const server = http.createServer(async (req, res) => {
         transactions: created.map((tx) => serializeBankTransaction(tx, data))
       });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao importar extrato' }, 400);
+      return sendErro(res, error, 'Erro ao importar extrato', 400);
     }
   }
 
@@ -12674,7 +12701,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data), entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao conciliar transação' }, 400);
+      return sendErro(res, error, 'Erro ao conciliar transação', 400);
     }
   }
 
@@ -12712,7 +12739,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao desconciliar transação' }, 400);
+      return sendErro(res, error, 'Erro ao desconciliar transação', 400);
     }
   }
 
@@ -12878,7 +12905,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { logs });
       }
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro no Open Finance' }, error.status || 500);
+      return sendErro(res, error, 'Erro no Open Finance', 500);
     }
   }
 
@@ -12939,7 +12966,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, entry });
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar financeiro' }, 400);
+      return sendErro(res, error, 'Erro ao salvar financeiro', 400);
     }
   }
 
@@ -13075,7 +13102,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, { error: 'Tipo de configuração inválido' }, 400);
     } catch (error) {
-      return sendJson(res, { error: 'Erro ao salvar configurações' }, 400);
+      return sendErro(res, error, 'Erro ao salvar configurações', 400);
     }
   }
 
@@ -13111,7 +13138,7 @@ const server = http.createServer(async (req, res) => {
         userAccess: acessoPorUsuario
       });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao carregar o controle de acesso' }, 500);
+      return sendErro(res, error, 'Erro ao carregar o controle de acesso', 500);
     }
   }
 
@@ -13131,7 +13158,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao salvar as permissões do papel' }, 400);
+      return sendErro(res, error, 'Erro ao salvar as permissões do papel', 400);
     }
   }
 
@@ -13176,7 +13203,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, { success: true });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao salvar o acesso do usuário' }, 400);
+      return sendErro(res, error, 'Erro ao salvar o acesso do usuário', 400);
     }
   }
 
@@ -13190,7 +13217,7 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, { logs, disponivel: db.rbac.rbacEstaDisponivel() });
     } catch (error) {
-      return sendJson(res, { error: error.message || 'Erro ao ler a trilha de auditoria' }, 500);
+      return sendErro(res, error, 'Erro ao ler a trilha de auditoria', 500);
     }
   }
 
@@ -13230,7 +13257,7 @@ const server = http.createServer(async (req, res) => {
         pendentesDeSincronia: pendentes.length
       });
     } catch (err) {
-      return sendJson(res, { error: 'Erro ao ler logs' }, 500);
+      return sendErro(res, err, 'Erro ao ler logs', 500);
     }
   }
 
@@ -13254,7 +13281,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true });
     } catch (err) {
-      return sendJson(res, { error: 'Erro ao excluir usuário' }, 500);
+      return sendErro(res, err, 'Erro ao excluir usuário', 500);
     }
   }
 
@@ -13326,7 +13353,7 @@ const server = http.createServer(async (req, res) => {
       saveData(data);
       return sendJson(res, { success: true, user: updated });
     } catch (err) {
-      return sendJson(res, { error: 'Erro ao atualizar usuário' }, 400);
+      return sendErro(res, err, 'Erro ao atualizar usuário', 400);
     }
   }
 

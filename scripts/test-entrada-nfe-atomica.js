@@ -90,7 +90,30 @@ check('desfazerEntrada existe na camada de dados', /async function desfazerEntra
 // Aqui o que se apaga é um lançamento nosso que não chegou a valer.
 check('  e explica por que isso não fere a regra do documento fiscal',
   /NÃO contradiz a regra de nunca excluir documento fiscal/.test(fonteDb));
-check('  a resposta devolve o erro real, não um genérico', /erroDoRazao\.message \|\| 'Erro ao lançar o estoque da nota\.'/.test(rota));
+// A INTENÇÃO CONTINUA A MESMA, o formato é que mudou (fase CC).
+//
+// Era `erroDoRazao.message || 'Erro ao lançar o estoque da nota.'`: a mensagem
+// ia inteira, fosse de quem fosse. Agora passa pelo sendErro, que separa duas
+// coisas que estavam juntas:
+//
+//   · o razão RECUSANDO — saldo insuficiente, produto controlado por cor sem a
+//     cor informada — é `stockCore.stockError`, tem status, e chega inteiro na
+//     tela. É este o caso que o teste sempre quis proteger: a entrada foi
+//     desfeita, e quem lançou precisa saber o que consertar para relançar.
+//
+//   · o razão QUEBRANDO — transação que não fechou, coluna que não existe —
+//     não tem status, e aí a pessoa vê o texto de reserva com um código, e o
+//     erro de verdade vai para o log. Essa mensagem nunca ajudou ninguém na
+//     tela; ajudava quem estivesse sondando o banco.
+check('  a resposta passa o erro do razão adiante',
+  /sendErro\(res, erroDoRazao, 'Erro ao lançar o estoque da nota\.', 400\)/.test(rota));
+// E a separação, provada na própria função que decide:
+const { respostaDeErro } = require('../lib/erro-para-o-usuario');
+const recusa = Object.assign(new Error('Saldo insuficiente no depósito.'), { status: 400 });
+check('    recusa do razão chega inteira na tela',
+  respostaDeErro(recusa, 'Erro ao lançar o estoque da nota.').mensagem === 'Saldo insuficiente no depósito.');
+check('    e falha de banco vira reserva com código',
+  /\(código [0-9a-f]{6}\)$/.test(respostaDeErro(new Error('relation "x" does not exist'), 'Erro ao lançar o estoque da nota.').mensagem));
 
 console.log('--- 4. o financeiro que falha não deixa a nota mentindo ---');
 
