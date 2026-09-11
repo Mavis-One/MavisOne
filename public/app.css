@@ -4307,3 +4307,39 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------------------------------------------------------------------------
+   CABEÇALHO QUE ORDENA (fase CF)
+   O <th> inteiro é clicável, mas quem recebe o clique é um <button> de verdade
+   dentro dele — assim chega pelo teclado e é anunciado como botão.
+   --------------------------------------------------------------------------- */
+.cadastro-ordenar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cadastro-ordenar:hover { color: var(--primary); }
+.cadastro-ordenar:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.cadastro-ordenar.is-ativa { color: var(--primary); }
+/* A seta reserva o próprio espaço mesmo quando vazia: sem isso, os títulos
+   dançam de lugar a cada troca de coluna ordenada. */
+.cadastro-ordenar-seta {
+  display: inline-block;
+  min-width: 10px;
+  font-size: 10px;
+  line-height: 1;
+}

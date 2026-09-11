@@ -57,7 +57,11 @@ console.log('--- 2. corta DEPOIS de filtrar e ordenar ---');
 // Se o slice viesse antes do filter, a página 1 seria "a primeira centena do
 // banco, filtrada" — e uma busca com 12 resultados espalhados voltaria vazia.
 const posFilter = appCodigo.indexOf('.some((field) => normalize(field).includes(query));');
-const posSort = appCodigo.indexOf("localeCompare(String(a.createdAt || '')));", posFilter);
+// A ordenação deixou de ser a linha fixa por `createdAt` e passou a ser o
+// `merged.sort` escolhido pelo cabeçalho (fase CF). A INTENÇÃO desta checagem é
+// a mesma: o corte tem de vir depois de ordenar, senão cada página se ordenaria
+// sozinha. Só o alvo mudou.
+const posSort = appCodigo.indexOf('merged.sort((a, b) => {', posFilter);
 const posSlice = appCodigo.indexOf('const visiveis = merged.slice(');
 check('o filtro vem antes do corte', posFilter > 0 && posSlice > posFilter);
 check('  e a ordenação também', posSort > 0 && posSlice > posSort);

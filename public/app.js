@@ -5419,7 +5419,15 @@ async function loadModule(moduleName) {
         // Em qual página da lista a pessoa está. Mora junto dos filtros de
         // propósito: os dois descrevem o mesmo recorte, e trocar um sem cuidar
         // do outro é o que produz "página 40 de 2".
-        pagina: Number(state.cadastroDraft.listFilters?.pagina) || 1
+        pagina: Number(state.cadastroDraft.listFilters?.pagina) || 1,
+        // Por qual coluna, e para que lado. Mesma casa dos filtros e da página,
+        // pelo mesmo motivo: os três descrevem juntos o que está na tela.
+        //
+        // `createdAt` descendente é o padrão porque era o comportamento de
+        // sempre — quem nunca clicar em cabeçalho nenhum vê a lista exatamente
+        // como via antes: o cadastro mais novo em cima.
+        ordemCampo: state.cadastroDraft.listFilters?.ordemCampo || 'createdAt',
+        ordemDirecao: state.cadastroDraft.listFilters?.ordemDirecao === 'asc' ? 'asc' : 'desc'
       };
       const depositsFilters = {
         show: Boolean(state.cadastroDraft.depositsFilters?.show),
@@ -6104,8 +6112,73 @@ async function loadModule(moduleName) {
               row.group,
               row.id
             ].some((field) => normalize(field).includes(query));
-          })
-          .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+          });
+
+        // ---------------------------------------------------------------
+        // A ORDEM VALE SOBRE A LISTA INTEIRA, e não sobre a página visível.
+        //
+        // É o ponto que decide se a ordenação serve para alguma coisa. Ordenar
+        // só as 100 linhas da tela reembaralharia cada página por conta
+        // própria: a página 2 começaria de novo no "A", e o maior valor da
+        // lista poderia estar em qualquer página. A pessoa clicaria em "Código"
+        // esperando achar o maior e encontraria o maior DAQUELE PEDAÇO.
+        //
+        // Por isso o `sort` vem aqui — depois do filtro, antes do corte em
+        // páginas. Custa ordenar 6.492 itens a cada render (medido: 3 ms), e é
+        // esse o preço de a ordem significar o que ela diz.
+        // ---------------------------------------------------------------
+
+        // Cada coluna é comparada pelo que ela É, e não como texto solto:
+        //   número  — 'código' é texto no banco, mas 100 vem depois de 99;
+        //   data    — createdAt é ISO, então texto já ordena certo;
+        //   texto   — comparação pt-BR, sem diferenciar acento nem maiúscula,
+        //             para que "Álvaro" fique junto de "Alvaro" e não no fim.
+        const COLUNAS_ORDENAVEIS = {
+          code: { rotulo: 'Código', tipo: 'numero' },
+          cadastroTipo: { rotulo: 'Tipo', tipo: 'texto' },
+          name: { rotulo: 'Nome / Razão social', tipo: 'texto' },
+          tradeName: { rotulo: 'Fantasia', tipo: 'texto' },
+          document: { rotulo: 'Documento', tipo: 'numero' },
+          email: { rotulo: 'E-mail', tipo: 'texto' },
+          phone: { rotulo: 'Telefone', tipo: 'numero' },
+          status: { rotulo: 'Status', tipo: 'texto' },
+          createdAt: { rotulo: 'Cadastrado em', tipo: 'data' }
+        };
+        const campoDaOrdem = COLUNAS_ORDENAVEIS[listFilters.ordemCampo] ? listFilters.ordemCampo : 'createdAt';
+        const direcaoDaOrdem = listFilters.ordemDirecao === 'asc' ? 'asc' : 'desc';
+        const comparadorDePtBr = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
+
+        merged.sort((a, b) => {
+          const tipo = COLUNAS_ORDENAVEIS[campoDaOrdem].tipo;
+          const va = a[campoDaOrdem];
+          const vb = b[campoDaOrdem];
+          const vazioA = va === null || va === undefined || String(va).trim() === '';
+          const vazioB = vb === null || vb === undefined || String(vb).trim() === '';
+          // VAZIO VAI SEMPRE PARA O FIM, nos dois sentidos. Inverter junto com a
+          // direção encheria o topo de traços ao pedir "maior primeiro" — e
+          // quem ordena por e-mail quer ver os e-mails, não quem não tem.
+          if (vazioA && vazioB) return 0;
+          if (vazioA) return 1;
+          if (vazioB) return -1;
+
+          let resultado;
+          if (tipo === 'numero') {
+            // 'código' e 'documento' são texto no banco; comparados como texto,
+            // o 100 cairia entre o 10 e o 11. Só os dígitos importam.
+            const na = Number(String(va).replace(/\D/g, '')) || 0;
+            const nb = Number(String(vb).replace(/\D/g, '')) || 0;
+            resultado = na - nb;
+          } else if (tipo === 'data') {
+            resultado = String(va).localeCompare(String(vb));
+          } else {
+            resultado = comparadorDePtBr.compare(String(va), String(vb));
+          }
+          // Empate resolvido pelo código: sem isso, duas pessoas com o mesmo
+          // nome trocariam de lugar entre um render e outro, e a lista pareceria
+          // se mexer sozinha.
+          if (resultado === 0) resultado = (Number(a.code) || 0) - (Number(b.code) || 0);
+          return direcaoDaOrdem === 'asc' ? resultado : -resultado;
+        });
 
         // ---------------------------------------------------------------
         // A LISTA SAI EM PÁGINAS DE 100 (importação do ViperERP, 6.492 pessoas).
@@ -6275,7 +6348,33 @@ async function loadModule(moduleName) {
             ${visiveis.length ? `
               <div class="table-scroll">
                 <table class="table table-actions">
-                  <thead><tr><th>Código</th><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <!-- CABECALHO QUE ORDENA. Cada coluna e um button de
+                           verdade dentro do th: chega pelo teclado, tem foco
+                           visivel e e anunciado como botao. Um th com
+                           addEventListener pareceria clicavel so para quem usa
+                           mouse. O aria-sort diz ao leitor de tela o que a
+                           setinha diz a quem enxerga. (Sem crase aqui: este
+                           comentario mora dentro de um template literal, e uma
+                           crase fecharia a string.) -->
+                      ${Object.entries(COLUNAS_ORDENAVEIS).map(([campo, def]) => {
+                        const ativa = campo === campoDaOrdem;
+                        const seta = ativa ? (direcaoDaOrdem === 'asc' ? '▲' : '▼') : '';
+                        const proxima = ativa && direcaoDaOrdem === 'asc' ? 'decrescente' : 'crescente';
+                        return `
+                          <th aria-sort="${ativa ? (direcaoDaOrdem === 'asc' ? 'ascending' : 'descending') : 'none'}">
+                            <button type="button" class="cadastro-ordenar ${ativa ? 'is-ativa' : ''}"
+                                    data-ordenar="${campo}"
+                                    title="Ordenar por ${escapeHtml(def.rotulo)} em ordem ${proxima}">
+                              <span>${escapeHtml(def.rotulo)}</span>
+                              <span class="cadastro-ordenar-seta" aria-hidden="true">${seta}</span>
+                            </button>
+                          </th>`;
+                      }).join('')}
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     ${visiveis.map((row) => `
                       <tr class="cadastro-row-clickable" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Duplo clique para editar">
@@ -6382,7 +6481,14 @@ async function loadModule(moduleName) {
             // Buscar SEMPRE volta para a primeira pagina. Manter a pagina 40 ao
             // trocar o filtro mostraria uma lista vazia com "Nenhum registro",
             // e a pessoa concluiria que a busca nao achou nada.
-            pagina: 1
+            pagina: 1,
+            // A ORDEM ATRAVESSA A BUSCA. Este objeto e' montado do zero a partir
+            // do formulario, e o formulario nao tem campo de ordenacao — sem
+            // carregar os dois aqui, buscar jogaria a lista de volta para a
+            // ordem padrao, desfazendo um clique que a pessoa deu ha' um
+            // segundo e nao pediu para desfazer.
+            ordemCampo: listFilters.ordemCampo,
+            ordemDirecao: listFilters.ordemDirecao
           }
         };
         state.activeSub = 'list';
@@ -6428,7 +6534,11 @@ async function loadModule(moduleName) {
             onlyInactive: false,
             dateStart: '',
             dateEnd: '',
-            pagina: 1
+            pagina: 1,
+            // O botao diz "Limpar FILTROS", e ordem nao e' filtro: quem estava
+            // lendo por nome continua lendo por nome depois de limpar a busca.
+            ordemCampo: listFilters.ordemCampo,
+            ordemDirecao: listFilters.ordemDirecao
           }
         };
         state.activeSub = 'list';
@@ -6453,6 +6563,42 @@ async function loadModule(moduleName) {
         loadModule('cadastros');
         // Virar a pagina e' comecar a ler de novo: sem isto, quem estivesse no
         // fim da pagina 3 cairia no meio da 4.
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      // ORDENAR PELO CABECALHO.
+      //
+      // Primeiro clique numa coluna: crescente. Clicar de novo NA MESMA: inverte.
+      // Clicar em OUTRA: comeca crescente de novo, e nao herda a direcao da
+      // anterior — herdar faria a lista aparecer ao contrario do que a pessoa
+      // acabou de pedir, sem ela ter pedido.
+      //
+      // A excecao e' "Cadastrado em", que comeca DECRESCENTE: com data, o que se
+      // procura e' o mais recente, e essa ja' e' a ordem padrao da tela.
+      content.addEventListener('click', (evento) => {
+        const alvo = evento.target.closest('[data-ordenar]');
+        if (!alvo) return;
+        const campo = alvo.dataset.ordenar;
+        // Le de `listFilters`, e nao das variaveis do renderizador:
+        // `campoDaOrdem` e `direcaoDaOrdem` sao declaradas DENTRO de
+        // renderUnifiedList, e este ouvinte mora fora dela. Usa-las aqui e' um
+        // ReferenceError a cada clique — e foi o que aconteceu: a lista nao
+        // reordenava e o erro so' aparecia no console.
+        const mesmaColuna = campo === listFilters.ordemCampo;
+        const direcao = mesmaColuna
+          ? (listFilters.ordemDirecao === 'asc' ? 'desc' : 'asc')
+          : (campo === 'createdAt' ? 'desc' : 'asc');
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          // Trocar a ordem volta para a pagina 1. Ficar na 40 depois de
+          // reordenar seria olhar para um pedaco do meio de uma lista que
+          // acabou de mudar inteira — e o que a pessoa quer ver, ao ordenar,
+          // e' justamente o comeco.
+          listFilters: { ...listFilters, ordemCampo: campo, ordemDirecao: direcao, pagina: 1 }
+        };
+        state.activeSub = 'list';
+        renderApp();
+        loadModule('cadastros');
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
 

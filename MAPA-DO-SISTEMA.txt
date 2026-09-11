@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-11 20:16 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-11 20:36 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -590,7 +590,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-100 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+101 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -655,6 +655,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-notas-contra-cnpj.js          NOTAS EMITIDAS CONTRA O NOSSO CNPJ — Distribuição de DF-e (fase AR).
   [npm test] test-numero-lancamento.js          O NÚMERO DO LANÇAMENTO FINANCEIRO — LF0001 (fase AT).
   [npm test] test-ordem-dos-scripts.js          OS <script> DO index.html CARREGAM NA ORDEM SEM QUEBRAR.
+  [npm test] test-ordenar-cadastros.js          ORDENAR A LISTA DE CADASTROS PELO CABEÇALHO (fase CF).
   [npm test] test-origem-da-venda.js            ORIGEM DA VENDA VIRA CADASTRO (fase AZ).
   [npm test] test-pagamentos-da-nfe.js          O GRUPO `pag` DA NF-e DIZ COMO A VENDA FOI PAGA (fase BU).
   [npm test] test-paginas-de-cadastros.js       A LISTA DE CADASTROS SAI EM PÁGINAS DE 100 (fase CF).
