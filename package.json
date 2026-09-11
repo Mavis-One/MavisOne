@@ -68,6 +68,7 @@
     "banco:subir": "docker compose up -d",
     "banco:parar": "docker compose down",
     "banco:zerar": "docker compose down -v && docker compose up -d",
+    "limpar": "node scripts/limpar-sistema.js",
     "banco:log": "docker compose logs -f banco",
     "sql-compat": "node scripts/test-sql-compat.js",
     "prova-banco": "node scripts/prova-banco.js",
