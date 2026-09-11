@@ -380,8 +380,12 @@ check('  Área de Trabalho delega para a lista filtrada',
 // Esconder link nunca fechou porta nenhuma.
 check('o render recusa a tela para quem não é admin',
   /sub === 'seller_dashboard'\)[\s\S]{0,900}if \(!usuarioEhAdmin\(\)\)[\s\S]{0,900}return;/.test(tela));
+// O BOTAO CONTINUA, mas navega por atributo (fase CA). Ele trazia o codigo
+// dentro de um `onclick=`, e era um dos tres que obrigavam a CSP a permitir
+// `script-src 'unsafe-inline'` — a permissao que faz a politica deixar de
+// proteger contra XSS. Virou `data-ir-para`, lido por um ouvinte delegado.
 check('  e oferece o Meu Painel no lugar, em vez de só barrar',
-  /sub === 'seller_dashboard'\)[\s\S]{0,900}activeSub='my_panel'/.test(tela));
+  /sub === 'seller_dashboard'\)[\s\S]{0,900}data-ir-para="my_panel"/.test(tela));
 
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);

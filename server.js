@@ -6019,7 +6019,61 @@ function decisoesDosItens(conferencia, body) {
   });
 }
 
+/**
+ * OS CABECALHOS QUE VALEM PARA TODA RESPOSTA.
+ *
+ * Nao havia nenhum. Sem eles o navegador aceita ser instruido a fazer coisas
+ * que o ERP nunca pede: carregar script de outro dominio, ser embutido num
+ * iframe de terceiros (clickjacking), adivinhar o tipo de um arquivo pelo
+ * conteudo, mandar a URL inteira como referer para fora.
+ *
+ * A CSP E ESTRITA, e isso so foi possivel porque o app nao tem NADA inline:
+ * nenhum <script> no corpo do HTML, nenhum recurso de CDN, nenhum fetch para
+ * fora. Restavam tres atributos `onclick=` — viraram um ouvinte delegado na
+ * mesma fase. Sem `'unsafe-inline'` em script-src, um `<script>` ou um
+ * `<img onerror=...>` que alguem consiga injetar simplesmente NAO EXECUTA.
+ * Com `'unsafe-inline'`, executaria, e a CSP seria enfeite.
+ *
+ *   style-src  admite 'unsafe-inline' porque a app usa 23 atributos
+ *              `style="..."`. Estilo injetado nao executa codigo; o risco e
+ *              muito menor e o custo de tirar seria alto.
+ *   img-src    admite data: e blob: — a tela monta pre-visualizacao de anexo
+ *              e abre arquivo por URL de blob.
+ *   frame-ancestors 'none'  substitui e supera o X-Frame-Options, que vai
+ *              junto so por navegador antigo.
+ *
+ * `setHeader` e nao `writeHead`: assim vale para sendJson, para serveStatic e
+ * para a entrega de anexo, sem cada um lembrar de repetir. O que a rota
+ * declarar depois no writeHead vence — e a entrega do anexo faz isso de
+ * proposito com o proprio Content-Type.
+ */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join('; ');
+
+function aplicarCabecalhosDeSeguranca(res) {
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  // `strict-origin-when-cross-origin` ja e o padrao dos navegadores atuais;
+  // declarar deixa de depender da versao de quem acessa.
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // O ERP nao usa camera, microfone nem localizacao. Declarar fecha a porta
+  // para qualquer coisa embutida que venha a pedir.
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+}
+
 const server = http.createServer(async (req, res) => {
+  aplicarCabecalhosDeSeguranca(res);
   const url = new URL(req.url, `http://${req.headers.host}`);
   const { pathname } = url;
 

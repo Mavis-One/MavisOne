@@ -2305,7 +2305,7 @@ async function loadModule(moduleName) {
             <div class="cadastro-list-actions">
               <!-- Um botão só, como a tela: pedido ou orçamento é escolha do
                    campo Status lá dentro, não de qual botão foi clicado. -->
-              <button type="button" onclick="state.salesDraft.editRecord=null; state.salesDraft.novoStatus=''; state.activeSub='new_sale'; renderApp(); loadModule('sales');">+ Nova Venda</button>
+              <button type="button" data-ir-para="new_sale" data-limpa-rascunho="1">+ Nova Venda</button>
               <button type="button" class="secondary" id="salesFilterToggleBtn">${showFilters ? 'Ocultar filtros' : 'Busca avançada'}</button>
               <button type="button" class="secondary" id="salesColunasBtn" title="Escolher colunas visíveis" aria-expanded="${mostrandoSeletor}">Colunas</button>
             </div>
@@ -4722,9 +4722,35 @@ async function loadModule(moduleName) {
                   headers: { 'x-auth-token': getSessionToken() }
                 });
                 if (!resposta.ok) throw new Error('Não consegui abrir o arquivo.');
+                // QUEM DECIDE ABRIR OU BAIXAR É O SERVIDOR, e esta tela obedece.
+                //
+                // O servidor manda `Content-Disposition: attachment` para o que
+                // não pode abrir no navegador (HTML e SVG carregam script e
+                // rodariam na origem do ERP). Só que este caminho NUNCA VÊ esse
+                // cabeçalho: ele busca os bytes e monta um `blob:` próprio, e
+                // URL de blob ignora Content-Disposition — pior, herda a origem
+                // de quem a criou. A trava do servidor, sozinha, não alcançava
+                // o botão "abrir anexo" da tela.
+                //
+                // Ler o cabeçalho da resposta (mesma origem, então todos os
+                // cabeçalhos estão disponíveis) mantém UMA decisão só, no
+                // servidor, em vez de uma segunda lista de tipos aqui — que
+                // envelheceria desencontrada da primeira.
+                const disposicao = String(resposta.headers.get('content-disposition') || '');
                 const blob = await resposta.blob();
                 const url = URL.createObjectURL(blob);
-                if (aba) aba.location.replace(url);
+                if (disposicao.trim().toLowerCase().startsWith('attachment')) {
+                  const ficha = anexos.find((a) => a.id === botao.dataset.anexo);
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = ficha ? ficha.nome : 'anexo';
+                  link.click();
+                  // A aba foi aberta no clique para não ser bloqueada; como o
+                  // arquivo vai baixar, ela não serve para mais nada.
+                  if (aba) aba.close();
+                } else if (aba) {
+                  aba.location.replace(url);
+                }
                 setTimeout(() => URL.revokeObjectURL(url), 60000);
               } catch (erro) {
                 if (aba) aba.close();
@@ -5018,7 +5044,7 @@ async function loadModule(moduleName) {
               <p class="muted">${data.importLogs.length} importação${data.importLogs.length === 1 ? '' : 'ões'} registrada${data.importLogs.length === 1 ? '' : 's'}</p>
             </div>
             <div class="cadastro-list-actions">
-              <button type="button" onclick="state.activeSub='import_sales'; renderApp(); loadModule('sales');">+ Importar Vendas</button>
+              <button type="button" data-ir-para="import_sales">+ Importar Vendas</button>
             </div>
           </div>
           <div class="panel">
@@ -5192,7 +5218,7 @@ async function loadModule(moduleName) {
             <div class="panel">
               <h3>Painel do Vendedor</h3>
               <p class="muted">Esta tela é do gestor: ela compara o desempenho de todos os vendedores. Para acompanhar as suas vendas, use <strong>Meu Painel</strong>.</p>
-              <button type="button" onclick="state.activeSub='my_panel'; renderApp(); loadModule('sales');">Ir para Meu Painel</button>
+              <button type="button" data-ir-para="my_panel">Ir para Meu Painel</button>
             </div>
           `;
           return;
@@ -7257,6 +7283,27 @@ async function loadModule(moduleName) {
     content.innerHTML = `<div class="panel"><p>${error.message}</p></div>`;
   }
 }
+
+// NAVEGACAO SEM `onclick=` NO HTML (fase CA).
+//
+// Tres botoes traziam o codigo dentro do atributo. Funcionava — e era a unica
+// coisa no sistema inteiro que obrigava a Content-Security-Policy a permitir
+// `script-src 'unsafe-inline'`, que e justamente a permissao que faz a CSP
+// deixar de proteger contra XSS: com ela, um `<img onerror=...>` injetado roda.
+//
+// Delegado no `document`, e nao religado a cada render: estas telas se
+// redesenham inteiras, e um ouvinte por botao teria de ser reatado toda vez.
+document.addEventListener('click', (evento) => {
+  const botao = evento.target.closest('[data-ir-para]');
+  if (!botao) return;
+  if (botao.dataset.limpaRascunho) {
+    state.salesDraft.editRecord = null;
+    state.salesDraft.novoStatus = '';
+  }
+  state.activeSub = botao.dataset.irPara;
+  renderApp();
+  loadModule('sales');
+});
 
 (async function bootstrap() {
   // Clear legacy token from older versions that used localStorage.
