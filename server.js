@@ -5,6 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
+// Quantas vezes da' para errar a senha. Regra pura, em modulo proprio, para o
+// teste nao precisar de servidor nem de esperar o relogio.
+const limiteTentativas = require('./lib/limite-tentativas');
 const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
@@ -179,7 +182,44 @@ const NAO_PERSISTIR = new Set([
 // na criação, em vez de recalcular a cada requisição, é o que faz a sessão
 // morrer na virada do dia em que NASCEU — recalcular daria sempre "a próxima
 // meia-noite a partir de agora", e a sessão nunca expiraria.
-let sessions = {};
+// `Object.create(null)` e nao `{}`: um objeto literal herda de Object.prototype,
+// entao `sessions['__proto__']` e `sessions['constructor']` respondem algo
+// truthy para um token que ninguem emitiu. Hoje isso morre logo adiante (o
+// `userId` sai undefined e o usuario nao e encontrado), mas depender de uma
+// segunda barreira para o lookup nao mentir e' fragil de graca. Sem prototipo,
+// a resposta e' `undefined` — que e' a verdade.
+let sessions = Object.create(null);
+
+/**
+ * O SEGREDO DA SESSAO — 256 bits de `crypto`, e nada mais.
+ *
+ * O token era `createId('token')`, isto e':
+ *
+ *   token-1789128929199-a6ef5t
+ *                       ^^^^^^ 6 caracteres base36 de Math.random()
+ *
+ * Duas coisas erradas ao mesmo tempo:
+ *
+ *   1. TAMANHO. 36^6 sao 2.176.782.336 combinacoes, ~31 bits. Medido nesta
+ *      maquina: ~1.500 tentativas/segundo contra /api/me, de um cliente so',
+ *      sem bloqueio nem atraso.
+ *   2. FONTE. `Math.random()` e' xorshift128+, um gerador NAO criptografico:
+ *      observando saidas suficientes reconstroi-se o estado e preveem-se as
+ *      proximas. E `createId` assinava TAMBEM os ids de pessoa, pedido e
+ *      produto — ou seja, cada resposta da API entregava amostras do mesmo
+ *      fluxo que gerava os tokens.
+ *
+ * Agora: 32 bytes de `crypto.randomBytes`, sem prefixo e sem carimbo de tempo.
+ * O carimbo nao acrescentava segredo — quem observa o sistema sabe quando
+ * alguem entrou —, so' dava a impressao de acrescentar.
+ */
+const tentativasDeLogin = limiteTentativas.criarLimitador();
+// A memoria nao cresce para sempre: o que saiu da janela some.
+setInterval(() => tentativasDeLogin.limpar(), 10 * 60 * 1000).unref();
+
+function criarTokenDeSessao() {
+  return crypto.randomBytes(32).toString('base64url');
+}
 
 // ---------------------------------------------------------------------------
 // SESSÃO ÚNICA POR USUÁRIO
@@ -5984,9 +6024,31 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/login' && req.method === 'POST') {
     try {
       const body = await readBody(req);
+      const ip = ipDaRequisicao(req);
+      const usuarioInformado = String(body.username || '').slice(0, 80);
+
+      // ANTES de conferir a senha: bloqueado nao gasta bcrypt nem ida ao banco.
+      const trava = tentativasDeLogin.conferir({ ip, usuario: usuarioInformado });
+      if (trava.bloqueado) {
+        await db.rbac.registrarAcesso({
+          action: 'login', resourceType: 'sessao', result: 'NEGADO', ip,
+          detail: { motivo: 'limite de tentativas', escopo: trava.escopo, usuarioInformado }
+        });
+        // 429 e nao 401: quem esta do outro lado precisa saber que a resposta
+        // nao diz nada sobre a senha — inclusive para uma pessoa que so' errou
+        // e vai tentar de novo.
+        res.setHeader('Retry-After', String(trava.segundos));
+        return sendJson(res, { error: tentativasDeLogin.mensagem(trava.escopo, trava.segundos) }, 429);
+      }
+
       const user = await db.authenticateUser(body.username, body.password);
 
       if (!user) {
+        const agora = tentativasDeLogin.falhou({ ip, usuario: usuarioInformado });
+        if (agora.bloqueado) {
+          res.setHeader('Retry-After', String(agora.segundos));
+          return sendJson(res, { error: tentativasDeLogin.mensagem(agora.escopo, agora.segundos) }, 429);
+        }
         // Senha errada não diz se o usuário existe — só o login inteiro falha.
         await db.rbac.registrarAcesso({
           action: 'login', resourceType: 'sessao', result: 'NEGADO', ip: ipDaRequisicao(req),
@@ -6003,7 +6065,11 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, { error: 'Usuário bloqueado. Procure um administrador.' }, 403);
       }
 
-      const token = createId('token');
+      // Entrou: o contador zera dos dois lados. Quem errou tres vezes e
+      // lembrou a senha nao fica carregando o placar ate o fim da janela.
+      tentativasDeLogin.acertou({ ip, usuario: usuarioInformado });
+
+      const token = criarTokenDeSessao();
       // Derruba ANTES de registrar a nova: se a ordem fosse inversa, a sessão
       // que acabou de nascer entraria na varredura e se derrubaria sozinha.
       const derrubadas = encerrarSessoesDoUsuario(user.id, 'outro-dispositivo', token);
@@ -7563,16 +7629,24 @@ const server = http.createServer(async (req, res) => {
         const ficha = fichas.find((a) => a.id === anexoId);
         if (!ficha) return sendJson(res, { error: 'Anexo não encontrado' }, 404);
         const { bytes, tipo } = await anexosDb.baixarAnexo(ficha);
+        // O que abre no navegador e o que baixa. Ver entregaDoAnexo: HTML e SVG
+        // enviados por um usuario rodavam script na ORIGEM do ERP.
+        const entrega = anexosDb.entregaDoAnexo(tipo, ficha.nome);
         // Os bytes saem por aqui, e nao existe URL nenhuma para o arquivo:
         // URL vaza facil (e-mail, print, log de proxy), e um anexo de pedido
         // tem contrato e dado de cliente dentro. Desde a fase AM o binario e
         // uma linha de tabela — so alcancavel por consulta do servidor.
         res.writeHead(200, {
-          'Content-Type': tipo,
+          'Content-Type': entrega.tipo,
           'Content-Length': bytes.length,
-          // `inline` para PDF e imagem abrirem no navegador; o nome original
-          // (com acento) vai no filename* como manda a RFC 5987.
-          'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(ficha.nome)}`,
+          // `inline` so para PDF e imagem (ver a lista de permissao); todo o
+          // resto BAIXA em vez de abrir.
+          'Content-Disposition': entrega.disposicao,
+          // O navegador NAO pode adivinhar o tipo. Sem isto, um arquivo
+          // entregue como octet-stream ainda podia ser farejado como HTML pelo
+          // conteudo — e a lista de permissao acima seria contornada pelo
+          // proprio navegador.
+          'X-Content-Type-Options': 'nosniff',
           'Cache-Control': 'private, no-store'
         });
         return res.end(bytes);

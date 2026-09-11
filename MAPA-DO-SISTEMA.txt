@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-10 20:35 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-11 13:05 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -216,6 +216,8 @@ o próprio arquivo dá de si, no comentário de cabeçalho.
       Cliente para a API da Focus NFe (https://doc.focusnfe.com.br).
   lib/kpis.js
       KPIs do topo do hub.
+  lib/limite-tentativas.js
+      QUANTAS VEZES DÁ PARA ERRAR A SENHA — E O QUE ACONTECE DEPOIS.
   lib/nfePayloadBuilder.js
       Monta o payload de emissão de NF-e no formato da Focus NFe (https://doc.focusnfe.com.br/reference/emitir_nfe).
   lib/nfeXml.js
@@ -573,7 +575,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-92 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+93 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -656,6 +658,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-sales-status.js               Catálogo de status de Pedido/Orçamento — public/modules/shared/sales_status.js O que este teste protege: 1.
   [avulso]  test-sales-totals-e2e.js           Prova que o total gravado pelo servidor bate com o que a tela calcula, e que o servidor NÃO aceita um total fo
   [npm test] test-sales-totals.js               Regras de desconto, frete e soma dos totais de Pedido/Orçamento.
+  [npm test] test-seguranca-sessao.js           AS TRÊS PORTAS QUE A VARREDURA DE 11/09/2026 ENCONTROU ABERTAS (fase BZ).
   [npm test] test-sessao-expira.js              Expiração das sessões na virada do dia — lib/sessao.js A conta de "quando esta sessão morre" é fácil de escrev
   [avulso]  test-sessao-unica.js               Sessão única por usuário: entrar numa máquina derruba a outra.
   [npm test] test-sql-compat.js                 A CAMADA COMPATÍVEL — o dialeto do supabase-js virando SQL, provado sem banco.

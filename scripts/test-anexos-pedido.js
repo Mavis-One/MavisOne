@@ -81,7 +81,15 @@ const posGenerico = serverSrc.indexOf("if (pathname.startsWith('/api/sales/recor
 check('e vêm ANTES da rota genérica de registro', posAnexo > -1 && posAnexo < posGenerico,
   `anexo ${posAnexo}, genérico ${posGenerico}`);
 check('exigem sessão e permissão do módulo', /rotaAnexo[\s\S]{0,900}allowedModules\.includes\('sales'\)/.test(serverSrc));
-check('o download não expõe URL, entrega bytes', /Content-Disposition[\s\S]{0,80}filename\*=UTF-8/.test(serverSrc));
+// O cabecalho passou a ser montado por `entregaDoAnexo` (fase BZ), que decide
+// tambem se o arquivo ABRE ou BAIXA — HTML e SVG enviados por um usuario
+// rodavam script na origem do ERP. A rota continua entregando bytes e nome,
+// sem URL nenhuma; o que mudou foi quem escreve a linha.
+check('o download não expõe URL, entrega bytes',
+  /'Content-Disposition': entrega\.disposicao,/.test(serverSrc)
+  && /filename\*=UTF-8/.test(ler('lib/db/anexos.js')));
+check('  e decide entre abrir e baixar pelo tipo',
+  /function entregaDoAnexo\(tipo, nome\)/.test(ler('lib/db/anexos.js')));
 // Anexo é documento comercial: cache de disco compartilhado não serve.
 check('e não deixa o arquivo em cache', /'Cache-Control': 'private, no-store'/.test(serverSrc));
 check('enviar e excluir gravam auditoria',
