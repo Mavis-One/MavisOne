@@ -4268,3 +4268,42 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   height: 16px;
   margin: 0;
 }
+
+/* ===========================================================================
+   PÁGINAS DA LISTA DE CADASTROS (fase CF)
+   ---------------------------------------------------------------------------
+   A barra aparece acima e abaixo da tabela. Com 100 linhas, ter só a de baixo
+   obrigaria a rolar a página inteira para virar a página.
+   =========================================================================== */
+.cadastro-paginas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 0;
+}
+.cadastro-paginas-acima { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.cadastro-paginas-abaixo { border-top: 1px solid var(--border); margin-top: 4px; }
+.cadastro-paginas-botoes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cadastro-paginas-botoes button {
+  min-width: 38px;
+  padding: 6px 10px;
+  line-height: 1;
+}
+/* Botão desligado continua ocupando o lugar: a barra não pode dançar quando se
+   chega na primeira ou na última página. */
+.cadastro-paginas-botoes button[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+.cadastro-paginas-atual {
+  padding: 0 8px;
+  font-size: 13px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

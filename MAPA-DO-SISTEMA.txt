@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-11 20:01 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-11 20:16 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -590,7 +590,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-99 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+100 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -657,6 +657,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-ordem-dos-scripts.js          OS <script> DO index.html CARREGAM NA ORDEM SEM QUEBRAR.
   [npm test] test-origem-da-venda.js            ORIGEM DA VENDA VIRA CADASTRO (fase AZ).
   [npm test] test-pagamentos-da-nfe.js          O GRUPO `pag` DA NF-e DIZ COMO A VENDA FOI PAGA (fase BU).
+  [npm test] test-paginas-de-cadastros.js       A LISTA DE CADASTROS SAI EM PÁGINAS DE 100 (fase CF).
   [npm test] test-paineis-modulos.js            Painéis por módulo — a conta de cada indicador, e o que eles se recusam a afirmar.
   [npm test] test-papel-do-usuario.js           O PAPEL DO USUÁRIO ACOMPANHA QUEM ELE É (fase BN).
   [npm test] test-pcp-estoque.js                O PCP NÃO MEXE NO ESTOQUE ÀS ESCURAS (fase BP).

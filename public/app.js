@@ -5415,7 +5415,11 @@ async function loadModule(moduleName) {
         showManufacturers: state.cadastroDraft.listFilters?.showManufacturers ?? true,
         onlyInactive: state.cadastroDraft.listFilters?.onlyInactive ?? false,
         dateStart: state.cadastroDraft.listFilters?.dateStart || '',
-        dateEnd: state.cadastroDraft.listFilters?.dateEnd || ''
+        dateEnd: state.cadastroDraft.listFilters?.dateEnd || '',
+        // Em qual página da lista a pessoa está. Mora junto dos filtros de
+        // propósito: os dois descrevem o mesmo recorte, e trocar um sem cuidar
+        // do outro é o que produz "página 40 de 2".
+        pagina: Number(state.cadastroDraft.listFilters?.pagina) || 1
       };
       const depositsFilters = {
         show: Boolean(state.cadastroDraft.depositsFilters?.show),
@@ -6103,6 +6107,52 @@ async function loadModule(moduleName) {
           })
           .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 
+        // ---------------------------------------------------------------
+        // A LISTA SAI EM PÁGINAS DE 100 (importação do ViperERP, 6.492 pessoas).
+        //
+        // Antes a tela desenhava TODAS as linhas de uma vez. Medido no Chrome
+        // com os 6.492 cadastros: 129.959 nós no DOM e 589 ms só para desenhar,
+        // sem contar a busca. Funcionava — e ia piorando a cada cadastro novo,
+        // sem nunca dar erro.
+        //
+        // O corte é DEPOIS do filtro e da ordenação: a página 1 tem de ser a
+        // primeira centena do que a pessoa pediu, e não a primeira centena do
+        // banco filtrada em seguida.
+        //
+        // Virar página passa pelo mesmo caminho de qualquer filtro
+        // (renderApp + loadModule), e isso custa uma ida ao servidor. Medido:
+        // as três rotas em paralelo respondem em 156 ms, e desenhar 100 linhas
+        // é uma fração do que eram 6.492. O que doía era o DOM, não a rede.
+        // ---------------------------------------------------------------
+        const POR_PAGINA = 100;
+        const totalRegistros = merged.length;
+        const totalPaginas = Math.max(1, Math.ceil(totalRegistros / POR_PAGINA));
+        // Preso entre 1 e o total: um filtro que reduz a lista enquanto a pessoa
+        // está na página 40 não pode deixá-la olhando para o vazio.
+        const paginaAtual = Math.min(Math.max(1, listFilters.pagina), totalPaginas);
+        const primeiroDaPagina = (paginaAtual - 1) * POR_PAGINA;
+        const visiveis = merged.slice(primeiroDaPagina, primeiroDaPagina + POR_PAGINA);
+
+        // A barra aparece em CIMA e EMBAIXO da tabela. Com 100 linhas, só
+        // embaixo obrigaria a rolar a página inteira para virar a página.
+        const barraDePaginas = (posicao) => (totalRegistros === 0 ? '' : `
+          <div class="cadastro-paginas cadastro-paginas-${posicao}">
+            <span class="muted">
+              Mostrando <strong>${primeiroDaPagina + 1}</strong>–<strong>${primeiroDaPagina + visiveis.length}</strong>
+              de <strong>${totalRegistros.toLocaleString('pt-BR')}</strong> cadastro${totalRegistros === 1 ? '' : 's'}
+            </span>
+            ${totalPaginas > 1 ? `
+              <div class="cadastro-paginas-botoes">
+                <button type="button" class="secondary" data-pagina="1" ${paginaAtual === 1 ? 'disabled' : ''} title="Primeira página" aria-label="Primeira página">««</button>
+                <button type="button" class="secondary" data-pagina="${paginaAtual - 1}" ${paginaAtual === 1 ? 'disabled' : ''} title="Página anterior" aria-label="Página anterior">‹</button>
+                <span class="cadastro-paginas-atual">Página ${paginaAtual} de ${totalPaginas}</span>
+                <button type="button" class="secondary" data-pagina="${paginaAtual + 1}" ${paginaAtual === totalPaginas ? 'disabled' : ''} title="Próxima página" aria-label="Próxima página">›</button>
+                <button type="button" class="secondary" data-pagina="${totalPaginas}" ${paginaAtual === totalPaginas ? 'disabled' : ''} title="Última página" aria-label="Última página">»»</button>
+              </div>
+            ` : ''}
+          </div>
+        `);
+
         return `
           <div class="panel cadastros-shell">
             <div class="cadastro-page-head">
@@ -6220,12 +6270,14 @@ async function loadModule(moduleName) {
               </form>
             ` : ''}
 
-            ${merged.length ? `
+            ${barraDePaginas('acima')}
+
+            ${visiveis.length ? `
               <div class="table-scroll">
                 <table class="table table-actions">
                   <thead><tr><th>Código</th><th>Tipo</th><th>Nome / Razão social</th><th>Fantasia</th><th>Documento</th><th>E-mail</th><th>Telefone</th><th>Status</th><th>Cadastrado em</th><th>Ações</th></tr></thead>
                   <tbody>
-                    ${merged.map((row) => `
+                    ${visiveis.map((row) => `
                       <tr class="cadastro-row-clickable" data-kind="${row.kind}" data-id="${escapeHtml(row.id || '')}" title="Duplo clique para editar">
                         <td>${escapeHtml(row.code || '-')}</td>
                         <td>${escapeHtml(row.cadastroTipo)}</td>
@@ -6249,6 +6301,7 @@ async function loadModule(moduleName) {
                   </tbody>
                 </table>
               </div>
+              ${barraDePaginas('abaixo')}
             ` : '<p class="muted">Nenhum registro encontrado para os filtros aplicados.</p>'}
           </div>
         `;
@@ -6325,7 +6378,11 @@ async function loadModule(moduleName) {
             showManufacturers: Boolean(data.get('showManufacturers')),
             onlyInactive: Boolean(data.get('onlyInactive')),
             dateStart: String(data.get('dateStart') || ''),
-            dateEnd: String(data.get('dateEnd') || '')
+            dateEnd: String(data.get('dateEnd') || ''),
+            // Buscar SEMPRE volta para a primeira pagina. Manter a pagina 40 ao
+            // trocar o filtro mostraria uma lista vazia com "Nenhum registro",
+            // e a pessoa concluiria que a busca nao achou nada.
+            pagina: 1
           }
         };
         state.activeSub = 'list';
@@ -6370,12 +6427,33 @@ async function loadModule(moduleName) {
             showManufacturers: true,
             onlyInactive: false,
             dateStart: '',
-            dateEnd: ''
+            dateEnd: '',
+            pagina: 1
           }
         };
         state.activeSub = 'list';
         renderApp();
         loadModule('cadastros');
+      });
+
+      // OS BOTOES DE PAGINA.
+      //
+      // Delegado no `content` e nao um ouvinte por botao: as barras sao duas (a
+      // de cima e a de baixo) e se redesenham inteiras a cada virada, entao um
+      // ouvinte por botao teria de ser reatado toda vez.
+      content.addEventListener('click', (evento) => {
+        const botao = evento.target.closest('.cadastro-paginas-botoes [data-pagina]');
+        if (!botao || botao.disabled) return;
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          listFilters: { ...listFilters, pagina: Number(botao.dataset.pagina) || 1 }
+        };
+        state.activeSub = 'list';
+        renderApp();
+        loadModule('cadastros');
+        // Virar a pagina e' comecar a ler de novo: sem isto, quem estivesse no
+        // fim da pagina 3 cairia no meio da 4.
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       });
 
       document.getElementById('cadastroDepositNewBtn')?.addEventListener('click', () => {
