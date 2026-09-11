@@ -740,7 +740,22 @@ function ipDaRequisicao(req) {
  */
 async function verificarAcesso(req, pathname) {
   const permissao = permissoes.resolverPermissao(pathname, req.method);
-  if (!permissao) return { permitido: true, permissao: null, usuario: null };
+  if (!permissao) {
+    // SEM PERMISSAO MAPEADA NAO E' MAIS SINONIMO DE LIBERADO.
+    //
+    // Antes, `null` aqui virava `permitido: true` e a requisicao seguia contando
+    // com a checagem que a propria rota fazia. Todas faziam — mas isso e' um
+    // acordo entre programadores, nao uma garantia: a proxima rota escrita fora
+    // dos prefixos mapeados nasceria sem portao nenhum, que e' precisamente o
+    // furo do modelo anterior que este bloco veio corrigir.
+    //
+    // Agora o padrao e' fechado: sem permissao mapeada, ainda assim exige
+    // SESSAO. So' passa sem ela o que esta declarado publico (login e os
+    // webhooks, que provam identidade por outro caminho).
+    if (!permissoes.exigeSessao(pathname)) return { permitido: true, permissao: null, usuario: null };
+    const usuario = await getCurrentUser(req);
+    return { permitido: Boolean(usuario), permissao: null, usuario };
+  }
 
   const usuario = await getCurrentUser(req);
   if (!usuario) return { permitido: false, permissao, usuario: null };
@@ -6977,6 +6992,19 @@ const server = http.createServer(async (req, res) => {
   // sondasse que existe algo ali; ignorar simplesmente devolve o que a pessoa
   // sempre pôde ver.
   // ==========================================================================
+  /**
+   * QUEM PODE ABRIR RELATORIOS.
+   *
+   * O modulo liberado ao usuario OU ser administrador. O "ou" nao e' folga: sem
+   * ele, um administrador cuja linha nao tem 'reports' em `allowed_modules`
+   * seria barrado na propria ferramenta que ele usa para conferir o sistema —
+   * era exatamente esse o receio anotado aqui antes, e e' um receio correto.
+   * O que estava errado era a conclusao: nao conferir NADA.
+   */
+  function podeVerRelatorios(user, ehAdministrador) {
+    return Boolean(user) && (ehAdministrador || user.allowedModules.includes('reports'));
+  }
+
   async function montarRelatorioDeVendas(req, params) {
     const data = loadData();
     // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
@@ -6992,7 +7020,11 @@ const server = http.createServer(async (req, res) => {
 
     // ehAdmin() consulta o RBAC (com cache de 5 min) — por isso o escopo recebe
     // a resposta pronta em vez de descobrir sozinho: a função da regra é pura.
-    const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+    const ehAdministrador = await ehAdmin(user);
+    if (!podeVerRelatorios(user, ehAdministrador)) {
+      return { erro: 'Sem permissão', status: 403 };
+    }
+    const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: ehAdministrador });
 
     const registros = [...data.orders, ...data.quotes].map((r) => serializeSalesRecord(r, data));
     const filtros = {
@@ -7053,12 +7085,23 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/reports/overview' && req.method === 'GET') {
     const data = loadData();
     await Promise.all([syncNfeData(data), syncPurchasesData(data)]);
-    // Sem checagem de permissão aqui: o portão central já traduziu esta rota
-    // para reports.ler e decidiu. Repetir com allowedModules seria MAIS
-    // restrito que o portão — administrador passa por lá e era barrado aqui.
     const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
+    }
+    // A CAIXA "RELATORIOS" DA TELA DE USUARIOS PRECISA VALER AQUI.
+    //
+    // Nao valia. O portao central decide por PAPEL (reports.ler), e o papel
+    // 'Usuario' ja traz essa permissao — entao o administrador desmarcava
+    // Relatorios em Configuracoes > Usuarios, a tela sumia do menu, e a rota
+    // continuava respondendo. Medido: usuario com `dashboard, sales` recebia
+    // 200 aqui, com contasAPagar, contasAReceber, serie de receitas e despesas
+    // e estoque — a posicao financeira da empresa.
+    //
+    // E' o mesmo defeito que a fase BR fechou em Frota, RH, PCP e Contratos, e
+    // este endpoint nao tem escopo nenhum por tras (o /reports/vendas tem).
+    if (!podeVerRelatorios(user, await ehAdmin(user))) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
     }
 
     const granularity = url.searchParams.get('granularity') || 'month';

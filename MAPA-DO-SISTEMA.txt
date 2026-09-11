@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-11 13:05 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-11 13:15 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -575,7 +575,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-93 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+94 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -643,6 +643,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-permissoes-fiscais.js         Permissões do módulo Fiscal — a tela e o portão do servidor têm de falar a mesma língua.
   [avulso]  test-permissoes-tela.js            A tela de Papéis e Permissões contra as permissões REAIS do banco.
   [npm test] test-permissoes.js                 Regras de controle de acesso (lib/permissoes.js).
+  [npm test] test-portao-fecha-por-padrao.js    O PORTÃO FECHA POR PADRÃO, E "LIVRE" DEIXOU DE QUERER DIZER DUAS COISAS (fase CA — achados 04 e 05 da varredur
   [npm test] test-prazo-cancelamento.js         Prazo de 24 horas para cancelar NF-e.
   [npm test] test-pre-check-fiscal.js           PRÉ-CHECK FISCAL DOS PEDIDOS DO DIA (fase BY, OBS-21).
   [npm test] test-produto-abas.js               Abas do cadastro de produto.

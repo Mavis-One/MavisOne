@@ -137,7 +137,24 @@ check('DELETE /api/open-finance/connections/x exige finance.excluir',
   P.resolverPermissao('/api/open-finance/connections/x', 'DELETE') === 'finance.excluir',
   String(P.resolverPermissao('/api/open-finance/connections/x', 'DELETE')));
 // Webhook do provider é chamado de fora, sem sessão: continua livre.
-check('webhook do provider segue livre', P.rotaLivre('/api/webhooks/focusnfe') === true);
+//
+// O CAMINHO MUDOU PORQUE ESTAVA ERRADO (fase CA). A asserção conferia
+// `/api/webhooks/focusnfe`, prefixo que não casa com rota nenhuma do
+// `server.js` — ele guardava o nada. Os webhooks de verdade são
+// `/api/fiscal/webhooks/focus` e `/api/open-finance/webhooks/<provider>`, e o
+// segundo estava BLOQUEADO: o portão exigia sessão de um provedor externo e
+// respondia 401 antes de a conferência do segredo compartilhado rodar.
+// Medido, com o segredo certo nos dois: fiscal 200, Open Finance 401.
+//
+// E a pergunta ficou mais afiada: `rotaPublica` é "entra sem sessão", enquanto
+// `rotaLivre` virou só "o portão central não resolve a permissão desta rota".
+check('webhook fiscal entra sem sessão', P.rotaPublica('/api/fiscal/webhooks/focus') === true);
+check('webhook do Open Finance também', P.rotaPublica('/api/open-finance/webhooks/pluggy') === true);
+// E o resto do Open Finance continua exigindo sessão e permissão — o webhook
+// ser público não pode ter aberto o módulo junto.
+check('  mas o resto do Open Finance NÃO é público', P.rotaPublica('/api/open-finance/connections') === false);
+check('  e continua exigindo finance.ler',
+  P.resolverPermissao('/api/open-finance/connections', 'GET') === 'finance.ler');
 
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
 process.exit(falhas === 0 ? 0 : 1);
