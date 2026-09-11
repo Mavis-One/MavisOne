@@ -286,7 +286,7 @@ check('  e a LISTA DE VENDEDORES também (senão o seletor vaza os nomes do time
 // conta: ele cita a forma ANTIGA — buildSalesDashboardSummary(data), sem
 // escopo — justamente para explicar o que mudou, e o teste acusava um chamador
 // desprotegido que não existe. Comentário não chama função nenhuma.
-const semComentarios = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const { semComentarios } = require('./sem-comentarios');
 const codigoServidor = semComentarios(servidor);
 const chamadas = [...codigoServidor.matchAll(/buildSalesDashboardSummary\(data([^)]*)\)/g)].map((m) => m[1].trim());
 check(`os ${chamadas.length} chamadores passam um escopo`,

@@ -3,6 +3,7 @@ require('dotenv').config();
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const zlib = require('zlib');
 const crypto = require('crypto');
 // Quantas vezes da' para errar a senha. Regra pura, em modulo proprio, para o
@@ -105,8 +106,23 @@ const purchaseTotals = require('./public/modules/shared/purchase_totals');
 const reservasLib = require('./lib/reservas');
 const painelModulos = require('./lib/painel-modulos');
 const sessaoUtil = require('./lib/sessao');
+const { segredosIguais } = require('./lib/comparar-segredo');
+const { dentroDaPasta } = require('./lib/caminho-seguro');
 
-const HOST = process.env.HOST || '0.0.0.0';
+// EM QUE INTERFACE O SERVIDOR ESCUTA (fase CB — achado 13).
+//
+// Era '0.0.0.0': toda interface da maquina, inclusive o Wi-Fi do lugar onde o
+// notebook estiver. Isso nunca foi decidido — foi o padrao que ficou. Com ele,
+// qualquer pessoa na mesma rede ve' a tela de login do ERP e pode tentar entrar
+// a vontade, e nenhuma tela do sistema avisa que isso esta acontecendo.
+//
+// O padrao agora e' 127.0.0.1: so' esta maquina alcanca.
+//
+// LOJA COM MAIS DE UM COMPUTADOR — ou o ERP numa VPS atras de um proxy: ponha
+// `HOST=0.0.0.0` no .env. Nao e' um remendo, e' a configuracao certa para esse
+// caso; o que mudou e' que agora ela e' uma escolha, e o servidor IMPRIME, ao
+// subir, em quais enderecos da rede ele ficou visivel.
+const HOST = process.env.HOST || '127.0.0.1';
 const BASE_PORT = Number(process.env.PORT) || 3000;
 const MAX_PORT_RETRIES = 10;
 const DATA_FILE = path.join(__dirname, 'data', 'db.json');
@@ -8406,7 +8422,9 @@ const server = http.createServer(async (req, res) => {
     try {
       const secretEsperado = String(process.env.FISCAL_WEBHOOK_SECRET || '').trim();
       const secretRecebido = req.headers['x-fiscal-webhook-secret'];
-      if (!secretEsperado || secretRecebido !== secretEsperado) {
+      // Comparacao de tempo constante: `!==` para no primeiro caractere errado
+      // e conta, em nanossegundos, quanto o palpite acertou. Ver lib/comparar-segredo.js.
+      if (!segredosIguais(secretRecebido, secretEsperado)) {
         return sendJson(res, { error: 'Não autorizado' }, 401);
       }
       const body = await readBody(req);
@@ -8434,7 +8452,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const secretEsperado = String(process.env.OPEN_FINANCE_WEBHOOK_SECRET || '').trim();
       const secretRecebido = req.headers['x-open-finance-webhook-secret'];
-      if (!secretEsperado || secretRecebido !== secretEsperado) {
+      if (!segredosIguais(secretRecebido, secretEsperado)) {
         return sendJson(res, { error: 'Não autorizado' }, 401);
       }
       const provider = decodeURIComponent(pathname.replace('/api/open-finance/webhooks/', ''));
@@ -13341,9 +13359,11 @@ const server = http.createServer(async (req, res) => {
   if (raizEstatica && req.method === 'GET') {
     const relativo = pathname.replace(/^\/(modules|assets)\//, '');
     const filePath = path.join(raizEstatica, relativo);
-    // Contenção de path traversal: path.join já normaliza '..', então basta
-    // exigir que o resultado continue dentro da raiz permitida.
-    if (!filePath.startsWith(raizEstatica)) {
+    // Contencao de path traversal por FRONTEIRA DE PASTA, e nao por prefixo de
+    // texto: `filePath.startsWith(raizEstatica)` aprovava
+    // `public/modules-privado/x.js`. A regra, com o porque e as 13 sondagens
+    // que a mediram, esta em lib/caminho-seguro.js.
+    if (!dentroDaPasta(raizEstatica, filePath)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Acesso negado');
       return;
@@ -13355,10 +13375,31 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, { error: 'Não encontrado' }, 404);
 });
 
+/**
+ * Os enderecos IPv4 em que a maquina esta visivel para os outros. Vazio quando
+ * HOST nao e' '0.0.0.0' — nesse caso nao ha nada a avisar.
+ */
+function enderecosDaRede() {
+  if (HOST !== '0.0.0.0') return [];
+  const achados = [];
+  for (const placas of Object.values(os.networkInterfaces())) {
+    for (const placa of placas || []) {
+      if (placa.family === 'IPv4' && !placa.internal) achados.push(placa.address);
+    }
+  }
+  return achados;
+}
+
 function startServer(port, retriesLeft) {
   server.listen(port, HOST, () => {
     const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
     console.log(`Servidor iniciado em http://${displayHost}:${port}`);
+    // Escutar em toda interface e' legitimo (loja com varios computadores), mas
+    // tem de ser VISIVEL. Sem esta linha, a diferenca entre "so' eu alcanco" e
+    // "a rua alcanca" nao aparecia em lugar nenhum.
+    for (const endereco of enderecosDaRede()) {
+      console.log(`  visivel na rede em http://${endereco}:${port} — qualquer um nesta rede alcanca`);
+    }
   });
 
   server.once('error', (error) => {

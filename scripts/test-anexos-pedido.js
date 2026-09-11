@@ -16,7 +16,7 @@ const path = require('path');
 
 const RAIZ = path.join(__dirname, '..');
 const ler = (rel) => fs.readFileSync(path.join(RAIZ, rel), 'utf8');
-const semComentarios = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const { semComentarios } = require('./sem-comentarios');
 
 let falhas = 0;
 const check = (nome, cond, det) => {

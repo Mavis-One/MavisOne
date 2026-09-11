@@ -78,7 +78,7 @@ check("frame-ancestors 'none'", /"frame-ancestors 'none'"/.test(csp));
 console.log('--- 3. nada inline no app (é o que sustenta a CSP) ---');
 // Um único `onclick=` que volte derruba a CSP inteira: seria preciso reabrir
 // 'unsafe-inline', e aí ela deixa de valer contra XSS.
-const semComentarios = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const { semComentarios } = require('./sem-comentarios');
 const appCodigo = semComentarios(app);
 for (const atributo of ['onclick=', 'onchange=', 'onsubmit=', 'onerror=', 'onload=']) {
   check(`  sem ${atributo} no app.js`, !appCodigo.includes(atributo));

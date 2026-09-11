@@ -18,7 +18,7 @@ const RAIZ = path.join(__dirname, '..');
 const ler = (rel) => fs.readFileSync(path.join(RAIZ, rel), 'utf8');
 // Comentário citando um trecho não é o trecho: sem tirar os comentários, este
 // arquivo já se deu por satisfeito duas vezes lendo a própria explicação.
-const semComentarios = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const { semComentarios } = require('./sem-comentarios');
 
 let falhas = 0;
 const check = (nome, cond, det) => {

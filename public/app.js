@@ -7156,115 +7156,26 @@ async function loadModule(moduleName) {
     // enquanto ela esteve aqui, editá-la parecia mexer no sistema e não mexia.
 
     // ========================================================================
-    // ABA: ESTOQUE
+    // ABA: ESTOQUE e ABA: FINANCEIRO — desenhadas por public/modules/, nao daqui.
     // ========================================================================
-    if (moduleName === 'stock') {
-      const data = await api('/api/stock');
-      content.innerHTML = `
-        <div class="panel">
-          <h3>Novo produto</h3>
-          <form id="stockForm" class="form-grid">
-            <div class="row">
-              <label>Nome<input name="name" required /></label>
-              <label>SKU<input name="sku" required /></label>
-            </div>
-            <div class="row">
-              <label>Estoque inicial<input name="stockQuantity" type="number" required value="0" /></label>
-              <label>Custo<input name="costPrice" type="number" step="0.01" required value="0" /></label>
-              <label>Preço de venda<input name="salePrice" type="number" step="0.01" required value="0" /></label>
-            </div>
-            <button type="submit">Salvar produto</button>
-          </form>
-        </div>
-        <div class="panel">
-          <h3>Estoque atual</h3>
-          <table class="table">
-            <thead><tr><th>Produto</th><th>SKU</th><th>Estoque</th><th>Custo</th><th>Venda</th></tr></thead>
-            <tbody>
-              ${data.products.map((product) => `<tr><td>${product.name}</td><td>${product.sku}</td><td>${product.stockQuantity}</td><td>R$ ${product.costPrice}</td><td>R$ ${product.salePrice}</td></tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
-      document.getElementById('stockForm').addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const formData = new FormData(event.target);
-        try {
-          await api('/api/stock', {
-            method: 'POST',
-            body: JSON.stringify({
-              name: formData.get('name'),
-              sku: formData.get('sku'),
-              stockQuantity: Number(formData.get('stockQuantity')),
-              costPrice: Number(formData.get('costPrice')),
-              salePrice: Number(formData.get('salePrice'))
-            })
-          });
-          showToast('Produto salvo com sucesso.', 'success');
-          loadModule('stock');
-        } catch (error) {
-          showToast(error.message || 'Erro ao salvar produto.', 'error');
-        }
-      });
-      return;
-    }
-
-    // ========================================================================
-    // ABA: FINANCEIRO
-    // ========================================================================
-    if (moduleName === 'finance') {
-      const data = await api('/api/finance');
-      content.innerHTML = `
-        <div class="panel">
-          <h3>Conciliação financeira</h3>
-          <p class="muted">Cada venda gera um lançamento financeiro ligado ao mesmo registro.</p>
-          <table class="table">
-            <thead><tr><th>Tipo</th><th>Referência</th><th>Descrição</th><th>Valor</th><th>Status</th></tr></thead>
-            <tbody>
-              ${data.finance.map((entry) => `<tr><td>${entry.type}</td><td>${entry.referenceId}</td><td>${entry.description}</td><td>R$ ${entry.amount.toFixed(2)}</td><td>${entry.status}</td></tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-        <div class="panel">
-          <h3>Adicionar lançamento</h3>
-          <form id="financeForm" class="form-grid">
-            <div class="row">
-              <label>Tipo<select name="type"><option value="sale">Venda</option><option value="purchase">Compra</option></select></label>
-              <label>Referência<input name="referenceId" /></label>
-              <label>Valor<input name="amount" type="number" step="0.01" required value="0" /></label>
-            </div>
-            <div class="row">
-              <label>Descrição<input name="description" /></label>
-              <label>Status<select name="status"><option value="paid">Pago</option><option value="pending">Pendente</option></select></label>
-              <label>Método<input name="method" value="Dinheiro" /></label>
-            </div>
-            <button type="submit">Salvar lançamento</button>
-          </form>
-        </div>
-      `;
-      document.getElementById('financeForm').addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const formData = new FormData(event.target);
-        try {
-          await api('/api/finance', {
-            method: 'POST',
-            body: JSON.stringify({
-              type: formData.get('type'),
-              referenceId: formData.get('referenceId'),
-              description: formData.get('description'),
-              amount: Number(formData.get('amount')),
-              status: formData.get('status'),
-              method: formData.get('method')
-            })
-          });
-          showToast('Lançamento financeiro salvo com sucesso.', 'success');
-          loadModule('finance');
-        } catch (error) {
-          showToast(error.message || 'Erro ao salvar lançamento financeiro.', 'error');
-        }
-      });
-      return;
-    }
+    // Aqui existiam duas telas inteiras: "Novo produto" com a tabela de estoque,
+    // e "Conciliacao financeira" com o formulario de lancamento. Nenhuma das
+    // duas rodava. O MavisModuleRouter chama MavisModuleRegistry.stock e
+    // .finance (modules/stock/index.js e modules/finance/index.js), e nenhum dos
+    // dois devolve false — entao o router retorna `handled` e este trecho ficava
+    // inalcancavel, como ja' acontecia com Compras e com Configuracoes.
+    //
+    // MEDIDO ANTES DE REMOVER, e nao deduzido: um marcador no topo de cada
+    // bloco, e os dois modulos abertos num Chrome de verdade por quatro
+    // sub-telas cada — a Area de Trabalho, a sub-tela padrao, uma sub-tela real
+    // e uma que nao existe (que cai no fallback). Oito aberturas, zero
+    // disparos.
+    //
+    // E as duas montavam HTML com `${product.name}` cru, sem escapeHtml. Nao
+    // dava para explorar, porque nao executavam — mas era o padrao errado
+    // guardado num arquivo onde alguem poderia copia-lo achando que era o jeito
+    // da casa. As telas de verdade estao em modules/stock/subs/ e
+    // modules/finance/subs/, e la' o escapeHtml e' usado.
 
     // ========================================================================
     // ABA: CONFIGURAÇÕES — mora em public/modules/settings/

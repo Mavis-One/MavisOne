@@ -198,7 +198,7 @@ const appJs = lerArquivo('public/app.js');
 // Sem comentários: a primeira versão deste check acusou o comentário que
 // EXPLICA a troca ("no lugar do window.prompt()"). Teste que reclama de texto
 // em vez de código ensina a esconder a palavra, não a corrigir o problema.
-const semComentarios = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const { semComentarios } = require('./sem-comentarios');
 const promptsCrus = varrer(path.join(RAIZ, 'public'))
   .filter((rel) => /(?:^|[^.\w])(?:window\.)?prompt\s*\(/m.test(
     semComentarios(lerArquivo(rel)).replace(/promptModal\s*\(/g, '')));
