@@ -10,7 +10,7 @@ const FINANCE_TYPE_TOGGLE = [
 window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFinanceNovoLancamento(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml } = ctx;
 
-  let meta = { categories: [], costCenters: [], bankAccounts: [], directory: [] };
+  let meta = { categories: [], costCenters: [], bankAccounts: [], directory: [], estabelecimentos: [], contasPorEstabelecimento: [] };
   try {
     meta = await api('/api/finance/meta');
   } catch (error) {
@@ -28,6 +28,23 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     }
     state.financeEditEntryId = null;
   }
+
+  // FASE CD — POR QUAL ESTABELECIMENTO ESTE LANCAMENTO E'.
+  //
+  // Entra preenchido com o da pessoa, que e' o caso comum e nao pede clique
+  // nenhum. Editando um lancamento antigo, vale o que ele ja tem — inclusive
+  // vazio, que e' como nasceram todos os anteriores a esta fase.
+  const REGRA = window.MavisContasPorEstabelecimento;
+  const podeTrocarEstab = meta.podeTrocarEstabelecimento === true;
+  let estabelecimentoAtual = editEntry
+    ? (editEntry.estabelecimentoId || '')
+    : (meta.estabelecimentoDoUsuario || '');
+  // O campo so' aparece quando ha' o que dizer: sem estabelecimento cadastrado,
+  // ou com a pessoa presa ao seu e sem vinculo nenhum, ele seria um select com
+  // uma opcao so' — ruido no formulario mais usado do Financeiro.
+  const mostrarEstab = Boolean(REGRA)
+    && (meta.estabelecimentos || []).length > 0
+    && (podeTrocarEstab || estabelecimentoAtual);
 
   let formType = editEntry ? String(editEntry.type).toUpperCase() : 'DESPESA';
   // Vinculado a pedido/NF-e: dá para editar, mas só o que a origem não possui.
@@ -52,8 +69,48 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   function costCenterOptions() {
     return meta.costCenters.map((c) => `<option value="${c.id}" ${editEntry && editEntry.costCenter === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
   }
+  /**
+   * As contas que ESTE estabelecimento pode usar (fase CD).
+   *
+   * Filtra pela MESMA funcao que o servidor usa para recusar a gravacao — o
+   * arquivo compartilhado e' um so'. Sem isso, a lista ofereceria uma conta que
+   * o servidor recusa, e a pessoa aprenderia a desconfiar da tela.
+   *
+   * Sem a regra carregada, mostra tudo: e' o comportamento anterior a esta
+   * fase, e esconder contas por causa de um <script> que nao carregou seria
+   * pior do que mostrar demais — o servidor continua recusando o que nao vale.
+   */
+  function contasDisponiveis() {
+    if (!REGRA || !estabelecimentoAtual) return meta.bankAccounts;
+    return REGRA.contasDoEstabelecimento({
+      contas: meta.bankAccounts,
+      estabelecimentoId: estabelecimentoAtual,
+      estabelecimentos: meta.estabelecimentos || [],
+      vinculos: meta.contasPorEstabelecimento || []
+    });
+  }
+
   function bankAccountOptions(selectedId) {
-    return meta.bankAccounts.map((c) => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    const lista = contasDisponiveis();
+    // A conta JA GRAVADA num lancamento antigo continua na lista mesmo que
+    // hoje nao seja permitida. Tira-la faria o select abrir em branco ao editar
+    // e o primeiro salvamento apagaria a conta do lancamento sem ninguem pedir.
+    const gravada = selectedId && !lista.some((c) => c.id === selectedId)
+      ? meta.bankAccounts.find((c) => c.id === selectedId)
+      : null;
+    const paraMostrar = gravada ? [gravada, ...lista] : lista;
+    return paraMostrar.map((c) => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}${gravada && c.id === gravada.id ? ' (não liberada para este estabelecimento)' : ''}</option>`).join('');
+  }
+
+  function nomeDoEstab(e) {
+    const nome = e.nomeFantasia || e.razaoSocial || 'Sem nome';
+    return String(e.tipo || '').toUpperCase() === 'MATRIZ' ? `${nome} (matriz)` : nome;
+  }
+
+  function estabelecimentoOptions() {
+    return (meta.estabelecimentos || [])
+      .map((e) => `<option value="${e.id}" ${estabelecimentoAtual === e.id ? 'selected' : ''}>${escapeHtml(nomeDoEstab(e))}</option>`)
+      .join('');
   }
 
   function renderForm() {
@@ -98,6 +155,19 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         </div>
 
         <form id="financeEntryForm" class="form-grid">
+          ${mostrarEstab ? `
+          <div class="row">
+            <label>Estabelecimento
+              <select name="estabelecimentoId" id="financeEstabSelect" ${podeTrocarEstab ? '' : 'disabled title="Você lança pelo seu próprio estabelecimento. Quem administra o sistema libera a troca em Configurações › Usuários."'}>
+                ${podeTrocarEstab ? '<option value="">Nenhum</option>' : ''}
+                ${estabelecimentoOptions()}
+              </select>
+            </label>
+            <label class="finance-estab-nota">&nbsp;
+              <span class="muted">A lista de contas bancárias abaixo mostra só o que este estabelecimento pode usar.</span>
+            </label>
+          </div>` : ''}
+
           <div class="row">
             <label>Data<input type="date" name="date" required value="${editEntry ? editEntry.date : today}" ${travado('date')} /></label>
             <label>Vencimento<input type="date" name="dueDate" required value="${editEntry ? editEntry.dueDate : today}" /></label>
@@ -307,6 +377,30 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       }
     });
 
+    // FASE CD — trocar o estabelecimento refaz SO' as listas de conta.
+    //
+    // Nao chama renderForm(): o formulario inteiro seria redesenhado e tudo o
+    // que a pessoa ja' digitou iria junto. Trocar o estabelecimento no meio do
+    // preenchimento e' justamente quando isso doeria mais.
+    document.getElementById('financeEstabSelect')?.addEventListener('change', (evento) => {
+      estabelecimentoAtual = evento.target.value || '';
+      const permitidas = contasDisponiveis();
+      let perdeuAlguma = null;
+      content.querySelectorAll('.js-bank-account-select').forEach((select) => {
+        const escolhida = select.value;
+        const aindaVale = !escolhida || permitidas.some((c) => c.id === escolhida);
+        if (!aindaVale) {
+          perdeuAlguma = (meta.bankAccounts.find((c) => c.id === escolhida) || {}).name || 'A conta escolhida';
+        }
+        select.innerHTML = `<option value="">Selecione</option>${bankAccountOptions(aindaVale ? escolhida : '')}`;
+      });
+      // Avisa em vez de limpar em silencio: um campo que se esvazia sozinho
+      // parece defeito, e a pessoa salvaria sem a conta sem perceber.
+      if (perdeuAlguma) {
+        showToast(`${perdeuAlguma} não está liberada para este estabelecimento. Escolha outra conta.`, 'warning');
+      }
+    });
+
     document.getElementById('financeEntryForm')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const submitBtn = event.target.querySelector('button[type="submit"]');
@@ -330,6 +424,13 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           document: formData.get('document'),
           note: formData.get('note')
         };
+      // Fase CD: so' vai quando o campo existe na tela. Mandar '' de um
+      // formulario que nem perguntou desvincularia o lancamento do
+      // estabelecimento dele — a mesma distincao ausente/vazio que o servidor
+      // faz para o vendedor e para as telas bloqueadas.
+      if (mostrarEstab) {
+        payload.estabelecimentoId = formData.get('estabelecimentoId') || '';
+      }
       if (formType === 'TRANSFERENCIA') {
         payload.bankAccountId = formData.get('sourceBankAccountId') || '';
         payload.targetBankAccountId = formData.get('targetBankAccountId') || '';

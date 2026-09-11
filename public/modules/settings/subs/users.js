@@ -24,6 +24,20 @@ window.MavisSubscreenRegistry.settings.users = async function renderSettingsUser
 
   const usuarios = data.users || [];
   const vendedores = data.sellers || [];
+  // Fase CD: para mostrar o vinculo na coluna. So' leitura aqui — quem edita e'
+  // a ficha do usuario, porque a caixa "pode lancar por outro" anda junto e as
+  // duas decisoes nao deviam ficar em telas diferentes.
+  const estabelecimentos = data.estabelecimentos || [];
+  function resumoDeEstabelecimento(user) {
+    if (!user.estabelecimentoId) return '<span class="muted">Todos</span>';
+    const dono = estabelecimentos.find((e) => e.id === user.estabelecimentoId);
+    if (!dono) return '<span class="muted">-</span>';
+    const ehMatriz = String(dono.tipo || '').toUpperCase() === 'MATRIZ';
+    const nome = escapeHtml(dono.nomeFantasia || dono.razaoSocial || 'Sem nome');
+    const troca = user.podeTrocarEstabelecimento
+      ? '<br><span class="muted" style="font-size:11px">pode lançar por outros</span>' : '';
+    return `${nome} <span class="chip-estab ${ehMatriz ? 'is-matriz' : ''}">${ehMatriz ? 'matriz' : 'filial'}</span>${troca}`;
+  }
 
   // "Todas" é o caso normal e precisa ser reconhecível de longe: sem isto, uma
   // coluna vazia e uma coluna com recorte se parecem, e o recorte é justamente
@@ -62,7 +76,7 @@ window.MavisSubscreenRegistry.settings.users = async function renderSettingsUser
                inclusive. Sem o seletor, um administrador que também vende não
                teria por onde se vincular, e o painel pessoal dele ficaria vazio
                para sempre sem explicação. Ver lib/relatorios-escopo.js. -->
-          <thead><tr><th>Usuário</th><th>Nome</th><th>Função</th><th>Módulos</th><th>Telas</th><th>Vendedor vinculado</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Usuário</th><th>Nome</th><th>Função</th><th>Módulos</th><th>Telas</th><th>Estabelecimento</th><th>Vendedor vinculado</th><th>Ações</th></tr></thead>
           <tbody>
             ${usuarios.length ? usuarios.map((user) => `
               <tr data-user-id="${user.id}">
@@ -71,6 +85,7 @@ window.MavisSubscreenRegistry.settings.users = async function renderSettingsUser
                 <td>${escapeHtml(user.role)}</td>
                 <td>${escapeHtml((user.allowedModules || []).join(', '))}</td>
                 <td>${resumoDeTelas(user)}</td>
+                <td>${resumoDeEstabelecimento(user)}</td>
                 <td>
                   <select class="user-seller" data-id="${escapeHtml(user.id)}">
                     <option value="">Nenhum</option>
@@ -90,7 +105,7 @@ window.MavisSubscreenRegistry.settings.users = async function renderSettingsUser
                   </button>
                 </td>
               </tr>
-            `).join('') : '<tr><td colspan="7" class="muted">Nenhum usuário cadastrado.</td></tr>'}
+            `).join('') : '<tr><td colspan="8" class="muted">Nenhum usuário cadastrado.</td></tr>'}
           </tbody>
         </table>
       </div>

@@ -35,6 +35,14 @@ const SETTINGS_FISCAL_PERMISSIONS = window.MavisFiscalPermissoes.CATALOGO;
 function renderSettingsUserForm(ctx, mode) {
   const { content, data, api, showToast, loadModule, moduleLabels, state, escapeHtml } = ctx;
   const vendedores = data?.sellers || [];
+  // Fase CD: de qual estabelecimento a pessoa e'. Vazio e' uma escolha
+  // legitima — quem nao tem vinculo nao tem conta filtrada, que e' como o
+  // sistema inteiro funcionava antes desta fase.
+  const estabelecimentos = data?.estabelecimentos || [];
+  const nomeDoEstab = (e) => {
+    const nome = e.nomeFantasia || e.razaoSocial || 'Sem nome';
+    return String(e.tipo || '').toUpperCase() === 'MATRIZ' ? `${nome} (matriz)` : nome;
+  };
   const isEditing = mode === 'edit';
   const editUser = isEditing ? state.settingsDraft?.editUser : null;
   // Quando se está CRIANDO a partir de "Duplicar", este é o usuário de origem:
@@ -101,6 +109,29 @@ function renderSettingsUserForm(ctx, mode) {
             </select>
           </label>
         </div>
+
+        ${estabelecimentos.length ? `
+        <!-- FASE CD — O ESTABELECIMENTO DA PESSOA.
+             É o que entra preenchido no lançamento financeiro e o que filtra a
+             lista de contas bancárias. Sem vínculo, nada é filtrado: é o
+             comportamento anterior a esta fase, e não um bloqueio silencioso.
+             A regra de quais contas cada estabelecimento pode usar está em
+             Configurações › Contas por Estabelecimento. -->
+        <div class="row">
+          <label>Estabelecimento
+            <select name="estabelecimentoId">
+              <option value="">Nenhum — não filtra contas bancárias</option>
+              ${estabelecimentos.map((e) => `<option value="${escapeHtml(e.id)}" ${e.id === editUser?.estabelecimentoId ? 'selected' : ''}>${escapeHtml(nomeDoEstab(e))}</option>`).join('')}
+            </select>
+          </label>
+          <label class="user-form-switch">
+            <input type="checkbox" name="podeTrocarEstabelecimento" ${editUser?.podeTrocarEstabelecimento ? 'checked' : ''} />
+            Pode lançar por outro estabelecimento
+          </label>
+          <label>&nbsp;
+            <span class="muted">Quem administra o sistema pode sempre, independente desta caixa.</span>
+          </label>
+        </div>` : ''}
         <div class="checkbox-grid">
           ${SETTINGS_USER_MODULES.map((module) => `<label><input type="checkbox" name="module" class="user-form-module" value="${module}" ${(modelo?.allowedModules || []).includes(module) ? 'checked' : ''} /> ${moduleLabels[module]}</label>`).join('')}
         </div>
@@ -253,6 +284,8 @@ function renderSettingsUserForm(ctx, mode) {
             allowedModules: selectedModules,
             fiscalPermissions: selectedFiscalPermissions,
             sellerId: formData.get('sellerId') || '',
+            estabelecimentoId: formData.get('estabelecimentoId') || '',
+            podeTrocarEstabelecimento: formData.get('podeTrocarEstabelecimento') === 'on',
             blockedSubs: telasBloqueadas,
             password: password || undefined
           })
@@ -263,7 +296,15 @@ function renderSettingsUserForm(ctx, mode) {
           method: 'POST',
           body: JSON.stringify({
             type: 'user',
-            payload: { name: formData.get('name'), username: formData.get('username'), password, role: formData.get('role'), allowedModules: selectedModules, fiscalPermissions: selectedFiscalPermissions, sellerId: formData.get('sellerId') || '', blockedSubs: telasBloqueadas }
+            payload: {
+              name: formData.get('name'), username: formData.get('username'), password,
+              role: formData.get('role'), allowedModules: selectedModules,
+              fiscalPermissions: selectedFiscalPermissions,
+              sellerId: formData.get('sellerId') || '',
+              estabelecimentoId: formData.get('estabelecimentoId') || '',
+              podeTrocarEstabelecimento: formData.get('podeTrocarEstabelecimento') === 'on',
+              blockedSubs: telasBloqueadas
+            }
           })
         });
         showToast('Usuário criado com sucesso.', 'success');

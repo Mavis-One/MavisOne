@@ -80,6 +80,12 @@
          app.js, que monta o select de bandeira na linha de pagamento do pedido.
          O server.js faz require() do MESMO arquivo. -->
     <script src="/modules/shared/bandeira_cartao.js"></script>
+    <!-- Qual conta bancaria cada estabelecimento pode usar. Antes do modulo de
+         Configuracoes (a tela da matriz de permissao) e antes do Financeiro (o
+         formulario de lancamento filtra a lista de contas por ela). O server.js
+         faz require() do MESMO arquivo, e e' por isso que a tela nunca oferece
+         uma conta que o servidor vai recusar. -->
+    <script src="/modules/shared/contas_por_estabelecimento.js"></script>
     <script src="/modules/shared/sales_bulk_actions.js"></script>
     <script src="/modules/shared/fiscal_permissoes.js"></script>
     <!-- O que cada CST do ICMS admite. Carregado antes do modulo Fiscal:
@@ -166,6 +172,7 @@
     <script src="/modules/settings/subs/fiscal.js"></script>
     <script src="/modules/settings/subs/access_control.js"></script>
     <script src="/modules/settings/subs/access_logs.js"></script>
+    <script src="/modules/settings/subs/contas_por_estabelecimento.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

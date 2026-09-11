@@ -27,7 +27,25 @@ window.MavisSubscreenRegistry.cadastros.nova_conta_bancaria = window.MavisCadast
             { id: 'investimento', name: 'Investimento' }
           ]
         },
-        { name: 'status', label: 'Status', type: 'select', empty: null, default: 'ativo', options: [{ id: 'ativo', name: 'Ativo' }, { id: 'inativo', name: 'Inativo' }] }
+        { name: 'status', label: 'Status', type: 'select', empty: null, default: 'ativo', options: [{ id: 'ativo', name: 'Ativo' }, { id: 'inativo', name: 'Inativo' }] },
+        // Fase CD: DE QUEM e' a conta. E' daqui que sai a regra padrao de quem
+        // pode usa-la — sem dono, a conta vale para todo mundo, que e' como
+        // toda conta anterior a esta fase esta'.
+        //
+        // `empty` diz "Sem dono" em vez de "Selecione": vazio aqui e' uma
+        // escolha legitima e comum (conta da casa, caixa interno), e nao um
+        // campo que a pessoa esqueceu de preencher.
+        {
+          name: 'estabelecimentoId',
+          label: 'Estabelecimento',
+          type: 'select',
+          empty: 'Sem dono — vale para todos',
+          hint: 'Quem pode usar esta conta sai daqui. Configurações › Contas por Estabelecimento ajusta caso a caso.',
+          options: (meta) => (meta.estabelecimentos || []).map((e) => ({
+            id: e.id,
+            name: `${e.nomeFantasia || e.razaoSocial}${String(e.tipo || '').toUpperCase() === 'MATRIZ' ? ' (matriz)' : ''}`
+          }))
+        }
       ]
     },
     {

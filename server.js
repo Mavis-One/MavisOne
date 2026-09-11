@@ -109,6 +109,12 @@ const sessaoUtil = require('./lib/sessao');
 const { segredosIguais } = require('./lib/comparar-segredo');
 const { dentroDaPasta } = require('./lib/caminho-seguro');
 const { respostaDeErro } = require('./lib/erro-para-o-usuario');
+// Fase CD: a regra de qual conta bancaria cada estabelecimento pode usar. Mesmo
+// arquivo que o navegador carrega por <script> -- a tela filtra a lista e o
+// servidor recusa a gravacao lendo a MESMA regra, entao a tela nunca oferece o
+// que o servidor recusa.
+const contasPorEstab = require('./public/modules/shared/contas_por_estabelecimento');
+const contasEstabDb = require('./lib/db/contas-estabelecimento');
 
 // EM QUE INTERFACE O SERVIDOR ESCUTA (fase CB — achado 13).
 //
@@ -734,6 +740,89 @@ async function ehAdmin(usuario) {
   if (permissoes.ehAdministrador(usuario)) return true;
   const acesso = await db.rbac.carregarAcessoDoUsuario(usuario.id);
   return Boolean(acesso && permissoes.ehAdministrador({ ...usuario, roles: acesso.roles }));
+}
+
+/**
+ * CONTAS BANCARIAS POR ESTABELECIMENTO (fase CD).
+ *
+ * Tres funcoes, e a divisao entre elas e' o ponto: quem PODE trocar, QUAL
+ * estabelecimento vale para esta operacao, e se a conta escolhida serve para
+ * ele. A regra em si nao esta aqui -- esta em
+ * public/modules/shared/contas_por_estabelecimento.js, que o navegador tambem
+ * le. Aqui fica so' o que depende da requisicao.
+ */
+
+/**
+ * Pode lancar por um estabelecimento que nao e' o seu?
+ *
+ * O "ou administrador" nao e' folga, e' a mesma razao do `podeVerRelatorios`:
+ * quem administra o sistema precisa conseguir corrigir o lancamento de qualquer
+ * unidade, e barra-lo aqui o faria pedir a alguem que ele mesmo administra.
+ */
+function podeTrocarDeEstabelecimento(user, ehAdministrador) {
+  return Boolean(user) && (ehAdministrador || user.podeTrocarEstabelecimento === true);
+}
+
+/**
+ * De qual estabelecimento e' esta operacao.
+ *
+ * Sem nada no corpo, e' o do usuario -- que e' o caso comum e por isso nao pede
+ * clique nenhum. Com algo no corpo, so' vale se a pessoa puder trocar; senao a
+ * recusa e' explicita, e nao um silencioso "usei o seu mesmo": gravar por um
+ * estabelecimento diferente do que a tela mostrou seria pior do que recusar.
+ */
+function estabelecimentoDaOperacao(user, ehAdministrador, pedido) {
+  const doUsuario = String((user && user.estabelecimentoId) || '').trim();
+  const pedidoLimpo = String(pedido == null ? '' : pedido).trim();
+
+  if (!pedidoLimpo) return { id: doUsuario };
+  if (pedidoLimpo === doUsuario) return { id: doUsuario };
+  if (podeTrocarDeEstabelecimento(user, ehAdministrador)) return { id: pedidoLimpo };
+
+  const erro = new Error('Você só pode lançar pelo seu próprio estabelecimento. '
+    + 'Quem administra o sistema libera isso em Configurações › Usuários.');
+  erro.status = 403;
+  return { id: doUsuario, erro };
+}
+
+/**
+ * A conta escolhida serve para este estabelecimento?
+ *
+ * Roda no servidor porque a tela ja' filtrou a lista, e lista filtrada nao e'
+ * trava: um POST a' mao passa por cima dela. Confere a conta de origem e a de
+ * destino -- transferencia entre contas tem duas, e uma transferencia da conta
+ * da filial PARA a conta da matriz seria exatamente o que a regra proibe, feita
+ * pela porta dos fundos.
+ */
+async function conferirContasDoEstabelecimento({ estabelecimentoId, contaIds }) {
+  const alvo = String(estabelecimentoId || '').trim();
+  const ids = (contaIds || []).map((id) => String(id || '').trim()).filter(Boolean);
+  // Sem estabelecimento nao ha pergunta a fazer: e' o lancamento de quem ainda
+  // nao tem vinculo, e o sistema funcionava assim ate' esta fase.
+  if (!alvo || !ids.length) return;
+
+  const [estabelecimentos, contas, vinculos] = await Promise.all([
+    fiscalDb.getEstabelecimentos(),
+    db.getBankAccounts(),
+    contasEstabDb.listarVinculos()
+  ]);
+  const estabelecimento = estabelecimentos.find((e) => String(e.id) === alvo);
+  if (!estabelecimento) {
+    const erro = new Error('Estabelecimento não encontrado.');
+    erro.status = 404;
+    throw erro;
+  }
+
+  for (const id of ids) {
+    const conta = contas.find((c) => String(c.id) === id);
+    // Conta que nao existe e' problema de outra validacao; aqui ela nao e'
+    // barrada pela regra de estabelecimento, que nao tem o que dizer sobre ela.
+    if (!conta) continue;
+    if (contasPorEstab.podeUsar({ conta, estabelecimentoId: alvo, estabelecimentos, vinculos })) continue;
+    const erro = new Error(contasPorEstab.motivoDaRecusa({ conta, estabelecimento, estabelecimentos }));
+    erro.status = 400;
+    throw erro;
+  }
 }
 
 function ipDaRequisicao(req) {
@@ -9486,11 +9575,19 @@ const server = http.createServer(async (req, res) => {
       } catch (error) {
         products = [];
       }
+      // Fase CD: o formulario da conta bancaria pergunta de qual estabelecimento
+      // ela e'. `.catch(() => [])` porque Cadastros nao depende do Fiscal: sem
+      // estabelecimento nenhum cadastrado, o campo some e o resto da tela
+      // continua funcionando.
+      const estabelecimentosCad = await fiscalDb.getEstabelecimentos().catch(() => []);
       return sendJson(res, {
         directory: cadastrosCore.directory(data),
         products,
         deposits: data.deposits,
         bankAccounts: data.bankAccounts,
+        estabelecimentos: estabelecimentosCad
+          .filter((e) => e.ativo !== false)
+          .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia })),
         paymentMethods: data.paymentMethods,
         // As credenciadoras alimentam o select da forma de pagamento (fase BV).
         // Só as ATIVAS: a inativa some do formulário e continua no histórico.
@@ -11672,10 +11769,30 @@ const server = http.createServer(async (req, res) => {
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
+    // Fase CD: a tela precisa das TRES coisas para filtrar a lista de contas
+    // sozinha, sem uma ida ao servidor a cada troca de estabelecimento — os
+    // estabelecimentos, os vinculos gravados, e qual e' o padrao desta pessoa.
+    // Manda-se a lista INTEIRA de contas, e nao a ja' filtrada: o filtro muda
+    // conforme o estabelecimento escolhido no proprio formulario, e refazer a
+    // requisicao a cada troca do select seria lento e piscaria a tela.
+    //
+    // Isso nao afrouxa nada. A lista e' o que a tela OFERECE; quem RECUSA e' o
+    // servidor, na gravacao, com a mesma regra.
+    const ehAdministrador = await ehAdmin(user);
+    const [estabelecimentosMeta, vinculosMeta] = await Promise.all([
+      fiscalDb.getEstabelecimentos().catch(() => []),
+      contasEstabDb.listarVinculos().catch(() => [])
+    ]);
     return sendJson(res, {
       categories: data.financialCategories,
       costCenters: data.costCenters,
       bankAccounts: data.bankAccounts,
+      estabelecimentos: estabelecimentosMeta
+        .filter((e) => e.ativo !== false)
+        .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia })),
+      contasPorEstabelecimento: vinculosMeta,
+      estabelecimentoDoUsuario: user.estabelecimentoId || '',
+      podeTrocarEstabelecimento: podeTrocarDeEstabelecimento(user, ehAdministrador),
       directory: getCadastroDirectory(data),
       // Produtos com a classificação fiscal: é o que permite montar o item da
       // NF-e a partir do cadastro em vez de digitar NCM e origem a cada
@@ -11804,6 +11921,16 @@ const server = http.createServer(async (req, res) => {
       const amount = Number(body.amount || 0);
       const invalido = validarLancamentoFinanceiro({ ...body, type, amount });
       if (invalido) return sendJson(res, { error: invalido }, 400);
+
+      // Fase CD. Duas perguntas, nesta ordem: por qual estabelecimento esta
+      // pessoa pode lancar, e se as contas escolhidas servem para ele.
+      const escolha = estabelecimentoDaOperacao(user, await ehAdmin(user), body.estabelecimentoId);
+      if (escolha.erro) throw escolha.erro;
+      await conferirContasDoEstabelecimento({
+        estabelecimentoId: escolha.id,
+        contaIds: [body.bankAccountId, type === 'TRANSFERENCIA' ? body.targetBankAccountId : '']
+      });
+
       const today = new Date().toISOString().slice(0, 10);
       const entry = await db.createFinancialEntry({
         type,
@@ -11817,6 +11944,7 @@ const server = http.createServer(async (req, res) => {
         costCenter: body.costCenter || '',
         bankAccountId: body.bankAccountId || '',
         targetBankAccountId: type === 'TRANSFERENCIA' ? (body.targetBankAccountId || '') : '',
+        estabelecimentoId: escolha.id,
         clientSupplierId: body.clientSupplierId || '',
         clientSupplierName: body.clientSupplierName || '',
         referenceId: '',
@@ -12068,6 +12196,23 @@ const server = http.createServer(async (req, res) => {
       const invalido = validarLancamentoFinanceiro(proposto);
       if (invalido) return sendJson(res, { error: invalido }, 400);
 
+      // Fase CD, e sobre o estado PROPOSTO pelo mesmo motivo das linhas acima:
+      // sem conferir aqui, a regra de contas por estabelecimento seria uma
+      // trava que se contorna gravando um lançamento qualquer e editando a
+      // conta depois. O estabelecimento do lançamento é o que ele já tem, a não
+      // ser que o PUT mande outro — e aí vale a mesma pergunta de quem pode
+      // trocar.
+      const escolhaPut = estabelecimentoDaOperacao(
+        user,
+        await ehAdmin(user),
+        body.estabelecimentoId !== undefined ? body.estabelecimentoId : entry.estabelecimentoId
+      );
+      if (escolhaPut.erro) throw escolhaPut.erro;
+      await conferirContasDoEstabelecimento({
+        estabelecimentoId: escolhaPut.id,
+        contaIds: [proposto.bankAccountId, proposto.targetBankAccountId]
+      });
+
       // LANÇAMENTO VINCULADO a um pedido (referenceId) ou a uma NF-e (nfeId).
       //
       // Antes daqui saía um "não pode editar" seco, e o sistema se contradizia:
@@ -12120,6 +12265,9 @@ const server = http.createServer(async (req, res) => {
         if (body.costCenter !== undefined) entry.costCenter = body.costCenter;
         if (body.bankAccountId !== undefined) entry.bankAccountId = body.bankAccountId;
         if (body.targetBankAccountId !== undefined) entry.targetBankAccountId = body.targetBankAccountId;
+        // Fase CD: o que `estabelecimentoDaOperacao` decidiu, e nao o que veio
+        // no corpo — quem nao pode trocar ja' foi recusado la' em cima.
+        entry.estabelecimentoId = escolhaPut.id;
         entry.status = recomputeFinanceEntryStatus(entry, data);
         entry.updatedAt = new Date().toISOString();
         // Mesmo caminho de persistência da edição livre, logo abaixo: registro
@@ -12150,6 +12298,7 @@ const server = http.createServer(async (req, res) => {
       if (body.targetBankAccountId !== undefined) entry.targetBankAccountId = body.targetBankAccountId;
       if (body.clientSupplierId !== undefined) entry.clientSupplierId = body.clientSupplierId;
       if (body.clientSupplierName !== undefined) entry.clientSupplierName = body.clientSupplierName;
+      entry.estabelecimentoId = escolhaPut.id;
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
       // Manda o registro inteiro: a edição pode ter mexido em qualquer campo, e
@@ -13021,7 +13170,12 @@ const server = http.createServer(async (req, res) => {
           sellerId: entry.sellerId || '',
           // Fase AN: sem isto o formulário abriria com todas as telas marcadas
           // e o primeiro salvamento desfaria os bloqueios sem ninguém pedir.
-          blockedSubs: entry.blockedSubs || {}
+          blockedSubs: entry.blockedSubs || {},
+          // Fase CD, pelo mesmo motivo das duas linhas acima: o formulário
+          // precisa abrir com o vínculo que já existe, senão salvar o nome de
+          // alguém desvincularia a pessoa do estabelecimento dela.
+          estabelecimentoId: entry.estabelecimentoId || '',
+          podeTrocarEstabelecimento: entry.podeTrocarEstabelecimento === true
         }))
       : [];
     return sendJson(res, {
@@ -13030,6 +13184,13 @@ const server = http.createServer(async (req, res) => {
       // As pessoas com papel "Vendedor" no Cadastros. So' quem administra usuario
       // recebe a lista: ela e' um cadastro, e nao um dado publico.
       sellers: canManageUsers ? getSellersDirectory(data) : [],
+      // Fase CD: a lista para o campo "Estabelecimento" da ficha do usuario.
+      // Mesma regra dos vendedores — so' quem administra usuario recebe.
+      estabelecimentos: canManageUsers
+        ? (await fiscalDb.getEstabelecimentos().catch(() => []))
+          .filter((e) => e.ativo !== false)
+          .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia }))
+        : [],
       totals,
       permissions: {
         company: true,
@@ -13066,6 +13227,11 @@ const server = http.createServer(async (req, res) => {
           fiscalPermissions: fiscalPermissoes.sanitizar(body.payload.fiscalPermissions),
           // Fase AL: de quem sao as "minhas vendas" deste usuario.
           sellerId: String(body.payload.sellerId || '').trim(),
+          // Fase CD: de qual estabelecimento a pessoa e', e se pode lancar por
+          // outro. Sem escolha, nasce sem vinculo — e sem vinculo nada e'
+          // filtrado, que e' o comportamento de antes desta fase.
+          estabelecimentoId: String(body.payload.estabelecimentoId || '').trim(),
+          podeTrocarEstabelecimento: body.payload.podeTrocarEstabelecimento === true,
           // Fase AN: telas que este usuario nao ve dentro dos modulos liberados.
           blockedSubs: sanitizarTelasBloqueadas(body.payload.blockedSubs)
         });
@@ -13103,6 +13269,110 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Tipo de configuração inválido' }, 400);
     } catch (error) {
       return sendErro(res, error, 'Erro ao salvar configurações', 400);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // CONTAS BANCARIAS POR ESTABELECIMENTO (fase CD) — so' administrador.
+  //
+  // O portao central nao tem prefixo mapeado para isto, entao a conferencia e'
+  // aqui mesmo, na rota: `ehAdmin` e nao `allowedModules.includes('settings')`,
+  // porque quem tem a caixa Configuracoes marcada nao necessariamente decide
+  // quem alcanca o dinheiro de qual unidade.
+  // ---------------------------------------------------------------------
+  if (pathname === '/api/settings/contas-por-estabelecimento' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !(await ehAdmin(user))) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const [estabelecimentos, contas, vinculos] = await Promise.all([
+        fiscalDb.getEstabelecimentos(),
+        db.getBankAccounts(),
+        contasEstabDb.listarVinculos()
+      ]);
+      return sendJson(res, {
+        estabelecimentos: estabelecimentos.map((e) => ({
+          id: e.id, tipo: e.tipo, ordem: e.ordem, cnpj: e.cnpj,
+          razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia, ativo: e.ativo
+        })),
+        contas: contas.map((c) => ({
+          id: c.id, name: c.name, bank: c.bank, bankCode: c.bankCode,
+          agency: c.agency, number: c.number, ativo: c.ativo,
+          estabelecimentoId: c.estabelecimentoId
+        })),
+        vinculos,
+        // O que a regra padrao produziria HOJE. A tela usa para mostrar, em
+        // cada conta que ninguem configurou, quais caixas o automatico marca —
+        // sem precisar reimplementar a regra do lado de la'.
+        padrao: contasPorEstab.regraPadrao(estabelecimentos, contas)
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao carregar as contas por estabelecimento', 500);
+    }
+  }
+
+  if (pathname === '/api/settings/contas-por-estabelecimento' && req.method === 'PUT') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !(await ehAdmin(user))) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+
+      let pares;
+      if (body.voltarTudoAoPadrao === true) {
+        // "Voltar tudo para a regra padrao" APAGA a configuracao manual, e nao
+        // grava o padrao como se alguem o tivesse marcado a mao.
+        //
+        // A diferenca aparece no futuro. Gravado, o padrao vira uma fotografia
+        // de hoje: a conta que nascer no mes que vem fica de fora da fotografia
+        // e ninguem a enxerga, e a filial criada depois nao entra em nada.
+        // Apagado, a regra volta a ser calculada a cada pergunta — e continua
+        // valendo para o que ainda nem existe.
+        pares = [];
+      } else {
+        if (!Array.isArray(body.vinculos)) {
+          return sendJson(res, { error: 'Envie a lista de vínculos.' }, 400);
+        }
+        pares = body.vinculos;
+      }
+
+      const gravados = await contasEstabDb.salvarVinculos(pares);
+      await registrarAuditoria({
+        action: 'salvarContasPorEstabelecimento',
+        targetId: 'conta_estabelecimento',
+        targetUsername: `${gravados} vínculo(s)`,
+        byId: user.id,
+        byName: user.name
+      });
+      return sendJson(res, { success: true, gravados });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao salvar as contas por estabelecimento', 400);
+    }
+  }
+
+  // Tira UMA conta da configuracao manual: ela volta a seguir a regra padrao.
+  // Existe separado do PUT porque "voltar ao automatico" e' uma decisao sobre
+  // uma linha, e faze-la pelo PUT exigiria a tela remontar a matriz inteira sem
+  // aquela conta — mais codigo para dizer menos.
+  if (/^\/api\/settings\/contas-por-estabelecimento\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !(await ehAdmin(user))) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const contaId = decodeURIComponent(pathname.replace('/api/settings/contas-por-estabelecimento/', ''));
+      await contasEstabDb.limparConta(contaId);
+      await registrarAuditoria({
+        action: 'contaVoltouAoPadrao',
+        targetId: contaId,
+        byId: user.id,
+        byName: user.name
+      });
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao voltar a conta para a regra padrão', 400);
     }
   }
 
@@ -13312,7 +13582,13 @@ const server = http.createServer(async (req, res) => {
         // Ausente = nao mexe no vinculo; vazio = desvincula. Ver updateUser.
         sellerId: body.sellerId === undefined ? undefined : String(body.sellerId || '').trim(),
         // Mesma regra: ausente nao mexe, {} libera todas as telas de volta.
-        blockedSubs: body.blockedSubs === undefined ? undefined : sanitizarTelasBloqueadas(body.blockedSubs)
+        blockedSubs: body.blockedSubs === undefined ? undefined : sanitizarTelasBloqueadas(body.blockedSubs),
+        // Fase CD, e a mesma distincao de novo: ausente nao mexe, vazio
+        // desvincula do estabelecimento.
+        estabelecimentoId: body.estabelecimentoId === undefined
+          ? undefined : String(body.estabelecimentoId || '').trim(),
+        podeTrocarEstabelecimento: body.podeTrocarEstabelecimento === undefined
+          ? undefined : body.podeTrocarEstabelecimento === true
       });
       // PROMOVER E REBAIXAR TEM DE CHEGAR AO PAPEL, NÃO SÓ À COLUNA.
       //

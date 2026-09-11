@@ -4192,3 +4192,79 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 .finance-cartao-box h4 { margin: 0 0 10px; font-size: 13px; }
 .finance-cartao-box p { margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; }
+
+/* ===========================================================================
+   CONTAS POR ESTABELECIMENTO (fase CD)
+   ---------------------------------------------------------------------------
+   Uma matriz de marcar caixas. O que precisa ficar legível de longe é o ESTADO
+   de cada linha: seguindo a regra padrão, ou configurada à mão. As duas se
+   parecem — as mesmas caixas marcadas —, e a diferença é o que acontece com a
+   conta ou a filial que nascer depois.
+   =========================================================================== */
+.matriz-contas th.col-estab,
+.matriz-contas td.col-estab {
+  text-align: center;
+  white-space: nowrap;
+}
+.matriz-contas td.col-estab input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+}
+/* Linha no automático: as caixas mostram o que a regra decide, e não o que
+   alguém marcou. Meio apagadas para dizer isso sem precisar de legenda. */
+.matriz-contas tr.linha-padrao td.col-estab input[type="checkbox"] {
+  opacity: 0.55;
+}
+.matriz-contas tr.linha-manual {
+  background: var(--panel-alt);
+}
+.estado-manual {
+  font-weight: 600;
+  color: var(--primary);
+}
+/* Matriz e filial precisam se distinguir na cabeça da coluna: a regra inteira
+   gira em torno de qual é qual. */
+.chip-estab {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--status-sistema-bg);
+  color: var(--status-sistema-text);
+  vertical-align: middle;
+}
+.chip-estab.is-matriz {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+/* Ação secundária dentro de uma célula: um botão de verdade (teclado, foco),
+   com aparência de link. */
+.link-botao {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-botao:hover { color: var(--success-hover); }
+/* Caixa de marcar dentro de uma linha de campos: alinha com os selects ao lado
+   em vez de flutuar no topo da célula. */
+.user-form-switch {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  align-self: end;
+  padding-bottom: 9px;
+}
+.user-form-switch input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}

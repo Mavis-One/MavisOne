@@ -1767,7 +1767,12 @@ const moduleSubItems = {
     // verdade da empresa (CNPJ, razão social, regime, certificado) sempre
     // estiveram na tela fiscal. Sobrou um cartão, apontando para onde o dado
     // realmente mora.
-    { key: 'fiscal', label: 'Empresa', desc: 'CNPJ, regime, certificado digital, estabelecimentos e regras fiscais.' }
+    { key: 'fiscal', label: 'Empresa', desc: 'CNPJ, regime, certificado digital, estabelecimentos e regras fiscais.' },
+    // Fase CD. Fica em Configuracoes, e nao em Cadastros junto das contas,
+    // porque a pergunta e' de administracao — quem alcanca o dinheiro de qual
+    // unidade —, e nao de cadastro. Quem tem a caixa Cadastros marcada nao
+    // decide isso: a rota exige administrador.
+    { key: 'contas_por_estabelecimento', label: 'Contas por Estabelecimento', desc: 'Qual conta bancária cada matriz/filial pode usar.' }
   ],
 
   // ABA: Cadastros

@@ -41,6 +41,20 @@ window.MavisSubscreenRegistry.cadastros.contas_bancarias = window.MavisCadastros
       }
     },
     { label: 'Tipo', render: (item) => window.MavisCadastros.escape(BANK_ACCOUNT_TYPE_LABELS[item.type] || item.type || '-') },
+    // Fase CD: de quem e' a conta. Fica na lista porque e' o que explica por que
+    // uma conta aparece para uns e nao para outros — sem a coluna, a pergunta
+    // "cade a conta X?" nao teria onde ser respondida.
+    {
+      label: 'Estabelecimento',
+      render: (item, meta) => {
+        if (!item.estabelecimentoId) return '<span class="muted">Todos</span>';
+        const dono = ((meta && meta.estabelecimentos) || []).find((e) => e.id === item.estabelecimentoId);
+        if (!dono) return '<span class="muted">-</span>';
+        const ehMatriz = String(dono.tipo || '').toUpperCase() === 'MATRIZ';
+        return window.MavisCadastros.escape(dono.nomeFantasia || dono.razaoSocial)
+          + ` <span class="chip-estab ${ehMatriz ? 'is-matriz' : ''}">${ehMatriz ? 'matriz' : 'filial'}</span>`;
+      }
+    },
     { label: 'Titular', render: (item) => window.MavisCadastros.escape(item.holder || '-') },
     { label: 'Saldo inicial', render: (item) => window.MavisCadastros.formatBRL(item.initialBalance) },
     { label: 'Status', render: (item) => window.MavisCadastros.statusBadge(item.status) }
