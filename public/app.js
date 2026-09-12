@@ -1893,6 +1893,15 @@ function opcoesDeCategoriaDeVenda(meta, valorAtual) {
   return opcoes;
 }
 
+// Contagem de cartao, com separador de milhar. "14864" num cartao se conta
+// digito por digito; "14.864" se le de relance. Aceita undefined porque a
+// resposta pode nao trazer o campo (rota antiga, ou erro parcial), e nesse caso
+// mostrar "0" seria afirmar que nao ha nenhum.
+function contagemFormatada(valor) {
+  if (valor === null || valor === undefined) return '—';
+  return Number(valor).toLocaleString('pt-BR');
+}
+
 function renderSearchableSelect({ id, name, options, selectedValue, placeholder, required }) {
   const selected = options.find((o) => String(o.value) === String(selectedValue || ''));
   return `
@@ -2339,10 +2348,15 @@ async function loadModule(moduleName) {
 
         content.innerHTML = `
           <div class="finance-stat-cards">
-            ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: String(data.orders?.length || 0) })}
-            ${financeStatCard({ tone: 'purple', label: 'Orçamentos', value: String(data.quotes?.length || 0) })}
-            ${financeStatCard({ tone: 'teal', label: 'NF-e', value: String(data.nfes?.length || 0) })}
-            ${financeStatCard({ tone: 'cyan', label: 'Importações', value: String(data.importLogs?.length || 0) })}
+            <!-- Os quatro cartoes leem CONTAGEM, e nao o tamanho de listas
+                 inteiras (fase CI). A rota mandava orders e quotes completos so
+                 para estes quatro numeros: 27,7 MB de pedidos para escrever
+                 "14864" aqui. Sem crase neste comentario, que ele mora dentro de
+                 um template literal. -->
+            ${financeStatCard({ tone: 'blue', label: 'Pedidos', value: contagemFormatada(data.contagens?.orders) })}
+            ${financeStatCard({ tone: 'purple', label: 'Orçamentos', value: contagemFormatada(data.contagens?.quotes) })}
+            ${financeStatCard({ tone: 'teal', label: 'NF-e', value: contagemFormatada(data.contagens?.nfes) })}
+            ${financeStatCard({ tone: 'cyan', label: 'Importações', value: contagemFormatada(data.contagens?.importLogs) })}
           </div>
           <div class="cadastro-page-head">
             <div>
@@ -5088,7 +5102,7 @@ async function loadModule(moduleName) {
           <div class="cadastro-page-head">
             <div>
               <h3>Logs de Vendas Importadas</h3>
-              <p class="muted">${data.importLogs.length} importação${data.importLogs.length === 1 ? '' : 'ões'} registrada${data.importLogs.length === 1 ? '' : 's'}</p>
+              <p class="muted">${data.importLogs.length} importa${data.importLogs.length === 1 ? 'ção' : 'ções'} registrada${data.importLogs.length === 1 ? '' : 's'}</p>
             </div>
             <div class="cadastro-list-actions">
               <button type="button" data-ir-para="import_sales">+ Importar Vendas</button>

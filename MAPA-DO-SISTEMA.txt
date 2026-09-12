@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-12 12:36 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-12 13:05 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -594,7 +594,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-103 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+104 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -640,6 +640,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-grupo-card-da-nfe.js          O GRUPO `card` DA NF-e (fase BW) — INTEIRO OU NENHUM.
   [npm test] test-guardas-de-exclusao.js        AS GUARDAS DE EXCLUSÃO PERGUNTAM À FONTE CERTA (fase BO).
   [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
+  [npm test] test-importacao-de-pedidos.js      O QUE A IMPORTAÇÃO DO HISTÓRICO DE VENDAS DEIXOU PARA TRÁS (fase CI).
   [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
   [npm test] test-lancamento-vinculado.js       Lançamento gerado por PEDIDO ou por NF-e: o que dá e o que não dá para mudar.
   [npm test] test-lista-vendas.js               Lista de Pedidos e Orçamentos: colunas, ordenação, paginação e URL.

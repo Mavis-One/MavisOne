@@ -7553,10 +7553,32 @@ const server = http.createServer(async (req, res) => {
         total: filtered.length,
         page,
         limit,
-        orders: data.orders,
-        quotes: data.quotes,
-        nfes: data.nfes,
-        importLogs: data.importLogs,
+        // CONTAGEM, E NAO AS LISTAS (fase CI).
+        //
+        // Aqui iam `orders: data.orders` e `quotes: data.quotes` inteiros, ao
+        // lado de uma pagina de 15 registros. A tela usa os quatro para UMA
+        // COISA SO': o numero dentro de quatro cartoes de contagem. Medido no
+        // navegador depois da importacao do historico do ViperERP:
+        //
+        //     orders ....... 27.772 KB   (14.864 itens)
+        //     meta .........  1.482 KB
+        //     quotes .......    137 KB   (78 itens)
+        //     records ......     35 KB   (15 itens)  <- a pagina que a tela usa
+        //     -------------------------------------
+        //     resposta .....  29.426 KB   ·   6,2 s so para buscar
+        //
+        // 99,9% do peso existia para a tela imprimir "14864" num cartao. Com uma
+        // duzia de pedidos ninguem nota; com 14.864 a lista de Vendas levava 17
+        // segundos para abrir em localhost, e numa rede de verdade nao abriria.
+        //
+        // As outras views desta rota (`nfes`, `import_logs`) tem resposta propria
+        // e continuam entregando a lista — quem precisa dela pede por lá.
+        contagens: {
+          orders: (data.orders || []).length,
+          quotes: (data.quotes || []).length,
+          nfes: (data.nfes || []).length,
+          importLogs: (data.importLogs || []).length
+        },
         meta: {
           companies: data.companies,
           sellers: getSellersDirectory(data),
