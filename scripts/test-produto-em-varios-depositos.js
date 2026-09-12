@@ -29,34 +29,89 @@
  *     tela Status do Produto ......................... posição por depósito,
  *        participação % e o histórico completo, movimento por movimento
  *
- * O QUE FICA REGISTRADO, E NÃO É BUG POR DECISÃO
+ * NENHUM DEPÓSITO PODE FICAR NEGATIVO (fase CK)
+ * -----------------------------------------------
+ * A venda conferia só o TOTAL do produto e gravava a baixa no depósito
+ * escolhido. Vender 8 de um depósito com 5, quando o produto tinha 10 somando
+ * dois galpões, era aceito e o depósito ficava em -3.
+ *
+ * Isto foi apresentado, o usuário primeiro decidiu deixar como estava e depois
+ * mandou corrigir — "nenhum estoque pode ficar negativo, nada pode sair dos
+ * estoques após zerados ou com quantidade menor do que solicitado no pedido".
+ * O texto que ficava aqui dizia que o comportamento seguiria como estava;
+ * deixá-lo seria pior do que não ter comentário.
+ *
+ * A GUARDA MORA NO COMMIT, e não em cada chamador. commitStockMovements é o
+ * ponto único: venda, PCP, transferência, nota de entrada, recebimento de
+ * compra e estorno todos passam por lá. Remendar caminho por caminho garante
+ * que o próximo caminho novo esqueça. E fica DENTRO da transação, depois do
+ * travarProduto — conferir antes de abrir a transação deixaria duas vendas
+ * simultâneas passarem somadas pela guarda.
+ *
+ * MEDIDO contra servidor e banco descartáveis, com 5 em cada um de 2 depósitos:
+ *
+ *   vender 8 da BARRA, que tem 5 ............ RECUSADO
+ *      "Estoque insuficiente em FILIAL 009 (BARRA) ...: disponível 5,
+ *       necessário 8. Nenhum depósito pode ficar negativo — transfira o saldo
+ *       antes, ou escolha outro depósito."
+ *   vender 5, que é exatamente o que há ..... ACEITO
+ *   vender 1 da BARRA, agora zerada ......... RECUSADO (disponível 0)
+ *   vender 3 da BARRA com 5 no GALPÃO ....... RECUSADO — o total do produto
+ *                                             não salva mais ninguém
+ *   transferir 3 do GALPÃO e vender 3 ....... ACEITO
+ *
+ * O "NÃO ALOCADO" TAMBÉM NÃO PODE FICAR NEGATIVO
  * ----------------------------------------------
- * A VENDA NÃO CONFERE O DEPÓSITO — só o total do produto. Medido:
+ * Movimento sem depósito cai nesse balde. Deixá-lo de fora produzia um estado
+ * incoerente SEM nenhum número negativo na tela — medido antes desta guarda,
+ * com o produto 10000:
  *
- *     LOJA SAO BENTO tinha 4, o produto tinha 14 no total
- *     vender 10 DA LOJA .............................. ACEITO
- *     depois:  ASSISTENCIA=3  LOJA=-6  GALPAO=7  total=4
- *     vender 9999 (mais que o total) ................. recusado,
- *        "disponível: 4, necessário: 9999"
+ *     FILIAL 006 (GALPAO) = 2      ·      total do produto = 1
  *
- * O total fica certo e nenhum depósito individual fica. A transferência recusa
- * o mesmo movimento que a venda aceita: em server.js a projeção da venda usa a
- * chave `productId|classValueId`, SEM depósito, e semeia com o total do
- * produto — mas grava a baixa no depósito escolhido no pedido.
+ * Então a venda de um pedido sem depósito passa a consumir apenas o não
+ * alocado. Saldo fora de depósito só nasce de importação (a rota de
+ * movimentação exige depósito de verdade), e é o caso dos produtos do
+ * ViperERP. Medido, com 4 fora de depósito:
  *
- * ISTO FOI APRESENTADO E O USUÁRIO DECIDIU DEIXAR COMO ESTÁ (12/09/2026). Está
- * escrito aqui para que:
- *   - ninguém gaste um dia redescobrindo o mesmo comportamento; e
- *   - ninguém o "corrija" achando que é descuido, sem saber que foi escolha.
+ *     vender 3 .......... ACEITO, sobra 1
+ *     vender 5 .......... RECUSADO (disponível 1)
+ *     vender 1 .......... ACEITO, sobra 0
+ *     vender 1 .......... RECUSADO (disponível 0)
  *
- * NÃO existe check assertando o comportamento atual de propósito. Travá-lo em
- * teste faria o conserto — que é a direção certa se a decisão mudar — falhar a
- * suíte como se fosse regressão.
+ * SALDO QUE JÁ ESTAVA NEGATIVO continua aceitando crédito: devolver mercadoria
+ * a um depósito negativo é o conserto, não a infração. A guarda só recusa
+ * quando o lote PIORA o saldo.
  *
- * Se um dia a decisão mudar, o conserto tem UM cuidado: pedido SEM depósito
- * escolhido tem de continuar projetando contra o total. Os 14.864 pedidos
- * importados do ViperERP têm deposit_id vazio, e passar a exigir saldo de um
- * depósito em branco bloquearia todos eles.
+ * A TELA AVISA ANTES
+ * ------------------
+ * Recusar no faturamento, sozinho, é dizer "não" depois de o cliente ter
+ * ouvido "sim". O seletor de produto da venda passou a mostrar o saldo DO
+ * DEPÓSITO ESCOLHIDO:
+ *
+ *     sem depósito ............ "... · saldo 1"
+ *     FILIAL 006 (GALPAO) ..... "... · 2 em FILIAL 006 (GALPAO) (1 no total)"
+ *     FILIAL 009 (BARRA) ...... "... · 0 em FILIAL 009 (BARRA) (1 no total)"
+ *
+ * O total vai entre parênteses porque "0 em Barra" sozinho faria concluir que o
+ * produto acabou, quando ele pode estar no galpão esperando transferência.
+ *
+ * DEPÓSITO PERTENCE A UMA FILIAL, E AGORA DÁ PARA DIZER ISSO NA TELA
+ * -----------------------------------------------------------------
+ * A coluna deposits.company_id e a conferência da rota existem desde a fase AW,
+ * e Vendas já filtrava o depósito pela empresa escolhida — mas não havia CAMPO
+ * em tela nenhuma. O vínculo só podia ser gravado por SQL, e um recurso que só
+ * o banco alcança é um recurso que não existe. Medido:
+ *
+ *     FILIAL 006 (GALPAO) -> SAL INFINITY PLUS (MATRIZ)
+ *     FILIAL 009 (BARRA)  -> SAL INFINITY FILIAL 009 (BARRA)
+ *     ESTOQUE CENTRAL     -> (todas as filiais)
+ *
+ *     escolhendo a BARRA na venda: ["ESTOQUE CENTRAL (todas)", "FILIAL 009 (BARRA)"]
+ *     escolhendo a MATRIZ:         ["ESTOQUE CENTRAL (todas)", "FILIAL 006 (GALPAO)"]
+ *
+ * Em branco é escolha legítima e é o padrão: um galpão central serve a rede
+ * inteira, e obrigar a escolher uma filial mentiria sobre ele — é também o que
+ * mantém de pé os depósitos já cadastrados sem empresa (ver a fase AW).
  */
 const fs = require('fs');
 const path = require('path');
@@ -182,6 +237,8 @@ console.log('--- 6. o filtro da lista por depósito ---');
 check('a lista de produtos filtra por depósito',
   /list = list\.filter\(\(p\) => \(p\.balances\.find\(\(b\) => b\.depositId === depositId\) \|\| \{\}\)\.quantity > 0\)/.test(servidor));
 
+const app = semComentarios(ler('public/app.js'));
+
 console.log('--- 7. o painel "Quantidades Disponíveis por Estoque" ---');
 const compartilhado = ler('public/modules/stock/shared.js');
 const compartilhadoCodigo = semComentarios(compartilhado);
@@ -242,6 +299,94 @@ check('sem depósito nenhum, o painel explica em vez de sair vazio',
   /Nenhum depósito cadastrado\. Cadastre um depósito/.test(compartilhado));
 
 // ---------------------------------------------------------------------------
+console.log('--- 8. a guarda: nenhum deposito pode ficar negativo ---');
+// A GUARDA MORA NO COMMIT, e nao em cada chamador. Este e' o check que garante
+// isso: se ela migrar para dentro de transitionOrderStockEffect, PCP, nota de
+// entrada e recebimento de compra voltam a ficar descobertos.
+const posCommit = servidor.indexOf('async function commitStockMovements');
+const posGuarda = servidor.indexOf('const deltaPorDeposito = new Map();');
+const posInsere = servidor.indexOf('await razaoEstoque.inserirMovimentos(cliente, movements);');
+check('a guarda esta dentro de commitStockMovements', posGuarda > posCommit && posCommit > 0);
+// ANTES de inserir: conferir depois gravaria e desfaria, e o rollback teria de
+// ser perfeito para o razao nao ficar com linha fantasma.
+check('  e ANTES de inserir os movimentos', posInsere > posGuarda);
+// DEPOIS do lock: conferir antes de travar deixaria duas vendas simultaneas do
+// mesmo produto passarem somadas pela guarda.
+const posLock = servidor.indexOf('await razaoEstoque.travarProduto(cliente, productId);');
+check('  e DEPOIS de travar o produto', posGuarda > posLock && posLock > posCommit);
+check('o saldo e lido do BANCO, dentro da transacao',
+  /await razaoEstoque\.saldosPorDeposito\(cliente, pares\)/.test(servidor));
+const razaoDb = semComentarios(ler('lib/db/estoque-razao.js'));
+check('  e a consulta soma o razao por produto+deposito',
+  /where product_id = \$1 and deposit_id = \$2/.test(razaoDb));
+
+console.log('--- 9. os dois niveis, e o que fica de fora ---');
+const guarda = servidor.slice(posGuarda, posInsere);
+// Conferir so a cor deixaria o deposito estourar por itens sem cor; conferir so
+// o deposito deixaria uma cor ficar devendo enquanto outra sobra.
+check('confere o deposito inteiro E o deposito+cor',
+  /const chaves = \[/.test(guarda) && /if \(movimento\.classValueId\) chaves\.push\(/.test(guarda));
+// Saldo que JA estava negativo continua aceitando credito: devolver mercadoria
+// a um deposito negativo e o conserto, nao a infracao.
+check('so recusa quando o lote PIORA o saldo', /\.filter\(\(\[, v\]\) => v\.delta < 0\)/.test(guarda));
+check('  e passa quando o resultado nao fica negativo', /if \(resultado >= 0\) continue;/.test(guarda));
+// A mensagem tem de dizer ONDE e QUANTO, senao a pessoa nao sabe o que fazer.
+const servidorCru = ler('server.js');
+check('a recusa nomeia o deposito e os dois numeros',
+  /Estoque insuficiente em \$\{nomeDoDeposito/.test(servidorCru)
+  && /dispon\u00edvel \$\{Number\(saldo\)\}, necess\u00e1rio \$\{Number\(-delta\)\}/.test(servidorCru));
+check('  e diz o que fazer', /transfira o saldo antes, ou escolha outro dep\u00f3sito/.test(servidorCru));
+
+console.log('--- 10. o "nao alocado" tambem nao pode ficar negativo ---');
+// Sem isto o estado ficava incoerente SEM nenhum negativo na tela: o produto
+// dizia "1 em estoque" e um galpao sozinho guardava 2.
+check('ha guarda para movimento sem deposito', /const deltaSemDeposito = new Map\(\);/.test(servidor));
+check('  lendo o nao alocado do banco', /await razaoEstoque\.naoAlocadoDoProduto\(cliente, produtoId\)/.test(servidor));
+// `unallocated` e DERIVADO (total - alocado), como productBalances calcula.
+// Somar o razao do deposito vazio daria outro numero para produto cujo saldo
+// entrou por importacao, sem movimento nenhum.
+check('  e o nao alocado e total MENOS os depositos, como productBalances faz',
+  /coalesce\(p\.stock_quantity, 0\) - coalesce\(\(/.test(razaoDb)
+  && /where m\.product_id = p\.id and m\.deposit_id <> ''/.test(razaoDb));
+check('a recusa explica que o saldo esta dentro de depositos',
+  /O saldo restante est\u00e1 dentro de dep\u00f3sitos/.test(servidorCru));
+
+console.log('--- 11. a tela de venda avisa ANTES ---');
+// Recusar no faturamento, sozinho, e dizer "nao" depois de o cliente ter
+// ouvido "sim".
+check('a meta de vendas manda o saldo por deposito', /saldosPorDeposito,/.test(servidor));
+check('o seletor de produto le o deposito escolhido',
+  /const saldoNoDepositoEscolhido = \(productId, classValueId\) =>/.test(app));
+check('  e a linha do item tambem',
+  /const noDeposito = saldoNoDepositoEscolhido\(item\.productId, item\.classValueId\);/.test(app));
+// "0 em Barra" sozinho faria concluir que o produto acabou, quando ele pode
+// estar no galpao esperando transferencia.
+check('o rotulo mostra o total entre parenteses', /no total\)/.test(servidorCru) || /no total\)/.test(ler('public/app.js')));
+// Sem isto os numeros continuariam os do deposito anterior, com o campo
+// dizendo outro nome.
+check('trocar o deposito redesenha o formulario',
+  /syncFormState\(\);[\s\S]{0,80}formState\.depositId = valor;[\s\S]{0,40}renderForm\(\);/.test(app));
+// renderApp() e para NAVEGACAO: usado aqui, levava o formulario embora.
+check('  e NAO com renderApp, que e de navegacao',
+  !/formState\.depositId = valor;[\s\S]{0,20}renderApp\(\);/.test(app));
+
+console.log('--- 12. o vinculo deposito -> filial tem campo em tela ---');
+const telaDeposito = ler('public/modules/stock/subs/new_deposit.js');
+check('o cadastro de deposito tem o campo Filial', /name: 'companyId'/.test(telaDeposito));
+check('  alimentado pela meta do estoque',
+  /options: \(meta\) => \(meta && meta\.companies\) \|\| \[\]/.test(telaDeposito));
+check('  e a meta do estoque manda as empresas',
+  /companies: \(data\.companies \|\| \[\]\)\.map/.test(servidor));
+// Em branco e escolha legitima e e o padrao: um galpao central serve a rede
+// inteira, e obrigar a escolher mentiria sobre ele.
+check('"Todas as filiais" e o padrao', /empty: 'Todas as filiais'/.test(telaDeposito));
+check('a dica explica o que o vazio significa',
+  /Em branco, o dep\u00f3sito serve a qualquer filial/.test(telaDeposito));
+// A dica era aceita na descricao do campo e descartada no desenho — pior que
+// nao existir, porque quem escreveu acha que esta na tela.
+check('  e Stock.field passou a DESENHAR a dica',
+  /const dica = def\.hint \?/.test(semComentarios(ler('public/modules/stock/shared.js'))));
+
 console.log('--- o que foi medido, com servidor e banco descartáveis ---');
 for (const [caso, resultado] of [
   ['10 na matriz + 4 na loja', 'total 14, soma bate'],

@@ -2940,6 +2940,33 @@ async function loadModule(moduleName) {
         // saldo é do produto, muda a toda hora e é sempre lido do cadastro
         // atual. Congelá-los no item faria a tela mostrar estoque de ontem.
         const produtoDoItem = (item) => meta.products.find((p) => p.id === item.productId);
+
+        /**
+         * O SALDO QUE VALE E' O DO DEPOSITO ESCOLHIDO (fase CK).
+         *
+         * A tela mostrava o saldo TOTAL do produto, somando todos os depositos.
+         * Quem vende pela Barra via "15 disponivel" de um produto que tem 5 la'
+         * e 10 no galpao, escolhia 8, e a recusa chegava no faturamento — depois
+         * de o cliente ter ouvido "sim".
+         *
+         * `meta.saldosPorDeposito` vem chaveado por `produto|deposito|cor`, e a
+         * chave com cor vazia e' o deposito inteiro.
+         *
+         * SEM DEPOSITO ESCOLHIDO devolve null: o numero do deposito nao existe
+         * ainda, e mostrar o total no lugar dele seria mostrar justamente o
+         * numero que enganava. Quem chama decide o que fazer com o null.
+         */
+        const saldoNoDepositoEscolhido = (productId, classValueId) => {
+          const deposito = String((typeof formState !== 'undefined' ? formState.depositId : '') || '').trim();
+          if (!deposito) return null;
+          const chave = `${productId}|${deposito}|${classValueId || ''}`;
+          return Number((meta.saldosPorDeposito || {})[chave] || 0);
+        };
+        const nomeDoDepositoEscolhido = () => {
+          const deposito = String((typeof formState !== 'undefined' ? formState.depositId : '') || '').trim();
+          const achado = (meta.deposits || []).find((d) => d.id === deposito);
+          return achado ? achado.name : '';
+        };
         // O rótulo da busca já traz preço e saldo — escolher o produto sem ver
         // que ele está zerado é o erro que a coluna Saldo Estoque só pega
         // depois de adicionado. Renderização e attach usam o MESMO rótulo,
@@ -2950,10 +2977,28 @@ async function loadModule(moduleName) {
               .filter(([chave]) => chave.startsWith(`${p.id}|`) && chave !== `${p.id}|`)
               .reduce((soma, [, qtd]) => soma + Number(qtd || 0), 0);
           const livre = Number(p.stockQuantity || 0) - reservado;
+          const cabecalho = `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)} · `;
+
+          // COM DEPOSITO ESCOLHIDO, o rotulo fala DELE. E' o saldo que a venda
+          // vai consumir e o que a guarda do servidor vai conferir; mostrar o
+          // total aqui seria oferecer 15 de um deposito que tem 5.
+          const noDeposito = saldoNoDepositoEscolhido(p.id, '');
+          if (noDeposito !== null) {
+            const nome = nomeDoDepositoEscolhido();
+            return cabecalho
+              + `${salesFormatQty(noDeposito)} em ${nome}`
+              // O total vai junto, entre parenteses: sem ele, quem ve "0 em
+              // Barra" conclui que o produto acabou, quando ele pode ter 10 no
+              // galpao esperando uma transferencia.
+              + (Number(p.stockQuantity || 0) !== Number(noDeposito)
+                ? ` (${salesFormatQty(p.stockQuantity)} no total)`
+                : '');
+          }
+
           // Quando há reserva o rótulo mostra os dois números: só o disponível
           // faria parecer que o estoque acabou, e só o saldo esconderia que ele
           // já está comprometido.
-          return `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)} · `
+          return cabecalho
             + (reservado > 0
               ? `disponível ${salesFormatQty(livre)} de ${salesFormatQty(p.stockQuantity)}`
               : `saldo ${salesFormatQty(p.stockQuantity)}`);
@@ -2995,6 +3040,14 @@ async function loadModule(moduleName) {
         const saldoDoItem = (item) => {
           const produto = produtoDoItem(item);
           if (!produto) return null;
+          // O DEPOSITO ESCOLHIDO MANDA (fase CK): e' de la' que a mercadoria
+          // sai, e e' o saldo de la' que o servidor confere no commit. Isto vale
+          // tanto para item com cor quanto sem: a chave do saldo por deposito ja
+          // separa as duas coisas.
+          const noDeposito = saldoNoDepositoEscolhido(item.productId, item.classValueId);
+          if (noDeposito !== null) return noDeposito;
+          // Sem deposito escolhido a baixa cai no "nao alocado" e a guarda
+          // confere o total do produto — entao o numero mostrado e o total.
           if (!item.classValueId) return Number(produto.stockQuantity || 0);
           const registro = classesPorProduto.get(item.productId);
           if (!registro) return null;
@@ -4525,7 +4578,27 @@ async function loadModule(moduleName) {
             }
           });
           attachSearchableSelect({ id: 'salesSeller', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })) });
-          attachSearchableSelect({ id: 'salesDeposit', options: depositosDaLoja(meta, formState.companyId, formState.depositId).map((d) => ({ value: d.id, label: d.name })) });
+          // TROCAR O DEPOSITO REDESENHA A TELA (fase CK).
+          //
+          // Desde que o saldo mostrado passou a ser o DAQUELE deposito, deixar a
+          // tela como estava seria pior do que antes: os numeros continuariam os
+          // do deposito anterior, com o campo dizendo outro nome. O rotulo do
+          // seletor de produto, a coluna de saldo de cada item e o alerta de
+          // "sem saldo" todos dependem desta escolha.
+          attachSearchableSelect({
+            id: 'salesDeposit',
+            options: depositosDaLoja(meta, formState.companyId, formState.depositId).map((d) => ({ value: d.id, label: d.name })),
+            onSelect: (valor) => {
+              // syncFormState() antes de redesenhar, para nao perder o que ja
+              // foi digitado — mesmo par que a troca de Pedido <-> Orcamento
+              // usa. `renderApp()` aqui era erro meu: ele e' para NAVEGACAO, e
+              // redesenhava a casca do app levando o formulario embora (o campo
+              // de deposito sumia da tela, e o de produto virava null).
+              syncFormState();
+              formState.depositId = valor;
+              renderForm();
+            }
+          });
           // Categoria e Tabela de Preços guardam o NOME, não um id: é o que o
           // registro da venda sempre gravou, e trocar para id exigiria migrar
           // as vendas antigas.

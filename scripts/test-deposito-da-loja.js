@@ -95,8 +95,18 @@ check('a busca de Categoria usa o cadastro de venda',
   /attachSearchableSelect\(\{ id: 'salesCategory', options: opcoesDeCategoriaDeVenda/.test(appSrc));
 check('  e não mais productCategories',
   !/id: 'salesCategory', options: \(meta\.productCategories/.test(appSrc));
+// O alvo deste check mudou de forma na fase CK, nao de intencao: a chamada
+// passou de uma linha para varias porque ganhou um `onSelect` — trocar o
+// deposito precisa redesenhar o formulario, ja que o saldo mostrado passou a
+// ser o DAQUELE deposito. A lista oferecida continua vindo de depositosDaLoja,
+// que e o que este check existe para garantir. `[\s\S]` em vez de exigir a
+// mesma linha.
 check('a busca de Depósito filtra pela loja',
-  /id: 'salesDeposit', options: depositosDaLoja\(/.test(appSrc));
+  /id: 'salesDeposit',[\s\S]{0,60}options: depositosDaLoja\(/.test(appSrc));
+// E trocar o deposito tem de redesenhar: sem isso os numeros de saldo
+// continuariam os do deposito anterior, com o campo dizendo outro nome.
+check('  e trocar o depósito redesenha o formulário',
+  /id: 'salesDeposit',[\s\S]{0,900}renderForm\(\)/.test(appSrc));
 check('  e o campo desenhado também',
   /id: 'salesDeposit', name: 'depositId', options: depositosDaLoja\(/.test(appSrc));
 

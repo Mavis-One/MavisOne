@@ -5880,6 +5880,103 @@ async function commitStockMovements(data, movements, productsById, opcoes = {}) 
     for (const transferencia of transferencias) {
       if (!transferencia.code) transferencia.code = await razaoEstoque.proximoCodigo(cliente, 'stock_transfers_code_seq', 'TRA');
     }
+    // ---------------------------------------------------------------
+    // NENHUM DEPOSITO PODE FICAR NEGATIVO (fase CK).
+    //
+    // Aqui, e nao em cada chamador, porque ESTE e' o ponto unico: toda
+    // movimentacao do sistema passa por commitStockMovements — venda, PCP,
+    // transferencia, nota de entrada, recebimento de compra, estorno. Remendar
+    // caminho por caminho garante que o proximo caminho novo esqueca.
+    //
+    // E aqui DENTRO da transacao, depois de travarProduto: o saldo lido ja' esta
+    // estavel, entao duas vendas simultaneas do mesmo produto nao passam somadas
+    // pela guarda. Conferir antes de abrir a transacao deixaria justamente essa
+    // corrida de pe'.
+    //
+    // O QUE SE CONFERE, E EM DOIS NIVEIS:
+    //   deposito inteiro  — somando todas as cores
+    //   deposito + cor    — quando o movimento tem cor
+    // Conferir so' a cor deixaria o deposito estourar por itens sem cor;
+    // conferir so' o deposito deixaria uma cor ficar devendo enquanto outra
+    // sobra.
+    //
+    // MOVIMENTO SEM DEPOSITO (deposit_id = '') FICA DE FORA. Esse saldo nao e'
+    // de deposito nenhum: e' o "nao alocado", o que existe no cadastro e nunca
+    // foi distribuido. Os 14.864 pedidos importados do ViperERP tem deposito
+    // vazio; exigir saldo de um deposito em branco recusaria todos eles.
+    //
+    // E SO' RECUSA QUANDO O LOTE PIORA. Saldo que JA' estava negativo (o -3 que
+    // apareceu antes desta guarda existir) continua aceitando credito: devolver
+    // mercadoria a um deposito negativo e' o conserto, nao a infracao.
+    // ---------------------------------------------------------------
+    // E O "NAO ALOCADO" TAMBEM NAO PODE FICAR NEGATIVO.
+    //
+    // Movimento sem deposito cai nesse balde — o que existe no cadastro e nao
+    // esta em galpao nenhum. Deixa-lo de fora produzia um estado incoerente SEM
+    // nenhum numero negativo na tela: medido com o produto 10000, uma venda de
+    // 1 sem deposito deixou o produto dizendo "1 em estoque" enquanto o GALPAO
+    // sozinho guardava 2.
+    //
+    // E' por isso que a venda de um pedido SEM deposito escolhido passa a
+    // consumir apenas o nao alocado, e nao o saldo que esta nos galpoes: tirar
+    // do estoque sem dizer de qual e' tirar de lugar nenhum.
+    const deltaSemDeposito = new Map();
+    for (const movimento of movements) {
+      if (String(movimento.depositId || '').trim()) continue;
+      const delta = stockCore.movementSignedQuantity(movimento);
+      const atual = deltaSemDeposito.get(movimento.productId) || { delta: 0, movimento };
+      deltaSemDeposito.set(movimento.productId, { delta: atual.delta + delta, movimento });
+    }
+    for (const [produtoId, { delta, movimento }] of deltaSemDeposito.entries()) {
+      if (delta >= 0) continue;
+      const naoAlocado = await razaoEstoque.naoAlocadoDoProduto(cliente, produtoId);
+      if (naoAlocado + delta >= 0) continue;
+      throw stockCore.stockError(
+        `Estoque insuficiente para "${movimento.productName || produtoId}" fora de depósito:`
+        + ` disponível ${Number(naoAlocado)}, necessário ${Number(-delta)}.`
+        + ' O saldo restante está dentro de depósitos — escolha o depósito de onde a mercadoria sai.',
+        400
+      );
+    }
+
+    const deltaPorDeposito = new Map();
+    for (const movimento of movements) {
+      const deposito = String(movimento.depositId || '').trim();
+      if (!deposito) continue;
+      const delta = stockCore.movementSignedQuantity(movimento);
+      const chaves = [`${movimento.productId}|${deposito}|`];
+      if (movimento.classValueId) chaves.push(`${movimento.productId}|${deposito}|${movimento.classValueId}`);
+      for (const chave of chaves) {
+        const atual = deltaPorDeposito.get(chave) || { delta: 0, movimento };
+        deltaPorDeposito.set(chave, { delta: atual.delta + delta, movimento });
+      }
+    }
+
+    const aConferir = [...deltaPorDeposito.entries()].filter(([, v]) => v.delta < 0);
+    if (aConferir.length) {
+      const pares = aConferir.map(([chave]) => {
+        const [produtoId, depositoId, classValueId] = chave.split('|');
+        return { produtoId, depositoId, classValueId };
+      });
+      const saldos = await razaoEstoque.saldosPorDeposito(cliente, pares);
+      for (const [chave, { delta, movimento }] of aConferir) {
+        const saldo = saldos.get(chave) || 0;
+        const resultado = saldo + delta;
+        if (resultado >= 0) continue;
+        const nomeDoDeposito = (data.deposits || [])
+          .find((d) => d.id === chave.split('|')[1]);
+        const cor = chave.split('|')[2];
+        const nomeDaCor = cor ? ` (${movimento.classValueName || cor})` : '';
+        throw stockCore.stockError(
+          `Estoque insuficiente em ${nomeDoDeposito ? nomeDoDeposito.name : 'depósito'}`
+          + ` para "${movimento.productName || movimento.productId}"${nomeDaCor}:`
+          + ` disponível ${Number(saldo)}, necessário ${Number(-delta)}.`
+          + ' Nenhum depósito pode ficar negativo — transfira o saldo antes, ou escolha outro depósito.',
+          400
+        );
+      }
+    }
+
     await razaoEstoque.inserirMovimentos(cliente, movements);
     await razaoEstoque.inserirTransferencias(cliente, transferencias);
     for (const [productId, delta] of deltaByProduct.entries()) {
@@ -7369,8 +7466,43 @@ const server = http.createServer(async (req, res) => {
       // de não abrir. O aviso some; a venda continua possível.
       reservas = {};
     }
+    // SALDO POR DEPOSITO, para a tela de venda mostrar o que ha NO DEPOSITO
+    // ESCOLHIDO (fase CK).
+    //
+    // Sem isto o seletor de produto mostrava o saldo TOTAL do produto, somando
+    // todos os depositos. Quem vende pela Barra via "15 disponivel" de um
+    // produto que tem 5 la' e 10 no galpao, escolhia 8 e a recusa chegava no
+    // faturamento — depois de o cliente ter ouvido "sim".
+    //
+    // Vai como objeto simples chaveado por `produto|deposito|cor`, do mesmo
+    // jeito que `reservas`: a tela faz a conta por linha de item, e um Map nao
+    // atravessa JSON. Montado numa passada pelo razao, entao so' aparecem os
+    // pares que tem movimento — produto que nunca entrou em deposito nenhum
+    // simplesmente nao tem chave, e a tela le zero.
+    let saldosPorDeposito = {};
+    try {
+      await sincronizarRazao(data);
+      for (const m of (data.stockMovements || [])) {
+        const deposito = String(m.depositId || '').trim();
+        if (!deposito) continue;
+        const delta = stockCore.movementSignedQuantity(m);
+        const doDeposito = `${m.productId}|${deposito}|`;
+        saldosPorDeposito[doDeposito] = (saldosPorDeposito[doDeposito] || 0) + delta;
+        if (m.classValueId) {
+          const daCor = `${m.productId}|${deposito}|${m.classValueId}`;
+          saldosPorDeposito[daCor] = (saldosPorDeposito[daCor] || 0) + delta;
+        }
+      }
+    } catch (erroRazao) {
+      // Sem o razao a tela cai no comportamento antigo (saldo total do produto)
+      // em vez de nao abrir. O numero fica menos preciso; a venda continua
+      // possivel, e a guarda do commit segue recusando o que nao cabe.
+      saldosPorDeposito = {};
+    }
+
     return sendJson(res, {
       reservas,
+      saldosPorDeposito,
       companies: data.companies,
       sellers: getSellersDirectory(data),
       deposits: data.deposits,
@@ -10815,6 +10947,13 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, {
         deposits: data.deposits,
+        // AS FILIAIS, para o cadastro de deposito poder vincular (fase CK).
+        //
+        // A coluna deposits.company_id e a conferencia da rota existem desde a
+        // fase AW, e Vendas ja filtra o deposito pela empresa escolhida — mas
+        // nao havia CAMPO em tela nenhuma para preencher o vinculo. Dava para
+        // gravar so por SQL, e por isso o recurso existia sem existir.
+        companies: (data.companies || []).map((c) => ({ id: c.id, name: c.name })),
         classes,
         productCategories: data.productCategories,
         movementCategories: data.movementCategories,

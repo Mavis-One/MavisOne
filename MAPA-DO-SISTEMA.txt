@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-12 13:52 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-12 14:14 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:

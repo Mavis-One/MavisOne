@@ -191,9 +191,16 @@ window.MavisStock = window.MavisStock || {};
   const busca = () => window.MavisCampoDeBusca;
 
   // Campo de formulário a partir da descrição declarativa das fábricas.
+  //
+  // `hint` usa o MESMO nome da fábrica de Cadastros, de propósito: declarar uma
+  // dica tem de ser igual nas duas, senão a próxima tela declara do jeito que a
+  // fábrica dela aceita e a divergência volta por outro caminho. Aqui ela era
+  // aceita na descrição do campo e descartada em silêncio no desenho — pior que
+  // não existir, porque quem escreveu a dica acha que ela está na tela.
   Stock.field = function field(def, value, meta) {
     const val = value ?? def.default ?? '';
     const required = def.required ? 'required' : '';
+    const dica = def.hint ? `<span class="cadastro-field-hint muted">${Stock.escape(def.hint)}</span>` : '';
     if (def.type === 'select') {
       const list = busca().lista(def, meta);
       if (busca().ehDeBusca(def, meta)) {
@@ -204,9 +211,9 @@ window.MavisStock = window.MavisStock || {};
           selectedValue: val,
           placeholder: 'Buscar por nome ou SKU...',
           required: Boolean(def.required)
-        })}</label>`;
+        })}${dica}</label>`;
       }
-      return `<label>${def.label}<select name="${def.name}" ${required}>${Stock.options(list, val, { empty: def.empty ?? 'Selecione' })}</select></label>`;
+      return `<label>${def.label}<select name="${def.name}" ${required}>${Stock.options(list, val, { empty: def.empty ?? 'Selecione' })}</select>${dica}</label>`;
     }
     if (def.type === 'textarea') {
       return `<label>${def.label}<textarea name="${def.name}" rows="${def.rows || 3}">${Stock.escape(val)}</textarea></label>`;
