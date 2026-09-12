@@ -4350,3 +4350,102 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   font-size: 10px;
   line-height: 1;
 }
+
+/* ===========================================================================
+   QUANTIDADES DISPONÍVEIS POR ESTOQUE (fase CJ)
+   ---------------------------------------------------------------------------
+   Um cartão por depósito, com o saldo daquele depósito. Substituiu uma tabela
+   de três colunas: a pergunta que se faz aqui é "de onde eu tiro este
+   produto?", e ela se responde correndo o olho, não lendo linha por linha.
+
+   TRÊS ESTADOS, E NÃO DOIS. Verde tem saldo, vermelho está zerado — e o
+   NEGATIVO tem cor própria, mais escura, porque não é a mesma coisa: zero quer
+   dizer "não tem aqui", e -6 quer dizer "o livro está errado". Pintar os dois
+   iguais esconderia um problema de verdade atrás de um estado normal.
+
+   Os depósitos zerados APARECEM de propósito: quem olha este painel precisa ver
+   a rede inteira para saber de onde dá para transferir, e uma lista que mostra
+   só onde há saldo não responde "onde NÃO há".
+   =========================================================================== */
+.estoque-cards {
+  display: grid;
+  /* 250px de minimo: cabe o nome de uma filial em duas linhas e o numero
+     grande, e numa tela larga fecha em 5 a 6 colunas. Sem o minimo, sete
+     depositos viravam sete colunas apertadas numa unica fila. */
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.estoque-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  min-width: 0;
+}
+.estoque-card-icone {
+  flex: 0 0 auto;
+  opacity: 0.75;
+  display: flex;
+  align-items: center;
+}
+/* EMPILHADO, e nao em linha: o nome em cima e o numero embaixo.
+   Os dois sao <span>, que e inline por padrao — sem isto saiam lado a lado
+   ("FILIAL 006 (GALPAO) 5") e o numero deixava de ser o que salta aos olhos,
+   que e o unico motivo de este painel existir. */
+.estoque-card-texto {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* O nome do depósito pode ser longo ("FILIAL 007 (CENTRO - JOINVILLE)"). Ele
+   quebra em duas linhas em vez de ser cortado: cortar "SAO BENTO DO SUL" em
+   "SAO BENT..." obriga a passar o mouse para saber de qual filial se trata. */
+.estoque-card-nome {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.25;
+  word-break: break-word;
+}
+.estoque-card-qtd {
+  display: block;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  /* Dígitos de mesma largura: sem isto os números não alinham entre os cartões
+     e a coluna parece torta. */
+  font-variant-numeric: tabular-nums;
+}
+.estoque-card.tem-saldo {
+  background: var(--success);
+  color: var(--on-primary);
+}
+.estoque-card.zerado {
+  background: var(--danger);
+  color: var(--on-primary);
+}
+/* Negativo: fundo escuro e borda, para não se confundir com o zerado num
+   relance. Ver a nota no topo deste bloco. */
+.estoque-card.negativo {
+  background: var(--danger-hover);
+  color: var(--on-primary);
+  border-color: var(--on-primary);
+  box-shadow: inset 0 0 0 1px var(--danger-hover);
+}
+/* "Sem depósito definido" não é depósito: é o saldo que existe no cadastro e
+   ainda não foi distribuído. Cor neutra, porque nem verde nem vermelho dizem a
+   verdade sobre ele. */
+.estoque-card.sem-deposito {
+  background: var(--panel-alt);
+  color: var(--text);
+  border-color: var(--border);
+}
+.estoque-card-aviso {
+  margin-top: 10px;
+  font-size: 13px;
+}

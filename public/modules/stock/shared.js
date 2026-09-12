@@ -46,6 +46,80 @@ window.MavisStock = window.MavisStock || {};
 
   Stock.trashIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"></path></svg>';
   Stock.editIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>';
+  // Galpao, para os cartoes de "Quantidades Disponiveis por Estoque".
+  Stock.depositoIcon = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20V9l10-5 10 5v11"></path><path d="M2 20h20"></path><path d="M7 20v-6h10v6"></path><path d="M7 14h10"></path></svg>';
+
+  /**
+   * QUANTIDADES DISPONIVEIS POR ESTOQUE — um cartao por deposito.
+   *
+   * Substituiu uma tabela de tres colunas (Deposito / Saldo / Participacao). A
+   * pergunta que se faz aqui e' "de onde eu tiro este produto?", e ela se
+   * responde correndo o olho pelos cartoes; a tabela obrigava a ler linha por
+   * linha para achar o maior.
+   *
+   * OS DEPOSITOS ZERADOS ENTRAM. Quem abre este painel precisa ver a rede
+   * inteira: uma lista que mostra so' onde HA saldo nao responde "de onde da'
+   * para transferir", que e' a pergunta seguinte.
+   *
+   * TRES ESTADOS, E NAO DOIS: verde tem saldo, vermelho esta zerado, e o
+   * NEGATIVO tem cor propria. Zero quer dizer "nao tem aqui"; -6 quer dizer "o
+   * livro esta errado" — e um deposito pode ficar negativo de verdade, porque o
+   * faturamento confere o total do produto e nao o saldo do deposito escolhido.
+   *
+   * A ORDEM E' DECRESCENTE pelo saldo, para o maior aparecer primeiro. O
+   * negativo cai naturalmente no fim (e menor que zero) e continua visivel pela
+   * cor propria; e quando existe algum, um aviso no rodape diz quantos sao,
+   * para ninguem depender de varrer o painel inteiro.
+   */
+  Stock.quantidadesPorEstoque = function quantidadesPorEstoque(product) {
+    const cartoes = (product.balances || [])
+      .slice()
+      .sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0))
+      .map((saldo) => {
+        const qtd = Number(saldo.quantity || 0);
+        const estado = qtd < 0 ? 'negativo' : (qtd > 0 ? 'tem-saldo' : 'zerado');
+        // A participacao saiu da tela e virou `title`: ela era a terceira coluna
+        // da tabela antiga e continua sendo util, mas dentro do cartao roubava a
+        // atencao do numero que importa.
+        const total = Number(product.stockQuantity || 0);
+        const parte = total > 0 ? ` · ${((qtd / total) * 100).toFixed(1)}% do total` : '';
+        return `
+          <div class="estoque-card ${estado}" title="${Stock.escape(saldo.depositName)}: ${Stock.formatQty(qtd)}${parte}">
+            <span class="estoque-card-icone" aria-hidden="true">${Stock.depositoIcon}</span>
+            <span class="estoque-card-texto">
+              <span class="estoque-card-nome">${Stock.escape(saldo.depositName)}</span>
+              <span class="estoque-card-qtd">${Stock.formatQty(qtd)}</span>
+            </span>
+          </div>`;
+      });
+
+    // Saldo que existe no cadastro e nunca foi distribuido por movimentacao.
+    // Nao e' deposito, entao nao e' verde nem vermelho.
+    if (Number(product.unallocated || 0) !== 0) {
+      cartoes.push(`
+        <div class="estoque-card sem-deposito" title="Saldo que existe no cadastro do produto e ainda nao foi distribuido por movimentacoes.">
+          <span class="estoque-card-icone" aria-hidden="true">${Stock.depositoIcon}</span>
+          <span class="estoque-card-texto">
+            <span class="estoque-card-nome">SEM DEPÓSITO DEFINIDO</span>
+            <span class="estoque-card-qtd">${Stock.formatQty(product.unallocated)}</span>
+          </span>
+        </div>`);
+    }
+
+    if (!cartoes.length) {
+      return '<p class="muted">Nenhum depósito cadastrado. Cadastre um depósito para ver a posição por estoque.</p>';
+    }
+
+    const negativos = (product.balances || []).filter((b) => Number(b.quantity || 0) < 0);
+    const aviso = negativos.length
+      ? `<p class="estoque-card-aviso"><strong>${negativos.length} depósito(s) com saldo negativo:</strong> `
+        + `${negativos.map((b) => Stock.escape(b.depositName)).join(', ')}. `
+        + 'Saldo negativo significa que saiu mais do que havia registrado naquele depósito — '
+        + 'confira as movimentações antes de usar este número.</p>'
+      : '';
+
+    return `<div class="estoque-cards">${cartoes.join('')}</div>${aviso}`;
+  };
 
   Stock.emptyRow = function emptyRow(colspan, message) {
     return `<tr><td colspan="${colspan}" class="muted" style="text-align:center; padding:24px;">${message}</td></tr>`;

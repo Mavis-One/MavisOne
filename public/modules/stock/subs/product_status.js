@@ -66,28 +66,13 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
         </div>
 
         <div class="panel">
-          <h3>Saldo por depósito</h3>
-          <div class="table-scroll">
-            <table class="table">
-              <thead><tr><th>Depósito</th><th>Saldo</th><th>Participação</th></tr></thead>
-              <tbody>
-                ${product.balances.length === 0 ? S.emptyRow(3, 'Nenhum depósito cadastrado.') : product.balances.map((balance) => `
-                  <tr>
-                    <td>${S.escape(balance.depositName)}</td>
-                    <td>${S.formatQty(balance.quantity)}</td>
-                    <td>${Number(product.stockQuantity) > 0 ? ((balance.quantity / Number(product.stockQuantity)) * 100).toFixed(1) : '0.0'}%</td>
-                  </tr>
-                `).join('')}
-                ${product.unallocated !== 0 ? `
-                  <tr>
-                    <td class="muted">Sem depósito definido</td>
-                    <td class="muted">${S.formatQty(product.unallocated)}</td>
-                    <td class="muted">-</td>
-                  </tr>
-                ` : ''}
-              </tbody>
-            </table>
-          </div>
+          <h3>Quantidades Disponíveis por Estoque</h3>
+          <!-- Era uma tabela de tres colunas (Deposito / Saldo / Participacao).
+               A pergunta que se faz aqui e "de onde eu tiro este produto?", e
+               ela se responde correndo o olho pelos cartoes. A participacao
+               continua, no title de cada cartao. O painel mora em
+               stock/shared.js porque nao e so desta tela. -->
+          ${S.quantidadesPorEstoque(product)}
           ${product.unallocated !== 0 ? '<p class="muted" style="margin-top:12px;">"Sem depósito definido" é o saldo que existe no cadastro do produto mas ainda não foi distribuído por movimentações. Registre uma entrada para alocá-lo.</p>' : ''}
         </div>
 
