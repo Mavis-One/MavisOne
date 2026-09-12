@@ -622,6 +622,21 @@ async function api(path, options = {}) {
   if (!response.ok) {
     throw new Error(data.error || 'Erro inesperado');
   }
+
+  // ESCREVEU, O SINO ENVELHECEU.
+  //
+  // O painel de pendências passou a ser reaproveitado por um minuto (ver
+  // buscarAtencao) — sem isto, faturar um pedido deixaria o sino contando o
+  // pedido antigo por até um minuto, e é justamente nesse instante que a
+  // pessoa olha para ele.
+  //
+  // Fica aqui, e não em cada tela que grava, pelo mesmo motivo do bloco de
+  // sessão encerrada logo acima: `api` é o único caminho até o servidor, e
+  // qualquer outro lugar seria um a mais para alguém esquecer. Um método que
+  // não é GET mudou alguma coisa — não precisa saber o quê.
+  if (options.method && options.method.toUpperCase() !== 'GET') {
+    atencaoBuscadaEm = 0;
+  }
   return data;
 }
 
@@ -995,6 +1010,24 @@ function iniciaisDoUsuario(nome) {
 // segunda ida ao servidor só para abrir a lista — mas ela é atualizada ao
 // abrir, porque pendência resolvida há um minuto não pode continuar listada.
 let ultimoPainelAtencao = null;
+// Quando o painel acima foi buscado, e a busca que está em voo agora.
+//
+// O SINO NÃO PRECISA SER REPERGUNTADO A CADA TELA. Ele responde "o que está
+// pendente na base inteira", e essa resposta não muda porque alguém abriu
+// outra tela. Mas ele vive no renderApp, então mudava — medido no navegador
+// com os dados reais, numa passada pelas 133 telas do sistema:
+//
+//   134 chamadas de /api/dashboard/atencao · média 919 ms · pior 7.005 ms
+//   123 s de servidor gastos para desenhar uma bolinha
+//
+// O pior caso são as três chamadas simultâneas do Dashboard (renderApp roda
+// mais de uma vez numa navegação): elas se atropelam no mesmo event loop e
+// ainda disputam a conexão com a requisição que a tela fez para desenhar a si
+// mesma. Daí telas que "não carregam direito" — carregavam, mas depois do
+// sino.
+const ATENCAO_VALIDADE_MS = 60000;
+let atencaoBuscadaEm = 0;
+let atencaoEmVoo = null;
 
 const SEVERIDADE_ROTULO = { alta: 'Crítico', media: 'Atenção', baixa: 'Observar' };
 
@@ -1064,6 +1097,37 @@ function desenharPainelAtencao(painel) {
   });
 }
 
+/**
+ * A única porta para /api/dashboard/atencao.
+ *
+ * Duas coisas, e as duas por medição:
+ *
+ *   1. REAPROVEITA por um minuto. O sino é um resumo da base; trocar de tela
+ *      não muda a resposta. Sem isto, eram 134 idas ao servidor numa passada
+ *      pelo sistema, todas com o mesmo 1 KB de resposta.
+ *   2. UMA CHAMADA EM VOO ATENDE TODO MUNDO. O Dashboard chamava três vezes na
+ *      mesma navegação, porque renderApp roda mais de uma vez — e as três
+ *      saíam, se atropelavam e a última demorava 7 s.
+ *
+ * Abrir o painel do sino passa `forcar`: aí a pessoa está olhando a lista, e
+ * pendência resolvida há um minuto não pode continuar listada.
+ */
+async function buscarAtencao({ forcar = false } = {}) {
+  const fresco = ultimoPainelAtencao && (Date.now() - atencaoBuscadaEm) < ATENCAO_VALIDADE_MS;
+  if (!forcar && fresco) return ultimoPainelAtencao;
+  if (atencaoEmVoo) return atencaoEmVoo;
+  atencaoEmVoo = api('/api/dashboard/atencao')
+    .then((painel) => {
+      ultimoPainelAtencao = painel;
+      // A marca de tempo só é gravada no SUCESSO: erro de rede não pode
+      // silenciar o sino por um minuto.
+      atencaoBuscadaEm = Date.now();
+      return painel;
+    })
+    .finally(() => { atencaoEmVoo = null; });
+  return atencaoEmVoo;
+}
+
 async function alternarPainelAtencao() {
   if (document.getElementById('notifPainel')) {
     fecharPainelAtencao();
@@ -1075,8 +1139,7 @@ async function alternarPainelAtencao() {
   if (tinhaCache) desenharPainelAtencao(ultimoPainelAtencao);
 
   try {
-    const painel = await api('/api/dashboard/atencao');
-    ultimoPainelAtencao = painel;
+    const painel = await buscarAtencao({ forcar: true });
     // Redesenha se ainda estiver aberto, ou se nem chegou a abrir por falta de
     // cache. Se a pessoa fechou enquanto carregava, NÃO reabre sozinho.
     if (document.getElementById('notifPainel') || !tinhaCache) desenharPainelAtencao(painel);
@@ -1092,8 +1155,7 @@ async function atualizarSinoDeAtencao() {
   const botao = document.getElementById('notifBtn');
   if (!marca || !botao) return;
   try {
-    const painel = await api('/api/dashboard/atencao');
-    ultimoPainelAtencao = painel;
+    const painel = await buscarAtencao();
     const criticos = Number(painel.criticos || 0);
     const total = Number(painel.total || 0);
     marca.hidden = total === 0;
@@ -1608,7 +1670,10 @@ const moduleSubItems = {
     { key: 'new_purchase_order', label: 'Nova Compra', desc: 'Cotação e ordem na mesma tela — o campo Status define qual dos dois é.' },
     { key: 'entrada_nfe', label: 'Notas de Entrada', desc: 'Lê o XML do fornecedor, reconhece quem emitiu e dá entrada com os dados da nota.' },
     { key: 'purchase_history', label: 'Histórico de Compras', desc: 'Compras registradas, por período e fornecedor.' },
-    { key: 'suppliers', label: 'Fornecedores', desc: 'Fornecedores cadastrados e seus dados.' }
+    // "Fornecedores cadastrados" era a descrição antiga, e ela prometia o
+    // cadastro — que mora em Cadastros › Pessoas. Esta tela soma os DOCUMENTOS
+    // DE COMPRA: quem nunca recebeu uma ordem não aparece aqui.
+    { key: 'suppliers', label: 'Fornecedores', desc: 'De quem já se comprou, com o total acumulado de cada um.' }
   ],
 
   // ABA: Estoque
@@ -1902,14 +1967,25 @@ function contagemFormatada(valor) {
   return Number(valor).toLocaleString('pt-BR');
 }
 
-function renderSearchableSelect({ id, name, options, selectedValue, placeholder, required }) {
+/**
+ * `readonly` existe porque há campo que MOSTRA sem deixar trocar — o
+ * cliente de um lançamento gerado por pedido ou NF-e, por exemplo: ele vem da
+ * origem, e mudar ali seria mentir sobre de onde o dinheiro veio.
+ *
+ * Vem no HTML, e não como um `input.readOnly = true` depois do render, de
+ * propósito: assim a travação não depende de mais nada rodar. O <input
+ * type="hidden"> continua levando o valor no envio — travar o campo não pode
+ * apagar o dado que a origem gravou. A lupa sai junto: abrir a lista inteira
+ * para não poder escolher nada é só frustração.
+ */
+function renderSearchableSelect({ id, name, options, selectedValue, placeholder, required, readonly }) {
   const selected = options.find((o) => String(o.value) === String(selectedValue || ''));
   return `
     <div class="searchable-select" id="${id}Wrapper">
       <input type="text" class="searchable-select-input" id="${id}Input" autocomplete="off"
-        placeholder="${escapeHtml(placeholder || 'Buscar...')}" value="${escapeHtml(selected ? selected.label : '')}" ${required ? 'required' : ''} />
-      <button type="button" class="searchable-select-lupa" id="${id}Lupa"
-        title="Ver todas as opções" aria-label="Ver todas as opções">${LUPA_SVG}</button>
+        placeholder="${escapeHtml(placeholder || 'Buscar...')}" value="${escapeHtml(selected ? selected.label : '')}" ${required ? 'required' : ''} ${readonly ? 'readonly tabindex="-1"' : ''} />
+      ${readonly ? '' : `<button type="button" class="searchable-select-lupa" id="${id}Lupa"
+        title="Ver todas as opções" aria-label="Ver todas as opções">${LUPA_SVG}</button>`}
       <input type="hidden" name="${name}" id="${id}Value" value="${escapeHtml(selectedValue || '')}" />
       <div class="searchable-select-dropdown" id="${id}Dropdown" hidden></div>
     </div>

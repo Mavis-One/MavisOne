@@ -55,12 +55,23 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     ? 'readonly tabindex="-1" title="Vem do pedido/NF-e de origem e não pode ser alterado aqui."'
     : '');
 
-  function directoryOptions(filterText) {
-    const term = (filterText || '').trim().toLowerCase();
-    const list = term
-      ? meta.directory.filter((c) => c.name.toLowerCase().includes(term) || String(c.code || '').toLowerCase().includes(term))
-      : meta.directory;
-    return list.map((c) => `<option value="${c.id}" ${editEntry && editEntry.clientSupplierId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}${c.code ? ` (${escapeHtml(c.code)})` : ''}</option>`).join('');
+  // O cliente/fornecedor do lançamento: UM campo de busca, não um par
+  // "digite aqui / escolha ali".
+  //
+  // Medido no navegador com os dados reais, antes: <select name="clientSupplierId">
+  // com 6.493 <option> e 6.546 nós no DOM numa tela de 13 campos. E o par era
+  // pior do que o número sugere — o texto digitado reconstruía os 6.493
+  // <option> A CADA TECLA, e escolher ainda exigia um segundo gesto no campo
+  // de baixo, que não dizia estar ligado ao de cima.
+  //
+  // O código entra no rótulo porque é como o cadastro é chamado no dia a dia
+  // ("o 6443"), e porque há nomes repetidos entre as 6.492 pessoas — mesmo
+  // motivo do SKU no rótulo do produto (ver shared/rotulo_produto.js).
+  function opcoesDoDiretorio() {
+    return (meta.directory || []).map((c) => ({
+      value: c.id,
+      label: c.code ? `${c.name} (${c.code})` : c.name
+    }));
   }
 
   function categoryOptions() {
@@ -192,13 +203,17 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           ` : `
             <div class="row">
               <label>${isReceita ? 'Cliente' : 'Fornecedor'}
-                <input type="text" id="financePartySearch" placeholder="Buscar por nome ou código..." autocomplete="off" value="${editEntry && editEntry.clienteFornecedor ? escapeHtml(editEntry.clienteFornecedor) : ''}" ${vinculado ? 'readonly tabindex="-1"' : ''} />
-              </label>
-              <label>&nbsp;
-                <select name="clientSupplierId" id="financePartySelect" ${vinculado ? 'disabled title="Vem do pedido/NF-e de origem."' : ''}>
-                  <option value="">Nenhum (usar nome livre abaixo)</option>
-                  ${directoryOptions('')}
-                </select>
+                ${renderSearchableSelect({
+      id: 'financeParty',
+      name: 'clientSupplierId',
+      options: opcoesDoDiretorio(),
+      selectedValue: (editEntry && editEntry.clientSupplierId) || '',
+      placeholder: 'Buscar por nome ou código...',
+      // Vinculado a pedido/NF-e: mostra de quem é, não deixa trocar. A
+      // travação vem no HTML, não depois — ver renderSearchableSelect.
+      readonly: vinculado
+    })}
+                <span class="muted">Em branco, use o nome livre ao lado.</span>
               </label>
               <label>Nome livre (se não cadastrado)<input name="clientSupplierName" value="${editEntry && !editEntry.clientSupplierId ? escapeHtml(editEntry.clienteFornecedor || '') : ''}" ${travado('clientSupplierName')} /></label>
             </div>
@@ -310,12 +325,16 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       });
     });
 
-    document.getElementById('financePartySearch')?.addEventListener('input', (event) => {
-      const select = document.getElementById('financePartySelect');
-      if (select) {
-        select.innerHTML = `<option value="">Nenhum (usar nome livre abaixo)</option>${directoryOptions(event.target.value)}`;
-      }
-    });
+    // Vinculado a pedido/NF-e: o campo já sai `readonly` do HTML (ver a
+    // chamada de renderSearchableSelect acima) e não recebe ouvinte nenhum. O
+    // valor continua indo no envio pelo <input type="hidden">, que é o que a
+    // origem gravou — travar o campo não pode apagar o dado.
+    if (vinculado) {
+      const buscaDaParte = document.getElementById('financePartyInput');
+      if (buscaDaParte) buscaDaParte.title = 'Vem do pedido/NF-e de origem.';
+    } else if (typeof attachSearchableSelect === 'function') {
+      attachSearchableSelect({ id: 'financeParty', options: opcoesDoDiretorio() });
+    }
 
     content.querySelectorAll('[data-inline-add]').forEach((btn) => {
       btn.addEventListener('click', () => {

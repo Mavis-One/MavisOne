@@ -21,6 +21,10 @@ const ler = (rel) => fs.readFileSync(path.join(RAIZ, rel), 'utf8');
 
 const escopoLib = require('../lib/relatorios-escopo');
 const rel = require('../lib/relatorios-vendas');
+// Procurar por padrão QUE NÃO DEVE EXISTIR precisa passar por aqui: o
+// comentário que explica o padrão retirado seria encontrado pela busca crua, e
+// o teste acusaria a própria explicação.
+const { semComentarios } = require('./sem-comentarios');
 
 let falhas = 0;
 const check = (nome, cond, det) => {
@@ -245,8 +249,26 @@ console.log('\n--- a tela mostra o recorte, e não só os números ---');
 const telaSrc = ler('public/modules/reports/subs/relatorios.js');
 // Filtros primeiro, indicadores depois, tabela, gráficos: a ordem do briefing.
 check('os filtros ficam num painel identificado', /class="panel rel-filtros"/.test(telaSrc) && /<h3>Filtros<\/h3>/.test(telaSrc));
+// O ALVO MUDOU DE LUGAR, NÃO DE INTENÇÃO.
+//
+// Vendedor, Cliente e Produto passaram a ser descritos numa lista só
+// (relFiltrosDeLista) porque o <select> de Produto tinha 5.241 <option> com os
+// dados reais e precisou virar campo de busca — e a regra de quando isso
+// acontece tem de ser lida pelo MESMO lugar que desenha o campo e que liga o
+// ouvinte dele (ver o cabeçalho de shared/campo_de_busca.js).
+//
+// A condição de segurança continua sendo a mesma e mora nessa lista: o campo
+// de vendedor só é criado para quem pode escolher. Um vendedor comum não
+// recebe a lista dos colegas nem para preencher um campo — seria vazar quem é
+// a equipe, quantos são e como se chamam.
 check('o filtro de vendedor só aparece para quem pode escolher',
-  /escopo\?\.podeEscolherVendedor \? `[\s\S]{0,200}vendedorId/.test(telaSrc));
+  /podeEscolherVendedor\) \{[\s\S]{0,200}campo: 'vendedorId'/.test(telaSrc));
+// E a barra desenha SÓ o que a lista devolve: sem isto, o campo poderia ser
+// escrito à mão na barra e escapar da condição acima.
+check('  e a barra de filtros desenha só o que a lista devolve',
+  /const listas = relFiltrosDeLista\(rel\);/.test(telaSrc)
+  && /\$\{campoPor\('vendedorId'\)\}/.test(telaSrc)
+  && !/<select data-rel-filtro="vendedorId"/.test(semComentarios(telaSrc)));
 check('a tela diz de quem são os números', /rel-escopo-selo/.test(telaSrc) && /escopo\?\.rotulo/.test(telaSrc));
 check('há as duas visões: tabela e por vendedor',
   /data-rel-visao="tabela"/.test(telaSrc) && /data-rel-visao="vendedor"/.test(telaSrc));

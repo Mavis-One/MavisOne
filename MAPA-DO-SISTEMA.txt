@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-12 14:14 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-12 15:23 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -41,7 +41,7 @@ Compras  (purchases)  —  7 tela(s) no menu
   [ok]  Nova Compra                        Cotação e ordem na mesma tela — o campo Status define qual dos dois é.
   [ok]  Notas de Entrada                   Lê o XML do fornecedor, reconhece quem emitiu e dá entrada com os dados da nota.
   [ok]  Histórico de Compras               Compras registradas, por período e fornecedor.
-  [ok]  Fornecedores                       Fornecedores cadastrados e seus dados.
+  [ok]  Fornecedores                       De quem já se comprou, com o total acumulado de cada um.
 
 Estoque  (stock)  —  20 tela(s) no menu
 ---------------------------------------
@@ -594,7 +594,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-105 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+106 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -696,6 +696,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-sync-obrigatorio.js           NENHUMA ROTA CONSOME COLEÇÃO DO POSTGRES SEM SINCRONIZAR (fase BC).
   [npm test] test-taxa-do-cartao.js             A TAXA DA MAQUININHA (fase BX) — o campo que era cadastrado e nunca lido.
   [npm test] test-telas-por-usuario.js          TELAS POR USUÁRIO (fase AN) — o recorte fino dentro de um módulo liberado.
+  [npm test] test-telas-que-nao-carregavam.js   AS TELAS QUE "NÃO CARREGAVAM DIREITO" — e por que carregavam devagar.
   [avulso]  test-transferencia-itens.js        TRANSFERÊNCIA COM VÁRIOS ITENS — contra o servidor de verdade.
   [npm test] test-transicoes-status.js          Transições de status e ações em lote.
   [avulso]  test-venda-a-vista.js              VENDA À VISTA NASCE QUITADA (fase AU).

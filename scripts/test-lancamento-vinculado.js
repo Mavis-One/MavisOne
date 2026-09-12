@@ -75,8 +75,27 @@ check('mostra o aviso no topo', /Lançamento gerado \$\{editEntry\.vinculo === '
 ['amount', 'date', 'description'].forEach((campo) => {
   check(`  ${campo} sai travado no formulário`, new RegExp(`\\$\\{travado\\('${campo}'\\)\\}`).test(telaSrc));
 });
-// <select> não aceita readonly.
-check('o cliente sai desabilitado', /financePartySelect" \$\{vinculado \? 'disabled/.test(telaSrc));
+// O ALVO DESTE CHECK MUDOU DE FORMA, NÃO DE INTENÇÃO.
+//
+// O campo era um <select name="clientSupplierId"> com um <option> por cadastro
+// — e, com os dados reais, 6.493 <option> e 6.546 nós no DOM numa tela de 13
+// campos. Ele virou campo de busca (renderSearchableSelect), e a travação
+// deixou de ser `disabled` num <select> para ser `readonly` num <input>, que é
+// o que um <input> aceita.
+//
+// A exigência continua a mesma, e é ela que este check guarda: a travação vem
+// NO HTML, e não de um `input.readOnly = true` depois do render. Se ela
+// dependesse de mais código rodar, qualquer falha no meio do caminho
+// devolveria um campo editável para um lançamento que a origem manda.
+check('o cliente sai travado', /readonly: vinculado/.test(telaSrc)
+  && /\$\{readonly \? 'readonly tabindex="-1"' : ''\}/.test(appSrc));
+// E o valor continua sendo enviado: travar o campo não pode apagar de quem é
+// o lançamento. Quem carrega o valor é o <input type="hidden">, que o
+// `readonly` do campo de texto não alcança.
+check('  e o valor travado continua no envio', /<input type="hidden" name="\$\{name\}"/.test(appSrc));
+// Sem ouvinte no campo travado: com ele, digitar limparia o hidden (o campo de
+// busca zera o valor a cada tecla) e o lançamento perderia o cliente.
+check('  e o campo travado não recebe ouvinte', /if \(vinculado\) \{[\s\S]{0,200}\} else if \(typeof attachSearchableSelect/.test(telaSrc));
 // Reenviar valor e data iguais é pedir para divergir por formato de data ou
 // arredondamento — melhor não mandar.
 check('o envio omite os campos travados', /const payload = vinculado[\s\S]{0,400}dueDate: formData\.get\('dueDate'\)/.test(telaSrc));

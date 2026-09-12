@@ -1417,7 +1417,41 @@ async function syncCadastroData(data) {
   data.deposits = deposits;
 }
 
-function getCadastroDirectory(data) {
+/**
+ * O DIRETÓRIO É MONTADO UMA VEZ POR CONJUNTO DE DADOS, E NÃO POR CHAMADA.
+ *
+ * Esta função projeta pessoas + CNPJs num formato só. Ela é barata sozinha e
+ * era chamada DENTRO de laços — serializeSalesRecord faz
+ * `getCadastroDirectory(data).find(...)` para resolver o nome do cliente de
+ * cada pedido. Com os dados reais isso é 14.864 × 6.492 objetos criados e
+ * varridos: 96 milhões. Medido dentro de buildSalesDashboardSummary, que é o
+ * que o Dashboard Geral e o Painel de Vendas chamam:
+ *
+ *   filtrar visíveis (14.864) .................... 25 ms
+ *   serializeSalesRecord em cada pedido ....... 6.975 ms   <- aqui
+ *   bySeller ...................................... 16 ms
+ *
+ * Era esse o motivo de o Dashboard Geral — a primeira tela depois do login —
+ * levar 7,2 s para devolver 1,3 KB. E num servidor Node, que tem um event loop
+ * só, esses 7 s não atrasam apenas quem está esperando: toda requisição de
+ * qualquer outra pessoa fica na fila atrás.
+ *
+ * A CHAVE DO CACHE É A IDENTIDADE DOS ARRAYS, e não o objeto `data`. É
+ * syncCadastroData que preenche `data.people`/`data.cnpjs`, e ele ATRIBUI
+ * arrays novos — então uma segunda sincronização na mesma requisição troca a
+ * referência, o cache não reconhece e remonta. Guardar só por `data` devolveria
+ * o diretório velho depois de um sync novo, e o nome errado num pedido é o tipo
+ * de erro que ninguém vê.
+ *
+ * WeakMap: a entrada morre com o `data` da requisição, sem vazar entre
+ * requisições nem segurar os 6.492 cadastros em memória depois que ela acaba.
+ */
+const CACHE_DIRETORIO = new WeakMap();
+
+function indiceDoCadastro(data) {
+  const guardado = CACHE_DIRETORIO.get(data);
+  if (guardado && guardado.people === data.people && guardado.cnpjs === data.cnpjs) return guardado;
+
   const project = (record, kind) => ({
     id: record.id,
     kind,
@@ -1432,12 +1466,39 @@ function getCadastroDirectory(data) {
   });
   const people = (data.people || []).map((p) => project(p, 'pessoa'));
   const companies = (data.cnpjs || []).map((c) => project(c, 'empresa'));
-  return [...people, ...companies];
+  const lista = [...people, ...companies];
+  const novo = {
+    people: data.people,
+    cnpjs: data.cnpjs,
+    lista,
+    // Índice por id para quem só quer um: `.find()` numa lista de 6.492 dentro
+    // de um laço de 14.864 é o mesmo problema por outro caminho.
+    porId: new Map(lista.map((e) => [e.id, e])),
+    // Vendedores saem da MESMA passada: getSellersDirectory filtrava as 6.492
+    // pessoas de novo, e também era chamado por pedido.
+    vendedores: (data.people || [])
+      .filter((person) => Array.isArray(person.roles) && person.roles.includes('Vendedor'))
+      .map((person) => ({ id: person.id, name: person.name }))
+  };
+  CACHE_DIRETORIO.set(data, novo);
+  return novo;
+}
+
+function getCadastroDirectory(data) {
+  return indiceDoCadastro(data).lista;
+}
+
+// Um cadastro pelo id, sem varrer a lista. Devolve `null` quando não existe —
+// quem chama decide o que mostrar no lugar.
+function acharNoCadastro(data, id) {
+  if (!id) return null;
+  return indiceDoCadastro(data).porId.get(id) || null;
 }
 
 function resolveFinanceCounterparty(entry, data) {
   if (entry.clientSupplierId) {
-    const found = getCadastroDirectory(data).find((c) => c.id === entry.clientSupplierId);
+    // Pelo índice: esta função é chamada uma vez por lançamento financeiro.
+    const found = acharNoCadastro(data, entry.clientSupplierId);
     if (found) return found.name;
   }
   if (entry.clientSupplierName) return entry.clientSupplierName;
@@ -1458,7 +1519,8 @@ function resolveFinanceCounterparty(entry, data) {
 // o sinal mais forte que existe, mais confiável que nome ou valor sozinhos.
 function resolveFinanceCounterpartyDocument(entry, data) {
   if (!entry.clientSupplierId) return '';
-  const found = getCadastroDirectory(data).find((c) => c.id === entry.clientSupplierId);
+  // Pelo índice: a conciliação chama isto por lançamento candidato.
+  const found = acharNoCadastro(data, entry.clientSupplierId);
   return found ? String(found.document || '') : '';
 }
 
@@ -1500,9 +1562,10 @@ function resolveById(list, id) {
 // Vendedores não são uma entidade própria: são pessoas do Cadastro marcadas
 // com a tag de papel 'Vendedor' (mesmo campo roles[] que a lista de Cadastros já filtra).
 function getSellersDirectory(data) {
-  return (data.people || [])
-    .filter((person) => Array.isArray(person.roles) && person.roles.includes('Vendedor'))
-    .map((person) => ({ id: person.id, name: person.name }));
+  // Mesma lista de antes, agora vinda do índice montado uma vez (ver
+  // indiceDoCadastro). Ela também era refiltrada a cada pedido, dentro do
+  // serializeSalesRecord.
+  return indiceDoCadastro(data).vendedores;
 }
 
 // Transportadora pode ser pessoa física (motorista autônomo) ou empresa, por
@@ -2250,7 +2313,9 @@ function serializeSalesRecord(record, data) {
 
   let customerName = record.clientSupplierName || record.customer || '';
   if (record.clientSupplierId) {
-    const found = getCadastroDirectory(data).find((entry) => entry.id === record.clientSupplierId);
+    // Pelo índice, e não remontando o diretório de 6.492 cadastros aqui dentro
+    // — esta função roda uma vez por pedido (ver indiceDoCadastro).
+    const found = acharNoCadastro(data, record.clientSupplierId);
     if (found) customerName = found.name;
   }
 
@@ -2918,10 +2983,30 @@ function buildSalesDashboardSummary(data, escopo) {
   // Vazaria menos (nome, e não valor), mas continuaria vazando: quem é a equipe
   // de vendas, quantas pessoas são e como se chamam. E a tela ficaria absurda,
   // com um seletor de dez nomes que sempre devolvem lista vazia.
+  // Um índice, e não um `filter` por vendedor.
+  //
+  // Era `orders.filter(o => o.sellerId === seller.id)` dentro do map dos
+  // vendedores — uma varredura dos 14.864 pedidos por vendedor. Hoje isso NÃO
+  // é o gargalo desta função: há 29 vendedores cadastrados, e medindo dentro
+  // dela o trecho do bySeller dá 16 ms (o tempo estava todo em
+  // serializeSalesRecord, ver o índice do diretório em getCadastroDirectory).
+  //
+  // Fica assim porque a conta cresce com o cadastro e a troca é de graça: o
+  // agrupamento é O(pedidos + vendedores), dá o MESMO resultado — a chave é o
+  // mesmo `sellerId` que o filtro comparava — e 300 vendedores já custariam
+  // 4,5 milhões de comparações por carregamento de dashboard.
+  const pedidosPorVendedor = new Map();
+  for (const pedido of orders) {
+    const chave = pedido.sellerId || '';
+    const lista = pedidosPorVendedor.get(chave);
+    if (lista) lista.push(pedido);
+    else pedidosPorVendedor.set(chave, [pedido]);
+  }
+
   const bySeller = getSellersDirectory(data)
     .filter((seller) => escopoLib.vendaVisivel(escopo, seller.id))
     .map((seller) => {
-    const sellerOrders = orders.filter((o) => o.sellerId === seller.id);
+    const sellerOrders = pedidosPorVendedor.get(seller.id) || [];
     const valorTotal = Math.round(sellerOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0) * 100) / 100;
     return {
       sellerId: seller.id,
@@ -6636,8 +6721,26 @@ const server = http.createServer(async (req, res) => {
       const data = loadData();
       // Uma ida so': os syncs escrevem em chaves distintas de `data` e
       // nenhum le o do outro, entao esperar um pelo outro era so' latencia.
+      //
+      // SEM syncCadastroData AQUI, e isso e' de proposito.
+      //
+      // Ele carrega as 6.492 pessoas, os CNPJs e os depositos — e o painel nao
+      // le nenhum dos tres: montarAtencao recebe lancamentos, notas, pedidos e
+      // produtos, e mais nada. Medido nesta rota, com os dados reais:
+      //
+      //   syncCadastroData ... 509 ms   <- ninguem abaixo usa o resultado
+      //   syncSalesData ...... 398 ms
+      //   sincronizarRazao .... 51 ms
+      //   getProducts ......... 49 ms
+      //   montarAtencao ....... 20 ms
+      //
+      // Como os syncs correm juntos, os 509 ms ERAM o tempo da rota: ela
+      // esperava pelo mais lento, que era o inutil. E esta rota e' chamada em
+      // TODA tela (o sino da barra de cima vive no renderApp) — 134 chamadas
+      // numa passada pelas 133 telas do sistema. Num servidor Node, que tem um
+      // event loop so', isso nao atrasa apenas o sino: atrasa a requisicao que
+      // a tela acabou de fazer para desenhar a si mesma.
       await Promise.all([
-        syncCadastroData(data),
         permissoes.finance ? syncFinanceData(data) : null,
         permissoes.sales ? syncSalesData(data) : null,
         // O aviso de estoque baixo compara saldo por depósito; sem o razão
@@ -6658,8 +6761,19 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // So' a SITUACAO, e nao o produto serializado inteiro.
+      //
+      // estoqueAbaixoDoMinimo() le exatamente um campo — `situation`. Serializar
+      // tudo montava 25 campos por produto (margem, nome do deposito padrao,
+      // NCM, unidade tributavel...) para jogar 24 fora.
+      //
+      // E productSituation nao passa por productBalances de proposito: aquele
+      // le `data.deposits` para montar a quebra por deposito, que esta rota nao
+      // usa. Ler uma colecao que a rota nao sincroniza e' o defeito que o
+      // test-sync-obrigatorio vigia — e ele pegou esta linha na primeira
+      // versao, quando eu tirei o syncCadastroData e deixei a chamada.
       const produtos = permissoes.stock
-        ? (await db.getProducts()).map((p) => stockCore.serializeProduct(p, data))
+        ? (await db.getProducts()).map((p) => ({ situation: stockCore.productSituation(data, p) }))
         : [];
 
       // Quais status significam "a venda se concretizou". Vem do catálogo, não

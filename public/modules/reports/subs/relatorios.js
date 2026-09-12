@@ -105,6 +105,51 @@ function relTabelaVazia(mensagem, colunas = 9) {
   return `<tr><td colspan="${colunas}" class="muted">${mensagem}</td></tr>`;
 }
 
+// ---------------------------------------------------------------------------
+// OS FILTROS DE LISTA — vendedor, cliente e produto — E A REGRA DE QUANDO ELES
+// DEIXAM DE SER <select>.
+//
+// A regra e o limite vêm de shared/campo_de_busca.js, que é a fonte única do
+// sistema para essa decisão. O que muda aqui é só o formato: aquele arquivo
+// trabalha com definições de campo das fábricas de formulário, e a barra de
+// filtros do relatório é HTML escrito à mão.
+//
+// Medido no navegador com os dados reais, antes:
+//
+//   Relatórios > Relatório de Vendas ..... <select> de Produto com 5.241 opções
+//   Relatórios > Relatório por Vendedor .. o mesmo, 5.241
+//
+// ESTA FUNÇÃO É A ÚNICA LISTA. Quem desenha o campo e quem liga o ouvinte dela
+// leem daqui — repetir a condição nos dois lugares é o modo de falhar
+// silencioso descrito no cabeçalho de shared/campo_de_busca.js: o campo
+// apareceria como busca e ninguém ligaria o evento dele, ou o contrário.
+const REL_LIMITE_LISTA = (window.MavisCampoDeBusca && window.MavisCampoDeBusca.LIMITE) || 200;
+
+function relIdDeBusca(campo) {
+  return `relBusca_${campo}`;
+}
+
+function relOpcoesDeBusca(lista) {
+  return (lista || []).map((o) => ({ value: o.id, label: o.nome }));
+}
+
+function relFiltrosDeLista(rel) {
+  const opcoes = rel.opcoes || {};
+  const fora = [];
+  // Vendedor só entra para quem pode escolher: o vendedor comum não recebe a
+  // lista dos colegas nem para preencher um campo.
+  if (rel.escopo && rel.escopo.podeEscolherVendedor) {
+    fora.push({ campo: 'vendedorId', rotulo: 'Vendedor', lista: opcoes.vendedores, vazio: 'Todos os vendedores' });
+  }
+  fora.push({ campo: 'clienteId', rotulo: 'Cliente', lista: opcoes.clientes, vazio: 'Todos os clientes' });
+  fora.push({ campo: 'produtoId', rotulo: 'Produto', lista: opcoes.produtos, vazio: 'Todos os produtos' });
+  return fora.map((d) => ({
+    ...d,
+    lista: d.lista || [],
+    deBusca: (d.lista || []).length > REL_LIMITE_LISTA
+  }));
+}
+
 // ===========================================================================
 // A BARRA DE FILTROS — o primeiro bloco da tela, e o mais importante.
 //
@@ -123,6 +168,30 @@ function relBarraDeFiltros(ctx, rel) {
     .concat((lista || []).map((o) => `<option value="${escapeHtml(o.id)}" ${o.id === valor ? 'selected' : ''}>${escapeHtml(o.nome)}</option>`))
     .join('');
 
+  // Vendedor, cliente e produto desenhados pela MESMA lista que liga os
+  // eventos (ver relFiltrosDeLista) — passando do limite, viram campo de busca.
+  const campoDeLista = (d) => {
+    if (!d.deBusca) {
+      return `<label>${escapeHtml(d.rotulo)}
+          <select data-rel-filtro="${d.campo}">${selects(d.lista, f[d.campo], d.vazio)}</select>
+        </label>`;
+    }
+    return `<label>${escapeHtml(d.rotulo)}
+        ${renderSearchableSelect({
+      id: relIdDeBusca(d.campo),
+      name: `relFiltro_${d.campo}`,
+      options: relOpcoesDeBusca(d.lista),
+      selectedValue: f[d.campo],
+      placeholder: d.vazio
+    })}
+      </label>`;
+  };
+  const listas = relFiltrosDeLista(rel);
+  const campoPor = (campo) => {
+    const d = listas.find((x) => x.campo === campo);
+    return d ? campoDeLista(d) : '';
+  };
+
   return `
     <section class="panel rel-filtros">
       <div class="rel-filtros-topo">
@@ -140,16 +209,9 @@ function relBarraDeFiltros(ctx, rel) {
         <label>até
           <input type="date" data-rel-filtro="dataAte" value="${escapeHtml(f.dataAte)}" />
         </label>
-        ${rel.escopo?.podeEscolherVendedor ? `
-          <label>Vendedor
-            <select data-rel-filtro="vendedorId">${selects(opcoes.vendedores, f.vendedorId, 'Todos os vendedores')}</select>
-          </label>` : ''}
-        <label>Cliente
-          <select data-rel-filtro="clienteId">${selects(opcoes.clientes, f.clienteId, 'Todos os clientes')}</select>
-        </label>
-        <label>Produto
-          <select data-rel-filtro="produtoId">${selects(opcoes.produtos, f.produtoId, 'Todos os produtos')}</select>
-        </label>
+        ${campoPor('vendedorId')}
+        ${campoPor('clienteId')}
+        ${campoPor('produtoId')}
         <label>Situação
           <select data-rel-filtro="status">
             <!-- O rótulo diz o que o padrão faz. Um "Todos" que na verdade
@@ -202,6 +264,36 @@ function relLigarFiltros(ctx) {
       f.pagina = 1;
     });
   });
+
+  // Os filtros que viraram campo de busca. O `onSelect` é obrigatório aqui: o
+  // valor mora num <input type="hidden">, e escrever nele por código NÃO
+  // dispara 'change' — o filtro seria escolhido na tela e ignorado na consulta.
+  relFiltrosDeLista(ctx.relatorioVendas || {})
+    .filter((d) => d.deBusca)
+    .forEach((d) => {
+      if (typeof attachSearchableSelect !== 'function') return;
+      attachSearchableSelect({
+        id: relIdDeBusca(d.campo),
+        options: relOpcoesDeBusca(d.lista),
+        onSelect: (valor) => {
+          f[d.campo] = valor || '';
+          f.pagina = 1;
+        }
+      });
+      // APAGAR O TEXTO TEM DE APAGAR O FILTRO. O campo de busca zera o
+      // <input type="hidden"> ao digitar, mas não chama `onSelect` — só
+      // escolher um item chama. Sem esta parte, quem limpasse "Produto" para
+      // voltar a ver todos continuaria vendo o relatório do produto anterior,
+      // com o campo em branco dizendo o contrário.
+      const entrada = document.getElementById(`${relIdDeBusca(d.campo)}Input`);
+      const escondido = document.getElementById(`${relIdDeBusca(d.campo)}Value`);
+      entrada?.addEventListener('input', () => {
+        if (escondido && !escondido.value && f[d.campo]) {
+          f[d.campo] = '';
+          f.pagina = 1;
+        }
+      });
+    });
   // Enter no campo de busca aplica, que é o que a mão espera.
   content.querySelector('[data-rel-filtro="busca"]')?.addEventListener('keydown', (evento) => {
     if (evento.key !== 'Enter') return;
@@ -361,9 +453,19 @@ function relPorVendedor(ctx, rel) {
   }
   return grupos.map((grupo) => {
     const i = grupo.indicadores;
+    // Quanto do detalhe deste vendedor está na tela. O servidor manda as
+    // primeiras linhas e o total (ver LINHAS_POR_VENDEDOR em
+    // lib/relatorios-vendas.js) — os números do resumo acima continuam saindo
+    // de TODAS as vendas dele, só a tabela é que é uma amostra.
+    const noTotal = Number(grupo.linhasNoTotal ?? grupo.linhas.length);
+    const escondidas = Math.max(0, noTotal - grupo.linhas.length);
+    // `details` FECHADO quando há mais de um vendedor: aberto, o navegador
+    // montava a tabela de todos eles de uma vez. Com um só (o vendedor vendo
+    // o próprio relatório) abrir é o certo — é o que ele veio ver.
+    const aberto = grupos.length === 1 ? ' open' : '';
     return `
       <section class="panel rel-grupo">
-        <details open>
+        <details${aberto}>
           <summary class="rel-grupo-topo">
             <strong>${escapeHtml(grupo.vendedorNome)}</strong>
             <span class="rel-grupo-resumo">
@@ -393,6 +495,21 @@ function relPorVendedor(ctx, rel) {
               </tbody>
             </table>
           </div>
+          ${escondidas ? `
+            <p class="muted rel-grupo-corte">
+              Mostrando ${grupo.linhas.length} de ${noTotal.toLocaleString('pt-BR')} itens
+              ${grupo.vendedorId
+    // Com vendedor: filtrar por ele mostra tudo, página por página.
+    ? `vendidos por ${escapeHtml(grupo.vendedorNome)}. Para ver todos,
+                       <button type="button" class="rel-link" data-rel-vendedor="${escapeHtml(grupo.vendedorId)}">filtre o relatório por ele</button>.`
+    // SEM VENDEDOR NÃO TEM POR QUEM FILTRAR. O botão existia aqui e filtrava
+    // por vendedor vazio, ou seja, não filtrava nada — e é justamente o grupo
+    // maior desta base (12.236 itens dos pedidos importados, que vieram sem
+    // vendedor). Um botão que não faz nada no lugar mais visível da tela é
+    // pior do que nenhum botão.
+    : 'de vendas sem vendedor atribuído. A tabela acima é uma amostra; os números do resumo contam todas.'}
+            </p>
+          ` : ''}
         </details>
       </section>
     `;
