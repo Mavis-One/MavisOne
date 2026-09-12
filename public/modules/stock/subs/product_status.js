@@ -7,6 +7,12 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
+
+  // O seletor deixou de ser um <select> (fase CH): sao 5.476 produtos depois da
+  // importacao, e 457 deles tem nome repetido. O rotulo leva o SKU porque o
+  // nome sozinho nao distingue qual das sete "SETA" e' esta.
+  const opcoesProduto = window.MavisRotuloProduto.opcoes(meta.products);
+
   let productId = state.stockStatusProductId || (meta.products[0] ? meta.products[0].id : '');
   state.stockStatusProductId = null;
 
@@ -45,7 +51,9 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
       <div class="panel">
         ${S.pageHead('Status do Produto', 'Posição atual e histórico de movimentações.')}
         <label>Produto
-          <select id="statusProductSelect">${S.options(meta.products, productId, { empty: meta.products.length ? null : 'Nenhum produto cadastrado' })}</select>
+          ${meta.products.length
+            ? renderSearchableSelect({ id: 'statusProduto', name: 'statusProduto', options: opcoesProduto, selectedValue: productId, placeholder: 'Buscar por nome ou SKU...' })
+            : '<select disabled><option>Nenhum produto cadastrado</option></select>'}
         </label>
       </div>
 
@@ -102,9 +110,13 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
       `}
     `;
 
-    document.getElementById('statusProductSelect')?.addEventListener('change', (event) => {
-      productId = event.target.value;
-      render();
+    attachSearchableSelect({
+      id: 'statusProduto',
+      options: opcoesProduto,
+      onSelect: (value) => {
+        productId = value;
+        render();
+      }
     });
 
     document.getElementById('statusNewMovement')?.addEventListener('click', () => {

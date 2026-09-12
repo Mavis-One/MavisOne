@@ -111,12 +111,27 @@ window.MavisStock = window.MavisStock || {};
     `;
   };
 
+  // Quando um <select> deixa de servir mora em shared/campo_de_busca.js: esta
+  // fabrica e a de Cadastros desenham campo com lista de produto, e a regra
+  // escrita nas duas divergiria na primeira correcao feita de um lado.
+  const busca = () => window.MavisCampoDeBusca;
+
   // Campo de formulário a partir da descrição declarativa das fábricas.
   Stock.field = function field(def, value, meta) {
     const val = value ?? def.default ?? '';
     const required = def.required ? 'required' : '';
     if (def.type === 'select') {
-      const list = typeof def.options === 'function' ? def.options(meta) : (def.options || []);
+      const list = busca().lista(def, meta);
+      if (busca().ehDeBusca(def, meta)) {
+        return `<label>${def.label}${renderSearchableSelect({
+          id: busca().idDoCampo(def),
+          name: def.name,
+          options: busca().opcoes(def, meta),
+          selectedValue: val,
+          placeholder: 'Buscar por nome ou SKU...',
+          required: Boolean(def.required)
+        })}</label>`;
+      }
       return `<label>${def.label}<select name="${def.name}" ${required}>${Stock.options(list, val, { empty: def.empty ?? 'Selecione' })}</select></label>`;
     }
     if (def.type === 'textarea') {
@@ -303,6 +318,10 @@ window.MavisStock = window.MavisStock || {};
           </form>
         </div>
       `;
+
+      // Os campos que viraram busca precisam dos ouvintes; os <select> comuns
+      // nao precisam de nada. A MESMA funcao que decidiu no desenho decide aqui.
+      busca().ligar(config.fields, meta);
 
       document.getElementById('stockFormCancel')?.addEventListener('click', () => {
         state.activeSub = config.listSub;

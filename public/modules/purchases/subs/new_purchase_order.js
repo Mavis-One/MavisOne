@@ -20,6 +20,19 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
   const produtos = data.products || [];
   const produtosPorId = new Map(produtos.map((p) => [p.id, p]));
   const directory = data.directory || [];
+
+  // OS DOIS SELETORES DESTA TELA DEIXARAM DE SER <select> (fase CH).
+  //
+  // Medido no navegador depois das importacoes: fornecedor com 6.493 <option>,
+  // produto com 5.476, e 12.030 nos no DOM so' desses dois campos. Um <select>
+  // desse tamanho nao se procura — rola-se ate' achar.
+  //
+  // O rotulo do produto leva o SKU porque 457 produtos tem nome repetido (203
+  // nomes, ate' 7 vezes cada) COM CUSTOS DIFERENTES. Numa ordem de compra isso
+  // e' dinheiro: escolher a "SETA" errada entre sete grava o custo errado no
+  // item, e o erro so' aparece quando a nota do fornecedor nao bate.
+  const opcoesProduto = window.MavisRotuloProduto.opcoes(produtos);
+  const opcoesFornecedor = directory.map((e) => ({ value: e.id, label: e.name }));
   const depositos = data.deposits || [];
 
   const editandoId = state.purchaseDocumentId || null;
@@ -73,7 +86,7 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
   }
 
   function adicionarItem() {
-    const productId = document.getElementById('compraProduto')?.value || '';
+    const productId = document.getElementById('compraProdutoValue')?.value || '';
     const quantity = Number(document.getElementById('compraQtd')?.value || 0);
     const unitCost = Number(document.getElementById('compraCusto')?.value || 0);
     if (!productId || quantity <= 0) {
@@ -121,10 +134,7 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
               </select>
             </label>
             <label>Fornecedor
-              <select name="supplierId" id="compraFornecedor">
-                <option value="">— escolha —</option>
-                ${directory.map((e) => `<option value="${e.id}" ${documento.supplierId === e.id ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
-              </select>
+              ${renderSearchableSelect({ id: 'compraFornecedor', name: 'supplierId', options: opcoesFornecedor, selectedValue: documento.supplierId, placeholder: 'Buscar fornecedor...' })}
             </label>
           </div>
           <div class="row">
@@ -141,12 +151,10 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
           <h4>Itens</h4>
           <div class="row">
             <label>Produto
-              <select id="compraProduto">
-                ${produtos.map((p) => `<option value="${p.id}" data-custo="${Number(p.costPrice || 0)}">${escapeHtml(p.name)}</option>`).join('')}
-              </select>
+              ${renderSearchableSelect({ id: 'compraProduto', name: 'produtoBusca', options: opcoesProduto, placeholder: 'Buscar por nome ou SKU...' })}
             </label>
             <label>Quantidade<input type="number" id="compraQtd" min="0" step="0.0001" value="1" /></label>
-            <label>Custo unitário<input type="number" id="compraCusto" min="0" step="0.01" value="${Number(produtos[0]?.costPrice || 0).toFixed(2)}" /></label>
+            <label>Custo unitário<input type="number" id="compraCusto" min="0" step="0.01" value="0.00" /></label>
             <button type="button" class="secondary" id="compraAdicionar">Adicionar</button>
           </div>
           <div class="table-scroll">
@@ -176,10 +184,15 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
       </div>
     `;
 
-    document.getElementById('compraProduto')?.addEventListener('change', (evento) => {
-      const opcao = evento.target.selectedOptions[0];
-      const campo = document.getElementById('compraCusto');
-      if (opcao && campo) campo.value = Number(opcao.dataset.custo || 0).toFixed(2);
+    attachSearchableSelect({ id: 'compraFornecedor', options: opcoesFornecedor });
+
+    attachSearchableSelect({
+      id: 'compraProduto',
+      options: opcoesProduto,
+      onSelect: (valor, opcao) => {
+        const campo = document.getElementById('compraCusto');
+        if (campo) campo.value = Number(opcao?.product?.costPrice || 0).toFixed(2);
+      }
     });
 
     document.getElementById('compraAdicionar')?.addEventListener('click', adicionarItem);
@@ -221,7 +234,7 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
       // quando a gravação falha: no sucesso a tela troca de lista.
       const botao = evento.target.querySelector('button[type="submit"]');
       if (botao?.disabled) return;
-      const fornecedorId = document.getElementById('compraFornecedor')?.value || '';
+      const fornecedorId = document.getElementById('compraFornecedorValue')?.value || '';
       if (!fornecedorId) {
         showToast('Escolha o fornecedor.', 'warning');
         return;

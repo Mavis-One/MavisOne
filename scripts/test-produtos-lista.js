@@ -234,8 +234,14 @@ check('  e a coluna ativa destacada', /\.lista-ordenar\.is-ativa/.test(css));
 // Se sobrasse um `.cadastro-paginas` em qualquer lugar, uma das duas telas
 // estaria apontando para um estilo que não existe mais — e o botão voltaria a
 // parecer um <button> cru, sem ninguém notar até abrir a tela.
+//
+// A checagem é sobre o CÓDIGO, sem comentários: os comentários que explicam o
+// rename citam o nome antigo de propósito ("`.cadastro-paginas` passou a
+// `.lista-paginas`"), e contá-los faria este check falhar justamente por causa
+// da documentação que ele deveria incentivar. Cai no mesmo engano da fase AE,
+// quando um docblock meu foi contado como um ponto não tratado.
 const sobrou = ['public/app.css', 'public/app.js', 'public/modules/stock/subs/products.js']
-  .filter((f) => /cadastro-paginas|cadastro-ordenar/.test(ler(f)));
+  .filter((f) => /cadastro-paginas|cadastro-ordenar/.test(semComentarios(ler(f))));
 check('nenhum arquivo ficou apontando para o nome antigo', sobrou.length === 0, sobrou.join(', ') || 'nenhum');
 
 // ---------------------------------------------------------------------------

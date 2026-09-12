@@ -14,6 +14,12 @@
          para ligar os campos de documento. -->
     <script src="/modules/shared/documento.js"></script>
     <script src="/modules/shared/campos.js"></script>
+    <!-- Como um produto se chama dentro de um seletor. Antes dos modulos porque
+         Estoque e Compras montam a lista de opcoes no topo das telas. -->
+    <script src="/modules/shared/rotulo_produto.js"></script>
+    <!-- Quando um <select> deixa de servir. Depois do rotulo_produto.js, que
+         ele usa para montar o rotulo de produto. -->
+    <script src="/modules/shared/campo_de_busca.js"></script>
     <!-- Antes de QUALQUER módulo: os painéis de Financeiro, Vendas, Estoque,
          Compras, Fiscal, Frota, RH, PCP e Contratos chamam MavisPainel, e o
          apelido financeBuildChartSvg é definido no fim deste arquivo. -->

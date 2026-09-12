@@ -8,6 +8,11 @@ window.MavisSubscreenRegistry.stock.transfers = async function renderTransfers(c
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
+
+  // O seletor de produto deixou de ser um <select> (fase CH): sao 5.476
+  // produtos depois da importacao, e 457 deles tem nome repetido. O rotulo leva
+  // o SKU porque o nome sozinho nao distingue.
+  const opcoesProduto = window.MavisRotuloProduto.opcoes(meta.products);
   const cores = S.indiceDeCores(meta);
   const filters = { search: '', productId: '', depositId: '' };
 
@@ -31,7 +36,9 @@ window.MavisSubscreenRegistry.stock.transfers = async function renderTransfers(c
         <form id="transferFilters" class="form-grid">
           <div class="row">
             <label>Buscar<input type="search" name="search" value="${S.escape(filters.search)}" placeholder="Código, produto ou observação" /></label>
-            <label>Produto<select name="productId">${S.options(meta.products, filters.productId, { empty: 'Todos' })}</select></label>
+            <label>Produto
+              ${renderSearchableSelect({ id: 'transferFiltroProduto', name: 'productId', options: opcoesProduto, selectedValue: filters.productId, placeholder: 'Todos — busque por nome ou SKU' })}
+            </label>
             <label>Depósito (origem ou destino)<select name="depositId">${S.options(meta.deposits, filters.depositId, { empty: 'Todos' })}</select></label>
           </div>
           <div class="finance-actions-row">
@@ -72,6 +79,9 @@ window.MavisSubscreenRegistry.stock.transfers = async function renderTransfers(c
       state.activeSub = 'new_transfer';
       loadModule('stock');
     });
+
+    // Em branco quer dizer "todos", como o "Todos" do <select> antigo.
+    attachSearchableSelect({ id: 'transferFiltroProduto', options: opcoesProduto });
 
     document.getElementById('transferFilters')?.addEventListener('submit', (event) => {
       event.preventDefault();

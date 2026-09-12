@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-12 11:46 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-12 12:36 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -263,6 +263,8 @@ regra só, para tela e servidor nunca discordarem.
       Botão "Atalhos" da barra superior.
   bandeira_cartao.js   [também no servidor]
       AS BANDEIRAS DE CARTÃO DA NF-e (campo `tBand`) — FONTE ÚNICA.
+  campo_de_busca.js
+      QUANDO UM <select> DEIXA DE SERVIR — fonte única.
   campos.js
       Telefone, CEP, UF e placa — comportamento ÚNICO, usado por todas as telas.
   contas_por_estabelecimento.js   [também no servidor]
@@ -295,6 +297,8 @@ regra só, para tela e servidor nunca discordarem.
       Catálogo de Status de Compra — FONTE ÚNICA.
   purchase_totals.js   [também no servidor]
       Totais do documento de compra — FONTE ÚNICA.
+  rotulo_produto.js
+      Como um produto se chama DENTRO DE UM SELETOR — fonte única.
   sales_bulk_actions.js   [também no servidor]
       Menu "Mais Ações" da LISTA — as ações em lote.
   sales_record_actions.js
@@ -590,7 +594,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-102 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+103 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -683,6 +687,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [avulso]  test-sales-totals-e2e.js           Prova que o total gravado pelo servidor bate com o que a tela calcula, e que o servidor NÃO aceita um total fo
   [npm test] test-sales-totals.js               Regras de desconto, frete e soma dos totais de Pedido/Orçamento.
   [npm test] test-seguranca-sessao.js           AS TRÊS PORTAS QUE A VARREDURA DE 11/09/2026 ENCONTROU ABERTAS (fase BZ).
+  [npm test] test-seletor-de-produto.js         NENHUMA TELA DESENHA 5.476 DE NADA (fase CH).
   [npm test] test-sessao-expira.js              Expiração das sessões na virada do dia — lib/sessao.js A conta de "quando esta sessão morre" é fácil de escrev
   [avulso]  test-sessao-unica.js               Sessão única por usuário: entrar numa máquina derruba a outra.
   [npm test] test-sql-compat.js                 A CAMADA COMPATÍVEL — o dialeto do supabase-js virando SQL, provado sem banco.
@@ -699,12 +704,14 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-129 arquivos JS carregados por public/index.html, nesta ordem.
+131 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
   /modules/shared/documento.js
   /modules/shared/campos.js
+  /modules/shared/rotulo_produto.js
+  /modules/shared/campo_de_busca.js
   /modules/shared/painel.js
   /modules/shared/module_workspace.js
   /modules/stock/shared.js

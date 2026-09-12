@@ -104,7 +104,22 @@ window.MavisCadastros = window.MavisCadastros || {};
 
     const inner = (() => {
       if (def.type === 'select') {
-        const list = typeof def.options === 'function' ? def.options(meta) : (def.options || []);
+        const busca = window.MavisCampoDeBusca;
+        // Lista grande deixa de ser <select> e vira campo de busca. A regra e o
+        // corte moram em shared/campo_de_busca.js, junto da explicacao: esta
+        // fabrica desenha PCP > Nova ordem e Cadastros > Novo cashback, que
+        // listam os 5.476 produtos.
+        if (busca.ehDeBusca(def, meta)) {
+          return renderSearchableSelect({
+            id: busca.idDoCampo(def),
+            name: def.name,
+            options: busca.opcoes(def, meta),
+            selectedValue: val,
+            placeholder: 'Buscar por nome ou SKU...',
+            required: Boolean(def.required)
+          });
+        }
+        const list = busca.lista(def, meta);
         return `<select name="${def.name}" ${def.attrs || ''}>${C.options(list, val, { empty: def.empty ?? 'Selecione' })}</select>`;
       }
       if (def.type === 'textarea') {
@@ -493,6 +508,9 @@ window.MavisCadastros = window.MavisCadastros || {};
         // Campos marcados com data-documento ganham máscara e validação de
         // CPF/CNPJ. Seguro chamar a cada render: ligar() ignora input já ligado.
         window.MavisDocumento?.ligarTodos(content);
+        // Os campos cuja lista passou do limite viraram busca e precisam dos
+        // ouvintes. A MESMA funcao que decidiu no desenho decide aqui.
+        window.MavisCampoDeBusca.ligar(campos, meta);
 
         ligar();
       }
@@ -693,6 +711,9 @@ window.MavisCadastros = window.MavisCadastros || {};
         // Campos marcados com data-documento ganham máscara e validação de
         // CPF/CNPJ. Seguro chamar a cada render: ligar() ignora input já ligado.
         window.MavisDocumento?.ligarTodos(content);
+        // Os campos cuja lista passou do limite viraram busca e precisam dos
+        // ouvintes. A MESMA funcao que decidiu no desenho decide aqui.
+        window.MavisCampoDeBusca.ligar(allFields, meta);
 
         attachHandlers();
       }

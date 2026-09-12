@@ -6,6 +6,11 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
+
+  // O seletor de produto deixou de ser um <select> (fase CH): sao 5.476
+  // produtos depois da importacao, e 457 deles tem nome repetido. O rotulo leva
+  // o SKU porque o nome sozinho nao distingue.
+  const opcoesProduto = window.MavisRotuloProduto.opcoes(meta.products);
   const filters = { search: '', type: '', productId: '', depositId: '', categoryId: '', classValueId: '', dateFrom: '', dateTo: '' };
   let page = 1;
   const limit = 20;
@@ -141,7 +146,9 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
                 <option value="saida" ${filters.type === 'saida' ? 'selected' : ''}>Saída</option>
               </select>
             </label>
-            <label>Produto<select name="productId">${S.options(meta.products, filters.productId, { empty: 'Todos' })}</select></label>
+            <label>Produto
+              ${renderSearchableSelect({ id: 'movFiltroProduto', name: 'productId', options: opcoesProduto, selectedValue: filters.productId, placeholder: 'Todos — busque por nome ou SKU' })}
+            </label>
             <label>Depósito<select name="depositId">${S.options(meta.deposits, filters.depositId, { empty: 'Todos' })}</select></label>
           </div>
           <div class="row">
@@ -206,6 +213,11 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
       state.activeSub = 'new_movement';
       loadModule('stock');
     });
+
+    // Filtro em branco quer dizer "todos": apagar o texto zera o campo
+    // escondido, e o filtro volta a nao filtrar nada. E' o mesmo que escolher
+    // "Todos" no <select> que estava aqui antes.
+    attachSearchableSelect({ id: 'movFiltroProduto', options: opcoesProduto });
 
     document.getElementById('movFilters')?.addEventListener('submit', (event) => {
       event.preventDefault();

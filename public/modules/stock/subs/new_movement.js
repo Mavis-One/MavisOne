@@ -6,6 +6,20 @@ window.MavisSubscreenRegistry.stock.new_movement = async function renderNewMovem
   const S = window.MavisStock;
 
   const meta = await S.loadMeta(api, showToast);
+
+  // O seletor de produto deixou de ser um <select> (fase CH).
+  //
+  // Depois da importacao do ViperERP sao 5.476 produtos. Um <select> com 5.477
+  // <option> nao e' so' lento: e' inutilizavel. Nao se procura nada nele —
+  // rola-se ate' achar, ou digita-se as primeiras letras rapido o bastante para
+  // o navegador contar como uma palavra so'.
+  //
+  // E 457 desses produtos tem nome repetido (203 nomes, ate' 7 vezes cada), com
+  // custos diferentes entre si. Por isso o rotulo leva o SKU: sete linhas
+  // identicas na lista sao sete chances de escolher a errada, e o erro so'
+  // aparece quando o saldo do produto errado fica negativo.
+  const opcoesProduto = window.MavisRotuloProduto.opcoes(meta.products);
+
   const preselectedProduct = state.stockMovementProductId || '';
   state.stockMovementProductId = null;
 
@@ -115,7 +129,7 @@ window.MavisSubscreenRegistry.stock.new_movement = async function renderNewMovem
         <form id="movementForm" class="form-grid">
           <div class="row">
             <label>Produto
-              <select name="productId" id="movementProduct" required>${S.options(meta.products, selectedProductId, { empty: 'Selecione' })}</select>
+              ${renderSearchableSelect({ id: 'movementProduct', name: 'productId', options: opcoesProduto, selectedValue: selectedProductId, placeholder: 'Buscar por nome ou SKU...', required: true })}
             </label>
             <label>Depósito<select name="depositId" id="movementDeposit" required>${S.options(meta.deposits, depositId, { empty: 'Selecione' })}</select></label>
             <label>Data<input type="date" name="date" required value="${today}" /></label>
@@ -143,20 +157,27 @@ window.MavisSubscreenRegistry.stock.new_movement = async function renderNewMovem
     content.querySelectorAll('[data-mov-type]').forEach((btn) => {
       btn.addEventListener('click', () => {
         type = btn.dataset.movType;
-        render(document.getElementById('movementProduct')?.value || '');
+        render(document.getElementById('movementProductValue')?.value || '');
       });
     });
 
-    document.getElementById('movementProduct')?.addEventListener('change', async (event) => {
-      await loadProductDetail(event.target.value);
-      render(event.target.value);
+    attachSearchableSelect({
+      id: 'movementProduct',
+      options: opcoesProduto,
+      onSelect: async (value) => {
+        // Carrega ANTES de pintar: o saldo por deposito e o campo de cor saem
+        // do que a API responde, e pintar duas vezes faria a caixa piscar a
+        // cada produto escolhido.
+        await loadProductDetail(value);
+        render(value);
+      }
     });
 
     // Trocar de depósito muda o saldo de cada cor — o rótulo "8 disponível"
     // vale para o galpão escolhido, não para a empresa inteira.
     document.getElementById('movementDeposit')?.addEventListener('change', async (event) => {
       depositId = event.target.value;
-      const productId = document.getElementById('movementProduct')?.value || '';
+      const productId = document.getElementById('movementProductValue')?.value || '';
       await loadClasses(productId);
       render(productId);
     });
@@ -176,9 +197,15 @@ window.MavisSubscreenRegistry.stock.new_movement = async function renderNewMovem
       if (submitBtn?.disabled) return;
       if (submitBtn) submitBtn.disabled = true;
       const formData = new FormData(event.target);
+      const escolhido = String(formData.get('productId') || '');
+      if (!escolhido) {
+        showToast('Escolha um produto na lista — digitar o nome nao basta.', 'error');
+        if (submitBtn) submitBtn.disabled = false;
+        return;
+      }
       const payload = {
         type,
-        productId: formData.get('productId'),
+        productId: escolhido,
         depositId: formData.get('depositId'),
         date: formData.get('date'),
         quantity: Number(formData.get('quantity') || 0),

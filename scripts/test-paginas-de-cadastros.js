@@ -94,7 +94,23 @@ check('com uma página só, some a botoeira mas fica a contagem',
   /\$\{totalPaginas > 1 \? `/.test(app));
 
 console.log('--- 5. virar página, e voltar para a 1 ---');
-check('o clique é delegado no content', /content\.addEventListener\('click', \(evento\) => \{[\s\S]{0,160}lista-paginas-botoes \[data-pagina\]/.test(appCodigo));
+// O clique é DELEGADO, e não um ouvinte por botão: as barras são duas e se
+// redesenham inteiras a cada virada, então um ouvinte por botão teria de ser
+// reatado toda vez.
+//
+// MAS DELEGADO NA CASCA DESTA LISTA, e não no `content`. Estava no `content` e
+// isso virou bug de verdade na fase CH: `content` é o mesmo nó em todos os
+// módulos e sobrevive à troca de tela (innerHTML troca os filhos, não o pai).
+// Quando o Estoque passou a usar as mesmas classes `.lista-*`, virar a página no
+// Gestor de Preços casava este seletor, este ouvinte rodava, e a pessoa era
+// jogada para Cadastros > Pessoas — sem erro no console.
+//
+// A intenção do check é a mesma de antes; o alvo mudou porque o alvo ERA o bug.
+check('o clique é delegado na casca da lista',
+  /const casca = content\.querySelector\('\.cadastros-shell'\);/.test(appCodigo)
+  && /casca\?\.addEventListener\('click', \(evento\) => \{[\s\S]{0,160}lista-paginas-botoes \[data-pagina\]/.test(appCodigo));
+check('  e NÃO no content, que é compartilhado entre os módulos',
+  !/content\.addEventListener\('click'[\s\S]{0,80}lista-paginas-botoes/.test(appCodigo));
 check('  ignorando botão desligado', /if \(!botao \|\| botao\.disabled\) return;/.test(appCodigo));
 check('  e subindo a tela ao virar', /window\.scrollTo\(\{ top: 0, behavior: 'smooth' \}\);/.test(appCodigo));
 // Buscar na página 40 e continuar na 40 mostraria "Nenhum registro" — e a

@@ -1927,7 +1927,14 @@ function attachSearchableSelect({ id, options, onSelect }) {
 
   // Índice de busca calculado uma vez, não a cada tecla: normalizar centenas
   // de rótulos a cada letra digitada trava o campo em cadastros grandes.
-  const indice = options.map((o) => ({ opcao: o, busca: textoDeBusca(o.label) }));
+  //
+  // `palavras` entra junto pelo mesmo motivo. Ele serve para dar preferência a
+  // quem casa uma PALAVRA INTEIRA — ver a pontuação mais abaixo — e recortá-lo
+  // a cada tecla, sobre 5.476 rótulos, seria fazer 5.476 splits por letra.
+  const indice = options.map((o) => {
+    const busca = textoDeBusca(o.label);
+    return { opcao: o, busca, palavras: busca.split(/[^a-z0-9]+/).filter(Boolean) };
+  });
 
   function renderDropdown(filterText, { mostrarTudo = false } = {}) {
     const term = textoDeBusca(filterText).trim();
@@ -1937,7 +1944,42 @@ function attachSearchableSelect({ id, options, onSelect }) {
       dropdown.hidden = true;
       return;
     }
-    const filtrados = term ? indice.filter((i) => i.busca.includes(term)) : indice;
+
+    // CADA PALAVRA DIGITADA É UM FILTRO, e não a frase inteira como um pedaço
+    // só. Antes era `busca.includes(term)`: quem digitava "seta pisca"
+    // procurando "SETA (PISCA DE SINALIZACAO) PARA BICICLETA" não achava nada,
+    // porque entre as duas palavras existe um parêntese. O campo respondia
+    // "Nenhum resultado" sobre um produto que está no cadastro — e a pessoa
+    // conclui que ele não existe.
+    //
+    // Com poucos itens ninguém nota; com 5.476 é o jeito normal de procurar.
+    const partes = term ? term.split(/\s+/).filter(Boolean) : [];
+    const filtrados = partes.length
+      ? indice.filter((i) => partes.every((parte) => i.busca.includes(parte)))
+      : indice;
+
+    // QUEM CASA PALAVRA INTEIRA VAI NA FRENTE.
+    //
+    // Digitar o SKU "10087" trazia 11 resultados com "100876", "100875" e
+    // "100874" em cima — todos contêm "10087" dentro. O produto de SKU 10087,
+    // que é exatamente o que se pediu, ficava perdido no meio. Procurar pelo
+    // código e não achar o código no topo é o campo devolvendo o trabalho.
+    //
+    // A ordenação é estável, então quem empata mantém a ordem do cadastro.
+    if (partes.length) {
+      const pontuar = (item) => {
+        // 0 — o rotulo COMECA com o que se digitou. Quem digita "abracadeira"
+        //     quer "ABRACADEIRA 1/2 CZ" antes de um rotulo que comeca com o
+        //     codigo de barras e traz a palavra la' no meio.
+        if (item.busca.startsWith(term)) return 0;
+        // 1 — todas as palavras digitadas aparecem INTEIRAS. E' o que poe o SKU
+        //     10087 na frente de 100876.
+        if (partes.every((parte) => item.palavras.includes(parte))) return 1;
+        // 2 — casa so' como pedaco de palavra.
+        return 2;
+      };
+      filtrados.sort((a, b) => pontuar(a) - pontuar(b));
+    }
     // O corte em 50 é o que mantém a lista utilizável; sem avisar, o usuário
     // procuraria um item que existe e não aparece.
     const mostrados = filtrados.slice(0, 50);
@@ -6548,10 +6590,26 @@ async function loadModule(moduleName) {
 
       // OS BOTOES DE PAGINA.
       //
-      // Delegado no `content` e nao um ouvinte por botao: as barras sao duas (a
-      // de cima e a de baixo) e se redesenham inteiras a cada virada, entao um
-      // ouvinte por botao teria de ser reatado toda vez.
-      content.addEventListener('click', (evento) => {
+      // Delegado, e nao um ouvinte por botao: as barras sao duas (a de cima e a
+      // de baixo) e se redesenham inteiras a cada virada, entao um ouvinte por
+      // botao teria de ser reatado toda vez.
+      //
+      // MAS DELEGADO NA CASCA DESTA LISTA, e nao no `content`. Estava no
+      // `content` e isso virou um bug de verdade na fase CH, quando os estilos
+      // `.cadastro-paginas` / `.cadastro-ordenar` passaram a `.lista-*` e o
+      // Estoque comecou a usar as MESMAS classes:
+      //
+      //   `content` e o mesmo no de todos os modulos, e o ouvinte ligado nele
+      //   sobrevive a troca de tela (innerHTML troca os filhos, nao o pai).
+      //   Resultado: virar a pagina no Gestor de Precos casava este seletor,
+      //   este ouvinte rodava, e a pessoa era jogada para Cadastros > Pessoas.
+      //   Sem erro no console — a tela simplesmente trocava.
+      //
+      // A casca e' recriada a cada render, entao ligar nela tambem resolve o
+      // vazamento de ouvintes que existia antes: cada passada por esta tela
+      // atava um ouvinte novo no `content` e nenhum era removido.
+      const casca = content.querySelector('.cadastros-shell');
+      casca?.addEventListener('click', (evento) => {
         const botao = evento.target.closest('.lista-paginas-botoes [data-pagina]');
         if (!botao || botao.disabled) return;
         state.cadastroDraft = {
@@ -6575,7 +6633,10 @@ async function loadModule(moduleName) {
       //
       // A excecao e' "Cadastrado em", que comeca DECRESCENTE: com data, o que se
       // procura e' o mais recente, e essa ja' e' a ordem padrao da tela.
-      content.addEventListener('click', (evento) => {
+      // Na casca, pelo mesmo motivo dos botoes de pagina: `[data-ordenar]` e' o
+      // cabecalho ordenavel de QUALQUER lista do sistema desde a fase CH, e no
+      // `content` este ouvinte respondia pelos cliques do Estoque tambem.
+      casca?.addEventListener('click', (evento) => {
         const alvo = evento.target.closest('[data-ordenar]');
         if (!alvo) return;
         const campo = alvo.dataset.ordenar;
