@@ -6209,16 +6209,16 @@ async function loadModule(moduleName) {
         // A barra aparece em CIMA e EMBAIXO da tabela. Com 100 linhas, só
         // embaixo obrigaria a rolar a página inteira para virar a página.
         const barraDePaginas = (posicao) => (totalRegistros === 0 ? '' : `
-          <div class="cadastro-paginas cadastro-paginas-${posicao}">
+          <div class="lista-paginas lista-paginas-${posicao}">
             <span class="muted">
               Mostrando <strong>${primeiroDaPagina + 1}</strong>–<strong>${primeiroDaPagina + visiveis.length}</strong>
               de <strong>${totalRegistros.toLocaleString('pt-BR')}</strong> cadastro${totalRegistros === 1 ? '' : 's'}
             </span>
             ${totalPaginas > 1 ? `
-              <div class="cadastro-paginas-botoes">
+              <div class="lista-paginas-botoes">
                 <button type="button" class="secondary" data-pagina="1" ${paginaAtual === 1 ? 'disabled' : ''} title="Primeira página" aria-label="Primeira página">««</button>
                 <button type="button" class="secondary" data-pagina="${paginaAtual - 1}" ${paginaAtual === 1 ? 'disabled' : ''} title="Página anterior" aria-label="Página anterior">‹</button>
-                <span class="cadastro-paginas-atual">Página ${paginaAtual} de ${totalPaginas}</span>
+                <span class="lista-paginas-atual">Página ${paginaAtual} de ${totalPaginas}</span>
                 <button type="button" class="secondary" data-pagina="${paginaAtual + 1}" ${paginaAtual === totalPaginas ? 'disabled' : ''} title="Próxima página" aria-label="Próxima página">›</button>
                 <button type="button" class="secondary" data-pagina="${totalPaginas}" ${paginaAtual === totalPaginas ? 'disabled' : ''} title="Última página" aria-label="Última página">»»</button>
               </div>
@@ -6364,11 +6364,11 @@ async function loadModule(moduleName) {
                         const proxima = ativa && direcaoDaOrdem === 'asc' ? 'decrescente' : 'crescente';
                         return `
                           <th aria-sort="${ativa ? (direcaoDaOrdem === 'asc' ? 'ascending' : 'descending') : 'none'}">
-                            <button type="button" class="cadastro-ordenar ${ativa ? 'is-ativa' : ''}"
+                            <button type="button" class="lista-ordenar ${ativa ? 'is-ativa' : ''}"
                                     data-ordenar="${campo}"
                                     title="Ordenar por ${escapeHtml(def.rotulo)} em ordem ${proxima}">
                               <span>${escapeHtml(def.rotulo)}</span>
-                              <span class="cadastro-ordenar-seta" aria-hidden="true">${seta}</span>
+                              <span class="lista-ordenar-seta" aria-hidden="true">${seta}</span>
                             </button>
                           </th>`;
                       }).join('')}
@@ -6552,7 +6552,7 @@ async function loadModule(moduleName) {
       // de cima e a de baixo) e se redesenham inteiras a cada virada, entao um
       // ouvinte por botao teria de ser reatado toda vez.
       content.addEventListener('click', (evento) => {
-        const botao = evento.target.closest('.cadastro-paginas-botoes [data-pagina]');
+        const botao = evento.target.closest('.lista-paginas-botoes [data-pagina]');
         if (!botao || botao.disabled) return;
         state.cadastroDraft = {
           ...state.cadastroDraft,

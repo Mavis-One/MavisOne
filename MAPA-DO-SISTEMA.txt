@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-11 20:36 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-12 11:46 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -590,7 +590,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-101 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+102 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -669,6 +669,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-prazo-cancelamento.js         Prazo de 24 horas para cancelar NF-e.
   [npm test] test-pre-check-fiscal.js           PRÉ-CHECK FISCAL DOS PEDIDOS DO DIA (fase BY, OBS-21).
   [npm test] test-produto-abas.js               Abas do cadastro de produto.
+  [npm test] test-produtos-lista.js             A LISTA DE PRODUTOS: PÁGINAS DE 100 E CABEÇALHO QUE ORDENA (fase CG).
   [avulso]  test-razao-no-banco.js             O RAZÃO DE ESTOQUE VIVE NO POSTGRES, E É TRANSACIONAL (fase AP).
   [npm test] test-regra-fiscal-parcial.js       SALVAR UMA REGRA FISCAL NÃO APAGA O QUE O FORMULÁRIO NÃO MOSTRA (fase BJ).
   [npm test] test-regras-fiscais.js             Modelo de regras fiscais — scripts/seed-regras-fiscais.js Os CFOPs vieram do ERP que o usuário usa hoje: 5102,

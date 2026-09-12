@@ -94,7 +94,7 @@ check('com uma página só, some a botoeira mas fica a contagem',
   /\$\{totalPaginas > 1 \? `/.test(app));
 
 console.log('--- 5. virar página, e voltar para a 1 ---');
-check('o clique é delegado no content', /content\.addEventListener\('click', \(evento\) => \{[\s\S]{0,160}cadastro-paginas-botoes \[data-pagina\]/.test(appCodigo));
+check('o clique é delegado no content', /content\.addEventListener\('click', \(evento\) => \{[\s\S]{0,160}lista-paginas-botoes \[data-pagina\]/.test(appCodigo));
 check('  ignorando botão desligado', /if \(!botao \|\| botao\.disabled\) return;/.test(appCodigo));
 check('  e subindo a tela ao virar', /window\.scrollTo\(\{ top: 0, behavior: 'smooth' \}\);/.test(appCodigo));
 // Buscar na página 40 e continuar na 40 mostraria "Nenhum registro" — e a
@@ -108,12 +108,12 @@ check('a página mora junto dos filtros no estado',
 
 console.log('--- 6. o estilo existe ---');
 const css = ler('public/app.css');
-check('a barra tem estilo', /\.cadastro-paginas \{/.test(css));
+check('a barra tem estilo', /\.lista-paginas \{/.test(css));
 check('  com a de cima e a de baixo diferenciadas',
-  /\.cadastro-paginas-acima/.test(css) && /\.cadastro-paginas-abaixo/.test(css));
+  /\.lista-paginas-acima/.test(css) && /\.lista-paginas-abaixo/.test(css));
 // Botão desligado continua ocupando o lugar: a barra não pode dançar ao chegar
 // na primeira ou na última página.
-check('  e botão desligado não some', /\.cadastro-paginas-botoes button\[disabled\]/.test(css));
+check('  e botão desligado não some', /\.lista-paginas-botoes button\[disabled\]/.test(css));
 
 console.log('--- o que foi medido no Chrome, com os 6.492 ---');
 for (const [caso, resultado] of [

@@ -86,7 +86,7 @@ check('a direção inverte o resultado, e não a comparação',
 console.log('--- 4. o cabeçalho ---');
 // <button> de verdade: chega pelo teclado e é anunciado como botão. Um <th> com
 // addEventListener pareceria clicável só para quem usa mouse.
-check('cada coluna é um button', /<button type="button" class="cadastro-ordenar/.test(app));
+check('cada coluna é um button', /<button type="button" class="lista-ordenar/.test(app));
 check('  com aria-sort para o leitor de tela', /aria-sort="\$\{ativa \? \(direcaoDaOrdem === 'asc' \? 'ascending' : 'descending'\) : 'none'\}"/.test(app));
 check('  e a seta indicando a direção', /direcaoDaOrdem === 'asc' \? '▲' : '▼'/.test(app));
 // O título diz o que o PRÓXIMO clique faz, não o que já está feito.
@@ -123,11 +123,11 @@ check('  descendente', /ordemDirecao: state\.cadastroDraft\.listFilters\?\.ordem
 
 console.log('--- 7. o estilo ---');
 const css = ler('public/app.css');
-check('o botão do cabeçalho tem estilo', /\.cadastro-ordenar \{/.test(css));
-check('  com foco visível pelo teclado', /\.cadastro-ordenar:focus-visible/.test(css));
-check('  e a coluna ativa destacada', /\.cadastro-ordenar\.is-ativa/.test(css));
+check('o botão do cabeçalho tem estilo', /\.lista-ordenar \{/.test(css));
+check('  com foco visível pelo teclado', /\.lista-ordenar:focus-visible/.test(css));
+check('  e a coluna ativa destacada', /\.lista-ordenar\.is-ativa/.test(css));
 // Sem largura mínima, os títulos dançam de lugar a cada troca de coluna.
-check('a seta reserva o próprio espaço', /\.cadastro-ordenar-seta \{[\s\S]{0,120}min-width/.test(css));
+check('a seta reserva o próprio espaço', /\.lista-ordenar-seta \{[\s\S]{0,120}min-width/.test(css));
 
 console.log('--- o que foi medido no Chrome, com os 6.492 ---');
 for (const [caso, resultado] of [

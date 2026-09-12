@@ -4270,12 +4270,17 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 
 /* ===========================================================================
-   PÁGINAS DA LISTA DE CADASTROS (fase CF)
+   PÁGINAS DA LISTA (fases CF e CG)
    ---------------------------------------------------------------------------
    A barra aparece acima e abaixo da tabela. Com 100 linhas, ter só a de baixo
    obrigaria a rolar a página inteira para virar a página.
+
+   Nasceu em Cadastros e hoje serve também Estoque > Produtos, por isso o nome
+   perdeu o prefixo do módulo: virar página é o MESMO controle nas duas telas, e
+   duas folhas de estilo para o mesmo botão são duas chances de ele ficar
+   diferente de um lado para o outro sem ninguém decidir isso.
    =========================================================================== */
-.cadastro-paginas {
+.lista-paginas {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -4283,25 +4288,25 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   gap: 10px 16px;
   padding: 10px 0;
 }
-.cadastro-paginas-acima { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
-.cadastro-paginas-abaixo { border-top: 1px solid var(--border); margin-top: 4px; }
-.cadastro-paginas-botoes {
+.lista-paginas-acima { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.lista-paginas-abaixo { border-top: 1px solid var(--border); margin-top: 4px; }
+.lista-paginas-botoes {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.cadastro-paginas-botoes button {
+.lista-paginas-botoes button {
   min-width: 38px;
   padding: 6px 10px;
   line-height: 1;
 }
 /* Botão desligado continua ocupando o lugar: a barra não pode dançar quando se
    chega na primeira ou na última página. */
-.cadastro-paginas-botoes button[disabled] {
+.lista-paginas-botoes button[disabled] {
   opacity: 0.4;
   cursor: default;
 }
-.cadastro-paginas-atual {
+.lista-paginas-atual {
   padding: 0 8px;
   font-size: 13px;
   white-space: nowrap;
@@ -4309,11 +4314,13 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 
 /* ---------------------------------------------------------------------------
-   CABEÇALHO QUE ORDENA (fase CF)
+   CABEÇALHO QUE ORDENA (fases CF e CG)
    O <th> inteiro é clicável, mas quem recebe o clique é um <button> de verdade
    dentro dele — assim chega pelo teclado e é anunciado como botão.
+
+   Compartilhado por Cadastros > Pessoas e Estoque > Produtos.
    --------------------------------------------------------------------------- */
-.cadastro-ordenar {
+.lista-ordenar {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -4328,16 +4335,16 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   text-align: left;
   cursor: pointer;
 }
-.cadastro-ordenar:hover { color: var(--primary); }
-.cadastro-ordenar:focus-visible {
+.lista-ordenar:hover { color: var(--primary); }
+.lista-ordenar:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
   border-radius: 2px;
 }
-.cadastro-ordenar.is-ativa { color: var(--primary); }
+.lista-ordenar.is-ativa { color: var(--primary); }
 /* A seta reserva o próprio espaço mesmo quando vazia: sem isso, os títulos
    dançam de lugar a cada troca de coluna ordenada. */
-.cadastro-ordenar-seta {
+.lista-ordenar-seta {
   display: inline-block;
   min-width: 10px;
   font-size: 10px;
