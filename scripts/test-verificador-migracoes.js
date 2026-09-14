@@ -22,6 +22,11 @@ const path = require('path');
 
 const RAIZ = path.join(__dirname, '..');
 const ler = (p) => fs.readFileSync(path.join(RAIZ, p), 'utf8').replace(/\r\n/g, '\n');
+// Procurar por padrão QUE NÃO DEVE EXISTIR passa por aqui: o comentário que
+// EXPLICA a mensagem retirada ("não existe mais colar no SQL Editor do
+// Supabase") seria encontrado pela busca crua, e o teste acusaria a própria
+// explicação.
+const { semComentarios } = require('./sem-comentarios');
 
 let falhas = 0;
 const check = (nome, cond, det) => {
@@ -30,12 +35,23 @@ const check = (nome, cond, det) => {
 };
 
 const src = ler('scripts/verificar-migracoes.js');
+// A LEITURA E A CONFERÊNCIA MUDARAM DE ENDEREÇO, NÃO DE EXIGÊNCIA.
+//
+// Elas saíram daqui para lib/migracoes.js quando o APLICADOR passou a precisar
+// das mesmas respostas. Três programas leem banco/migrations/ hoje — verificar,
+// aplicar e gerar o "recriar do zero" — e cada um com a sua cópia era o caminho
+// para a primeira correção feita de um lado ficar de fora do outro. Já
+// aconteceu duas vezes neste arquivo (o regex da fase-v e a ordem das fases).
+const lib = ler('lib/migracoes.js');
 
 console.log('--- o regex enxerga as duas formas de alterar tabela ---');
 // Extrai o regex do próprio fonte e roda contra SQL de verdade: assim o teste
 // verifica o COMPORTAMENTO da leitura, não a presença de um texto.
-const linhaColunas = src.match(/const colunas = \[\.\.\.sql\.matchAll\((\/.+\/gi)\)\]/);
-check('o script declara o regex de colunas', Boolean(linhaColunas), linhaColunas ? 'achado' : 'NÃO ACHADO');
+const linhaColunas = lib.match(/const colunas = \[\.\.\.sql\.matchAll\((\/.+\/gi)\)\]/);
+check('a biblioteca declara o regex de colunas', Boolean(linhaColunas), linhaColunas ? 'achado' : 'NÃO ACHADO');
+// E o verificador tem de ler DELA, senão volta a existir uma segunda cópia.
+check('  e o verificador lê a biblioteca', /require\('\.\.\/lib\/migracoes'\)/.test(src));
+check('  o gerador do zero também', /require\('\.\.\/lib\/migracoes'\)/.test(ler('scripts/gerar-sql-do-zero.js')));
 
 if (linhaColunas) {
   const corpo = linhaColunas[1].replace(/^\//, '').replace(/\/gi$/, '');
@@ -58,9 +74,12 @@ if (linhaColunas) {
 }
 
 console.log('\n--- "não sei conferir" não pode se parecer com "está certo" ---');
-check('existe o estado NÃO CONFERIDA', /'NÃO CONFERIDA'/.test(src));
-check('e ele não é mais chamado de "sem estrutura a conferir"', !/sem estrutura a conferir/.test(src));
-check('as não conferidas são acumuladas à parte', /const naoConferidas = \[\]/.test(src));
+check('existe o estado NÃO CONFERIDA', /'NÃO CONFERIDA'/.test(lib));
+// Sem comentários: o cabeçalho de lib/migracoes.js CITA o nome antigo para
+// explicar por que ele foi trocado, e a busca crua acusaria a explicação.
+check('e ele não é mais chamado de "sem estrutura a conferir"',
+  !/sem estrutura a conferir/.test(semComentarios(lib) + semComentarios(src)));
+check('as não conferidas são acumuladas à parte', /const naoConferidas = \[\]/.test(lib));
 check('e listadas com nome no fim', /naoConferidas\.forEach/.test(src));
 // O ponto todo: quando sobra algo por conferir, o veredito precisa dizer que
 // foi parcial — e o "BANCO EM DIA" limpo tem que ficar no outro ramo.
@@ -71,8 +90,26 @@ check('e o "BANCO EM DIA" limpo é o outro ramo do mesmo ternário',
 console.log('\n--- a trava de deploy continua de pé ---');
 // Migração que só insere dado ou cria índice não tem coluna a conferir e isso
 // não é erro: a ressalva aparece, mas a saída segue 0. Só pendente derruba.
-check('pendente ainda sai com código 1', /pendentes\.length[\s\S]{0,600}process\.exit\(1\)/.test(src));
+//
+// A distância entre um trecho e outro saiu do check: a mensagem do meio cresceu
+// quando o "cole no SQL Editor" virou "npm run migracoes:aplicar", e um limite
+// de caracteres teria acusado a troca do texto como se fosse a trava caindo.
+check('pendente ainda sai com código 1',
+  /MIGRAÇÃO\(ÕES\) PENDENTE\(S\)/.test(src) && /\/\/ Sai com erro de propósito[\s\S]{0,80}process\.exit\(1\)/.test(src));
 check('e a ressalva sozinha sai com 0', /naoConferidas\.length[\s\S]{0,200}process\.exit\(0\)/.test(src));
+
+console.log('\n--- e ele manda rodar no lugar CERTO ---');
+// O Supabase saiu em agosto de 2026; o banco é um Postgres em Docker. A
+// mensagem antiga mandava abrir um painel web que esta instalação não tem, e o
+// deploy do VPS parava esperando um passo que não existe mais.
+check('não manda mais colar no SQL Editor do Supabase',
+  !/SQL Editor/i.test(semComentarios(src)) && !/Supabase/i.test(semComentarios(src)));
+check('  manda usar o aplicador', /npm run migracoes:aplicar/.test(src));
+check('  e o aplicador existe e está no package.json',
+  fs.existsSync(path.join(RAIZ, 'scripts/aplicar-migracoes.js'))
+  && /"migracoes:aplicar": "node scripts\/aplicar-migracoes\.js"/.test(ler('package.json')));
+// O cabeçalho e o título também falavam de Supabase.
+check('  nem no título da saída', /=== MIGRAÇÕES vs\. BANCO ===/.test(src));
 
 console.log('\n--- o pacote para colar no SQL Editor é fiel às fases ---');
 // A primeira versão deste bloco cobrava uma fase POR NOME ("o pacote traz a

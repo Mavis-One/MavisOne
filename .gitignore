@@ -15,3 +15,13 @@ supabase/.temp/
 # acesso ao destino dos backups (chave, token, senha). O modelo versionado é o
 # deploy/rclone.conf.exemplo; o arquivo real fica só na máquina.
 deploy/rclone/
+
+# Ajustes do compose que valem só NAQUELA máquina — no VPS é o do backup. O
+# Docker Compose lê este arquivo por cima do docker-compose.yml sozinho, sem
+# ninguém pedir, e é essa a intenção dele: cada servidor sobrepõe o que precisa.
+#
+# Fora do .gitignore, ele aparecia como alteração não commitada e o
+# scripts/deploy.sh ABORTAVA antes do git pull — o deploy no VPS não rodava, e
+# o motivo ("há alterações locais não commitadas") não dizia que o arquivo nem
+# devia estar sendo vigiado.
+docker-compose.override.yml

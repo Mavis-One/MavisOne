@@ -1,0 +1,191 @@
+#!/usr/bin/env node
+/**
+ * APLICA as migrações que faltam, na ordem das fases, cada uma numa transação.
+ *
+ *   node scripts/aplicar-migracoes.js            (npm run migracoes:aplicar)
+ *   node scripts/aplicar-migracoes.js --simular  diz o que faria, sem tocar no banco
+ *
+ * POR QUE ISTO EXISTE
+ * -------------------
+ * Até aqui, "aplicar migração" era um passo humano: o verificador listava o que
+ * faltava e mandava colar no SQL Editor do Supabase — um painel web que esta
+ * instalação não tem desde agosto de 2026, quando o banco virou um Postgres em
+ * Docker. O deploy do VPS chegava nesse ponto e parava esperando alguém
+ * executar um passo que não existe mais.
+ *
+ * O LIVRO-CAIXA, E POR QUE ELE NÃO EXISTIA ANTES
+ * ----------------------------------------------
+ * O verificador descobre o que falta OLHANDO O BANCO: ele lê as migrações e
+ * pergunta se cada tabela e cada coluna estão lá. Isso responde bem "falta
+ * alguma coisa?", e não responde "esta migração já rodou?" — são perguntas
+ * diferentes, e a segunda é a que o aplicador precisa. Doze das migrações só
+ * inserem dado (permissões, CSTs, status, categorias): elas não criam tabela
+ * nem coluna, então o verificador as marca NÃO CONFERIDA, e rodar de novo o que
+ * já rodou duplicaria linha.
+ *
+ * Daí a tabela `schema_migracoes`: um registro por arquivo já aplicado. A
+ * gravação acontece DENTRO da mesma transação do SQL da migração — migração que
+ * falha no meio não deixa registro, e a próxima tentativa a encontra pendente
+ * de novo.
+ *
+ * A PRIMEIRA RODADA NUM BANCO QUE JÁ EXISTE
+ * -----------------------------------------
+ * Este banco tem 52 migrações aplicadas à mão ao longo de meses, e nenhum
+ * registro delas. Se o livro-caixa nascesse vazio e o script simplesmente
+ * "aplicasse tudo que não está registrado", ele rodaria as 52 de novo num banco
+ * em produção — e as doze que inserem dado duplicariam.
+ *
+ * Então a primeira rodada ADOTA em vez de aplicar: pergunta ao banco, pelo
+ * mesmo caminho do verificador, o que já está lá, e registra essas como
+ * adotadas sem executar uma linha de SQL. Só o que o verificador aponta como
+ * PENDENTE é executado de verdade.
+ *
+ * As NÃO CONFERIDAS entram como adotadas, e isso é uma aposta declarada: não há
+ * como saber se rodaram. Num banco que já está no ar há meses, supor que
+ * rodaram é o lado seguro — o outro lado duplica dado. O script diz quais
+ * foram, uma por uma, para a decisão não ficar escondida.
+ */
+require('dotenv').config();
+const { consultar, emTransacao } = require('../lib/db/conexao');
+const { banco } = require('../lib/db/client');
+const { lerMigracoes, conferir } = require('../lib/migracoes');
+
+const SIMULAR = process.argv.includes('--simular');
+
+// Mesmas sondas do verificador: o cliente devolve erro nomeando a coluna ou a
+// tabela quando ela não existe.
+async function existeColuna(tabela, coluna) {
+  const { error } = await banco.from(tabela).select(coluna).limit(1);
+  if (!error) return true;
+  if (/does not exist|Could not find|schema cache/i.test(error.message || '')) return false;
+  throw new Error(`${tabela}.${coluna}: ${error.message}`);
+}
+
+async function existeTabela(tabela) {
+  const { error } = await banco.from(tabela).select('*').limit(1);
+  if (!error) return true;
+  if (/does not exist|Could not find|schema cache/i.test(error.message || '')) return false;
+  throw new Error(`${tabela}: ${error.message}`);
+}
+
+async function criarLivroCaixa() {
+  await consultar(`
+    create table if not exists schema_migracoes (
+      nome text primary key,
+      aplicada_em timestamptz not null default now(),
+      -- 'aplicada' = este script rodou o SQL.
+      -- 'adotada'  = o banco já tinha, registrada sem executar nada.
+      como text not null default 'aplicada'
+    )
+  `);
+}
+
+async function jaRegistradas() {
+  const { rows } = await consultar('select nome, como from schema_migracoes');
+  return new Map(rows.map((r) => [r.nome, r.como]));
+}
+
+async function aplicar(migracao) {
+  await emTransacao(async (cliente) => {
+    await cliente.query(migracao.sql);
+    // No MESMO commit do SQL: migração que falha no meio não deixa registro, e
+    // a próxima rodada a encontra pendente de novo em vez de pulá-la.
+    await cliente.query(
+      "insert into schema_migracoes (nome, como) values ($1, 'aplicada') on conflict (nome) do nothing",
+      [migracao.nome]
+    );
+  });
+}
+
+async function adotar(nomes) {
+  if (!nomes.length) return;
+  await consultar(
+    "insert into schema_migracoes (nome, como) select unnest($1::text[]), 'adotada' on conflict (nome) do nothing",
+    [nomes]
+  );
+}
+
+(async () => {
+  console.log('\n=== APLICAR MIGRAÇÕES ===\n');
+
+  // Banco vazio não é caso deste script: aplicar migração sobre nada falha na
+  // primeira que altera tabela. Quem cria o banco do zero é o
+  // banco/RECRIAR-DO-ZERO.sql, que o container roda sozinho na primeira subida.
+  if (!(await existeTabela('users'))) {
+    console.log('  O banco não tem nem a tabela `users` — ele está vazio.');
+    console.log('  Migração não cria banco: quem cria é banco/RECRIAR-DO-ZERO.sql,');
+    console.log('  que o container do Postgres roda sozinho na primeira subida.');
+    console.log('');
+    console.log('      docker compose down -v && docker compose up -d banco');
+    console.log('');
+    process.exit(1);
+  }
+
+  await criarLivroCaixa();
+  const registradas = await jaRegistradas();
+  const todas = lerMigracoes().filter((m) => m.aplicavel);
+  const primeiraRodada = registradas.size === 0;
+
+  if (primeiraRodada) {
+    console.log('  Primeira rodada: a tabela schema_migracoes acabou de nascer, e este');
+    console.log('  banco já tem migrações aplicadas à mão. Vou PERGUNTAR ao banco o que');
+    console.log('  já está lá, em vez de rodar tudo de novo.\n');
+
+    const { pendentes, naoConferidas } = await conferir({ existeTabela, existeColuna });
+    const pendentesPorNome = new Set(pendentes.map((m) => m.nome));
+    const adotar0 = todas.filter((m) => !pendentesPorNome.has(m.nome)).map((m) => m.nome);
+
+    console.log(`  ${adotar0.length} migração(ões) o banco já tem — registradas como adotadas, sem executar.`);
+    if (naoConferidas.length) {
+      console.log('');
+      console.log(`  ${naoConferidas.length} delas NÃO declaram tabela nem coluna, então não há como conferir se`);
+      console.log('  rodaram. Estão sendo adotadas por suposição — num banco no ar há meses,');
+      console.log('  supor que rodaram é o lado seguro; o outro lado duplica dado inserido:');
+      naoConferidas.forEach((m) => console.log(`     ${m.nome}`));
+    }
+    console.log('');
+    if (!SIMULAR) await adotar(adotar0);
+    adotar0.forEach((nome) => registradas.set(nome, 'adotada'));
+  }
+
+  const pendentes = todas.filter((m) => !registradas.has(m.nome));
+
+  if (!pendentes.length) {
+    console.log(`  Nada a aplicar. ${registradas.size} migração(ões) no livro-caixa.\n`);
+    console.log('===== BANCO EM DIA =====\n');
+    process.exit(0);
+  }
+
+  console.log(`  ${pendentes.length} migração(ões) a aplicar, nesta ordem:\n`);
+  pendentes.forEach((m) => console.log(`     ${m.nome}`));
+  console.log('');
+
+  if (SIMULAR) {
+    console.log('===== SIMULAÇÃO: nada foi executado =====\n');
+    process.exit(0);
+  }
+
+  for (const migracao of pendentes) {
+    process.stdout.write(`  aplicando ${migracao.nome} ... `);
+    try {
+      await aplicar(migracao);
+      console.log('ok');
+    } catch (erro) {
+      console.log('FALHOU');
+      console.error('');
+      console.error(`  ${erro.message}`);
+      console.error('');
+      console.error('  A transação foi desfeita: o banco está como estava antes DESTA');
+      console.error('  migração, e ela continua pendente. As anteriores já estão aplicadas.');
+      console.error('');
+      process.exit(1);
+    }
+  }
+
+  console.log('');
+  console.log(`===== ${pendentes.length} MIGRAÇÃO(ÕES) APLICADA(S) =====\n`);
+  process.exit(0);
+})().catch((erro) => {
+  console.error('Erro ao aplicar as migrações:', erro.message);
+  process.exit(2);
+});

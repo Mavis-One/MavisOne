@@ -52,6 +52,19 @@ if [ -f .env ] && [ -f .env.example ]; then
   fi
 fi
 
+# MIGRAÇÃO ANTES DO RESTART, E NÃO DEPOIS.
+#
+# O código novo espera colunas que a migração cria. Reiniciar primeiro deixaria
+# o app no ar contra um banco velho por alguns segundos — e o modo de falhar
+# aqui não é erro visível, é gravação em silêncio: o formulário de Pedidos já
+# ficou semanas perdendo campo porque a coluna não existia.
+#
+# Aplicar só quando alguma migração mudou seria uma economia falsa: a rodada
+# anterior pode ter parado no meio, e o script sai em 1 segundo quando não há
+# nada a fazer.
+echo "==> Aplicando migrações do banco..."
+npm run --silent migracoes:aplicar
+
 echo "==> Reiniciando PM2..."
 mkdir -p logs   # o PM2 não cria o diretório dos logs sozinho
 pm2 reload ecosystem.config.js --update-env

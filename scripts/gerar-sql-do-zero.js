@@ -57,21 +57,11 @@ const SAIDA = path.join(RAIZ, 'banco', 'RECRIAR-DO-ZERO.sql');
  * alfabética. Arquivo sem `fase-<letras>-` no nome vai para o fim, em vez de
  * quebrar a ordenação por causa de um nome fora do padrão.
  */
-function ordenarPorFase(nomes) {
-  const letras = (nome) => {
-    const m = /^fase-([a-z]+)-/i.exec(nome);
-    return m ? m[1].toLowerCase() : null;
-  };
-  return nomes.slice().sort((a, b) => {
-    const la = letras(a);
-    const lb = letras(b);
-    if (!la && !lb) return a.localeCompare(b);
-    if (!la) return 1;
-    if (!lb) return -1;
-    if (la.length !== lb.length) return la.length - lb.length;
-    return la.localeCompare(lb);
-  });
-}
+// A regra mora em lib/migracoes.js, e não aqui, desde que o APLICADOR passou a
+// precisar dela também: aplicar na ordem alfabética crua tenta alterar tabela
+// que ainda não foi criada, exatamente como colar na ordem errada. Continua
+// exportada daqui porque este era o endereço dela.
+const { ordenarPorFase } = require('../lib/migracoes');
 
 function gerar() {
   const arquivos = ordenarPorFase(

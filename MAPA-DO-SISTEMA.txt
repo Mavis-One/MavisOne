@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-12 15:23 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-14 19:04 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -225,6 +225,8 @@ o próprio arquivo dá de si, no comentário de cabeçalho.
       KPIs do topo do hub.
   lib/limite-tentativas.js
       QUANTAS VEZES DÁ PARA ERRAR A SENHA — E O QUE ACONTECE DEPOIS.
+  lib/migracoes.js
+      AS MIGRAÇÕES — ler, ordenar e conferir.
   lib/nfePayloadBuilder.js
       Monta o payload de emissão de NF-e no formato da Focus NFe (https://doc.focusnfe.com.br/reference/emitir_nfe).
   lib/nfeXml.js
@@ -594,11 +596,12 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-106 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+107 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
   [npm test] test-anexos-pedido.js              Arquivos Anexados ao pedido/orçamento.
+  [npm test] test-aplicar-migracoes.js          APLICAR MIGRAÇÃO DEIXOU DE SER UM PASSO HUMANO.
   [npm test] test-atalhos.js                    Botão "Atalhos" da barra superior — public/modules/shared/atalhos.js O que quebra em silêncio aqui: 1.
   [npm test] test-atencao.js                    Painel "Atenção" do hub — lib/atencao.js O QUE ELE RESOLVE
   [npm test] test-auditoria-fiscal.js           Trilha de auditoria — emissão, cancelamento, CC-e e inutilização de NF-e.

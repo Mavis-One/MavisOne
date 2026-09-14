@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Quais migrações já estão no Supabase e quais faltam.
+// Quais migrações já estão no banco e quais faltam.
 //
 // A pergunta "rodei o SQL ou não?" já custou caro neste projeto: o formulário
 // de Pedidos ficou semanas gravando e perdendo campo em silêncio porque as
@@ -8,44 +8,16 @@
 //
 // Este script não tem lista própria do que esperar: ele LÊ banco/migrations/
 // e cobra do banco exatamente o que os arquivos dizem criar. Migração nova passa
-// a ser verificada sozinha, sem ninguém lembrar de atualizar nada aqui.
+// a ser verificada sozinha, sem ninguém lembrar de atualizar nada aqui. A
+// leitura, a ordem e a conferência moram em lib/migracoes.js, compartilhadas
+// com o aplicador e com o gerador do "recriar do zero".
 //
-// Uso:  node scripts/verificar-migracoes.js
+// Uso:  node scripts/verificar-migracoes.js      (npm run migracoes)
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
 const { banco } = require('../lib/db/client');
+const { conferir } = require('../lib/migracoes');
 
-const DIR = path.join(__dirname, '..', 'banco', 'migrations');
-
-// Lê os arquivos e extrai o que cada um promete criar.
-function lerMigracoes() {
-  return fs.readdirSync(DIR)
-    .filter((nome) => nome.endsWith('.sql'))
-    .sort()
-    .map((nome) => {
-      const sql = fs.readFileSync(path.join(DIR, nome), 'utf8');
-      // `if exists` e `if not exists` são OPCIONAIS no regex de propósito.
-      // Enquanto eram obrigatórios, "alter table regra_fiscal add column ..."
-      // (sem o `if exists`) não casava com nada: a fase-v ficava sem estrutura
-      // reconhecida, era classificada como "nada a conferir" e o script
-      // anunciava BANCO EM DIA com as duas colunas do DIFAL faltando. A tela de
-      // Regras Fiscais dava erro em toda gravação e este script jurava que
-      // estava tudo certo. São 24 comandos nessa forma espalhados pelas
-      // migrações — todos invisíveis até aqui.
-      const colunas = [...sql.matchAll(/alter\s+table\s+(?:if\s+exists\s+)?(\w+)\s+add\s+column\s+(?:if\s+not\s+exists\s+)?(\w+)/gi)]
-        .map((m) => ({ tabela: m[1], coluna: m[2] }));
-      const tabelas = [...sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(\w+)/gi)].map((m) => m[1]);
-      const superada = /SUPERADA PELA/i.test(sql);
-      // Arquivo que só junta outras migrações para colar de uma vez no SQL
-      // Editor. Contá-lo somaria as mesmas colunas duas vezes e mandaria rodar
-      // o pacote E as partes — foi o que aconteceu na primeira versão disto.
-      const consolidado = /^--\s*CONSOLIDADO/im.test(sql);
-      return { nome, colunas, tabelas, superada, consolidado };
-    });
-}
-
-// PostgREST devolve erro nomeando a coluna/tabela quando ela não existe — é o
+// O cliente devolve erro nomeando a coluna/tabela quando ela não existe — é o
 // jeito de perguntar "isto existe?" sem acesso ao catálogo do Postgres.
 async function existeColuna(tabela, coluna) {
   const { error } = await banco.from(tabela).select(coluna).limit(1);
@@ -62,40 +34,23 @@ async function existeTabela(tabela) {
 }
 
 (async () => {
-  const migracoes = lerMigracoes();
-  const pendentes = [];
-  const naoConferidas = [];
+  console.log('\n=== MIGRAÇÕES vs. BANCO ===\n');
 
-  console.log('\n=== MIGRAÇÕES vs. SUPABASE ===\n');
+  const { migracoes, pendentes, naoConferidas } = await conferir({ existeTabela, existeColuna });
+  const porNome = new Map();
+  [...pendentes, ...naoConferidas].forEach((m) => porNome.set(m.nome, m));
 
   for (const migracao of migracoes) {
     if (migracao.consolidado) {
       console.log(`  ${'pacote (não conta)'.padEnd(34)} ${migracao.nome}`);
       continue;
     }
-    const faltando = [];
-
-    for (const tabela of [...new Set(migracao.tabelas)]) {
-      if (!(await existeTabela(tabela))) faltando.push(`tabela ${tabela}`);
-    }
-    for (const { tabela, coluna } of migracao.colunas) {
-      // Coluna de tabela que nem existe já foi contada acima.
-      if (migracao.tabelas.includes(tabela)) continue;
-      if (!(await existeTabela(tabela))) continue;
-      if (!(await existeColuna(tabela, coluna))) faltando.push(`${tabela}.${coluna}`);
-    }
-
-    const total = migracao.tabelas.length + migracao.colunas.length;
-    const estado = migracao.superada ? 'SUPERADA'
-      : !total ? 'NÃO CONFERIDA'
-        : faltando.length === 0 ? 'APLICADA'
-          : `PENDENTE (${faltando.length} de ${total} faltando)`;
-
+    const achado = porNome.get(migracao.nome);
+    const estado = achado ? achado.estado : (migracao.superada ? 'SUPERADA' : 'APLICADA');
     console.log(`  ${estado.padEnd(34)} ${migracao.nome}`);
-    if (!total && !migracao.superada) naoConferidas.push(migracao.nome);
-    if (faltando.length && !migracao.superada) {
-      console.log(`     falta: ${faltando.slice(0, 6).join(', ')}${faltando.length > 6 ? ` … +${faltando.length - 6}` : ''}`);
-      pendentes.push(migracao.nome);
+    if (achado && achado.faltando.length) {
+      const f = achado.faltando;
+      console.log(`     falta: ${f.slice(0, 6).join(', ')}${f.length > 6 ? ` … +${f.length - 6}` : ''}`);
     }
   }
 
@@ -109,7 +64,7 @@ async function existeTabela(tabela) {
   if (naoConferidas.length) {
     console.log(`  ${naoConferidas.length} migração(ões) sem tabela ou coluna declarada — este script não`);
     console.log('  tem como confirmar se rodaram. Confira à mão o que elas fazem:');
-    naoConferidas.forEach((n) => console.log(`     ${n}`));
+    naoConferidas.forEach((m) => console.log(`     ${m.nome}`));
     console.log('');
   }
 
@@ -120,8 +75,18 @@ async function existeTabela(tabela) {
     process.exit(0);
   }
   console.log(`===== ${pendentes.length} MIGRAÇÃO(ÕES) PENDENTE(S) =====`);
-  console.log('Rode no SQL Editor do Supabase, nesta ordem:');
-  pendentes.forEach((n) => console.log(`  banco/migrations/${n}`));
+  // NÃO EXISTE MAIS "COLAR NO SQL EDITOR DO SUPABASE".
+  //
+  // O Supabase saiu em agosto de 2026 e o banco virou um Postgres em Docker
+  // (docker-compose.yml, serviço `banco`). A mensagem antiga mandava abrir um
+  // painel web que esta instalação não tem mais — e o deploy do VPS parava
+  // esperando alguém executar um passo que não existe.
+  console.log('Aplique com:');
+  console.log('');
+  console.log('    npm run migracoes:aplicar');
+  console.log('');
+  console.log('Ele roda estes arquivos, nesta ordem, cada um numa transação:');
+  pendentes.forEach((m) => console.log(`  banco/migrations/${m.nome}`));
   console.log('');
   // Sai com erro de propósito: dá para usar no deploy como trava.
   process.exit(1);
