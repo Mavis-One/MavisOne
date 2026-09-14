@@ -25,3 +25,12 @@ deploy/rclone/
 # o motivo ("há alterações locais não commitadas") não dizia que o arquivo nem
 # devia estar sendo vigiado.
 docker-compose.override.yml
+
+# Marca do último deploy que chegou ao fim (scripts/deploy.sh): o commit que
+# foi migrado, reiniciado e respondeu online. É estado DAQUELE servidor.
+#
+# Ignorar não é detalhe: o deploy aborta quando encontra qualquer arquivo não
+# commitado, então uma marca versionada — ou esquecida fora do .gitignore —
+# travaria o deploy seguinte. É o mesmo defeito do override aqui de cima, e
+# seria eu reintroduzindo-o na linha em que o conserto.
+.deploy-concluido

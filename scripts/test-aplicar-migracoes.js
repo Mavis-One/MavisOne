@@ -70,6 +70,44 @@ check('  ANTES de reiniciar o PM2',
 // `set -euo pipefail` no topo é o que faz a falha do aplicador parar o deploy.
 check('  e a falha dele derruba o deploy', /^set -euo pipefail$/m.test(deploy));
 
+// ---------------------------------------------------------------------------
+// "NÃO VEIO COMMIT NOVO" NÃO É "NÃO HÁ NADA A FAZER".
+//
+// O deploy saía cedo quando `git pull` não trazia nada. Mas ele para DEPOIS do
+// pull: um deploy que falha na migração deixa o código novo no disco, o PM2 no
+// antigo e o banco por migrar — e a rodada seguinte via ANTES == DEPOIS e
+// anunciava "Nada novo. Nenhum restart necessário." com código 0, no estado
+// quebrado. Reproduzido num repositório de ensaio com pm2 e npm falsos:
+//
+//   migração falha ..... deploy para, app não reiniciado          (certo)
+//   rodar de novo ...... saída 0 · migração 0 vez · restart 0 vez (mentira)
+//
+// A marca fecha o buraco: ela é escrita na ÚLTIMA linha do caminho feliz, e sem
+// ela o script sabe que ficou trabalho para trás.
+// ---------------------------------------------------------------------------
+check('o deploy guarda uma marca do último que concluiu', /MARCA="\.deploy-concluido"/.test(deploy));
+check('  e ela exige as DUAS condições para sair cedo',
+  /if \[ "\$ANTES" = "\$DEPOIS" \] && \[ "\$DEPOIS" = "\$ULTIMO_OK" \]; then/.test(deploy));
+// Escrever a marca antes da confirmação tornaria a próxima rodada cega para a
+// falha que acabou de acontecer.
+check('  a marca é escrita só depois de o app responder online',
+  deploy.indexOf('echo "$DEPOIS" > "$MARCA"') > deploy.indexOf('OK: mavisone online'));
+// Numa retomada o pull não traz nada: comparar com o HEAD de antes do pull
+// deixaria o npm install de fora justamente quando a dependência nova é o que
+// faltou instalar na tentativa que falhou.
+check('  e o npm install compara com o último deploy CONCLUÍDO',
+  /BASE="\$\{ULTIMO_OK:-\$ANTES\}"/.test(deploy)
+  && /git diff --quiet "\$BASE" "\$DEPOIS" -- package\.json/.test(deploy));
+// Commit que sumiu (rebase, force push) não serve de base e não pode derrubar
+// o deploy com `set -e`.
+check('  marca apontando para commit inexistente é descartada, não quebra',
+  /git cat-file -e "\$\{ULTIMO_OK\}\^\{commit\}"/.test(deploy));
+// E a marca é um arquivo novo no diretório do projeto: fora do .gitignore, ela
+// travaria o deploy seguinte na checagem de "alterações não commitadas" — o
+// mesmo defeito do docker-compose.override.yml, reintroduzido pelo conserto.
+check('  a marca está no .gitignore, senão ela mesma trava o próximo deploy',
+  /^\.deploy-concluido$/m.test(ignore));
+
 // ===========================================================================
 console.log('\n--- 3. o verificador manda rodar onde dá para rodar ---');
 // ===========================================================================

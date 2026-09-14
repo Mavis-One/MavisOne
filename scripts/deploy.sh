@@ -24,16 +24,47 @@ echo "==> Puxando $(git rev-parse --abbrev-ref HEAD)..."
 git pull --ff-only
 DEPOIS=$(git rev-parse HEAD)
 
-if [ "$ANTES" = "$DEPOIS" ]; then
-  echo "==> Nada novo. Nenhum restart necessário."
+# A MARCA DO ÚLTIMO DEPLOY QUE CHEGOU ATÉ O FIM.
+#
+# "Não veio commit novo" NÃO é o mesmo que "não há nada a fazer", e a diferença
+# já mordeu: um deploy que falha na migração para DEPOIS do git pull. O código
+# novo fica no disco, o PM2 continua no antigo e o banco não foi migrado.
+# Rodando de novo, `git pull` não traz nada, ANTES == DEPOIS, e o script saía
+# com "Nada novo. Nenhum restart necessário." e código 0 — anunciando sucesso
+# exatamente no estado quebrado. Reproduzido num repositório de ensaio, com pm2
+# e npm falsos: na segunda rodada, migração aplicada 0 vezes e app reiniciado 0
+# vezes, saída 0.
+#
+# Esta marca só é escrita na última linha do script, depois de o app responder
+# online. Enquanto ela não for igual ao commit atual, há trabalho pendente.
+MARCA=".deploy-concluido"
+ULTIMO_OK=$(cat "$MARCA" 2>/dev/null || true)
+# Commit que não existe mais (rebase, force push) não serve de base para nada.
+if [ -n "$ULTIMO_OK" ] && ! git cat-file -e "${ULTIMO_OK}^{commit}" 2>/dev/null; then
+  echo "==> A marca do último deploy aponta para um commit que não existe mais; ignorando."
+  ULTIMO_OK=""
+fi
+
+if [ "$ANTES" = "$DEPOIS" ] && [ "$DEPOIS" = "$ULTIMO_OK" ]; then
+  echo "==> Nada novo, e o último deploy concluiu. Nenhum restart necessário."
   exit 0
 fi
 
-echo "==> $(git log --oneline "$ANTES..$DEPOIS" | wc -l) commit(s) novo(s):"
-git log --oneline "$ANTES..$DEPOIS"
+# A base da comparação é o último deploy CONCLUÍDO, e não o HEAD de antes do
+# pull: numa retomada, o pull não traz nada e `git diff ANTES DEPOIS` seria
+# vazio — o npm install ficaria de fora mesmo que a dependência nova seja
+# justamente o que faltou instalar na tentativa que falhou.
+BASE="${ULTIMO_OK:-$ANTES}"
+
+if [ "$BASE" = "$DEPOIS" ]; then
+  echo "==> Sem commit novo, mas o último deploy não concluiu. Retomando."
+else
+  echo "==> $(git log --oneline "$BASE..$DEPOIS" | wc -l) commit(s) desde o último deploy concluído:"
+  git log --oneline "$BASE..$DEPOIS"
+fi
 
 # npm install só quando as dependências mudaram — economiza tempo no deploy.
-if ! git diff --quiet "$ANTES" "$DEPOIS" -- package.json package-lock.json; then
+if ! git diff --quiet "$BASE" "$DEPOIS" -- package.json package-lock.json; then
   echo "==> Dependências mudaram, rodando npm install..."
   npm install --omit=dev
 fi
@@ -59,9 +90,9 @@ fi
 # aqui não é erro visível, é gravação em silêncio: o formulário de Pedidos já
 # ficou semanas perdendo campo porque a coluna não existia.
 #
-# Aplicar só quando alguma migração mudou seria uma economia falsa: a rodada
-# anterior pode ter parado no meio, e o script sai em 1 segundo quando não há
-# nada a fazer.
+# Aplicar só quando algum arquivo de migração mudou seria uma economia falsa: a
+# rodada anterior pode ter parado no meio (é por isso que existe a marca lá em
+# cima), e o aplicador sai em um segundo quando não há nada a fazer.
 echo "==> Aplicando migrações do banco..."
 npm run --silent migracoes:aplicar
 
@@ -74,6 +105,10 @@ sleep 3
 if pm2 describe mavisone | grep -q "status.*online"; then
   echo "==> OK: mavisone online"
   pm2 describe mavisone | grep -E "status|restarts|uptime" || true
+  # ÚLTIMA LINHA DO CAMINHO FELIZ, e só aqui: a marca significa "este commit
+  # foi migrado, reiniciado e respondeu online". Escrevê-la antes tornaria a
+  # próxima rodada cega para a falha que acabou de acontecer.
+  echo "$DEPOIS" > "$MARCA"
 else
   echo "!! O app NÃO está online. Últimas linhas do log:"
   pm2 logs mavisone --lines 30 --nostream
