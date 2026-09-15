@@ -108,6 +108,28 @@ check('  marca apontando para commit inexistente é descartada, não quebra',
 check('  a marca está no .gitignore, senão ela mesma trava o próximo deploy',
   /^\.deploy-concluido$/m.test(ignore));
 
+// CÓPIA DO BANCO NÃO ENTRA NO REPOSITÓRIO.
+//
+// `docker cp ... .\mavisone.dump` deixa 2,6 MB na raiz do projeto, e o arquivo
+// tem os dados reais: 5.475 produtos, 14.864 pedidos e 6.492 cadastros com
+// CPF/CNPJ, telefone e e-mail. São duas consequências, e a segunda é a grave:
+// o arquivo solto trava o deploy (a checagem de "não commitado"), e um
+// `git add -A` distraído publica a base inteira — histórico publicado não se
+// apaga com um commit novo.
+check('cópias do banco (*.dump) são ignoradas', /^\*\.dump$/m.test(ignore));
+// A regra por extensão importa: o dump costuma sair com o nome do dia ou do
+// banco, e cobrir só `mavisone.dump` deixaria o próximo passar.
+check('  pela extensão, não pelo nome de um arquivo', !/^mavisone\.dump$/m.test(ignore));
+// E a prova que interessa: nenhum dump chegou a ser rastreado.
+try {
+  const rastreados = execFileSync('git', ['ls-files'], { cwd: RAIZ, encoding: 'utf8' })
+    .split('\n').filter((n) => /\.dump$/i.test(n));
+  check('  e nenhum dump está rastreado no git', rastreados.length === 0,
+    rastreados.join(', ') || 'nenhum');
+} catch (erro) {
+  check('  e nenhum dump está rastreado no git', false, `não deu para perguntar ao git: ${erro.message}`);
+}
+
 // ===========================================================================
 console.log('\n--- 3. o verificador manda rodar onde dá para rodar ---');
 // ===========================================================================

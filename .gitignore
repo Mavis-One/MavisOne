@@ -34,3 +34,15 @@ docker-compose.override.yml
 # travaria o deploy seguinte. É o mesmo defeito do override aqui de cima, e
 # seria eu reintroduzindo-o na linha em que o conserto.
 .deploy-concluido
+
+# Cópias do banco (pg_dump -Fc). São DADOS, não código — e dados reais:
+# 5.475 produtos, 14.864 pedidos e 6.492 cadastros com CPF/CNPJ, telefone e
+# e-mail. Um `git add -A` distraído mandaria tudo isso para o GitHub, e
+# histórico publicado não se apaga com um commit novo.
+#
+# O padrão é por EXTENSÃO, e não pelo nome de um arquivo: o dump costuma sair
+# com o nome do dia ou do banco, e uma regra que só cobrisse `mavisone.dump`
+# deixaria o próximo passar. E pelo mesmo motivo do `.deploy-concluido` acima,
+# o arquivo solto na raiz também travava o deploy — foi assim que este caso
+# apareceu.
+*.dump
