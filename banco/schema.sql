@@ -21,7 +21,8 @@ create or replace function next_cadastro_code()
 returns text
 language sql
 as $$
-  select lpad(nextval('cadastro_code_seq')::text, 2, '0');
+  select case when n < 10 then '0' || n::text else n::text end
+    from nextval('cadastro_code_seq') as n;
 $$;
 
 -- ----------------------------------------------------------------------------
