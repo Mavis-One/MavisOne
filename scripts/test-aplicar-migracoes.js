@@ -272,6 +272,24 @@ console.log('\n--- 5. conferir() separa "falta" de "não sei" ---');
   check('dá para simular sem tocar no banco',
     /const SIMULAR = process\.argv\.includes\('--simular'\)/.test(aplicador)
     && /if \(SIMULAR\)[\s\S]{0,200}process\.exit\(0\)/.test(aplicador));
+  // E "sem tocar" é LITERAL, inclusive a tabela do livro-caixa. A primeira
+  // versão criava `schema_migracoes` antes de olhar para o `--simular`: visto
+  // em produção, depois do dry-run no VPS ela existia com 0 linhas, enquanto a
+  // descrição da opção dizia "sem tocar no banco". O efeito era inofensivo ali
+  // — nasceria minutos depois, no deploy —, mas promessa errada é consultada
+  // justamente quando o banco importa.
+  check('  e a simulação não cria nem o livro-caixa',
+    /if \(!SIMULAR\) await criarLivroCaixa\(\);/.test(aplicador));
+  // Para isso, ler a tabela tem de tolerar que ela não exista: tabela ausente é
+  // "nenhuma registrada", que é o retrato de uma primeira rodada. Sem isto, a
+  // simulação teria de criá-la só para poder consultá-la.
+  check('  lendo o livro-caixa sem exigir que ele exista',
+    /if \(!\(await existeTabela\('schema_migracoes'\)\)\) return new Map\(\);/.test(aplicador));
+  // E o texto acompanha: dizer "registradas" quando nada foi registrado é a
+  // mesma promessa falsa, por outro caminho.
+  check('  e a saída não diz que registrou o que não registrou',
+    /seriam adotadas, sem executar/.test(aplicador)
+    && /ficariam no livro-caixa/.test(aplicador));
 
   check('e está no package.json',
     /"migracoes:aplicar": "node scripts\/aplicar-migracoes\.js"/.test(ler('package.json')));

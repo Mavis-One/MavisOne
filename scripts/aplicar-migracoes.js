@@ -3,7 +3,13 @@
  * APLICA as migrações que faltam, na ordem das fases, cada uma numa transação.
  *
  *   node scripts/aplicar-migracoes.js            (npm run migracoes:aplicar)
- *   node scripts/aplicar-migracoes.js --simular  diz o que faria, sem tocar no banco
+ *   node scripts/aplicar-migracoes.js --simular  diz o que faria, sem escrever nada
+ *
+ * "Sem escrever nada" é literal: nem a tabela do livro-caixa. A primeira versão
+ * criava `schema_migracoes` antes de olhar para o `--simular`, e o ensaio
+ * deixava a tabela para trás — visto em produção, depois do dry-run no VPS ela
+ * existia com 0 linhas. Ler, ele lê: precisa perguntar ao banco o que já está
+ * lá para ter o que dizer.
  *
  * POR QUE ISTO EXISTE
  * -------------------
@@ -81,6 +87,10 @@ async function criarLivroCaixa() {
 }
 
 async function jaRegistradas() {
+  // Tabela ausente é resposta, não erro: significa "nenhuma registrada", que é
+  // o retrato de uma primeira rodada. Sem isto, `--simular` teria de criar a
+  // tabela só para poder consultá-la — e criar nada é o que ele promete.
+  if (!(await existeTabela('schema_migracoes'))) return new Map();
   const { rows } = await consultar('select nome, como from schema_migracoes');
   return new Map(rows.map((r) => [r.nome, r.como]));
 }
@@ -121,13 +131,23 @@ async function adotar(nomes) {
     process.exit(1);
   }
 
-  await criarLivroCaixa();
+  // SIMULAR NÃO CRIA NEM ISTO.
+  //
+  // A criação ficava acima da checagem do `--simular`, então o "ensaio" deixava
+  // a tabela `schema_migracoes` para trás — vazia, mas criada. Visto em
+  // produção: depois do dry-run no VPS ela existia com 0 linhas, enquanto a
+  // descrição da opção dizia "sem tocar no banco". O efeito era inofensivo
+  // (nasceria minutos depois, no deploy), mas a promessa estava errada — e
+  // promessa errada é consultada justamente quando o banco importa.
+  if (!SIMULAR) await criarLivroCaixa();
   const registradas = await jaRegistradas();
   const todas = lerMigracoes().filter((m) => m.aplicavel);
   const primeiraRodada = registradas.size === 0;
 
   if (primeiraRodada) {
-    console.log('  Primeira rodada: a tabela schema_migracoes acabou de nascer, e este');
+    console.log(SIMULAR
+      ? '  Primeira rodada: ainda não existe a tabela schema_migracoes, e este'
+      : '  Primeira rodada: a tabela schema_migracoes acabou de nascer, e este');
     console.log('  banco já tem migrações aplicadas à mão. Vou PERGUNTAR ao banco o que');
     console.log('  já está lá, em vez de rodar tudo de novo.\n');
 
@@ -135,7 +155,11 @@ async function adotar(nomes) {
     const pendentesPorNome = new Set(pendentes.map((m) => m.nome));
     const adotar0 = todas.filter((m) => !pendentesPorNome.has(m.nome)).map((m) => m.nome);
 
-    console.log(`  ${adotar0.length} migração(ões) o banco já tem — registradas como adotadas, sem executar.`);
+    // O verbo muda com o modo: em simulação nada foi registrado, e dizer que
+    // foi seria o mesmo tipo de promessa falsa que a tabela criada no ensaio.
+    console.log(SIMULAR
+      ? `  ${adotar0.length} migração(ões) o banco já tem — seriam adotadas, sem executar.`
+      : `  ${adotar0.length} migração(ões) o banco já tem — registradas como adotadas, sem executar.`);
     if (naoConferidas.length) {
       console.log('');
       console.log(`  ${naoConferidas.length} delas NÃO declaram tabela nem coluna, então não há como conferir se`);
@@ -151,7 +175,9 @@ async function adotar(nomes) {
   const pendentes = todas.filter((m) => !registradas.has(m.nome));
 
   if (!pendentes.length) {
-    console.log(`  Nada a aplicar. ${registradas.size} migração(ões) no livro-caixa.\n`);
+    console.log(SIMULAR
+      ? `  Nada a aplicar. ${registradas.size} migração(ões) ficariam no livro-caixa.\n`
+      : `  Nada a aplicar. ${registradas.size} migração(ões) no livro-caixa.\n`);
     console.log('===== BANCO EM DIA =====\n');
     process.exit(0);
   }
