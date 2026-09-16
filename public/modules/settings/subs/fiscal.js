@@ -39,6 +39,22 @@ function fiscalFormatCnpj(digits) {
   return clean.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
 }
 
+// A ORDEM DO ESTABELECIMENTO ESTÁ DENTRO DO PRÓPRIO CNPJ: são os dígitos 9 a
+// 12. "43792899 0001 35" é a matriz, "43792899 0002 16" é a primeira filial.
+// Derivar em vez de perguntar evita a divergência boba — um cadastro com CNPJ
+// de filial e ordem 0001 — que o banco aceita e ninguém confere depois.
+function fiscalOrdemDoCnpj(cnpj) {
+  const limpo = fiscalDigitsOnly(cnpj);
+  return limpo.length === 14 ? limpo.slice(8, 12) : '';
+}
+
+// Sugestão, não veredito: o formulário deixa trocar. Depósito fechado e
+// armazém geral também têm ordem diferente de 0001 e não dá para distingui-los
+// de uma filial pelo CNPJ — quem sabe é quem cadastra.
+function fiscalTipoPelaOrdem(ordem) {
+  return ordem === '0001' ? 'MATRIZ' : 'FILIAL';
+}
+
 function fiscalFormatCnpjRaiz(digits) {
   const clean = fiscalDigitsOnly(digits);
   if (clean.length !== 8) return digits || '';
@@ -61,6 +77,14 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   let regraForm = null; // null | {} (nova) | objeto regra (edição)
   let certificados = [];
   let certificadoForm = null; // null | {} (novo)
+  // Fase CH — a chave mestra e a importação das empresas da conta.
+  let integracao = null; // {chaveMestra*Configurada, ativo} — nunca o token
+  let integracaoErro = '';
+  // null = ainda não perguntou à Focus; [] = perguntou e não veio nada. A
+  // distinção é o que separa "clique no botão" de "a conta está vazia".
+  let empresasDaConta = null;
+  let empresasDaContaErro = '';
+  let importAmbiente = 'homologacao';
   // Tabelas oficiais (CFOP, CST, CSOSN, IBS/CBS). São códigos da legislação,
   // iguais para qualquer empresa, e já vinham do banco por /api/fiscal/tabelas
   // — só não chegavam até aqui: o formulário de regra pedia os códigos como
@@ -98,6 +122,20 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   async function loadCertificados(empresaId) {
     const res = await api(`/api/fiscal/certificados?empresaId=${encodeURIComponent(empresaId)}`);
     certificados = res.certificados || [];
+  }
+
+  // Estado da integração, não a conta Focus: esta chamada não sai da máquina.
+  // Perguntar à Focus é o botão "Buscar empresas", e é de propósito — abrir a
+  // tela de empresas não deveria disparar uma chamada externa toda vez.
+  async function loadIntegracao() {
+    try {
+      const res = await api('/api/integracoes');
+      integracao = (res.integracoes || []).find((i) => i.provedor === 'FOCUS_NFE') || null;
+      integracaoErro = integracao ? '' : 'A integração Focus NFe não está cadastrada no banco. Rode as migrações pendentes (npm run migracoes).';
+    } catch (error) {
+      integracao = null;
+      integracaoErro = error.message || 'Erro ao carregar a integração Focus NFe.';
+    }
   }
 
   function certificadoStatusBadge(validoAte) {
@@ -534,7 +572,154 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         </div>
         <div id="focusNfeStatusBox" class="muted">Verificando conexão...</div>
       </div>
+      ${renderChaveMestraSection()}
+      ${renderEmpresasDaContaSection()}
     `;
+  }
+
+  // -------------------------------------------------------------------------
+  // A CHAVE MESTRA E A IMPORTAÇÃO (fase CH)
+  // -------------------------------------------------------------------------
+  // O problema que estas duas seções resolvem: com 10 CNPJs, cadastrar o token
+  // de cada um à mão é 10 oportunidades de colar a coisa errada no campo
+  // errado — e o campo é type="password", onde o navegador já gravou a senha do
+  // login no lugar de um token. A chave mestra faz o servidor buscar os 10.
+  //
+  // O QUE ELA NÃO FAZ, e a tela precisa dizer: ela não emite. Na Focus, o token
+  // é quem diz de qual CNPJ é a nota, e uma nota autorizada com o emitente
+  // errado não tem desfazer. Emitir continua sendo com o token de cada CNPJ.
+  function renderChaveMestraSection() {
+    if (!integracao) {
+      return `
+        <div class="panel">
+          <h3>Chave mestra da conta</h3>
+          <p class="muted">${escapeHtml(integracaoErro || 'A integração Focus NFe ainda não está cadastrada no banco. Rode as migrações pendentes (npm run migracoes).')}</p>
+        </div>
+      `;
+    }
+    const badge = (configurada) => (configurada
+      ? '<span class="finance-badge finance-badge-success">Configurada</span>'
+      : '<span class="finance-badge finance-badge-muted">Não configurada</span>');
+    return `
+      <div class="panel">
+        <div class="cadastro-page-head">
+          <div>
+            <h3>Chave mestra da conta</h3>
+            <p class="muted">
+              O token <strong>principal</strong> da conta Focus — o que não pertence a nenhum CNPJ.
+              Ele <strong>não emite nota</strong>: serve para listar as empresas da conta e trazer o token de cada uma,
+              para você não cadastrar um por um. Fica guardado criptografado, e nenhuma tela devolve o valor dele.
+            </p>
+          </div>
+        </div>
+        <form id="fiscalChaveMestraForm" class="form-grid">
+          <label>Chave mestra — Homologação ${badge(integracao.chaveMestraHomologacaoConfigurada)}
+            <input type="password" name="tokenHomologacao" autocomplete="off" placeholder="${integracao.chaveMestraHomologacaoConfigurada ? 'Deixe em branco para manter a atual' : 'Cole o token principal de homologação'}" />
+          </label>
+          <label class="checkbox-inline"><input type="checkbox" name="removerHomologacao" /> Remover a chave de homologação</label>
+          <label>Chave mestra — Produção ${badge(integracao.chaveMestraProducaoConfigurada)}
+            <input type="password" name="tokenProducao" autocomplete="off" placeholder="${integracao.chaveMestraProducaoConfigurada ? 'Deixe em branco para manter a atual' : 'Cole o token principal de produção'}" />
+          </label>
+          <label class="checkbox-inline"><input type="checkbox" name="removerProducao" /> Remover a chave de produção</label>
+          <div class="form-actions">
+            <button type="submit">Salvar chave mestra</button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
+  function certificadoDaContaBadge(empresa) {
+    if (!empresa.certificadoValidoAte) {
+      return '<span class="finance-badge finance-badge-danger" title="Sem certificado no painel da Focus: este CNPJ não consegue emitir.">Sem certificado</span>';
+    }
+    const validoAte = String(empresa.certificadoValidoAte).slice(0, 10);
+    return `${certificadoStatusBadge(validoAte)} <small class="muted">${escapeHtml(validoAte.split('-').reverse().join('/'))}</small>`;
+  }
+
+  function renderEmpresasDaContaSection() {
+    if (!integracao) return '';
+    const ambienteLabel = importAmbiente === 'producao' ? 'Produção' : 'Homologação';
+    return `
+      <div class="panel">
+        <div class="cadastro-page-head">
+          <div>
+            <h3>Empresas da conta Focus</h3>
+            <p class="muted">
+              O que a Focus tem cadastrado, lado a lado com os estabelecimentos daqui. O vínculo é pelo CNPJ.
+              Esta consulta é <strong>só leitura</strong> e não emite nada.
+            </p>
+          </div>
+          <div class="cadastro-list-actions">
+            <button type="button" class="secondary" id="fiscalBuscarEmpresasFocus">Buscar empresas na Focus</button>
+          </div>
+        </div>
+        ${empresasDaContaErro ? `<p class="fiscal-aviso-homologacao">${escapeHtml(empresasDaContaErro)}</p>` : ''}
+        ${empresasDaConta === null
+          ? '<p class="muted">Clique em “Buscar empresas na Focus” para ver os CNPJs da conta, a numeração de cada um e a validade do certificado.</p>'
+          : (empresasDaConta.length ? `
+            <div class="table-scroll">
+            <table class="table">
+              <thead><tr>
+                <th>CNPJ</th><th>Na Focus</th><th>Aqui</th><th>Certificado</th>
+                <th>Série / próximo nº (produção)</th><th>Última emissão</th><th>Token na Focus</th>
+              </tr></thead>
+              <tbody>
+                ${empresasDaConta.map((e) => `
+                  <tr>
+                    <td>${escapeHtml(fiscalFormatCnpj(e.cnpj))}</td>
+                    <td>${escapeHtml(e.nomeFantasia || e.nome)}<br><small class="muted">${escapeHtml(e.municipio)}/${escapeHtml(e.uf)}</small></td>
+                    <td>${e.estabelecimentoId
+                      ? `${escapeHtml(e.estabelecimentoRazaoSocial || '')} ${e.estabelecimentoTemToken ? '<span class="finance-badge finance-badge-success">com token</span>' : '<span class="finance-badge finance-badge-muted">sem token</span>'}`
+                      : `<span class="finance-badge finance-badge-warning" title="A Focus conhece este CNPJ, mas ele não está cadastrado como estabelecimento aqui.">Não cadastrado aqui</span>
+                         <button type="button" class="secondary fiscal-cadastrar-da-focus" data-cnpj="${escapeHtml(e.cnpj)}">Cadastrar aqui</button>`}</td>
+                    <td>${certificadoDaContaBadge(e)}</td>
+                    <td>${escapeHtml(String(e.serieNfeProducao ?? '—'))} / <strong>${escapeHtml(String(e.proximoNumeroNfeProducao ?? '—'))}</strong></td>
+                    <td>${e.dataUltimaEmissao
+                      ? escapeHtml(String(e.dataUltimaEmissao).slice(0, 10).split('-').reverse().join('/'))
+                      : '<span class="muted">nunca emitiu</span>'}</td>
+                    <td>${e.temTokenHomologacao ? '<span class="finance-badge finance-badge-info">homologação</span>' : ''} ${e.temTokenProducao ? '<span class="finance-badge finance-badge-info">produção</span>' : ''}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            </div>
+            <div class="cadastro-page-head" style="margin-top:12px">
+              <div>
+                <p class="muted">
+                  Importar grava o token de cada CNPJ no estabelecimento correspondente, criptografado,
+                  <strong>sem o token passar pelo navegador</strong>. Só entram os que estão cadastrados aqui.
+                </p>
+                ${importAmbiente === 'producao' ? `<p class="fiscal-aviso-homologacao"><strong>Atenção.</strong> Importar os tokens de produção também muda o ambiente desses estabelecimentos para Produção — o token e o ambiente são a mesma decisão.${travadoEmHomologacao ? ' A trava do servidor continua ligada, então nenhuma nota sai com valor fiscal até ela ser desligada.' : ' <strong>A trava está DESLIGADA: a próxima nota emitida por eles vale de verdade.</strong>'}</p>` : ''}
+              </div>
+              <div class="cadastro-list-actions">
+                <label>Importar tokens de
+                  <select id="fiscalImportAmbiente">
+                    <option value="homologacao" ${importAmbiente !== 'producao' ? 'selected' : ''}>Homologação</option>
+                    <option value="producao" ${importAmbiente === 'producao' ? 'selected' : ''}>Produção</option>
+                  </select>
+                </label>
+                <button type="button" id="fiscalImportarTokens">Importar tokens de ${escapeHtml(ambienteLabel)}</button>
+              </div>
+            </div>
+          ` : '<p class="muted">A conta Focus não devolveu nenhuma empresa.</p>')}
+      </div>
+    `;
+  }
+
+  async function buscarEmpresasDaConta() {
+    empresasDaContaErro = '';
+    try {
+      const res = await api('/api/integracoes/FOCUS_NFE/empresas');
+      empresasDaConta = res.empresas || [];
+      if (res.semEstabelecimento > 0) {
+        showToast(`${res.semEstabelecimento} CNPJ(s) da conta Focus não têm estabelecimento cadastrado aqui — cadastre-os para poder importar o token.`, 'warning');
+      }
+    } catch (error) {
+      empresasDaConta = [];
+      empresasDaContaErro = error.message || 'Erro ao consultar a conta Focus NFe.';
+    }
+    renderAll();
   }
 
   async function carregarStatusFocusPadrao() {
@@ -674,6 +859,156 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
     // renderAll pinta precisa ser religado, e um lugar so' e' o que evita
     // religar quatro e esquecer o quinto.
     ligarCamposDeCodigo();
+
+    // --- Fase CH: chave mestra e importação das empresas da conta ---
+    document.getElementById('fiscalChaveMestraForm')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      // Só vai o que foi preenchido ou marcado. Mandar string vazia faria o
+      // servidor entender "nada para salvar" — ou pior, num campo futuro,
+      // sobrescrever com vazio o token que estava lá.
+      const payload = {};
+      const homologacao = String(formData.get('tokenHomologacao') || '').trim();
+      const producao = String(formData.get('tokenProducao') || '').trim();
+      if (homologacao) payload.tokenHomologacao = homologacao;
+      if (producao) payload.tokenProducao = producao;
+      if (formData.get('removerHomologacao') === 'on') payload.removerHomologacao = true;
+      if (formData.get('removerProducao') === 'on') payload.removerProducao = true;
+      if (!Object.keys(payload).length) {
+        showToast('Preencha uma das chaves ou marque uma remoção.', 'error');
+        return;
+      }
+      try {
+        await api('/api/integracoes/FOCUS_NFE/chave-mestra', { method: 'PUT', body: JSON.stringify(payload) });
+        showToast('Chave mestra salva.', 'success');
+        await loadIntegracao();
+        // A lista antiga foi buscada com a chave antiga: mantê-la na tela
+        // depois de trocar a credencial mostraria um retrato que já não é o
+        // da conta que vale agora.
+        empresasDaConta = null;
+        renderAll();
+      } catch (error) {
+        showToast(error.message || 'Erro ao salvar a chave mestra.', 'error');
+      }
+    });
+
+    document.getElementById('fiscalBuscarEmpresasFocus')?.addEventListener('click', async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      btn.textContent = 'Consultando a Focus...';
+      await buscarEmpresasDaConta();
+    });
+
+    // CADASTRAR UM ESTABELECIMENTO A PARTIR DO QUE A FOCUS JÁ SABE.
+    //
+    // Não cria nada sozinho: abre o formulário preenchido e deixa a conferência
+    // com quem cadastra. Cadastro fiscal criado às cegas sai em toda nota
+    // daquela filial, e corrigir depois exige cancelar as notas já autorizadas.
+    //
+    // O CNAE fica VAZIO de propósito — a Focus não o devolve, e o campo é
+    // obrigatório. Chutar um CNAE seria inventar a atividade econômica da
+    // filial; deixar vazio faz o formulário pedir, que é o certo.
+    document.querySelectorAll('.fiscal-cadastrar-da-focus').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const daFocus = (empresasDaConta || []).find((e) => e.cnpj === btn.dataset.cnpj);
+        if (!daFocus) return;
+
+        // O estabelecimento pendura numa empresa (a raiz do CNPJ), e o
+        // formulário só existe com uma selecionada. Sem a empresa, não há onde
+        // pendurar — e dizer isso é mais útil do que abrir um formulário que
+        // vai falhar no submit.
+        const raiz = daFocus.cnpj.slice(0, 8);
+        const empresa = empresas.find((emp) => fiscalDigitsOnly(emp.cnpjRaiz) === raiz);
+        if (!empresa) {
+          showToast(`Cadastre primeiro a empresa da raiz ${fiscalFormatCnpjRaiz(raiz)} — o estabelecimento precisa pertencer a uma.`, 'error');
+          return;
+        }
+        if (selectedEmpresaId !== empresa.id) {
+          selectedEmpresaId = empresa.id;
+          try {
+            await Promise.all([loadEstabelecimentos(selectedEmpresaId), loadRegrasFiscais(selectedEmpresaId), loadCertificados(selectedEmpresaId)]);
+          } catch (error) {
+            showToast(error.message || 'Erro ao carregar a empresa.', 'error');
+            return;
+          }
+        }
+
+        const ordem = fiscalOrdemDoCnpj(daFocus.cnpj);
+        estabForm = {
+          cnpj: daFocus.cnpj,
+          ordem,
+          tipo: fiscalTipoPelaOrdem(ordem),
+          // A razão social da Focus traz o apelido entre parênteses ("... (MATRIZ)")
+          // porque é assim que as dez se distinguem no painel dela. Na nota, a
+          // razão social é dado da Receita: o apelido vai para o nome fantasia,
+          // onde ele é legítimo.
+          razaoSocial: String(daFocus.nome || '').replace(/\s*\([^)]*\)\s*$/, '').trim(),
+          nomeFantasia: daFocus.nomeFantasia || '',
+          email: daFocus.email || '',
+          telefone: daFocus.telefone || '',
+          cnaePrincipal: '',
+          inscricaoEstadual: daFocus.inscricaoEstadual || '',
+          inscricaoMunicipal: daFocus.inscricaoMunicipal || '',
+          logradouro: daFocus.logradouro || '',
+          numero: daFocus.numero || '',
+          complemento: daFocus.complemento || '',
+          bairro: daFocus.bairro || '',
+          codigoMunicipio: daFocus.codigoMunicipio || '',
+          municipio: daFocus.municipio || '',
+          uf: daFocus.uf || '',
+          cep: daFocus.cep || '',
+          emiteNfe: daFocus.habilitaNfe !== false,
+          // A Focus tem NFC-e ligada nos dez, mas o sistema não emite NFC-e.
+          // Herdar esse `true` marcaria uma caixa que não significa nada aqui.
+          emiteNfce: false
+        };
+        renderAll();
+        const form = document.getElementById('fiscalEstabForm');
+        if (form) {
+          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          showToast('Confira os dados e preencha o CNAE — ele não vem da Focus.', 'info');
+        }
+      });
+    });
+
+    document.getElementById('fiscalImportAmbiente')?.addEventListener('change', (event) => {
+      importAmbiente = event.target.value === 'producao' ? 'producao' : 'homologacao';
+      renderAll();
+    });
+
+    document.getElementById('fiscalImportarTokens')?.addEventListener('click', async () => {
+      const alvos = (empresasDaConta || []).filter((e) => e.estabelecimentoId);
+      if (!alvos.length) {
+        showToast('Nenhum CNPJ da conta Focus está cadastrado como estabelecimento aqui.', 'error');
+        return;
+      }
+      // Produção pede confirmação escrita, homologação não. A diferença é que
+      // importar produção TAMBÉM vira o ambiente dos estabelecimentos — e daí
+      // para uma nota com valor fiscal falta só a trava do servidor.
+      const pergunta = importAmbiente === 'producao'
+        ? `Importar o token de PRODUÇÃO de ${alvos.length} estabelecimento(s)? Isso também muda o ambiente deles para Produção.`
+        : `Importar o token de homologação de ${alvos.length} estabelecimento(s)?`;
+      const confirmed = await confirmModal(pergunta);
+      if (!confirmed) return;
+      try {
+        const res = await api('/api/integracoes/FOCUS_NFE/importar-tokens', {
+          method: 'POST',
+          body: JSON.stringify({ ambiente: importAmbiente, cnpjs: alvos.map((e) => e.cnpj) })
+        });
+        const feitos = (res.importados || []).length;
+        showToast(
+          `${feitos} token(s) importado(s).`
+          + ((res.semToken || []).length ? ` ${res.semToken.length} sem token neste ambiente na Focus.` : ''),
+          feitos ? 'success' : 'warning'
+        );
+        // Os dois lados mudaram: o estabelecimento ganhou token e ambiente, e a
+        // coluna "Aqui" da lista da conta reflete isso.
+        if (selectedEmpresaId) await loadEstabelecimentos(selectedEmpresaId);
+        await buscarEmpresasDaConta();
+      } catch (error) {
+        showToast(error.message || 'Erro ao importar os tokens.', 'error');
+      }
+    });
 
     document.getElementById('fiscalNewEmpresaBtn')?.addEventListener('click', () => {
       empresaForm = { ativo: true };
@@ -1030,7 +1365,9 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
   try {
     // As tabelas oficiais em paralelo com as empresas: são independentes, e uma
     // depois da outra atrasaria a tela pelo tempo das duas.
-    await Promise.all([loadEmpresas(), loadTabelas()]);
+    // loadIntegracao entra junto pelo mesmo motivo, e tem catch próprio: banco
+    // sem a fase CF é um painel que se explica, não uma tela que não abre.
+    await Promise.all([loadEmpresas(), loadTabelas(), loadIntegracao()]);
   } catch (error) {
     showToast(error.message || 'Erro ao carregar empresas fiscais.', 'error');
   }

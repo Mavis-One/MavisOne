@@ -12,6 +12,9 @@ const limiteTentativas = require('./lib/limite-tentativas');
 const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
+// Fase CF: a chave mestra da conta Focus NFe (o token principal), separada do
+// token de emissão de cada CNPJ, que continua em lib/db/fiscal.js.
+const integracoesDb = require('./lib/db/integracoes');
 const modulosDb = require('./lib/db/modulos');
 const crmDb = require('./lib/db/crm');
 const {
@@ -437,9 +440,11 @@ function saveData(data) {
   fs.renameSync(temporario, DATA_FILE);
 }
 
-function createId(prefix) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
+// O gerador de ids do sistema é um só — ver lib/criar-id.js, que explica por
+// que são 15 caracteres e não 6. Havia uma cópia aqui, com `Math.random` e o
+// tamanho antigo, assinando movimento de estoque, pedido, orçamento e trilha
+// de auditoria.
+const { createId } = require('./lib/criar-id');
 
 function sanitizeDigits(value) {
   return String(value || '').replace(/\D/g, '');
@@ -8803,8 +8808,203 @@ const server = http.createServer(async (req, res) => {
     if (!user || !user.allowedModules.includes('settings')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    const status = await focusNfe.checkStatus();
+    // Fase CF: testa a chave mestra do banco e, só se ela não existir, o
+    // FOCUS_NFE_TOKEN do .env. A resposta diz qual dos dois foi usado
+    // (`origem`) — "conectado" sozinho não responde conectado COM QUAL token,
+    // que é a pergunta de quem acabou de trocar a chave e quer saber se pegou.
+    const status = await focusNfe.checkStatusDaConta();
     return sendJson(res, status);
+  }
+
+  // ---------------------------------------------------------------------
+  // INTEGRAÇÕES E CHAVE MESTRA (fase CF)
+  // ---------------------------------------------------------------------
+  // Ler exige o módulo Configurações; ESCREVER exige administrador. A
+  // diferença é proposital: a chave mestra vale pela conta Focus inteira, e
+  // quem a troca passa a decidir por qual conta o sistema emite. Nenhuma
+  // destas rotas devolve token — só se há um gravado (ver lib/db/integracoes.js).
+  if (pathname === '/api/integracoes' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('settings')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    try {
+      const [integracoes, vinculos] = await Promise.all([
+        integracoesDb.listarIntegracoes(),
+        integracoesDb.listarVinculos()
+      ]);
+      return sendJson(res, {
+        integracoes,
+        vinculos,
+        // A tela precisa saber da trava pelo mesmo motivo de sempre: não
+        // oferecer produção num sistema que vai recusar produção.
+        travadoEmHomologacao: focusNfe.somenteHomologacao()
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao carregar integrações', 500);
+    }
+  }
+
+  if (pathname.startsWith('/api/integracoes/') && pathname.endsWith('/chave-mestra') && req.method === 'PUT') {
+    const user = await getCurrentUser(req);
+    if (!user || !(await ehAdmin(user))) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const provedor = decodeURIComponent(pathname.replace('/api/integracoes/', '').replace('/chave-mestra', ''));
+    try {
+      const body = await readBody(req);
+      const integracao = await integracoesDb.salvarChaveMestra(provedor, body);
+      // O QUE mudou, nunca o valor: um token em audit_logs seria o mesmo
+      // segredo em texto, só que numa tabela que mais gente pode ler.
+      await registrarAuditoria({
+        action: 'salvarChaveMestraIntegracao',
+        targetId: integracao.id,
+        targetUsername: integracao.provedor,
+        byId: user.id,
+        byName: user.name,
+        details: {
+          homologacao: body.tokenHomologacao ? 'gravada' : (body.removerHomologacao ? 'removida' : 'sem alteração'),
+          producao: body.tokenProducao ? 'gravada' : (body.removerProducao ? 'removida' : 'sem alteração'),
+          ativo: body.ativo
+        }
+      });
+      return sendJson(res, { success: true, integracao });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao salvar a chave mestra', 400);
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // AS EMPRESAS DA CONTA FOCUS (fase CH)
+  // -------------------------------------------------------------------
+  // Lê a conta inteira com a chave mestra e casa por CNPJ com os
+  // estabelecimentos daqui. A resposta NÃO tem token: ela diz quais CNPJs a
+  // Focus conhece, qual estabelecimento é cada um, e o que está faltando em
+  // cada lado — numeração, certificado, token.
+  //
+  // EXIGE ADMINISTRADOR, e não só o módulo Configurações como as outras
+  // leituras desta seção. É uma leitura, mas é a chave mestra sendo exercida:
+  // ela devolve o retrato da conta inteira, e quem a dispara está usando a
+  // credencial que responde por todos os CNPJs.
+  if (pathname.startsWith('/api/integracoes/') && pathname.endsWith('/empresas') && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !(await ehAdmin(user))) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    try {
+      const [daFocus, daqui] = await Promise.all([
+        focusNfe.listarEmpresasDaConta(),
+        fiscalDb.getEstabelecimentos()
+      ]);
+      const porCnpj = new Map(daqui.map((e) => [String(e.cnpj || '').trim(), e]));
+      const empresas = daFocus.map((empresa) => {
+        const estab = porCnpj.get(empresa.cnpj) || null;
+        return {
+          ...empresa,
+          // O vínculo é por CNPJ e só por CNPJ: é o único dado que significa a
+          // mesma coisa nos dois lados. Casar por nome encontraria as dez, que
+          // têm a mesma razão social e diferem só pelo apelido entre
+          // parênteses.
+          estabelecimentoId: estab ? estab.id : null,
+          estabelecimentoRazaoSocial: estab ? estab.razaoSocial : null,
+          estabelecimentoAmbiente: estab ? estab.focusAmbiente : null,
+          estabelecimentoTemToken: estab ? Boolean(estab.focusTokenConfigured) : false
+        };
+      });
+      return sendJson(res, {
+        empresas,
+        // Quantos CNPJs a Focus conhece e este sistema não. Sem isto, a tela
+        // mostraria dez linhas e ninguém repararia que três não têm para onde ir.
+        semEstabelecimento: empresas.filter((e) => !e.estabelecimentoId).length,
+        travadoEmHomologacao: focusNfe.somenteHomologacao()
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao listar as empresas da conta Focus NFe', 502);
+    }
+  }
+
+  // Importa os tokens: um por estabelecimento, direto do fetch para a coluna
+  // cifrada. O token NÃO passa pelo navegador em momento nenhum — nem na ida
+  // (a tela manda CNPJ, não token) nem na volta (a resposta é um relatório).
+  if (pathname.startsWith('/api/integracoes/') && pathname.endsWith('/importar-tokens') && req.method === 'POST') {
+    const user = await getCurrentUser(req);
+    if (!user || !(await ehAdmin(user))) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    try {
+      const body = await readBody(req);
+      const ambiente = String(body.ambiente || '').toLowerCase() === 'producao' ? 'producao' : 'homologacao';
+      // Lista vazia ou ausente = todos os que casarem. Quem manda a lista
+      // escolheu na tela, linha a linha.
+      const escolhidos = Array.isArray(body.cnpjs) && body.cnpjs.length
+        ? new Set(body.cnpjs.map((c) => String(c).replace(/\D/g, '')))
+        : null;
+
+      const [tokens, daqui] = await Promise.all([
+        focusNfe.tokensDaConta(),
+        fiscalDb.getEstabelecimentos()
+      ]);
+
+      const importados = [];
+      const semToken = [];
+      const naoEncontrados = [];
+      for (const estab of daqui) {
+        const cnpj = String(estab.cnpj || '').trim();
+        if (escolhidos && !escolhidos.has(cnpj)) continue;
+        const par = tokens.get(cnpj);
+        if (!par) {
+          naoEncontrados.push(cnpj);
+          continue;
+        }
+        const token = par[ambiente];
+        if (!token) {
+          semToken.push(cnpj);
+          continue;
+        }
+        await fiscalDb.salvarTokenFocusDoEstabelecimento(estab.id, { token, ambiente });
+        importados.push({ cnpj, razaoSocial: estab.razaoSocial });
+      }
+
+      // QUAIS CNPJs, nunca o token — mesma regra da chave mestra. O que
+      // interessa numa auditoria é quem apontou quais estabelecimentos para
+      // qual ambiente, e isso o CNPJ conta inteiro.
+      await registrarAuditoria({
+        action: 'importarTokensDaContaFocus',
+        targetId: null,
+        targetUsername: decodeURIComponent(pathname.replace('/api/integracoes/', '').replace('/importar-tokens', '')),
+        byId: user.id,
+        byName: user.name,
+        details: { ambiente, importados: importados.map((i) => i.cnpj), semToken, naoEncontrados }
+      });
+
+      return sendJson(res, { success: true, ambiente, importados, semToken, naoEncontrados });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao importar os tokens da conta Focus NFe', 502);
+    }
+  }
+
+  if (pathname.startsWith('/api/integracoes/') && pathname.includes('/empresas/') && req.method === 'PUT') {
+    const user = await getCurrentUser(req);
+    if (!user || !(await ehAdmin(user))) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const resto = pathname.replace('/api/integracoes/', '');
+    const [provedor, , empresaId] = resto.split('/').map((parte) => decodeURIComponent(parte));
+    try {
+      const body = await readBody(req);
+      const vinculo = await integracoesDb.salvarVinculo(empresaId, body, provedor);
+      await registrarAuditoria({
+        action: 'salvarVinculoIntegracao',
+        targetId: empresaId,
+        targetUsername: provedor,
+        byId: user.id,
+        byName: user.name,
+        details: { ativo: body.ativo }
+      });
+      return sendJson(res, { success: true, vinculo });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao salvar o vínculo da empresa com a integração', 400);
+    }
   }
 
   // Webhook da Focus NFe — chamado por ELES, não pelo navegador do usuário.
@@ -8834,6 +9034,88 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { success: true });
     } catch (error) {
       return sendErro(res, error, 'Erro ao processar webhook', 500);
+    }
+  }
+
+  // Webhook da automação MD-e da Focus NFe (ciência automática) — também
+  // chamado por ELES, e fora do gate de sessão pelo mesmo motivo do vizinho.
+  //
+  // PORTA SEPARADA, de propósito: no webhook acima a nota é NOSSA e chega por
+  // `ref`; aqui ela foi emitida CONTRA nós e chega por `chave_nfe`, sem `ref`
+  // nenhuma. Mandar os dois pela mesma porta obrigaria a adivinhar o formato do
+  // payload — e a porta que já funciona é a da emissão, que é a última que se
+  // quer arriscar.
+  if (pathname === '/api/fiscal/webhooks/focus/mde' && req.method === 'POST') {
+    try {
+      const secretEsperado = String(process.env.FISCAL_WEBHOOK_SECRET || '').trim();
+      // A automação é configurada no painel da Focus, que envia o segredo no
+      // header `Authorization` — e não no X-Fiscal-Webhook-Secret usado pelo
+      // hook de NF-e (lá o nome do header é escolhido por nós, na API). Aceitar
+      // os dois evita que a configuração feita pela tela deles chegue como 401,
+      // que é um erro sem sintoma: a Focus retentaria calada.
+      const authorization = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const recebido = req.headers['x-fiscal-webhook-secret'] || authorization;
+      if (!segredosIguais(recebido, secretEsperado)) {
+        return sendJson(res, { error: 'Não autorizado' }, 401);
+      }
+
+      const body = await readBody(req);
+      const aviso = focusNfe.normalizarMdeAutomacao(body);
+      // 44 dígitos exatos, e não "tem alguma coisa": a coluna é character(44) e
+      // o Postgres COMPLETA com espaços o que vier menor — a nota entraria com
+      // uma chave que não casa em nenhuma comparação depois, e sem erro nenhum
+      // no caminho. Mesma razão do `length === 44` em distribuicaoDfe.
+      if (aviso.documento.chave.length !== 44) {
+        return sendJson(res, { error: 'Payload sem chave_nfe válida (44 dígitos).' }, 400);
+      }
+
+      const estabelecimentos = await fiscalDb.getEstabelecimentos();
+      const destino = estabelecimentos.find(
+        (e) => String(e.cnpj || '').replace(/\D/g, '') === aviso.destinatarioDocumento
+      );
+      if (!destino) {
+        // 200, e não erro: nota de outra conta, de outro ambiente ou de um CNPJ
+        // que ainda não foi cadastrado aqui. Responder erro faria a Focus
+        // retentar para sempre por algo que a retentativa não resolve.
+        console.log('Webhook MD-e ignorado — CNPJ destinatário não cadastrado:', aviso.destinatarioDocumento);
+        return sendJson(res, { success: true, ignorado: true, motivo: 'CNPJ destinatário não é de nenhum estabelecimento cadastrado.' });
+      }
+
+      const gravado = await dfeDb.gravarDocumento({
+        cnpjDestinatario: aviso.destinatarioDocumento,
+        empresaNome: destino.razaoSocial || destino.nomeFantasia || '',
+        documento: aviso.documento
+      });
+
+      // A MANIFESTAÇÃO JÁ ACONTECEU NA SEFAZ — quem a fez foi a automação da
+      // Focus, e este POST é o aviso. Registrar aqui não fere a regra de
+      // lib/db/dfe.js (nunca gravar manifestação sem ter ido à SEFAZ): a ida
+      // existiu, só não foi nossa. O nome gravado diz isso, para a tela não
+      // sugerir que alguém desta casa decidiu dar ciência.
+      let manifestado = false;
+      if (aviso.manifestacao) {
+        const evento = manifestacao.obter(aviso.manifestacao);
+        const conhecido = manifestacao.CATALOGO.some((m) => m.value === evento.value);
+        const atual = await dfeDb.obterDocumento(gravado.id);
+        if (!conhecido) {
+          // Evento fora do catálogo não vira código inventado na coluna: fica
+          // no `resumo` jsonb (gravado acima) e aparece no log.
+          console.log('Webhook MD-e com manifestação desconhecida:', aviso.manifestacao, 'chave', aviso.documento.chave);
+        } else if (atual && !atual.manifestacaoCodigo) {
+          // Não sobrescreve manifestação já registrada. Um reenvio do mesmo
+          // aviso não pode apagar o que uma pessoa manifestou daqui.
+          await dfeDb.registrarManifestacao(gravado.id, {
+            codigo: evento.codigo,
+            usuarioId: null,
+            usuarioNome: 'Ciência automática (Focus NFe)'
+          });
+          manifestado = true;
+        }
+      }
+
+      return sendJson(res, { success: true, novo: gravado.novo, manifestado });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao processar webhook MD-e', 500);
     }
   }
 
@@ -8949,7 +9231,10 @@ const server = http.createServer(async (req, res) => {
         // um botao que nao diz de onde parte.
         const ponteiros = {};
         for (const estabelecimento of estabelecimentos) {
-          const documento = String(empresa.cnpj || '').replace(/\D/g, '');
+          // `estabelecimento`, a variável do laço — `empresa` nunca existiu aqui.
+          // Era ReferenceError na ABERTURA da tela, não só na busca: a lista de
+          // notas contra o CNPJ não carregava para ninguém.
+          const documento = String(estabelecimento.cnpj || '').replace(/\D/g, '');
           if (documento) ponteiros[documento] = await dfeDb.obterNsu(documento);
         }
         return sendJson(res, {
@@ -8974,8 +9259,12 @@ const server = http.createServer(async (req, res) => {
           if (!estabelecimento) {
             return sendJson(res, { error: 'Escolha a empresa cujo CNPJ sera consultado na SEFAZ.' }, 400);
           }
-          const cnpj = String(empresa.cnpj || '').replace(/\D/g, '');
-          const nomeEmpresa = empresa.razaoSocial || empresa.nomeFantasia || '';
+          // `estabelecimento`, e não `empresa`: quem tem CNPJ completo (14) é o
+          // estabelecimento, e é ele que a SEFAZ consulta. A variável `empresa`
+          // nunca existiu neste escopo — a busca manual estourava ReferenceError
+          // antes de falar com a Focus, e o 500 saía sem dizer o motivo.
+          const cnpj = String(estabelecimento.cnpj || '').replace(/\D/g, '');
+          const nomeEmpresa = estabelecimento.razaoSocial || estabelecimento.nomeFantasia || '';
 
           const modo = String(body.modo || 'ultimo-nsu');
           const ponteiro = await dfeDb.obterNsu(cnpj);
