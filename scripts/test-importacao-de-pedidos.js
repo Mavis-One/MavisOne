@@ -108,6 +108,29 @@ check('o comentário obsoleto da função foi corrigido',
   !/getNextSalesCode\(data\) hoje incrementa um contador no arquivo local/.test(ler('lib/db/vendas-compras.js')));
 
 // ---------------------------------------------------------------------------
+// O PISO DE 16000 (fase CG)
+// ---------------------------------------------------------------------------
+// A numeração própria começa em 16000: abaixo disso é o histórico importado
+// (1 a 15.525). O perigo não é o piso em si — é a migração que o instala.
+console.log('\n--- 1b. o piso de 16000 não pode rebaixar a numeração ---');
+const migracaoCg = ler('banco/migrations/fase-cg-numeracao-de-venda-a-partir-de-16000.sql');
+// Um `setval(..., 15999)` fixo, rodado num banco que já passou do 16.010,
+// REEMITIRIA números já gravados — e não há unique em orders.code nem em
+// quotes.code para barrar. Migração roda mais de uma vez por natureza.
+check('o setval é embrulhado em greatest', /setval\(\s*\n?\s*'sales_code_seq',\s*\n?\s*greatest\(/.test(migracaoCg));
+check('  considera onde a sequence já está', /select last_value from sales_code_seq/.test(migracaoCg));
+check('  e o maior código das DUAS tabelas', /max\(code\) from orders/.test(migracaoCg) && /max\(code\) from quotes/.test(migracaoCg));
+check('  com 15999 + is_called para o próximo ser 16000', /15999/.test(migracaoCg) && /\),\s*\n?\s*true\s*\n?\s*\);/.test(migracaoCg));
+
+// A queda (banco sem a sequence) precisa dizer o MESMO que a sequence. Com o
+// piso antigo de 1000 ela numeraria 15.526 e cruzaria a faixa do histórico.
+const vendasSrc = ler('lib/db/vendas-compras.js');
+check('a queda usa o mesmo piso, e não o 1000 de antes',
+  /const PRIMEIRO_NUMERO_DE_VENDA = 16000;/.test(vendasSrc)
+  && /PRIMEIRO_NUMERO_DE_VENDA - 1\)/.test(vendasSrc));
+check('  e o 1000 saiu do Math.max', !/Number\(lastQuote\?\.code\) \|\| 0, 1000\)/.test(vendasSrc));
+
+// ---------------------------------------------------------------------------
 console.log('--- 2. a lista de vendas não manda a tabela inteira ---');
 const servidor = semComentarios(ler('server.js'));
 const rota = servidor.slice(servidor.indexOf("if (pathname === '/api/sales/records' && req.method === 'GET')"));
