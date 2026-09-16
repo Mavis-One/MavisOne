@@ -78,15 +78,37 @@ check('  e sem Math.random', !/Math\.random/.test(funcaoToken));
 check('o mapa de sessões não tem protótipo', /let sessions = Object\.create\(null\);/.test(src));
 
 console.log('--- 2. o gerador de ids também saiu do Math.random ---');
-const cliente = ler('lib/db/client.js');
-check('createId usa crypto', /crypto\.randomBytes\(4\)\.toString\('hex'\)/.test(cliente));
-check('  e não Math.random', !/Math\.random/.test(semComentarios(cliente)));
-// O formato não mudou: ids já gravados continuam válidos e nada que os leia
-// precisa saber da mudança.
+// O gerador virou FONTE ÚNICA (lib/criar-id.js) porque havia duas cópias e elas
+// divergiram: esta checagem olhava só para lib/db/client.js, e a de
+// lib/cadastros-core.js continuou no Math.random por meses, assinando contato,
+// equipamento, conta bancária e agendamento.
+const gerador = ler('lib/criar-id.js');
+check('createId usa crypto', /crypto\.randomBytes\(8\)\.toString\('hex'\)/.test(gerador));
+check('  e não Math.random', !/Math\.random/.test(semComentarios(gerador)));
+check('lib/db/client.js usa a fonte única', /require\('\.\.\/criar-id'\)/.test(ler('lib/db/client.js')));
+check('lib/cadastros-core.js também — sem cópia própria', /require\('\.\/criar-id'\)/.test(ler('lib/cadastros-core.js')));
+check('  e sem Math.random sobrando lá', !/Math\.random/.test(semComentarios(ler('lib/cadastros-core.js'))));
+
+// A PARTE ALEATÓRIA FOI DE 6 PARA 15 CARACTERES (24 -> 60 bits).
+//
+// Com 6, o teste dos 5000 ids falhava de vez em quando — e "de vez em quando"
+// era o gerador colidindo de verdade: o timestamp tem resolução de
+// milissegundo, então num laço apertado os 24 bits eram tudo o que separava um
+// id do outro. Em produção isso não aparece como teste vermelho, e sim como
+// chave duplicada no meio de uma importação.
+//
+// O prefixo e o carimbo de tempo continuam iguais: ids já gravados seguem
+// válidos, e nada que os leia precisa saber da mudança.
 const id = createId('pes');
-check('o formato continua o mesmo', /^pes-\d{13}-[0-9a-f]{6}$/.test(id), id);
+check('o formato: prefixo, ms e 15 hex', /^pes-\d{13}-[0-9a-f]{15}$/.test(id), id);
 const muitos = new Set(Array.from({ length: 5000 }, () => createId('x')));
 check('  e 5000 ids seguidos não colidem', muitos.size === 5000, `${muitos.size} distintos`);
+// Os 5000 acima cabem em poucos milissegundos; este laço força o pior caso —
+// tudo no MESMO milissegundo, que é onde a versão de 6 caracteres quebrava.
+const agora = Date.now();
+const mesmoMs = new Set();
+for (let i = 0; i < 20000; i++) mesmoMs.add(createId('x').split('-')[2]);
+check('  e 20.000 aleatórios são distintos entre si', mesmoMs.size === 20000, `${mesmoMs.size} distintos em ${Date.now() - agora}ms`);
 
 console.log('--- 3. o anexo: lista de PERMISSÃO, não de proibição ---');
 // Bloquear "text/html" e esquecer "image/svg+xml" seria o tipo de lista que
