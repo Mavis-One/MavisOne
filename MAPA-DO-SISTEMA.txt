@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-14 19:04 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-16 18:07 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -215,6 +215,8 @@ o próprio arquivo dá de si, no comentário de cabeçalho.
       O ARQUIVO PEDIDO ESTA' MESMO DENTRO DA PASTA? (fase CB — achado 11) O servidor entrega dois diretorios inteiros por URL: public/modules e public/assets.
   lib/comparar-segredo.js
       COMPARAR SEGREDO SEM DIZER O QUANTO ERROU (fase CB — achado 09).
+  lib/criar-id.js
+      O GERADOR DE IDs DA CASA.
   lib/entradaNfe.js
       ENTRADA DE NF-e — ler o XML do fornecedor e dizer o que dele já existe aqui.
   lib/erro-para-o-usuario.js
@@ -283,6 +285,8 @@ regra só, para tela e servidor nunca discordarem.
       COMO CADA FORMA DE PAGAMENTO VIRA DINHEIRO — FONTE ÚNICA.
   garantia.js   [também no servidor]
       A GARANTIA DO EQUIPAMENTO — FONTE ÚNICA.
+  inscricao_estadual.js   [também no servidor]
+      Inscrição estadual — REGRA ÚNICA para "é contribuinte de ICMS?".
   lancamento_codigo.js   [também no servidor]
       O NÚMERO DO LANÇAMENTO FINANCEIRO — FONTE ÚNICA.
   manifestacao.js   [também no servidor]
@@ -371,6 +375,9 @@ Arquivos de acesso (lib/db)
       tabelas: bank_accounts, bank_transactions, cost_centers, financial_categories, financial_entries, financial_payments, nfe_items, nfes
   lib/db/fiscal.js
       tabelas: certificado_digital, cfop, empresa, estabelecimento, nfe, nfe_arquivos, nfe_eventos, regra_fiscal
+  lib/db/integracoes.js
+      AS INTEGRAÇÕES E A CHAVE MESTRA (fase CF).
+      tabelas: empresas_integracoes, integracoes
   lib/db/modulos.js
       CRUD dos módulos Frota, RH, PCP e Contratos.
       tabelas: contract_templates, contract_types, contracts, fleet_maintenances, fleet_refuels, fleet_vehicles, hr_departments, hr_employee_categories, hr_employee_types, hr_employees, hr_leaves, hr_positions, hr_time_entries, hr_work_schedules, pcp_bom, pcp_entries, pcp_orders, pcp_quality_checks, pcp_sectors, pcp_statuses
@@ -382,12 +389,14 @@ Arquivos de acesso (lib/db)
       tabelas: sales_origins
   lib/db/rbac.js
       tabelas: access_logs, permissions, role_permissions, roles, user_permissions, user_roles
+  lib/db/sessoes.js
+      ONDE A SESSÃO DE LOGIN MORA (fase CL).
   lib/db/settings.js
       tabelas: audit_logs, settings
   lib/db/vendas-compras.js
       tabelas: import_logs, orders, purchases, quotes, sales
 
-Tabelas usadas (77)
+Tabelas usadas (79)
 -------------------
   access_logs             account_balances        audit_logs
   bank_accounts           bank_cards              bank_transactions
@@ -395,29 +404,30 @@ Tabelas usadas (77)
   cfop                    cnpjs                   conta_estabelecimento
   contract_templates      contract_types          contracts
   cost_centers            crm_connection          deposits
-  dfe_nsu                 empresa                 equipments
-  estabelecimento         financial_categories    financial_entries
-  financial_institutions  financial_payments      fleet_maintenances
-  fleet_refuels           fleet_vehicles          hr_departments
-  hr_employee_categories  hr_employee_types       hr_employees
-  hr_leaves               hr_positions            hr_time_entries
-  hr_work_schedules       import_logs             nfe
-  nfe_arquivos            nfe_distribuicao        nfe_entrada
-  nfe_entrada_item        nfe_eventos             nfe_items
-  nfes                    open_finance_audit_logs open_finance_connections
-  open_finance_webhook_eventsorders                  pcp_bom
-  pcp_entries             pcp_orders              pcp_quality_checks
-  pcp_sectors             pcp_statuses            pedido_anexo
-  people                  permissions             product_class_assignments
-  product_class_value_assignmentsproduct_class_values    product_classes
-  products                purchase_orders         purchases
-  quotes                  regra_fiscal            role_permissions
-  roles                   sales                   sales_categories
-  sales_origins           settings                user_permissions
-  user_roles              users
+  dfe_nsu                 empresa                 empresas_integracoes
+  equipments              estabelecimento         financial_categories
+  financial_entries       financial_institutions  financial_payments
+  fleet_maintenances      fleet_refuels           fleet_vehicles
+  hr_departments          hr_employee_categories  hr_employee_types
+  hr_employees            hr_leaves               hr_positions
+  hr_time_entries         hr_work_schedules       import_logs
+  integracoes             nfe                     nfe_arquivos
+  nfe_distribuicao        nfe_entrada             nfe_entrada_item
+  nfe_eventos             nfe_items               nfes
+  open_finance_audit_logs open_finance_connectionsopen_finance_webhook_events
+  orders                  pcp_bom                 pcp_entries
+  pcp_orders              pcp_quality_checks      pcp_sectors
+  pcp_statuses            pedido_anexo            people
+  permissions             product_class_assignmentsproduct_class_value_assignments
+  product_class_values    product_classes         products
+  purchase_orders         purchases               quotes
+  regra_fiscal            role_permissions        roles
+  sales                   sales_categories        sales_origins
+  settings                user_permissions        user_roles
+  users
 
 ==============================================================================
-4. ROTAS DA API (111 encontradas no server.js)
+4. ROTAS DA API (114 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -481,7 +491,10 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/fiscal/regras/simular                           GET
   /api/fiscal/tabelas                                  GET
   /api/fiscal/webhooks/focus                           POST
+  /api/fiscal/webhooks/focus/mde                       POST
   /api/focusnfe/status                                 GET
+  /api/integracoes                                     GET
+  /api/integracoes/…                                   
   /api/login                                           POST
   /api/logout                                          POST
   /api/me                                              
@@ -537,7 +550,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-53 arquivo(s) em banco/migrations, em ordem de fase:
+56 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -573,6 +586,9 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-bx-titulo-de-cartao.sql
   fase-cd-contas-por-estabelecimento.sql
   fase-ce-codigo-de-cadastro-sem-corte.sql
+  fase-cf-chave-mestra-focus.sql
+  fase-cg-numeracao-de-venda-a-partir-de-16000.sql
+  fase-cl-sessao-no-banco.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -596,7 +612,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-107 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+115 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -614,12 +630,14 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-cancelamento-desfatura.js     CANCELAR A NF-e DESFAZ O FATURAMENTO QUE ELA CAUSOU (fase BF).
   [avulso]  test-categorias-venda.js           CATEGORIAS DE VENDA (fase AS).
   [npm test] test-chassi-item.js                Chassi na linha do item de venda.
+  [npm test] test-chave-mestra-focus.js         A CHAVE MESTRA DA FOCUS NFe (fase CF).
   [npm test] test-classes-produto.js            Classes de produto — camada de dados (COR e, no futuro, VOLTAGEM/TAMANHO).
   [npm test] test-codigo-de-cadastro.js         O CÓDIGO DE CADASTRO NÃO PODE SER CORTADO (fase CE).
   [npm test] test-complemento-icms.js           NF-e COMPLEMENTAR EXCLUSIVA DE ICMS.
   [npm test] test-compra-cancelada-financeiro.js CANCELAR A COMPRA MATA A CONTA A PAGAR QUE ELA CRIOU (fase BI).
   [avulso]  test-compras-documento.js          A CADEIA DE COMPRAS: COTACAO -> ORDEM -> RECEBIMENTO (fase AQ).
   [npm test] test-conta-bancaria.js             A CONTA BANCÁRIA DO CADASTRO GRAVA DE VERDADE (fase BA).
+  [npm test] test-contar-sem-carregar.js        CONTAR NÃO É CARREGAR (fase CJ).
   [npm test] test-contas-por-estabelecimento.js QUAL CONTA BANCÁRIA CADA ESTABELECIMENTO PODE USAR (fase CD).
   [npm test] test-contrato-financeiro.js        Geração das parcelas de um contrato — parcelasDoContrato / vencimentoDoPeriodo.
   [npm test] test-credenciadora-de-cartao.js    QUEM PROCESSA O CARTÃO (fase BV).
@@ -644,8 +662,11 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-guardas-de-exclusao.js        AS GUARDAS DE EXCLUSÃO PERGUNTAM À FONTE CERTA (fase BO).
   [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
   [npm test] test-importacao-de-pedidos.js      O QUE A IMPORTAÇÃO DO HISTÓRICO DE VENDAS DEIXOU PARA TRÁS (fase CI).
+  [npm test] test-importar-empresas-focus.js    IMPORTAR AS EMPRESAS DA CONTA FOCUS (fase CH).
+  [npm test] test-inscricao-estadual.js         A INSCRIÇÃO ESTADUAL NO ATALHO DE NOVO CLIENTE — E O QUE "ISENTO" SIGNIFICA.
   [npm test] test-kpis.js                       Cartões do topo do hub — lib/kpis.js POR QUE UM NÚMERO SOZINHO NÃO SERVE
   [npm test] test-lancamento-vinculado.js       Lançamento gerado por PEDIDO ou por NF-e: o que dá e o que não dá para mudar.
+  [npm test] test-lista-de-busca-solta.js       A LISTA DO CAMPO DE BUSCA NÃO PODE FICAR "ATRÁS" DO BLOCO SEGUINTE.
   [npm test] test-lista-vendas.js               Lista de Pedidos e Orçamentos: colunas, ordenação, paginação e URL.
   [npm test] test-meu-painel.js                 MEU PAINEL — "minhas vendas" tem que ser MINHAS, provado sem subir nada.
   [npm test] test-module-workspace.js           Testa a Área de Trabalho dos módulos contra as listas REAIS do app.js.
@@ -661,6 +682,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-nfe-payload.js                Montagem do payload de NF-e — lib/nfePayloadBuilder.js É conta de imposto: errado aqui não dá erro de tela, dá
   [npm test] test-nfe-unificada.js              A lista de NF-e passou a mostrar as duas origens.
   [npm test] test-notas-contra-cnpj.js          NOTAS EMITIDAS CONTRA O NOSSO CNPJ — Distribuição de DF-e (fase AR).
+  [npm test] test-numeracao-de-venda.js         O NÚMERO DO PEDIDO, NOS QUATRO CAMINHOS QUE ELE PODE SAIR (fases BR, CG, CI).
   [npm test] test-numero-lancamento.js          O NÚMERO DO LANÇAMENTO FINANCEIRO — LF0001 (fase AT).
   [npm test] test-ordem-dos-scripts.js          OS <script> DO index.html CARREGAM NA ORDEM SEM QUEBRAR.
   [npm test] test-ordenar-cadastros.js          ORDENAR A LISTA DE CADASTROS PELO CABEÇALHO (fase CF).
@@ -694,6 +716,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-seguranca-sessao.js           AS TRÊS PORTAS QUE A VARREDURA DE 11/09/2026 ENCONTROU ABERTAS (fase BZ).
   [npm test] test-seletor-de-produto.js         NENHUMA TELA DESENHA 5.476 DE NADA (fase CH).
   [npm test] test-sessao-expira.js              Expiração das sessões na virada do dia — lib/sessao.js A conta de "quando esta sessão morre" é fácil de escrev
+  [npm test] test-sessao-no-banco.js            A SESSÃO NO BANCO, E AS GUARDAS QUE PARARAM DE DERRUBAR O PROCESSO (fase CL).
   [avulso]  test-sessao-unica.js               Sessão única por usuário: entrar numa máquina derruba a outra.
   [npm test] test-sql-compat.js                 A CAMADA COMPATÍVEL — o dialeto do supabase-js virando SQL, provado sem banco.
   [npm test] test-sync-obrigatorio.js           NENHUMA ROTA CONSOME COLEÇÃO DO POSTGRES SEM SINCRONIZAR (fase BC).
@@ -706,15 +729,17 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-vendas-financeiro.js          Contas a receber geradas por um pedido faturado (lib/vendas-financeiro.js).
   [npm test] test-verificador-migracoes.js      O verificador de migrações precisa estar certo sobre o que ele NÃO sabe.
   [npm test] test-vinculo-pedido-nfe.js         Vínculo pedido <-> NF-e: existe nos DOIS sentidos, e um pedido não emite duas notas.
+  [npm test] test-webhook-mde.js                O WEBHOOK DA AUTOMAÇÃO MD-e (ciência automática) da Focus NFe.
 
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-131 arquivos JS carregados por public/index.html, nesta ordem.
+132 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
   /modules/shared/documento.js
+  /modules/shared/inscricao_estadual.js
   /modules/shared/campos.js
   /modules/shared/rotulo_produto.js
   /modules/shared/campo_de_busca.js

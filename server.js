@@ -7897,7 +7897,21 @@ async function tratarRequisicao(req, res) {
           companies: data.companies,
           sellers: getSellersDirectory(data),
           deposits: data.deposits,
-          directory: getCadastroDirectory(data),
+          // SÓ id E name (fase CJ). O diretório completo carrega dez campos por
+          // pessoa — documento, endereço, cidade, CEP, inscrição estadual —
+          // porque o FORMULÁRIO do pedido precisa deles para preencher entrega e
+          // nota. Esta lista aqui não é o formulário: é o <option> do filtro
+          // "Cliente/Fornecedor" da Busca Avançada, que usa o id no value e o
+          // nome no texto. Mais nada.
+          //
+          // Medido: 1.476 KB com os dez campos, para 6.492 pessoas — em TODA
+          // página da lista, inclusive quando ninguém abre a Busca Avançada.
+          // Era 97% da resposta de uma rota que devolve 15 registros.
+          //
+          // O corte é aqui, e não em getCadastroDirectory: a mesma função serve
+          // o formulário de pedido (/api/sales/meta), e lá os dez campos são o
+          // motivo de ela existir.
+          directory: getCadastroDirectory(data).map((c) => ({ id: c.id, name: c.name })),
           // Transportadora e Categoria viram select na Busca Avançada, e as
           // duas listas vêm do Cadastro. Digitadas à mão virariam "Revenda",
           // "revenda" e "Revensa" como se fossem coisas diferentes, e aí
@@ -13764,21 +13778,35 @@ async function tratarRequisicao(req, res) {
     // Mesmas coleções legadas vazias do /api/dashboard: precisam vir do
     // Supabase. `people` entra junto porque, sem ele, a lista de vendedores do
     // vínculo chega vazia e a tela sugere que ninguém é vendedor.
-    const [settings, allUsers, products] = await Promise.all([
+    // CONTAR NÃO É CARREGAR (fase CJ).
+    //
+    // Isto aqui pedia as coleções INTEIRAS para usar `.length` delas. Medido
+    // neste banco: getOrders sozinho custava 409 ms e 27,7 MB de JSON, mais
+    // 1,9 MB de produtos — cerca de 30 MB de memória por requisição para a
+    // resposta de 2 KB que esta rota devolve. Era a tela mais lenta do sistema,
+    // com 1 s de espera para escrever cinco números em cinco cartões.
+    //
+    // Os syncs continuam existindo para quem PRECISA das linhas; aqui ninguém
+    // precisava. O único que sobrou é o de cadastros, porque
+    // `getSellersDirectory(data)` lê a coleção de verdade para montar a lista
+    // de vendedores — esse não dá para contar.
+    const canSeeStock = user.allowedModules.includes('stock');
+    const canSeeFinance = user.allowedModules.includes('finance');
+    const [settings, allUsers, totalProducts, totalSales, totalPurchases, totalFinance] = await Promise.all([
       db.getSettings(),
       canManageUsers ? db.getUsers() : Promise.resolve([]),
-      user.allowedModules.includes('stock') ? db.getProducts() : Promise.resolve([]),
-      canSeeSales ? syncSalesData(data) : null,
-      canSeePurchases ? syncPurchasesData(data) : null,
-      syncFinanceData(data),
+      canSeeStock ? db.contarProducts() : Promise.resolve(0),
+      canSeeSales ? db.contarOrders() : Promise.resolve(0),
+      canSeePurchases ? db.contarPurchasesAtivas() : Promise.resolve(0),
+      canSeeFinance ? db.contarFinancialEntries() : Promise.resolve(0),
       canManageUsers ? syncCadastroData(data) : null
     ]);
     const totals = {
       totalUsers: canManageUsers ? allUsers.length : 0,
-      totalProducts: user.allowedModules.includes('stock') ? products.length : 0,
-      totalSales: canSeeSales ? (data.orders || []).length : 0,
-      totalPurchases: canSeePurchases ? (data.purchases || []).filter((p) => p.status !== 'cancelada').length : 0,
-      totalFinance: user.allowedModules.includes('finance') ? data.finance.length : 0
+      totalProducts,
+      totalSales,
+      totalPurchases,
+      totalFinance
     };
     const safeUsers = canManageUsers
       ? allUsers.map((entry) => ({
