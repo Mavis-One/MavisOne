@@ -254,12 +254,39 @@ console.log('\n--- 5. conferir() separa "falta" de "não sei" ---');
     && !blocoPrimeira.includes('await aplicar('));
   check('  adotando pelo que o BANCO responde, e não por suposição em bloco',
     /await conferir\(\{ existeTabela, existeColuna \}\)/.test(aplicador)
-    && /todas\.filter\(\(m\) => !pendentesPorNome\.has\(m\.nome\)\)/.test(aplicador));
-  // A aposta existe e não pode ficar escondida: as NÃO CONFERIDAS entram como
-  // adotadas porque não há como saber, e num banco no ar há meses supor que
-  // rodaram é o lado seguro — o outro lado duplica dado.
-  check('  e a suposição das não conferidas é dita, uma por uma',
-    /naoConferidas\.forEach\(\(m\) => console\.log/.test(aplicador));
+    && /todas\s*\n?\s*\.filter\(\(m\) => !pendentesPorNome\.has\(m\.nome\)\)/.test(aplicador));
+
+  // "NÃO CONFERIDA" NÃO É "APLICADA": É "NÃO SEI".
+  //
+  // Esta era a aposta contrária, e ela custou caro. Adotar tudo que não está
+  // em `pendentes` varre junto as que não declaram tabela nem coluna — que não
+  // aparecem ali por não haver como perguntar, e não por terem rodado.
+  //
+  // No VPS, em 14/09/2026, 10 migrações foram adotadas assim e três nunca
+  // haviam rodado: fase-ay (27.362 lançamentos sem `code`), fase-br (a sequence
+  // sales_code_seq não existia) e fase-bx (colunas do cartão). A fase-br só
+  // apareceu porque a fase-cg quebrou atrás dela; as outras duas ficaram
+  // silenciosas, com o livro-caixa dizendo que o banco estava em dia.
+  //
+  // O lado seguro é o oposto do que se supunha: as migrações daqui são
+  // idempotentes, então reaplicar não duplica — deixar de aplicar, sim, deixa
+  // buraco que só aparece meses depois.
+  check('  as NÃO CONFERIDAS não entram na adoção: voltam para a fila',
+    /\.filter\(\(m\) => ADOTAR_NAO_CONFERIDAS \|\| !naoConferidasPorNome\.has\(m\.nome\)\)/.test(aplicador));
+  check('  o conjunto das não conferidas é montado para isso',
+    /const naoConferidasPorNome = new Set\(naoConferidas\.map\(\(m\) => m\.nome\)\)/.test(aplicador));
+  check('  e continuam sendo ditas uma por uma, com o destino delas',
+    /naoConferidas\.forEach\(\(m\) => console\.log/.test(aplicador)
+    && /Vão para a fila e serão aplicadas/.test(aplicador));
+  // A volta ao comportamento antigo existe, mas é PEDIDA — não é o padrão.
+  // Padrão que supõe é o que produziu o estrago.
+  check('  dá para readotar por suposição, mas só pedindo',
+    /const ADOTAR_NAO_CONFERIDAS = process\.argv\.includes\('--adotar-nao-conferidas'\)/.test(aplicador)
+    && /Adotadas por suposição, a seu pedido/.test(aplicador));
+  // O `pendentes` de baixo é quem as pega: como elas não entram no livro-caixa,
+  // `!registradas.has(nome)` já as encontra, na ordem dos arquivos.
+  check('  e a fila de baixo as encontra sozinha',
+    /const pendentes = todas\.filter\(\(m\) => !registradas\.has\(m\.nome\)\);/.test(aplicador));
   check('o livro-caixa distingue aplicada de adotada',
     /'aplicada'/.test(aplicador) && /'adotada'/.test(aplicador));
 

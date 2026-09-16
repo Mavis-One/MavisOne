@@ -57,6 +57,11 @@ const { banco } = require('../lib/db/client');
 const { lerMigracoes, conferir } = require('../lib/migracoes');
 
 const SIMULAR = process.argv.includes('--simular');
+// A volta ao comportamento antigo, para um banco antigo em que as não
+// conferidas comprovadamente rodaram e ninguém quer arriscar rodá-las de novo.
+// É opção, e não padrão, porque o padrão errado custou três migrações
+// registradas sem nunca terem sido executadas — ver o bloco da primeira rodada.
+const ADOTAR_NAO_CONFERIDAS = process.argv.includes('--adotar-nao-conferidas');
 
 // Mesmas sondas do verificador: o cliente devolve erro nomeando a coluna ou a
 // tabela quando ela não existe.
@@ -153,7 +158,35 @@ async function adotar(nomes) {
 
     const { pendentes, naoConferidas } = await conferir({ existeTabela, existeColuna });
     const pendentesPorNome = new Set(pendentes.map((m) => m.nome));
-    const adotar0 = todas.filter((m) => !pendentesPorNome.has(m.nome)).map((m) => m.nome);
+    const naoConferidasPorNome = new Set(naoConferidas.map((m) => m.nome));
+
+    // "NÃO CONFERIDA" NÃO É "APLICADA": É "NÃO SEI".
+    //
+    // `pendentes` e `naoConferidas` são coisas diferentes, e tratá-las como uma
+    // só foi o defeito. Uma migração que não declara tabela nem coluna não
+    // aparece em `pendentes` — não porque rodou, mas porque não há como
+    // perguntar. Adotar "tudo que não está pendente" registrava essas como
+    // aplicadas sem nunca terem sido executadas.
+    //
+    // Aconteceu no VPS em 14/09/2026, com 10 migrações adotadas às cegas. Três
+    // realmente nunca haviam rodado:
+    //
+    //   fase-ay .... 27.362 lançamentos com `code` nulo, sem número LF
+    //   fase-br .... a sequence sales_code_seq não existia
+    //   fase-bx .... colunas card_acquirer_id/_name e o índice
+    //
+    // A fase-br só apareceu porque a fase-cg quebrou atrás dela ("relation
+    // sales_code_seq does not exist"). As outras duas estavam silenciosas — que
+    // é o estrago de verdade: o livro-caixa dizia que o banco estava em dia.
+    //
+    // Então só se adota o que o conferidor CONFIRMOU. Quem não dá para conferir
+    // volta para a fila e é aplicada. As migrações daqui são idempotentes
+    // (create if not exists, on conflict do nothing, update com filtro), então
+    // rodar de novo não duplica nada — e esse é o lado seguro, não o contrário.
+    const adotar0 = todas
+      .filter((m) => !pendentesPorNome.has(m.nome))
+      .filter((m) => ADOTAR_NAO_CONFERIDAS || !naoConferidasPorNome.has(m.nome))
+      .map((m) => m.nome);
 
     // O verbo muda com o modo: em simulação nada foi registrado, e dizer que
     // foi seria o mesmo tipo de promessa falsa que a tabela criada no ensaio.
@@ -163,8 +196,11 @@ async function adotar(nomes) {
     if (naoConferidas.length) {
       console.log('');
       console.log(`  ${naoConferidas.length} delas NÃO declaram tabela nem coluna, então não há como conferir se`);
-      console.log('  rodaram. Estão sendo adotadas por suposição — num banco no ar há meses,');
-      console.log('  supor que rodaram é o lado seguro; o outro lado duplica dado inserido:');
+      if (ADOTAR_NAO_CONFERIDAS) {
+        console.log('  rodaram. Adotadas por suposição, a seu pedido (--adotar-nao-conferidas):');
+      } else {
+        console.log('  rodaram. Vão para a fila e serão aplicadas — são idempotentes:');
+      }
       naoConferidas.forEach((m) => console.log(`     ${m.nome}`));
     }
     console.log('');
