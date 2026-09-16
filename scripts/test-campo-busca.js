@@ -56,8 +56,10 @@ console.log('\n--- o foco NÃO abre a lista inteira ---');
 const attach = appSrc.slice(appSrc.indexOf('function attachSearchableSelect'), appSrc.indexOf('function sanitizeDigits'));
 // Era exatamente isto: input.addEventListener('focus', () => renderDropdown(''))
 check('foco não chama renderDropdown vazio', !/addEventListener\('focus', \(\) => renderDropdown\(''\)\)/.test(attach));
-// Sem termo e sem pedido explícito, o dropdown fica fechado.
-check('sem termo e sem lupa, não abre', /if \(!term && !mostrarTudo\) \{[\s\S]{0,80}dropdown\.hidden = true;/.test(attach));
+// Sem termo e sem pedido explícito, o dropdown fica fechado. Fechar é
+// `fecharLista()`: desde que a lista sai do bloco enquanto aberta, esconder
+// é também devolvê-la ao wrapper (ver test-lista-de-busca-solta.js).
+check('sem termo e sem lupa, não abre', /if \(!term && !mostrarTudo\) \{[\s\S]{0,80}fecharLista\(\);/.test(attach));
 // Mas se já há texto digitado, voltar ao campo mostra o que combina com ele.
 check('com texto digitado, o foco reabre o filtrado', /addEventListener\('focus', \(\) => \{\s*\n?\s*if \(input\.value\.trim\(\)\) renderDropdown\(input\.value\)/.test(attach));
 
@@ -68,7 +70,7 @@ check('tem rótulo acessível', /aria-label="Ver todas as opções"/.test(appSrc
 check('usa mousedown, não click', /lupa\?\.addEventListener\('mousedown'/.test(attach));
 check('e impede o blur', /lupa\?\.addEventListener\('mousedown', \(evento\) => \{\s*\n?\s*evento\.preventDefault\(\)/.test(attach));
 check('a lupa abre a lista completa', /renderDropdown\('', \{ mostrarTudo: true \}\)/.test(attach));
-check('e alterna: clicar de novo fecha', /if \(!dropdown\.hidden\) \{ dropdown\.hidden = true; return; \}/.test(attach));
+check('e alterna: clicar de novo fecha', /if \(!dropdown\.hidden\) \{ fecharLista\(\); return; \}/.test(attach));
 
 console.log('\n--- desempenho e limite da lista ---');
 // Normalizar centenas de rótulos a cada tecla trava o campo em cadastro grande.

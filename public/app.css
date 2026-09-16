@@ -301,6 +301,11 @@ textarea { min-height: 120px; resize: vertical; }
   max-height: 240px; overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 12px 30px rgba(2, 6, 23, 0.25);
 }
+/* Enquanto aberta, a lista vive no <body> com posição fixa calculada a partir
+   do campo (ver attachSearchableSelect em app.js): fora do bloco que a cortava
+   (.cadastro-section tem overflow: hidden, os modais rolam) e acima dos modais
+   (.modal-overlay é 1200). left/top/width vêm inline; right sai do caminho. */
+.searchable-select-dropdown-solta { position: fixed; z-index: 1300; right: auto; }
 .searchable-select-option { padding: 10px 14px; cursor: pointer; font-weight: 400; }
 .searchable-select-option:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.12)); }
 .searchable-select-empty { padding: 10px 14px; color: var(--muted); font-weight: 400; }

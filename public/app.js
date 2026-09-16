@@ -2010,6 +2010,75 @@ function attachSearchableSelect({ id, options, onSelect }) {
   const lupa = document.getElementById(`${id}Lupa`);
   if (!input || !hidden || !dropdown) return;
 
+  // A LISTA SAI DO BLOCO DO FORMULÁRIO ENQUANTO ESTÁ ABERTA.
+  //
+  // Ela era `position: absolute` dentro do bloco do campo, e os blocos dos
+  // formulários cortam o que sai deles (.cadastro-section tem overflow:
+  // hidden; os modais rolam). A lista aparecia com uma linha e o resto ficava
+  // "atrás" do bloco seguinte — visto no PCP > Nova ordem, campo Produto:
+  // 5.476 opções, uma visível.
+  //
+  // Enquanto está aberta, a lista vive no <body>, com posição FIXA calculada a
+  // partir do campo, e acompanha rolagem e redimensionamento. Fechada, volta
+  // para dentro do wrapper — assim uma tela redesenhada leva a lista junto,
+  // como sempre levou. Se o campo sumir do DOM com a lista aberta (troca de
+  // tela), a próxima rolagem, ou a abertura de outra lista, a recolhe.
+  const wrapper = dropdown.parentElement;
+  let reposicionar = null;
+
+  function posicionar() {
+    if (!input.isConnected) { fecharLista(); return; }
+    const r = input.getBoundingClientRect();
+    dropdown.style.left = `${r.left}px`;
+    dropdown.style.width = `${r.width}px`;
+    // Abre para cima quando não cabe embaixo e cabe em cima. 240px é o
+    // max-height da lista no CSS.
+    const altura = Math.min(dropdown.scrollHeight, 240);
+    const cabeEmbaixo = window.innerHeight - r.bottom - 4 >= altura;
+    const cabeEmCima = r.top - 4 >= altura;
+    if (!cabeEmbaixo && cabeEmCima) {
+      dropdown.style.top = 'auto';
+      dropdown.style.bottom = `${window.innerHeight - r.top + 4}px`;
+    } else {
+      dropdown.style.bottom = 'auto';
+      dropdown.style.top = `${r.bottom + 4}px`;
+    }
+  }
+
+  function abrirLista() {
+    // Lista de um campo que já saiu da tela não tem dono: recolhe.
+    document.querySelectorAll('body > .searchable-select-dropdown-solta').forEach((outra) => {
+      if (outra !== dropdown) outra.remove();
+    });
+    if (dropdown.parentElement !== document.body) document.body.appendChild(dropdown);
+    dropdown.classList.add('searchable-select-dropdown-solta');
+    dropdown.hidden = false;
+    posicionar();
+    if (!reposicionar) {
+      reposicionar = () => posicionar();
+      // `true`: a rolagem que importa é a do bloco que contém o campo (o modal,
+      // a área da tela), e scroll não borbulha — só se pega na captura.
+      window.addEventListener('scroll', reposicionar, true);
+      window.addEventListener('resize', reposicionar);
+    }
+  }
+
+  function fecharLista() {
+    dropdown.hidden = true;
+    if (reposicionar) {
+      window.removeEventListener('scroll', reposicionar, true);
+      window.removeEventListener('resize', reposicionar);
+      reposicionar = null;
+    }
+    dropdown.classList.remove('searchable-select-dropdown-solta');
+    dropdown.style.left = dropdown.style.width = dropdown.style.top = dropdown.style.bottom = '';
+    if (wrapper && wrapper.isConnected) {
+      if (dropdown.parentElement !== wrapper) wrapper.appendChild(dropdown);
+    } else {
+      dropdown.remove();
+    }
+  }
+
   // Índice de busca calculado uma vez, não a cada tecla: normalizar centenas
   // de rótulos a cada letra digitada trava o campo em cadastros grandes.
   //
@@ -2026,7 +2095,7 @@ function attachSearchableSelect({ id, options, onSelect }) {
     // Sem termo e sem pedido explícito pela lupa, não abre nada. É a diferença
     // entre um campo de busca e um select disfarçado.
     if (!term && !mostrarTudo) {
-      dropdown.hidden = true;
+      fecharLista();
       return;
     }
 
@@ -2074,7 +2143,7 @@ function attachSearchableSelect({ id, options, onSelect }) {
     dropdown.innerHTML = mostrados.length
       ? mostrados.map(({ opcao }) => `<div class="searchable-select-option" data-value="${escapeHtml(String(opcao.value))}">${escapeHtml(opcao.label)}</div>`).join('') + aviso
       : '<div class="searchable-select-empty">Nenhum resultado</div>';
-    dropdown.hidden = false;
+    abrirLista();
   }
 
   input.addEventListener('input', () => {
@@ -2089,7 +2158,7 @@ function attachSearchableSelect({ id, options, onSelect }) {
   input.addEventListener('keydown', (evento) => {
     if (evento.key === 'Escape' && !dropdown.hidden) {
       evento.stopPropagation();
-      dropdown.hidden = true;
+      fecharLista();
     }
   });
   // A saída para quem não sabe o nome: abre tudo, sob demanda.
@@ -2099,13 +2168,13 @@ function attachSearchableSelect({ id, options, onSelect }) {
   // e sumiria sozinha. É o mesmo motivo pelo qual o dropdown usa mousedown.
   lupa?.addEventListener('mousedown', (evento) => {
     evento.preventDefault();
-    if (!dropdown.hidden) { dropdown.hidden = true; return; }
+    if (!dropdown.hidden) { fecharLista(); return; }
     renderDropdown('', { mostrarTudo: true });
     input.focus();
   });
   input.addEventListener('blur', () => {
     // atraso pra deixar o "mousedown" do clique na opção disparar antes do dropdown fechar
-    setTimeout(() => { dropdown.hidden = true; }, 150);
+    setTimeout(() => { fecharLista(); }, 150);
   });
   dropdown.addEventListener('mousedown', (event) => {
     const optionEl = event.target.closest('.searchable-select-option');
@@ -2115,7 +2184,7 @@ function attachSearchableSelect({ id, options, onSelect }) {
     const found = options.find((o) => String(o.value) === String(value));
     hidden.value = value;
     input.value = found ? found.label : '';
-    dropdown.hidden = true;
+    fecharLista();
     if (onSelect) onSelect(value, found);
   });
 }
