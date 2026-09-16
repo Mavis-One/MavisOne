@@ -52,10 +52,27 @@ window.MavisAtalhos = (function () {
     { name: 'state', label: 'UF', type: 'select', opcoes: UFS, linha: 4 }
   ];
 
+  // O CLIENTE PEDE A INSCRIÇÃO ESTADUAL, E PEDE OBRIGATÓRIA.
+  //
+  // É ela que decide, na hora de emitir a NF-e, se o destinatário é
+  // contribuinte de ICMS — e com isso o indicador de IE e o DIFAL. Cliente
+  // cadastrado sem a resposta é nota que trava na emissão, longe de quem
+  // cadastrou. "ISENTO" é a resposta de quem não é contribuinte (pessoa
+  // física, quase sempre); o que conta como contribuinte é a regra de
+  // shared/inscricao_estadual.js, a mesma do servidor.
+  //
+  // Só o cliente: o fornecedor criado à mão continua como estava, e o que
+  // entra por XML já traz a IE do emitente.
+  const CAMPO_IE = {
+    name: 'stateRegistration', label: 'Inscrição Estadual (I.E.)', required: true, linha: 1,
+    ie: true, placeholder: 'Números ou ISENTO', hint: 'ISENTO quando o cliente não é contribuinte de ICMS'
+  };
+  const CAMPOS_CLIENTE = CAMPOS_PESSOA.flatMap((campo) => (campo.name === 'name' ? [campo, CAMPO_IE] : [campo]));
+
   const ATALHOS_CRIAR = [
     {
       id: 'novo_cliente', label: 'Novo Cliente', icone: ICONES.cliente, modulo: 'cadastros',
-      titulo: 'Cliente', endpoint: '/api/cadastros/pessoas', campos: CAMPOS_PESSOA,
+      titulo: 'Cliente', endpoint: '/api/cadastros/pessoas', campos: CAMPOS_CLIENTE,
       consultaCnpj: true,
       // O papel é o que separa cliente de fornecedor na mesma tabela de pessoas.
       extras: { roles: ['Cliente'], status: 'ativo' },
@@ -141,7 +158,8 @@ window.MavisAtalhos = (function () {
       const doc = campo.documento ? `data-documento="${campo.documento === true ? '' : campo.documento}"` : '';
       // Mesmo nome das outras duas fábricas (Estoque e Cadastros).
       const mascara = campo.mascara ? `data-campo="${campo.mascara}"` : '';
-      controle = `<input type="${campo.type || 'text'}" name="${campo.name}" value="${escapeHtml(valor)}" ${passo} ${min} ${doc} ${mascara} ${obrigatorio} />`;
+      const exemplo = campo.placeholder ? `placeholder="${escapeHtml(campo.placeholder)}"` : '';
+      controle = `<input type="${campo.type || 'text'}" name="${campo.name}" value="${escapeHtml(valor)}" ${passo} ${min} ${doc} ${mascara} ${exemplo} ${obrigatorio} />`;
     }
     return `
       <label class="atalho-campo">
@@ -251,11 +269,29 @@ window.MavisAtalhos = (function () {
 
       const dados = new FormData(evento.target);
       const payload = { ...atalho.extras };
-      atalho.campos.forEach((campo) => {
+      // Erro ao lado do campo, antes de mandar, para o que a janela declara
+      // obrigatório: o `required` do navegador barra o vazio, mas deixa passar
+      // o espaço em branco — e a I.E. tem forma (números ou ISENTO). O que a
+      // ROTA exige além disso (endereço, cidade, UF, CEP) continua vindo como
+      // 400 do servidor, como sempre veio: a janela não marca esses campos.
+      const recusar = (campo, mensagem) => {
+        erroEl.hidden = false;
+        erroEl.textContent = mensagem;
+        overlay.querySelector(`[name="${campo.name}"]`)?.focus();
+      };
+      for (const campo of atalho.campos) {
         let valor = dados.get(campo.name) ?? '';
         if (campo.name === 'document') valor = soDigitos(valor);
+        if (campo.required && !String(valor).trim()) return recusar(campo, `Informe ${campo.label}.`);
+        if (campo.ie) {
+          // Regra de shared/inscricao_estadual.js — a mesma que o servidor usa
+          // para decidir se o cliente é contribuinte.
+          const ie = window.MavisInscricaoEstadual;
+          if (!ie.valida(valor)) return recusar(campo, 'Inscrição Estadual inválida: informe só os números, ou ISENTO.');
+          valor = ie.normalizar(valor);
+        }
         payload[campo.name] = campo.type === 'number' ? Number(valor || 0) : valor;
-      });
+      }
 
       botao.disabled = true;
       botao.textContent = 'Cadastrando…';

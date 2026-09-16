@@ -27,6 +27,10 @@ const operacaoFiscal = require('./lib/operacaoFiscal');
 // Prazo de 24h para cancelar NF-e. Mesmo arquivo que o navegador carrega, para
 // tela e servidor não discordarem sobre quando o prazo venceu.
 const prazoCancelamento = require('./public/modules/shared/prazo_cancelamento');
+// "É contribuinte de ICMS?" sai da inscrição estadual — e ISENTO não é
+// inscrição. Mesmo arquivo que o navegador carrega: o atalho de Novo Cliente
+// grava o que esta regra aceita, e a emissão decide o indicador de IE por ela.
+const inscricaoEstadual = require('./public/modules/shared/inscricao_estadual');
 // Painel "Atenção" do hub: junta o que já está errado e espalhado por seis
 // telas — conta vencida, NF-e rejeitada, pedido faturado sem nota, estoque
 // abaixo do mínimo.
@@ -2551,9 +2555,10 @@ async function montarContextoFiscalDoPedido(body, data) {
   const cliente = getCadastroDirectory(data).find((c) => c.id === body.clientSupplierId) || null;
   const destinatario = {
     uf: (cliente && cliente.state) || '',
-    // Quem tem inscrição estadual é contribuinte. É o mesmo critério que a
-    // emissão usa, e não um campo novo para alguém manter em dia.
-    contribuinte: Boolean(cliente && String(cliente.stateRegistration || '').trim())
+    // Quem tem inscrição estadual é contribuinte — e "ISENTO" não é inscrição.
+    // É o mesmo critério que a emissão usa (shared/inscricao_estadual.js), e
+    // não um campo novo para alguém manter em dia.
+    contribuinte: inscricaoEstadual.ehContribuinte(cliente && cliente.stateRegistration)
   };
 
   const produtos = await db.getProducts();
@@ -4616,10 +4621,11 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
     destinatario: {
       nome: pessoa ? pessoa.name : (pedido.clientSupplierName || ''),
       documento: pessoa ? String(pessoa.document || '') : '',
-      inscricaoEstadual: pessoa ? String(pessoa.stateRegistration || '') : '',
-      // Contribuinte se tem inscricao estadual: e' o que decide indicador_ie e,
-      // com ele, se a operacao tem DIFAL.
-      contribuinte: Boolean(pessoa && pessoa.stateRegistration),
+      inscricaoEstadual: inscricaoEstadual.normalizar(pessoa && pessoa.stateRegistration),
+      // Contribuinte se tem inscricao estadual — e ISENTO nao e' inscricao. E'
+      // o que decide indicador_ie e, com ele, se a operacao tem DIFAL. Regra
+      // unica em shared/inscricao_estadual.js, a mesma da tela de emissao.
+      contribuinte: inscricaoEstadual.ehContribuinte(pessoa && pessoa.stateRegistration),
       ...endereco
     },
     // NCM, CEST e origem NAO vao daqui: prepararNfeParaTransmitir os rele' do
@@ -4703,6 +4709,15 @@ async function prepararNfeParaTransmitir(body) {
   const destinatario = body.destinatario || {};
   if (!destinatario.nome || !destinatario.documento || !destinatario.uf) {
     const err = new Error('Preencha os dados do destinatário (nome, documento e UF).');
+    err.status = 400;
+    throw err;
+  }
+  // "Contribuinte" marcado sem IE válida daria indicador 1 sem a tag IE — a
+  // SEFAZ rejeita depois de transmitir. A regra e o texto moram em
+  // shared/inscricao_estadual.js; aqui só se recusa antes de montar a nota.
+  const motivoIe = inscricaoEstadual.motivoParaRecusar(destinatario);
+  if (motivoIe) {
+    const err = new Error(motivoIe);
     err.status = 400;
     throw err;
   }

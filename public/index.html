@@ -13,6 +13,10 @@
     <!-- CPF/CNPJ antes de tudo: o app.js delega para ele, e as telas o usam
          para ligar os campos de documento. -->
     <script src="/modules/shared/documento.js"></script>
+    <!-- Inscrição estadual e "é contribuinte?": regra única, a mesma que o
+         servidor requer. Antes dos módulos porque o atalho de Novo Cliente e
+         a emissão de NF-e a usam. -->
+    <script src="/modules/shared/inscricao_estadual.js"></script>
     <script src="/modules/shared/campos.js"></script>
     <!-- Como um produto se chama dentro de um seletor. Antes dos modulos porque
          Estoque e Compras montam a lista de opcoes no topo das telas. -->

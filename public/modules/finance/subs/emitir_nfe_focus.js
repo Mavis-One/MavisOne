@@ -178,12 +178,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const cliente = meta.directory.find((c) => c.id === selectedClienteId);
     destinatario.nome = cliente?.name || doPedido.clientName || '';
     destinatario.documento = cliente?.document || '';
-    destinatario.inscricaoEstadual = cliente?.stateRegistration || '';
+    // A IE do cadastro entra só quando é de contribuinte: "ISENTO" fica fora
+    // do campo, e o checkbox nasce desmarcado.
+    destinatario.inscricaoEstadual = window.MavisInscricaoEstadual.paraNota(cliente?.stateRegistration) || '';
     destinatario.uf = cliente?.state || '';
     destinatario.municipio = cliente?.city || '';
-    // Contribuinte se tem inscrição estadual: é o que decide indicador_ie e,
-    // com ele, se a operação tem DIFAL.
-    destinatario.contribuinte = Boolean(cliente?.stateRegistration);
+    // Contribuinte se tem inscrição estadual — e ISENTO não é inscrição. É o
+    // que decide indicador_ie e, com ele, se a operação tem DIFAL. Regra única
+    // em shared/inscricao_estadual.js, a mesma do servidor.
+    destinatario.contribuinte = window.MavisInscricaoEstadual.ehContribuinte(cliente?.stateRegistration);
     if (Array.isArray(doPedido.items) && doPedido.items.length) {
       itens = doPedido.items.map((item) => ({
         produtoId: item.produtoId || item.productId || '',
@@ -411,7 +414,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <div class="row">
               <label>Nome / Razão social<input name="destNome" required value="${escapeHtml(destinatario.nome)}" /></label>
               <label>CPF/CNPJ<input name="destDocumento" required data-documento value="${escapeHtml(destinatario.documento)}" /></label>
-              <label><input type="checkbox" name="destContribuinte" /> Contribuinte de ICMS</label>
+              <label><input type="checkbox" name="destContribuinte" ${destinatario.contribuinte ? 'checked' : ''} /> Contribuinte de ICMS</label>
             </div>
             <label>Inscrição estadual (se contribuinte)<input name="destIe" value="${escapeHtml(destinatario.inscricaoEstadual)}" /></label>
             <div class="row">
@@ -815,7 +818,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       form.querySelector('[name="destDocumento"]').value = found.document || '';
       form.querySelector('[name="destUf"]').value = found.state || '';
       form.querySelector('[name="destMunicipio"]').value = found.city || '';
-      form.querySelector('[name="destIe"]').value = found.stateRegistration || '';
+      // Mesma regra da carga do pedido: IE só de contribuinte, e o checkbox
+      // acompanha — antes ele ficava como estava, e a nota saía com IE de
+      // não contribuinte, ou sem IE de contribuinte.
+      form.querySelector('[name="destIe"]').value = window.MavisInscricaoEstadual.paraNota(found.stateRegistration) || '';
+      form.querySelector('[name="destContribuinte"]').checked = window.MavisInscricaoEstadual.ehContribuinte(found.stateRegistration);
     });
 
     document.getElementById('nfeFocusBuscarCep')?.addEventListener('click', async () => {

@@ -226,8 +226,23 @@ const notaCpf = buildNfePayload({
   naturezaOperacao: 'Venda', tipoDocumento: 1, finalidadeEmissao: 1, dataEmissao: '2026-08-10T10:00:00'
 });
 check('CPF quando tem 11 dígitos', notaCpf.cpf_destinatario === '12345678901' && notaCpf.cnpj_destinatario === undefined);
-check('não contribuinte vira indicador de IE 9', notaCpf.indicador_ie_destinatario === 9);
-check('contribuinte vira indicador de IE 1', nota.indicador_ie_destinatario === 1);
+// O campo tem o nome da Focus (`indicador_inscricao_estadual_destinatario`,
+// tag indIEDest). Chamava-se `indicador_ie_destinatario`, que a Focus não
+// conhece e ignorava em silêncio — o indicador nunca chegava à nota.
+check('não contribuinte vira indicador de IE 9', notaCpf.indicador_inscricao_estadual_destinatario === 9);
+check('contribuinte vira indicador de IE 1', nota.indicador_inscricao_estadual_destinatario === 1);
+check('  no campo com o nome da Focus, e não na abreviação antiga', nota.indicador_ie_destinatario === undefined && notaCpf.indicador_ie_destinatario === undefined);
+// A IE só entra para contribuinte, e só com os dígitos. "ISENTO" no cadastro
+// é resposta para a tela; ponto e traço são exibição. Os dois no XML são
+// rejeição da SEFAZ (regra em shared/inscricao_estadual.js).
+const comIe = (destinatario) => buildNfePayload({
+  estabelecimento: ESTAB, empresa: EMPRESA, itens: [item({ cfop: '6102', cstIcms: '00', aliquotaIcms: 18 })],
+  destinatario, naturezaOperacao: 'Venda', tipoDocumento: 1, finalidadeEmissao: 1, dataEmissao: '2026-08-10T10:00:00'
+});
+const iePontuada = comIe({ ...DEST, contribuinte: true, inscricaoEstadual: '251.234.567' });
+check('IE do contribuinte vai só com dígitos', iePontuada.inscricao_estadual_destinatario === '251234567', iePontuada.inscricao_estadual_destinatario);
+const ieIsento = comIe({ ...DEST, documento: '12345678901', contribuinte: false, inscricaoEstadual: 'ISENTO' });
+check('ISENTO não vira IE na nota', ieIsento.inscricao_estadual_destinatario === undefined && ieIsento.indicador_inscricao_estadual_destinatario === 9);
 check('regime tributário do emitente vem da empresa', nota.regime_tributario_emitente === 3);
 check('itens numerados a partir de 1', nota.items[0].numero_item === 1);
 check('valor bruto do item', nota.items[0].valor_bruto === 1000, String(nota.items[0].valor_bruto));
