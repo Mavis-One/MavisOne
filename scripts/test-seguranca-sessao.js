@@ -56,9 +56,18 @@ const src = ler('server.js');
 // SEM OS COMENTARIOS para as buscas de "isto nao existe mais": o proprio
 // comentario que explica a correcao cita o codigo antigo, e uma busca crua
 // acusaria como se ele ainda estivesse la.
+//
+// A ORDEM DAS DUAS TROCAS NAO E' INDIFERENTE, e estava errada aqui: tirar os
+// blocos `/* */` primeiro engole codigo de verdade. Existe no server.js uma
+// linha de comentario `//` citando "public/modules/**", e o `/*` de dentro dela
+// pareia com o `*/` do proximo bloco, levando as linhas entre os dois.
+//
+// Num teste que afirma "isto NAO existe mais", engolir codigo faz o check
+// PASSAR por engano — some o trecho, some a evidencia. Tirando as linhas `//`
+// primeiro, o `/*` que mora dentro delas vai junto.
 const semComentarios = (texto) => texto
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^\s*\/\/.*$/gm, '');
+  .replace(/^\s*\/\/.*$/gm, '')
+  .replace(/\/\*[\s\S]*?\*\//g, '');
 const srcCodigo = semComentarios(src);
 check('existe uma função só para o token', /function criarTokenDeSessao\(\) \{/.test(src));
 // 32 bytes = 256 bits. base64url para caber num cabeçalho sem escapar nada.
@@ -72,10 +81,27 @@ const funcaoToken = (/function criarTokenDeSessao\(\) \{[\s\S]*?\n\}/.exec(src) 
 check('  sem carimbo de tempo dentro', !/Date\.now\(\)/.test(funcaoToken));
 check('  e sem Math.random', !/Math\.random/.test(funcaoToken));
 
-// `{}` herda de Object.prototype: sessions['__proto__'] responderia algo
-// truthy para um token que ninguém emitiu. Hoje morre adiante, mas depender de
-// uma segunda barreira para o lookup não mentir é frágil de graça.
-check('o mapa de sessões não tem protótipo', /let sessions = Object\.create\(null\);/.test(src));
+// A PREOCUPAÇÃO ERA O PROTÓTIPO, e ela saiu de cena junto com o mapa.
+//
+// Enquanto a sessão vivia num objeto, `{}` herdaria de Object.prototype e
+// `sessions['__proto__']` responderia algo truthy para um token que ninguém
+// emitiu — daí o `Object.create(null)` que este check cobrava. Na fase CL a
+// sessão passou a morar no banco: o lookup é `where token_hash = $1` com
+// parâmetro, que não tem herança para consultar, e o que viaja não é nem o
+// token — é o SHA-256 dele.
+//
+// O check não foi apagado, foi reapontado: o que precisa continuar verdadeiro é
+// que o servidor não volte a guardar sessão na memória do processo (era o que
+// deslogava o escritório a cada reinício) e que o token não seja gravado.
+check('o servidor não guarda sessão em memória', !/let sessions = Object\.create\(null\)/.test(srcCodigo));
+check('  e a procura pelo token vai ao banco', /db\.sessoes\.buscar\(/.test(srcCodigo));
+const armazem = ler('lib/db/sessoes.js');
+check('o que vai para o banco é o hash do token', /createHash\('sha256'\)/.test(armazem));
+// O que o insert AMARRA na primeira posição, que é o `token_hash`: gravar o
+// token cru ali anularia todo o resto, porque o banco sai da máquina nos
+// backups. A prova de que nenhuma coluna guarda o token é comportamental e
+// está em test-sessao-no-banco.js — aqui basta olhar o que é passado.
+check('  e é ele que o insert amarra', /returning user_id[\s\S]{0,120}?\[hashDoToken\(token\)/.test(armazem));
 
 console.log('--- 2. o gerador de ids também saiu do Math.random ---');
 // O gerador virou FONTE ÚNICA (lib/criar-id.js) porque havia duas cópias e elas

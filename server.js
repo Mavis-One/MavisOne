@@ -208,17 +208,67 @@ const NAO_PERSISTIR = new Set([
   '__razaoCarregado'                                                      // marca da requisicao, nao e' dado
 ]);
 
-// Cada sessão é { userId, criadaEm, expiraEm }. Guardar o `expiraEm` calculado
-// na criação, em vez de recalcular a cada requisição, é o que faz a sessão
-// morrer na virada do dia em que NASCEU — recalcular daria sempre "a próxima
-// meia-noite a partir de agora", e a sessão nunca expiraria.
-// `Object.create(null)` e nao `{}`: um objeto literal herda de Object.prototype,
-// entao `sessions['__proto__']` e `sessions['constructor']` respondem algo
-// truthy para um token que ninguem emitiu. Hoje isso morre logo adiante (o
-// `userId` sai undefined e o usuario nao e encontrado), mas depender de uma
-// segunda barreira para o lookup nao mentir e' fragil de graca. Sem prototipo,
-// a resposta e' `undefined` — que e' a verdade.
-let sessions = Object.create(null);
+// ---------------------------------------------------------------------------
+// A SESSÃO MORA NO BANCO (fase CL)
+//
+// Era um objeto nesta linha — `let sessions = Object.create(null)` —, e o
+// problema não era o objeto: era o "nesta linha". Medido em 16/09/2026, com o
+// escritório reclamando que ninguém ficava conectado dez minutos:
+//
+//   1. não existe, nem existia, prazo de dez minutos em lugar nenhum. A sessão
+//      vale até a meia-noite (lib/sessao.js);
+//   2. o que havia era o processo reiniciando. Este mapa e o de sessões
+//      encerradas morriam com ele, e o segundo é o que doía: sem o motivo
+//      guardado, o servidor responde 401 sem `motivo`, e a tela — que só volta
+//      ao login quando tem um motivo para mostrar — fica aberta dando erro a
+//      cada clique. "Não autenticado", exatamente como foi relatado;
+//   3. um `await` que rejeitasse fora de try/catch bastava para derrubar o
+//      processo (ver as guardas no fim deste arquivo). Um tropeço de um segundo
+//      no Postgres deslogava o escritório.
+//
+// Agora a verdade sobre quem está logado sobrevive ao processo: reinício, deploy
+// e `pm2 restart` deixam de ser evento para o usuário. O armazém é
+// lib/db/sessoes.js; a REGRA de quando vence continua só em lib/sessao.js.
+//
+// O que se perdeu ao sair da memória: o lookup era síncrono e de graça, e agora
+// é uma consulta. Por isso o `sessaoDaRequisicao` abaixo — uma pergunta ao
+// banco por requisição, no máximo, e não uma por ponto que precisa da sessão.
+//
+// A preocupação de protótipo que este comentário registrava (`sessions['__proto__']`
+// respondendo algo truthy para um token que ninguém emitiu) deixou de existir
+// junto com o objeto: `where token_hash = $1` com um parâmetro não tem herança
+// para consultar, e o token nem chega ao banco em texto — vai o SHA-256 dele.
+// ---------------------------------------------------------------------------
+
+// A sessão desta requisição, lembrada pelo mesmo motivo (e com o mesmo WeakMap
+// chaveado no `req`) que `usuarioDaRequisicao` mais adiante: o portão de acesso
+// e o `getCurrentUser` precisam os dois da sessão, e sem memória seriam duas
+// consultas idênticas por chamada de API. Nasce e morre com a requisição.
+const sessaoLembrada = new WeakMap();
+
+/**
+ * A sessão do token desta requisição, viva ou encerrada — ou `null` quando o
+ * token não existe no banco.
+ *
+ * Devolver a ENCERRADA também é o ponto da fase CL: é ela que permite dizer
+ * "sua conta entrou em outro dispositivo" em vez de "Não autenticado". Quem
+ * chama distingue pelo `encerradaEm`.
+ *
+ * A checagem da virada acontece aqui, e o encerramento vai para o banco: assim
+ * a outra aba (e a próxima requisição) encontram o motivo escrito em vez de
+ * descobrirem a expiração cada uma por conta própria.
+ */
+async function sessaoDaRequisicao(req) {
+  if (sessaoLembrada.has(req)) return sessaoLembrada.get(req);
+  const token = req.headers['x-auth-token'];
+  let sessao = token ? await db.sessoes.buscar(token) : null;
+  if (sessao && !sessao.encerradaEm && sessaoUtil.sessaoExpirou(sessao)) {
+    await db.sessoes.encerrar(token, 'fim-do-dia');
+    sessao = { ...sessao, encerradaEm: Date.now(), motivo: 'fim-do-dia' };
+  }
+  sessaoLembrada.set(req, sessao);
+  return sessao;
+}
 
 /**
  * O SEGREDO DA SESSAO — 256 bits de `crypto`, e nada mais.
@@ -258,63 +308,36 @@ function criarTokenDeSessao() {
 // só funciona se a máquina derrubada souber POR QUE caiu: sem isso o usuário vê
 // erros aleatórios em cada clique e acha que o sistema quebrou.
 //
-// Por isso o token derrubado não é simplesmente esquecido — ele fica aqui com o
-// motivo, e a próxima requisição dele recebe uma resposta que a tela sabe
-// explicar. É a diferença entre "Erro inesperado" e "sua conta entrou em outro
-// dispositivo".
+// Por isso o token derrubado não é simplesmente esquecido — a linha dele fica
+// no banco com o motivo (`encerrada_em` + `motivo`, fase CL), e a próxima
+// requisição dele recebe uma resposta que a tela sabe explicar. É a diferença
+// entre "Erro inesperado" e "sua conta entrou em outro dispositivo".
 //
-// Guarda só o token e o instante. O token já é um identificador opaco e a
-// sessão dele acabou, então não há o que vazar aqui.
-const sessoesEncerradas = new Map();
-const LEMBRAR_ENCERRADA_MS = 12 * 60 * 60 * 1000; // 12h
-
-function limparEncerradasAntigas() {
-  const limite = Date.now() - LEMBRAR_ENCERRADA_MS;
-  for (const [token, registro] of sessoesEncerradas) {
-    if (registro.em < limite) sessoesEncerradas.delete(token);
-  }
-}
-
-/**
- * Derruba as sessões abertas do usuário e devolve quantas caíram.
- * `exceto` protege o token recém-criado de derrubar a si mesmo.
- */
-function encerrarSessoesDoUsuario(userId, motivo, exceto = null) {
-  const derrubados = Object.keys(sessions).filter((t) => sessions[t].userId === userId && t !== exceto);
-  if (derrubados.length) limparEncerradasAntigas();
-  for (const token of derrubados) {
-    delete sessions[token];
-    sessoesEncerradas.set(token, { motivo, em: Date.now() });
-  }
-  return derrubados.length;
-}
+// Quem derruba é `db.sessoes.abrirUnica`, na mesma transação que abre a nova:
+// o porquê de ser uma operação só, e não duas, está lá.
 
 // ---------------------------------------------------------------------------
 // EXPIRAÇÃO NA VIRADA DO DIA
 //
-// A regra e o porquê estão em lib/sessao.js. Aqui só a aplicação: derrubar o
-// token quando ele vence, e varrer periodicamente os que venceram e cujo dono
-// nunca mais voltou — sem a varredura, o mapa de sessões só cresceria, que é
-// exatamente o peso que esta regra existe para tirar.
+// A regra e o porquê estão em lib/sessao.js. Aqui só a aplicação: varrer
+// periodicamente o que venceu e cujo dono nunca mais voltou. Sem a varredura a
+// tabela só cresceria, que é exatamente o peso que esta regra existe para tirar
+// — e o que vence sem ser varrido responderia "não autenticado" em vez de
+// "o dia virou", porque ninguém escreveu o motivo.
 // ---------------------------------------------------------------------------
 const VARRER_SESSOES_MS = 10 * 60 * 1000;
 
-/** Encerra o token se ele já passou da virada. Devolve true se derrubou. */
-function derrubarSeExpirou(token) {
-  const sessao = sessions[token];
-  if (!sessao || !sessaoUtil.sessaoExpirou(sessao)) return false;
-  delete sessions[token];
-  sessoesEncerradas.set(token, { motivo: 'fim-do-dia', em: Date.now() });
-  return true;
-}
-
-function varrerSessoesExpiradas() {
-  for (const token of Object.keys(sessions)) derrubarSeExpirou(token);
-  limparEncerradasAntigas();
-}
-
-// unref: a varredura não é motivo para o processo continuar de pé.
-setInterval(varrerSessoesExpiradas, VARRER_SESSOES_MS).unref();
+// O try/catch NÃO é decoração: este callback é `async`, e uma rejeição dentro
+// de um setInterval não tem quem a pegue — viraria unhandledRejection, que é
+// precisamente o mecanismo que derrubava o processo e deslogava o escritório.
+// Banco fora do ar é motivo para a varredura falhar, nunca para o servidor cair.
+setInterval(async () => {
+  try {
+    await db.sessoes.varrer();
+  } catch (erro) {
+    console.error('[sessao] varredura falhou (o servidor segue):', erro.message);
+  }
+}, VARRER_SESSOES_MS).unref();
 
 function ensureDataFile() {
   if (!fs.existsSync(DATA_FILE)) {
@@ -698,16 +721,18 @@ async function fetchCepData(cep) {
 const usuarioDaRequisicao = new WeakMap();
 
 async function getCurrentUser(req) {
-  const token = req.headers['x-auth-token'];
   // Confere a virada aqui também, e não só no portão da requisição: qualquer
   // caminho que chegue a um usuário autenticado passa por esta função, então é
-  // o último ponto em que uma sessão vencida ainda poderia passar.
-  if (!token || derrubarSeExpirou(token) || !sessions[token]) {
+  // o último ponto em que uma sessão vencida ainda poderia passar. É o que
+  // `sessaoDaRequisicao` faz por dentro — e a consulta é a MESMA que o portão
+  // já fez, porque ela é lembrada por requisição.
+  const sessao = await sessaoDaRequisicao(req);
+  if (!sessao || sessao.encerradaEm) {
     return null;
   }
   if (usuarioDaRequisicao.has(req)) return usuarioDaRequisicao.get(req);
 
-  const { userId } = sessions[token];
+  const { userId } = sessao;
   const user = await db.getUserById(userId);
   // Bloqueado é como se não estivesse logado — inclusive para quem já tinha
   // sessão aberta quando o acesso foi suspenso.
@@ -6402,7 +6427,25 @@ function aplicarCabecalhosDeSeguranca(res) {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
 }
 
-const server = http.createServer(async (req, res) => {
+/**
+ * O tratamento de uma requisição, de ponta a ponta.
+ *
+ * ERA O CALLBACK DIRETO do createServer, e a diferença não é de estilo: um
+ * `async` passado ao createServer devolve uma Promise que o Node IGNORA. Se ela
+ * rejeitasse — um `await` que falhou fora de qualquer try/catch, num arquivo de
+ * quase oito mil linhas — não havia ninguém para pegar, e o padrão do Node
+ * (>= 15) para rejeição sem dono é derrubar o processo.
+ *
+ * Medido em 16/09/2026, reproduzindo este mesmo formato: uma rejeição e o
+ * processo morre com código 1, antes de responder a requisição seguinte. Com o
+ * PM2 reiniciando por cima, o efeito visível era o escritório sendo deslogado —
+ * porque as sessões viviam na memória do processo (ver a fase CL, acima).
+ *
+ * Extraída para uma função com nome, o `catch` de quem chama passa a existir, e
+ * aí uma falha volta a ser o que deveria ter sido desde sempre: erro de UMA
+ * requisição.
+ */
+async function tratarRequisicao(req, res) {
   aplicarCabecalhosDeSeguranca(res);
   const url = new URL(req.url, `http://${req.headers.host}`);
   const { pathname } = url;
@@ -6412,11 +6455,11 @@ const server = http.createServer(async (req, res) => {
   // funcionar mesmo, e responder aqui garante a MESMA explicação em todas as
   // telas. Se cada rota tratasse por conta própria, uma delas esqueceria e
   // mostraria "Erro inesperado".
-  const tokenRecebido = req.headers['x-auth-token'];
-  // Vence agora, se for o caso, para cair no `if` de baixo já com o motivo.
-  if (tokenRecebido) derrubarSeExpirou(tokenRecebido);
-  if (tokenRecebido && !sessions[tokenRecebido] && sessoesEncerradas.has(tokenRecebido)) {
-    const { motivo } = sessoesEncerradas.get(tokenRecebido);
+  // `sessaoDaRequisicao` já vence a sessão na hora, se for o caso, para cair
+  // neste `if` com o motivo escrito.
+  const sessaoRecebida = req.headers['x-auth-token'] ? await sessaoDaRequisicao(req) : null;
+  if (sessaoRecebida && sessaoRecebida.encerradaEm) {
+    const { motivo } = sessaoRecebida;
     return sendJson(res, { error: sessaoUtil.mensagemDoMotivo(motivo), motivo }, 401);
   }
 
@@ -6469,16 +6512,17 @@ const server = http.createServer(async (req, res) => {
       tentativasDeLogin.acertou({ ip, usuario: usuarioInformado });
 
       const token = criarTokenDeSessao();
-      // Derruba ANTES de registrar a nova: se a ordem fosse inversa, a sessão
-      // que acabou de nascer entraria na varredura e se derrubaria sozinha.
-      const derrubadas = encerrarSessoesDoUsuario(user.id, 'outro-dispositivo', token);
       const agora = new Date();
-      sessions[token] = {
+      // Abrir a nova e derrubar as outras é uma operação só, numa transação —
+      // ver lib/db/sessoes.js/abrirUnica para o que cada metade sozinha
+      // produziria se a outra falhasse.
+      const { sessao, derrubadas } = await db.sessoes.abrirUnica({
+        token,
         userId: user.id,
-        criadaEm: agora.getTime(),
         // Vale até a virada do dia, sempre — mesmo que faltem minutos.
-        expiraEm: sessaoUtil.proximaViradaDeDia(agora)
-      };
+        expiraEm: sessaoUtil.proximaViradaDeDia(agora),
+        ip: ipDaRequisicao(req)
+      });
 
       await db.registrarLogin(user.id);
       await db.rbac.registrarAcesso({
@@ -6494,7 +6538,7 @@ const server = http.createServer(async (req, res) => {
       // hora errada sairia cedo demais ou continuaria aberta depois do corte.
       return sendJson(res, {
         token,
-        sessaoExpiraEm: sessions[token].expiraEm,
+        sessaoExpiraEm: sessao.expiraEm,
         user: serializeUserForClient(user, acesso)
       });
     } catch (error) {
@@ -6533,9 +6577,10 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { error: 'Não autenticado' }, 401);
     }
     // Recarregar a página (F5) passa por aqui, não pelo login — sem devolver o
-    // vencimento a tela reaberta ficaria sem o agendamento da saída.
+    // vencimento a tela reaberta ficaria sem o agendamento da saída. A sessão
+    // vem lembrada da requisição: o `getCurrentUser` logo acima já a consultou.
     return sendJson(res, {
-      sessaoExpiraEm: sessions[req.headers['x-auth-token']]?.expiraEm || null,
+      sessaoExpiraEm: (await sessaoDaRequisicao(req))?.expiraEm || null,
       user: serializeUserForClient(user, await db.rbac.carregarAcessoDoUsuario(user.id))
     });
   }
@@ -6621,9 +6666,12 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/logout' && req.method === 'POST') {
     const token = req.headers['x-auth-token'];
-    if (token && sessions[token]) {
-      delete sessions[token];
-    }
+    // Encerra com motivo em vez de apagar a linha: 'logout' é o único motivo
+    // que a tela não precisa explicar (quem clicou em Sair sabe por quê), mas
+    // sem ele o token vira "nunca existiu" — e o mesmo "Não autenticado" que a
+    // fase CL veio tirar da frente do usuário voltaria pela porta do logout,
+    // por exemplo numa segunda aba que ficou aberta.
+    if (token) await db.sessoes.encerrar(token, 'logout');
     return sendJson(res, { success: true });
   }
 
@@ -14255,6 +14303,27 @@ const server = http.createServer(async (req, res) => {
   }
 
   sendJson(res, { error: 'Não encontrado' }, 404);
+}
+
+const server = http.createServer((req, res) => {
+  // O `catch` que faltava. `sendErro` é o mesmo caminho das outras 62 saídas de
+  // erro do arquivo (lib/erro-para-o-usuario.js): a pessoa recebe um texto que
+  // não vaza nome de tabela, com um código curto, e a pilha inteira vai para o
+  // log sob esse mesmo código.
+  //
+  // 500, e não 400: aqui não se sabe o que aconteceu. Um erro que o código
+  // lançou de propósito (com `.status`) continua chegando com o status dele.
+  tratarRequisicao(req, res).catch((erro) => {
+    // Falhou DEPOIS de começar a responder: não cabe mais um JSON de erro por
+    // cima de um corpo pela metade — o cliente leria os dois colados. Corta a
+    // conexão, que é o que ele sabe interpretar como resposta incompleta.
+    if (res.headersSent || res.writableEnded) {
+      console.error('[requisicao] falhou com a resposta já iniciada:', (erro && erro.stack) || erro);
+      res.destroy();
+      return;
+    }
+    sendErro(res, erro, 'Erro interno no servidor', 500);
+  });
 });
 
 /**
@@ -14333,4 +14402,60 @@ async function conferirBanco() {
   }
 }
 
-conferirBanco().then(() => startServer(BASE_PORT, MAX_PORT_RETRIES));
+// ---------------------------------------------------------------------------
+// AS DUAS ÚLTIMAS REDES (fase CL)
+//
+// Antes desta fase não havia nenhuma das duas, e o efeito prático foi medido em
+// 16/09/2026: bastava um `await` rejeitando fora de try/catch para o processo
+// inteiro morrer. Com as sessões em memória, isso deslogava o escritório; era o
+// "não estou conseguindo ficar conectado" que abriu a investigação.
+//
+// O conserto de verdade é o `catch` do `tratarRequisicao`, que cobre o caminho
+// da requisição — por onde tudo isso passava. Estas duas aqui são o que sobra:
+// trabalho de fundo (um timer, um webhook, uma varredura) que não tem dono.
+//
+// POR QUE AS DUAS SE COMPORTAM DIFERENTE
+// --------------------------------------
+// `unhandledRejection` → ANOTA E SEGUE. Uma Promise rejeitada sem dono não diz
+// que o processo está corrompido; diz que alguém esqueceu um `catch`. Derrubar o
+// servidor por isso é trocar um bug pequeno por uma parada geral.
+//
+// `uncaughtException` → ANOTA E SAI. Aqui a pilha estourou em lugar
+// desconhecido, possivelmente no meio de uma escrita: continuar servindo é
+// servir de um estado que ninguém conferiu, que é o modo de falha silenciosa
+// que este projeto combate em todo lugar (ver conferirBanco, logo acima).
+//
+// E SAIR AGORA É BARATO, que é o ponto em que as duas metades desta fase se
+// encontram: com a sessão no banco, reiniciar não desloga ninguém. O PM2 sobe
+// de volta em cerca de um segundo e as pessoas continuam onde estavam. Antes,
+// esse mesmo `exit` custava o login de todo mundo.
+//
+// Sem fechar com elegância (drenar conexões, esperar as requisições em curso):
+// depois de uma exceção não capturada, um desligamento ordenado depende do
+// mesmo estado que acabou de se mostrar não confiável — e pode pendurar o
+// processo em vez de encerrá-lo, que é pior do que sair.
+//
+// O `max_restarts: 10` do ecosystem.config.js não briga com isto: ele conta
+// reinícios que acontecem antes do `min_uptime` (1s no padrão do PM2). Um erro
+// a cada dez minutos zera o contador toda vez; o que ele barra é um ciclo de
+// queda imediata — e nesse caso parar de pé é mesmo a resposta certa.
+// ---------------------------------------------------------------------------
+process.on('unhandledRejection', (motivo) => {
+  console.error('[processo] Promise rejeitada sem tratamento (o servidor segue):',
+    (motivo && motivo.stack) || motivo);
+});
+
+process.on('uncaughtException', (erro) => {
+  console.error('[processo] exceção não capturada — encerrando para o PM2 subir limpo:',
+    (erro && erro.stack) || erro);
+  process.exit(1);
+});
+
+conferirBanco()
+  .then(() => startServer(BASE_PORT, MAX_PORT_RETRIES))
+  // Mesmo aqui: sem o catch, uma falha na subida seria uma rejeição sem dono, e
+  // o processo morreria sem dizer por quê — justamente o que esta fase conserta.
+  .catch((erro) => {
+    console.error('Falha ao iniciar o servidor:', (erro && erro.stack) || erro);
+    process.exit(1);
+  });

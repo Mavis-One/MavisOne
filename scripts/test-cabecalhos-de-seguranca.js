@@ -49,8 +49,20 @@ console.log('--- 1. os cabeçalhos saem em TODA resposta ---');
 check('há uma função única', /function aplicarCabecalhosDeSeguranca\(res\)/.test(src));
 // No topo do handler, com setHeader: assim vale para sendJson, para serveStatic
 // e para a entrega de anexo, sem cada um lembrar de repetir.
-check('  chamada na primeira linha do servidor',
-  /createServer\(async \(req, res\) => \{\s*\n\s*aplicarCabecalhosDeSeguranca\(res\);/.test(src));
+// O handler DEIXOU DE SER o callback anônimo do createServer na fase CL: um
+// `async` passado direto ao createServer devolve uma Promise que o Node ignora,
+// e uma rejeição sem dono derrubava o processo inteiro (era o que deslogava o
+// escritório). Ele virou `tratarRequisicao`, com um `catch` em quem chama.
+//
+// O que este check cobra continua sendo o mesmo: os cabeçalhos são a PRIMEIRA
+// coisa do tratamento, para valerem no sendJson, no serveStatic e na entrega de
+// anexo sem cada um lembrar de repetir. Mudou onde essa primeira linha mora.
+check('  chamada na primeira linha do tratamento da requisição',
+  /async function tratarRequisicao\(req, res\) \{\s*\n\s*aplicarCabecalhosDeSeguranca\(res\);/.test(src));
+// E ninguém atende por fora dela: o createServer só delega. Sem este par, um
+// segundo caminho de resposta poderia nascer no callback, antes dos cabeçalhos.
+check('  e é ela que o servidor chama',
+  /createServer\(\(req, res\) => \{[\s\S]{0,600}?tratarRequisicao\(req, res\)\.catch\(/.test(src));
 for (const cab of ['Content-Security-Policy', 'X-Content-Type-Options', 'X-Frame-Options', 'Referrer-Policy', 'Permissions-Policy']) {
   check(`  ${cab}`, new RegExp(`res\\.setHeader\\('${cab}'`).test(src));
 }

@@ -14,6 +14,7 @@ const vendasCompras = require('./lib/db/vendas-compras');
 const cadastros = require('./lib/db/cadastros');
 const financeiro = require('./lib/db/financeiro');
 const rbac = require('./lib/db/rbac');
+const sessoes = require('./lib/db/sessoes');
 
 module.exports = {
   ...auth,
@@ -25,5 +26,9 @@ module.exports = {
   // Namespace próprio: são funções de controle de acesso, não de um módulo do
   // ERP — misturar com o resto convidaria a chamar db.registrarAcesso() achando
   // que é log de negócio.
-  rbac
+  rbac,
+  // Mesmo motivo do `rbac`, e um a mais: `criar`, `buscar` e `encerrar` são
+  // nomes genéricos demais para viverem soltos no objeto do banco. Espalhados,
+  // `db.criar(...)` não diria criar o quê (fase CL).
+  sessoes
 };

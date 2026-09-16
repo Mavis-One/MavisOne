@@ -14,9 +14,22 @@ module.exports = {
       script: 'server.js',
       cwd: __dirname,
       instances: 1,
-      // Precisa ser fork, não cluster: as sessões de login vivem em memória
-      // (objeto `sessions` no server.js), então com mais de um processo o
-      // usuário cairia numa instância que não conhece o token dele.
+      // Precisa ser fork, não cluster — mas NÃO mais pelas sessões.
+      //
+      // O motivo era este: elas viviam em memória, então com mais de um
+      // processo o usuário cairia numa instância que não conhece o token dele.
+      // Na fase CL a sessão passou para o banco (tabela `sessoes`), e esse
+      // impedimento acabou junto — é a mesma mudança que fez reinício e deploy
+      // pararem de deslogar todo mundo.
+      //
+      // O que ainda segura em fork/1 é o LIMITE DE TENTATIVAS DE LOGIN, que
+      // continua em memória (lib/limite-tentativas.js): em cluster, cada
+      // trabalhador teria o contador dele, e "5 tentativas" passaria a valer 5
+      // POR INSTÂNCIA — a proteção contra força bruta afrouxaria na exata
+      // proporção do número de processos, sem nada avisando.
+      //
+      // Ou seja: para escalar em cluster um dia, o contador é o próximo a sair
+      // da memória. Até então, 1 instância.
       exec_mode: 'fork',
       autorestart: true,
       max_restarts: 10,
