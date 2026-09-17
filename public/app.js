@@ -1736,6 +1736,10 @@ const moduleSubItems = {
     { key: 'eventos', label: 'Eventos NF-e', desc: 'Cartas de correção, cancelamentos e inutilizações.' },
     { key: 'logs', label: 'Logs NF-e', desc: 'O que foi enviado à SEFAZ e o que ela respondeu.' },
     { key: 'tabelas', label: 'Tabelas Fiscais', desc: 'Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.' },
+    // Entre Tabelas e Regras de propósito, porque é a peça do meio: Tabelas são
+    // os CÓDIGOS, Operações são os TIPOS DE OPERAÇÃO, e Regras é quem casa um
+    // com o outro. É consulta — ver o cabeçalho de subs/operacoes.js.
+    { key: 'operacoes', label: 'Operações Fiscais', desc: 'O que cada operação faz: finalidade, estoque, financeiro e o que ela exige.' },
     { key: 'regras', label: 'Regras Fiscais', desc: 'Define qual CFOP e qual tributação se aplicam a cada operação.' }
   ],
 

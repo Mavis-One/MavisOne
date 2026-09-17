@@ -3212,6 +3212,20 @@ tr.is-selecionada > td { background: var(--panel-alt); }
   line-height: 1.5;
 }
 
+/* Tabela de Operações Fiscais — as colunas de "sim/não" de cada bandeira.
+
+   As células são estreitas e numerosas (sete bandeiras), então vão centradas:
+   alinhadas à esquerda, a resposta fica longe do cabeçalho que a nomeia e
+   passa a exigir contagem de coluna para ser lida.
+
+   O "não" é um travessão em cor apagada, e não um "Não" escrito: numa tabela
+   em que a maioria das respostas é negativa, sete "Não" por linha viram ruído
+   e o "Sim" — que é a informação — desaparece no meio deles. O `title` no
+   <span> mantém a palavra para quem usa leitor de tela ou passa o mouse. */
+.op-bandeira { text-align: center; white-space: nowrap; }
+.op-sim { color: var(--success); font-weight: 600; }
+.op-nao { color: var(--muted); }
+
 /* O que a situação tributária escolhida implica, na tela de Regras Fiscais.
    Não é erro — é explicação de por que os campos de alíquota sumiram. Por isso
    tem a cor do texto normal, e não a de recusa: campo que desaparece sem

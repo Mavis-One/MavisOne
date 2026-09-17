@@ -4333,6 +4333,9 @@ function resolveFiscalPermission(pathname, method) {
   // Tabelas de referência: código oficial de CFOP/CST não é dado sensível da
   // empresa, e quem emite nota precisa consultá-las.
   if (pathname === '/api/fiscal/tabelas') return 'visualizar';
+  // Mesmo raciocínio das tabelas: o catálogo de operações é regra do sistema,
+  // não dado da empresa, e quem emite precisa saber o que cada operação faz.
+  if (pathname === '/api/fiscal/operacoes') return 'visualizar';
 
   if (pathname === '/api/fiscal/empresas') return method === 'GET' ? 'visualizar' : 'configurar';
   if (pathname.startsWith('/api/fiscal/empresas/')) return 'configurar';
@@ -9520,6 +9523,33 @@ async function tratarRequisicao(req, res) {
 
       if (pathname === '/api/fiscal/tabelas' && req.method === 'GET') {
         return sendJson(res, await fiscalDb.getTabelasFiscais());
+      }
+
+      // O CATÁLOGO DE OPERAÇÕES FISCAIS.
+      //
+      // Sai de lib/operacaoFiscal.js por varredura do objeto, e não de uma
+      // lista escrita aqui: operação nova entra na tela sozinha, no dia em que
+      // for acrescentada ao catálogo. Uma segunda lista para manter seria a
+      // maneira certa de a tela passar a mentir — mostrando sete operações
+      // quando o sistema já obedece oito.
+      //
+      // `chave` viaja junto do rótulo porque é ela que o resto do sistema usa
+      // (`tipoOperacao` na emissão); quem está conferindo um payload precisa
+      // ligar "Complemento de ICMS" a COMPLEMENTO_ICMS.
+      if (pathname === '/api/fiscal/operacoes' && req.method === 'GET') {
+        const operacoes = Object.entries(operacaoFiscal.OPERACOES).map(([chave, op]) => ({
+          chave,
+          rotulo: op.rotulo,
+          finalidade: op.finalidade,
+          movimentaEstoque: op.movimentaEstoque === true,
+          geraFinanceiro: op.geraFinanceiro === true,
+          exigeReferencia: op.exigeReferencia === true,
+          permiteQuantidadeZero: op.permiteQuantidadeZero === true,
+          permiteValorZero: op.permiteValorZero === true,
+          exigeIcms: op.exigeIcms === true,
+          exigeProdutoEscritural: op.exigeProdutoEscritural === true
+        }));
+        return sendJson(res, { operacoes });
       }
 
       if (pathname === '/api/fiscal/empresas' && req.method === 'GET') {

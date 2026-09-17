@@ -39,7 +39,7 @@ const check = (n, c, d) => { console.log(`${c ? '  OK ' : '  XX '} ${n}${d ? ' -
 const chavesFiscal = moduleSubItems.fiscal.map((i) => i.key);
 
 console.log('\n--- as telas pedidas estão no menu do Fiscal ---');
-const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'regras'];
+const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'regras'];
 ESPERADAS.forEach((k) => {
   const item = moduleSubItems.fiscal.find((i) => i.key === k);
   check(`fiscal.${k}`, Boolean(item), item ? item.label : 'AUSENTE');
@@ -67,7 +67,7 @@ const foraDoMenu = [...registradas].filter((k) => !chavesFiscal.includes(k));
 check('nenhuma tela órfã', foraDoMenu.length === 0, foraDoMenu.join(', ') || 'nenhuma');
 
 console.log('\n--- todos os arquivos novos são carregados pelo index.html ---');
-['shared.js', 'subs/eventos.js', 'subs/inutilizar.js', 'subs/logs.js', 'subs/regras.js', 'subs/nfe_espelho.js'].forEach((arq) => {
+['shared.js', 'subs/eventos.js', 'subs/inutilizar.js', 'subs/logs.js', 'subs/regras.js', 'subs/nfe_espelho.js', 'subs/operacoes.js'].forEach((arq) => {
   check(`index.html carrega fiscal/${arq}`, indexSrc.includes(`/modules/fiscal/${arq}`));
 });
 // shared.js define MavisFiscalDocs, que os subs recebem NA CARGA (IIFE). Se
@@ -301,6 +301,27 @@ check('P0001 (raise da trigger) preserva a mensagem', /error\.code === 'P0001'[\
 check('CNPJ repetido diz que é CNPJ repetido', /23505[\s\S]{0,160}Já existe um estabelecimento cadastrado com este CNPJ/.test(dbFiscalSrc));
 check('e as duas escritas usam esse tratamento', (dbFiscalSrc.match(/assertEstabelecimentoValido\(error, '(create|update)Estabelecimento'\)/g) || []).length === 2);
 check('a trigger que gera o P0001 existe no schema', /estabelecimento_valida_cnpj_raiz/.test(ler('banco/schema.sql')));
+
+console.log('\n--- Operações Fiscais: a tela mostra o catálogo, não uma cópia dele ---');
+// O catálogo de lib/operacaoFiscal.js decide finalidade, baixa de estoque e
+// geração de financeiro, e até esta tela só era legível abrindo o fonte.
+//
+// O QUE SE PROTEGE AQUI não é a tela, é a SINCRONIA: se a rota devolvesse uma
+// lista escrita à mão, acrescentar uma operação ao catálogo deixaria a tela
+// mostrando seis quando o sistema já obedece sete — e uma tela que mente sobre
+// regra fiscal é pior do que tela que não existe.
+const operacoesSrc = ler('public/modules/fiscal/subs/operacoes.js');
+check('a rota varre o catálogo', /Object\.entries\(operacaoFiscal\.OPERACOES\)/.test(serverSrc));
+check('  e não tem lista de operações escrita no server', !/'VENDA'[\s\S]{0,80}'TRANSFERENCIA'/.test(serverSrc));
+check('a permissão é de leitura, como as Tabelas', /'\/api\/fiscal\/operacoes'\) return 'visualizar'/.test(serverSrc));
+// `chave` é o que o resto do sistema usa como `tipoOperacao`: sem ela, quem
+// confere um payload não liga "Complemento de ICMS" a COMPLEMENTO_ICMS.
+check('a resposta leva a chave junto do rótulo', /chave,\n\s*rotulo: op\.rotulo/.test(serverSrc));
+check('a tela é consulta — não tem botão de criar nem de salvar', !/<button[^>]*submit|Salvar|Novo/i.test(operacoesSrc));
+// Um `op.movimentaEstoque` que chegasse undefined renderizaria "—" para uma
+// operação que MOVIMENTA estoque. Normalizar no servidor é o que impede isso.
+check('as bandeiras viram booleano no servidor', /movimentaEstoque: op\.movimentaEstoque === true/.test(serverSrc));
+check('e o estilo das colunas existe', /\.op-bandeira/.test(ler('public/app.css')) && /\.op-sim/.test(ler('public/app.css')));
 
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====\n' : `\n===== ${falhas} CHECK(S) FALHARAM =====\n`);
 process.exit(falhas === 0 ? 0 : 1);

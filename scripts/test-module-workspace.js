@@ -172,12 +172,15 @@ TODAS_PRONTAS.forEach((m) => {
 });
 
 const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
-// 12 desde a fase BY, que acrescentou "Pré-check Fiscal" (quais pedidos do dia
-// seriam recusados se fossem transmitidos agora). Eram 11 desde a fase AR, com
-// "Notas contra CNPJ". O número está escrito de propósito: tela nova sem
-// renderizador cai como "pendente" e o check acima já pegaria — mas tela nova
-// que ninguém registrou no menu passaria batido sem este.
-check('fiscal tem as 12 telas reais', reais('fiscal') === 12, `${reais('fiscal')} real(is)`);
+// 13 com "Operações Fiscais", a consulta do catálogo de lib/operacaoFiscal.js —
+// o que cada operação faz com estoque, financeiro e finalidade da nota, que até
+// então só se lia no fonte. Eram 12 desde a fase BY, que acrescentou "Pré-check
+// Fiscal" (quais pedidos do dia seriam recusados se fossem transmitidos agora),
+// e 11 desde a fase AR, com "Notas contra CNPJ". O número está escrito de
+// propósito: tela nova sem renderizador cai como "pendente" e o check acima já
+// pegaria — mas tela nova que ninguém registrou no menu passaria batido sem
+// este.
+check('fiscal tem as 13 telas reais', reais('fiscal') === 13, `${reais('fiscal')} real(is)`);
 // Sem nenhuma tela pendente em lugar nenhum, o menu não pode mais oferecer um
 // destino que não abre.
 const pendentesNoSistema = Object.entries(moduleSubItems)
