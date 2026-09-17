@@ -103,8 +103,18 @@ check('achei a rota do painel de pendências', rota.length > 400, `${rota.length
 // syncCadastroData traz as 6.492 pessoas, os CNPJs e os depósitos.
 check('ela NÃO chama syncCadastroData', !/syncCadastroData/.test(rota));
 // Os syncs correm juntos: o tempo da rota era o do mais lento, que era o inútil.
+// O que importa é os dois estarem DENTRO do mesmo Promise.all — em fila, o
+// tempo da rota voltaria a ser a soma. Recorta o bloco e olha dentro dele, em
+// vez de contar caracteres entre as chamadas: na fase CM entrou um comentário
+// no meio e a distância mudou, o que não muda nada sobre o paralelismo.
+//
+// Aceita `syncSalesDataParaAgregado` porque é o que esta rota passou a usar na
+// fase CM: o painel soma e conta, e as ~60 colunas de cada pedido custavam
+// 323 ms contra 49 ms do recorte.
+const blocoParalelo = (/await Promise\.all\(\[[\s\S]*?\]\);/.exec(rota) || [''])[0];
 check('  e os que sobraram continuam correndo juntos',
-  /await Promise\.all\(\[[\s\S]{0,400}syncSalesData\(data\)[\s\S]{0,200}sincronizarRazao\(data\)/.test(rota));
+  /syncSalesData(ParaAgregado)?\(data\)/.test(blocoParalelo) && /sincronizarRazao\(data\)/.test(blocoParalelo),
+  blocoParalelo ? `${blocoParalelo.length} caracteres no bloco` : 'bloco não encontrado');
 // estoqueAbaixoDoMinimo lê exatamente um campo: `situation`.
 check('o produto entra só com a situação',
   /\{ situation: stockCore\.productSituation\(data, p\) \}/.test(rota));

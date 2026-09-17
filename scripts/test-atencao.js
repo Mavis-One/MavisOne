@@ -198,7 +198,36 @@ console.log('\n--- a rota varre as vendas DE VERDADE ---');
 check('o painel recebe data.orders', /pedidos: data\.orders/.test(rota));
 check('  e NÃO a coleção legada data.sales', !/pedidos: data\.sales/.test(rota));
 // Sem o sync, data.orders chega vazio e o efeito é o mesmo de antes.
-check('  com syncSalesData chamado antes', /syncSalesData\(data\)/.test(rota));
+//
+// Aceita as duas versões do sync porque na fase CM esta rota passou a usar a
+// ENXUTA (só as colunas que um agregado lê — 323 ms viraram 49 ms). O que
+// importa aqui não é o nome: é que alguém popule data.orders antes do uso.
+check('  com um sync de vendas chamado antes', /syncSalesData(ParaAgregado)?\(data\)/.test(rota));
+
+// E O QUE A VERSÃO ENXUTA NÃO PODE DEIXAR DE FORA.
+//
+// `pedidosSemNota` começa com `if (p.nfeId) return false`. Se a carga enxuta
+// não trouxer `nfe_id`, esse campo chega `undefined`, o filtro nunca corta, e o
+// painel passa a acusar como "faturado sem NF-e" TODO pedido — inclusive os que
+// têm nota. Nada quebra: o alerta só fica errado, que é o defeito que este
+// arquivo inteiro existe para pegar.
+//
+// Quase aconteceu: a primeira versão do recorte tinha oito colunas e nenhuma
+// delas era nfe_id.
+// As duas constantes juntas: a base é compartilhada com o orçamento e a de
+// pedido acrescenta o `nfe_id` (orçamento não tem nota, e a coluna não existe
+// em `quotes` — pedir a lista única ali derruba a rota).
+const vendasDb = ler('lib/db/vendas-compras.js');
+const recorte = [
+  (/const COLUNAS_DE_AGREGADO = '([^']*)'/.exec(vendasDb) || [])[1] || '',
+  (/const COLUNAS_DE_AGREGADO_PEDIDO = `([^`]*)`/.exec(vendasDb) || [])[1] || ''
+].join(', ');
+check('a carga enxuta de pedido traz nfe_id', /nfe_id/.test(recorte), recorte || 'recorte não encontrado');
+// `date` e `created_at` são a segunda metade do filtro (o pedido só entra depois
+// de um dia), e o valor é o que o alerta mostra.
+['date', 'created_at', 'total_amount', 'status'].forEach((c) => {
+  check(`  e também ${c}`, new RegExp(`\\b${c}\\b`).test(recorte));
+});
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

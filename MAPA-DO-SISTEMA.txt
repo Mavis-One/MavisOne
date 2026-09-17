@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-16 18:07 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-17 12:11 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -77,7 +77,7 @@ Financeiro  (finance)  —  8 tela(s) no menu
   [ok]  Extrato Open Finance               Extrato bancário puxado via Open Finance.
   [ok]  Bancos Conectados                  Bancos ligados e situação de cada conexão.
 
-Fiscal  (fiscal)  —  12 tela(s) no menu
+Fiscal  (fiscal)  —  13 tela(s) no menu
 ---------------------------------------
   [ok]  Painel Fiscal                      Notas transmitidas, autorizadas e o que a SEFAZ recusou.
   [ok]  NF-e Emitidas                      Notas emitidas, com DANFE, XML e cancelamento.
@@ -90,6 +90,7 @@ Fiscal  (fiscal)  —  12 tela(s) no menu
   [ok]  Eventos NF-e                       Cartas de correção, cancelamentos e inutilizações.
   [ok]  Logs NF-e                          O que foi enviado à SEFAZ e o que ela respondeu.
   [ok]  Tabelas Fiscais                    Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.
+  [ok]  Operações Fiscais                  O que cada operação faz: finalidade, estoque, financeiro e o que ela exige.
   [ok]  Regras Fiscais                     Define qual CFOP e qual tributação se aplicam a cada operação.
 
 Relatórios  (reports)  —  4 tela(s) no menu
@@ -196,7 +197,7 @@ Cadastros  (cadastros)  —  21 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 132 telas no menu.
+TOTAL: 14 módulos, 133 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -427,7 +428,7 @@ Tabelas usadas (79)
   users
 
 ==============================================================================
-4. ROTAS DA API (114 encontradas no server.js)
+4. ROTAS DA API (115 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -485,6 +486,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/fiscal/nfe                                      GET
   /api/fiscal/nfe/…                                    
   /api/fiscal/nfe/emitir                               POST
+  /api/fiscal/operacoes                                GET
   /api/fiscal/pre-check                                GET
   /api/fiscal/regras                                   GET POST
   /api/fiscal/regras/…                                 
@@ -612,7 +614,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-115 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+116 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -706,6 +708,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-regras-fiscais.js             Modelo de regras fiscais — scripts/seed-regras-fiscais.js Os CFOPs vieram do ERP que o usuário usa hoje: 5102,
   [npm test] test-relatorio-vendas.js           RELATÓRIO DE VENDAS — quem vê o quê, provado com dados de mentira.
   [npm test] test-reserva-estoque.js            Reserva de estoque — a ponte entre "prometido" e "baixado".
+  [npm test] test-resposta-comprimida.js        A RESPOSTA DE API VAI COMPRIMIDA (fase CM).
   [npm test] test-rls.js                        RLS: toda tabela do schema precisa estar na fase-af.
   [npm test] test-saldo-por-cor.js              O SALDO POR COR E O DEPÓSITO DO MOVIMENTO (fase BD).
   [npm test] test-sales-actions.js              Regras do menu "Mais Ações" da tela de Pedidos e Orçamentos.
@@ -734,7 +737,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-132 arquivos JS carregados por public/index.html, nesta ordem.
+133 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -811,6 +814,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/fiscal/index.js
   /modules/fiscal/shared.js
   /modules/fiscal/subs/tabelas.js
+  /modules/fiscal/subs/operacoes.js
   /modules/fiscal/subs/painel.js
   /modules/fiscal/subs/notas_contra_cnpj.js
   /modules/fiscal/subs/eventos.js

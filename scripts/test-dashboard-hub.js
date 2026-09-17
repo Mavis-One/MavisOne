@@ -74,7 +74,17 @@ console.log('\n--- as três fontes falham em separado ---');
 // apagar os KPIs.
 check('KPIs têm fallback próprio', /api\(`\/api\/dashboard\?period=[\s\S]{0,90}\.catch\(\(\) => \(\{ kpis: \[\] \}\)\)/.test(src));
 check('pendências têm fallback próprio', /api\('\/api\/dashboard\/atencao'\)\.catch\(\(\) => \(\{ itens: \[\] \}\)\)/.test(src));
-check('gráficos já tinham', /catch \(error\) \{\s*\n\s*\/\/ Sem os gráficos/.test(src));
+// Os gráficos tinham try/catch próprio porque vinham num `await` SEPARADO,
+// antes das outras duas — apesar de o comentário ao lado já dizer "as três
+// fontes". Medido em 17/09/2026: em fila, abrir o Início custava os 383 ms dos
+// gráficos SOMADOS ao resto; com os três no mesmo Promise.all, custa o do mais
+// lento. Agora o fallback deles é `.catch` na própria chamada, como os outros
+// dois — a garantia é a mesma (uma fonte fora não apaga a tela), a forma mudou.
+check('gráficos têm fallback próprio',
+  /api\(`\/api\/dashboard\/charts[\s\S]{0,140}?\.catch\(\(\) => \(\{ salesChartSeries: \[\]/.test(src));
+// E o que esta fase conserta: os três no MESMO Promise.all. Se alguém tirar um
+// de volta para um `await` solto, o tempo da tela volta a ser a soma.
+check('  e as três vão na mesma onda', /const \[charts, resumo, pendencias\] = await Promise\.all\(\[/.test(src));
 // Em série, a tela esperaria a soma dos três tempos.
 check('buscadas em paralelo', /await Promise\.all\(\[/.test(src));
 

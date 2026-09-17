@@ -1707,6 +1707,27 @@ async function syncSalesData(data) {
   data.importLogs = importLogs;
 }
 
+/**
+ * O MESMO, PARA QUEM SÓ SOMA E CONTA (fase CM).
+ *
+ * `syncSalesData` traz as ~60 colunas de cada pedido porque as telas de venda
+ * precisam delas. Um painel que escreve "R$ 1.234.567" e "14.864 pedidos" não
+ * precisa de nenhuma: medido em 17/09/2026, `getOrders()` custa 323 ms e o
+ * recorte de oito colunas custa 49 ms (6,6x) — ver getOrdersParaAgregado.
+ *
+ * Também não traz `importLogs`: é o histórico de importação de planilha, que
+ * nenhum agregado lê.
+ *
+ * Quem chama isto NÃO PODE devolver pedido para a tela — os campos que faltam
+ * voltam vazios do serializer. É agregado, e só.
+ */
+async function syncSalesDataParaAgregado(data) {
+  const [orders, quotes] = await Promise.all([db.getOrdersParaAgregado(), db.getQuotesParaAgregado()]);
+  data.orders = orders;
+  data.quotes = quotes;
+}
+
+
 // Mesmo papel de syncCadastroData/syncSalesData: popula data.purchases com o
 // conteúdo atual do Supabase logo após loadData(), pra resolveFinanceCounterparty
 // (Financeiro) e a checagem de produto-em-uso (Estoque) continuarem lendo
@@ -6765,6 +6786,25 @@ async function tratarRequisicao(req, res) {
     const data = loadData();
     // sincronizarRazao entra na mesma onda: o painel mostra saldo por
     // depósito, e sem o razão em memória todo depósito aparecia zerado.
+    //
+    // O CADASTRO CONTINUA INTEIRO AQUI, e a tentativa de enxugar foi desfeita
+    // de propósito (fase CM).
+    //
+    // Trocar por um sync só de depósitos economizava 112 ms das 6.492 pessoas,
+    // e nenhuma linha da resposta depende delas — o `acharNoCadastro` que as
+    // leria só roda quando o pedido tem `clientSupplierId`, e a carga enxuta não
+    // traz essa coluna. Ou seja: funcionava.
+    //
+    // Funcionava POR ACIDENTE, e o guarda de scripts/test-sync-obrigatorio.js
+    // apontou isso na hora: a rota passaria a LER `people` (via
+    // serializeSalesRecord -> indiceDoCadastro) sem sincronizar. Coleção do
+    // banco lida sem sync devolve vazio em silêncio, e é o defeito que aquele
+    // teste existe para pegar — o mesmo que já custou meses aqui. A economia
+    // dependia de uma coluna continuar ausente do recorte; no dia em que
+    // alguém a acrescentasse, o nome do cliente sairia errado sem nada avisar.
+    //
+    // 112 ms não pagam essa fragilidade. O ganho grande desta fase está nos
+    // pedidos, logo abaixo.
     await Promise.all([syncNfeData(data), syncCadastroData(data), sincronizarRazao(data)]);
     const user = await getCurrentUser(req);
     if (!user) {
@@ -6782,9 +6822,13 @@ async function tratarRequisicao(req, res) {
     // Uma ida so' ao banco. Eram tres syncs em fila mais a consulta de
     // produtos -- quatro viagens de ~260ms cada (medido) para buscar colecoes
     // que nao dependem umas das outras. O `if` na frente escondia o custo.
+    // `syncSalesDataParaAgregado` no lugar de `syncSalesData` (fase CM): esta
+    // rota soma e conta, e não devolve pedido nenhum. Eram 519 dos 596 ms da
+    // rota em `getOrders()` trazendo ~15 MB de 60 colunas para escrever meia
+    // dúzia de números.
     const [products] = await Promise.all([
       canStock ? db.getProducts() : Promise.resolve([]),
-      canSales ? syncSalesData(data) : null,
+      canSales ? syncSalesDataParaAgregado(data) : null,
       canPurchases ? syncPurchasesData(data) : null,
       syncFinanceData(data)
     ]);
@@ -6894,9 +6938,14 @@ async function tratarRequisicao(req, res) {
       // numa passada pelas 133 telas do sistema. Num servidor Node, que tem um
       // event loop so', isso nao atrasa apenas o sino: atrasa a requisicao que
       // a tela acabou de fazer para desenhar a si mesma.
+      // E ENXUTO TAMBÉM AQUI (fase CM), pelo mesmo motivo do sync inútil acima:
+      // deste painel sai contagem e soma. `montarAtencao` lê de cada pedido
+      // `nfeId`, `status`, `date`/`createdAt` e o valor — dez colunas contra as
+      // ~60 de `select *`. Medido: 323 ms -> 49 ms na carga dos pedidos, e este
+      // sino é chamado em TODA tela.
       await Promise.all([
         permissoes.finance ? syncFinanceData(data) : null,
-        permissoes.sales ? syncSalesData(data) : null,
+        permissoes.sales ? syncSalesDataParaAgregado(data) : null,
         // O aviso de estoque baixo compara saldo por depósito; sem o razão
         // em memória todo produto parecia zerado e o painel ou gritava por
         // tudo ou por nada, dependendo do limite cadastrado.
@@ -6972,7 +7021,10 @@ async function tratarRequisicao(req, res) {
     const granularity = url.searchParams.get('granularity') || 'month';
     const canSales = user.allowedModules.includes('sales');
     const canFinance = user.allowedModules.includes('finance');
-    if (canSales) await syncSalesData(data);
+    // Enxuto (fase CM): desta rota sai uma SÉRIE — data e valor por mês. O
+    // buildSalesChartSeries lê `date` e `totalAmount ?? amount` de cada
+    // registro, e mais nada; as outras ~55 colunas eram 274 ms de nada.
+    if (canSales) await syncSalesDataParaAgregado(data);
 
     const salesChartSeries = canSales ? buildSalesChartSeries(data, granularity) : [];
     const financeEntries = canFinance ? (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry)) : [];

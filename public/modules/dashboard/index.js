@@ -233,18 +233,25 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
   });
 
   const granularity = state.dashboardChartGranularity || 'month';
-  let charts = { salesChartSeries: [], financeChartSeries: [], permissions: {} };
-  try {
-    charts = await api(`/api/dashboard/charts?granularity=${granularity}`);
-  } catch (error) {
-    // Sem os gráficos o resto do Dashboard Geral (favoritos) continua funcionando normalmente.
-  }
 
-  // As três fontes são independentes e falham em separado: um KPI indisponível
+  // As TRÊS fontes são independentes e falham em separado: um KPI indisponível
   // não pode apagar os gráficos, nem o painel de pendências apagar os KPIs.
   // Buscadas em paralelo porque nenhuma depende da outra — em série, a tela
   // esperaria a soma dos três tempos.
-  const [resumo, pendencias] = await Promise.all([
+  //
+  // E ERAM DUAS EM PARALELO E UMA EM FILA: os gráficos vinham num `await`
+  // próprio, ANTES deste bloco, apesar deste comentário já dizer "as três".
+  // Medido em 17/09/2026 neste banco: gráficos 383 ms, resumo 596 ms,
+  // pendências 414 ms. Em fila, abrir o Início custava 383 + 596 = ~979 ms;
+  // com os três juntos, passa a custar o do mais lento — ~596 ms. O ganho não
+  // vem de nenhuma consulta ter ficado mais rápida.
+  //
+  // O `.catch` por chamada é o que mantém a degradação separada: um
+  // `Promise.all` sem eles perderia a tela inteira por causa de uma fonte, que
+  // é justamente o que os três blocos try/catch de antes evitavam.
+  const [charts, resumo, pendencias] = await Promise.all([
+    api(`/api/dashboard/charts?granularity=${granularity}`)
+      .catch(() => ({ salesChartSeries: [], financeChartSeries: [], permissions: {} })),
     api(`/api/dashboard?period=${encodeURIComponent(PERIODO_DO_GRANULARITY[granularity] || 'month')}`).catch(() => ({ kpis: [] })),
     api('/api/dashboard/atencao').catch(() => ({ itens: [] }))
   ]);

@@ -85,6 +85,13 @@ const linhas = src.split('\n');
 const POPULA = {
   syncCadastroData: ['people', 'cnpjs', 'deposits'],
   syncSalesData: ['orders', 'quotes', 'importLogs'],
+  // Fase CM: a versão enxuta popula as MESMAS coleções, com menos colunas em
+  // cada registro (agregado não lê as outras ~50). Para este guarda o que
+  // importa é que `data.orders` e `data.quotes` deixem de chegar vazios — e
+  // deixam. `importLogs` fica de fora porque ela não carrega, e é isso que a
+  // ausência dele aqui declara: quem precisar do histórico de importação
+  // continua tendo que chamar o sync inteiro.
+  syncSalesDataParaAgregado: ['orders', 'quotes'],
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
@@ -109,7 +116,8 @@ const RESOLVE_SOZINHO = {
 
 const INFRA = new Set([
   'loadData', 'saveData', 'normalizeData', 'ensureCadastroCollections',
-  'syncCadastroData', 'syncSalesData', 'syncPurchasesData', 'syncNfeData',
+  'syncCadastroData', 'syncSalesData', 'syncSalesDataParaAgregado',
+  'syncPurchasesData', 'syncNfeData',
   'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao'
 ]);
 
