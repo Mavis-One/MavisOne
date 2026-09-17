@@ -916,9 +916,92 @@ function deveRegistrar(metodo, permitido) {
   return !permitido || !['GET', 'HEAD'].includes(String(metodo || '').toUpperCase());
 }
 
+// ---------------------------------------------------------------------------
+// A RESPOSTA DE API VAI COMPRIMIDA (fase CM)
+//
+// O gzip já existia neste arquivo, e só para arquivo estático (ver serveStatic).
+// Toda resposta de API saía crua — e é nela que está o volume. Medido em
+// 17/09/2026, nas onze telas principais deste banco (14.864 pedidos, 6.492
+// pessoas, 5.475 produtos):
+//
+//   Cadastros — pessoas .... 7.424 KB  ->   695 KB   (10,7x)
+//   Vendas — formulário .... 3.422 KB  ->   555 KB   ( 6,2x)
+//   Estoque — produtos ..... 3.023 KB  ->   250 KB   (12,1x)
+//   TOTAL das onze ........ 25.666 KB -> 3.694 KB   ( 6,9x)
+//
+// Num link de 25 Mbit/s isso é 8,4 s de transferência virando 1,2 s — e o
+// escritório acessa por VPS, então esse tempo é o que a pessoa sente. JSON
+// comprime assim porque é a mesma dúzia de nomes de campo repetida em milhares
+// de registros.
+//
+// Não conserta o EXCESSO, conserta o transporte dele: mandar 6.492 pessoas para
+// desenhar uma página de 15 continua errado, e paginar de verdade é outra
+// mudança (bem maior, porque a filtragem hoje é no navegador). Esta aqui não
+// muda contrato de rota nenhuma, não muda uma linha de tela, e valia ser feita
+// antes de qualquer refatoração — inclusive porque reduz o ganho aparente
+// delas, que é honesto: o problema de transporte já não estaria lá.
+//
+// POR QUE `res.req` E NÃO UM PARÂMETRO: são 60+ chamadas de sendJson no
+// arquivo, e nenhuma delas passa o `req`. O Node expõe a requisição na própria
+// resposta desde a v15, então dá para ler o Accept-Encoding sem tocar em 60
+// pontos — e sem criar a variante "sendJson que comprime" que metade das rotas
+// esqueceria de usar.
+//
+// ASSÍNCRONO, e não gzipSync: comprimir 7,4 MB custa ~51 ms de CPU, e o
+// servidor roda em UM processo (exec_mode fork, ver ecosystem.config.js). Em
+// versão síncrona, esses 51 ms travariam o event loop — ou seja, travariam
+// todas as outras requisições em curso para acelerar uma.
+//
+// O PISO DE 1.400 BYTES é o tamanho de um pacote: abaixo disso o cabeçalho do
+// gzip e o custo de CPU não compram nada, e a maioria das respostas deste
+// sistema (um `{ success: true }`, um login) está aí.
+const PISO_PARA_COMPRIMIR = 1400;
+
 function sendJson(res, payload, statusCode = 200) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(payload));
+  const corpo = Buffer.from(JSON.stringify(payload), 'utf8');
+  const cabecalhos = { 'Content-Type': 'application/json' };
+
+  // Quem não pede gzip recebe cru — é o caso dos scripts de teste deste
+  // repositório, que falam com a API pelo módulo http do Node (ele não manda
+  // Accept-Encoding por conta própria).
+  const aceita = String((res.req && res.req.headers['accept-encoding']) || '');
+  if (corpo.length < PISO_PARA_COMPRIMIR || !/\bgzip\b/.test(aceita)) {
+    res.writeHead(statusCode, { ...cabecalhos, 'Content-Length': corpo.length });
+    res.end(corpo);
+    return;
+  }
+
+  zlib.gzip(corpo, (erro, comprimido) => {
+    // A ASSINCRONIA ABRIU UMA JANELA que a versão síncrona não tinha: entre o
+    // pedido de compressão e esta linha, o cliente pode ter fechado a aba. Aí
+    // `res` está destruída, e escrever nela lança — dentro de um callback do
+    // zlib, ou seja, fora de qualquer try/catch de rota. Isso viraria
+    // `uncaughtException`, que neste servidor ENCERRA O PROCESSO de propósito
+    // (ver as guardas no fim do arquivo). Quem fecha a aba no meio de uma
+    // consulta grande derrubaria o servidor de todo mundo.
+    if (res.destroyed || res.writableEnded) return;
+    try {
+      if (erro) {
+        // Falhar em comprimir não é motivo para não responder.
+        res.writeHead(statusCode, { ...cabecalhos, 'Content-Length': corpo.length });
+        res.end(corpo);
+        return;
+      }
+      res.writeHead(statusCode, {
+        ...cabecalhos,
+        'Content-Encoding': 'gzip',
+        // Sem Vary, um proxy compartilhado entregaria o corpo gzipado a um
+        // cliente que não pediu gzip. Mesmo cuidado do serveStatic.
+        Vary: 'Accept-Encoding',
+        'Content-Length': comprimido.length
+      });
+      res.end(comprimido);
+    } catch (erroEscrita) {
+      // Conexão que morreu entre o `if` acima e a escrita. Não há resposta a
+      // dar a ninguém; o que não pode é subir daqui.
+      console.error('[resposta] falhou ao escrever resposta comprimida:', erroEscrita.message);
+    }
+  });
 }
 
 // LIMITE_CORPO_PADRAO cobre com folga qualquer JSON desta API (um pedido com
