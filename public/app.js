@@ -1740,6 +1740,9 @@ const moduleSubItems = {
     // os CÓDIGOS, Operações são os TIPOS DE OPERAÇÃO, e Regras é quem casa um
     // com o outro. É consulta — ver o cabeçalho de subs/operacoes.js.
     { key: 'operacoes', label: 'Operações Fiscais', desc: 'O que cada operação faz: finalidade, estoque, financeiro e o que ela exige.' },
+    // Fica depois de Logs e antes das telas de referência: é sobre os DOCUMENTOS
+    // do período, como Eventos e Logs, e não sobre configuração.
+    { key: 'arquivos', label: 'Arquivos Fiscais', desc: 'O XML de cada nota do período, em zip, para a contabilidade — e quais faltam.' },
     { key: 'regras', label: 'Regras Fiscais', desc: 'Define qual CFOP e qual tributação se aplicam a cada operação.' }
   ],
 

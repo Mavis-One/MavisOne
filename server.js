@@ -27,6 +27,9 @@ const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
 // gera financeiro e exige documento referenciado — em vez de `if` de
 // finalidade espalhado pelo código de emissão.
 const operacaoFiscal = require('./lib/operacaoFiscal');
+// Fase CN — o zip do acervo de XML. Escrito à mão para não trazer dependência;
+// o porquê está no cabeçalho do arquivo.
+const zipUtil = require('./lib/zip');
 // Prazo de 24h para cancelar NF-e. Mesmo arquivo que o navegador carrega, para
 // tela e servidor não discordarem sobre quando o prazo venceu.
 const prazoCancelamento = require('./public/modules/shared/prazo_cancelamento');
@@ -4450,6 +4453,33 @@ function parcelasDoContrato(contrato, { periodos = 12 } = {}) {
   return linhas;
 }
 
+/**
+ * O período e o estabelecimento do acervo, conferidos (fase CN).
+ *
+ * Vale para as três rotas do acervo, e é uma função só porque as três precisam
+ * exatamente das mesmas três coisas — repetir a conferência em cada uma é como
+ * uma delas acaba sem ela.
+ *
+ * O TETO DE UM ANO não é burocracia: o zip é montado na memória (ver lib/zip.js
+ * e o porquê lá), e "de 2024 a hoje" num CNPJ que emite todo dia é um lote que
+ * ninguém quer descobrir que não caber no meio do fechamento. Fechamento é
+ * mensal; quem precisa do ano pede doze vezes.
+ */
+function lerPeriodoDoAcervo(params) {
+  const estabelecimentoId = String(params.get('estabelecimentoId') || '').trim();
+  const de = String(params.get('de') || '').trim().slice(0, 10);
+  const ate = String(params.get('ate') || '').trim().slice(0, 10);
+  const ehData = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
+
+  if (!estabelecimentoId) return { erro: 'Escolha o estabelecimento.' };
+  if (!ehData(de) || !ehData(ate)) return { erro: 'Informe o período no formato AAAA-MM-DD.' };
+  if (de > ate) return { erro: 'A data inicial é depois da final.' };
+  const dias = Math.round((Date.parse(ate) - Date.parse(de)) / 86400000) + 1;
+  if (dias > 366) return { erro: `O período pede ${dias} dias, e o limite é 366. Baixe um mês por vez.` };
+
+  return { estabelecimentoId, de, ate };
+}
+
 function resolveFiscalPermission(pathname, method) {
   // Tabelas de referência: código oficial de CFOP/CST não é dado sensível da
   // empresa, e quem emite nota precisa consultá-las.
@@ -4489,6 +4519,21 @@ function resolveFiscalPermission(pathname, method) {
   // confere os pedidos do dia de manha nao precisa poder transmitir. Exigir
   // 'emitir' faria a conferencia so' existir para quem ja' pode errar caro.
   if (pathname === '/api/fiscal/pre-check') return 'visualizar';
+
+  // O ACERVO DO PERÍODO (fase CN). Três rotas e duas permissões diferentes, e a
+  // divisão é o ponto:
+  //
+  //   o RESUMO é contagem ("32 notas, 30 com XML") -> 'visualizar', como o
+  //   pré-check: conferir se o acervo está completo não devia exigir poder
+  //   levar os documentos embora.
+  //
+  //   o ZIP e o BUSCAR-FALTANTES entregam e completam os documentos -> 'xml',
+  //   a MESMA permissão de baixar o XML de uma nota. Download em lote não pode
+  //   ser um caminho mais fácil do que o individual para sair com o acervo
+  //   fiscal inteiro da empresa.
+  if (pathname === '/api/fiscal/acervo') return 'visualizar';
+  if (pathname === '/api/fiscal/acervo/zip') return 'xml';
+  if (pathname === '/api/fiscal/acervo/buscar-faltantes') return 'xml';
   if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
   if (pathname.endsWith('/cancelar')) return 'cancelar';
   if (pathname.endsWith('/cce')) return 'cce';
@@ -9697,6 +9742,108 @@ async function tratarRequisicao(req, res) {
       // `chave` viaja junto do rótulo porque é ela que o resto do sistema usa
       // (`tipoOperacao` na emissão); quem está conferindo um payload precisa
       // ligar "Complemento de ICMS" a COMPLEMENTO_ICMS.
+      // ---------------------------------------------------------------------
+      // O ACERVO FISCAL DO PERÍODO (fase CN)
+      //
+      // O contador gera a EFD a partir dos XML, e este sistema já guarda todos
+      // — o que faltava era tirá-los de uma vez e saber se falta algum. O porquê
+      // e as consultas estão em lib/db/fiscal.js (resumoDoAcervo e companhia).
+      // ---------------------------------------------------------------------
+      if (pathname === '/api/fiscal/acervo' && req.method === 'GET') {
+        const periodo = lerPeriodoDoAcervo(url.searchParams);
+        if (periodo.erro) return sendJson(res, { error: periodo.erro }, 400);
+        const estab = await fiscalDb.getEstabelecimentoById(periodo.estabelecimentoId);
+        if (!estab) return sendJson(res, { error: 'Estabelecimento não encontrado.' }, 404);
+        const resumo = await fiscalDb.resumoDoAcervo({ ...periodo, cnpj: estab.cnpj });
+        // As notas faltantes vêm com número e chave: "faltam 2" não diz quais,
+        // e é o "quais" que permite conferir no painel da Focus.
+        const faltantes = await fiscalDb.notasSemXml(periodo);
+        return sendJson(res, {
+          estabelecimento: { id: estab.id, cnpj: estab.cnpj, razaoSocial: estab.razaoSocial },
+          periodo: { de: periodo.de, ate: periodo.ate },
+          ...resumo,
+          faltantes: faltantes.map((f) => ({
+            id: f.id, numero: f.numero, serie: f.serie, chaveAcesso: f.chaveAcesso,
+            status: f.status,
+            // Sem URL na Focus não há de onde buscar: a nota foi autorizada mas
+            // o link não ficou gravado, e aí o caminho é o painel da Focus.
+            temUrl: Boolean(f.urlXml)
+          }))
+        });
+      }
+
+      // Completa o acervo: busca na Focus o XML das notas que ficaram sem.
+      //
+      // É a RETENTATIVA que não existia. O download roda uma vez, no instante
+      // em que a nota passa a AUTORIZADO, e é melhor esforço — a Focus gera o
+      // arquivo de forma assíncrona, então a primeira tentativa pode chegar
+      // antes do arquivo existir. Sem isto, aquele XML nunca mais era buscado.
+      if (pathname === '/api/fiscal/acervo/buscar-faltantes' && req.method === 'POST') {
+        const body = await readBody(req);
+        const periodo = lerPeriodoDoAcervo(new URLSearchParams(body || {}));
+        if (periodo.erro) return sendJson(res, { error: periodo.erro }, 400);
+        const faltantes = await fiscalDb.notasSemXml(periodo);
+        const comUrl = faltantes.filter((f) => f.urlXml);
+        let recuperadas = 0;
+        const falhas = [];
+        if (comUrl.length) {
+          const client = await focusNfe.forEstabelecimento(periodo.estabelecimentoId);
+          // Uma por vez, e não em paralelo: são chamadas à Focus, e um lote de
+          // um mês inteiro disparado de uma vez é a maneira de tomar limite de
+          // requisição justamente quando se está tentando fechar o mês.
+          for (const nota of comUrl) {
+            try {
+              const conteudo = await client.baixarArquivo(nota.urlXml);
+              await fiscalDb.createNfeArquivo({ nfeId: nota.id, tipo: 'xml', conteudo });
+              recuperadas += 1;
+            } catch (erro) {
+              falhas.push({ numero: nota.numero, motivo: erro.message });
+            }
+          }
+        }
+        return sendJson(res, {
+          tentadas: comUrl.length,
+          recuperadas,
+          semUrl: faltantes.length - comUrl.length,
+          falhas
+        });
+      }
+
+      if (pathname === '/api/fiscal/acervo/zip' && req.method === 'GET') {
+        const periodo = lerPeriodoDoAcervo(url.searchParams);
+        if (periodo.erro) return sendJson(res, { error: periodo.erro }, 400);
+        const estab = await fiscalDb.getEstabelecimentoById(periodo.estabelecimentoId);
+        if (!estab) return sendJson(res, { error: 'Estabelecimento não encontrado.' }, 404);
+        const acervo = await fiscalDb.xmlDoAcervo({ ...periodo, cnpj: estab.cnpj });
+        const arquivos = [
+          ...acervo.saidas.map((n) => ({
+            // A CHAVE é o nome, e não o número: ela é única no país e é por ela
+            // que o software fiscal do contador casa o arquivo com o documento.
+            // Número repete entre séries e entre estabelecimentos.
+            nome: `saidas/${zipUtil.nomeSeguro(n.chave || `nota-${n.numero}`)}.xml`,
+            conteudo: n.xml,
+            data: n.dataEmissao ? new Date(n.dataEmissao) : undefined
+          })),
+          ...acervo.entradas.map((n) => ({
+            nome: `entradas/${zipUtil.nomeSeguro(n.chave || `entrada-${n.numero}`)}.xml`,
+            conteudo: n.xml,
+            data: n.dataEmissao ? new Date(n.dataEmissao) : undefined
+          }))
+        ];
+        if (!arquivos.length) {
+          return sendJson(res, { error: 'Nenhum XML arquivado neste período para este estabelecimento.' }, 404);
+        }
+        const zip = zipUtil.criarZip(arquivos);
+        const nomeArquivo = `xml-${estab.cnpj}-${periodo.de}-a-${periodo.ate}.zip`;
+        res.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="${nomeArquivo}"`,
+          'Content-Length': zip.length
+        });
+        res.end(zip);
+        return;
+      }
+
       if (pathname === '/api/fiscal/operacoes' && req.method === 'GET') {
         const operacoes = Object.entries(operacaoFiscal.OPERACOES).map(([chave, op]) => ({
           chave,

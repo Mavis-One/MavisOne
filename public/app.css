@@ -3212,6 +3212,12 @@ tr.is-selecionada > td { background: var(--panel-alt); }
   line-height: 1.5;
 }
 
+/* O número de "Sem XML" no acervo fiscal (fase CN). Só o número muda de cor, e
+   não o cartão inteiro: um cartão vermelho ao lado de três neutros grita mais
+   alto que o assunto merece — faltar XML é pendência de arquivo, não recusa da
+   SEFAZ. Zero continua neutro, porque zero aqui é a notícia boa. */
+.acervo-alerta { color: var(--warning-text); }
+
 /* Tabela de Operações Fiscais — as colunas de "sim/não" de cada bandeira.
 
    As células são estreitas e numerosas (sete bandeiras), então vão centradas:

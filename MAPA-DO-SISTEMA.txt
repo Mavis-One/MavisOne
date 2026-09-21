@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-17 12:11 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-21 12:03 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -77,7 +77,7 @@ Financeiro  (finance)  —  8 tela(s) no menu
   [ok]  Extrato Open Finance               Extrato bancário puxado via Open Finance.
   [ok]  Bancos Conectados                  Bancos ligados e situação de cada conexão.
 
-Fiscal  (fiscal)  —  13 tela(s) no menu
+Fiscal  (fiscal)  —  14 tela(s) no menu
 ---------------------------------------
   [ok]  Painel Fiscal                      Notas transmitidas, autorizadas e o que a SEFAZ recusou.
   [ok]  NF-e Emitidas                      Notas emitidas, com DANFE, XML e cancelamento.
@@ -91,6 +91,7 @@ Fiscal  (fiscal)  —  13 tela(s) no menu
   [ok]  Logs NF-e                          O que foi enviado à SEFAZ e o que ela respondeu.
   [ok]  Tabelas Fiscais                    Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.
   [ok]  Operações Fiscais                  O que cada operação faz: finalidade, estoque, financeiro e o que ela exige.
+  [ok]  Arquivos Fiscais                   O XML de cada nota do período, em zip, para a contabilidade — e quais faltam.
   [ok]  Regras Fiscais                     Define qual CFOP e qual tributação se aplicam a cada operação.
 
 Relatórios  (reports)  —  4 tela(s) no menu
@@ -197,7 +198,7 @@ Cadastros  (cadastros)  —  21 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 133 telas no menu.
+TOTAL: 14 módulos, 134 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -256,6 +257,8 @@ o próprio arquivo dá de si, no comentário de cabeçalho.
       Núcleo do módulo Estoque: cadastros auxiliares, movimentações, transferências entre depósitos, tabelas de preço e catálogos.
   lib/vendas-financeiro.js
       Quais contas a receber um pedido faturado gera — SEM banco e SEM rede.
+  lib/zip.js
+      UM ZIP, ESCRITO À MÃO (fase CN).
 
 Módulos compartilhados entre navegador e servidor (public/modules/shared)
 -------------------------------------------------------------------------
@@ -428,7 +431,7 @@ Tabelas usadas (79)
   users
 
 ==============================================================================
-4. ROTAS DA API (115 encontradas no server.js)
+4. ROTAS DA API (118 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -472,6 +475,9 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/finance/nfe/…                                   
   /api/finance/summary                                 GET
   /api/fiscal/…                                        
+  /api/fiscal/acervo                                   GET
+  /api/fiscal/acervo/buscar-faltantes                  POST
+  /api/fiscal/acervo/zip                               GET
   /api/fiscal/certificados                             GET POST
   /api/fiscal/certificados/…                           
   /api/fiscal/dfe                                      GET
@@ -614,12 +620,13 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-116 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+117 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
   [npm test] test-anexos-pedido.js              Arquivos Anexados ao pedido/orçamento.
   [npm test] test-aplicar-migracoes.js          APLICAR MIGRAÇÃO DEIXOU DE SER UM PASSO HUMANO.
+  [npm test] test-arquivos-fiscais.js           O ACERVO FISCAL DO PERÍODO (fase CN): o zip e as três rotas.
   [npm test] test-atalhos.js                    Botão "Atalhos" da barra superior — public/modules/shared/atalhos.js O que quebra em silêncio aqui: 1.
   [npm test] test-atencao.js                    Painel "Atenção" do hub — lib/atencao.js O QUE ELE RESOLVE
   [npm test] test-auditoria-fiscal.js           Trilha de auditoria — emissão, cancelamento, CC-e e inutilização de NF-e.
@@ -737,7 +744,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-133 arquivos JS carregados por public/index.html, nesta ordem.
+134 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -815,6 +822,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/fiscal/shared.js
   /modules/fiscal/subs/tabelas.js
   /modules/fiscal/subs/operacoes.js
+  /modules/fiscal/subs/arquivos.js
   /modules/fiscal/subs/painel.js
   /modules/fiscal/subs/notas_contra_cnpj.js
   /modules/fiscal/subs/eventos.js

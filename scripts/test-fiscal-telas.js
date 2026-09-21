@@ -39,7 +39,7 @@ const check = (n, c, d) => { console.log(`${c ? '  OK ' : '  XX '} ${n}${d ? ' -
 const chavesFiscal = moduleSubItems.fiscal.map((i) => i.key);
 
 console.log('\n--- as telas pedidas estão no menu do Fiscal ---');
-const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'regras'];
+const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'arquivos', 'regras'];
 ESPERADAS.forEach((k) => {
   const item = moduleSubItems.fiscal.find((i) => i.key === k);
   check(`fiscal.${k}`, Boolean(item), item ? item.label : 'AUSENTE');
@@ -67,7 +67,7 @@ const foraDoMenu = [...registradas].filter((k) => !chavesFiscal.includes(k));
 check('nenhuma tela órfã', foraDoMenu.length === 0, foraDoMenu.join(', ') || 'nenhuma');
 
 console.log('\n--- todos os arquivos novos são carregados pelo index.html ---');
-['shared.js', 'subs/eventos.js', 'subs/inutilizar.js', 'subs/logs.js', 'subs/regras.js', 'subs/nfe_espelho.js', 'subs/operacoes.js'].forEach((arq) => {
+['shared.js', 'subs/eventos.js', 'subs/inutilizar.js', 'subs/logs.js', 'subs/regras.js', 'subs/nfe_espelho.js', 'subs/operacoes.js', 'subs/arquivos.js'].forEach((arq) => {
   check(`index.html carrega fiscal/${arq}`, indexSrc.includes(`/modules/fiscal/${arq}`));
 });
 // shared.js define MavisFiscalDocs, que os subs recebem NA CARGA (IIFE). Se
