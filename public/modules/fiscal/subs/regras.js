@@ -72,7 +72,10 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
   // Campos que o formulário envia. Ficam numa lista só para o submit e o
   // "editar" não saírem de sincronia quando um campo novo aparecer.
   const CAMPOS_TEXTO = [
-    'tipoOperacao', 'ncm', 'origem', 'ufDestino', 'dentroDoEstado', 'destinatarioContribuinte',
+    // 'grupoTributarioId' entrou na fase CP. Campo do formulário que NÃO esteja
+    // nesta lista é lido como vazio e chega ao servidor apagado — o mesmo
+    // defeito que CHAVE_DA_COLUNA_REGRA conserta do outro lado.
+    'tipoOperacao', 'ncm', 'grupoTributarioId', 'origem', 'ufDestino', 'dentroDoEstado', 'destinatarioContribuinte',
     'cfop', 'csosn', 'cstIcms', 'modalidadeBcIcms', 'aliquotaIcms', 'reducaoBcIcms',
     'aliquotaInternaUfDestino', 'aliquotaFcpUfDestino',
     'cstIcmsSt', 'mvaSt', 'aliquotaIcmsSt', 'cstPis', 'aliquotaPis', 'cstCofins', 'aliquotaCofins',
@@ -110,15 +113,21 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     // campos de código caem em texto livre em vez de a tela não abrir.
     let tabelas = { disponivel: false };
     let regras = [];
+    // Fase CP — o critério de grupo. `.catch` próprio: empresa sem nenhum grupo
+    // cadastrado ainda tem de conseguir escrever regra por NCM, como antes.
+    let gruposTributarios = [];
     let erro = '';
     try {
-      [tabelas, regras] = await Promise.all([
+      [tabelas, regras, gruposTributarios] = await Promise.all([
         api('/api/fiscal/tabelas').catch(() => ({ disponivel: false })),
-        api(`/api/fiscal/regras?empresaId=${encodeURIComponent(empresaId)}`).then((r) => r.regras || [])
+        api(`/api/fiscal/regras?empresaId=${encodeURIComponent(empresaId)}`).then((r) => r.regras || []),
+        api(`/api/fiscal/grupos-tributarios?empresaId=${encodeURIComponent(empresaId)}&ativos=1`)
+          .then((r) => r.grupos || []).catch(() => [])
       ]);
     } catch (e) {
       erro = e.message || 'Não foi possível carregar as regras fiscais.';
     }
+    const nomeDoGrupo = (id) => (gruposTributarios.find((g) => g.id === id) || {}).nome || '';
 
     const form = state.fiscalRegraForm && state.fiscalRegraForm.empresaId === empresaId
       ? state.fiscalRegraForm
@@ -191,6 +200,13 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     function criterios(regra) {
       const partes = [];
       if (regra.ncm) partes.push(`NCM ${regra.ncm}`);
+      // Pelo NOME, nunca pelo id: "grupo 8f4106a7-…" não diz nada a ninguém. Se
+      // o grupo foi desativado ele sai da lista de ativos e o nome não resolve —
+      // e aí a marca diz isso, em vez de desaparecer e fazer a regra parecer
+      // coringa quando ela não é.
+      if (regra.grupoTributarioId) {
+        partes.push(`grupo ${nomeDoGrupo(regra.grupoTributarioId) || '(desativado)'}`);
+      }
       if (regra.origem !== null && regra.origem !== undefined) partes.push(`origem ${regra.origem}`);
       if (regra.ufDestino) partes.push(`UF ${regra.ufDestino}`);
       if (regra.dentroDoEstado === true) partes.push('dentro do estado');
@@ -290,9 +306,16 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                       ${TIPOS_OPERACAO.map((t) => `<option value="${t.value}" ${form.tipoOperacao === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}
                     </select>
                   </label>
+                  <label>Grupo tributário
+                    <select name="grupoTributarioId">
+                      <option value="">qualquer</option>
+                      ${gruposTributarios.map((g) => `<option value="${escapeHtml(g.id)}" ${form.grupoTributarioId === g.id ? 'selected' : ''}>${escapeHtml(g.nome)}</option>`).join('')}
+                    </select>
+                    <small class="muted">O tratamento GERAL. Uma regra por grupo cobre centenas de produtos.</small>
+                  </label>
                   <label>NCM
                     <input name="ncm" data-campo="ncm" value="${escapeHtml(form.ncm || '')}" placeholder="qualquer" />
-                    <small class="muted">8 dígitos, sem ponto.</small>
+                    <small class="muted">8 dígitos, sem ponto. É a EXCEÇÃO: ganha do grupo quando os dois casam.</small>
                   </label>
                   ${campoCodigo('origem', 'Origem da mercadoria', tabelas.origemMercadoria, form.origem === null || form.origem === undefined ? '' : String(form.origem))}
                   <label>UF de destino
@@ -492,6 +515,12 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
               </select>
             </label>
             <label>NCM do produto<input name="ncm" data-campo="ncm" value="${escapeHtml(simulacao?.entrada?.ncm || '')}" /></label>
+            <label>Grupo tributário
+              <select name="grupoTributarioId">
+                <option value="">—</option>
+                ${gruposTributarios.map((g) => `<option value="${escapeHtml(g.id)}" ${simulacao?.entrada?.grupoTributarioId === g.id ? 'selected' : ''}>${escapeHtml(g.nome)}</option>`).join('')}
+              </select>
+            </label>
             <label>Origem<input name="origem" type="number" min="0" max="8" value="${escapeHtml(simulacao?.entrada?.origem ?? '')}" /></label>
             <label>UF de destino
               <select name="ufDestino">
@@ -602,7 +631,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     content.querySelector('#fiscalSimularForm')?.addEventListener('submit', async (evento) => {
       evento.preventDefault();
       const dados = new FormData(evento.target);
-      const entrada = Object.fromEntries(['tipoOperacao', 'ncm', 'origem', 'ufDestino', 'dentroDoEstado', 'destinatarioContribuinte', 'data']
+      const entrada = Object.fromEntries(['tipoOperacao', 'ncm', 'grupoTributarioId', 'origem', 'ufDestino', 'dentroDoEstado', 'destinatarioContribuinte', 'data']
         .map((campo) => [campo, String(dados.get(campo) || '')]));
       const params = new URLSearchParams({ empresaId });
       Object.entries(entrada).forEach(([chave, valor]) => { if (valor !== '') params.set(chave, valor); });

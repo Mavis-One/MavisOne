@@ -191,6 +191,20 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
                 <input name="unidadeTributavel" value="${value('unidadeTributavel', current ? '' : 'UN')}" placeholder="igual à unidade" />
               </label>
             </div>
+            <!-- GRUPO TRIBUTÁRIO (fase CP). Ao lado do NCM porque são as duas
+                 classificações do produto, e a diferença entre elas é o que
+                 confunde: o NCM diz o que a mercadoria É (classificação
+                 aduaneira, igual para todo mundo), e o grupo diz como ESTA
+                 empresa a tributa. É o grupo que faz uma regra fiscal valer
+                 para centenas de produtos em vez de um NCM por vez. -->
+            <div class="row">
+              <label class="produto-campo-2">Grupo tributário
+                <select name="grupoTributarioId">${S.options(meta.grupoTributarios, current ? current.grupoTributarioId : '', { empty: 'Sem grupo' })}</select>
+                <small class="muted">${(meta.grupoTributarios || []).length
+    ? 'Como a empresa tributa este produto. A regra fiscal usa o grupo como critério.'
+    : 'Nenhum grupo cadastrado ainda — crie em Fiscal → Grupos Tributários.'}</small>
+              </label>
+            </div>
           `)}
 
           ${painel('estoque', `
@@ -331,6 +345,10 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       ncm: formData.get('ncm'),
       cest: formData.get('cest'),
       origem: formData.get('origem'),
+      // Vazio chega como '' e o servidor o converte em null (textoOuNulo em
+      // camposFiscaisDoProduto): "Sem grupo" precisa poder ser escolhido de
+      // volta, e não só ser o estado inicial.
+      grupoTributarioId: formData.get('grupoTributarioId'),
       unidadeTributavel: formData.get('unidadeTributavel'),
       minStock: Number(formData.get('minStock') || 0),
       maxStock: Number(formData.get('maxStock') || 0),

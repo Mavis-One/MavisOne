@@ -2726,6 +2726,9 @@ async function montarContextoFiscalDoPedido(body, data) {
       ncm: (produto && produto.ncm) || '',
       origem: (produto && produto.origem) || 0,
       cest: (produto && produto.cest) || '',
+      // Pelo mesmo motivo dos dois de cima, e com a mesma consequência se
+      // faltar: a aba Impostos escolheria uma regra e a emissão outra (fase CP).
+      grupoTributarioId: (produto && produto.grupoTributarioId) || '',
       quantidade: Number(item.quantity || 0),
       valorUnitario: Number(item.unitPrice || 0)
     };
@@ -4541,6 +4544,17 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/certificados') return method === 'GET' ? 'visualizar' : 'certificado';
   if (pathname.startsWith('/api/fiscal/certificados/')) return 'certificado';
 
+  // GRUPO TRIBUTÁRIO (fase CP). É parametrização fiscal, e por isso a MESMA
+  // permissão das regras: quem define como um produto é tributado está fazendo
+  // exatamente o que a tela de regras faz — só do outro lado da matriz. Dar a
+  // este cadastro uma permissão mais fraca abriria um caminho mais fácil para
+  // mudar a tributação de 5.000 produtos do que para mudar uma regra.
+  //
+  // Ler é 'visualizar': o formulário de produto precisa oferecer a lista.
+  if (pathname === '/api/fiscal/grupos-tributarios') return method === 'GET' ? 'visualizar' : 'regras';
+  if (pathname === '/api/fiscal/grupos-tributarios/classificar') return 'regras';
+  if (pathname.startsWith('/api/fiscal/grupos-tributarios/')) return 'regras';
+
   if (pathname === '/api/fiscal/regras') return method === 'GET' ? 'visualizar' : 'regras';
   // Simular é leitura: responde "qual regra se aplicaria", sem gravar nada.
   // Explícito antes do startsWith abaixo, senão cairia em 'regras' e quem só
@@ -5045,6 +5059,10 @@ async function prepararNfeParaTransmitir(body) {
         origem: produto.origem === null || produto.origem === undefined ? (bruto.origem || 0) : produto.origem,
         unidadeComercial: produto.unidadeComercial || bruto.unidadeComercial || 'UN',
         unidadeTributavel: produto.unidadeTributavel || bruto.unidadeTributavel || produto.unidadeComercial || bruto.unidadeComercial || 'UN',
+        // Fase CP — vem SEMPRE do cadastro, e nunca do corpo da requisição: o
+        // grupo tributário escolhe a regra fiscal, e aceitá-lo da tela seria
+        // deixar quem monta a nota escolher a própria tributação.
+        grupoTributarioId: produto.grupoTributarioId || '',
         // Escritural vem do CADASTRO, nunca do que a tela mandou: senão
         // bastaria marcar a flag no corpo da requisição para um produto real
         // sair de uma nota sem baixar estoque.
@@ -5068,6 +5086,7 @@ async function prepararNfeParaTransmitir(body) {
     const regra = await fiscalDb.resolverRegraFiscal({
       empresaId: empresa.id,
       ncm: item.ncm,
+      grupoTributarioId: item.grupoTributarioId || '',
       origem: item.origem || 0,
       tipoOperacao,
       ufDestino: destinatario.uf,
@@ -10022,6 +10041,7 @@ async function tratarRequisicao(req, res) {
           empresaId,
           tipoOperacao,
           ncm: q.get('ncm') || undefined,
+          grupoTributarioId: q.get('grupoTributarioId') || undefined,
           origem: q.get('origem') === null || q.get('origem') === '' ? undefined : Number(q.get('origem')),
           ufDestino: q.get('ufDestino') || undefined,
           dentroDoEstado: booleano('dentroDoEstado'),
@@ -10029,6 +10049,66 @@ async function tratarRequisicao(req, res) {
           data: q.get('data') || undefined
         });
         return sendJson(res, { encontrou: Boolean(regra), regra: regra || null });
+      }
+
+      // -----------------------------------------------------------------------
+      // GRUPO TRIBUTÁRIO (fase CP) — o outro eixo da matriz fiscal.
+      //
+      // A regra fiscal casava por NCM, que é classificação ADUANEIRA: diz o que
+      // a mercadoria é, não como a empresa a tributa. São 759 NCMs neste banco,
+      // e havia ZERO regras cadastradas — a parametrização, do jeito que
+      // estava, não cabia em ninguém. O porquê inteiro está na migração
+      // fase-cp-grupo-tributario.sql.
+      // -----------------------------------------------------------------------
+      if (pathname === '/api/fiscal/grupos-tributarios' && req.method === 'GET') {
+        const empresaId = url.searchParams.get('empresaId') || undefined;
+        if (!empresaId) return sendJson(res, { error: 'Informe a empresa.' }, 400);
+        // `uso` traz quantos produtos e quantas regras dependem de cada grupo:
+        // é o que faz "desativar" ser decisão informada em vez de chute.
+        const grupos = url.searchParams.get('comUso') === '1'
+          ? await fiscalDb.getUsoDosGruposTributarios(empresaId)
+          : await fiscalDb.getGruposTributarios(empresaId, { somenteAtivos: url.searchParams.get('ativos') === '1' });
+        return sendJson(res, { grupos });
+      }
+
+      if (pathname === '/api/fiscal/grupos-tributarios' && req.method === 'POST') {
+        const body = await readBody(req);
+        const nome = String(body.nome || '').trim();
+        if (!body.empresaId) return sendJson(res, { error: 'Informe a empresa.' }, 400);
+        if (nome.length < 2) return sendJson(res, { error: 'O grupo precisa de um nome com pelo menos 2 letras.' }, 400);
+        try {
+          const grupo = await fiscalDb.createGrupoTributario({ ...body, nome });
+          return sendJson(res, { success: true, grupo });
+        } catch (erro) {
+          // O índice único é por (empresa, lower(nome)): dois grupos com o mesmo
+          // nome em caixa diferente fariam metade do catálogo cair num e metade
+          // no outro. A mensagem diz isso, em vez de devolver o erro do Postgres.
+          if (/idx_grupo_tributario_nome|duplicate key/i.test(erro.message || '')) {
+            return sendJson(res, { error: `Já existe um grupo chamado "${nome}" nesta empresa.` }, 400);
+          }
+          throw erro;
+        }
+      }
+
+      // CLASSIFICAR EM LOTE. Explícito antes do /:id abaixo, senão
+      // "classificar" seria lido como id de grupo.
+      if (pathname === '/api/fiscal/grupos-tributarios/classificar' && req.method === 'POST') {
+        const body = await readBody(req);
+        const ids = Array.isArray(body.produtoIds) ? body.produtoIds : [];
+        if (!ids.length) return sendJson(res, { error: 'Nenhum produto selecionado.' }, 400);
+        const quantos = await fiscalDb.classificarProdutos(ids, body.grupoTributarioId || null);
+        return sendJson(res, { success: true, produtos: quantos });
+      }
+
+      if (pathname.startsWith('/api/fiscal/grupos-tributarios/') && req.method === 'PUT') {
+        const id = pathname.split('/').pop();
+        const body = await readBody(req);
+        if (body.nome !== undefined && String(body.nome).trim().length < 2) {
+          return sendJson(res, { error: 'O grupo precisa de um nome com pelo menos 2 letras.' }, 400);
+        }
+        const grupo = await fiscalDb.updateGrupoTributario(id, body);
+        if (!grupo) return sendJson(res, { error: 'Grupo não encontrado.' }, 404);
+        return sendJson(res, { success: true, grupo });
       }
 
       if (pathname === '/api/fiscal/regras' && req.method === 'GET') {
@@ -11830,6 +11910,22 @@ async function tratarRequisicao(req, res) {
         movementCategories: data.movementCategories,
         priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type, markupPercent: t.markupPercent })),
         catalogs: (data.productCatalogs || []).map((c) => ({ id: c.id, name: c.name })),
+        // OS GRUPOS TRIBUTÁRIOS ATIVOS, para o cadastro de produto (fase CP).
+        //
+        // Vêm por AQUI e não por /api/fiscal/grupos-tributarios de propósito: o
+        // cadastro de produto é do ESTOQUE, e quem o usa normalmente não tem
+        // permissão fiscal nenhuma (é o mesmo motivo pelo qual a lista de
+        // origens da mercadoria está escrita no próprio new_product.js). Pedir
+        // a rota fiscal faria o campo aparecer vazio, ou não aparecer, para
+        // exatamente quem cadastra produto.
+        //
+        // São id e nome, de grupos ATIVOS: não é dado sensível, é o rótulo que
+        // o campo precisa mostrar. `.catch` porque a tabela pode não existir
+        // ainda — o cadastro de produto não pode parar por causa de uma
+        // migração não rodada.
+        grupoTributarios: await fiscalDb.getGruposTributarios(null, { somenteAtivos: true })
+          .then((gs) => gs.map((g) => ({ id: g.id, name: g.nome })))
+          .catch(() => []),
         products: products.map((p) => ({ id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice, salePrice: p.salePrice, stockQuantity: p.stockQuantity }))
       });
     } catch (error) {
@@ -11956,18 +12052,28 @@ async function tratarRequisicao(req, res) {
       const situation = url.searchParams.get('situation') || '';
       const depositId = url.searchParams.get('depositId') || '';
 
+      // Fase CP: 'sem' traz os NÃO classificados, um id traz os daquele grupo.
+      const grupoTributario = url.searchParams.get('grupoTributario') || '';
+
       let list = products.map((product) => stockCore.serializeProduct(product, data, reservas));
       if (search) {
-        list = list.filter((p) => `${p.name} ${p.sku} ${p.ean}`.toLowerCase().includes(search));
+        // O NCM entra na busca desde a fase CP: a classificação em lote procura
+        // por NCM ("todos os 8471..."), que é o critério mais natural de quem
+        // está montando grupo tributário. Sem ele a busca parecia quebrada.
+        list = list.filter((p) => `${p.name} ${p.sku} ${p.ean} ${p.ncm}`.toLowerCase().includes(search));
       }
       if (categoryId) list = list.filter((p) => p.categoryId === categoryId);
       if (status) list = list.filter((p) => p.status === status);
       if (situation) list = list.filter((p) => p.situation === situation);
+      if (grupoTributario === 'sem') list = list.filter((p) => !p.grupoTributarioId);
+      else if (grupoTributario) list = list.filter((p) => p.grupoTributarioId === grupoTributario);
       if (depositId) {
         list = list.filter((p) => (p.balances.find((b) => b.depositId === depositId) || {}).quantity > 0);
       }
       list.sort((a, b) => a.name.localeCompare(b.name));
-      return sendJson(res, { products: list });
+      // `total` vem junto porque quem só quer CONTAR (o cartão "produtos sem
+      // grupo") não deveria ter de somar a lista inteira no navegador.
+      return sendJson(res, { products: list, total: list.length });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar produtos', 500);
     }
@@ -12055,7 +12161,10 @@ async function tratarRequisicao(req, res) {
         // um campo só ("Unidade"), que serve de padrão para as duas.
         unidadeComercial: String(body.unit ?? 'UN').trim() || 'UN',
         unidadeTributavel: String(body.unidadeTributavel || body.unit || 'UN').trim() || 'UN',
-        numeroFci: String(body.numeroFci ?? '').trim()
+        numeroFci: String(body.numeroFci ?? '').trim(),
+        // Fase CP. Vazio vira null na coluna uuid (camposFiscaisDoProduto), e é
+        // assim que "Sem grupo" se escolhe de volta depois de classificado.
+        grupoTributarioId: String(body.grupoTributarioId ?? '').trim()
       });
 
       data.productMeta[product.id] = stockCore.buildProductMeta(body, stockCore.productMeta(data, product.id));

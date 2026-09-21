@@ -131,7 +131,7 @@ window.MavisStock = window.MavisStock || {};
       return await api('/api/stock/meta');
     } catch (error) {
       if (showToast) showToast('Não foi possível carregar os cadastros de apoio do estoque.', 'warning');
-      return { deposits: [], classes: [], productCategories: [], movementCategories: [], priceTables: [], catalogs: [], products: [] };
+      return { deposits: [], classes: [], productCategories: [], movementCategories: [], priceTables: [], catalogs: [], grupoTributarios: [], products: [] };
     }
   };
 

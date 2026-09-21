@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-21 12:03 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-21 17:11 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -77,7 +77,7 @@ Financeiro  (finance)  —  8 tela(s) no menu
   [ok]  Extrato Open Finance               Extrato bancário puxado via Open Finance.
   [ok]  Bancos Conectados                  Bancos ligados e situação de cada conexão.
 
-Fiscal  (fiscal)  —  14 tela(s) no menu
+Fiscal  (fiscal)  —  15 tela(s) no menu
 ---------------------------------------
   [ok]  Painel Fiscal                      Notas transmitidas, autorizadas e o que a SEFAZ recusou.
   [ok]  NF-e Emitidas                      Notas emitidas, com DANFE, XML e cancelamento.
@@ -92,6 +92,7 @@ Fiscal  (fiscal)  —  14 tela(s) no menu
   [ok]  Tabelas Fiscais                    Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.
   [ok]  Operações Fiscais                  O que cada operação faz: finalidade, estoque, financeiro e o que ela exige.
   [ok]  Arquivos Fiscais                   O XML de cada nota do período, em zip, para a contabilidade — e quais faltam.
+  [ok]  Grupos Tributários                 Como a empresa tributa cada produto — o critério que a regra fiscal usa no lugar de uma regra por NCM.
   [ok]  Regras Fiscais                     Define qual CFOP e qual tributação se aplicam a cada operação.
 
 Relatórios  (reports)  —  4 tela(s) no menu
@@ -198,7 +199,7 @@ Cadastros  (cadastros)  —  21 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 134 telas no menu.
+TOTAL: 14 módulos, 135 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -378,7 +379,7 @@ Arquivos de acesso (lib/db)
   lib/db/financeiro.js
       tabelas: bank_accounts, bank_transactions, cost_centers, financial_categories, financial_entries, financial_payments, nfe_items, nfes
   lib/db/fiscal.js
-      tabelas: certificado_digital, cfop, empresa, estabelecimento, nfe, nfe_arquivos, nfe_eventos, regra_fiscal
+      tabelas: certificado_digital, cfop, empresa, estabelecimento, grupo_tributario, nfe, nfe_arquivos, nfe_eventos, regra_fiscal
   lib/db/integracoes.js
       AS INTEGRAÇÕES E A CHAVE MESTRA (fase CF).
       tabelas: empresas_integracoes, integracoes
@@ -400,7 +401,7 @@ Arquivos de acesso (lib/db)
   lib/db/vendas-compras.js
       tabelas: import_logs, orders, purchases, quotes, sales
 
-Tabelas usadas (79)
+Tabelas usadas (80)
 -------------------
   access_logs             account_balances        audit_logs
   bank_accounts           bank_cards              bank_transactions
@@ -412,26 +413,26 @@ Tabelas usadas (79)
   equipments              estabelecimento         financial_categories
   financial_entries       financial_institutions  financial_payments
   fleet_maintenances      fleet_refuels           fleet_vehicles
-  hr_departments          hr_employee_categories  hr_employee_types
-  hr_employees            hr_leaves               hr_positions
-  hr_time_entries         hr_work_schedules       import_logs
-  integracoes             nfe                     nfe_arquivos
-  nfe_distribuicao        nfe_entrada             nfe_entrada_item
-  nfe_eventos             nfe_items               nfes
-  open_finance_audit_logs open_finance_connectionsopen_finance_webhook_events
-  orders                  pcp_bom                 pcp_entries
-  pcp_orders              pcp_quality_checks      pcp_sectors
-  pcp_statuses            pedido_anexo            people
-  permissions             product_class_assignmentsproduct_class_value_assignments
-  product_class_values    product_classes         products
-  purchase_orders         purchases               quotes
-  regra_fiscal            role_permissions        roles
-  sales                   sales_categories        sales_origins
-  settings                user_permissions        user_roles
-  users
+  grupo_tributario        hr_departments          hr_employee_categories
+  hr_employee_types       hr_employees            hr_leaves
+  hr_positions            hr_time_entries         hr_work_schedules
+  import_logs             integracoes             nfe
+  nfe_arquivos            nfe_distribuicao        nfe_entrada
+  nfe_entrada_item        nfe_eventos             nfe_items
+  nfes                    open_finance_audit_logs open_finance_connections
+  open_finance_webhook_eventsorders                  pcp_bom
+  pcp_entries             pcp_orders              pcp_quality_checks
+  pcp_sectors             pcp_statuses            pedido_anexo
+  people                  permissions             product_class_assignments
+  product_class_value_assignmentsproduct_class_values    product_classes
+  products                purchase_orders         purchases
+  quotes                  regra_fiscal            role_permissions
+  roles                   sales                   sales_categories
+  sales_origins           settings                user_permissions
+  user_roles              users
 
 ==============================================================================
-4. ROTAS DA API (118 encontradas no server.js)
+4. ROTAS DA API (121 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -488,6 +489,9 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/fiscal/estabelecimentos                         GET POST
   /api/fiscal/estabelecimentos/…                       
   /api/fiscal/eventos                                  GET
+  /api/fiscal/grupos-tributarios                       GET POST
+  /api/fiscal/grupos-tributarios/…                     
+  /api/fiscal/grupos-tributarios/classificar           POST
   /api/fiscal/inutilizar                               POST
   /api/fiscal/nfe                                      GET
   /api/fiscal/nfe/…                                    
@@ -558,7 +562,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-56 arquivo(s) em banco/migrations, em ordem de fase:
+57 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -597,6 +601,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-cf-chave-mestra-focus.sql
   fase-cg-numeracao-de-venda-a-partir-de-16000.sql
   fase-cl-sessao-no-banco.sql
+  fase-cp-grupo-tributario.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -620,7 +625,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-117 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+119 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -665,9 +670,11 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [avulso]  test-faturar-exige-nota.js         FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
   [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
+  [npm test] test-fontes-sem-byte-de-controle.js NENHUM FONTE CARREGA BYTE DE CONTROLE CRU.
   [npm test] test-garantia-equipamento.js       A GARANTIA DO EQUIPAMENTO É CONTADA, NÃO DIGITADA (fase BB).
   [avulso]  test-gate-openfinance.js           O portão central alcança mesmo o Open Finance? A regra de permissão dizia '/api/openfinance', mas a rota é '/a
   [npm test] test-grupo-card-da-nfe.js          O GRUPO `card` DA NF-e (fase BW) — INTEIRO OU NENHUM.
+  [npm test] test-grupo-tributario.js           GRUPO TRIBUTÁRIO (fase CP) — sem banco e sem servidor.
   [npm test] test-guardas-de-exclusao.js        AS GUARDAS DE EXCLUSÃO PERGUNTAM À FONTE CERTA (fase BO).
   [npm test] test-ibs-cbs.js                    IBS e CBS — Reforma Tributária (LC 214/2025).
   [npm test] test-importacao-de-pedidos.js      O QUE A IMPORTAÇÃO DO HISTÓRICO DE VENDAS DEIXOU PARA TRÁS (fase CI).
@@ -744,7 +751,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-134 arquivos JS carregados por public/index.html, nesta ordem.
+135 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -829,6 +836,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/fiscal/subs/inutilizar.js
   /modules/fiscal/subs/logs.js
   /modules/fiscal/subs/pre_check.js
+  /modules/fiscal/subs/grupos_tributarios.js
   /modules/fiscal/subs/regras.js
   /modules/fiscal/subs/nfe_espelho.js
   /modules/reports/index.js

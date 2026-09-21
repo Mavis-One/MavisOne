@@ -1743,6 +1743,10 @@ const moduleSubItems = {
     // Fica depois de Logs e antes das telas de referência: é sobre os DOCUMENTOS
     // do período, como Eventos e Logs, e não sobre configuração.
     { key: 'arquivos', label: 'Arquivos Fiscais', desc: 'O XML de cada nota do período, em zip, para a contabilidade — e quais faltam.' },
+    // Imediatamente antes de Regras Fiscais, e a ordem é a da tarefa: primeiro
+    // se decide COMO cada produto é tributado (o grupo), depois se escreve a
+    // regra que atende cada grupo.
+    { key: 'grupos_tributarios', label: 'Grupos Tributários', desc: 'Como a empresa tributa cada produto — o critério que a regra fiscal usa no lugar de uma regra por NCM.' },
     { key: 'regras', label: 'Regras Fiscais', desc: 'Define qual CFOP e qual tributação se aplicam a cada operação.' }
   ],
 
