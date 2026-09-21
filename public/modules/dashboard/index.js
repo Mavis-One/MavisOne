@@ -278,11 +278,19 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
         <!-- Cor por classe, não por style inline: inline vence o CSS, e a
              legenda ficava presa no azul/roxo do tema claro enquanto a linha
              do gráfico acendia no escuro. -->
+        <!-- TRÊS LINHAS, e a ordem da legenda é a ordem da importância
+             (fase CO). "Faturado" primeiro porque é a única que é dinheiro:
+             a linha "Pedidos" inclui o que ainda não virou receita, e antes as
+             duas estavam somadas numa só — o gráfico apontava julho como o
+             melhor mês (R$ 4,39 mi) quando o faturamento de julho foi R$ 1,46
+             mi, e o melhor mês de verdade foi março. -->
+        <span><i class="finance-legend-dot finance-legend-receita"></i> Faturado</span>
         <span><i class="finance-legend-dot finance-legend-pedidos"></i> Pedidos</span>
         <span><i class="finance-legend-dot finance-legend-orcamentos"></i> Orçamentos</span>
       </div>
       <div class="finance-chart-wrap">
         ${financeBuildChartSvg(charts.salesChartSeries || [], escapeHtml, [
+          { key: 'faturado', cssClass: 'finance-chart-line-receita' },
           { key: 'pedidos', cssClass: 'finance-chart-line-blue' },
           { key: 'orcamentos', cssClass: 'finance-chart-line-purple' }
         ])}

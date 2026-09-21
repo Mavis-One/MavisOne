@@ -3887,16 +3887,58 @@ function buildFinanceChartSeries(entries, granularity) {
 
 // Fluxo de Vendas do Dashboard Geral: pedidos x orçamentos por período (mesmo
 // recorte de tempo do gráfico do Financeiro, mesma ideia de "linhas por período").
+/**
+ * A SÉRIE DO FLUXO DE VENDAS — e o que ela CONTA (fase CO).
+ *
+ * O QUE ESTAVA ERRADO, e por que dava para desconfiar olhando o gráfico:
+ * a linha "Pedidos" somava `totalAmount` de TODO pedido do mês, qualquer
+ * status — cancelado incluído, transferência incluída, remessa incluída. Quem
+ * lê "Fluxo de Vendas" lê faturamento, e não era.
+ *
+ * Medido em 21/09/2026 nos dados reais, por mês:
+ *
+ *            no gráfico     só faturado
+ *   03/2026   2.490.621       2.221.582   <- o MAIOR mês de faturamento
+ *   04/2026   3.828.927       1.899.325
+ *   07/2026   4.392.338       1.459.604   <- o pico do gráfico, 3x o real
+ *
+ * O gráfico apontava abril e julho; o faturamento de verdade teve pico em
+ * março. A diferença tem dois nomes: R$ 3,0 milhões em pedidos CANCELADOS e
+ * R$ 12,9 milhões em `pedido-aprovado-sem-faturamento` — transferência entre
+ * filiais, remessa, bonificação. Mercadoria que saiu e dinheiro que não entrou.
+ *
+ * AGORA SÃO TRÊS SÉRIES, porque são três perguntas diferentes:
+ *
+ *   faturado    o que virou receita (status com geraFinanceiro)
+ *   pedidos     o que foi pedido, fora os cancelados
+ *   orcamentos  o que foi orçado
+ *
+ * A distância entre `pedidos` e `faturado` passa a ser informação — é quanto do
+ * que entrou não virou dinheiro. Antes as duas estavam somadas numa linha só.
+ *
+ * `statusQueFaturam` vem do CATÁLOGO (salesStatus), e não de uma lista escrita
+ * aqui: status novo que gere financeiro entra sozinho.
+ */
 function buildSalesChartSeries(data, granularity) {
   const buckets = buildPeriodBuckets(granularity);
   const orders = data.orders || [];
   const quotes = data.quotes || [];
   const amountOf = (record) => (typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || 0));
+  const soma = (lista) => sumBy(lista.map((r) => ({ v: amountOf(r) })), 'v');
 
   return buckets.map((bucket) => {
-    const pedidos = sumBy(orders.filter((o) => o.date >= bucket.from && o.date <= bucket.to).map((o) => ({ v: amountOf(o) })), 'v');
-    const orcamentos = sumBy(quotes.filter((q) => q.date >= bucket.from && q.date <= bucket.to).map((q) => ({ v: amountOf(q) })), 'v');
-    return { label: bucket.label, from: bucket.from, to: bucket.to, pedidos, orcamentos };
+    const noPeriodo = (r) => r.date >= bucket.from && r.date <= bucket.to;
+    const doMes = orders.filter(noPeriodo);
+    return {
+      label: bucket.label,
+      from: bucket.from,
+      to: bucket.to,
+      // Cancelado não é venda: ele existiu, foi desfeito, e somá-lo ao fluxo
+      // mostra um mês melhor do que ele foi.
+      pedidos: soma(doMes.filter((o) => !salesStatus.ehCancelado(o.status))),
+      faturado: soma(doMes.filter((o) => salesStatus.geraFinanceiro(o.status))),
+      orcamentos: soma(quotes.filter(noPeriodo))
+    };
   });
 }
 
@@ -6936,6 +6978,10 @@ async function tratarRequisicao(req, res) {
       depositos: data.deposits || [],
       intervalo,
       serieVendas: canSales ? buildSalesChartSeries(data, 'month') : [],
+      // Quais status significam receita. Vem do CATÁLOGO, como na rota do
+      // painel de pendências: sem esta lista o cartão "Faturamento" volta a
+      // somar pedido cancelado e transferência (fase CO).
+      statusQueFaturam: salesStatus.CATALOGO.filter((s) => s.geraFinanceiro).map((s) => s.value),
       permissoes: { sales: canSales, finance: canFinance, stock: canStock, purchases: canPurchases },
       hoje: toDateStr(getTodayLocal())
     });
@@ -7037,8 +7083,15 @@ async function tratarRequisicao(req, res) {
       // usa. Ler uma colecao que a rota nao sincroniza e' o defeito que o
       // test-sync-obrigatorio vigia — e ele pegou esta linha na primeira
       // versao, quando eu tirei o syncCadastroData e deixei a chamada.
+      // `temMinimo` viaja junto do `situation` desde a fase CO: sem ele o painel
+      // não consegue separar "produto zerou" de "o razão nunca foi carregado", e
+      // acusava os 5.476 produtos deste banco como pendência de reposição. O
+      // porquê está em lib/atencao.js/estoqueAbaixoDoMinimo.
       const produtos = permissoes.stock
-        ? (await db.getProducts()).map((p) => ({ situation: stockCore.productSituation(data, p) }))
+        ? (await db.getProducts()).map((p) => ({
+          situation: stockCore.productSituation(data, p),
+          temMinimo: Number(stockCore.productMeta(data, p.id).minStock || 0) > 0
+        }))
         : [];
 
       // Quais status significam "a venda se concretizou". Vem do catálogo, não

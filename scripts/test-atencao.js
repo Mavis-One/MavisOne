@@ -107,18 +107,97 @@ check('e sugere o que fazer', /Consultar status/.test(presa.detalhe), presa.deta
 
 console.log('\n--- pedidos faturados sem nota ---');
 // Venda concretizada sem documento fiscal é o alerta mais caro da lista.
+//
+// `code >= 16000` em toda fixture daqui para baixo: é o piso da fase CG, que
+// separa o que nasceu neste sistema do histórico importado do ViperERP. Desde a
+// fase CO o painel só cobra o que nasceu aqui — ver o bloco de nasceuAqui.
 const semNota = montar({ pedidos: [
-  { status: 'pedido-faturado', nfeId: '', date: '2026-08-05', totalAmount: 3000 },
-  { status: 'pedido-faturado', nfeId: 'nfe-1', date: '2026-08-05', totalAmount: 1000 },
-  { status: 'orcamento', nfeId: '', date: '2026-08-05', totalAmount: 500 }
+  { code: 16001, status: 'pedido-faturado', nfeId: '', date: '2026-08-05', totalAmount: 3000 },
+  { code: 16002, status: 'pedido-faturado', nfeId: 'nfe-1', date: '2026-08-05', totalAmount: 1000 },
+  { code: 16003, status: 'orcamento', nfeId: '', date: '2026-08-05', totalAmount: 500 }
 ] });
 const pedidos = semNota.itens.find((i) => i.id === 'pedidos-sem-nota');
 check('só o faturado sem nota conta', pedidos && pedidos.contagem === 1, String(pedidos?.contagem));
 check('severidade alta', pedidos.severidade === 'alta');
 check('soma o valor sem documento', /3\.000,00/.test(pedidos.detalhe), pedidos.detalhe);
 // Faturado hoje ainda não é problema — a nota sai no mesmo dia.
-const hojeFaturado = montar({ pedidos: [{ status: 'pedido-faturado', nfeId: '', date: HOJE, totalAmount: 100 }] });
+const hojeFaturado = montar({ pedidos: [{ code: 16004, status: 'pedido-faturado', nfeId: '', date: HOJE, totalAmount: 100 }] });
 check('faturado hoje tem tolerância', hojeFaturado.itens.length === 0);
+
+console.log('\n--- HISTÓRICO IMPORTADO NÃO É PENDÊNCIA (fase CO) ---');
+// O QUE O PAINEL MOSTRAVA, medido em 21/09/2026 nos dados reais: 13.325
+// "pedidos faturados sem NF-e", R$ 24.809.929,55 — e 13.320 deles eram a
+// importação do ViperERP, cuja nota saiu no sistema ANTIGO. Nenhum pedido havia
+// nascido aqui ainda (a sequence estava em 15.999).
+//
+// Painel de pendência que nunca zera deixa de ser lido, e aí a pendência de
+// verdade se perde no meio dos treze mil. O histórico continua nas listas de
+// Vendas, Financeiro e Estoque — só deixou de ser cobrado como tarefa.
+const soHistorico = montar({ pedidos: [
+  { code: 14086, status: 'pedido-faturado', nfeId: '', date: '2026-03-10', totalAmount: 5000 },
+  { code: null, status: 'pedido-faturado', nfeId: '', date: '2026-03-11', totalAmount: 7000 }
+] });
+check('pedido importado não vira alerta', !soHistorico.itens.some((i) => i.id === 'pedidos-sem-nota'),
+  JSON.stringify(soHistorico.itens.map((i) => i.id)));
+// Sem `code` conta como importado: documento que nasce aqui recebe número da
+// sequence, então ausência de número é marca de linha que entrou por fora.
+check('  e sem code também não', soHistorico.total === 0, String(soHistorico.total));
+// O que importa é não jogar fora o que é real junto com o histórico.
+const misturado = montar({ pedidos: [
+  { code: 14090, status: 'pedido-faturado', nfeId: '', date: '2026-03-10', totalAmount: 5000 },
+  { code: 16010, status: 'pedido-faturado', nfeId: '', date: '2026-08-05', totalAmount: 2500 }
+] });
+const soOMeu = misturado.itens.find((i) => i.id === 'pedidos-sem-nota');
+check('no meio do histórico, o que nasceu aqui continua cobrado', soOMeu && soOMeu.contagem === 1, String(soOMeu?.contagem));
+check('  e o valor é só o dele', /2\.500,00/.test(soOMeu.detalhe), soOMeu.detalhe);
+
+// TÍTULO DE PEDIDO IMPORTADO TAMBÉM É HISTÓRICO: era o que punha "a mais antiga
+// há 320 dias" no painel. `referenceId` é o que amarra a parcela ao pedido.
+const titulos = montar({
+  pedidos: [
+    { code: 14099, status: 'pedido-faturado', nfeId: 'x', date: '2025-11-01', totalAmount: 500 },
+    { code: 16020, status: 'pedido-faturado', nfeId: 'y', date: '2026-09-01', totalAmount: 700 }
+  ],
+  // Vencimentos ANTES de HOJE (11/08/2026), senão caem em "a vencer" e este
+  // check mediria outra coisa.
+  entradas: [
+    { id: 't1', referenceId: '', status: 'pending', dueDate: '2025-11-01', amount: 500 },
+    { id: 't2', referenceId: '', status: 'pending', dueDate: '2026-07-01', amount: 700 },
+    { id: 't3', referenceId: '', status: 'pending', dueDate: '2026-07-02', amount: 900 }
+  ]
+});
+// Os pedidos das fixtures não têm id, então nenhum título casa por referência:
+// os três contam. É o caso do título digitado à mão (aluguel, imposto), que
+// nasceu aqui e tem de continuar cobrando — o corte do histórico não pode
+// silenciar despesa de verdade só porque ela é antiga.
+const vencidasSemRef = titulos.itens.find((i) => i.id === 'contas-vencidas');
+check('título sem referência de pedido continua cobrado', vencidasSemRef && vencidasSemRef.contagem === 3, String(vencidasSemRef?.contagem));
+const comRef = montar({
+  pedidos: [{ id: 'ord-velho', code: 14099, status: 'pedido-faturado', nfeId: 'x', date: '2025-11-01', totalAmount: 500 }],
+  entradas: [{ id: 't1', referenceId: 'ord-velho', status: 'pending', dueDate: '2025-11-01', amount: 500 }]
+});
+check('  mas título de pedido importado sai da conta', !comRef.itens.some((i) => i.id === 'contas-vencidas'),
+  JSON.stringify(comRef.itens.map((i) => i.id)));
+
+console.log('\n--- "zerado" só é pendência com mínimo declarado (fase CO) ---');
+// Os 5.475 produtos deste banco estão em zero porque o razão nunca foi
+// carregado, e nenhum tem mínimo cadastrado: o painel acusava 5.476 reposições
+// que são ausência de dado, não falta de mercadoria.
+const semMinimo = montar({ produtos: [
+  { situation: 'zerado', temMinimo: false },
+  { situation: 'zerado', temMinimo: false }
+] });
+check('zerado sem mínimo não alerta', !semMinimo.itens.some((i) => i.id === 'estoque-minimo'),
+  JSON.stringify(semMinimo.itens.map((i) => i.id)));
+const estoqueReal = montar({ produtos: [
+  { situation: 'zerado', temMinimo: true },
+  { situation: 'abaixo-minimo', temMinimo: true },
+  { situation: 'zerado', temMinimo: false }
+] });
+const alertaEstoque = estoqueReal.itens.find((i) => i.id === 'estoque-minimo');
+check('com mínimo declarado, alerta', alertaEstoque && alertaEstoque.contagem === 2, String(alertaEstoque?.contagem));
+// 'abaixo-minimo' só existe quando há mínimo > 0, então entra sempre.
+check('  e conta o zerado entre eles', /1 com saldo zerado/.test(alertaEstoque.detalhe), alertaEstoque.detalhe);
 // A lista vem do CATÁLOGO de status, não escrita à mão: um status novo que
 // gere financeiro entra sozinho no alerta.
 check('o servidor lê os status do catálogo',
@@ -126,14 +205,16 @@ check('o servidor lê os status do catálogo',
 
 console.log('\n--- estoque ---');
 const estoque = montar({ produtos: [
-  { situation: 'abaixo-minimo' }, { situation: 'zerado' },
+  // `temMinimo` desde a fase CO: 'zerado' só é pendência quando alguém
+  // declarou que o produto devia ter estoque. Ver o bloco logo acima.
+  { situation: 'abaixo-minimo', temMinimo: true }, { situation: 'zerado', temMinimo: true },
   { situation: 'normal' }, { situation: 'acima-maximo' }
 ] });
 const min = estoque.itens.find((i) => i.id === 'estoque-minimo');
 check('conta abaixo do mínimo e zerado', min && min.contagem === 2, String(min?.contagem));
 // Saldo zerado é pior do que pouco saldo: sobe a severidade.
 check('zerado eleva para média', min.severidade === 'media');
-const soAbaixo = montar({ produtos: [{ situation: 'abaixo-minimo' }] });
+const soAbaixo = montar({ produtos: [{ situation: 'abaixo-minimo', temMinimo: true }] });
 check('sem zerado, fica baixa', soAbaixo.itens[0].severidade === 'baixa');
 
 console.log('\n--- permissão decide o que aparece ---');
@@ -144,8 +225,8 @@ const soEstoque = A.montarAtencao({
   permissoes: { stock: true },
   entradas: [{ status: 'pending', dueDate: '2026-01-01', amount: 999 }],
   notasFiscais: [{ status: 'ERRO' }],
-  pedidos: [{ status: 'pedido-faturado', nfeId: '', date: '2026-01-01' }],
-  produtos: [{ situation: 'zerado' }],
+  pedidos: [{ code: 16030, status: 'pedido-faturado', nfeId: '', date: '2026-01-01' }],
+  produtos: [{ situation: 'zerado', temMinimo: true }],
   statusQueFaturam: ['pedido-faturado']
 });
 check('só o módulo permitido aparece', soEstoque.itens.length === 1, soEstoque.itens.map((i) => i.modulo).join(','));
@@ -155,7 +236,7 @@ console.log('\n--- ordenação: o mais grave primeiro ---');
 // Se tudo fosse vermelho, a severidade deixaria de significar algo.
 const misto = montar({
   entradas: [{ status: 'pending', dueDate: '2026-07-01', amount: 100 }, { status: 'pending', dueDate: '2026-08-13', amount: 50 }],
-  produtos: [{ situation: 'abaixo-minimo' }],
+  produtos: [{ situation: 'abaixo-minimo', temMinimo: true }],
   notasFiscais: [{ status: 'ERRO' }, { status: 'ERRO' }, { status: 'ERRO' }]
 });
 const severidades = misto.itens.map((i) => i.severidade);

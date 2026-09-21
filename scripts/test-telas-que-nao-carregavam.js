@@ -115,9 +115,14 @@ const blocoParalelo = (/await Promise\.all\(\[[\s\S]*?\]\);/.exec(rota) || [''])
 check('  e os que sobraram continuam correndo juntos',
   /syncSalesData(ParaAgregado)?\(data\)/.test(blocoParalelo) && /sincronizarRazao\(data\)/.test(blocoParalelo),
   blocoParalelo ? `${blocoParalelo.length} caracteres no bloco` : 'bloco não encontrado');
-// estoqueAbaixoDoMinimo lê exatamente um campo: `situation`.
-check('o produto entra só com a situação',
-  /\{ situation: stockCore\.productSituation\(data, p\) \}/.test(rota));
+// estoqueAbaixoDoMinimo lê DOIS campos: `situation` e, desde a fase CO,
+// `temMinimo` — sem o segundo o painel não separa "produto zerou" de "o razão
+// nunca foi carregado", e acusava os 5.476 produtos deste banco como pendência
+// de reposição. Continua sendo um objeto de dois campos, e não o produto
+// serializado inteiro, que é o que este check protege.
+check('o produto entra só com situação e mínimo',
+  /situation: stockCore\.productSituation\(data, p\)/.test(rota)
+  && /temMinimo: Number\(stockCore\.productMeta\(data, p\.id\)\.minStock \|\| 0\) > 0/.test(rota));
 check('  e não serializado inteiro', !/serializeProduct/.test(rota));
 // productBalances monta a quebra por depósito e por isso lê `data.deposits` —
 // ler coleção que a rota não sincroniza é o defeito que o test-sync-obrigatorio

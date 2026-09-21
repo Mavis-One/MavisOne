@@ -63,7 +63,11 @@ const fat = K.kpiFaturamento({
     { date: '2026-07-10', totalAmount: 1143 },
     { date: '2026-06-01', totalAmount: 9999 }
   ],
-  serie: [{ pedidos: 800 }, { pedidos: 900 }, { pedidos: 1284 }]
+  // `faturado`, e não `pedidos`: a faísca do cartão passou a acompanhar a
+  // série de FATURAMENTO na fase CO. A linha "pedidos" do gráfico inclui o que
+  // ainda não virou receita, e cartão e gráfico discordando na mesma tela é o
+  // pior dos dois mundos.
+  serie: [{ faturado: 800 }, { faturado: 900 }, { faturado: 1284 }]
 });
 check('soma só o período', fat.valor === 1284, String(fat.valor));
 check('compara com o anterior', fat.variacao === 12.3, String(fat.variacao));
@@ -74,6 +78,39 @@ check('conta os pedidos', /2 pedidos/.test(fat.detalhe), fat.detalhe);
 // A sparkline vem da MESMA série do gráfico: dois cálculos diferentes fariam
 // o cartão e o gráfico discordarem na mesma tela.
 check('a série vem pronta de fora', JSON.stringify(fat.serie) === JSON.stringify([800, 900, 1284]));
+
+// O CARTÃO SE CHAMA FATURAMENTO E CONTAVA TODO PEDIDO (fase CO).
+//
+// Medido em 21/09/2026 nos dados reais: março de 2026 saía R$ 2,49 mi no cartão
+// contra R$ 2,22 mi de faturamento de verdade, e julho saía R$ 4,39 mi contra
+// R$ 1,46 mi. A diferença tem dois nomes — pedido CANCELADO (R$ 3,0 mi no
+// histórico) e `pedido-aprovado-sem-faturamento` (R$ 12,9 mi): transferência
+// entre filiais, remessa, bonificação. Mercadoria que saiu e dinheiro que não
+// entrou. O nome do cartão prometia receita.
+const comStatus = {
+  intervalo: AGOSTO,
+  pedidos: [
+    { date: '2026-08-05', totalAmount: 1000, status: 'pedido-faturado' },
+    { date: '2026-08-06', totalAmount: 5000, status: 'pedido-cancelado' },
+    { date: '2026-08-07', totalAmount: 7000, status: 'pedido-aprovado-sem-faturamento' },
+    { date: '2026-08-08', totalAmount: 200, status: 'pedido' }
+  ],
+  serie: []
+};
+const fatFiltrado = K.kpiFaturamento({ ...comStatus, statusQueFaturam: ['pedido-faturado'] });
+check('só o que gera receita entra', fatFiltrado.valor === 1000, String(fatFiltrado.valor));
+check('  cancelado fica fora', fatFiltrado.valor === 1000);
+check('  e remessa/transferência também', fatFiltrado.valor === 1000);
+check('o detalhe diz "faturados"', /1 pedido faturado/.test(fatFiltrado.detalhe), fatFiltrado.detalhe);
+// A lista vem do catálogo de status (o servidor passa). Este módulo é puro e
+// não conhece o vocabulário de venda: sem a lista, o comportamento é o antigo —
+// nenhum painel fica sem número por causa disto.
+const fatSemLista = K.kpiFaturamento(comStatus);
+check('sem a lista, soma tudo (comportamento antigo)', fatSemLista.valor === 13200, String(fatSemLista.valor));
+// E o servidor tem de passar a lista, senão o conserto não chega ao cartão.
+const servidorSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8');
+check('o servidor passa a lista para o cartão',
+  /statusQueFaturam: salesStatus\.CATALOGO\.filter\(\(s\) => s\.geraFinanceiro\)\.map\(\(s\) => s\.value\)/.test(servidorSrc));
 
 console.log('\n--- a receber: a faixa é o que já venceu ---');
 const receber = K.kpiAReceber({
