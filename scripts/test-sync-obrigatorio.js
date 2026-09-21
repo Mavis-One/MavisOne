@@ -92,6 +92,10 @@ const POPULA = {
   // ausência dele aqui declara: quem precisar do histórico de importação
   // continua tendo que chamar o sync inteiro.
   syncSalesDataParaAgregado: ['orders', 'quotes'],
+  // Mesma coisa, com três colunas a mais (quem é o cliente). Ver
+  // getOrdersResumidos: é para quem soma, conta E lista pedido de forma
+  // compacta. Popula as mesmas duas coleções.
+  syncSalesDataResumida: ['orders', 'quotes'],
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
@@ -117,6 +121,7 @@ const RESOLVE_SOZINHO = {
 const INFRA = new Set([
   'loadData', 'saveData', 'normalizeData', 'ensureCadastroCollections',
   'syncCadastroData', 'syncSalesData', 'syncSalesDataParaAgregado',
+  'syncSalesDataResumida',
   'syncPurchasesData', 'syncNfeData',
   'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao'
 ]);

@@ -1727,6 +1727,23 @@ async function syncSalesDataParaAgregado(data) {
   data.quotes = quotes;
 }
 
+/**
+ * O agregado MAIS o nome do cliente (fase CM).
+ *
+ * Para quem soma, conta E lista pedido de forma compacta — é o Painel de
+ * Vendas, que mostra os pedidos de cada vendedor com seis campos por linha.
+ * Ver getOrdersResumidos para o recorte e o preço.
+ *
+ * Quem precisa dos ITENS não pode usar nem este nem o de cima: o Relatório de
+ * Vendas monta uma linha por item, e para ele `select *` é o que o relatório
+ * relata, não desperdício.
+ */
+async function syncSalesDataResumida(data) {
+  const [orders, quotes] = await Promise.all([db.getOrdersResumidos(), db.getQuotesResumidos()]);
+  data.orders = orders;
+  data.quotes = quotes;
+}
+
 
 // Mesmo papel de syncCadastroData/syncSalesData: popula data.purchases com o
 // conteúdo atual do Supabase logo após loadData(), pra resolveFinanceCounterparty
@@ -7887,9 +7904,18 @@ async function tratarRequisicao(req, res) {
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
     // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
     // Em sequencia, a rota pagava 2x essa latencia por nada.
+    // RESUMIDA (fase CM): deste painel saem números e uma lista compacta de
+    // pedidos por vendedor — seis campos por linha. As outras ~50 colunas de
+    // cada pedido custavam 322 ms contra 76 ms do recorte.
+    //
+    // `syncCadastroData` e `syncNfeData` FICAM: o nome do cliente sai do
+    // cadastro (é o campo `customer` de cada linha) e o serializer lê `data.nfe`
+    // pela chave da nota. Tirar qualquer um dos dois seria ler coleção do banco
+    // sem sincronizar — o guarda de scripts/test-sync-obrigatorio.js pega, e com
+    // razão: devolve vazio em silêncio.
     await Promise.all([
       syncCadastroData(data),
-      syncSalesData(data),
+      syncSalesDataResumida(data),
       syncNfeData(data)
     ]);
     const user = await getCurrentUser(req);
