@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-21 17:11 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-22 19:16 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -625,7 +625,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-119 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+120 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -720,6 +720,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [avulso]  test-razao-no-banco.js             O RAZÃO DE ESTOQUE VIVE NO POSTGRES, E É TRANSACIONAL (fase AP).
   [npm test] test-regra-fiscal-parcial.js       SALVAR UMA REGRA FISCAL NÃO APAGA O QUE O FORMULÁRIO NÃO MOSTRA (fase BJ).
   [npm test] test-regras-fiscais.js             Modelo de regras fiscais — scripts/seed-regras-fiscais.js Os CFOPs vieram do ERP que o usuário usa hoje: 5102,
+  [npm test] test-relatorio-cliente.js          O NOME DO CLIENTE NO RELATÓRIO DE VENDAS — sem banco e sem servidor.
   [npm test] test-relatorio-vendas.js           RELATÓRIO DE VENDAS — quem vê o quê, provado com dados de mentira.
   [npm test] test-reserva-estoque.js            Reserva de estoque — a ponte entre "prometido" e "baixado".
   [npm test] test-resposta-comprimida.js        A RESPOSTA DE API VAI COMPRIMIDA (fase CM).
