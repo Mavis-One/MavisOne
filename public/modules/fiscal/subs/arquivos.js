@@ -12,12 +12,32 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 // uma tela ruim, é uma tela que ninguém usa.
 //
 // Ela NÃO gera o arquivo do SPED, e o nome diz isso de propósito. Gerar a EFD
-// hoje produziria arquivo inválido: medido em 17/09/2026, os 6.492 participantes
-// estão sem o código IBGE do município, que o registro 0150 exige; o `TIPO_ITEM`
-// do registro 0200 não existe como conceito (os 5.475 produtos estão todos como
-// `NORMAL`, que é outra classificação); não há cadastro de contabilista para o
-// 0100; e não há apuração nenhuma para o Bloco E. Botão que produz arquivo que a
-// SEFAZ rejeita é pior do que botão que não existe, porque alguém entrega.
+// hoje produziria arquivo inválido, e os bloqueios foram remedidos em 22/09/2026:
+//
+//   0200  o `TIPO_ITEM` não existe como conceito. `products.tipo_produto_fiscal`
+//         só aceita 'NORMAL' e 'ESCRITURAL' por check constraint, e é o item
+//         escritural da NF-e complementar — outra classificação;
+//   C170  a NF-e de SAÍDA não tem tabela de item. `nfe_items` referencia a
+//         tabela legada `nfes` (a NF-e manual do Financeiro), não `nfe`: as
+//         únicas FKs para `nfe` são `nfe_arquivos` e `nfe_eventos`. Por item, o
+//         que o C170 pede existe só dentro de `nfe.payload_enviado` (jsonb) e do
+//         XML autorizado em `nfe_arquivos.conteudo`;
+//   E     não há apuração nenhuma. `lib/calcularTributos.js` é por PEDIDO e não
+//         grava nada, e o saldo credor do mês anterior (E110/E210/E520) não é
+//         derivável de documento — depende de um fechamento que não existe;
+//   H010  o saldo é `products.stock_quantity`, um escalar global sem data e sem
+//         CNPJ; o razão tem data, mas nasce com `unitCost: 0` e data de HOJE nos
+//         movimentos automáticos, e não tem coluna de estabelecimento;
+//   0100  não há cadastro de contabilista.
+//
+// CORREÇÃO DE 22/09/2026: a versão anterior deste comentário afirmava que "os
+// 6.492 participantes estão sem o código IBGE do município". ERRADO — 5.831
+// deles TÊM código de 7 dígitos em `people.extra->>'ibgeCityCode'`, trazido da
+// importação; faltam 661. O 0150 é, de longe, o menor dos bloqueios, e foi um
+// erro de medição meu tratá-lo como o maior.
+//
+// Botão que produz arquivo que a SEFAZ rejeita é pior do que botão que não
+// existe, porque alguém entrega.
 //
 // O QUE ELA CONSERTA DE VERDADE
 // -----------------------------

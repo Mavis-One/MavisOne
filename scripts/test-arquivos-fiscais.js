@@ -7,11 +7,19 @@
 //
 // A TELA NÃO GERA SPED, e isso é decisão registrada em teste porque é o tipo de
 // coisa que alguém "melhora" depois: gerar a EFD hoje produziria arquivo que a
-// SEFAZ rejeita. Medido em 17/09/2026 neste banco: os 6.492 participantes estão
-// sem o código IBGE do município (o registro 0150 exige), o `TIPO_ITEM` do 0200
-// não existe como conceito (os 5.475 produtos estão todos como `NORMAL`, que é
-// outra classificação), não há cadastro de contabilista para o 0100 e não há
-// apuração para o Bloco E. Botão que produz arquivo inválido é pior do que
+// SEFAZ rejeita. Remedido em 22/09/2026 neste banco: o `TIPO_ITEM` do 0200 não
+// existe como conceito (`products.tipo_produto_fiscal` só aceita 'NORMAL' e
+// 'ESCRITURAL', que é o item da NF-e complementar), a NF-e de SAÍDA não tem
+// tabela de item (`nfe_items` referencia a tabela legada `nfes`, não `nfe`),
+// não há apuração para o Bloco E nem saldo credor de mês anterior, o saldo de
+// estoque é um escalar global sem data e sem CNPJ, e não há contabilista para o
+// 0100.
+//
+// CORREÇÃO: a versão anterior deste comentário dizia que os 6.492 participantes
+// estavam sem código IBGE. Errado — 5.831 TÊM, em `people.extra->>'ibgeCityCode'`;
+// faltam 661. O 0150 é o menor dos bloqueios, não o maior.
+//
+// Botão que produz arquivo inválido é pior do que
 // botão ausente, porque alguém entrega.
 //
 // O zip é testado DE VERDADE aqui: monta e desmonta, lendo o índice central e
