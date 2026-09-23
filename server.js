@@ -19,6 +19,7 @@ const modulosDb = require('./lib/db/modulos');
 const crmDb = require('./lib/db/crm');
 const {
   buildNfePayload, conferirLimitesDeTexto, conferirPagamentosDaNota, conferirCartoesDaNota,
+  conferirEscalaDosItens,
   conferirDestinatarioDaNota
 } = require('./lib/nfePayloadBuilder');
 // Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
@@ -5070,6 +5071,16 @@ async function prepararNfeParaTransmitir(body) {
         // grupo tributário escolhe a regra fiscal, e aceitá-lo da tela seria
         // deixar quem monta a nota escolher a própria tributação.
         grupoTributarioId: produto.grupoTributarioId || '',
+        // Fase CS — os cinco que só o produto responde, e pela mesma razão do
+        // grupo tributário: vêm do CADASTRO. O IPI em especial — aceitá-lo do
+        // corpo deixaria quem monta a nota escolher a própria alíquota.
+        cstIpi: produto.cstIpi || '',
+        aliquotaIpi: produto.aliquotaIpi,
+        codigoExTipi: produto.codigoExTipi || '',
+        // Passa os três estados adiante: `|| null` transformaria `false`
+        // (escala NÃO relevante) em "não declarado", que é o oposto.
+        escalaRelevante: produto.escalaRelevante === undefined ? null : produto.escalaRelevante,
+        cnpjFabricante: produto.cnpjFabricante || '',
         // Escritural vem do CADASTRO, nunca do que a tela mandou: senão
         // bastaria marcar a flag no corpo da requisição para um produto real
         // sair de uma nota sem baixar estoque.
@@ -5215,6 +5226,17 @@ async function prepararNfeParaTransmitir(body) {
   const cartaoIncompleto = conferirCartoesDaNota(payload);
   if (cartaoIncompleto) {
     const err = new Error(cartaoIncompleto);
+    err.status = 400;
+    throw err;
+  }
+
+  // ESCALA NAO RELEVANTE sem o CNPJ do fabricante? (fase CS) Mesma janela e
+  // mesmo motivo dos dois de cima: o Convenio ICMS 52/2017 exige o CNPJFab
+  // quando o indEscala diz "nao relevante", e a nota sem ele volta recusada com
+  // a numeracao ja' consumida.
+  const escalaIncompleta = conferirEscalaDosItens(payload);
+  if (escalaIncompleta) {
+    const err = new Error(escalaIncompleta);
     err.status = 400;
     throw err;
   }
@@ -12188,7 +12210,16 @@ async function tratarRequisicao(req, res) {
         numeroFci: String(body.numeroFci ?? '').trim(),
         // Fase CP. Vazio vira null na coluna uuid (camposFiscaisDoProduto), e é
         // assim que "Sem grupo" se escolhe de volta depois de classificado.
-        grupoTributarioId: String(body.grupoTributarioId ?? '').trim()
+        grupoTributarioId: String(body.grupoTributarioId ?? '').trim(),
+        // Fase CS. Passados CRUS de propósito: a conversão de cada tipo está em
+        // `camposFiscaisDoProduto`, num lugar só, e é lá que '' vira NULL,
+        // '0' vira 0 e o CNPJ perde a pontuação. Converter aqui também daria
+        // duas regras para o mesmo campo.
+        cstIpi: String(body.cstIpi ?? '').trim(),
+        aliquotaIpi: body.aliquotaIpi ?? '',
+        codigoExTipi: String(body.codigoExTipi ?? '').trim(),
+        escalaRelevante: body.escalaRelevante ?? '',
+        cnpjFabricante: String(body.cnpjFabricante ?? '').trim()
       });
 
       data.productMeta[product.id] = stockCore.buildProductMeta(body, stockCore.productMeta(data, product.id));

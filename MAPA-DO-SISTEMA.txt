@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-23 15:00 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-23 17:03 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -564,7 +564,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 5. MIGRAÇÕES DE BANCO
 ==============================================================================
-57 arquivo(s) em banco/migrations, em ordem de fase:
+58 arquivo(s) em banco/migrations, em ordem de fase:
 
   PENDENTES-rodar-agora.sql
   fase-aa-nfe-lista-unificada.sql
@@ -604,6 +604,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   fase-cg-numeracao-de-venda-a-partir-de-16000.sql
   fase-cl-sessao-no-banco.sql
   fase-cp-grupo-tributario.sql
+  fase-cs-fiscal-do-produto.sql
   fase-h-campos-financeiros.sql
   fase-i-informacoes-gerais.sql
   fase-j-cabecalho-dados.sql
@@ -627,7 +628,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-121 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+122 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -670,6 +671,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-entrada-nfe.js                ENTRADA DE NF-e — o XML do fornecedor, o fornecedor que falta e o que a nota não pode fazer sozinha.
   [npm test] test-erro-sem-vazamento.js         O ERRO QUE CHEGA NA TELA (fase CC — achado 08 da varredura de 11/09/2026).
   [avulso]  test-faturar-exige-nota.js         FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
+  [npm test] test-fiscal-do-produto.js          OS CAMPOS FISCAIS QUE SÓ O PRODUTO RESPONDE (fase CS) — sem banco e sem rede.
   [npm test] test-fiscal-telas.js               As telas novas do módulo Fiscal, sem banco e sem rede.
   [npm test] test-focus-homologacao.js          Trava de homologação da Focus NFe.
   [npm test] test-fontes-sem-byte-de-controle.js NENHUM FONTE CARREGA BYTE DE CONTROLE CRU.

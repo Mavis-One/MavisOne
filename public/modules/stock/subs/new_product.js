@@ -205,6 +205,56 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
     : 'Nenhum grupo cadastrado ainda — crie em Fiscal → Grupos Tributários.'}</small>
               </label>
             </div>
+
+            <!-- IPI E ESCALA (fase CS). Ficam depois do grupo tributário porque
+                 são a exceção dele: o grupo resolve ICMS, PIS e COFINS pela
+                 regra fiscal, e estes cinco a regra não tem como responder.
+
+                 O IPI daqui VENCE a regra fiscal, e é o único imposto em que
+                 isso acontece: a alíquota de IPI segue a classificação do
+                 produto na TIPI, que é do produto e não da operação. Vazio =
+                 usa a regra, e é por isso que nada muda nas notas de hoje. -->
+            <div class="row produto-row-fiscal">
+              <label>CST do IPI
+                <input name="cstIpi" maxlength="2" inputmode="numeric" value="${value('cstIpi')}" placeholder="da regra" />
+                <small class="muted">Preenchido, vence a regra fiscal.</small>
+              </label>
+              <label>Alíquota de IPI (%)
+                <input name="aliquotaIpi" type="number" step="0.01" min="0" max="100"
+                       value="${current && current.aliquotaIpi !== null && current.aliquotaIpi !== undefined ? current.aliquotaIpi : ''}" placeholder="da regra" />
+              </label>
+              <label>EX TIPI
+                <input name="codigoExTipi" maxlength="3" inputmode="numeric" value="${value('codigoExTipi')}" placeholder="2 ou 3 dígitos" />
+              </label>
+            </div>
+            <div class="row produto-row-fiscal">
+              <!-- TRÊS estados, e o vazio é o que importa: "não declarado" faz a
+                   nota OMITIR o indEscala. Um <select> e não um switch por isso
+                   — um interruptor só tem dois estados, e o padrão dele
+                   passaria a afirmar algo sobre todos os produtos.
+
+                   A pergunta é pela NEGATIVA ("não relevante") porque é o rótulo
+                   que o operador conhece, do Convênio 52/2017 e do sistema
+                   antigo. A inversão para o campo escala_relevante da Focus
+                   acontece AQUI, num lugar só, à vista.
+
+                   (E sem acento grave neste comentário: ele vive DENTRO de um
+                   template literal, e um par de acentos graves aqui fecha o
+                   template e quebra a tela inteira com "missing ) after
+                   argument list" apontando dez linhas adiante.) -->
+              <label class="produto-campo-2">Produzido em escala NÃO relevante
+                <select name="escalaNaoRelevante">
+                  <option value="" ${current && (current.escalaRelevante === null || current.escalaRelevante === undefined) ? 'selected' : (current ? '' : 'selected')}>Não declarado</option>
+                  <option value="1" ${current && current.escalaRelevante === false ? 'selected' : ''}>Sim — escala não relevante</option>
+                  <option value="0" ${current && current.escalaRelevante === true ? 'selected' : ''}>Não — escala relevante</option>
+                </select>
+                <small class="muted">Convênio ICMS 52/2017. "Não declarado" omite o campo da nota.</small>
+              </label>
+              <label class="produto-campo-2">CNPJ do fabricante
+                <input name="cnpjFabricante" data-campo="cnpj" value="${value('cnpjFabricante')}" placeholder="exigido em escala não relevante" />
+                <small class="muted">A SEFAZ recusa a nota sem ele quando a escala é não relevante.</small>
+              </label>
+            </div>
           `)}
 
           ${painel('estoque', `
@@ -349,6 +399,22 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       // camposFiscaisDoProduto): "Sem grupo" precisa poder ser escolhido de
       // volta, e não só ser o estado inicial.
       grupoTributarioId: formData.get('grupoTributarioId'),
+      // Fase CS
+      cstIpi: formData.get('cstIpi'),
+      aliquotaIpi: formData.get('aliquotaIpi'),
+      codigoExTipi: formData.get('codigoExTipi'),
+      // A INVERSÃO ACONTECE AQUI, e só aqui. O campo pergunta "produzido em
+      // escala NÃO relevante" (o rótulo do Convênio 52/2017, que o operador
+      // conhece) e a coluna guarda `escala_relevante`, o nome que a Focus
+      // espera — assim não há negação no meio do caminho entre banco e payload,
+      // que é o jeito mais fácil de emitir a nota com a informação trocada.
+      // '' continua '' de propósito: é o terceiro estado, "não declarado".
+      escalaRelevante: (() => {
+        const bruto = formData.get('escalaNaoRelevante');
+        if (bruto === '' || bruto === null) return '';
+        return bruto === '1' ? 'false' : 'true';
+      })(),
+      cnpjFabricante: formData.get('cnpjFabricante'),
       unidadeTributavel: formData.get('unidadeTributavel'),
       minStock: Number(formData.get('minStock') || 0),
       maxStock: Number(formData.get('maxStock') || 0),
