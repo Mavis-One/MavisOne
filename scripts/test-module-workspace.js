@@ -172,7 +172,11 @@ TODAS_PRONTAS.forEach((m) => {
 });
 
 const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
-// 15 com "Grupos Tributários", a etiqueta que diz como a empresa tributa cada
+// 16 com "Notas com Problema", a lista do que a SEFAZ recusou e do que ficou em
+// processamento, com o motivo de cada nota — `nfe.mensagem_sefaz` existia no
+// banco e só aparecia na tela de Logs (ordem cronológica de tudo) e na tela de
+// emissão da nota que falhou (que exige já saber qual procurar).
+// Eram 15 com "Grupos Tributários", a etiqueta que diz como a empresa tributa cada
 // produto — o critério que a regra fiscal passou a usar no lugar de uma regra
 // por NCM (759 NCMs distintos no catálogo, e zero regras cadastradas por isso).
 // Eram 14 com "Arquivos Fiscais", o acervo de XML do período em zip para a
@@ -185,7 +189,7 @@ const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
 // propósito: tela nova sem renderizador cai como "pendente" e o check acima já
 // pegaria — mas tela nova que ninguém registrou no menu passaria batido sem
 // este.
-check('fiscal tem as 15 telas reais', reais('fiscal') === 15, `${reais('fiscal')} real(is)`);
+check('fiscal tem as 16 telas reais', reais('fiscal') === 16, `${reais('fiscal')} real(is)`);
 // Sem nenhuma tela pendente em lugar nenhum, o menu não pode mais oferecer um
 // destino que não abre.
 const pendentesNoSistema = Object.entries(moduleSubItems)

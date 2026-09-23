@@ -1746,6 +1746,10 @@ const moduleSubItems = {
     // Imediatamente antes de Regras Fiscais, e a ordem é a da tarefa: primeiro
     // se decide COMO cada produto é tributado (o grupo), depois se escreve a
     // regra que atende cada grupo.
+    // Depois do Painel Fiscal de proposito: o painel mostra QUANTAS notas
+    // ficaram pelo caminho, numa rosca por status, e esta responde QUAIS e por
+    // que — o motivo da SEFAZ estava so' na tela de Logs e na de emissao.
+    { key: 'notas_presas', label: 'Notas com Problema', desc: 'O que a SEFAZ recusou, o que ficou em processamento e o que nunca foi transmitido — com o motivo de cada uma.' },
     { key: 'grupos_tributarios', label: 'Grupos Tributários', desc: 'Como a empresa tributa cada produto — o critério que a regra fiscal usa no lugar de uma regra por NCM.' },
     { key: 'regras', label: 'Regras Fiscais', desc: 'Define qual CFOP e qual tributação se aplicam a cada operação.' }
   ],

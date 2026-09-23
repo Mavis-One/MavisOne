@@ -4474,3 +4474,13 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   margin-top: 10px;
   font-size: 13px;
 }
+
+/* O numero de notas com numeracao CONSUMIDA (fase CR). Denegada consumiu
+   numero e nao pode ser cancelada — e' a unica das quatro situacoes que
+   tem consequencia irreversivel, entao e' a unica que ganha cor. */
+.notas-presas-grave { color: var(--danger-text); }
+
+/* A mensagem da SEFAZ vem inteira e pode ser longa. Quebra onde couber em
+   vez de esticar a tabela: o texto e' a informacao, e cortar com ellipsis
+   esconderia justamente o campo que ela aponta. */
+.notas-presas-motivo { display: block; max-width: 40ch; white-space: normal; word-break: break-word; }

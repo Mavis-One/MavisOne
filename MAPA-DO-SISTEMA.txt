@@ -1,5 +1,5 @@
 MAVISONE — MAPA DO SISTEMA
-Gerado em 2026-09-22 19:16 por scripts/mapa-do-sistema.js, lendo o código-fonte.
+Gerado em 2026-09-23 15:00 por scripts/mapa-do-sistema.js, lendo o código-fonte.
 Rode o script de novo depois de qualquer mudança para atualizar este arquivo.
 
 Como ler:
@@ -77,7 +77,7 @@ Financeiro  (finance)  —  8 tela(s) no menu
   [ok]  Extrato Open Finance               Extrato bancário puxado via Open Finance.
   [ok]  Bancos Conectados                  Bancos ligados e situação de cada conexão.
 
-Fiscal  (fiscal)  —  15 tela(s) no menu
+Fiscal  (fiscal)  —  16 tela(s) no menu
 ---------------------------------------
   [ok]  Painel Fiscal                      Notas transmitidas, autorizadas e o que a SEFAZ recusou.
   [ok]  NF-e Emitidas                      Notas emitidas, com DANFE, XML e cancelamento.
@@ -92,6 +92,7 @@ Fiscal  (fiscal)  —  15 tela(s) no menu
   [ok]  Tabelas Fiscais                    Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.
   [ok]  Operações Fiscais                  O que cada operação faz: finalidade, estoque, financeiro e o que ela exige.
   [ok]  Arquivos Fiscais                   O XML de cada nota do período, em zip, para a contabilidade — e quais faltam.
+  [ok]  Notas com Problema                 O que a SEFAZ recusou, o que ficou em processamento e o que nunca foi transmitido — com o motivo de cada uma.
   [ok]  Grupos Tributários                 Como a empresa tributa cada produto — o critério que a regra fiscal usa no lugar de uma regra por NCM.
   [ok]  Regras Fiscais                     Define qual CFOP e qual tributação se aplicam a cada operação.
 
@@ -199,7 +200,7 @@ Cadastros  (cadastros)  —  21 tela(s) no menu
   [+]  novo_equipamento                   (tela interna, fora do menu)
   [+]  novo_status_venda                  (tela interna, fora do menu)
 
-TOTAL: 14 módulos, 135 telas no menu.
+TOTAL: 14 módulos, 136 telas no menu.
 Nenhuma tela do menu ficou sem implementação.
 
 ==============================================================================
@@ -432,7 +433,7 @@ Tabelas usadas (80)
   user_roles              users
 
 ==============================================================================
-4. ROTAS DA API (121 encontradas no server.js)
+4. ROTAS DA API (122 encontradas no server.js)
 ==============================================================================
 Lidas do texto do server.js. Rotas com padrão (":id", prefixos) aparecem
 com reticências. Métodos em branco = a rota trata mais de um verbo.
@@ -496,6 +497,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
   /api/fiscal/nfe                                      GET
   /api/fiscal/nfe/…                                    
   /api/fiscal/nfe/emitir                               POST
+  /api/fiscal/nfe/problemas                            GET
   /api/fiscal/operacoes                                GET
   /api/fiscal/pre-check                                GET
   /api/fiscal/regras                                   GET POST
@@ -625,7 +627,7 @@ com reticências. Métodos em branco = a rota trata mais de um verbo.
 ==============================================================================
 6. TESTES
 ==============================================================================
-120 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
+121 arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte
 e verificam regras puras. "[npm test]" = entra na suíte principal.
 
   [avulso]  test-admin-por-papel.js            Promover alguém a administrador pela tela funciona de verdade? A tela Configurações > Papéis e Permissões grav
@@ -698,6 +700,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
   [npm test] test-nfe-payload.js                Montagem do payload de NF-e — lib/nfePayloadBuilder.js É conta de imposto: errado aqui não dá erro de tela, dá
   [npm test] test-nfe-unificada.js              A lista de NF-e passou a mostrar as duas origens.
   [npm test] test-notas-contra-cnpj.js          NOTAS EMITIDAS CONTRA O NOSSO CNPJ — Distribuição de DF-e (fase AR).
+  [npm test] test-notas-presas.js               NOTAS COM PROBLEMA (fase CR) — sem banco e sem servidor.
   [npm test] test-numeracao-de-venda.js         O NÚMERO DO PEDIDO, NOS QUATRO CAMINHOS QUE ELE PODE SAIR (fases BR, CG, CI).
   [npm test] test-numero-lancamento.js          O NÚMERO DO LANÇAMENTO FINANCEIRO — LF0001 (fase AT).
   [npm test] test-ordem-dos-scripts.js          OS <script> DO index.html CARREGAM NA ORDEM SEM QUEBRAR.
@@ -752,7 +755,7 @@ e verificam regras puras. "[npm test]" = entra na suíte principal.
 ==============================================================================
 7. CARREGAMENTO DO NAVEGADOR
 ==============================================================================
-135 arquivos JS carregados por public/index.html, nesta ordem.
+136 arquivos JS carregados por public/index.html, nesta ordem.
 A ordem importa: módulos compartilhados vêm antes de quem os usa.
 
   /modules/router.js
@@ -837,6 +840,7 @@ A ordem importa: módulos compartilhados vêm antes de quem os usa.
   /modules/fiscal/subs/inutilizar.js
   /modules/fiscal/subs/logs.js
   /modules/fiscal/subs/pre_check.js
+  /modules/fiscal/subs/notas_presas.js
   /modules/fiscal/subs/grupos_tributarios.js
   /modules/fiscal/subs/regras.js
   /modules/fiscal/subs/nfe_espelho.js

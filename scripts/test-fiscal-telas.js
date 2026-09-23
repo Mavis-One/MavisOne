@@ -39,7 +39,7 @@ const check = (n, c, d) => { console.log(`${c ? '  OK ' : '  XX '} ${n}${d ? ' -
 const chavesFiscal = moduleSubItems.fiscal.map((i) => i.key);
 
 console.log('\n--- as telas pedidas estão no menu do Fiscal ---');
-const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'arquivos', 'grupos_tributarios', 'regras'];
+const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'arquivos', 'notas_presas', 'grupos_tributarios', 'regras'];
 ESPERADAS.forEach((k) => {
   const item = moduleSubItems.fiscal.find((i) => i.key === k);
   check(`fiscal.${k}`, Boolean(item), item ? item.label : 'AUSENTE');

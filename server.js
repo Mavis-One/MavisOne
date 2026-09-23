@@ -4571,6 +4571,13 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname.startsWith('/api/fiscal/dfe/')) return 'documentos_recebidos';
 
   if (pathname === '/api/fiscal/nfe') return 'visualizar';
+  // AS NOTAS QUE NAO CHEGARAM AO FIM (fase CR). 'visualizar', pelo mesmo
+  // raciocinio do pre-check: e' leitura, e saber que tres notas estao presas nao
+  // devia exigir poder transmitir. Explicito AQUI, e nao deixado para o
+  // `startsWith('/api/fiscal/nfe/')` do fim da funcao, porque aquele e' o
+  // catch-all: cair nele faria a permissao desta rota depender da ordem das
+  // linhas, e nao de uma decisao escrita.
+  if (pathname === '/api/fiscal/nfe/problemas') return 'visualizar';
   // PRE-CHECK e' LEITURA, e por isso pede 'visualizar' e nao 'emitir': quem
   // confere os pedidos do dia de manha nao precisa poder transmitir. Exigir
   // 'emitir' faria a conferencia so' existir para quem ja' pode errar caro.
@@ -10228,6 +10235,23 @@ async function tratarRequisicao(req, res) {
         const estabelecimentoId = url.searchParams.get('estabelecimentoId') || undefined;
         const records = await fiscalDb.getNfeRecords(estabelecimentoId);
         return sendJson(res, { records });
+      }
+
+      // AS NOTAS QUE NÃO CHEGARAM AO FIM (fase CR).
+      //
+      // Consulta própria, e não um filtro sobre /api/fiscal/nfe, por duas
+      // razões: aquela rota traz TODA nota do estabelecimento com as 28 colunas
+      // (inclusive `payload_enviado` e `resposta_focus`, os dois jsonb gordos),
+      // e o que esta tela precisa são treze campos das notas presas — que num
+      // CNPJ saudável são meia dúzia entre milhares. A outra razão é que a
+      // ORDEM importa aqui e é por gravidade, não por data: está em
+      // lib/db/fiscal.js/notasComProblema, com o que cada status significa
+      // para a numeração.
+      if (pathname === '/api/fiscal/nfe/problemas' && req.method === 'GET') {
+        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
+        if (!estabelecimentoId) return sendJson(res, { error: 'Escolha o estabelecimento.' }, 400);
+        const notas = await fiscalDb.notasComProblema(estabelecimentoId);
+        return sendJson(res, { notas });
       }
 
       // Eventos do estabelecimento inteiro. A inutilização de numeração só
