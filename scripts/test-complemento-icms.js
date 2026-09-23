@@ -160,7 +160,18 @@ check('código do produto', item.codigo_produto === 'CFOP5.949');
 check('CFOP da regra', item.cfop === '5949');
 // indTot=0: o item não compõe o total de mercadorias. Sem isso a SEFAZ soma o
 // item ao total e acusa divergência.
-check('declara que não entra no total (indTot 0)', item.item_valor_total === 0);
+//
+// O NOME DO CAMPO: até 23/09/2026 este check afirmava `item_valor_total`, que
+// NÃO EXISTE na Focus — e foi assim que o defeito sobreviveu. O teste provava
+// que o builder gravava a chave; não podia provar que a Focus a entendia, e ela
+// não entendia: campo desconhecido é descartado em silêncio, com resposta de
+// sucesso. O nome certo, conferido em campos.focusnfe.com.br, é
+// `inclui_no_total` (tag indTot, valores 0 e 1, padrão 1).
+check('declara que não entra no total (indTot 0)', item.inclui_no_total === 0);
+// E o nome ERRADO não pode voltar: é a única parte deste check que um teste
+// consegue garantir sem transmitir nota de verdade.
+check('  e não usa o campo inexistente item_valor_total',
+  !Object.prototype.hasOwnProperty.call(item, 'item_valor_total'));
 
 console.log('\n--- o ICMS existe apesar do valor zero ---');
 // É o ponto inteiro da nota: valor de produto 0, imposto > 0.
