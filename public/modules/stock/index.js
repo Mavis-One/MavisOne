@@ -8,6 +8,10 @@ const STOCK_SUB_KEYS = [
   'price_manager',
   'movements', 'new_movement',
   'transfers', 'new_transfer',
+  // Fase CU. Sem estas duas chaves a tela aparece no menu, o clique cai no
+  // fallback e abre Produtos — sem erro nenhum. É o que test-modulos-telas.js
+  // cobra, e foi ele que pegou a falta delas aqui.
+  'counts', 'new_count',
   'products', 'new_product', 'product_status', 'classes',
   'deposits', 'new_deposit',
   'price_tables', 'new_price_table',

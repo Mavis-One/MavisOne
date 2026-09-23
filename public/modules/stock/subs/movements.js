@@ -27,7 +27,11 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
     'entrada-nfe': ['Entrada de NF-e', 'info'],
     purchase: ['Compra', 'info'],
     order: ['Pedido', 'info'],
-    producao: ['Produção', 'info']
+    producao: ['Produção', 'info'],
+    // Fase CU. Sem esta linha o ajuste de uma contagem apareceria como
+    // "Manual" -- que e exatamente o rotulo errado de que fala o comentario
+    // acima: mandaria procurar quem "lancou na mao" o que a folha gerou.
+    contagem: ['Contagem', 'warning']
   };
   function seloDeOrigem(movement) {
     if (movement.transferId) return S.badge('Transferência', 'info');

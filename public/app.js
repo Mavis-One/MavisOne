@@ -1684,6 +1684,11 @@ const moduleSubItems = {
     { key: 'new_movement', label: 'Nova Movimentação', desc: 'Lança entrada, saída ou ajuste de estoque.' },
     { key: 'transfers', label: 'Entre Depósitos', desc: 'Transferências de produtos entre depósitos.' },
     { key: 'new_transfer', label: 'Nova Entre Depósitos', desc: 'Move produtos de um depósito para outro.' },
+    // Fase CU. A carga do estoque inicial e o inventario ciclico sao a MESMA
+    // folha -- a carga inicial e uma contagem contra saldo anterior zero --,
+    // por isso sao duas telas e nao quatro.
+    { key: 'counts', label: 'Contagens de Estoque', desc: 'Inventário e carga inicial: folhas de contagem e acuracidade.' },
+    { key: 'new_count', label: 'Nova Contagem de Estoque', desc: 'Conta um depósito e gera os ajustes ao fechar.' },
     { key: 'products', label: 'Produtos', desc: 'Produtos com saldo, custo e preço de venda.' },
     { key: 'new_product', label: 'Novo Produto', desc: 'Cadastra um produto novo.' },
     // A descricao dizia "Situacoes que um produto pode assumir", que promete um

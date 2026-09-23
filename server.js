@@ -84,6 +84,9 @@ const painelPessoal = require('./lib/painel-pessoal-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
 // Fase AP: o razao de estoque saiu do db.json e virou tabela no Postgres.
 const razaoEstoque = require('./lib/db/estoque-razao');
+// Fase CU: a folha de contagem. Monta o documento; quem grava saldo continua
+// sendo commitStockMovements.
+const contagemDb = require('./lib/db/contagem-estoque');
 const { emTransacao, consultar: consultarBanco } = require('./lib/db/conexao');
 // Fase AT: o numero do lancamento financeiro (LF0001) — mesmo formato na tela.
 const lancamentoCodigo = require('./public/modules/shared/lancamento_codigo');
@@ -1439,12 +1442,20 @@ async function empresaEmUso(id) {
 
 async function depositoEmUso(id) {
   const dados = loadData();
-  const [movimentos, equipamentos] = await Promise.all([
+  const [movimentos, equipamentos, contagens] = await Promise.all([
     razaoEstoque.contarPorDeposito(id).catch(() => 0),
-    equipamentosDb.contarPor('deposito', id).catch(() => 0)
+    equipamentosDb.contarPor('deposito', id).catch(() => 0),
+    // Fase CU. A contagem FECHADA já é pega pelo contador de movimentações
+    // (fechar gera movimento); a ABERTA ainda não gerou nada, e excluir o
+    // depósito nesse instante deixaria a folha apontando para um lugar que não
+    // existe mais.
+    contagemDb.contarPorDeposito(id).catch(() => 0)
   ]);
   if (movimentos > 0) {
     return `${movimentos === 1 ? 'Existe 1 movimentação' : `Existem ${movimentos} movimentações`} de estoque neste depósito.`;
+  }
+  if (contagens > 0) {
+    return `${contagens === 1 ? 'Existe 1 contagem' : `Existem ${contagens} contagens`} de estoque neste depósito.`;
   }
   if (equipamentos > 0) return 'Existem equipamentos alocados neste depósito.';
   return cadastrosCore.depositInUse(dados, id);
@@ -12617,6 +12628,393 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { success: true });
     } catch (error) {
       return sendErro(res, error, 'Erro ao estornar transferência');
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // CONTAGEM DE ESTOQUE (fase CU)
+  //
+  // A folha por depósito. Aberta, é uma lista de leituras e não toca em saldo.
+  // Fechada, cada item vira um movimento de ajuste — e é isso que a torna a
+  // carga inicial (VM-EST-08) e o inventário cíclico (VM-EST-04) ao mesmo
+  // tempo: a carga inicial é uma contagem contra saldo anterior zero.
+  // --------------------------------------------------------------------------
+  if (pathname === '/api/stock/counts' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const contagens = await contagemDb.listar({
+        status: url.searchParams.get('status') || '',
+        depositoId: url.searchParams.get('depositId') || ''
+      });
+      return sendJson(res, { counts: contagens });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao listar contagens', 500);
+    }
+  }
+
+  if (pathname === '/api/stock/counts' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const body = await readBody(req);
+      const { data } = await loadStockContext();
+      const depositId = String(body.depositId || '').trim();
+      // Depósito é OBRIGATÓRIO e tem de existir: conta-se um lugar. Ver o
+      // bloco da migração sobre por que o balde "não alocado" não é um lugar.
+      const deposito = (data.deposits || []).find((d) => d.id === depositId);
+      if (!deposito) return sendJson(res, { error: 'Selecione o depósito a ser contado.' }, 400);
+
+      // UMA CONTAGEM ABERTA POR DEPÓSITO.
+      //
+      // Duas folhas abertas no mesmo galpão é a receita da contagem dobrada:
+      // as duas leem o mesmo saldo esperado, as duas são fechadas, e o segundo
+      // fechamento ajusta contra um saldo que o primeiro já mudou. O resultado
+      // fica certo por acidente quando as duas contaram o mesmo, e errado em
+      // silêncio quando não.
+      const abertas = await contagemDb.abertasNoDeposito(depositId);
+      if (abertas > 0) {
+        return sendJson(res, {
+          error: `Já existe uma contagem aberta em ${deposito.name}.`
+            + ' Feche ou cancele a anterior antes de abrir outra.'
+        }, 409);
+      }
+
+      const id = stockCore.createId('cnt');
+      const code = await emTransacao(async (cliente) =>
+        razaoEstoque.proximoCodigo(cliente, 'stock_counts_code_seq', 'CNT'));
+      const contagem = await contagemDb.criar({
+        id,
+        code,
+        date: body.date || stockCore.todayStr(),
+        depositId,
+        note: String(body.note || ''),
+        createdBy: user.id,
+        createdByName: user.name
+      });
+      return sendJson(res, { success: true, count: contagem });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao abrir a contagem');
+    }
+  }
+
+  if (/^\/api\/stock\/counts\/[^/]+$/.test(pathname) && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/counts/', ''));
+      const contagem = await contagemDb.buscar(id);
+      if (!contagem) return sendJson(res, { error: 'Contagem não encontrada' }, 404);
+      const { data, productsById } = await loadStockContext();
+      const deposito = (data.deposits || []).find((d) => d.id === contagem.depositId);
+      const itens = await contagemDb.itensDaContagem(id);
+
+      // O SALDO ATUAL VAI JUNTO, E É DIFERENTE DE `expectedQuantity`.
+      //
+      // `expectedQuantity` é o saldo de quando o item foi contado (gravado, para
+      // a acuracidade não desaparecer depois do fechamento). `saldoAtual` é o de
+      // agora — e a tela precisa dele para mostrar o ajuste que o fechamento
+      // VAI aplicar. Numa contagem fechada os dois já não se movem.
+      return sendJson(res, {
+        count: { ...contagem, depositName: deposito ? deposito.name : '' },
+        items: itens.map((item) => ({
+          ...item,
+          saldoAtual: contagem.status === 'aberta'
+            ? (item.classValueId
+              ? stockCore.classValueBalance(data, item.productId, item.classValueId, contagem.depositId)
+              : stockCore.depositBalance(data, item.productId, contagem.depositId))
+            : item.expectedQuantity,
+          productMissing: !productsById.has(item.productId)
+        }))
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao carregar a contagem', 500);
+    }
+  }
+
+  if (/^\/api\/stock\/counts\/[^/]+\/items$/.test(pathname) && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/counts/', '').replace('/items', ''));
+      const contagem = await contagemDb.buscar(id);
+      if (!contagem) return sendJson(res, { error: 'Contagem não encontrada' }, 404);
+      if (contagem.status !== 'aberta') {
+        return sendJson(res, { error: `Esta contagem está ${contagem.status} e não aceita mais itens.` }, 409);
+      }
+      const body = await readBody(req);
+      const { data, productsById } = await loadStockContext();
+      const productId = String(body.productId || '').trim();
+      const product = productsById.get(productId);
+      if (!product) return sendJson(res, { error: 'Produto não encontrado.' }, 404);
+
+      // ZERO É VÁLIDO, e é a contagem que encontra a perda total. `toNumber`
+      // com um segundo argumento devolveria 0 para texto inválido, o que
+      // transformaria um erro de digitação numa baixa de estoque — por isso a
+      // recusa é explícita e vem antes.
+      const countedRaw = body.countedQuantity;
+      if (countedRaw === '' || countedRaw === null || countedRaw === undefined) {
+        return sendJson(res, { error: 'Informe a quantidade contada (zero é uma contagem válida).' }, 400);
+      }
+      const counted = Number(countedRaw);
+      if (!Number.isFinite(counted) || counted < 0) {
+        return sendJson(res, { error: 'A quantidade contada não pode ser negativa.' }, 400);
+      }
+
+      // A cor é conferida contra as classes DO PRODUTO, como na movimentação
+      // manual: um id qualquer criaria saldo de uma cor que o produto não tem,
+      // e o total continuaria fechando — escondendo o erro.
+      const classValueId = String(body.classValueId || '').trim();
+      let classId = String(body.classId || '').trim();
+      if (classValueId) {
+        let classes = [];
+        try {
+          classes = await classesDb.classesDoProduto(productId);
+        } catch (erroClasses) {
+          classes = [];
+        }
+        const classe = classes.find((c) => c.valores.some((v) => v.id === classValueId));
+        if (!classe) {
+          return sendJson(res, { error: 'Este valor de classe não está disponível para o produto.' }, 400);
+        }
+        classId = classe.id;
+      }
+
+      // Ou se conta o produto, ou se contam as cores dele — não os dois na
+      // mesma folha. Ver o bloco em conflitaComOutraForma.
+      if (await contagemDb.conflitaComOutraForma(id, productId, Boolean(classValueId))) {
+        return sendJson(res, {
+          error: classValueId
+            ? `"${product.name}" já foi contado nesta folha sem separar por variação.`
+              + ' Remova aquela linha antes de contar por variação — as duas leituras falam do mesmo saldo.'
+            : `"${product.name}" já foi contado nesta folha por variação.`
+              + ' Conte as demais variações, ou remova as linhas antes de contar o produto inteiro.'
+        }, 409);
+      }
+
+      const esperado = classValueId
+        ? stockCore.classValueBalance(data, productId, classValueId, contagem.depositId)
+        : stockCore.depositBalance(data, productId, contagem.depositId);
+
+      const item = await contagemDb.salvarItem({
+        id: stockCore.createId('cni'),
+        countId: id,
+        productId,
+        productName: product.name,
+        classId,
+        classValueId,
+        countedQuantity: counted,
+        expectedQuantity: esperado,
+        note: String(body.note || ''),
+        countedBy: user.id,
+        countedByName: user.name
+      });
+      return sendJson(res, { success: true, item: { ...item, saldoAtual: esperado } });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao gravar o item contado');
+    }
+  }
+
+  if (/^\/api\/stock\/counts\/[^/]+\/items\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const partes = pathname.replace('/api/stock/counts/', '').split('/items/');
+      const id = decodeURIComponent(partes[0]);
+      const itemId = decodeURIComponent(partes[1] || '');
+      const contagem = await contagemDb.buscar(id);
+      if (!contagem) return sendJson(res, { error: 'Contagem não encontrada' }, 404);
+      if (contagem.status !== 'aberta') {
+        return sendJson(res, { error: 'Contagem fechada não pode ter itens removidos.' }, 409);
+      }
+      const removido = await contagemDb.apagarItem(id, itemId);
+      if (!removido) return sendJson(res, { error: 'Item não encontrado' }, 404);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao remover o item');
+    }
+  }
+
+  if (/^\/api\/stock\/counts\/[^/]+\/cancel$/.test(pathname) && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/counts/', '').replace('/cancel', ''));
+      const body = await readBody(req);
+      // Cancelar e NÃO excluir: uma contagem abandonada é registro de trabalho
+      // feito, e o relatório de acuracidade que só vê as contagens bem
+      // sucedidas mede a coisa errada. Ver o bloco da migração.
+      const contagem = await contagemDb.cancelar(id, String(body.reason || ''));
+      if (!contagem) {
+        return sendJson(res, { error: 'Contagem não encontrada ou já fechada.' }, 409);
+      }
+      return sendJson(res, { success: true, count: contagem });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao cancelar a contagem');
+    }
+  }
+
+  if (/^\/api\/stock\/counts\/[^/]+\/close$/.test(pathname) && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/counts/', '').replace('/close', ''));
+      const contagem = await contagemDb.buscar(id);
+      if (!contagem) return sendJson(res, { error: 'Contagem não encontrada' }, 404);
+      if (contagem.status !== 'aberta') {
+        return sendJson(res, { error: `Esta contagem já está ${contagem.status}.` }, 409);
+      }
+      // A categoria de movimentação do ajuste vem no corpo (opcional): "ajuste
+      // de inventário" é uma das categorias que o módulo já cadastra, e é por
+      // ela que o razão fica filtrável depois.
+      const body = await readBody(req);
+      const { data, productsById } = await loadStockContext();
+      const itens = await contagemDb.itensDaContagem(id);
+      if (!itens.length) {
+        return sendJson(res, { error: 'A contagem não tem nenhum item. Conte ao menos um produto antes de fechar.' }, 400);
+      }
+
+      // ------------------------------------------------------------------
+      // O AJUSTE É `contado − saldo`, e nada mais.
+      //
+      // Não é "somar o contado": somar transformaria a contagem em entrada, e
+      // recontar o mesmo galpão dobraria o estoque. A contagem AFIRMA um saldo;
+      // o movimento é a diferença entre o que ela afirma e o que o sistema
+      // achava.
+      //
+      // Delta zero não gera movimento. Um razão com 5.475 linhas de "ajuste de
+      // 0 unidades" tornaria a tela de Movimentações ilegível e não registraria
+      // nada — a prova de que o item foi contado e conferido é o próprio item
+      // da folha, que fica gravado com contado = esperado.
+      // ------------------------------------------------------------------
+      const movimentos = [];
+      const ajustes = [];
+      const semProduto = [];
+      for (const item of itens) {
+        const product = productsById.get(item.productId);
+        if (!product) {
+          semProduto.push(item.productName || item.productId);
+          continue;
+        }
+        const saldo = item.classValueId
+          ? stockCore.classValueBalance(data, item.productId, item.classValueId, contagem.depositId)
+          : stockCore.depositBalance(data, item.productId, contagem.depositId);
+        const delta = item.countedQuantity - saldo;
+        if (delta === 0) {
+          ajustes.push({ itemId: item.id, adjustment: 0, movementId: '' });
+          continue;
+        }
+        const movimento = buildMovementRecord(data, {
+          type: delta > 0 ? 'entrada' : 'saida',
+          productId: item.productId,
+          depositId: contagem.depositId,
+          quantity: Math.abs(delta),
+          // O CUSTO DO AJUSTE É O CUSTO DO PRODUTO, e não zero.
+          //
+          // Os movimentos automáticos do sistema gravam unitCost 0, e para uma
+          // venda isso não importa. Para a CARGA INICIAL importa tudo: é o
+          // movimento que dá entrada no acervo inteiro, e com custo 0 o valor
+          // do estoque nasce zerado — o Painel de Estoque diria "R$ 0,00 parado"
+          // com o galpão cheio.
+          unitCost: stockCore.toNumber(product.costPrice),
+          date: contagem.date,
+          categoryId: String(body.categoryId || ''),
+          document: contagem.code,
+          note: `Contagem ${contagem.code}: contado ${item.countedQuantity}, saldo ${saldo}`,
+          origin: 'contagem',
+          classId: item.classId,
+          classValueId: item.classValueId,
+          referenceType: 'stock_count',
+          referenceId: contagem.id
+        }, user);
+        movimentos.push(movimento);
+        ajustes.push({ itemId: item.id, adjustment: delta, movementId: movimento.id });
+      }
+
+      // Produto excluído depois de ter sido contado. Recusar a contagem inteira
+      // e nomear os produtos: fechar sem eles gravaria uma folha que diz ter
+      // conferido o galpão e deixou itens de fora sem avisar.
+      if (semProduto.length) {
+        return sendJson(res, {
+          error: `Não é possível fechar: ${semProduto.length} produto(s) da folha não existem mais no cadastro`
+            + ` (${semProduto.slice(0, 3).join(', ')}${semProduto.length > 3 ? '...' : ''}).`
+            + ' Remova os itens antes de fechar.'
+        }, 409);
+      }
+
+      // ------------------------------------------------------------------
+      // O FECHAMENTO PASSA POR commitStockMovements.
+      //
+      // É lá que moram a travagem dos produtos em ordem fixa (contra deadlock),
+      // a numeração pela sequence, a soma transacional do total do produto e as
+      // guardas de saldo negativo. Uma contagem, por construção, não faz
+      // nenhuma das guardas disparar (ver o bloco da migração) — e passar por
+      // ali assim mesmo é o que faz a próxima guarda que alguém acrescentar lá
+      // valer para a contagem de graça.
+      //
+      // `tambemNaTransacao` grava o fechamento no MESMO instante dos
+      // movimentos. Fora dele, um processo morto no meio deixaria o ajuste
+      // aplicado numa contagem que continua se oferecendo para ser fechada — e
+      // o segundo clique dobraria o saldo.
+      //
+      // A TRAVA impede os dois cliques simultâneos: sem ela, dois "Fechar"
+      // leriam `aberta` os dois e o saldo receberia o ajuste em dobro — e a
+      // segunda gravação do status não reclamaria, porque escrever 'fechada'
+      // por cima de 'fechada' é um UPDATE válido.
+      //
+      // E A CONFERÊNCIA É DO RESULTADO, NÃO DO PONTO DE PARTIDA.
+      //
+      // O gancho roda DEPOIS de os movimentos entrarem, então o saldo que ele
+      // lê já é o ajustado — e é essa a pergunta que vale: "o saldo ficou sendo
+      // exatamente o contado?". É a definição de uma contagem. Se algo se mexeu
+      // entre a folha ter sido lida e o fechamento, o delta foi calculado sobre
+      // um saldo velho e o resultado não bate; a transação volta atrás inteira e
+      // a mensagem pede para recarregar. Gravar mesmo assim registraria uma
+      // folha que afirma um saldo que o galpão não tem.
+      // ------------------------------------------------------------------
+      await commitStockMovements(data, movimentos, productsById, {
+        tambemNaTransacao: async (cliente) => {
+          const travada = await contagemDb.travarParaFechar(cliente, id);
+          if (!travada || travada.status !== 'aberta') {
+            throw stockCore.stockError('Esta contagem acabou de ser fechada ou cancelada por outra pessoa.', 409);
+          }
+          const saldos = await contagemDb.saldosDoDeposito(
+            cliente, contagem.depositId, itens.map((i) => i.productId)
+          );
+          for (const item of itens) {
+            const resultado = item.classValueId
+              ? (saldos.porCor.get(`${item.productId}|${item.classValueId}`) || 0)
+              : (saldos.porProduto.get(item.productId) || 0);
+            // Epsilon de meia unidade da última casa: numeric(18,4) não sofre
+            // do erro de ponto flutuante, mas a aritmética do delta acontece em
+            // JS, onde 0,1 + 0,2 não é 0,3. Comparar com `!==` faria uma
+            // contagem de frações falhar sem nada de errado ter acontecido.
+            if (Math.abs(resultado - item.countedQuantity) > 0.00005) {
+              throw stockCore.stockError(
+                `O saldo de "${item.productName || item.productId}" mudou durante o fechamento:`
+                + ` a contagem diz ${item.countedQuantity} e o saldo ficou ${resultado}.`
+                + ' Recarregue a contagem e feche de novo — o ajuste foi calculado sobre um saldo que já mudou.',
+                409
+              );
+            }
+          }
+          await contagemDb.marcarItensFechados(cliente, ajustes);
+          await contagemDb.atualizarFechamento(cliente, id, {
+            closedBy: user.id,
+            closedByName: user.name
+          });
+        }
+      });
+
+      const fechada = await contagemDb.buscar(id);
+      return sendJson(res, {
+        success: true,
+        count: fechada,
+        ajustes: movimentos.length,
+        conferidosSemDivergencia: ajustes.length - movimentos.length
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao fechar a contagem');
     }
   }
 
