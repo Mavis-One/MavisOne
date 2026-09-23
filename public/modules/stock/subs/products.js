@@ -7,7 +7,10 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
 
   const meta = await S.loadMeta(api, showToast);
   const cores = S.indiceDeCores(meta);
-  const filters = { search: '', categoryId: '', status: '', situation: '', depositId: '' };
+  // `pendencia` entra aqui e nao precisa de mais nada: fetchProducts monta a
+  // query varrendo este objeto, entao um filtro novo chega ao servidor so' por
+  // existir nesta linha.
+  const filters = { search: '', categoryId: '', status: '', situation: '', depositId: '', pendencia: '' };
 
   // ---------------------------------------------------------------------
   // PAGINA E ORDEM (fase CG)
@@ -23,6 +26,8 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   const POR_PAGINA = 100;
   let pagina = 1;
   const ordem = { campo: 'name', direcao: 'asc' };
+  // Preenchido por fetchProducts a cada carga (fase CT).
+  let pendencias = {};
 
   // Cada coluna e' comparada pelo que ela E', e nao como texto solto:
   //   texto  - comparacao pt-BR, sem diferenciar acento nem maiuscula, e com
@@ -133,9 +138,14 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
     Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
     try {
       const res = await api(`/api/stock/products?${params.toString()}`);
+      // As contagens de pendência vêm do servidor e são guardadas aqui: o
+      // cartão as mostra sem que esta tela precise saber o que "sem preço"
+      // significa. A regra tem um dono só, em lib/stock-core.js.
+      pendencias = res.pendencias || {};
       return res.products || [];
     } catch (error) {
       showToast(error.message || 'Erro ao carregar produtos.', 'error');
+      pendencias = {};
       return [];
     }
   }
@@ -150,6 +160,18 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
         <div class="panel"><strong>${S.formatQty(totalUnits)}</strong><p class="muted">Unidades em estoque</p></div>
         <div class="panel"><strong>${S.formatBRL(totalCost)}</strong><p class="muted">Valor a custo</p></div>
         <div class="panel"><strong>${alerts}</strong><p class="muted">Zerados ou abaixo do mínimo</p></div>
+        <!-- A CONTAGEM E' DA SELECAO, NAO DA PAGINA (fase CT).
+             Sem este cartao o filtro de pendencia existia sem ninguem saber
+             que havia o que filtrar: 3.078 produtos sem preco nao se anunciam,
+             e a lista ordenada por nome nunca os junta. -->
+        <div class="panel">
+          <strong>${Number(pendencias.qualquer || 0).toLocaleString('pt-BR')}</strong>
+          <p class="muted">Com pendência de cadastro${
+            (pendencias['sem-preco'] || 0) > 0
+              ? ` · ${Number(pendencias['sem-preco']).toLocaleString('pt-BR')} sem preço`
+              : ''
+          }</p>
+        </div>
       </div>
     `;
   }
@@ -214,6 +236,20 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
                 <option value="abaixo-minimo" ${filters.situation === 'abaixo-minimo' ? 'selected' : ''}>Abaixo do mínimo</option>
                 <option value="acima-maximo" ${filters.situation === 'acima-maximo' ? 'selected' : ''}>Acima do máximo</option>
                 <option value="zerado" ${filters.situation === 'zerado' ? 'selected' : ''}>Zerado</option>
+              </select>
+            </label>
+            <!-- A FILA DE PENDENCIAS DE CADASTRO (fase CT).
+                 Nao se confunde com "Situacao": aquela fala do SALDO (zerado,
+                 abaixo do minimo) e esta fala do CADASTRO (sem preco, sem NCM).
+                 Um produto pode estar com saldo normal e sem preco nenhum --
+                 3.078 dos 5.475 importados estao exatamente assim. -->
+            <label>Pendência de cadastro
+              <select name="pendencia">
+                <option value="">Todas</option>
+                <option value="qualquer" ${filters.pendencia === 'qualquer' ? 'selected' : ''}>Qualquer pendência</option>
+                <option value="sem-preco" ${filters.pendencia === 'sem-preco' ? 'selected' : ''}>Sem preço de venda</option>
+                <option value="sem-custo" ${filters.pendencia === 'sem-custo' ? 'selected' : ''}>Sem custo</option>
+                <option value="sem-ncm" ${filters.pendencia === 'sem-ncm' ? 'selected' : ''}>Sem NCM</option>
               </select>
             </label>
           </div>

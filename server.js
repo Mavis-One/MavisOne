@@ -12101,6 +12101,10 @@ async function tratarRequisicao(req, res) {
       // Fase CP: 'sem' traz os NÃO classificados, um id traz os daquele grupo.
       const grupoTributario = url.searchParams.get('grupoTributario') || '';
 
+      // Fase CT: a fila de pendências de cadastro. O predicado mora em
+      // stock-core para esta rota e a do Gestor de Preços não divergirem.
+      const pendencia = url.searchParams.get('pendencia') || '';
+
       let list = products.map((product) => stockCore.serializeProduct(product, data, reservas));
       if (search) {
         // O NCM entra na busca desde a fase CP: a classificação em lote procura
@@ -12116,10 +12120,25 @@ async function tratarRequisicao(req, res) {
       if (depositId) {
         list = list.filter((p) => (p.balances.find((b) => b.depositId === depositId) || {}).quantity > 0);
       }
+
+      // AS CONTAGENS SAEM DAQUI, E NÃO DO NAVEGADOR.
+      //
+      // Contar no cliente obrigaria a reescrever "sem preço" lá — a segunda
+      // cópia da regra que o predicado existe para evitar. E são contadas
+      // DEPOIS dos outros filtros e ANTES do de pendência: a pergunta que o
+      // cartão responde é "nesta seleção, quantos estão incompletos?", e
+      // contá-las depois daria sempre o tamanho da própria lista.
+      const pendencias = {};
+      for (const chave of Object.keys(stockCore.PENDENCIAS_DE_CADASTRO)) {
+        pendencias[chave] = list.filter((p) => stockCore.temPendenciaDeCadastro(p, chave)).length;
+      }
+      pendencias.qualquer = list.filter((p) => stockCore.temPendenciaDeCadastro(p, 'qualquer')).length;
+
+      if (pendencia) list = list.filter((p) => stockCore.temPendenciaDeCadastro(p, pendencia));
       list.sort((a, b) => a.name.localeCompare(b.name));
       // `total` vem junto porque quem só quer CONTAR (o cartão "produtos sem
       // grupo") não deveria ter de somar a lista inteira no navegador.
-      return sendJson(res, { products: list, total: list.length });
+      return sendJson(res, { products: list, total: list.length, pendencias });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar produtos', 500);
     }
@@ -12611,11 +12630,17 @@ async function tratarRequisicao(req, res) {
       const priceTableId = url.searchParams.get('priceTableId') || '';
       const priceTable = (data.priceTables || []).find((t) => t.id === priceTableId) || null;
       const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
+      // Fase CT: o MESMO filtro da tela de Produtos, pelo mesmo predicado. Esta
+      // tela é onde a pendência se resolve — filtrar a fila lá e não conseguir
+      // trazê-la para cá deixaria a pessoa copiando SKUs de uma tela para a
+      // busca da outra, que é a planilha de novo, só dentro do sistema.
+      const pendencia = url.searchParams.get('pendencia') || '';
       let list = products.map((product) => {
         const serialized = stockCore.serializeProduct(product, data);
         return { ...serialized, tablePrice: stockCore.priceForProduct(priceTable, product) };
       });
       if (search) list = list.filter((p) => `${p.name} ${p.sku}`.toLowerCase().includes(search));
+      if (pendencia) list = list.filter((p) => stockCore.temPendenciaDeCadastro(p, pendencia));
       list.sort((a, b) => a.name.localeCompare(b.name));
       return sendJson(res, { products: list, priceTables: data.priceTables, priceTableId });
     } catch (error) {

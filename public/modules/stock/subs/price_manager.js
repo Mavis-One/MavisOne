@@ -9,6 +9,10 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
 
   let priceTableId = '';
   let search = '';
+  // Fase CT: a mesma fila da tela de Produtos, para quem chega aqui PARA
+  // corrigir o preço. Achar os 3.078 sem preço buscando por nome exigia saber
+  // os nomes — a busca por texto não responde "o que está faltando".
+  let pendencia = '';
   let products = [];
   let priceTables = [];
   const edits = new Map();
@@ -31,6 +35,7 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
     const params = new URLSearchParams();
     if (priceTableId) params.set('priceTableId', priceTableId);
     if (search) params.set('search', search);
+    if (pendencia) params.set('pendencia', pendencia);
     try {
       const res = await api(`/api/stock/price-manager?${params.toString()}`);
       products = res.products || [];
@@ -114,6 +119,15 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
             <select id="priceManagerTable">${S.options(priceTables, priceTableId, { empty: 'Nenhuma (preço do cadastro)' })}</select>
           </label>
           <label>Buscar<input type="search" id="priceManagerSearch" value="${S.escape(search)}" placeholder="Nome ou SKU" /></label>
+          <label>Pendência de cadastro
+            <select id="priceManagerPendencia">
+              <option value="">Todas</option>
+              <option value="qualquer" ${pendencia === 'qualquer' ? 'selected' : ''}>Qualquer pendência</option>
+              <option value="sem-preco" ${pendencia === 'sem-preco' ? 'selected' : ''}>Sem preço de venda</option>
+              <option value="sem-custo" ${pendencia === 'sem-custo' ? 'selected' : ''}>Sem custo</option>
+              <option value="sem-ncm" ${pendencia === 'sem-ncm' ? 'selected' : ''}>Sem NCM</option>
+            </select>
+          </label>
         </div>
         ${table ? `<p class="muted">${isFixed
           ? 'Tabela de preço fixo: o valor da última coluna é gravado como preço do produto nesta tabela.'
@@ -154,6 +168,16 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
   function attachHandlers() {
     document.getElementById('priceManagerTable')?.addEventListener('change', async (event) => {
       priceTableId = event.target.value;
+      pagina = 1;
+      await load();
+      render();
+    });
+
+    // Volta para a pagina 1 pelo mesmo motivo da busca: filtrar estando na
+    // pagina 30 mostraria "Nenhum produto encontrado" para uma fila que tem
+    // 3.078 linhas.
+    document.getElementById('priceManagerPendencia')?.addEventListener('change', async (event) => {
+      pendencia = event.target.value;
       pagina = 1;
       await load();
       render();

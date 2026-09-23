@@ -209,7 +209,12 @@ check('o filtro soma o ncm',
   'a tela anuncia "Nome, SKU ou NCM"');
 check('e o filtro por grupo existe',
   /if \(grupoTributario === 'sem'\) list = list\.filter\(\(p\) => !p\.grupoTributarioId\);/.test(serverSrc));
-check('a rota devolve total', /return sendJson\(res, \{ products: list, total: list\.length \}\);/.test(serverSrc));
+// A asserção prende `total: list.length` e NADA MAIS da resposta. Prender a
+// chave-de-fechamento (`\}\);`) travava a FORMA da rota, não o comportamento:
+// a fase CT acrescentou `pendencias` ao lado de `total` e este check quebrou
+// sem que nada do grupo tributário tivesse mudado. Um teste que reclama de
+// campo novo ensina a não acrescentar campo.
+check('a rota devolve total', /sendJson\(res, \{ products: list, total: list\.length\b/.test(serverSrc));
 
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);
 process.exit(falhas === 0 ? 0 : 1);

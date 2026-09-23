@@ -1686,7 +1686,11 @@ const moduleSubItems = {
     { key: 'new_transfer', label: 'Nova Entre Depósitos', desc: 'Move produtos de um depósito para outro.' },
     { key: 'products', label: 'Produtos', desc: 'Produtos com saldo, custo e preço de venda.' },
     { key: 'new_product', label: 'Novo Produto', desc: 'Cadastra um produto novo.' },
-    { key: 'product_status', label: 'Status do Produto', desc: 'Situações que um produto pode assumir.' },
+    // A descricao dizia "Situacoes que um produto pode assumir", que promete um
+    // CADASTRO de status. A tela e' uma CONSULTA: escolhe-se um produto e ela
+    // mostra o saldo por deposito, os limites e o historico de movimentacoes
+    // (ver o subtitulo da propria tela, "Posicao atual e historico").
+    { key: 'product_status', label: 'Status do Produto', desc: 'Posição de um produto: saldo por depósito, limites e histórico.' },
     { key: 'deposits', label: 'Depósitos', desc: 'Depósitos e locais de armazenagem.' },
     { key: 'new_deposit', label: 'Novo Depósito', desc: 'Cadastra um depósito novo.' },
     { key: 'price_tables', label: 'Tabelas de Preços', desc: 'Preços por cliente ou canal de venda.' },
