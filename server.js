@@ -11470,6 +11470,9 @@ async function tratarRequisicao(req, res) {
       // era atualizado por fora, num upsert absoluto — nota com 30 itens eram
       // 30 janelas para o processo morrer com metade do estoque lancado.
       const movimentosDaNota = [];
+      // { produtoId, custo } de cada item cuja tela pediu para atualizar o
+      // custo. Gravado dentro da transação — ver o bloco no fim do laço.
+      const custosDaNota = [];
       for (const decisao of decisoes.filter((d) => d.movimentarEstoque)) {
         const produto = produtosPorId.get(decisao.produtoId);
         movimentosDaNota.push(buildMovementRecord(data, {
@@ -11492,8 +11495,14 @@ async function tratarRequisicao(req, res) {
         // vUnCom é o preço da mercadoria: NÃO inclui frete, IPI nem ST. Custo
         // de reposição de verdade sai de rateio, e rateio é decisão de quem
         // apura — não de quem lança a nota.
+        //
+        // AQUI SÓ SE ANOTA O QUE GRAVAR. A gravação foi para dentro da
+        // transação, logo abaixo: escrita aqui, o `catch` que desfaz a nota
+        // inteira (para a chave de acesso não ficar queimada) deixava o custo
+        // de cada item já sobrescrito. Sobrava nenhuma nota, nenhum movimento e
+        // o custo trocado — e nada na tela diz que o custo se mexeu.
         if (body.atualizarCusto !== false) {
-          await db.atualizarCusto(produto.id, Number(decisao.item.valorUnitario || 0));
+          custosDaNota.push({ produtoId: produto.id, custo: Number(decisao.item.valorUnitario || 0) });
         }
         movimentados.push(produto.name);
       }
@@ -11518,10 +11527,23 @@ async function tratarRequisicao(req, res) {
       // O `for update` e a reconferência aqui dentro fecham a janela entre a
       // validação lá de cima e este commit: duas notas apontando para a mesma
       // ordem, ao mesmo tempo, esperam uma pela outra e a segunda é recusada.
+      // O GANCHO AGORA TAMBÉM CARREGA O CUSTO (e por isso existe mesmo sem
+      // ordem vinculada). Custo e razão passam a mudar juntos, ou nenhum dos
+      // dois muda — que é a mesma regra que a fase BH aplicou à marca na ordem,
+      // pelo mesmo motivo.
+      //
+      // Continua condicional para não abrir transação à toa: nota em que nenhum
+      // item movimenta estoque, sem ordem e sem custo a gravar, não tem o que
+      // commitar.
+      const precisaDeTransacao = custosDaNota.length > 0 || Boolean(body.purchaseOrderId);
       try {
         await commitStockMovements(data, movimentosDaNota, produtosPorId, {
-          tambemNaTransacao: body.purchaseOrderId
+          tambemNaTransacao: precisaDeTransacao
             ? async (cliente) => {
+              for (const { produtoId, custo } of custosDaNota) {
+                await razaoEstoque.atualizarCustoDoProduto(cliente, produtoId, custo);
+              }
+              if (!body.purchaseOrderId) return;
               await comprasDb.travarDocumento(cliente, body.purchaseOrderId);
               const { rows } = await cliente.query(
                 'select stock_applied from purchase_orders where id = $1', [body.purchaseOrderId]

@@ -126,5 +126,48 @@ check('  mas o estoque NÃO se desfaz por causa do financeiro',
   !/desfazerEntrada/.test(rota.slice(rota.indexOf('falhaAoGerarFinanceiroDaEntrada'))));
 check('atualizarSinalizadores existe na camada de dados', /async function atualizarSinalizadores\(id, \{/.test(fonteDb));
 
+// ---------------------------------------------------------------------------
+console.log('\n--- 5. o CUSTO muda junto com o razão, ou não muda (fase CV) ---');
+//
+// A quarta camada, e a que faltava. O cabeçalho deste arquivo já dizia que
+// depois da fase BH o custo voltava a 50 — e isso era verdade só para o caso
+// COMUM, porque as duas recusas da ordem vinculada passaram a ser conferidas
+// antes de qualquer gravação.
+//
+// O que sobrava: `db.atualizarCusto` era chamado no LAÇO dos itens, antes de
+// `commitStockMovements`, e o `catch` que desfaz a nota inteira não o
+// desfazia. Bastava a transação falhar por outro motivo — a corrida entre a
+// conferência prévia e o commit, que o próprio comentário da rota admite, ou
+// qualquer erro de banco — e ficava: nenhuma nota, nenhum movimento, e o custo
+// de cada item já sobrescrito pelo vUnCom.
+//
+// Silencioso nas duas pontas: a tela mostra o erro da ordem, e nada diz que o
+// custo se mexeu.
+const razaoSrc = ler('lib/db/estoque-razao.js');
+
+check('a rota NÃO grava custo fora da transação',
+  !/await db\.atualizarCusto\(/.test(rota),
+  'era a chamada dentro do laco dos itens');
+check('  ela só anota o que gravar', /custosDaNota\.push\(\{ produtoId: produto\.id, custo:/.test(rota));
+check('  e grava dentro do gancho transacional',
+  /tambemNaTransacao: precisaDeTransacao[\s\S]{0,200}atualizarCustoDoProduto\(cliente, produtoId, custo\)/.test(rota),
+  'custo e razao mudam juntos, como a marca na ordem desde a fase BH');
+
+// O gancho passou a existir SEM ordem vinculada — antes ele era
+// `body.purchaseOrderId ? ... : undefined`. Se voltasse a ser condicional só
+// na ordem, o custo de uma nota sem ordem sairia da transação outra vez.
+check('  o gancho não depende mais de haver ordem vinculada',
+  /const precisaDeTransacao = custosDaNota\.length > 0 \|\| Boolean\(body\.purchaseOrderId\)/.test(rota));
+check('  e a parte da ordem sai cedo quando não há ordem',
+  /if \(!body\.purchaseOrderId\) return;/.test(rota));
+
+check('atualizarCustoDoProduto recebe o cliente da transação',
+  /async function atualizarCustoDoProduto\(cliente, produtoId, custo\)/.test(razaoSrc));
+check('  e é um UPDATE de coluna, não um upsert da linha',
+  /update products set cost_price = \$1 where id = \$2/.test(razaoSrc),
+  'upsert levaria de volta o saldo lido ANTES desta nota');
+check('  com o porquê escrito ao lado de somarNoTotalDoProduto',
+  /MORA AQUI porque este módulo já é o lugar das gravações em `products`/.test(razaoSrc));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

@@ -64,10 +64,20 @@
       tom: 'info', entraEstoque: false, geraFinanceiro: false
     },
     {
-      // Chegou parte. NÃO movimenta estoque por si: o que chegou entra pela
-      // Nota de Entrada ou pelo recebimento explícito, item a item. Marcar o
-      // documento inteiro como recebido aqui daria entrada no que ainda está
-      // com o fornecedor.
+      // Chegou parte. NÃO movimenta estoque por si, e marcar o documento
+      // inteiro como recebido aqui daria entrada no que ainda está com o
+      // fornecedor.
+      //
+      // O QUE ESTE STATUS AINDA NÃO REGISTRA: quanto de cada item chegou.
+      // Hoje ele é um MARCADOR — diz "chegou parte" e nada mais; a quantidade
+      // entra pela Nota de Entrada, com os números que o fornecedor faturou.
+      // Não há conferência por item, então "recebi 8 de 10" não existe como
+      // dado, e divergência de recebimento não se mede (VM-CMP-06).
+      //
+      // Uma versão anterior deste comentário dizia que o que chegou entrava
+      // "pelo recebimento explícito, item a item". Esse caminho nunca foi
+      // construído, e comentário que descreve recurso inexistente é pior do
+      // que comentário nenhum: manda procurar uma tela que não há.
       value: 'ordem-recebida-parcial', label: 'Recebida Parcialmente', tipo: 'order',
       tom: 'warning', entraEstoque: false, geraFinanceiro: false
     },
