@@ -4366,6 +4366,35 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
   return { consumidos, produzido: quantidade };
 }
 
+/**
+ * A ficha técnica é válida? Devolve a recusa, ou vazio quando aceita.
+ *
+ * UM PRODUTO NÃO SE CONSOME (fase CX). Os dois selects do formulário — "Produto
+ * final" e "Componente" — saem da MESMA lista de produtos, e escolher o mesmo
+ * nos dois era aceito. O efeito, provado por HTTP: `aplicarConsumoDeProducao`
+ * soma +quantidade no produto final e -quantidade no componente na mesma chave
+ * do Map, as duas se cancelam, e apontar 10 grava ZERO movimento com a ordem
+ * exibindo "Produzido: 10". Com quantidade 0,5 por unidade não se cancelam e o
+ * apontamento CRIA estoque: 50 viram 55.
+ *
+ * O CHECK do banco é quem garante; isto aqui existe só para a mensagem ser em
+ * português e dizer o que fazer, em vez do texto cru da constraint.
+ *
+ * `anterior` é a linha atual na edição: o PUT pode trazer só um dos dois
+ * campos, e conferir só o corpo deixaria passar trocar o componente para o
+ * produto que já estava gravado.
+ */
+function recusaDeFichaTecnica(corpo, anterior) {
+  const produtoId = String((corpo.productId ?? anterior?.productId) || '').trim();
+  const componenteId = String((corpo.componentId ?? anterior?.componentId) || '').trim();
+  if (!produtoId || !componenteId) return '';
+  if (produtoId !== componenteId) return '';
+  return 'Um produto não pode ser componente de si mesmo. '
+    + 'A ficha técnica diz o que o produto CONSOME para ser feito — se ele aparecer '
+    + 'na própria lista, o apontamento de produção não movimenta estoque nenhum, ou '
+    + 'cria estoque do nada. Escolha um componente diferente do produto final.';
+}
+
 // Casca de gravação do efeito acima: carrega a ordem, aplica e persiste o
 // ledger local (data.stockMovements). Sai calada quando não há o que fazer —
 // delta zero, ordem inexistente — para o chamador não precisar se defender.
@@ -7622,6 +7651,10 @@ async function tratarRequisicao(req, res) {
           const recusa = await ordemAceitaApontamento(corpo.orderId);
           if (recusa) return sendJson(res, { error: recusa }, 400);
         }
+        if (recurso === 'pcp/bom') {
+          const recusa = recusaDeFichaTecnica(corpo, null);
+          if (recusa) return sendJson(res, { error: recusa }, 400);
+        }
         // Estoque ANTES de gravar o apontamento: faltando componente, nada é
         // criado, em vez de sobrar um apontamento que não baixou nada.
         const efeito = recurso === 'pcp/entries'
@@ -7639,6 +7672,10 @@ async function tratarRequisicao(req, res) {
         // ser recalculadas, senão a de origem fica contando o que saiu dela.
         const anterior = recurso === 'pcp/entries' ? await modulosDb.obter(recurso, id) : null;
         const corpo = await readBody(req);
+        if (recurso === 'pcp/bom') {
+          const recusa = recusaDeFichaTecnica(corpo, await modulosDb.obter(recurso, id));
+          if (recusa) return sendJson(res, { error: recusa }, 400);
+        }
         if (anterior) {
           const novaOrdem = corpo.orderId ?? anterior.orderId;
           const novaQtd = corpo.quantity === undefined ? Number(anterior.quantity || 0) : Number(corpo.quantity || 0);

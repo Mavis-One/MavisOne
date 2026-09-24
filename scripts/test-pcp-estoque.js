@@ -128,5 +128,58 @@ check('  desfazer diz que a saída precisa ser estornada antes',
 check('  e apontar distingue produto de componente',
   /\$\{ehProdutoFinal \? 'produto' : 'componente'\}/.test(consumo));
 
+// ---------------------------------------------------------------------------
+// 7. A FICHA TÉCNICA NÃO CONSOME O PRÓPRIO PRODUTO (fase CX).
+//
+// `pcp_bom` só tinha `pcp_bom_unico (product_id, component_id)`, que impede o
+// mesmo componente repetir na ficha. Nada impedia o componente de ser o PRÓPRIO
+// produto — e os dois selects do formulário saem da mesma lista de produtos.
+//
+// Medido por HTTP em 24/09/2026, antes da correção:
+//
+//   ficha "PRODUTO consome 1 PRODUTO"
+//     estoque 50 -> apontar 10 -> estoque 50, ZERO movimentos gravados,
+//     e a lista de Ordens exibindo "Produzido: 10".
+//
+//   ficha "PRODUTO consome 0,5 PRODUTO"
+//     estoque 50 -> apontar 10 -> estoque 55.
+//     Dez produzidas, cinco unidades a mais no estoque, vindas do nada.
+//
+// A causa: `efeitos` é um Map por id de produto. O +quantidade do produto final
+// e o -quantidade do componente caem na MESMA chave. Com 1 por unidade se
+// cancelam (e `if (!produto || !variacao) continue` engole o movimento); com
+// 0,5 sobra metade como ENTRADA.
+console.log('--- 7. a ficha não consome o próprio produto ---');
+const recusaFicha = corpoDe('recusaDeFichaTecnica');
+check('recusaDeFichaTecnica existe', recusaFicha.length > 0);
+check('  compara produto final com componente', /if \(produtoId !== componenteId\) return '';/.test(recusaFicha));
+// Campo vazio não é assunto desta guarda: obrigatoriedade é outra conferência,
+// e recusar aqui daria a mensagem errada para quem só esqueceu de preencher.
+check('  e sai calada quando falta um dos dois', /if \(!produtoId \|\| !componenteId\) return '';/.test(recusaFicha));
+// O PUT pode trazer só um dos dois campos. Conferir apenas o corpo deixaria
+// passar trocar o componente PARA o produto que já estava gravado.
+check('  a edição funde o corpo com a linha atual',
+  /corpo\.productId \?\? anterior\?\.productId/.test(recusaFicha)
+  && /corpo\.componentId \?\? anterior\?\.componentId/.test(recusaFicha));
+check('  e a mensagem diz o efeito, não só "não pode"',
+  /não movimenta estoque nenhum/.test(recusaFicha) && /cria estoque do nada/.test(recusaFicha));
+
+check('o POST a consulta', /if \(recurso === 'pcp\/bom'\) \{\s*\n\s*const recusa = recusaDeFichaTecnica\(corpo, null\);/.test(src));
+check('  e o PUT também, passando a linha atual',
+  /const recusa = recusaDeFichaTecnica\(corpo, await modulosDb\.obter\(recurso, id\)\);/.test(src));
+
+// A ROTA É A MENSAGEM; O BANCO É A GARANTIA. Sem o CHECK, importação e psql
+// continuariam entrando com a ficha inválida.
+const migracaoCx = ler('banco/migrations/fase-cx-ficha-tecnica-nao-se-consome.sql');
+check('o banco tem o CHECK', /check \(product_id <> component_id\)/.test(migracaoCx));
+check('  com nome próprio, para a falha se explicar',
+  /constraint pcp_bom_nao_consome_a_si_mesmo/.test(migracaoCx));
+check('  e guardado por pg_constraint, para reaplicar sem erro',
+  /select 1 from pg_constraint where conname = 'pcp_bom_nao_consome_a_si_mesmo'/.test(migracaoCx));
+// A migração NÃO apaga linha do usuário: para com o motivo e a consulta que
+// mostra o estrago. Falhar calada deixaria o operador com o texto cru do ALTER.
+check('  e não apaga ficha existente: para e explica',
+  /raise exception/.test(migracaoCx) && !/delete from pcp_bom/.test(migracaoCx));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);
