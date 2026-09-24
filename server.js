@@ -38,6 +38,9 @@ const prazoCancelamento = require('./public/modules/shared/prazo_cancelamento');
 // inscrição. Mesmo arquivo que o navegador carrega: o atalho de Novo Cliente
 // grava o que esta regra aceita, e a emissão decide o indicador de IE por ela.
 const inscricaoEstadual = require('./public/modules/shared/inscricao_estadual');
+// Fase CW: a regra de duplicidade de cadastro, num lugar só. Estava escrita
+// duas vezes — aqui e no public/app.js — com as duas cópias idênticas.
+const duplicidade = require('./public/modules/shared/duplicidade_cadastro');
 // Painel "Atenção" do hub: junta o que já está errado e espalhado por seis
 // telas — conta vencida, NF-e rejeitada, pedido faturado sem nota, estoque
 // abaixo do mínimo.
@@ -546,24 +549,13 @@ function normalizeText(value) {
     .replace(/\s+/g, ' ');
 }
 
+// `address` OU `street`: o formulário grava `street`; registros antigos e
+// alguns payloads de integração usam `address`. A gêmea desta função, que monta
+// a CHAVE do endereço completo, saiu daqui na fase CW — mora em
+// public/modules/shared/duplicidade_cadastro.js, num lugar só, porque havia uma
+// cópia idêntica dela no public/app.js.
 function getAddressLine(record) {
   return record.address || record.street || '';
-}
-
-function buildAddressKey(record) {
-  const line = normalizeText(getAddressLine(record));
-  if (!line) {
-    return '';
-  }
-  const parts = [
-    line,
-    normalizeText(record.streetNumber || record.addressNumber || ''),
-    normalizeText(record.neighborhood || ''),
-    normalizeText(record.city || ''),
-    normalizeText(record.state || ''),
-    sanitizeDigits(record.zipCode || '')
-  ];
-  return parts.join('|');
 }
 
 function validateRequiredRegistrationFields(record) {
@@ -579,27 +571,26 @@ function validateRequiredRegistrationFields(record) {
   return missing;
 }
 
+/**
+ * A REGRA SAIU DAQUI (fase CW). Ver public/modules/shared/duplicidade_cadastro.js.
+ *
+ * Estava escrita duas vezes, palavra por palavra: aqui e em
+ * `findDuplicateRegistrationClient`, no public/app.js. Duas cópias de uma regra
+ * são duas regras — a segunda só ainda não divergiu. Agora as duas pontas
+ * chamam o mesmo módulo, como já acontece com sales_status e purchase_status.
+ *
+ * E a regra MUDOU: recusava por documento, por nome E por endereço. As duas
+ * últimas travavam 824 cadastros legítimos nesta base — homônimo, mãe e filho
+ * no mesmo endereço, matriz e filial. Viraram AVISO. O que recusa é o
+ * documento, que é o que existe para dizer "esta é a mesma pessoa".
+ */
 function findDuplicateRegistration(data, record, excludeId) {
-  const allRecords = [...data.people, ...data.cnpjs];
-  const document = sanitizeDigits(record.document || '');
-  const name = normalizeText(record.name || '');
-  const addressKey = buildAddressKey(record);
+  return duplicidade.bloqueio([...data.people, ...data.cnpjs], record, excludeId);
+}
 
-  for (const entry of allRecords) {
-    if (excludeId && entry.id === excludeId) {
-      continue;
-    }
-    if (document && sanitizeDigits(entry.document || '') === document) {
-      return `Já existe um cadastro com o CPF/CNPJ informado (${entry.name || 'sem nome'}).`;
-    }
-    if (name && normalizeText(entry.name || '') === name) {
-      return `Já existe um cadastro com o nome "${record.name}".`;
-    }
-    if (addressKey && buildAddressKey(entry) === addressKey) {
-      return 'Já existe um cadastro com este mesmo endereço.';
-    }
-  }
-  return null;
+/** As coincidências que merecem pergunta, não recusa. Lista de { tipo, mensagem }. */
+function avisosDeDuplicidade(data, record, excludeId) {
+  return duplicidade.avisos([...data.people, ...data.cnpjs], record, excludeId);
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -10447,8 +10438,16 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: duplicateMessage }, 409);
       }
 
+      // OS AVISOS VÃO NA RESPOSTA (fase CW), e são calculados ANTES de gravar —
+      // depois, o próprio cadastro novo apareceria na lista e se acusaria.
+      //
+      // Nome e endereço repetidos deixaram de recusar, mas não deixaram de
+      // importar: cadastrar a mesma pessoa duas vezes divide o histórico dela
+      // em dois, e quem procura pelo nome acha metade. Quem chega por API vê o
+      // aviso aqui; quem chega pela tela responde à pergunta antes de enviar.
+      const avisos = avisosDeDuplicidade(data, person);
       const created = await db.createPerson(person);
-      return sendJson(res, { success: true, person: created });
+      return sendJson(res, { success: true, person: created, avisos });
     } catch (error) {
       return sendErro(res, error, 'Erro ao salvar pessoa', 400);
     }
@@ -10523,8 +10522,9 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: duplicateMessage }, 409);
       }
 
+      const avisos = avisosDeDuplicidade(data, person, person.id);
       const updated = await db.updatePerson(id, person);
-      return sendJson(res, { success: true, person: updated });
+      return sendJson(res, { success: true, person: updated, avisos });
     } catch (error) {
       return sendErro(res, error, 'Erro ao atualizar pessoa', 400);
     }
@@ -10614,8 +10614,9 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: duplicateMessage }, 409);
       }
 
+      const avisos = avisosDeDuplicidade(data, company);
       const created = await db.createCnpj(company);
-      return sendJson(res, { success: true, company: created });
+      return sendJson(res, { success: true, company: created, avisos });
     } catch (error) {
       return sendErro(res, error, 'Erro ao salvar CNPJ', 400);
     }
@@ -10690,8 +10691,9 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: duplicateMessage }, 409);
       }
 
+      const avisos = avisosDeDuplicidade(data, company, company.id);
       const updated = await db.updateCnpj(id, company);
-      return sendJson(res, { success: true, company: updated });
+      return sendJson(res, { success: true, company: updated, avisos });
     } catch (error) {
       return sendErro(res, error, 'Erro ao atualizar CNPJ', 400);
     }

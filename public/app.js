@@ -2229,32 +2229,21 @@ const isValidCpf = (cpf) => window.MavisDocumento.validoCpf(cpf);
 const isValidCnpj = (cnpj) => window.MavisDocumento.validoCnpj(cnpj);
 const isValidDocument = (documentValue) => window.MavisDocumento.valido(documentValue);
 
-function normalizeRegistrationText(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
-}
+// A REGRA DE DUPLICIDADE SAIU DAQUI (fase CW).
+//
+// Havia tres funcoes aqui -- normalizeRegistrationText,
+// buildRegistrationAddressKey e findDuplicateRegistrationClient -- identicas,
+// palavra por palavra, as do server.js. Duas copias de uma regra sao duas
+// regras: a segunda so ainda nao divergiu.
+//
+// De carona, a copia daqui tinha os caracteres combinantes LITERAIS dentro do
+// regex de acentos. Caractere invisivel no fonte e o defeito que ninguem revisa
+// -- ver o byte NUL que o lib/zip.js carregava. O modulo compartilhado os
+// escreve como ̀-ͯ.
+const duplicidadeCadastro = () => window.MavisDuplicidade;
 
 function getRegistrationAddressLine(record) {
-  return record.address || record.street || '';
-}
-
-function buildRegistrationAddressKey(record) {
-  const line = normalizeRegistrationText(getRegistrationAddressLine(record));
-  if (!line) {
-    return '';
-  }
-  return [
-    line,
-    normalizeRegistrationText(record.streetNumber || record.addressNumber || ''),
-    normalizeRegistrationText(record.neighborhood || ''),
-    normalizeRegistrationText(record.city || ''),
-    normalizeRegistrationText(record.state || ''),
-    sanitizeDigits(record.zipCode || '')
-  ].join('|');
+  return duplicidadeCadastro().linhaDeEndereco(record);
 }
 
 function getMissingRequiredRegistrationFields(record) {
@@ -2270,26 +2259,28 @@ function getMissingRequiredRegistrationFields(record) {
   return missing;
 }
 
+/**
+ * O QUE RECUSA: so o documento. Casca sobre window.MavisDuplicidade, que o
+ * servidor tambem usa -- a mesma resposta nas duas pontas, por construcao.
+ */
 function findDuplicateRegistrationClient(existingRecords, record, excludeId) {
-  const document = sanitizeDigits(record.document || '');
-  const name = normalizeRegistrationText(record.name || '');
-  const addressKey = buildRegistrationAddressKey(record);
+  return duplicidadeCadastro().bloqueio(existingRecords, record, excludeId);
+}
 
-  for (const entry of existingRecords) {
-    if (excludeId && entry.id === excludeId) {
-      continue;
-    }
-    if (document && sanitizeDigits(entry.document || '') === document) {
-      return `Já existe um cadastro com o CPF/CNPJ informado (${entry.name || 'sem nome'}).`;
-    }
-    if (name && normalizeRegistrationText(entry.name || '') === name) {
-      return `Já existe um cadastro com o nome "${record.name}".`;
-    }
-    if (addressKey && buildRegistrationAddressKey(entry) === addressKey) {
-      return 'Já existe um cadastro com este mesmo endereço.';
-    }
-  }
-  return null;
+/**
+ * O QUE MERECE PERGUNTA: nome e endereco repetidos.
+ *
+ * Recusavam o cadastro, e travavam 824 registros legitimos desta base (87 por
+ * nome, 737 por endereco) -- inclusive a EDICAO deles, porque a conferencia
+ * ignora so o proprio id: abrir um homonimo para corrigir o telefone achava o
+ * outro e recusava.
+ *
+ * Devolve o texto da pergunta, ou '' quando nao ha coincidencia.
+ */
+function avisoDeDuplicidadeCliente(existingRecords, record, excludeId) {
+  return duplicidadeCadastro().textoDoAviso(
+    duplicidadeCadastro().avisos(existingRecords, record, excludeId)
+  );
 }
 
 const getDocumentType = (documentValue) => window.MavisDocumento.tipoDe(documentValue);
@@ -7358,6 +7349,15 @@ async function loadModule(moduleName) {
           return;
         }
 
+        // NOME E ENDERECO REPETIDOS PERGUNTAM, NAO RECUSAM (fase CW).
+        //
+        // A pergunta chega aqui, e nao depois de gravar, porque e aqui que quem
+        // esta cadastrando pode responder: ele e quem sabe se e a mesma pessoa
+        // ou o filho que mora no mesmo endereco. Aviso depois do salvamento
+        // seria informacao sem acao.
+        const avisoDup = avisoDeDuplicidadeCliente([...people, ...cnpjs], payload, payload.id);
+        if (avisoDup && !(await confirmModal(avisoDup))) return;
+
         state.cadastroDraft = { ...state.cadastroDraft, people: payload };
 
         try {
@@ -7562,6 +7562,15 @@ async function loadModule(moduleName) {
           markFormError({ ...payload }, 'cnpjs', duplicateMessage);
           return;
         }
+
+        // NOME E ENDERECO REPETIDOS PERGUNTAM, NAO RECUSAM (fase CW).
+        //
+        // A pergunta chega aqui, e nao depois de gravar, porque e aqui que quem
+        // esta cadastrando pode responder: ele e quem sabe se e a mesma pessoa
+        // ou o filho que mora no mesmo endereco. Aviso depois do salvamento
+        // seria informacao sem acao.
+        const avisoDup = avisoDeDuplicidadeCliente([...people, ...cnpjs], payload, payload.id);
+        if (avisoDup && !(await confirmModal(avisoDup))) return;
 
         state.cadastroDraft = { ...state.cadastroDraft, cnpjs: payload };
 
