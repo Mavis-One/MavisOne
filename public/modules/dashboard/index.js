@@ -249,9 +249,10 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
   // O `.catch` por chamada é o que mantém a degradação separada: um
   // `Promise.all` sem eles perderia a tela inteira por causa de uma fonte, que
   // é justamente o que os três blocos try/catch de antes evitavam.
+  const filialPedida = state.dashboardFilial || '';
   const [charts, resumo, pendencias] = await Promise.all([
-    api(`/api/dashboard/charts?granularity=${granularity}`)
-      .catch(() => ({ salesChartSeries: [], financeChartSeries: [], permissions: {} })),
+    api(`/api/dashboard/charts?granularity=${granularity}${filialPedida ? `&filial=${encodeURIComponent(filialPedida)}` : ''}`)
+      .catch(() => ({ salesChartSeries: [], financeChartSeries: [], filiais: [], permissions: {} })),
     api(`/api/dashboard?period=${encodeURIComponent(PERIODO_DO_GRANULARITY[granularity] || 'month')}`).catch(() => ({ kpis: [] })),
     api('/api/dashboard/atencao').catch(() => ({ itens: [] }))
   ]);
@@ -271,9 +272,68 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
     }
   }
 
+  // O servidor devolve a filial que ele APLICOU. Uma filial que sumiu da lista
+  // (ou que o usuário não enxerga) volta vazia, e o seletor tem de mostrar
+  // "Todas" — e não o nome de um filtro que não está valendo.
+  state.dashboardFilial = charts.filial || '';
+  const filial = state.dashboardFilial;
+  const filiais = charts.filiais || [];
+  const serieVendas = charts.salesChartSeries || [];
+  const temMeta = serieVendas.some((p) => p.meta !== null && p.meta !== undefined);
+
+  const seletorFilial = filiais.length ? `
+    <label class="dashboard-fluxo-filial">
+      <span>Filial</span>
+      <select data-dashboard-filial aria-label="Filial do Fluxo de Vendas">
+        <option value="">Todas as filiais</option>
+        ${filiais.map((f) => `<option value="${escapeHtml(f.nome)}" ${f.nome === filial ? 'selected' : ''}>${escapeHtml(f.nome)}</option>`).join('')}
+      </select>
+    </label>
+  ` : '';
+
+  // Formulário da meta: só para quem o servidor diz que pode (administrador).
+  // Esconder o botão não é o controle — a rota /api/metas recusa o resto.
+  // A meta é MENSAL; o gráfico rateia por dias corridos no Diário e no Semanal.
+  // Data LOCAL: toISOString() é UTC, e às 21h do último dia do mês já seria o
+  // mês seguinte aqui.
+  const agora = new Date();
+  const mesAtual = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+  const formMeta = charts.podeDefinirMeta && state.dashboardMetaAberta && filiais.length ? `
+    <form class="dashboard-meta-form" data-dashboard-meta-form>
+      <label>
+        <span>Filial</span>
+        <select name="filial" required>
+          ${filiais.map((f) => `<option value="${escapeHtml(f.nome)}" ${f.nome === (filial || filiais[0].nome) ? 'selected' : ''}>${escapeHtml(f.nome)}</option>`).join('')}
+        </select>
+      </label>
+      <label>
+        <span>Mês</span>
+        <input type="month" name="mes" value="${mesAtual}" required>
+      </label>
+      <label>
+        <span>Meta do mês (R$)</span>
+        <input type="number" name="valor" min="0" step="0.01" inputmode="decimal" required>
+      </label>
+      <div class="dashboard-meta-acoes">
+        <button type="submit">Salvar meta</button>
+        <button type="button" class="secondary" data-dashboard-meta-remover hidden>Remover</button>
+        <button type="button" class="secondary" data-dashboard-meta-fechar>Fechar</button>
+      </div>
+      <p class="muted dashboard-meta-dica">A meta é mensal. No Diário e no Semanal a linha mostra a parte proporcional do mês, por dias corridos.
+        Em "Todas as filiais" a linha é a soma das metas das filiais.</p>
+    </form>
+  ` : '';
+
   const salesChartPanel = charts.permissions?.sales ? `
     <section class="panel finance-panel-stripe-chart">
-      <h3>Fluxo de Vendas</h3>
+      <div class="dashboard-fluxo-topo">
+        <h3>Fluxo de Vendas${filial ? ` <small class="muted">· ${escapeHtml(filial)}</small>` : ''}</h3>
+        <div class="dashboard-fluxo-controles">
+          ${seletorFilial}
+          ${charts.podeDefinirMeta && filiais.length ? `<button type="button" class="finance-pill finance-pill-sm ${state.dashboardMetaAberta ? 'active' : ''}" data-dashboard-meta-abrir>Definir meta</button>` : ''}
+        </div>
+      </div>
+      ${formMeta}
       <div class="finance-chart-legend">
         <!-- Cor por classe, não por style inline: inline vence o CSS, e a
              legenda ficava presa no azul/roxo do tema claro enquanto a linha
@@ -287,12 +347,16 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
         <span><i class="finance-legend-dot finance-legend-receita"></i> Faturado</span>
         <span><i class="finance-legend-dot finance-legend-pedidos"></i> Pedidos</span>
         <span><i class="finance-legend-dot finance-legend-orcamentos"></i> Orçamentos</span>
+        <!-- Só com meta cadastrada: legenda de uma linha que não está no
+             gráfico faria procurar o que não existe. -->
+        ${temMeta ? '<span><i class="finance-legend-meta"></i> Meta</span>' : ''}
       </div>
       <div class="finance-chart-wrap">
-        ${financeBuildChartSvg(charts.salesChartSeries || [], escapeHtml, [
-          { key: 'faturado', cssClass: 'finance-chart-line-receita' },
-          { key: 'pedidos', cssClass: 'finance-chart-line-blue' },
-          { key: 'orcamentos', cssClass: 'finance-chart-line-purple' }
+        ${financeBuildChartSvg(serieVendas, escapeHtml, [
+          { key: 'faturado', cssClass: 'finance-chart-line-receita', rotulo: 'Faturado' },
+          { key: 'pedidos', cssClass: 'finance-chart-line-blue', rotulo: 'Pedidos' },
+          { key: 'orcamentos', cssClass: 'finance-chart-line-purple', rotulo: 'Orçamentos' },
+          ...(temMeta ? [{ key: 'meta', cssClass: 'finance-chart-line-meta', rotulo: 'Meta' }] : [])
         ])}
       </div>
     </section>
@@ -458,6 +522,90 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
       window.MavisModuleRegistry.dashboard(ctx);
     });
   });
+
+  // A filial manda só no Fluxo de Vendas: é o único bloco do painel que sabe
+  // de que loja veio cada número. Cartões de contas e estoque não têm filial.
+  content.querySelector('[data-dashboard-filial]')?.addEventListener('change', (event) => {
+    state.dashboardFilial = event.target.value;
+    window.MavisModuleRegistry.dashboard(ctx);
+  });
+
+  content.querySelector('[data-dashboard-meta-abrir]')?.addEventListener('click', () => {
+    state.dashboardMetaAberta = !state.dashboardMetaAberta;
+    window.MavisModuleRegistry.dashboard(ctx);
+  });
+
+  const formMetaEl = content.querySelector('[data-dashboard-meta-form]');
+  if (formMetaEl) {
+    const campoFilial = formMetaEl.elements.filial;
+    const campoMes = formMetaEl.elements.mes;
+    const campoValor = formMetaEl.elements.valor;
+    const botaoRemover = formMetaEl.querySelector('[data-dashboard-meta-remover]');
+    const chave = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    let metaAtual = null;
+
+    // Mostra a meta que JÁ existe para a filial e o mês escolhidos. Salvar de
+    // novo sobrescreve (a rota faz upsert), então o campo preenchido é o que
+    // deixa claro que se está corrigindo, e não somando, um alvo.
+    async function carregarMetaAtual() {
+      metaAtual = null;
+      campoValor.value = '';
+      botaoRemover.hidden = true;
+      const competencia = `${campoMes.value}-01`;
+      if (!campoMes.value) return;
+      try {
+        const resposta = await api(`/api/metas?escopo=filial&de=${competencia}&ate=${competencia}`);
+        metaAtual = (resposta.metas || []).find((m) => chave(m.referenciaId) === chave(campoFilial.value)) || null;
+      } catch (error) {
+        showToast(error.message || 'Não foi possível ler a meta.', 'error');
+      }
+      if (metaAtual) {
+        campoValor.value = String(metaAtual.valor);
+        botaoRemover.hidden = false;
+      }
+    }
+
+    campoFilial.addEventListener('change', carregarMetaAtual);
+    campoMes.addEventListener('change', carregarMetaAtual);
+    carregarMetaAtual();
+
+    formMetaEl.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        await api('/api/metas', {
+          method: 'POST',
+          body: JSON.stringify({
+            escopo: 'filial',
+            referenciaId: campoFilial.value,
+            competencia: campoMes.value,
+            valor: Number(campoValor.value)
+          })
+        });
+        showToast(`Meta de ${campoFilial.value} salva.`, 'success');
+        window.MavisModuleRegistry.dashboard(ctx);
+      } catch (error) {
+        showToast(error.message || 'Erro ao salvar a meta.', 'error');
+      }
+    });
+
+    botaoRemover.addEventListener('click', async () => {
+      if (!metaAtual) return;
+      const confirmar = ctx.confirmModal || ((texto) => Promise.resolve(window.confirm(texto)));
+      if (!(await confirmar(`Remover a meta de ${campoFilial.value} em ${campoMes.value}?`))) return;
+      try {
+        await api(`/api/metas/${encodeURIComponent(metaAtual.id)}`, { method: 'DELETE' });
+        showToast('Meta removida.', 'success');
+        window.MavisModuleRegistry.dashboard(ctx);
+      } catch (error) {
+        showToast(error.message || 'Erro ao remover a meta.', 'error');
+      }
+    });
+
+    formMetaEl.querySelector('[data-dashboard-meta-fechar]').addEventListener('click', () => {
+      state.dashboardMetaAberta = false;
+      window.MavisModuleRegistry.dashboard(ctx);
+    });
+  }
 
   // Cada pendência leva à tela onde ela se resolve — a mesma navegação do
   // painel do sino, para os dois se comportarem igual.

@@ -189,7 +189,37 @@ check('nenhum cartão declara meta', !/\bmeta\b/i.test(JSON.stringify(K.montarKp
 check('e o código explica por quê', /de meta em lugar nenhum/.test(kpisSrc));
 // A justificativa mais importante: número inventado é pior do que campo
 // ausente, porque parece confiável e ninguém confere.
-check('e diz por que não inventar', /pior do que cartão sem número/.test(kpisSrc));
+//
+// SEM QUEBRA DE LINHA NO MEIO DA FRASE. A versão anterior pedia
+// /pior do que cartão sem número/ e falhou na fase DC, quando a frase passou a
+// quebrar entre "que" e "cartão": o texto estava lá, e o regex não atravessa o
+// `\n * ` do bloco de comentário. Dois pedaços curtos dizem a mesma coisa e não
+// dependem de onde a linha corta.
+check('e diz por que não inventar',
+  /derivado de nada é pior/.test(kpisSrc) && /parece confiável/.test(kpisSrc));
+
+// A META PASSOU A EXISTIR (fase DC): `metas_de_venda`, por loja e por vendedor.
+// O que o bloco acima protegia continua valendo e virou MAIS importante — sem
+// meta cadastrada, nenhum cartão declara meta. Falta provar o outro lado: COM
+// meta, a faixa aparece.
+const comMeta = K.montarKpis({
+  permissoes: { sales: true },
+  intervalo: AGOSTO, hoje: HOJE,
+  pedidos: [{ date: '2026-08-05', status: 'pedido-faturado', totalAmount: 900 }],
+  statusQueFaturam: ['pedido-faturado'],
+  metaDeVenda: 1000,
+  compras: [], entradas: [], produtos: [], depositos: [], serieVendas: []
+}).find((c) => c.id === 'faturamento');
+check('com meta, 900 de 1000 dá 90%', comMeta.faixa && comMeta.faixa.percentual === 90,
+  JSON.stringify(comMeta.faixa));
+check('  com o rótulo "da meta"', comMeta.faixa.rotulo === 'da meta');
+// 90% é "dá para virar", não "vai dar ruim": o tom separa os três casos.
+check('  e tom de atenção entre 70 e 99', comMeta.faixa.tom === 'atencao', comMeta.faixa.tom);
+// E a faixa tem a MESMA forma das outras (valor/percentual/rotulo/tom): a barra
+// do cartão já existia, e um segundo formato faria o cartão de meta parecer
+// diferente dos outros sem motivo.
+check('  na mesma forma das outras faixas',
+  ['valor', 'percentual', 'rotulo', 'tom', 'contagem'].every((k) => k in comMeta.faixa));
 
 console.log('\n--- permissão decide o que aparece ---');
 // Mostrar faturamento para quem não pode abrir Vendas é vazar número que a
@@ -221,7 +251,12 @@ check('usa o produto serializado', /produtos: canStock \? products\.map\(\(p\) =
 check('descarta lançamento cancelado', /\.filter\(\(e\) => !isFinanceEntryCancelled\(e\)\)/.test(serverSrc));
 check('classifica receita x despesa', /tipo: classifyFinanceEntry\(e\)/.test(serverSrc));
 // A mesma série do gráfico alimenta a sparkline.
-check('a série vem de buildSalesChartSeries', /serieVendas: canSales \? buildSalesChartSeries\(data, 'month'\)/.test(serverSrc));
+// O ESCOPO ENTROU NA CHAMADA (fase DC). A série alimenta a faísca do cartão e
+// saía de `data.orders` cru: um vendedor restrito lia a curva da empresa.
+check('a série vem de buildSalesChartSeries, COM escopo',
+  /serieVendas: canSales \? buildSalesChartSeries\(data, 'month', escopoVendas\)/.test(serverSrc));
+check('  e os pedidos do cartão também são filtrados pelo escopo',
+  /pedidos: canSales \? \(data\.orders \|\| \[\]\)\.filter\(\(o\) => escopoLib\.vendaVisivel\(escopoVendas, o\.sellerId\)\) : \[\]/.test(serverSrc));
 check('o período é parametrizável', /getPeriodRange\(url\.searchParams\.get\('period'\) \|\| 'month'/.test(serverSrc));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);

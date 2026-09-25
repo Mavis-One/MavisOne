@@ -81,5 +81,86 @@ check('lib/zip.js escreve a faixa de controle com escape',
   /\\u0000-\\u001f/.test(zipSrc),
   'nomeSeguro recorta de NUL a US');
 
+// ACENTO COMBINANTE LITERAL TAMBÉM É CARACTERE INVISÍVEL — e por isso a regra
+// mora aqui, e não num teste de um arquivo só.
+//
+// A REGRA JÁ EXISTIA, E O DEFEITO VOLTOU. `public/modules/shared/
+// duplicidade_cadastro.js` nasceu com a faixa U+0300–U+036F escrita com os
+// caracteres CRUS dentro do regex — a ferramenta que gravou o arquivo
+// interpretou o escape —, e `test-duplicidade-cadastro.js` ganhou um check para
+// isso. Só que o check era DAQUELE arquivo: quando `lib/filial-da-venda.js`
+// passou a remover acento do nome da filial, reproduziu o mesmo defeito, e nada
+// reclamou.
+//
+// O estrago é o mesmo do byte de controle: o caractere não aparece no editor,
+// ninguém revisa o que não vê, e um "salvar como" com codificação errada apaga
+// a faixa. O regex deixa de casar com qualquer coisa, e "Timbo" e "Timbó" viram
+// duas lojas com metade das vendas cada — sem erro nenhum aparecer.
+//
+// POR QUE ESTE ARQUIVO: ele varre TODO fonte versionado (`git ls-files`), então
+// a regra passa a valer para o próximo que escrever `normalize('NFD')`. Era
+// exatamente o que faltava.
+//
+// A faixa é montada por CÓDIGO (`String.fromCharCode`), e não escrita como
+// escape: um U+0300 cru no fonte deste teste é a mesma armadilha que ele existe
+// para pegar.
+const COMBINANTES = new RegExp(`[${String.fromCharCode(0x300)}-${String.fromCharCode(0x36f)}]`);
+const comCombinante = [];
+for (const relativo of arquivos) {
+  let texto;
+  try {
+    texto = fs.readFileSync(path.join(RAIZ, relativo), 'utf8');
+  } catch {
+    continue;
+  }
+  const onde = texto.search(COMBINANTES);
+  if (onde < 0) continue;
+  comCombinante.push(`${relativo}:${texto.slice(0, onde).split('\n').length}`);
+}
+
+check('nenhum fonte tem acento combinante solto',
+  comCombinante.length === 0,
+  comCombinante.length ? comCombinante.slice(0, 10).join(' | ') : `${arquivos.length} conferidos`);
+
+// OS SEIS QUE REMOVEM ACENTO, conferidos pelo nome. O check de cima pega a
+// VOLTA do defeito; estes dizem que a intenção — recortar de U+0300 a U+036F —
+// continua escrita em cada um, em escape.
+//
+// A CLASSE TEM DE SER A FAIXA INTEIRA, e não apenas conter o escape.
+//
+// Consertando os quatro arquivos de uma vez por substituição automática, eu
+// troquei cada COMBINANTE por uma faixa inteira e produzi uma classe ANINHADA —
+// a faixa dentro de outra classe, com um hífen sobrando no meio. O JavaScript
+// aceita, o `node --check` passa, não sobra combinante nenhum para o check de
+// cima achar, e a expressão deixou de remover acento (além de passar a casar
+// com `[` e `]`).
+//
+// Os dois checks anteriores diziam OK. É por isso que este confere a faixa
+// INTEIRA, recusando a forma aninhada, e por isso o check seguinte mede o
+// EFEITO: teste que só olha a grafia do fonte não pega uma classe mal formada.
+const FAIXA = `[${String.fromCharCode(92)}u0300-${String.fromCharCode(92)}u036f]`;
+const REMOVEM_ACENTO = [
+  'public/modules/shared/duplicidade_cadastro.js',
+  'lib/filial-da-venda.js',
+  'lib/entradaNfe.js',
+  'lib/relatorios-vendas.js',
+  'public/modules/cadastros/shared.js',
+  'public/modules/dashboard/index.js',
+  'server.js'
+];
+for (const arquivo of REMOVEM_ACENTO) {
+  const fonte = fs.readFileSync(path.join(RAIZ, arquivo), 'utf8');
+  check(`${arquivo.split('/').pop()}: a faixa é ${FAIXA}, e só ela`,
+    fonte.includes(`/${FAIXA}/g`) && !fonte.includes(`[${FAIXA}-`),
+    fonte.includes(`[${FAIXA}-`) ? 'CLASSE ANINHADA' : undefined);
+}
+
+// E O EFEITO, não só a grafia: a faixa montada por código tem de apagar o
+// acento decomposto. Um teste que só olha o fonte não pega a classe aninhada.
+const semAcento = `Assist${String.fromCharCode(101, 0x302)}ncia`
+  .normalize('NFD')
+  .replace(new RegExp(`[${String.fromCharCode(0x300)}-${String.fromCharCode(0x36f)}]`, 'g'), '');
+check('e a faixa U+0300–U+036F de fato remove o acento', semAcento === 'Assistencia', semAcento);
+
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);
 process.exit(falhas === 0 ? 0 : 1);

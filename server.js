@@ -85,6 +85,12 @@ const relatoriosVendas = require('./lib/relatorios-vendas');
 // Fase DB: as colunas do CSV do Financeiro e do Estoque, que nao tinham
 // exportacao nenhuma. Puro, como o de vendas.
 const relatoriosCsv = require('./lib/relatorios-csv');
+// Fase DC: a meta de venda. O rateio por dias corridos e' regra pura em
+// lib/metas.js; as linhas vem de lib/db/metas.js.
+const metasLib = require('./lib/metas');
+const metasDb = require('./lib/db/metas');
+// Fase DD: a filial de cada venda, lida do fim da categoria.
+const filialDaVenda = require('./lib/filial-da-venda');
 // Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
 const painelPessoal = require('./lib/painel-pessoal-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
@@ -549,7 +555,7 @@ function isValidDocument(documentValue) {
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
@@ -1168,6 +1174,25 @@ function getPeriodRange(period, fromQ, toQ) {
     const first = new Date(today.getFullYear(), today.getMonth() + 1, 1);
     const last = new Date(today.getFullYear(), today.getMonth() + 2, 0);
     return { from: toDateStr(first), to: toDateStr(last) };
+  }
+  // 'year' FALTAVA, e a aba "Anual" do Início mostrava o MÊS (fase DC).
+  //
+  // A tela tem quatro recortes e manda `PERIODO_DO_GRANULARITY[granularity]`:
+  // today, week, month e year. Os três primeiros tinham ramo aqui; `year` caía
+  // no default do fim e voltava o mês corrente. Medido nesta base, em
+  // 25/09/2026:
+  //
+  //   Mensal .... R$ 564.276,11 em 128 pedidos
+  //   Anual ..... R$ 564.276,11 em 128 pedidos   <- o mesmo número
+  //   2026 de verdade .... R$ 13.481.995,78 em 5.555 pedidos
+  //
+  // Clicar em "Anual" devolvia o mês sem nada indicar. `buildPeriodBuckets`, que
+  // desenha o gráfico, SEMPRE soube de 'year' — eram duas listas de recortes em
+  // dois lugares, e só uma ficou para trás. É o que
+  // test-periodo-do-dashboard.js passa a cobrar: todo recorte que a tela manda
+  // tem de ter ramo aqui.
+  if (period === 'year') {
+    return { from: `${today.getFullYear()}-01-01`, to: `${today.getFullYear()}-12-31` };
   }
   if (period === 'custom') {
     return { from: fromQ || todayStr, to: toQ || todayStr };
@@ -3931,17 +3956,54 @@ function buildFinanceChartSeries(entries, granularity) {
  * `statusQueFaturam` vem do CATÁLOGO (salesStatus), e não de uma lista escrita
  * aqui: status novo que gere financeiro entra sozinho.
  */
-function buildSalesChartSeries(data, granularity) {
+/*
+ * O ESCOPO E OBRIGATORIO (fase DC), e pela mesma razao de
+ * buildSalesDashboardSummary lanca-lo quando falta.
+ *
+ * O QUE VAZAVA, medido nos 14.864 pedidos desta base: um usuario ligado ao
+ * vendedor MISAEL (1.299 pedidos), com acesso so' a `dashboard` e `sales`,
+ * abria o Inicio e lia
+ *
+ *     cartao Faturamento .......... R$ 564.276,11
+ *     mesmo cartao, para o admin .. R$ 564.276,11
+ *
+ * O MESMO numero. O cartao, a faisca dele e o grafico "Fluxo de Vendas" saiam
+ * de data.orders cru, enquanto `salesTotal` -- na MESMA resposta -- vinha
+ * escopado. Era exatamente o que o comentario da rota do dashboard ja avisava
+ * poder acontecer: "os dois numeros discordariam, e o maior deles seria o que
+ * ele nao deveria ver".
+ *
+ * LANCAR quando falta, em vez de assumir "sem restricao": o padrao silencioso e'
+ * o que deixou isto passar. Quem chama tem o escopo na mao -- as tres rotas ja
+ * o calculavam para outra coisa na mesma linha.
+ */
+/*
+ * FILIAL E META (fase DD), os dois opcionais.
+ *
+ * `filial` recorta DEPOIS do escopo, nunca no lugar dele: um vendedor restrito
+ * que escolhe Araquari vê as vendas DELE em Araquari, e não as da loja.
+ *
+ * `metas`, quando vem, já é a lista do recorte (metasLib.metasDoRecorte). Cada
+ * período ganha `meta` rateada por dias corridos — o dia recebe 1/30 da meta
+ * do mês, a semana que cruza a virada recebe um pedaço de cada mês. `null`
+ * quando aquele período não tem meta: a linha some ali em vez de desenhar um
+ * alvo zero que ninguém definiu.
+ */
+function buildSalesChartSeries(data, granularity, escopo, { filial = '', metas = null } = {}) {
+  if (!escopo) {
+    throw new Error('buildSalesChartSeries exige um escopo (lib/relatorios-escopo.js). Sem ele a serie vazaria as vendas de todos os vendedores.');
+  }
   const buckets = buildPeriodBuckets(granularity);
-  const orders = data.orders || [];
-  const quotes = data.quotes || [];
+  const visivel = (record) => escopoLib.vendaVisivel(escopo, record.sellerId) && filialDaVenda.daFilial(record, filial);
+  const orders = (data.orders || []).filter(visivel);
+  const quotes = (data.quotes || []).filter(visivel);
   const amountOf = (record) => (typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || 0));
   const soma = (lista) => sumBy(lista.map((r) => ({ v: amountOf(r) })), 'v');
 
   return buckets.map((bucket) => {
     const noPeriodo = (r) => r.date >= bucket.from && r.date <= bucket.to;
     const doMes = orders.filter(noPeriodo);
-    return {
+    const ponto = {
       label: bucket.label,
       from: bucket.from,
       to: bucket.to,
@@ -3951,6 +4013,8 @@ function buildSalesChartSeries(data, granularity) {
       faturado: soma(doMes.filter((o) => salesStatus.geraFinanceiro(o.status))),
       orcamentos: soma(quotes.filter(noPeriodo))
     };
+    if (metas) ponto.meta = metasLib.metaDoPeriodo(metas, bucket);
+    return ponto;
   });
 }
 
@@ -7033,8 +7097,13 @@ async function tratarRequisicao(req, res) {
     // Geral mostraria o faturamento da empresa inteira para um vendedor que,
     // duas telas adiante, só consegue ver os próprios pedidos: os dois números
     // discordariam, e o maior deles seria o que ele não deveria ver.
+    // O ESCOPO SAI PARA UMA VARIAVEL (fase DC). Estava embutido na chamada do
+    // resumo, e era por isso que os cartoes e o grafico -- montados vinte
+    // linhas abaixo -- nao o usavam: nao havia o que usar. Um escopo com nome
+    // e' um escopo que o proximo bloco lembra de aplicar.
+    const escopoVendas = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
     const salesSummary = canSales
-      ? buildSalesDashboardSummary(data, escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) })).overview
+      ? buildSalesDashboardSummary(data, escopoVendas).overview
       : null;
     const salesTotal = salesSummary ? salesSummary.valorPedidos : 0;
 
@@ -7059,8 +7128,45 @@ async function tratarRequisicao(req, res) {
     const entradasClassificadas = (data.finance || [])
       .filter((e) => !isFinanceEntryCancelled(e))
       .map((e) => ({ ...e, tipo: classifyFinanceEntry(e) }));
+    // A META DO ESCOPO DE QUEM PERGUNTA (fase DC).
+    //
+    // Quem vê TODAS as vendas compara com a meta das EMPRESAS; quem vê só as
+    // próprias compara com a META DELE. É o que faz o valor do cartão e o alvo
+    // dele medirem o mesmo universo — comparar o faturamento de um vendedor com
+    // a meta da loja daria 8% e não significaria nada.
+    //
+    // E cresce junto com o escopo: um papel 'gerente' que devolva os sellerIds
+    // da equipe recebe a soma das metas daquela equipe sem uma linha a mais
+    // aqui, porque `sellerIds` já é uma lista (ver lib/relatorios-escopo.js).
+    //
+    // FALHA CALADA, de propósito: se a tabela ainda não existe (VPS sem a
+    // migração aplicada), o Início não pode deixar de abrir por causa da barra
+    // de um cartão. Sem meta, `faixaDaMeta` devolve null e o cartão fica como
+    // era antes desta fase.
+    //
+    // A escolha mora em metasLib.metasDoRecorte (fase DD), a MESMA que a linha
+    // de meta do Fluxo de Vendas usa: com as metas de filial, "quem vê tudo"
+    // passou a ter duas fontes possíveis, e cartão e gráfico escolhendo cada
+    // um a sua mostrariam dois alvos na mesma tela.
+    let metaDeVenda = null;
+    if (canSales) {
+      try {
+        const competencias = metasLib.mesesDoIntervalo(intervalo).map((m) => m.competencia);
+        const minhas = metasLib.metasDoRecorte(
+          await metasDb.listarPorCompetencias(competencias),
+          { sellerIds: escopoVendas.sellerIds }
+        );
+        metaDeVenda = metasLib.metaDoPeriodo(minhas, intervalo);
+      } catch (erroMeta) {
+        console.error('Dashboard: nao consegui ler as metas de venda', erroMeta.message);
+      }
+    }
+
     const kpiCards = kpis.montarKpis({
-      pedidos: data.orders || [],
+      // ESCOPADO (fase DC). Era `data.orders || []`, e o cartao Faturamento de
+      // um vendedor restrito trazia o numero da empresa inteira -- identico ao
+      // do admin, medido. Ver a nota em buildSalesChartSeries.
+      pedidos: canSales ? (data.orders || []).filter((o) => escopoLib.vendaVisivel(escopoVendas, o.sellerId)) : [],
       compras: activePurchases,
       entradas: entradasClassificadas,
       // serializeProduct traz `situation` (abaixo-minimo/zerado), que é o que
@@ -7068,11 +7174,13 @@ async function tratarRequisicao(req, res) {
       produtos: canStock ? products.map((p) => stockCore.serializeProduct(p, data)) : [],
       depositos: data.deposits || [],
       intervalo,
-      serieVendas: canSales ? buildSalesChartSeries(data, 'month') : [],
+      serieVendas: canSales ? buildSalesChartSeries(data, 'month', escopoVendas) : [],
       // Quais status significam receita. Vem do CATÁLOGO, como na rota do
       // painel de pendências: sem esta lista o cartão "Faturamento" volta a
       // somar pedido cancelado e transferência (fase CO).
       statusQueFaturam: salesStatus.CATALOGO.filter((s) => s.geraFinanceiro).map((s) => s.value),
+      // Ja rateada para o intervalo e filtrada pelo escopo, logo acima.
+      metaDeVenda,
       permissoes: { sales: canSales, finance: canFinance, stock: canStock, purchases: canPurchases },
       hoje: toDateStr(getTodayLocal())
     });
@@ -7232,7 +7340,44 @@ async function tratarRequisicao(req, res) {
     // registro, e mais nada; as outras ~55 colunas eram 274 ms de nada.
     if (canSales) await syncSalesDataParaAgregado(data);
 
-    const salesChartSeries = canSales ? buildSalesChartSeries(data, granularity) : [];
+    // ESCOPADO (fase DC). O grafico "Fluxo de Vendas" do Inicio desenhava a
+    // empresa inteira para um vendedor restrito -- as tres linhas dele. O
+    // recorte enxuto TRAZ `seller_id` (ver COLUNAS_DE_AGREGADO), entao filtrar
+    // aqui nao pede coluna nenhuma a mais.
+    const admin = await ehAdmin(user);
+    const escopoVendas = escopoLib.escopoDeVendas(user, { ehAdmin: admin });
+
+    // FILIAL (fase DD). A lista sai das vendas que ESTE usuário enxerga: um
+    // vendedor restrito não descobre pelo filtro que existe uma loja onde ele
+    // nunca vendeu. Uma filial pedida que não está na lista cai em "Todas"
+    // em vez de desenhar um gráfico zerado com o nome de uma loja inventada.
+    const visiveis = canSales
+      ? [...(data.orders || []), ...(data.quotes || [])].filter((r) => escopoLib.vendaVisivel(escopoVendas, r.sellerId))
+      : [];
+    const filiais = filialDaVenda.listarFiliais(visiveis);
+    const pedida = filialDaVenda.chaveDaFilial(url.searchParams.get('filial'));
+    const filial = (filiais.find((f) => filialDaVenda.chaveDaFilial(f.nome) === pedida) || {}).nome || '';
+
+    // A META DO RECORTE, rateada por período. Falha calada pelo mesmo motivo
+    // do cartão: sem a tabela (VPS sem migração), o gráfico abre sem a linha.
+    let metas = null;
+    if (canSales) {
+      try {
+        const buckets = buildPeriodBuckets(granularity);
+        const competencias = buckets.length
+          ? metasLib.mesesDoIntervalo({ from: buckets[0].from, to: buckets[buckets.length - 1].to }).map((m) => m.competencia)
+          : [];
+        metas = metasLib.metasDoRecorte(await metasDb.listarPorCompetencias(competencias), {
+          sellerIds: escopoVendas.sellerIds,
+          filial,
+          mesmaFilial: (a, b) => filialDaVenda.chaveDaFilial(a) === filialDaVenda.chaveDaFilial(b)
+        });
+      } catch (erroMeta) {
+        console.error('Dashboard: nao consegui ler as metas do grafico', erroMeta.message);
+      }
+    }
+
+    const salesChartSeries = canSales ? buildSalesChartSeries(data, granularity, escopoVendas, { filial, metas }) : [];
     const financeEntries = canFinance ? (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry)) : [];
     const financeChartSeries = canFinance ? buildFinanceChartSeries(financeEntries, granularity) : [];
 
@@ -7240,6 +7385,10 @@ async function tratarRequisicao(req, res) {
       granularity,
       salesChartSeries,
       financeChartSeries,
+      filial,
+      filiais,
+      // A mesma regra da rota /api/metas: só administrador define meta.
+      podeDefinirMeta: Boolean(canSales && admin),
       permissions: { sales: canSales, finance: canFinance }
     });
   }
@@ -8011,6 +8160,117 @@ async function tratarRequisicao(req, res) {
     }
   }
 
+  // ==========================================================================
+  // METAS DE VENDA (fase DC) — o alvo por loja e por vendedor.
+  //
+  // SÓ ADMINISTRADOR ESCREVE. Meta é instrumento de cobrança: quem pode mudar o
+  // próprio alvo não tem alvo.
+  //
+  // A LEITURA exige o módulo `settings`, que é onde a tela mora. A primeira
+  // versão exigia `podeVerRelatorios` e estava errada por um motivo concreto: o
+  // vendedor comum não tem `reports`, então ele levava 403 aqui — e a prova que
+  // eu escrevi para verificar "ele vê só a meta dele" passou À TOA, porque
+  // `metas` vinha `undefined` e o `.every()` de uma lista vazia é sempre
+  // verdadeiro. Guarda conferido contra requisição recusada não conferiu nada.
+  //
+  // O VENDEDOR NÃO PRECISA DESTA ROTA para saber a meta dele: ela chega como a
+  // barra do cartão Faturamento no Início, que lê `metas_de_venda` direto. Esta
+  // rota é a de ADMINISTRAÇÃO da meta.
+  //
+  // O filtro por escopo abaixo fica como defesa em profundidade: se algum dia
+  // um papel não-administrador ganhar `settings`, ele não passa a ver o alvo de
+  // cada colega de porta aberta.
+  // ==========================================================================
+  const rotaMeta = pathname.match(/^\/api\/metas(?:\/([^/]+))?$/);
+  if (rotaMeta) {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user) return sendJson(res, { error: 'Não autenticado' }, 401);
+      const admin = await ehAdmin(user);
+      if (!admin && !user.allowedModules.includes('settings')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = rotaMeta[1] ? decodeURIComponent(rotaMeta[1]) : '';
+
+      if (req.method === 'GET' && !id) {
+        const escopo = String(url.searchParams.get('escopo') || '').trim();
+        if (escopo && !metasLib.ESCOPOS.includes(escopo)) {
+          return sendJson(res, { error: 'Escopo inválido. Use empresa, vendedor ou filial.' }, 400);
+        }
+        let lista = await metasDb.listar({
+          escopo,
+          de: String(url.searchParams.get('de') || '').trim(),
+          ate: String(url.searchParams.get('ate') || '').trim()
+        });
+        // O VENDEDOR COMUM VÊ SÓ A META DELE. Esconder o campo na tela não é
+        // controle de acesso — é aqui que a decisão vale.
+        const escopoVendas = escopoLib.escopoDeVendas(user, { ehAdmin: admin });
+        if (escopoVendas.sellerIds !== null) {
+          const meus = new Set(escopoVendas.sellerIds);
+          lista = lista.filter((m) => m.escopo === 'vendedor' && meus.has(m.referenciaId));
+        }
+        const data = loadData();
+        // As filiais (fase DD) só servem ao formulário, que só o administrador
+        // vê — e saem dos pedidos (lib/filial-da-venda.js), uma carga enxuta
+        // que o vendedor comum não precisa pagar.
+        await Promise.all([syncCadastroData(data), admin ? syncSalesDataParaAgregado(data) : null]);
+        return sendJson(res, {
+          metas: lista,
+          filiais: admin ? filialDaVenda.listarFiliais([...(data.orders || []), ...(data.quotes || [])]) : [],
+          // Boolean() e nao `admin` cru: `ehAdmin` devolve valor falsy que nao
+          // e' `false`, e `undefined` DESAPARECE do JSON -- a tela recebia o
+          // campo ausente em vez de um "nao". Funciona por acidente enquanto
+          // quem le usa Boolean(); quebra no primeiro `=== false`.
+          podeEditar: Boolean(admin),
+          // Os nomes para a tela: empresas do db.json e pessoas com papel
+          // Vendedor — as MESMAS referências que orders.company_id e
+          // orders.seller_id usam.
+          empresas: (data.companies || []).map((e) => ({ id: e.id, name: e.name })),
+          vendedores: indiceDoCadastro(data).vendedores
+        });
+      }
+
+      if (req.method === 'POST' && !id) {
+        if (!admin) return sendJson(res, { error: 'Apenas administrador define meta de venda.' }, 403);
+        const body = await readBody(req);
+        const escopo = String(body.escopo || '').trim();
+        if (!metasLib.ESCOPOS.includes(escopo)) {
+          return sendJson(res, { error: 'Escolha se a meta é da loja, da filial ou do vendedor.' }, 400);
+        }
+        const referenciaId = String(body.referenciaId || '').trim();
+        if (!referenciaId) {
+          return sendJson(res, { error: escopo === 'vendedor' ? 'Escolha o vendedor.' : (escopo === 'filial' ? 'Escolha a filial.' : 'Escolha a loja.') }, 400);
+        }
+        // A competência chega como 'YYYY-MM' do <input type="month"> e é
+        // normalizada no dia 1 — o CHECK do banco exige isso, e deixar a tela
+        // mandar '2026-09-15' faria dois registros do mesmo mês passarem pela
+        // unicidade.
+        const mes = String(body.competencia || '').trim();
+        if (!/^\d{4}-\d{2}(-\d{2})?$/.test(mes)) {
+          return sendJson(res, { error: 'Informe o mês da meta.' }, 400);
+        }
+        const competencia = `${mes.slice(0, 7)}-01`;
+        const valor = Number(body.valor);
+        if (!Number.isFinite(valor) || valor < 0) {
+          return sendJson(res, { error: 'Informe um valor de meta igual ou maior que zero.' }, 400);
+        }
+        const meta = await metasDb.salvar({ escopo, referenciaId, competencia, valor, user });
+        return sendJson(res, { success: true, meta });
+      }
+
+      if (req.method === 'DELETE' && id) {
+        if (!admin) return sendJson(res, { error: 'Apenas administrador exclui meta de venda.' }, 403);
+        const removeu = await metasDb.remover(id);
+        if (!removeu) return sendJson(res, { error: 'Meta não encontrada.' }, 404);
+        return sendJson(res, { success: true });
+      }
+
+      return sendJson(res, { error: 'Método não suportado' }, 405);
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao tratar a meta de venda', 400);
+    }
+  }
+
   if (pathname === '/api/reports/overview' && req.method === 'GET') {
     // A base vem de `baseDosRelatoriosGerais`, definida perto do fim deste
     // arquivo junto das rotas de exportação que a compartilham.
@@ -8035,7 +8295,10 @@ async function tratarRequisicao(req, res) {
       vendedores: vendas.bySeller.map(({ sellerId, sellerName, totalPedidos, valorTotal, ticketMedio }) => ({
         sellerId, sellerName, totalPedidos, valorTotal, ticketMedio
       })),
-      serieVendas: buildSalesChartSeries(data, granularity),
+      // O MESMO escopo do bloco `vendedores` logo acima (fase DC): a serie
+      // saia sem ele, e o relatorio mostrava o fluxo da empresa a quem so' ve
+      // as proprias vendas.
+      serieVendas: buildSalesChartSeries(data, granularity, escopoVendas),
       serieFinanceiro,
       financeiro: {
         contasAPagar: financeiro.contasAPagar,

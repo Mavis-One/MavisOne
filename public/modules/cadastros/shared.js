@@ -179,7 +179,7 @@ window.MavisCadastros = window.MavisCadastros || {};
   function normalizeText(value) {
     return String(value || '')
       .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
+      .replace(/[\u0300-\u036f]/g, '')
       .toLocaleLowerCase('pt-BR')
       .trim();
   }

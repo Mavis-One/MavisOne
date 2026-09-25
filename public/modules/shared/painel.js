@@ -152,14 +152,27 @@ window.MavisPainel = (function () {
     ];
     const maxVal = Math.max(1, ...series.map((s) => Math.max(...activeLines.map((line) => Math.abs(Number(s[line.key]) || 0)))));
 
+    // Valor AUSENTE (null/undefined) não é zero: a linha de meta do Fluxo de
+    // Vendas não existe no mês sem meta cadastrada, e desenhá-la no chão diria
+    // "a meta era zero". O ponto some e a linha se parte ali.
+    const temValor = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
     const pointsFor = (key) => series.map((s, i) => {
       const x = n > 1 ? i * step : width / 2;
       const y = baseY - (Number(s[key]) / maxVal) * chartHeight;
-      return { x, y, s };
+      return { x, y, s, vazio: !temValor(s[key]) };
     });
 
+    // Um trecho por sequência de pontos com valor. Sem nenhum vazio (as séries
+    // de sempre), sai um trecho só — o mesmo desenho de antes.
+    const trechos = (points) => points.reduce((acc, p) => {
+      if (p.vazio) acc.push([]);
+      else acc[acc.length - 1].push(p);
+      return acc;
+    }, [[]]).filter((t) => t.length);
     const linePath = (points) => points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-    const dots = (points, cls, key) => points.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" class="finance-chart-dot ${cls}"><title>${escapeHtml(p.s.label)}: ${valorCheio(p.s[key], formato)}</title></circle>`).join('');
+    // `rotulo` no tooltip: com três ou quatro linhas no mesmo gráfico, "09-25:
+    // R$ 1.200,00" não diz se aquilo é o faturado ou a meta.
+    const dots = (points, cls, key, rotulo) => points.filter((p) => !p.vazio).map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" class="finance-chart-dot ${cls}"><title>${escapeHtml(p.s.label)}${rotulo ? ` · ${escapeHtml(rotulo)}` : ''}: ${valorCheio(p.s[key], formato)}</title></circle>`).join('');
 
     const linesData = activeLines.map((line) => ({ ...line, points: pointsFor(line.key) }));
 
@@ -171,8 +184,8 @@ window.MavisPainel = (function () {
     return `
       <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de tendência por período">
         <line x1="0" y1="${baseY}" x2="${width}" y2="${baseY}" class="finance-chart-axis"></line>
-        ${linesData.map((line) => `<polyline points="${linePath(line.points)}" class="${line.cssClass}"></polyline>`).join('')}
-        ${linesData.map((line) => dots(line.points, line.cssClass, line.key)).join('')}
+        ${linesData.map((line) => trechos(line.points).map((t) => `<polyline points="${linePath(t)}" class="${line.cssClass}"></polyline>`).join('')).join('')}
+        ${linesData.map((line) => dots(line.points, line.cssClass, line.key, line.rotulo)).join('')}
         ${labels}
       </svg>
     `;

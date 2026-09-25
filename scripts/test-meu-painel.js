@@ -314,8 +314,11 @@ check('a tela só desenha o seletor para quem pode escolher vendedor',
 // O Dashboard Geral e o Relatório leem o mesmo resumo. Se um deles ficasse sem
 // escopo, o vendedor veria o faturamento da empresa num card e o dele em outro
 // — e o número maior seria justamente o que ele não deveria ver.
+// Na fase DC o escopo saiu da chamada para a variável `escopoVendas`, declarada
+// logo antes — para os cartões e o gráfico usarem o MESMO. O teste confere as
+// duas metades: a variável vem de escopoDeVendas(user), e o resumo a recebe.
 check('o Dashboard Geral passa escopo no cartão de vendas',
-  /salesSummary = canSales[\s\S]{0,400}escopoDeVendas\(user/.test(servidor));
+  /const escopoVendas = escopoLib\.escopoDeVendas\(user[^\n]*\n\s*const salesSummary = canSales\s*\n\s*\? buildSalesDashboardSummary\(data, escopoVendas\)/.test(servidor));
 check('o Relatório passa escopo no bloco de vendedores',
   /const vendas = buildSalesDashboardSummary\(data, escopoVendas\)/.test(servidor));
 

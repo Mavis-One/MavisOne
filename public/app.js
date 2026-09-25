@@ -1862,7 +1862,12 @@ const moduleSubItems = {
     // porque a pergunta e' de administracao — quem alcanca o dinheiro de qual
     // unidade —, e nao de cadastro. Quem tem a caixa Cadastros marcada nao
     // decide isso: a rota exige administrador.
-    { key: 'contas_por_estabelecimento', label: 'Contas por Estabelecimento', desc: 'Qual conta bancária cada matriz/filial pode usar.' }
+    { key: 'contas_por_estabelecimento', label: 'Contas por Estabelecimento', desc: 'Qual conta bancária cada matriz/filial pode usar.' },
+    // Fase DC. Mesma razao do cartao acima: a pergunta e' de ADMINISTRACAO --
+    // quem cobra quanto de quem --, e nao de cadastro nem de operacao. Escrever
+    // exige administrador; ler e' liberado a quem ve relatorios, porque o
+    // vendedor precisa saber qual e' a meta dele.
+    { key: 'metas', label: 'Metas de Venda', desc: 'Alvo de faturamento por loja e por vendedor, mês a mês.' }
   ],
 
   // ABA: Cadastros
@@ -2240,7 +2245,7 @@ const isValidDocument = (documentValue) => window.MavisDocumento.valido(document
 // De carona, a copia daqui tinha os caracteres combinantes LITERAIS dentro do
 // regex de acentos. Caractere invisivel no fonte e o defeito que ninguem revisa
 // -- ver o byte NUL que o lib/zip.js carregava. O modulo compartilhado os
-// escreve como ̀-ͯ.
+// escreve por codigo, como U+0300-U+036F.
 const duplicidadeCadastro = () => window.MavisDuplicidade;
 
 function getRegistrationAddressLine(record) {

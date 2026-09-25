@@ -3673,6 +3673,48 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   .dashboard-charts-grid-principal { grid-template-columns: 1.75fr 1fr; }
 }
 
+/* Fluxo de Vendas: título à esquerda, filial e meta à direita. Quebra linha
+   no celular em vez de espremer o seletor. */
+.dashboard-fluxo-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-bottom: 12px;
+}
+.dashboard-fluxo-topo h3 { margin: 0; }
+.dashboard-fluxo-topo h3 small { font-size: 0.8em; font-weight: 500; }
+.dashboard-fluxo-controles { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dashboard-fluxo-filial { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--muted); }
+.dashboard-fluxo-filial select { padding: 7px 10px; font-size: 0.85rem; min-width: 180px; max-width: 100%; }
+
+.dashboard-meta-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 12px;
+  align-items: end;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.dashboard-meta-form label { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); min-width: 0; }
+.dashboard-meta-form input,
+.dashboard-meta-form select { padding: 8px 10px; width: 100%; box-sizing: border-box; }
+.dashboard-meta-acoes { display: flex; flex-wrap: wrap; gap: 8px; }
+.dashboard-meta-acoes button { padding: 8px 14px; }
+.dashboard-meta-dica { grid-column: 1 / -1; margin: 0; font-size: 0.78rem; }
+
+/* A meta é um ALVO, não um movimento: tracejada e sem brilho, para não
+   competir com as três linhas de venda. Âmbar porque verde, azul e roxo já
+   estão no gráfico. */
+.finance-chart-line-meta { fill: none; stroke: var(--warning); stroke-width: 2; stroke-dasharray: 7 5; stroke-linecap: round; }
+/* O ponto carrega a classe da linha também; sem repor o fill aqui, o
+   `fill: none` da linha (declarada depois de .finance-chart-dot) o esvaziaria. */
+.finance-chart-dot.finance-chart-line-meta { fill: var(--panel); stroke: var(--warning); stroke-dasharray: none; }
+.finance-legend-meta { display: inline-block; width: 16px; margin-right: 6px; vertical-align: middle; border-top: 2px dashed var(--warning); }
+
 .dashboard-atencao { padding: 0; overflow: hidden; }
 .dashboard-atencao-topo {
   display: flex;

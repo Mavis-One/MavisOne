@@ -158,8 +158,19 @@ check('  e o aviso', /duplicidadeCadastro\(\)\.textoDoAviso\(/.test(app));
 const modulo = ler('public/modules/shared/duplicidade_cadastro.js');
 check('os acentos combinantes estão escapados no módulo',
   modulo.includes(String.fromCharCode(92) + 'u0300-' + String.fromCharCode(92) + 'u036f'));
+// A FAIXA É MONTADA POR CÓDIGO, e não escrita como literal dentro do regex.
+//
+// Esta linha era `!/[<combinantes literais>]/.test(modulo)` — usava exatamente
+// o caractere invisível que ela existe para proibir. Funcionava, e era a
+// armadilha: quem abrisse o teste para entender a regra veria colchetes vazios.
+//
+// A varredura de TODOS os fontes mora em test-fontes-sem-byte-de-controle.js
+// (a regra valia só para este arquivo, e o defeito voltou em
+// lib/filial-da-venda.js). Aqui fica o caso do módulo, que é o que esta suíte
+// cobre.
+const COMBINANTES = new RegExp(`[${String.fromCharCode(0x300)}-${String.fromCharCode(0x36f)}]`);
 check('e não há combinante literal no arquivo',
-  !/[̀-ͯ]/.test(modulo),
+  !COMBINANTES.test(modulo),
   'fonte com caractere invisivel some num "salvar como" errado');
 
 console.log('\n--- 7. o aviso chega ANTES de gravar, na tela ---');

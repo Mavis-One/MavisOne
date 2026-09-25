@@ -114,7 +114,10 @@ check('  e as exportações também',
   (servidor.match(/await baseDosRelatoriosGerais\(req, url\.searchParams\)/g) || []).length === 2);
 // A rota de overview não pode ter voltado a montar a série por conta própria.
 check('o overview não recalcula a série',
-  /serieVendas: buildSalesChartSeries\(data, granularity\),\s*\n\s*serieFinanceiro,/.test(servidor),
+  // `escopoVendas` entrou na fase DC: buildSalesChartSeries passou a EXIGIR
+  // escopo (lança sem ele), e a série de Relatórios mostrava a empresa inteira
+  // para um vendedor restrito.
+  /serieVendas: buildSalesChartSeries\(data, granularity, escopoVendas\),\s*\n\s*serieFinanceiro,/.test(servidor),
   'ele repassa a que veio da base');
 
 console.log('\n--- 4. as duas rotas ---');
