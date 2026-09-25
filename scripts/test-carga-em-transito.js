@@ -316,5 +316,18 @@ check('  e a conferência NÃO tem entrada de menu',
 check('o <script> da conferência está na página',
   /modules\/stock\/subs\/receive_transfer\.js/.test(html));
 
+// O SALDO EM TRÂNSITO APARECE NA LISTA DE PRODUTOS.
+//
+// Sem isto, `inTransit` seria calculado, serializado e invisível: a tela diria
+// "10 unidades" sem contar que 4 estão numa estrada entre o CD e a filial. É a
+// mesma pergunta que a reserva responde — "deste saldo, quanto dá para vender
+// hoje?" — e por isso mora ao lado dela.
+const produtos = ler('public/modules/stock/subs/products.js');
+check('a lista de produtos mostra o que está em trânsito',
+  /function transitoDoProduto\(product\)/.test(produtos)
+  && /\$\{transitoDoProduto\(product\)\}/.test(produtos));
+check('  e zero não vira linha, como na reserva',
+  /if \(!emTransito\) return '';/.test(produtos));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

@@ -122,6 +122,28 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
       + `</div>`;
   }
 
+  /**
+   * EM TRÂNSITO: saiu de um depósito e ainda não foi conferida no destino
+   * (fase CZ).
+   *
+   * Aparece ao lado da reserva porque as duas respondem à mesma pergunta —
+   * "deste saldo, quanto eu posso mesmo vender hoje?" — por motivos diferentes:
+   * a reserva está prometida, o trânsito está no caminhão. O total do produto
+   * inclui as duas, e é justamente isso que torna a linha necessária: sem ela, a
+   * tela mostra 10 unidades e não diz que 4 estão numa estrada entre o CD e a
+   * filial.
+   *
+   * Zero não vira linha, mesma regra da reserva: seria ruído em todo produto
+   * que nunca foi transferido.
+   */
+  function transitoDoProduto(product) {
+    const emTransito = Number(product.inTransit || 0);
+    if (!emTransito) return '';
+    return `<div class="stock-reserva" title="Saiu de um depósito e ainda não foi conferida no destino. Veja Estoque › Cargas a Conferir.">`
+      + `${S.formatQty(emTransito)} em trânsito`
+      + `</div>`;
+  }
+
   function quebraPorCor(product) {
     const quebra = product.classBalances;
     if (!quebra) return '';
@@ -304,7 +326,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
                     <td>${S.formatBRL(product.costPrice)}</td>
                     <td>${S.formatBRL(product.salePrice)}</td>
                     <td>${Number(product.margin || 0).toFixed(1)}%</td>
-                    <td>${S.formatQty(product.stockQuantity)}${reservaDoProduto(product)}${quebraPorCor(product)}</td>
+                    <td>${S.formatQty(product.stockQuantity)}${reservaDoProduto(product)}${transitoDoProduto(product)}${quebraPorCor(product)}</td>
                     <td>${S.situationBadge(product.situation)}</td>
                     <td>${S.statusBadge(product.status)}</td>
                     <td>

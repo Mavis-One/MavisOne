@@ -400,7 +400,15 @@ check('a transferência listada também', /S\.corBadge\(cores, transfer\.classVa
 
 console.log('\n--- §20: a quebra por cor na lista de produtos ---');
 const prodSrc = ler('public/modules/stock/subs/products.js');
-check('o saldo mostra a quebra embaixo', /\$\{S\.formatQty\(product\.stockQuantity\)\}\$\{reservaDoProduto\(product\)\}\$\{quebraPorCor\(product\)\}/.test(prodSrc));
+// A quebra por cor vem DEPOIS do saldo e das linhas de compromisso (reserva e,
+// desde a fase CZ, trânsito). Este check pedia os três pedaços em sequência
+// exata e quebrou quando o trânsito entrou entre eles — o que ele precisa
+// garantir é que a quebra fique no MESMO campo do saldo, embaixo dele, e não em
+// coluna própria.
+check('o saldo mostra a quebra embaixo',
+  /\$\{S\.formatQty\(product\.stockQuantity\)\}[^<]*\$\{quebraPorCor\(product\)\}/.test(prodSrc));
+check('  com a reserva e o trânsito entre os dois',
+  /\$\{reservaDoProduto\(product\)\}\$\{transitoDoProduto\(product\)\}/.test(prodSrc));
 // Esconder o "sem cor" faria a soma das cores não bater com o total exibido.
 check('o saldo sem cor aparece', /if \(quebra\.semClasse !== 0\) partes\.push/.test(prodSrc));
 check('cor zerada não polui a linha', /\.filter\(\(linha\) => linha\.quantity !== 0\)/.test(prodSrc));
