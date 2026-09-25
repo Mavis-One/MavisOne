@@ -116,6 +116,9 @@ const bandeiraCartao = require('./public/modules/shared/bandeira_cartao');
 // traduzir a linha do pedido — montar a nota no servidor sem ele faria duas
 // traducoes do mesmo de-para, e uma envelheceria.
 const formaPagamento = require('./public/modules/shared/forma_pagamento');
+// Fase CY: modFrete sai do "Meio de Envio" da aba Entrega, e nao do valor do
+// frete. A tela de emissao usa o mesmo modulo.
+const modalidadeFrete = require('./public/modules/shared/modalidade_frete');
 // Fase AQ: cotacao e ordem de compra sao o mesmo documento — o status decide.
 const comprasDb = require('./lib/db/compras');
 const purchaseStatus = require('./public/modules/shared/purchase_status');
@@ -4955,6 +4958,12 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
     // quando COBRADO do comprador; servico fica de fora, que nao e' mercadoria.
     desconto: totais.descontoTotal || 0,
     frete: totais.freteCobrado || 0,
+    // Fase CY: QUEM CONTRATOU o transporte, que nao e' a mesma pergunta de
+    // quanto o frete custou. O `freteCobrado` acima zera quando a loja absorve
+    // o frete, e sem esta linha a nota passava a declarar 9 ("sem ocorrencia de
+    // transporte") para uma entrega que aconteceu. Fica `undefined` quando o
+    // meio de envio nao responde ("Outro"), e ai o builder volta a palpitar.
+    modalidadeFrete: modalidadeFrete.paraNota(pedido.delivery && pedido.delivery.shippingMethod),
     outrasDespesas: (totais.despesasGerais || 0) + (totais.taxaMontagem || 0)
   };
 }

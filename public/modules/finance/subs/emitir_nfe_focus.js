@@ -144,6 +144,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     ? doPedido.pagamentosDaNota.filter((linha) => Number(linha.valor || 0) > 0)
     : [];
   const frete = doPedido ? Number(doPedido.frete || 0) : 0;
+  // FASE CY: modFrete responde QUEM CONTRATOU o transporte, e essa resposta está
+  // no "Meio de Envio" da aba Entrega do pedido — não no valor do frete. Aqui
+  // ia `modalidadeFrete: 0` fixo sempre que havia frete, e o servidor não
+  // mandava nada: entrega própria declarava frete contratado, e entrega com o
+  // frete absorvido pela loja declarava que não houve transporte.
+  //
+  // `undefined` quando o meio não responde ("Outro") ou quando é nota avulsa —
+  // e aí o palpite do builder (`frete > 0 ? 0 : 9`) volta a valer.
+  const modalidadeDoFrete = window.MavisModalidadeFrete.paraNota(doPedido && doPedido.meioDeEnvio);
   const outrasDespesas = doPedido ? Number(doPedido.outrasDespesas || 0) : 0;
 
   try {
@@ -1141,7 +1150,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         // Desconto, frete e despesas do pedido de origem (fase BQ). Sem eles a
         // nota sai pelo bruto dos itens e diverge da conta a receber.
         ...(desconto ? { desconto } : {}),
-        ...(frete ? { frete, modalidadeFrete: 0 } : {}),
+        ...(frete ? { frete } : {}),
+        // Fora do `...(frete ? ...)` de propósito: transporte próprio sem
+        // cobrança tem vFrete zero e modFrete 3, e amarrar a modalidade ao
+        // valor era metade do defeito da fase CY.
+        ...(modalidadeDoFrete === undefined ? {} : { modalidadeFrete: modalidadeDoFrete }),
         ...(outrasDespesas ? { outrasDespesas } : {}),
         // Com pedido de origem, o servidor NÃO gera contas a receber: quem
         // gerou foi o pedido, e um segundo recebível pelo mesmo valor só

@@ -139,7 +139,12 @@ check('a tela guarda os três valores', /const desconto = doPedido \? Number\(do
 check('  o total exibido passa a ser o da nota',
   /return Math\.round\(\(totalDosItens\(\) \+ frete \+ outrasDespesas - desconto\) \* 100\) \/ 100;/.test(telaSrc));
 check('  e o corpo enviado os leva', /\.\.\.\(desconto \? \{ desconto \} : \{\}\),/.test(telaSrc));
-check('  com a modalidade de frete junto', /\.\.\.\(frete \? \{ frete, modalidadeFrete: 0 \} : \{\}\),/.test(telaSrc));
+check('  e o frete entre eles', /\.\.\.\(frete \? \{ frete \} : \{\}\),/.test(telaSrc));
+// A MODALIDADE SAIU DAQUI, e de propósito (fase CY). Este check pedia
+// `{ frete, modalidadeFrete: 0 }` — a forma exata, com o 0 fixo dentro. Mas o
+// assunto desta seção é o VALOR da nota fechar com o da venda; quem contratou o
+// transporte é outra pergunta, e amarrá-la ao valor era justamente o defeito.
+// Quem cobra a modalidade agora é test-modalidade-frete.js.
 
 // A prova de que os dois lados fecham: itens - desconto + frete + despesas tem
 // de dar exatamente o total do pedido.

@@ -3300,7 +3300,10 @@ async function loadModule(moduleName) {
         const CAMPOS_FORM = [...CAMPOS_EXTRA, ...CAMPOS_PAGAMENTO, ...CAMPOS_ENTREGA, 'salesTerms'];
 
         const TIPOS_ENDERECO = ['Endereço Pessoa', 'Outro Endereço'];
-        const MEIOS_ENVIO = ['Outro', 'Correios', 'Transportadora', 'Retirada no Balcão', 'Entrega Própria'];
+        // A lista mora no módulo que traduz cada meio para o modFrete da NF-e
+        // (fase CY). Solta aqui, um sexto meio de envio entraria no select e
+        // sairia declarando frete contratado sem ninguém decidir nada.
+        const MEIOS_ENVIO = window.MavisModalidadeFrete.MEIOS_ENVIO;
         const DOCUMENTOS_IMPRESSAO = ['Nenhum', 'Boleto', 'Carnê', 'Recibo', 'Duplicata'];
 
         let payments = (origem?.payments || []).map((linha) => ({ ...linha }));
@@ -3812,6 +3815,15 @@ async function loadModule(moduleName) {
               // algo que não está declarado em item nenhum.
               desconto: totaisDaNota.descontoTotal || 0,
               frete: totaisDaNota.freteCobrado || 0,
+              // FASE CY: O MEIO DE ENVIO VIAJA JUNTO, e não o código já
+              // resolvido. Quem traduz é shared/modalidade_frete.js, o mesmo
+              // módulo que o servidor usa — mandar o número daqui criaria uma
+              // segunda tradução do mesmo de-para.
+              //
+              // Sem isto, a tela de emissão mandava `modalidadeFrete: 0` fixo
+              // sempre que havia frete, e toda entrega própria saía declarando
+              // frete contratado de terceiro.
+              meioDeEnvio: formState.shippingMethod || '',
               outrasDespesas: (totaisDaNota.despesasGerais || 0) + (totaisDaNota.taxaMontagem || 0)
             };
             state.activeModule = 'finance';

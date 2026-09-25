@@ -88,6 +88,10 @@
     <script src="/modules/shared/descricao_lancamento.js"></script>
     <script src="/modules/shared/garantia.js"></script>
     <script src="/modules/shared/forma_pagamento.js"></script>
+    <!-- modFrete da NF-e a partir do Meio de Envio do pedido. Antes do app.js
+         (a aba Entrega monta o select a partir da lista dele) e antes do modulo
+         Financeiro (a tela de emissao traduz o meio na hora de transmitir). -->
+    <script src="/modules/shared/modalidade_frete.js"></script>
     <!-- Tabela tBand da NF-e. Antes do modulo de Cadastros (o formulario de
          credenciadora desenha uma caixa por bandeira a partir dela) e antes do
          app.js, que monta o select de bandeira na linha de pagamento do pedido.
