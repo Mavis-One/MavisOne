@@ -93,9 +93,25 @@ const rotaEstorno = src.slice(src.indexOf("if (/^\\/api\\/stock\\/transfers\\/[^
 const trecho = rotaEstorno.slice(0, rotaEstorno.indexOf('await emTransacao('));
 check('achei o estorno de transferência', trecho.length > 100, `${trecho.length} caracteres`);
 check('confere o saldo DA COR quando há cor',
-  /const available = cor\s*\n\s*\? stockCore\.classValueBalance\(data, transfer\.productId, cor, transfer\.destinationDepositId\)/.test(trecho));
+  /const available = cor\s*\n\s*\? stockCore\.classValueBalance\(data, transfer\.productId, cor, depositoDeOnde\)/.test(trecho));
 check('  e o do depósito quando não há',
-  /: stockCore\.depositBalance\(data, transfer\.productId, transfer\.destinationDepositId\);/.test(trecho));
+  /: stockCore\.depositBalance\(data, transfer\.productId, depositoDeOnde\);/.test(trecho));
+// FASE CZ: O DEPÓSITO CONFERIDO DEPENDE DE ONDE A MERCADORIA ESTÁ.
+//
+// Estes dois checks pediam `transfer.destinationDepositId` fixo, e era o certo
+// enquanto a transferência era instantânea: o destino era o único lugar
+// possível. Com trânsito há dois, e conferir o destino numa carga que não
+// chegou olharia um saldo sem relação nenhuma com o estorno — a recusa (ou a
+// liberação) sairia pelo motivo errado.
+check('  e o lugar é o trânsito quando a carga não chegou',
+  /const depositoDeOnde = emTransito \? stockCore\.DEPOSITO_EM_TRANSITO : transfer\.destinationDepositId;/.test(trecho));
+check('  com emTransito vindo do status da linha',
+  /const emTransito = status === 'enviada';/.test(trecho));
+// Parte no destino e parte no trânsito: um estorno só teria de escolher de onde
+// tirar, e qualquer escolha seria palpite sobre o que houve no balcão.
+check('  e a carga PARCIALMENTE recebida é recusada',
+  /if \(status === 'enviada' && recebido > 0\)/.test(trecho)
+  && /Termine a conferência antes de estornar/.test(trecho));
 // "disponível 0" num depósito visivelmente cheio não explica nada.
 check('  e a mensagem nomeia a cor', /await classesDb\.nomeDoValor\(cor\)/.test(trecho));
 

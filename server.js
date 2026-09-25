@@ -12477,9 +12477,17 @@ async function tratarRequisicao(req, res) {
       const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
       const productId = url.searchParams.get('productId') || '';
       const depositId = url.searchParams.get('depositId') || '';
+      // Fase CZ. O status do HISTORICO e' 'recebida' (era instantaneo), entao
+      // filtrar por 'enviada' devolve exatamente as cargas na estrada.
+      const status = String(url.searchParams.get('status') || '').trim();
+      // A CARGA inteira, para a tela de conferência. `batch_id` já ligava os
+      // itens enviados juntos desde a fase BO; agora ele é a chave da tela.
+      const batchId = String(url.searchParams.get('batchId') || '').trim();
       let list = (data.stockTransfers || []).slice();
+      if (batchId) list = list.filter((t) => t.batchId === batchId);
       if (productId) list = list.filter((t) => t.productId === productId);
       if (depositId) list = list.filter((t) => t.originDepositId === depositId || t.destinationDepositId === depositId);
+      if (status) list = list.filter((t) => String(t.status || 'recebida') === status);
       if (search) {
         list = list.filter((t) => {
           const product = productsById.get(t.productId);
@@ -12576,6 +12584,10 @@ async function tratarRequisicao(req, res) {
       }
 
       const date = body.date || stockCore.todayStr();
+      // Ligado por padrão: entre lojas a conferência é o certo, e quem não
+      // decidir nada precisa cair no lado seguro. Ver a nota na perna da
+      // entrada, logo abaixo.
+      const comConferencia = body.conferirNaChegada !== false;
       // Liga os itens enviados juntos. A lista de transferências continua com
       // uma linha por produto (é assim que ela sempre foi, e é o que o estorno
       // por linha espera), mas quem precisar reconstruir a movimentação inteira
@@ -12612,9 +12624,23 @@ async function tratarRequisicao(req, res) {
         // commitStockMovements. Calcular max+1 aqui gerava o mesmo MOV duas
         // vezes quando duas movimentacoes saiam ao mesmo tempo.
         movimentos.push(out);
+        // FASE CZ: A ENTRADA NASCE NO TRÂNSITO, NÃO NO DESTINO.
+        //
+        // Enquanto as duas pernas saíam juntas, a carga que ia do CD para a
+        // FILIAL 08 aparecia no estoque da filial antes de o caminhão sair: a
+        // filial vendia o que estava na estrada, e perda no caminho não existia
+        // como fato — reaparecia meses depois como falta na contagem dela.
+        //
+        // `conferirNaChegada` desligado devolve o comportamento antigo, e há
+        // caso legítimo para isso: mudar mercadoria do salão para o galpão da
+        // MESMA loja não é uma viagem, e exigir conferência ali só criaria
+        // carga pendente que ninguém vai conferir.
         const into = buildMovementRecord(data, {
-          ...shared, type: 'entrada', depositId: destinationDepositId,
-          note: body.note || 'Transferência entre depósitos (entrada)'
+          ...shared, type: 'entrada',
+          depositId: comConferencia ? stockCore.DEPOSITO_EM_TRANSITO : destinationDepositId,
+          note: body.note || (comConferencia
+            ? 'Transferência entre depósitos (saiu para trânsito)'
+            : 'Transferência entre depósitos (entrada)')
         }, user);
         movimentos.push(into);
 
@@ -12635,7 +12661,14 @@ async function tratarRequisicao(req, res) {
           quantity: item.quantity,
           note: body.note || '',
           movementOutId: out.id,
-          movementInId: into.id,
+          // `movementInId` é a entrada NO DESTINO, e com conferência ela só
+          // existe na chegada. A perna do trânsito tem coluna própria — assim
+          // quem já lia essas duas colunas continua lendo a mesma coisa.
+          movementInId: comConferencia ? '' : into.id,
+          movementTransitInId: comConferencia ? into.id : '',
+          status: comConferencia ? 'enviada' : 'recebida',
+          receivedQuantity: comConferencia ? 0 : item.quantity,
+          sentAt: new Date().toISOString(),
           createdBy: user.id,
           createdByName: user.name,
           createdAt: new Date().toISOString()
@@ -12653,6 +12686,162 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { success: true, transfer: serializadas[0], transfers: serializadas });
     } catch (error) {
       return sendErro(res, error, 'Erro ao transferir entre depósitos');
+    }
+  }
+
+  // ==========================================================================
+  // CONFERÊNCIA NA CHEGADA (fase CZ) — o trânsito vira estoque do destino.
+  //
+  // ANTES do match de `/api/stock/transfers/<id>`: aquele regex leria
+  // "receive" como id de transferência e devolveria 404.
+  //
+  // Recebe a CARGA (o batch_id), não a linha: o que chega no balcão é um
+  // caminhão, e conferir item por item em requisições separadas deixaria metade
+  // da carga recebida se a segunda falhasse.
+  // ==========================================================================
+  if (pathname === '/api/stock/transfers/receive' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const body = await readBody(req);
+      const { data, productsById } = await loadStockContext();
+
+      const batchId = String(body.batchId || '').trim();
+      if (!batchId) return sendJson(res, { error: 'Informe a carga a conferir.' }, 400);
+      const itensBrutos = Array.isArray(body.items) ? body.items : [];
+      if (!itensBrutos.length) return sendJson(res, { error: 'Nenhum item conferido.' }, 400);
+
+      const doLote = (data.stockTransfers || []).filter((t) => t.batchId === batchId);
+      if (!doLote.length) return sendJson(res, { error: 'Carga não encontrada.' }, 404);
+
+      // TUDO CONFERIDO ANTES DE QUALQUER COISA SER GRAVADA — mesma regra do
+      // envio. Meia carga recebida com uma mensagem de erro que não diz o que
+      // ficou feito é pior do que a recusa inteira.
+      const conferidos = [];
+      for (const bruto of itensBrutos) {
+        const transferId = String(bruto?.transferId || '').trim();
+        const linha = doLote.find((t) => t.id === transferId);
+        if (!linha) return sendJson(res, { error: 'Item que não pertence a esta carga.' }, 400);
+
+        const quantidade = stockCore.toNumber(bruto.quantity);
+        // Zero é resposta VÁLIDA e a mais importante: "esta caixa não chegou".
+        // Ela não gera movimento, e a linha segue pendente para quem for
+        // resolver — que é o contrário de apagar a divergência.
+        if (quantidade < 0) return sendJson(res, { error: 'Quantidade conferida não pode ser negativa.' }, 400);
+        if (!quantidade) continue;
+
+        if (String(linha.status || 'recebida') !== 'enviada') {
+          return sendJson(res, {
+            error: `${linha.code || 'A linha'} já foi recebida por inteiro e não aceita nova conferência.`
+          }, 409);
+        }
+        const pendente = stockCore.toNumber(linha.quantity) - stockCore.toNumber(linha.receivedQuantity);
+        if (quantidade > pendente + 0.00005) {
+          const produto = productsById.get(linha.productId);
+          return sendJson(res, {
+            error: `Foram enviadas ${pendente} unidades de "${produto ? produto.name : linha.productId}" `
+              + `nesta carga e a conferência diz ${quantidade}. Receber mais do que saiu criaria estoque — `
+              + 'o excesso não saiu de depósito nenhum. Confira a quantidade, ou envie uma segunda transferência.'
+          }, 400);
+        }
+        conferidos.push({ linha, quantidade });
+      }
+      if (!conferidos.length) {
+        return sendJson(res, { error: 'Nenhuma quantidade conferida — informe o que chegou.' }, 400);
+      }
+
+      // O saldo do balde de trânsito, por cor quando há cor. A guarda do
+      // commitStockMovements recusaria de todo jeito, mas depois de montar tudo
+      // e com a mensagem genérica de saldo negativo; aqui a mensagem sabe que o
+      // assunto é uma carga.
+      for (const { linha, quantidade } of conferidos) {
+        const cor = linha.classValueId || '';
+        const noTransito = cor
+          ? stockCore.classValueBalance(data, linha.productId, cor, stockCore.DEPOSITO_EM_TRANSITO)
+          : stockCore.transitBalance(data, linha.productId);
+        if (quantidade > noTransito + 0.00005) {
+          const produto = productsById.get(linha.productId);
+          return sendJson(res, {
+            error: `"${produto ? produto.name : linha.productId}" tem ${noTransito} em trânsito e a `
+              + `conferência diz ${quantidade}. Alguma outra conferência já recebeu esta carga.`
+          }, 409);
+        }
+      }
+
+      const movimentos = [];
+      for (const { linha, quantidade } of conferidos) {
+        movimentos.push(buildMovementRecord(data, {
+          type: 'saida', productId: linha.productId,
+          depositId: stockCore.DEPOSITO_EM_TRANSITO,
+          quantity: quantidade,
+          date: stockCore.todayStr(),
+          transferId: linha.id,
+          origin: 'transferencia',
+          classId: linha.classId || '', classValueId: linha.classValueId || '',
+          note: `Conferência da carga ${linha.code || batchId} (saiu do trânsito)`
+        }, user));
+        movimentos.push(buildMovementRecord(data, {
+          type: 'entrada', productId: linha.productId,
+          depositId: linha.destinationDepositId,
+          quantity: quantidade,
+          date: stockCore.todayStr(),
+          transferId: linha.id,
+          origin: 'transferencia',
+          classId: linha.classId || '', classValueId: linha.classValueId || '',
+          note: `Conferência da carga ${linha.code || batchId} (entrada no destino)`
+        }, user));
+      }
+
+      const resultados = [];
+      await commitStockMovements(data, movimentos, productsById, {
+        tambemNaTransacao: async (cliente) => {
+          // A TRAVA É DO LOTE INTEIRO, e antes de escrever: duas pessoas
+          // conferindo a mesma carga no balcão é o caso comum. Sem ela, as duas
+          // leem "faltam 10", as duas recebem 10, e `received_quantity` passa do
+          // enviado — que o CHECK do banco recusaria, mas só depois de metade da
+          // segunda conferência já estar gravada.
+          //
+          // `received_quantity` não é tocado pelos movimentos acima, então
+          // reconferi-lo aqui dentro é a checagem certa (diferente da contagem
+          // de estoque, onde o saldo já inclui o que acabou de entrar).
+          const travadas = await razaoEstoque.travarLoteParaConferir(cliente, batchId);
+          for (const { linha, quantidade } of conferidos) {
+            const atual = travadas.find((t) => t.id === linha.id);
+            if (!atual || atual.status !== 'enviada') {
+              throw stockCore.stockError(
+                `${linha.code || 'Uma linha'} desta carga foi recebida enquanto esta conferência estava aberta. `
+                + 'Recarregue a carga e confira de novo.', 409);
+            }
+            const pendente = stockCore.toNumber(atual.quantity) - stockCore.toNumber(atual.receivedQuantity);
+            if (quantidade > pendente + 0.00005) {
+              throw stockCore.stockError(
+                `${linha.code || 'Uma linha'} desta carga já teve ${atual.receivedQuantity} recebidos por `
+                + 'outra conferência. Recarregue a carga e confira de novo.', 409);
+            }
+            const saida = movimentos.find((m) => m.transferId === linha.id && m.type === 'saida');
+            const entrada = movimentos.find((m) => m.transferId === linha.id && m.type === 'entrada');
+            resultados.push(await razaoEstoque.registrarRecebimento(cliente, {
+              transferId: linha.id,
+              quantidade,
+              movementTransitOutId: saida ? saida.id : '',
+              movementInId: entrada ? entrada.id : '',
+              user
+            }));
+          }
+        }
+      });
+
+      // O que ainda falta desta carga, para a tela dizer se acabou.
+      const pendenteDoLote = resultados.reduce(
+        (soma, r) => soma + Math.max(0, stockCore.toNumber(r.quantity) - stockCore.toNumber(r.receivedQuantity)), 0);
+      return sendJson(res, {
+        success: true,
+        recebidas: resultados.length,
+        pendente: Math.round(pendenteDoLote * 10000) / 10000,
+        transfers: resultados.map((t) => stockCore.serializeTransfer(t, data, productsById))
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao conferir a carga');
     }
   }
 
@@ -12675,21 +12864,45 @@ async function tratarRequisicao(req, res) {
       // esse saldo por cor agora inflado.
       //
       // A rota irma — o estorno de MOVIMENTACAO, logo acima — ja fazia assim.
+      // FASE CZ: O ESTORNO DEVOLVE DO LUGAR ONDE A MERCADORIA ESTÁ.
+      //
+      // Enquanto a transferência era instantânea, esse lugar era sempre o
+      // destino. Com trânsito há dois casos, e conferir o destino numa carga que
+      // não chegou olharia um saldo que nada tem a ver: a recusa (ou a
+      // liberação) sairia pelo motivo errado.
+      //
+      // PARCIALMENTE RECEBIDA É RECUSADA, e não desfeita pela metade. Parte da
+      // carga está no destino e parte no trânsito; um estorno só teria de
+      // escolher de onde tirar, e qualquer escolha seria um palpite sobre o que
+      // aconteceu no balcão. Conferir o resto (ou zerar a carga) é decisão de
+      // quem está olhando a mercadoria.
+      const status = String(transfer.status || 'recebida');
+      const recebido = stockCore.toNumber(transfer.receivedQuantity ?? transfer.quantity);
+      if (status === 'enviada' && recebido > 0) {
+        return sendJson(res, {
+          error: `Esta linha da carga teve ${recebido} de ${stockCore.toNumber(transfer.quantity)} `
+            + 'já conferidos na chegada: parte está no destino e parte no trânsito. '
+            + 'Termine a conferência antes de estornar.'
+        }, 409);
+      }
+      const emTransito = status === 'enviada';
+      const depositoDeOnde = emTransito ? stockCore.DEPOSITO_EM_TRANSITO : transfer.destinationDepositId;
       const cor = transfer.classValueId || '';
       const available = cor
-        ? stockCore.classValueBalance(data, transfer.productId, cor, transfer.destinationDepositId)
-        : stockCore.depositBalance(data, transfer.productId, transfer.destinationDepositId);
+        ? stockCore.classValueBalance(data, transfer.productId, cor, depositoDeOnde)
+        : stockCore.depositBalance(data, transfer.productId, depositoDeOnde);
       if (stockCore.toNumber(transfer.quantity) > available) {
         // Nomear a cor: "disponivel 0" num deposito visivelmente cheio nao
         // explica nada a quem esta olhando a tela.
         const nomeDaCor = cor ? ` de ${await classesDb.nomeDoValor(cor)}` : '';
         return sendJson(res, {
-          error: `Não é possível estornar: o depósito de destino ficaria negativo${nomeDaCor} `
-            + `(disponível ${available}).`
+          error: `Não é possível estornar: ${emTransito ? 'o trânsito' : 'o depósito de destino'} `
+            + `ficaria negativo${nomeDaCor} (disponível ${available}).`
         }, 409);
       }
-      // Os dois movimentos e o registro saem juntos. O total do produto NAO
-      // muda: a transferencia moveu entre depositos, nao criou nem consumiu.
+      // Os dois (ou quatro) movimentos e o registro saem juntos. O total do
+      // produto NAO muda: a transferencia moveu entre depositos, nao criou nem
+      // consumiu -- e o mesmo vale para a perna do transito.
       await emTransacao(async (cliente) => {
         await razaoEstoque.apagarTransferencia(cliente, id);
       });

@@ -213,6 +213,23 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
               <label>Documento<input name="document" /></label>
             </div>
             <label>Observação<textarea name="note" rows="2"></textarea></label>
+            <!-- FASE CZ. Ligado por padrão porque entre lojas é o certo, e quem
+                 não decidir nada precisa cair no lado seguro: sem conferência, a
+                 filial vende o que ainda está na estrada.
+
+                 Desligar tem caso legítimo — mudar mercadoria do salão para o
+                 galpão da MESMA loja não é uma viagem, e exigir conferência ali
+                 só criaria carga pendente que ninguém vai conferir. -->
+            <label class="switch-field">
+              <input type="checkbox" name="conferirNaChegada" checked />
+              Conferir na chegada (a carga fica em trânsito)
+            </label>
+            <p class="muted" style="margin-top:-4px;">
+              Ligado, a mercadoria sai da origem e fica <strong>em trânsito</strong> até alguém
+              conferir no destino — o destino só pode vendê-la depois disso, e o que faltar na
+              chegada aparece como carga pendente. Desligado, ela chega na hora, como uma mudança
+              de prateleira dentro do mesmo galpão.
+            </p>
           </div>
         </div>
 
@@ -294,6 +311,9 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
         date: formData.get('date'),
         document: formData.get('document') || '',
         note: formData.get('note') || '',
+        // O checkbox desmarcado nao aparece no FormData -- dai a comparacao com
+        // null, e nao um `=== 'on'` que trataria ausencia e desmarcado igual.
+        conferirNaChegada: formData.get('conferirNaChegada') !== null,
         items: itens.map((item) => ({
           productId: item.productId,
           quantity: item.quantity,
@@ -304,8 +324,13 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
       try {
         const res = await api('/api/stock/transfers', { method: 'POST', body: JSON.stringify(payload) });
         const quantos = (res.transfers || []).length || 1;
-        showToast(`Movimentação registrada — ${quantos} ${quantos === 1 ? 'produto transferido' : 'produtos transferidos'}.`, 'success');
-        state.activeSub = 'transfers';
+        const emTransito = (res.transfers || []).some((t) => t.status === 'enviada');
+        showToast(emTransito
+          ? `Carga enviada — ${quantos} ${quantos === 1 ? 'produto' : 'produtos'} em trânsito, `
+            + 'aguardando conferência no destino.'
+          : `Movimentação registrada — ${quantos} ${quantos === 1 ? 'produto transferido' : 'produtos transferidos'}.`,
+        'success', emTransito ? 7000 : 4000);
+        state.activeSub = emTransito ? 'transfers_pending' : 'transfers';
         loadModule('stock');
       } catch (error) {
         showToast(error.message || 'Erro ao transferir.', 'error');

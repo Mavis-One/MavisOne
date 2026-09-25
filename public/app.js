@@ -1683,6 +1683,7 @@ const moduleSubItems = {
     { key: 'movements', label: 'Movimentações', desc: 'Entradas, saídas e ajustes já lançados.' },
     { key: 'new_movement', label: 'Nova Movimentação', desc: 'Lança entrada, saída ou ajuste de estoque.' },
     { key: 'transfers', label: 'Entre Depósitos', desc: 'Transferências de produtos entre depósitos.' },
+    { key: 'transfers_pending', label: 'Cargas a Conferir', desc: 'O que saiu de um depósito e ainda não foi conferido no destino.' },
     { key: 'new_transfer', label: 'Nova Entre Depósitos', desc: 'Move produtos de um depósito para outro.' },
     // Fase CU. A carga do estoque inicial e o inventario ciclico sao a MESMA
     // folha -- a carga inicial e uma contagem contra saldo anterior zero --,

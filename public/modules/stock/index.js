@@ -8,6 +8,11 @@ const STOCK_SUB_KEYS = [
   'price_manager',
   'movements', 'new_movement',
   'transfers', 'new_transfer',
+  // Fase CZ. `transfers_pending` e' a mesma tela com o filtro de pendentes
+  // ligado, e `receive_transfer` nao tem entrada de menu de proposito: ela
+  // precisa de uma carga escolhida, e abri-la sem carga so' devolveria a
+  // pessoa para a lista.
+  'transfers_pending', 'receive_transfer',
   // Fase CU. Sem estas duas chaves a tela aparece no menu, o clique cai no
   // fallback e abre Produtos — sem erro nenhum. É o que test-modulos-telas.js
   // cobra, e foi ele que pegou a falta delas aqui.
