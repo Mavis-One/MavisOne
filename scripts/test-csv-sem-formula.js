@@ -156,13 +156,49 @@ check('o relatório NÃO tem mais o seu próprio escape',
 check('  nem a sua própria vírgula decimal',
   !/replace\('\.', ','\)/.test(relatorio));
 
-// Quem emite text/csv tem de passar por aqui. Hoje é uma rota; o documento de
-// BI pede ~20, e é esse crescimento que este check vigia.
+// TODA ROTA QUE EMITE text/csv MONTA O ARQUIVO POR UM MÓDULO, e nenhuma o monta
+// sozinha. O documento de BI pede exportação em ~20 relatórios, e é esse
+// crescimento que este check vigia.
+//
+// A primeira versão exigia `rotasCsv === 1`, e falhou no dia seguinte quando a
+// fase DB deu exportação ao Financeiro e ao Estoque — fez o que tinha de fazer
+// (avisar que nasceu outra) e pela razão errada (contar rotas não é a regra). A
+// regra é: cada uma passa por um montador, e o montador passa por lib/csv.js.
 const servidor = semComentarios(ler('server.js'));
 const rotasCsv = (servidor.match(/text\/csv/g) || []).length;
-check(`as rotas que emitem CSV usam o montador do relatório (${rotasCsv})`,
-  rotasCsv === 1 && /relatoriosVendas\.montarCsv\(linhas\)/.test(servidor),
-  'quando a segunda nascer, este check cobra que ela nao monte o arquivo sozinha');
+const montagens = (servidor.match(/relatoriosVendas\.montarCsv\(|relatoriosCsv\.(financeiro|estoque)\(/g) || []).length;
+check(`toda rota de CSV chama um montador (${rotasCsv} rota(s), ${montagens} montagem(ns))`,
+  rotasCsv > 0 && montagens >= rotasCsv,
+  'rota nova sem montador cai aqui');
+// O CHECK QUE IMPEDE A MONTAGEM À MÃO — e olha o CORPO de cada rota de CSV, não
+// o arquivo inteiro. `!/join\(';'\)/` no server.js todo reprovava
+// `buildNfeConteudoKey`, que junta itens com ponto e vírgula para a chave de
+// idempotência da NF-e e não tem nada a ver com planilha. Guarda que reprova
+// código correto é guarda que alguém desliga.
+const corposDeCsv = [];
+let de = servidor.indexOf('text/csv');
+while (de >= 0) {
+  corposDeCsv.push(servidor.slice(Math.max(0, de - 2000), de));
+  de = servidor.indexOf('text/csv', de + 1);
+}
+check(`achei o corpo das ${corposDeCsv.length} rota(s) de CSV`, corposDeCsv.length === rotasCsv);
+check('cada uma chama um montador, e nenhuma junta células por conta própria',
+  corposDeCsv.every((corpo) =>
+    /relatoriosVendas\.montarCsv\(|relatoriosCsv\.(financeiro|estoque)\(/.test(corpo)
+    && !/join\(';'\)/.test(corpo)),
+  'montar a mao e o caminho de volta para o buraco da fase DA');
+
+// Os montadores do Financeiro e do Estoque passam por lib/csv.js — se um deles
+// escrever o separador direto, a neutralização não acontece naquele arquivo.
+const outros = semComentarios(ler('lib/relatorios-csv.js'));
+check('relatorios-csv requer lib/csv', /require\('\.\/csv'\)/.test(ler('lib/relatorios-csv.js')));
+check('  e monta os dois documentos por ele',
+  (outros.match(/csv\.documento\(/g) || []).length === 2);
+check('  sem join manual', !/\.join\(';'\)/.test(outros));
+// Texto pelo `celula` (neutraliza), número pelo `numero` (não neutraliza, senão
+// a planilha pararia de somar a coluna).
+check('  texto pelo celula e número pelo numero',
+  /csv\.celula\(texto\(/.test(outros) && /csv\.numero\(/.test(outros));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

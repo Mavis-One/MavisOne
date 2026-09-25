@@ -104,7 +104,23 @@ const POPULA = {
   loadStockContext: ['stockMovements', 'stockTransfers', 'people', 'cnpjs', 'deposits'],
   // Fase BD: o razão sozinho, para quem já tem o próprio `data` na mão e não
   // pode trocar por outro (Vendas, Compras, Fiscal, os painéis).
-  sincronizarRazao: ['stockMovements', 'stockTransfers']
+  sincronizarRazao: ['stockMovements', 'stockTransfers'],
+  // FASE DB: a base dos relatórios Financeiro e Estoque. Ela chama os CINCO
+  // syncs de uma vez (cadastro, vendas, compras, NF-e e financeiro), confere a
+  // permissão antes deles e devolve `data` pronto.
+  //
+  // Entrou aqui porque a rota /api/reports/overview passou a obtê-la por este
+  // helper em vez de sincronizar no próprio corpo, e este guarda leu isso como
+  // sete leituras sem sync — corretamente, pelo que ele vê. A união abaixo é
+  // exatamente o que os cinco syncs populam; nada foi acrescentado para o teste
+  // passar.
+  baseDosRelatoriosGerais: [
+    'people', 'cnpjs', 'deposits',
+    'orders', 'quotes', 'importLogs',
+    'purchases',
+    'nfes', 'nfe',
+    'finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'
+  ]
 };
 const SYNC_DE = {};
 Object.entries(POPULA).forEach(([fn, cols]) => cols.forEach((c) => { (SYNC_DE[c] = SYNC_DE[c] || []).push(fn); }));
@@ -123,7 +139,9 @@ const INFRA = new Set([
   'syncCadastroData', 'syncSalesData', 'syncSalesDataParaAgregado',
   'syncSalesDataResumida',
   'syncPurchasesData', 'syncNfeData',
-  'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao'
+  'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
+  // Fase DB: sincroniza por dentro, como o loadStockContext.
+  'baseDosRelatoriosGerais'
 ]);
 
 const ARQUIVOS = [

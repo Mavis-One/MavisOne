@@ -82,6 +82,9 @@ const salesBulk = require('./public/modules/shared/sales_bulk_actions');
 // dois em funções puras. Ver o cabeçalho de lib/relatorios-escopo.js.
 const escopoLib = require('./lib/relatorios-escopo');
 const relatoriosVendas = require('./lib/relatorios-vendas');
+// Fase DB: as colunas do CSV do Financeiro e do Estoque, que nao tinham
+// exportacao nenhuma. Puro, como o de vendas.
+const relatoriosCsv = require('./lib/relatorios-csv');
 // Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
 const painelPessoal = require('./lib/painel-pessoal-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
@@ -7815,6 +7818,72 @@ async function tratarRequisicao(req, res) {
     return Boolean(user) && (ehAdministrador || user.allowedModules.includes('reports'));
   }
 
+  /**
+   * A BASE DOS RELATÓRIOS GERAIS (Financeiro e Estoque) — UMA conta só.
+   *
+   * Existe porque agora há dois consumidores da mesma coisa: a tela
+   * (/api/reports/overview) e os arquivos (/financeiro/export e
+   * /estoque/export). Montar cada um por conta própria é o jeito conhecido de a
+   * exportação passar a discordar do que estava na tela — e discordar em
+   * silêncio, porque ninguém compara uma planilha com um gráfico.
+   *
+   * A PERMISSÃO VEM ANTES DOS SYNCS, e a ordem mudou aqui. A rota de overview
+   * carregava NF-e e compras, depois conferia se a pessoa podia ver relatório.
+   * Trabalho feito para quem vai levar 403 — e, com os dados já em `data`, a
+   * distância entre "carregou" e "não respondeu" é uma linha de código.
+   *
+   * A CAIXA "RELATORIOS" DA TELA DE USUARIOS PRECISA VALER AQUI, e não valia: o
+   * portão central decide por PAPEL (reports.ler) e o papel 'Usuario' já a
+   * traz, então o administrador desmarcava Relatórios em Configurações, a tela
+   * saía do menu e a rota continuava respondendo. Medido: usuário com
+   * `dashboard, sales` recebia 200 com contas a pagar, a receber, a série de
+   * receitas e despesas e o estoque — a posição financeira da empresa. É o
+   * mesmo defeito que a fase BR fechou em Frota, RH, PCP e Contratos, e estes
+   * endpoints não têm escopo nenhum por trás (o /reports/vendas tem).
+   */
+  async function baseDosRelatoriosGerais(req, params) {
+    const user = await getCurrentUser(req);
+    if (!user) return { erro: 'Não autenticado', status: 401 };
+    if (!podeVerRelatorios(user, await ehAdmin(user))) return { erro: 'Sem permissão', status: 403 };
+
+    const data = loadData();
+    // Uma ONDA so de ida ao banco, e nao 5 em fila. Cada consulta ao Supabase
+    // custa ~300ms de rede (medido), e estes syncs sao independentes: cada um
+    // escreve em chaves diferentes de `data` e nenhum le o do outro.
+    await Promise.all([
+      syncNfeData(data),
+      syncPurchasesData(data),
+      syncCadastroData(data),
+      syncSalesData(data),
+      syncFinanceData(data)
+    ]);
+    const products = await db.getProducts();
+    const granularity = params.get('granularity') || 'month';
+    const lancamentos = (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry));
+
+    const produtosComSaldo = products.map((produto) => {
+      const quantidade = Number(produto.stockQuantity || 0);
+      const custo = Number(produto.costPrice || 0);
+      return {
+        id: produto.id,
+        name: produto.name,
+        sku: produto.sku || '',
+        quantidade,
+        custo,
+        valor: Math.round(quantidade * custo * 100) / 100
+      };
+    });
+
+    return {
+      user,
+      data,
+      granularity,
+      lancamentos,
+      produtosComSaldo,
+      serieFinanceiro: buildFinanceChartSeries(lancamentos, granularity)
+    };
+  }
+
   async function montarRelatorioDeVendas(req, params) {
     const data = loadData();
     // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
@@ -7892,39 +7961,62 @@ async function tratarRequisicao(req, res) {
     }
   }
 
-  if (pathname === '/api/reports/overview' && req.method === 'GET') {
-    const data = loadData();
-    await Promise.all([syncNfeData(data), syncPurchasesData(data)]);
-    const user = await getCurrentUser(req);
-    if (!user) {
-      return sendJson(res, { error: 'Não autenticado' }, 401);
-    }
-    // A CAIXA "RELATORIOS" DA TELA DE USUARIOS PRECISA VALER AQUI.
-    //
-    // Nao valia. O portao central decide por PAPEL (reports.ler), e o papel
-    // 'Usuario' ja traz essa permissao — entao o administrador desmarcava
-    // Relatorios em Configuracoes > Usuarios, a tela sumia do menu, e a rota
-    // continuava respondendo. Medido: usuario com `dashboard, sales` recebia
-    // 200 aqui, com contasAPagar, contasAReceber, serie de receitas e despesas
-    // e estoque — a posicao financeira da empresa.
-    //
-    // E' o mesmo defeito que a fase BR fechou em Frota, RH, PCP e Contratos, e
-    // este endpoint nao tem escopo nenhum por tras (o /reports/vendas tem).
-    if (!podeVerRelatorios(user, await ehAdmin(user))) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
-    }
+  // ==========================================================================
+  // EXPORTAÇÃO DO FINANCEIRO E DO ESTOQUE (fase DB)
+  //
+  // Os dois relatórios não tinham como exportar nada: o botão "Excel (CSV)"
+  // mora na barra de filtros do relatório de VENDAS, e só Vendas e Por Vendedor
+  // a chamam.
+  //
+  // As duas rotas saem da MESMA `baseDosRelatoriosGerais` que alimenta a tela —
+  // é o que impede o arquivo de discordar do que a pessoa acabou de ver, em
+  // silêncio, porque ninguém compara uma planilha com um gráfico.
+  //
+  // O CSV é montado por lib/relatorios-csv.js, que passa por lib/csv.js: sem
+  // isso, cada rota nova reabriria o buraco de injeção de fórmula que a fase DA
+  // fechou (célula começando com `=` é programa para o Excel).
+  // ==========================================================================
+  const exportacaoGeral = pathname.match(/^\/api\/reports\/(financeiro|estoque)\/export$/);
+  if (exportacaoGeral && req.method === 'GET') {
+    try {
+      const qual = exportacaoGeral[1];
+      const base = await baseDosRelatoriosGerais(req, url.searchParams);
+      if (base.erro) return sendJson(res, { error: base.erro }, base.status);
 
-    const granularity = url.searchParams.get('granularity') || 'month';
-    // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
-    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-    // Em sequencia, a rota pagava 3x essa latencia por nada.
-    await Promise.all([
-      syncCadastroData(data),
-      syncSalesData(data),
-      syncFinanceData(data)
-    ]);
-    const products = await db.getProducts();
+      let conteudo;
+      if (qual === 'financeiro') {
+        conteudo = relatoriosCsv.financeiro(base.serieFinanceiro);
+      } else {
+        // A LISTA INTEIRA, e não os 15 da tela. A tela responde "o que mais
+        // prende dinheiro?", e quinze linhas bastam para isso; ninguém abre uma
+        // planilha para reler o que já estava na tela. Ordenada pelo mesmo
+        // critério, para o começo do arquivo ser reconhecível.
+        //
+        // `valor > 0` fica FORA daqui de propósito: produto sem custo informado
+        // tem valor zero e é justamente o que alguém procura numa planilha de
+        // estoque — na tela ele seria ruído no topo dos "maiores".
+        conteudo = relatoriosCsv.estoque(
+          base.produtosComSaldo.slice().sort((a, b) => b.valor - a.valor)
+        );
+      }
+
+      const hoje = new Date().toISOString().slice(0, 10);
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="relatorio-de-${qual}-${hoje}.csv"`
+      });
+      return res.end(conteudo);
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao exportar', 400);
+    }
+  }
+
+  if (pathname === '/api/reports/overview' && req.method === 'GET') {
+    // A base vem de `baseDosRelatoriosGerais`, definida perto do fim deste
+    // arquivo junto das rotas de exportação que a compartilham.
+    const base = await baseDosRelatoriosGerais(req, url.searchParams);
+    if (base.erro) return sendJson(res, { error: base.erro }, base.status);
+    const { user, data, granularity, produtosComSaldo: comSaldo, serieFinanceiro } = base;
 
     // Mesmo recorte do Painel Vendedor, e pelo mesmo motivo: o bloco
     // "vendedores" deste relatório mostra o total de cada pessoa da equipe.
@@ -7934,20 +8026,6 @@ async function tratarRequisicao(req, res) {
     const escopoVendas = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
     const vendas = buildSalesDashboardSummary(data, escopoVendas);
     const financeiro = buildFinanceDashboardSummary(data, url.searchParams);
-    const lancamentos = (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry));
-
-    const comSaldo = products.map((produto) => {
-      const quantidade = Number(produto.stockQuantity || 0);
-      const custo = Number(produto.costPrice || 0);
-      return {
-        id: produto.id,
-        name: produto.name,
-        sku: produto.sku || '',
-        quantidade,
-        custo,
-        valor: Math.round(quantidade * custo * 100) / 100
-      };
-    });
 
     return sendJson(res, {
       granularity,
@@ -7958,7 +8036,7 @@ async function tratarRequisicao(req, res) {
         sellerId, sellerName, totalPedidos, valorTotal, ticketMedio
       })),
       serieVendas: buildSalesChartSeries(data, granularity),
-      serieFinanceiro: buildFinanceChartSeries(lancamentos, granularity),
+      serieFinanceiro,
       financeiro: {
         contasAPagar: financeiro.contasAPagar,
         contasAReceber: financeiro.contasAReceber

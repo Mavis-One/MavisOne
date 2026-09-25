@@ -233,22 +233,42 @@ function relBarraDeFiltros(ctx, rel) {
         </label>
       </div>
 
-      <div class="rel-filtros-acoes">
-        <div>
-          <button type="button" id="relAplicar">Aplicar filtros</button>
-          <button type="button" class="secondary" id="relLimpar">Limpar</button>
-          <button type="button" class="secondary" id="relAtualizar">Atualizar</button>
-        </div>
-        <div>
-          <!-- A exportação NÃO monta arquivo com o que está na tela: ela chama o
-               servidor, que refaz a permissão e o filtro. Gerar no navegador
-               significaria que os dados já teriam saído do servidor antes de
-               alguém checar se podiam sair. -->
-          <button type="button" class="secondary" id="relExportar">Excel (CSV)</button>
-          <button type="button" class="secondary" id="relImprimir">Imprimir</button>
-        </div>
-      </div>
+      ${relAcoes(`
+        <button type="button" id="relAplicar">Aplicar filtros</button>
+        <button type="button" class="secondary" id="relLimpar">Limpar</button>
+      `)}
     </section>
+  `;
+}
+
+/**
+ * A LINHA DE AÇÕES — a mesma nos quatro relatórios (fase DB).
+ *
+ * Estava dentro da barra de filtros do relatório de VENDAS, e é por isso que
+ * Financeiro e Estoque nunca tiveram exportação: quem quisesse dar o botão a
+ * eles teria de chamar a barra inteira, com os filtros de vendedor, cliente e
+ * produto que não existem naqueles dois.
+ *
+ * `antes` é o que cada tela tem de próprio à esquerda (Vendas tem "Aplicar" e
+ * "Limpar"; os outros dois não têm filtro para aplicar). Atualizar, exportar e
+ * imprimir são de todos.
+ */
+function relAcoes(antes) {
+  return `
+    <div class="rel-filtros-acoes">
+      <div>
+        ${antes || ''}
+        <button type="button" class="secondary" id="relAtualizar">Atualizar</button>
+      </div>
+      <div>
+        <!-- A exportação NÃO monta arquivo com o que está na tela: ela chama o
+             servidor, que refaz a permissão e o filtro. Gerar no navegador
+             significaria que os dados já teriam saído do servidor antes de
+             alguém checar se podiam sair. -->
+        <button type="button" class="secondary" id="relExportar">Excel (CSV)</button>
+        <button type="button" class="secondary" id="relImprimir">Imprimir</button>
+      </div>
+    </div>
   `;
 }
 
@@ -311,12 +331,28 @@ function relLigarFiltros(ctx) {
   });
   content.querySelector('#relImprimir')?.addEventListener('click', () => window.print());
 
+  relLigarExportacao(ctx, `/api/reports/vendas/export?${relQueryDeFiltros(f)}`, 'vendas',
+    'Exportação gerada com os mesmos filtros da tela.');
+}
+
+/**
+ * O DOWNLOAD — um só, para os quatro relatórios (fase DB).
+ *
+ * fetch + blob, e não `<a href>`: a sessão vive no cabeçalho `x-auth-token`, e
+ * um link comum chegaria ao servidor sem sessão nenhuma — a rota responderia
+ * 401 e o navegador baixaria um arquivo com a mensagem de erro dentro.
+ *
+ * `aviso` é o que a tela diz depois de baixar, e muda por relatório: em Vendas
+ * o arquivo tem os MESMOS filtros da tela; no Estoque ele tem MAIS linhas do
+ * que a tela mostra. Dizer "gerado com os filtros da tela" nos dois faria a
+ * segunda mensagem ser falsa, e a diferença de contagem pareceria defeito.
+ */
+function relLigarExportacao(ctx, endpoint, nome, aviso) {
+  const { content, showToast } = ctx;
   content.querySelector('#relExportar')?.addEventListener('click', async () => {
-    // fetch + blob, e não <a href>: a sessão vive no cabeçalho x-auth-token, e
-    // um link comum chegaria ao servidor sem sessão nenhuma.
     let url = null;
     try {
-      const resposta = await fetch(`/api/reports/vendas/export?${relQueryDeFiltros(f)}`, {
+      const resposta = await fetch(endpoint, {
         headers: { 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' }
       });
       if (!resposta.ok) {
@@ -328,17 +364,30 @@ function relLigarFiltros(ctx) {
       url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `relatorio-de-vendas-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.download = `relatorio-de-${nome}-${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(link);
       link.click();
       link.remove();
-      showToast('Exportação gerada com os mesmos filtros da tela.', 'success');
+      showToast(aviso, 'success', 6000);
     } catch (erro) {
       showToast(erro.message || 'Não consegui exportar.', 'error');
     } finally {
       if (url) setTimeout(() => URL.revokeObjectURL(url), 10000);
     }
   });
+}
+
+/**
+ * Atualizar + imprimir + exportar, para as telas que não têm barra de filtros.
+ *
+ * `relLigarFiltros` faz isso para Vendas junto de uma dúzia de outros eventos;
+ * chamá-la aqui ligaria eventos a campos que não existem nestas telas.
+ */
+function relLigarAcoes(ctx, endpoint, nome, aviso) {
+  const { content, loadModule } = ctx;
+  content.querySelector('#relAtualizar')?.addEventListener('click', () => loadModule('reports'));
+  content.querySelector('#relImprimir')?.addEventListener('click', () => window.print());
+  relLigarExportacao(ctx, endpoint, nome, aviso);
 }
 
 // ===========================================================================
@@ -751,6 +800,7 @@ window.MavisSubscreenRegistry.reports.financeiro = async function relFinanceiro(
   const { content, dados, escapeHtml } = ctx;
   const pagar = dados.financeiro?.contasAPagar || {};
   const receber = dados.financeiro?.contasAReceber || {};
+  const serie = dados.serieFinanceiro || [];
   content.innerHTML = `
     <div class="workspace">
       ${relCabecalho(ctx, 'Relatório Financeiro', 'Receitas, despesas e o que está em aberto.', true)}
@@ -768,12 +818,46 @@ window.MavisSubscreenRegistry.reports.financeiro = async function relFinanceiro(
           <span><i class="finance-legend-line"></i> Saldo</span>
         </div>
         <div class="finance-chart-wrap">
-          ${financeBuildChartSvg(dados.serieFinanceiro || [], escapeHtml)}
+          ${financeBuildChartSvg(serie, escapeHtml)}
         </div>
       </section>
+
+      <!-- A TABELA DO FLUXO (fase DB). Até aqui estes números existiam SÓ como
+           desenho: quem precisava do valor de um mês media a altura da linha
+           com o olho. É também o que a exportação leva, e é bom que a tela
+           mostre o mesmo que o arquivo. -->
+      <section class="panel">
+        <div class="rel-tabela-topo">
+          <h3>Fluxo período a período</h3>
+          <span class="muted">Saldo é receitas menos despesas, no recorte escolhido acima.</span>
+        </div>
+        <div class="table-scroll">
+          <table class="table rel-tabela">
+            <thead><tr><th>Período</th><th class="rel-num">Receitas</th><th class="rel-num">Despesas</th><th class="rel-num">Saldo</th></tr></thead>
+            <tbody>
+              ${serie.length ? serie.map((ponto) => {
+    const saldo = Number(ponto.receitas || 0) - Number(ponto.despesas || 0);
+    return `
+                <tr>
+                  <td>${escapeHtml(ponto.label || '')}<br /><span class="muted">${relData(ponto.from)} a ${relData(ponto.to)}</span></td>
+                  <td class="rel-num">${relBRL(ponto.receitas)}</td>
+                  <td class="rel-num">${relBRL(ponto.despesas)}</td>
+                  <!-- Saldo negativo em vermelho: é a linha que alguém precisa
+                       achar rolando a tabela, e não somando de cabeça. -->
+                  <td class="rel-num"><strong${saldo < 0 ? ' style="color:var(--danger-text);"' : ''}>${relBRL(saldo)}</strong></td>
+                </tr>`;
+  }).join('') : relTabelaVazia('Nenhum lançamento realizado no período.', 4)}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      ${relAcoes('')}
     </div>
   `;
   relLigarPeriodo(ctx);
+  relLigarAcoes(ctx, `/api/reports/financeiro/export?granularity=${encodeURIComponent(ctx.granularidade || 'month')}`,
+    'financeiro', 'Exportação gerada com o mesmo recorte de período da tela.');
 };
 
 // --- Relatório de Estoque --------------------------------------------------
@@ -792,7 +876,15 @@ window.MavisSubscreenRegistry.reports.estoque = async function relEstoque(ctx) {
       <section class="panel">
         <div class="rel-tabela-topo">
           <h3>Maiores valores parados</h3>
-          <span class="muted">Custo × quantidade, do maior para o menor.</span>
+          <!-- O ARQUIVO TEM MAIS LINHAS QUE A TELA, e a tela precisa dizer isso
+               (fase DB). A pergunta desta tela é "o que mais prende dinheiro?",
+               e quinze linhas a respondem; a planilha existe para a outra
+               pergunta, a que percorre o estoque todo. Sem o aviso, quem
+               exportasse contaria 5.475 linhas onde viu 15 e acharia defeito. -->
+          <span class="muted">
+            Custo × quantidade, do maior para o menor. Os ${maiores.length} primeiros —
+            <strong>a exportação leva os ${Number(e.totalProdutos || 0).toLocaleString('pt-BR')} produtos</strong>.
+          </span>
         </div>
         <div class="table-scroll">
           <table class="table rel-tabela">
@@ -811,6 +903,10 @@ window.MavisSubscreenRegistry.reports.estoque = async function relEstoque(ctx) {
           </table>
         </div>
       </section>
+
+      ${relAcoes('')}
     </div>
   `;
+  relLigarAcoes(ctx, '/api/reports/estoque/export', 'estoque',
+    'Exportação gerada com a lista COMPLETA de produtos — a tela mostra só os maiores.');
 };
