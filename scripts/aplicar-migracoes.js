@@ -52,6 +52,23 @@
  * foram, uma por uma, para a decisão não ficar escondida.
  */
 require('dotenv').config();
+
+// MIGRAÇÃO NÃO TEM TETO DE TEMPO — a metade do driver (fase DF).
+//
+// São dois tetos, e a isenção precisa dos dois. O do BANCO sai com
+// `set local statement_timeout = 0` dentro da transação de cada migração (ver
+// mais abaixo). O do DRIVER é `query_timeout`, configurado no pool, e não há
+// comando SQL que o desligue: quem desiste é o Node, não o Postgres.
+//
+// Sem esta linha, um `create index` de dois minutos em tabela grande morreria
+// aos 35s por decisão do driver — e migração interrompida no meio é
+// precisamente o que este script existe para evitar.
+//
+// Funciona por variável de ambiente porque o pool é PREGUIÇOSO: ele nasce na
+// primeira consulta e lê `process.env` naquele momento. Vale só para este
+// processo, que termina quando as migrações terminam.
+process.env.DATABASE_QUERY_TIMEOUT_MS = '0';
+
 const { consultar, emTransacao } = require('../lib/db/conexao');
 const { banco } = require('../lib/db/client');
 const { lerMigracoes, conferir } = require('../lib/migracoes');

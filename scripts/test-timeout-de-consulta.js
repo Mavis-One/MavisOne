@@ -18,12 +18,27 @@
 // As 12 importam mais que o cancelamento: são mais que as 10 conexões do pool.
 // Se a consulta cancelada tivesse ficado presa, travariam.
 //
-// A ISENÇÃO DA MIGRAÇÃO é a parte que merece guarda própria. `create index`
-// sobre tabela grande passa de 30s sem nada estar errado, e ser cancelado no
-// meio é exatamente o que scripts/aplicar-migracoes.js existe para evitar. A
-// isenção é `set local` (morre com a transação) e não `set` — provado que o
-// teto volta: depois da transação, 12 de 12 consultas longas foram canceladas,
-// ou seja, nenhuma conexão voltou ao pool sem limite.
+// SÃO DOIS TETOS, E O PRIMEIRO NÃO BASTA. `statement_timeout` é imposto pelo
+// POSTGRES — com o container pausado não há quem aborte, e a consulta fica
+// pendurada com o teto configurado e tudo. Medido em 28/09/2026 com
+// `docker pause`: teto do banco em 2s, e a consulta passou de 15s sem resposta.
+// Foi o que me escapou na primeira versão desta correção. `query_timeout` é o
+// Node desistindo, e fecha esse caso: "Query read timeout" em 3.001 ms.
+//
+// A ORDEM É DELIBERADA: o do driver (35s) fica ACIMA do do banco (30s). Com o
+// banco vivo, quem cancela deve ser o Postgres, porque o erro dele nomeia o
+// comando e traz o código 57014; o do driver é genérico. Medido com 1s/5s: o
+// erro veio do banco, em 1.035 ms.
+//
+// A ISENÇÃO DA MIGRAÇÃO precisa dos DOIS, e é a parte que merece guarda própria.
+// `create index` sobre tabela grande passa de 30s sem nada estar errado, e ser
+// cancelado no meio é exatamente o que scripts/aplicar-migracoes.js existe para
+// evitar. No banco a isenção é `set local` (morre com a transação) e não `set` —
+// provado que o teto volta: depois da transação, 12 de 12 consultas longas foram
+// canceladas, ou seja, nenhuma conexão voltou ao pool sem limite. No driver não
+// existe comando SQL que desligue, então é variável de ambiente, e o pool a lê
+// porque nasce preguiçoso. Provado: com os dois desligados uma transação de 8s
+// passa; com só o do banco desligado, o driver corta.
 //
 // SEM BANCO: este teste lê fonte. O efeito foi medido à parte, contra o
 // Postgres local, e os números estão acima.
@@ -54,6 +69,32 @@ check('  com padrão diferente de zero', !/DATABASE_STATEMENT_TIMEOUT_MS \|\| 0\
 const setsSoltos = (conexao.match(/set statement_timeout/g) || []).length;
 check('  e não há set solto em lib/db/conexao.js', setsSoltos === 0, `${setsSoltos} encontrado(s)`);
 
+console.log('\n--- e o teto do DRIVER, porque o do banco nao cobre banco congelado ---');
+// `statement_timeout` e imposto pelo POSTGRES. Container pausado, maquina
+// travada ou rede que engole pacote sem fechar o socket: nao ha quem aborte, e
+// a consulta fica pendurada com o teto configurado e tudo.
+//
+// Medido em 28/09/2026 com `docker pause` e uma conexao JA OCIOSA no pool --
+// o caso ruim, porque numa conexao nova o connectionTimeoutMillis pegaria:
+//
+//   so com statement_timeout (2s) ..... passou de 15s sem resposta
+//   com query_timeout (3s) ............ "Query read timeout" em 3.001 ms
+//
+// E o banco voltou a responder normalmente depois do `unpause` nos dois casos.
+check('query_timeout esta na configuracao do pool',
+  /query_timeout: Number\(process\.env\.DATABASE_QUERY_TIMEOUT_MS \|\| 35000\)/.test(conexao));
+// ACIMA do teto do banco, de proposito. Com o banco vivo, quem cancela tem de
+// ser o Postgres: o erro dele nomeia o comando e traz o codigo 57014, e o do
+// driver e generico ("Query read timeout") porque ele nao sabe o que houve.
+// Invertida, a ordem trocaria todo erro bom por um erro generico.
+const tetoBanco = Number((conexao.match(/DATABASE_STATEMENT_TIMEOUT_MS \|\| (\d+)/) || [])[1]);
+const tetoDriver = Number((conexao.match(/DATABASE_QUERY_TIMEOUT_MS \|\| (\d+)/) || [])[1]);
+check('  e o do driver e MAIOR que o do banco', tetoDriver > tetoBanco,
+  `banco ${tetoBanco} ms, driver ${tetoDriver} ms`);
+// Provado: com banco vivo e teto de 1s/5s, o erro veio do banco (57014) em
+// 1.035 ms -- nao do driver.
+check('  com padrao diferente de zero', !/DATABASE_QUERY_TIMEOUT_MS \|\| 0\b/.test(conexao));
+
 console.log('\n--- e o de pegar conexão continua lá: são coisas diferentes ---');
 check('connectionTimeoutMillis não foi substituído',
   /connectionTimeoutMillis: Number\(process\.env\.DATABASE_TIMEOUT_MS \|\| 10000\)/.test(conexao),
@@ -75,6 +116,20 @@ const posTransacao = migrar.indexOf('await emTransacao(');
 check('  dentro da transação da migração', posTransacao > -1 && posSet > posTransacao,
   `transação ${posTransacao}, set ${posSet}`);
 check('  e ANTES do SQL da migração', posSet > -1 && posSql > posSet, `sql ${posSql}`);
+// A ISENCAO PRECISA DOS DOIS TETOS, e este e o que me escapou na primeira
+// versao: `set local` fala com o Postgres e nao alcanca o driver. Com o driver
+// em 35s, um `create index` de dois minutos morreria aos 35s por decisao do
+// Node -- e nao existe comando SQL que o desligue.
+check('a migração também desliga o teto do driver',
+  /process\.env\.DATABASE_QUERY_TIMEOUT_MS = '0';/.test(migrar));
+// Antes do require do pool, porque o pool nasce PREGUICOSO e le process.env na
+// primeira consulta. Depois do require ainda funcionaria; antes deixa claro.
+const posEnv = migrar.indexOf("DATABASE_QUERY_TIMEOUT_MS = '0'");
+const posRequire = migrar.indexOf("require('../lib/db/conexao')");
+check('  antes de exigir o pool', posEnv > -1 && posRequire > posEnv,
+  `env ${posEnv}, require ${posRequire}`);
+// Provado: com os dois desligados, uma transacao de 8s passa; com so o do banco
+// desligado, o driver corta e devolve "Query read timeout".
 
 console.log('\n--- e ninguém mais se isenta ---');
 // A isenção é da migração, e de mais ninguém. Um `statement_timeout = 0` em
@@ -91,6 +146,8 @@ console.log('\n--- a variável está documentada ---');
 const exemplo = ler('.env.example');
 check('DATABASE_STATEMENT_TIMEOUT_MS aparece no .env.example',
   /DATABASE_STATEMENT_TIMEOUT_MS=30000/.test(exemplo));
+check('DATABASE_QUERY_TIMEOUT_MS também',
+  /DATABASE_QUERY_TIMEOUT_MS=35000/.test(exemplo));
 check('  explicando a diferença do outro timeout',
   /limita PEGAR a conex/.test(exemplo) && /esgotam o/.test(exemplo));
 
