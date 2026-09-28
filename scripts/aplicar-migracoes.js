@@ -102,6 +102,18 @@ async function jaRegistradas() {
 
 async function aplicar(migracao) {
   await emTransacao(async (cliente) => {
+    // MIGRAÇÃO NÃO TEM TETO DE TEMPO (fase DF).
+    //
+    // O pool põe `statement_timeout` de 30s em toda consulta, para uma consulta
+    // travada não esgotar as conexões e parar o sistema (ver lib/db/conexao.js).
+    // Migração é a exceção legítima: um `create index` sobre tabela grande, ou um
+    // `alter table` que reescreve linhas, passa de 30s sem nada estar errado — e
+    // ser cancelado no meio é precisamente o que este script existe para evitar.
+    //
+    // `set local`, e não `set`: vale só até o fim DESTA transação. A conexão
+    // volta ao pool com o teto de novo em pé, sem deixar uma conexão sem limite
+    // circulando para a próxima rota que a pegar.
+    await cliente.query('set local statement_timeout = 0');
     await cliente.query(migracao.sql);
     // No MESMO commit do SQL: migração que falha no meio não deixa registro, e
     // a próxima rodada a encontra pendente de novo em vez de pulá-la.
