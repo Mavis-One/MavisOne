@@ -28,8 +28,19 @@ module.exports = {
       // POR INSTÂNCIA — a proteção contra força bruta afrouxaria na exata
       // proporção do número de processos, sem nada avisando.
       //
+      // E DESDE A FASE DI HÁ UM SEGUNDO ITEM NESSA LISTA: o cache do cadastro
+      // (lib/db/cadastros.js). As 6.492 pessoas, com 5,6 MB de jsonb, eram
+      // relidas a cada requisição — 93,7 ms — e agora ficam em memória,
+      // invalidadas por toda escrita deste processo. Em cluster, a escrita de um
+      // trabalhador não avisaria os outros, e um cliente cadastrado sumiria da
+      // lista de quem caiu noutra instância até o TTL de 30s expirar.
+      //
+      // É menos grave que o contador de tentativas — degrada em atraso, não em
+      // proteção afrouxada — e tem TTL como rede. Mas está anotado aqui, junto,
+      // para a conta de "o que sair da memória antes do cluster" ficar completa.
+      //
       // Ou seja: para escalar em cluster um dia, o contador é o próximo a sair
-      // da memória. Até então, 1 instância.
+      // da memória, e o cache do cadastro vem logo atrás. Até então, 1 instância.
       exec_mode: 'fork',
       autorestart: true,
       max_restarts: 10,
