@@ -7342,29 +7342,27 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname === '/api/dashboard') {
-    const data = loadData();
-    // sincronizarRazao entra na mesma onda: o painel mostra saldo por
-    // depósito, e sem o razão em memória todo depósito aparecia zerado.
+    // O USUÁRIO VEM PRIMEIRO, E UMA ONDA SÓ DEPOIS (fase DH).
     //
-    // O CADASTRO CONTINUA INTEIRO AQUI, e a tentativa de enxugar foi desfeita
-    // de propósito (fase CM).
+    // Eram DUAS ondas em fila com `getCurrentUser` no meio, e a segunda só
+    // podia começar depois de saber as permissões. Medido neste banco:
     //
-    // Trocar por um sync só de depósitos economizava 112 ms das 6.492 pessoas,
-    // e nenhuma linha da resposta depende delas — o `acharNoCadastro` que as
-    // leria só roda quando o pedido tem `clientSupplierId`, e a carga enxuta não
-    // traz essa coluna. Ou seja: funcionava.
+    //     onda 1 (getPeople, 6.492 pessoas) ......... 133 ms
+    //     getCurrentUser ............................   1 ms
+    //     onda 2 (getOrdersParaAgregado, 14.864) .... 117 ms
+    //     ------------------------------------------------
+    //     em fila ................................... 250 ms
+    //     numa onda ................................. 133 ms
     //
-    // Funcionava POR ACIDENTE, e o guarda de scripts/test-sync-obrigatorio.js
-    // apontou isso na hora: a rota passaria a LER `people` (via
-    // serializeSalesRecord -> indiceDoCadastro) sem sincronizar. Coleção do
-    // banco lida sem sync devolve vazio em silêncio, e é o defeito que aquele
-    // teste existe para pegar — o mesmo que já custou meses aqui. A economia
-    // dependia de uma coluna continuar ausente do recorte; no dia em que
-    // alguém a acrescentasse, o nome do cliente sairia errado sem nada avisar.
+    // A sessão custa UM milissegundo. Perguntada primeiro, as permissões já
+    // estão na mão e tudo cabe numa onda — que é o que esta rota já queria, e o
+    // `if` de permissão no meio impedia.
     //
-    // 112 ms não pagam essa fragilidade. O ganho grande desta fase está nos
-    // pedidos, logo abaixo.
-    await Promise.all([syncNfeData(data), syncCadastroData(data), sincronizarRazao(data)]);
+    // E CONSERTA UMA COISA PIOR QUE LENTIDÃO: requisição sem sessão válida
+    // pagava a onda 1 inteira — 133 ms de banco — e SÓ ENTÃO recebia 401.
+    // Qualquer um sem token podia gastar o banco do sistema. É a mesma correção
+    // que `baseDosRelatoriosGerais` já tinha (permissão antes dos syncs), e que
+    // scripts/test-exportar-relatorios.js cobra lá.
     const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
@@ -7375,18 +7373,40 @@ async function tratarRequisicao(req, res) {
     const canStock = user.allowedModules.includes('stock');
     const canFinance = user.allowedModules.includes('finance');
 
-    // As coleções legadas data.sales/data.purchases do db.json não recebem mais
-    // escrita: vendas viraram orders/quotes e compras viraram purchases, ambas no
-    // Supabase. Sem estes syncs o painel somava arrays sempre vazios e exibia R$ 0.
-    // Uma ida so' ao banco. Eram tres syncs em fila mais a consulta de
-    // produtos -- quatro viagens de ~260ms cada (medido) para buscar colecoes
-    // que nao dependem umas das outras. O `if` na frente escondia o custo.
+    const data = loadData();
+    // TUDO NUMA ONDA. Cada carga escreve em chaves distintas de `data` (ou nem
+    // toca em `data`) e nenhuma lê o resultado da outra.
+    //
+    // sincronizarRazao está aqui porque o painel mostra saldo por depósito, e
+    // sem o razão em memória todo depósito aparecia zerado.
+    //
+    // O CADASTRO CONTINUA INTEIRO, e a tentativa de enxugá-lo foi desfeita de
+    // propósito (fase CM). Trocar por um sync só de depósitos economizava 112 ms
+    // das 6.492 pessoas, e nenhuma linha da resposta depende delas — o
+    // `acharNoCadastro` que as leria só roda quando o pedido tem
+    // `clientSupplierId`, e a carga enxuta não traz essa coluna. Ou seja:
+    // funcionava.
+    //
+    // Funcionava POR ACIDENTE, e o guarda de scripts/test-sync-obrigatorio.js
+    // apontou na hora: a rota passaria a LER `people` (via
+    // serializeSalesRecord -> indiceDoCadastro) sem sincronizar. Coleção do
+    // banco lida sem sync devolve vazio em silêncio, e é o defeito que aquele
+    // teste existe para pegar. A economia dependia de uma coluna continuar
+    // ausente do recorte; no dia em que alguém a acrescentasse, o nome do
+    // cliente sairia errado sem nada avisar. 112 ms não pagam essa fragilidade.
+    //
     // `syncSalesDataParaAgregado` no lugar de `syncSalesData` (fase CM): esta
     // rota soma e conta, e não devolve pedido nenhum. Eram 519 dos 596 ms da
     // rota em `getOrders()` trazendo ~15 MB de 60 colunas para escrever meia
     // dúzia de números.
+    //
+    // As cargas condicionadas por permissão continuam condicionadas: quem não
+    // vê Estoque não paga os 5.475 produtos.
     const [products] = await Promise.all([
       canStock ? db.getProducts() : Promise.resolve([]),
+      syncNfeData(data),
+      syncCadastroData(data),
+      sincronizarRazao(data),
       canSales ? syncSalesDataParaAgregado(data) : null,
       canPurchases ? syncPurchasesData(data) : null,
       syncFinanceData(data)

@@ -1,6 +1,6 @@
 // O QUE FAZ AS TELAS ABRIREM — e o que voltaria a fazê-las demorar.
 //
-// Cinco consertos medidos, cada um com uma armadilha própria:
+// Seis consertos medidos, cada um com uma armadilha própria:
 //
 //   1. OS ESTÁTICOS. `public/index.html` carrega 142 `<script>` mais o CSS e o
 //      logo. Servidos com `Cache-Control: no-cache`, eram 144 requisições a
@@ -32,6 +32,13 @@
 //      página. Foi ali que apareceu um comparador indiferente: dois valores
 //      vazios devolviam 0 antes do desempate, e a ordem passava a depender da
 //      ordem de entrada da lista.
+//
+//   6. O PAINEL TRABALHAVA ANTES DE SABER QUEM PERGUNTA. Duas ondas de banco em
+//      fila com `getCurrentUser` no meio, porque a segunda dependia das
+//      permissões — e a sessão custa UM milissegundo. Perguntada primeiro, tudo
+//      cabe numa onda (250 ms -> 202 ms de banco). E requisição SEM sessão
+//      pagava a primeira onda inteira antes de levar 401: 202 ms de banco que
+//      qualquer um sem token podia gastar. Agora o 401 custa 15 ms.
 //
 // SEM BANCO E SEM SERVIDOR: este teste lê fonte e exercita as funções puras.
 // O comportamento HTTP foi provado à parte, contra a base real.
@@ -307,6 +314,52 @@ check('os totais dos cartoes vem do servidor',
   && /const totais = \{\s*\n\s*produtos: list\.length,/.test(servidor));
 check('  e a tela nao os soma da pagina',
   !/products\.reduce\(\(sum, p\) => sum \+ Number\(p\.stockQuantity/.test(telaProdutos));
+
+console.log('\n--- 6. o Painel pergunta QUEM antes de trabalhar (fase DH) ---');
+// Eram DUAS ondas de banco em fila, com getCurrentUser no meio -- e a segunda
+// so podia comecar depois de saber as permissoes. Medido:
+//
+//     onda 1 (getPeople, 6.492 pessoas) ......... 133 ms
+//     getCurrentUser ............................   1 ms
+//     onda 2 (getOrdersParaAgregado, 14.864) .... 117 ms
+//
+// A sessao custa UM milissegundo. Perguntada primeiro, as permissoes ja estao
+// na mao e tudo cabe numa onda.
+//
+// E CONSERTA UMA COISA PIOR QUE LENTIDAO: requisicao sem sessao valida pagava a
+// onda 1 inteira e SO ENTAO recebia 401. Qualquer um sem token podia gastar o
+// banco do sistema. Medido depois: 401 em 15 ms.
+const rotaPainel = servidor.slice(
+  servidor.indexOf("if (pathname === '/api/dashboard') {"),
+  // O FIM DA ROTA E' o `if` seguinte, e nao o de /charts: entre os dois mora
+  // /api/dashboard/atencao, que tem onda propria. Recortando ate /charts, o
+  // check de "uma onda so" contava a onda do sino e acusava duas.
+  servidor.indexOf("if (pathname === '/api/dashboard/atencao'")
+);
+check('a rota do Painel foi encontrada', rotaPainel.length > 800, `${rotaPainel.length} caracteres`);
+const posUser = rotaPainel.indexOf('await getCurrentUser(req)');
+const posOnda = rotaPainel.indexOf('await Promise.all([');
+const posLoad = rotaPainel.indexOf('loadData()');
+check('pergunta o usuario ANTES de qualquer ida ao banco',
+  posUser > -1 && posOnda > posUser, `usuario ${posUser}, onda ${posOnda}`);
+check('  e antes de ler o db.json', posLoad > posUser, `loadData ${posLoad}`);
+check('  e recusa antes de sincronizar',
+  rotaPainel.indexOf("error: 'Não autenticado'") < posOnda,
+  'sem token nao gasta banco');
+// UMA onda, e nao duas: em fila, a rota paga a soma.
+const ondas = (rotaPainel.match(/await Promise\.all\(\[/g) || []).length;
+check('e as cargas saem numa onda so', ondas === 1, `${ondas} onda(s)`);
+// As condicionadas por permissao CONTINUAM condicionadas: quem nao ve Estoque
+// nao deve pagar os 5.475 produtos so porque a onda foi unificada.
+check('  sem perder as condicoes de permissao',
+  /canStock \? db\.getProducts\(\) : Promise\.resolve\(\[\]\)/.test(rotaPainel)
+  && /canSales \? syncSalesDataParaAgregado\(data\) : null/.test(rotaPainel)
+  && /canPurchases \? syncPurchasesData\(data\) : null/.test(rotaPainel));
+// O cadastro INTEIRO fica, e isso e' decisao registrada da fase CM: enxuga-lo
+// funcionava por acidente, e o guarda de sync apontou na hora.
+check('  e o cadastro continua inteiro (decisao da fase CM)',
+  /syncCadastroData\(data\)/.test(rotaPainel),
+  'trocar por um sync de depositos fazia a rota LER people sem sincronizar');
 
 console.log('\n--- e o que sobrou de select * está lá porque precisa ---');
 // Não é para zerar: a Busca Avançada filtra por campos de TODOS os registros, e
