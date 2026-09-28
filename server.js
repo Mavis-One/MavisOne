@@ -10,6 +10,7 @@ const crypto = require('crypto');
 // teste nao precisar de servidor nem de esperar o relogio.
 const limiteTentativas = require('./lib/limite-tentativas');
 const versaoEstatica = require('./lib/versao-dos-estaticos');
+const ordemDeProdutos = require('./public/modules/shared/ordem_de_produtos');
 const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
@@ -12916,10 +12917,56 @@ async function tratarRequisicao(req, res) {
       pendencias.qualquer = list.filter((p) => stockCore.temPendenciaDeCadastro(p, 'qualquer')).length;
 
       if (pendencia) list = list.filter((p) => stockCore.temPendenciaDeCadastro(p, pendencia));
-      list.sort((a, b) => a.name.localeCompare(b.name));
-      // `total` vem junto porque quem só quer CONTAR (o cartão "produtos sem
-      // grupo") não deveria ter de somar a lista inteira no navegador.
-      return sendJson(res, { products: list, total: list.length, pendencias });
+
+      // OS TOTAIS SÃO DA SELEÇÃO, E NÃO DA PÁGINA (fase DG).
+      //
+      // Os quatro cartões do topo da tela somam a lista FILTRADA inteira — é a
+      // mesma razão do cartão de pendências da fase CT. Com a página vindo daqui,
+      // o navegador já não tem a lista inteira para somar, então a soma vem
+      // pronta. Contada ANTES de fatiar, por isso.
+      const totais = {
+        produtos: list.length,
+        unidades: list.reduce((soma, p) => soma + Number(p.stockQuantity || 0), 0),
+        custo: Math.round(list.reduce((soma, p) => soma + Number(p.stockQuantity || 0) * Number(p.costPrice || 0), 0) * 100) / 100,
+        alertas: list.filter((p) => p.situation === 'abaixo-minimo' || p.situation === 'zerado').length
+      };
+
+      // A ORDEM SAI DO MÓDULO COMPARTILHADO, que é o mesmo que a tela usa.
+      //
+      // Era `a.name.localeCompare(b.name)` aqui, e a tela reordenava tudo por
+      // cima no navegador — então esta ordem nunca era a que se via. Agora ela é,
+      // e por isso tem de ser A MESMA: as quatro decisões que a tela tomou (vazio
+      // no fim nos dois sentidos, urgência da Situação, colação pt-BR, desempate
+      // por nome e id) vivem em public/modules/shared/ordem_de_produtos.js.
+      const ordenada = ordemDeProdutos.ordenar(
+        list,
+        url.searchParams.get('sort') || 'name',
+        url.searchParams.get('dir') === 'desc' ? 'desc' : 'asc'
+      );
+
+      // A PÁGINA SÓ SAI QUANDO PEDIDA, e isso é deliberado.
+      //
+      // Esta rota tem outros dois clientes: a tela de Grupos Tributários pede
+      // `?grupoTributario=sem` e `?search=...` esperando a lista INTEIRA para
+      // classificar em lote. Paginar por padrão os quebraria em silêncio — eles
+      // classificariam os 100 primeiros e diriam que acabou.
+      //
+      // Quem quer página manda `page`. Quem não manda recebe tudo, como antes.
+      const querPagina = url.searchParams.has('page') || url.searchParams.has('limit');
+      if (!querPagina) {
+        return sendJson(res, { products: ordenada, total: ordenada.length, totais, pendencias });
+      }
+      const { page, limit } = parsePageParams(url.searchParams, 100, 500);
+      const inicio = (page - 1) * limit;
+      return sendJson(res, {
+        products: ordenada.slice(inicio, inicio + limit),
+        // `total` é da seleção: é ele que diz quantas páginas existem.
+        total: ordenada.length,
+        page,
+        limit,
+        totais,
+        pendencias
+      });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar produtos', 500);
     }

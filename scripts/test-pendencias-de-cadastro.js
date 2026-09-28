@@ -123,7 +123,17 @@ check('Gestor de Preços lê o parâmetro', /searchParams\.get\('pendencia'\)/.t
 check('Gestor de Preços filtra por ele', /temPendenciaDeCadastro\(p, pendencia\)/.test(trechoGestor));
 
 console.log('\n--- 5. a contagem sai do servidor, não do navegador ---');
-check('a rota devolve `pendencias`', /pendencias\b/.test(trechoProdutos) && /total: list\.length, pendencias/.test(trechoProdutos));
+// A GRAFIA `total: list.length, pendencias` PRENDIA A ORDEM DOS CAMPOS, e a
+// fase DG a mudou: a rota passou a ordenar e paginar, entao a variavel virou
+// `ordenada` e `pendencias` deixou de ser o vizinho de `total`. Nada da
+// contagem de pendencias havia mudado -- e este e o terceiro check desta suite
+// que quebra por prender grafia em vez de comportamento.
+//
+// Agora ele pergunta o que importa: `pendencias` sai da rota, e sai nos DOIS
+// caminhos dela (com pagina e sem), porque o cartao existe nas duas.
+const saidasComPendencias = (trechoProdutos.match(/pendencias[,\s}]/g) || []).length;
+check('a rota devolve `pendencias`', saidasComPendencias >= 2,
+  saidasComPendencias + ' saida(s) da rota levam pendencias');
 check('e conta varrendo PENDENCIAS_DE_CADASTRO',
   /Object\.keys\(stockCore\.PENDENCIAS_DE_CADASTRO\)/.test(trechoProdutos),
   'uma pendencia nova entra na contagem sem tocar nesta rota');

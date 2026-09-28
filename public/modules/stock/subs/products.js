@@ -28,74 +28,27 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   const ordem = { campo: 'name', direcao: 'asc' };
   // Preenchido por fetchProducts a cada carga (fase CT).
   let pendencias = {};
+  // Idem, e pela mesma razao: os quatro cartoes somam a SELECAO, e a selecao ja
+  // nao esta toda no navegador (fase DG).
+  let totais = null;
+  let total = 0;
 
-  // Cada coluna e' comparada pelo que ela E', e nao como texto solto:
-  //   texto  - comparacao pt-BR, sem diferenciar acento nem maiuscula, e com
-  //            numeric:true, que compara pedacos numericos como numero. E' por
-  //            isso que o SKU entra aqui e nao como numero puro: '100860' e
-  //            'ZM27011250' convivem no mesmo cadastro, e o collator ordena os
-  //            dois sem que eu tenha de adivinhar qual e' qual.
-  //   numero - custo, venda, margem e saldo JA chegam como numero do servidor.
-  //            Arrancar os digitos deles (o que Cadastros faz com 'codigo')
-  //            destruiria o negativo e a casa decimal: -100.0% de margem viraria
-  //            1000, e R$ 1.234,56 viraria 123456.
-  //   alerta - a Situacao ordena por urgencia, nao por alfabeto. Ver abaixo.
-  const COLUNAS_ORDENAVEIS = {
-    name: { rotulo: 'Produto', tipo: 'texto' },
-    sku: { rotulo: 'SKU', tipo: 'texto' },
-    categoryName: { rotulo: 'Categoria', tipo: 'texto' },
-    unit: { rotulo: 'Un.', tipo: 'texto' },
-    costPrice: { rotulo: 'Custo', tipo: 'numero' },
-    salePrice: { rotulo: 'Venda', tipo: 'numero' },
-    margin: { rotulo: 'Margem', tipo: 'numero' },
-    stockQuantity: { rotulo: 'Saldo', tipo: 'numero' },
-    situation: { rotulo: 'Situacao', tipo: 'alerta' },
-    status: { rotulo: 'Status', tipo: 'texto' }
-  };
+  // A ORDEM MORA NUM LUGAR SO' (fase DG).
+  //
+  // Estas definicoes -- quais colunas ordenam, de que tipo cada uma e', a
+  // urgencia da Situacao e a colacao pt-BR -- estavam aqui, e a tela ordenava
+  // os 5.475 produtos no navegador depois de baixar todos. Agora o SERVIDOR
+  // manda so a pagina, e para isso ele precisa ordenar com as mesmas regras.
+  //
+  // Escritas nos dois lados, elas concordariam ate o dia em que alguem
+  // corrigisse um lado so -- e o sintoma seria um produto aparecendo em duas
+  // paginas e outro em nenhuma. Entao vivem em
+  // public/modules/shared/ordem_de_produtos.js, e os dois as leem de la.
+  const ORDEM = window.MavisOrdemDeProdutos;
+  const COLUNAS_ORDENAVEIS = ORDEM.COLUNAS;
 
-  // A Situacao em ordem alfabetica ('abaixo-minimo', 'acima-maximo', 'normal',
-  // 'zerado') nao responde a pergunta que leva alguem a clicar nela, que e'
-  // "o que precisa de mim primeiro?". Entao ela ordena por urgencia: crescente
-  // traz o que esta faltando, decrescente traz o que esta sobrando.
-  const URGENCIA = { zerado: 0, 'abaixo-minimo': 1, 'acima-maximo': 2, normal: 3 };
-  const comparadorDePtBr = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
-
-  function ordenar(lista) {
-    const def = COLUNAS_ORDENAVEIS[ordem.campo] || COLUNAS_ORDENAVEIS.name;
-    const campo = COLUNAS_ORDENAVEIS[ordem.campo] ? ordem.campo : 'name';
-    return lista.slice().sort((a, b) => {
-      const va = a[campo];
-      const vb = b[campo];
-      const vazioA = va === null || va === undefined || String(va).trim() === '';
-      const vazioB = vb === null || vb === undefined || String(vb).trim() === '';
-      // VAZIO VAI SEMPRE PARA O FIM, nos dois sentidos. Inverter junto com a
-      // direcao encheria o topo de tracos ao pedir "maior primeiro" — e quem
-      // ordena por Categoria quer ver as categorias, nao quem nao tem.
-      //
-      // Aqui isso pesa: a importacao do Viper entrou sem categoria nenhuma, e
-      // sem esta regra um clique em Categoria mostraria 100 linhas de "-".
-      if (vazioA && vazioB) return 0;
-      if (vazioA) return 1;
-      if (vazioB) return -1;
-
-      let resultado;
-      if (def.tipo === 'numero') {
-        resultado = Number(va) - Number(vb);
-      } else if (def.tipo === 'alerta') {
-        const ua = URGENCIA[va] === undefined ? 99 : URGENCIA[va];
-        const ub = URGENCIA[vb] === undefined ? 99 : URGENCIA[vb];
-        resultado = ua - ub;
-      } else {
-        resultado = comparadorDePtBr.compare(String(va), String(vb));
-      }
-      // Empate desempatado pelo nome, e depois pelo id. Sem isso, dois produtos
-      // de mesmo custo trocariam de lugar entre um render e outro e a lista
-      // pareceria se mexer sozinha.
-      if (resultado === 0) resultado = comparadorDePtBr.compare(String(a.name || ''), String(b.name || ''));
-      if (resultado === 0) resultado = String(a.id).localeCompare(String(b.id));
-      return ordem.direcao === 'asc' ? resultado : -resultado;
-    });
-  }
+  // `ordenar()` saiu daqui: quem ordena agora e o servidor, com o mesmo modulo
+  // (ver ORDEM acima). A tela so DIZ por qual coluna e em que direcao.
 
   /**
    * §20: a quebra por cor embaixo do saldo, e não numa tela de relatório à
@@ -158,27 +111,60 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   async function fetchProducts() {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    // A PAGINA E A ORDEM VAO PARA O SERVIDOR (fase DG).
+    //
+    // Antes esta tela baixava os 5.475 produtos e fatiava no navegador: 3.713 KB
+    // crus (257 KB no fio) para mostrar 100 linhas. Com a pagina vindo de la,
+    // sao 68 KB crus e 6 KB no fio.
+    //
+    // `page` e' o que faz o servidor paginar: sem ele, ele devolve a lista
+    // inteira -- e' assim que a tela de Grupos Tributarios continua recebendo
+    // tudo para classificar em lote.
+    params.set('page', String(pagina));
+    params.set('limit', String(POR_PAGINA));
+    params.set('sort', ordem.campo);
+    params.set('dir', ordem.direcao);
     try {
       const res = await api(`/api/stock/products?${params.toString()}`);
       // As contagens de pendência vêm do servidor e são guardadas aqui: o
       // cartão as mostra sem que esta tela precise saber o que "sem preço"
       // significa. A regra tem um dono só, em lib/stock-core.js.
       pendencias = res.pendencias || {};
+      // OS TOTAIS TAMBEM VEM DE LA, e pelo mesmo motivo das contagens: eles sao
+      // da SELECAO inteira, e a tela ja nao tem a selecao inteira para somar.
+      totais = res.totais || null;
+      total = Number(res.total || 0);
       return res.products || [];
     } catch (error) {
       showToast(error.message || 'Erro ao carregar produtos.', 'error');
       pendencias = {};
+      totais = null;
+      total = 0;
       return [];
     }
   }
 
-  function totalsPanel(products) {
-    const totalUnits = products.reduce((sum, p) => sum + Number(p.stockQuantity || 0), 0);
-    const totalCost = products.reduce((sum, p) => sum + Number(p.stockQuantity || 0) * Number(p.costPrice || 0), 0);
-    const alerts = products.filter((p) => p.situation === 'abaixo-minimo' || p.situation === 'zerado').length;
+  // OS QUATRO CARTOES SOMAM A SELECAO, E NAO A PAGINA (fase DG).
+  //
+  // Eles somavam `products`, que era a lista inteira filtrada -- a tela a tinha
+  // toda no navegador. Com a pagina vindo do servidor, somar `products` aqui
+  // daria o total das 100 linhas visiveis: "Unidades em estoque" mudaria ao
+  // virar a pagina, e ninguem entenderia por que.
+  //
+  // Entao a soma vem pronta de la, contada ANTES de fatiar. E' a mesma decisao
+  // do cartao de pendencias da fase CT, pelo mesmo motivo.
+  //
+  // O `|| {}` nao e' decoracao: se a rota falhar, fetchProducts zera `totais` e
+  // os cartoes mostram zero em vez de a tela nao abrir.
+  function totalsPanel() {
+    const t = totais || {};
+    const totalUnits = Number(t.unidades || 0);
+    const totalCost = Number(t.custo || 0);
+    const alerts = Number(t.alertas || 0);
+    const listados = Number(t.produtos || 0);
     return `
       <div class="row">
-        <div class="panel"><strong>${products.length.toLocaleString('pt-BR')}</strong><p class="muted">Produtos listados</p></div>
+        <div class="panel"><strong>${listados.toLocaleString('pt-BR')}</strong><p class="muted">Produtos listados</p></div>
         <div class="panel"><strong>${S.formatQty(totalUnits)}</strong><p class="muted">Unidades em estoque</p></div>
         <div class="panel"><strong>${S.formatBRL(totalCost)}</strong><p class="muted">Valor a custo</p></div>
         <div class="panel"><strong>${alerts}</strong><p class="muted">Zerados ou abaixo do mínimo</p></div>
@@ -199,24 +185,40 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   }
 
   async function render() {
-    // `todos` e' a lista inteira ja filtrada pelo servidor e ordenada aqui;
-    // `visiveis` e' so' a centena que vai para a tela.
+    // `visiveis` e' a pagina que o SERVIDOR mandou, ja filtrada e ja ordenada
+    // (fase DG). Antes era `todos` inteiro aqui e o fatiamento acontecia
+    // abaixo -- 3.713 KB para mostrar 100 linhas.
     //
     // A ORDEM VALE SOBRE A LISTA INTEIRA, e nao sobre a pagina visivel. E' o
     // ponto que decide se ordenar serve para alguma coisa: ordenar so' as 100
     // linhas da tela reembaralharia cada pagina por conta propria, a pagina 2
     // comecaria de novo no "A", e quem clicasse em "Custo" procurando o mais
     // caro acharia o mais caro DAQUELE PEDACO.
-    const todos = ordenar(await fetchProducts());
+    //
+    // Continua valendo, e agora por construcao: o servidor ordena a selecao
+    // inteira e ENTAO fatia. Quem garante que as duas ordens sao a mesma e o
+    // modulo compartilhado -- nao ha uma ordem do cliente e outra do servidor.
+    let visiveis = await fetchProducts();
 
-    const totalRegistros = todos.length;
-    const totalPaginas = Math.max(1, Math.ceil(totalRegistros / POR_PAGINA));
+    let totalRegistros = total;
+    let totalPaginas = Math.max(1, Math.ceil(totalRegistros / POR_PAGINA));
     // A pagina fica presa entre 1 e o total: um filtro que encolhe a lista
     // enquanto a pessoa esta na pagina 40 nao pode deixa-la olhando para o vazio.
+    //
+    // ANTES a tela tinha a lista inteira e podia fatiar de novo na hora. Agora a
+    // pagina vem do servidor, entao clampar exige pedir OUTRA VEZ. Acontece so
+    // quando o total encolheu por baixo -- um produto excluido enquanto alguem
+    // estava numa pagina funda --, porque todo filtro e toda ordenacao ja voltam
+    // para a pagina 1. Nao vale um caminho mais esperto que isso.
+    if (pagina > totalPaginas && totalRegistros > 0) {
+      pagina = totalPaginas;
+      visiveis = await fetchProducts();
+      totalRegistros = total;
+      totalPaginas = Math.max(1, Math.ceil(totalRegistros / POR_PAGINA));
+    }
     const paginaAtual = Math.min(Math.max(1, pagina), totalPaginas);
     pagina = paginaAtual;
     const primeiroDaPagina = (paginaAtual - 1) * POR_PAGINA;
-    const visiveis = todos.slice(primeiroDaPagina, primeiroDaPagina + POR_PAGINA);
 
     const barraDePaginas = (posicao) => (totalRegistros === 0 ? '' : `
       <div class="lista-paginas lista-paginas-${posicao}">
@@ -282,7 +284,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
         </form>
       </div>
 
-      ${totalsPanel(todos)}
+      ${totalsPanel()}
 
       <div class="panel">
         ${barraDePaginas('acima')}
@@ -415,7 +417,9 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
 
     content.querySelectorAll('[data-delete]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const product = todos.find((p) => p.id === btn.dataset.delete);
+        // `visiveis` e nao `todos`: a lista inteira ja nao esta no navegador
+        // (fase DG), e o botao de excluir so existe em linha que esta na tela.
+        const product = visiveis.find((p) => p.id === btn.dataset.delete);
         const confirmed = await confirmModal(`Excluir o produto "${product ? product.name : ''}"? Produtos com movimentações não podem ser excluídos.`);
         if (!confirmed) return;
         try {

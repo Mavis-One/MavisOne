@@ -209,12 +209,34 @@ check('o filtro soma o ncm',
   'a tela anuncia "Nome, SKU ou NCM"');
 check('e o filtro por grupo existe',
   /if \(grupoTributario === 'sem'\) list = list\.filter\(\(p\) => !p\.grupoTributarioId\);/.test(serverSrc));
-// A asserção prende `total: list.length` e NADA MAIS da resposta. Prender a
-// chave-de-fechamento (`\}\);`) travava a FORMA da rota, não o comportamento:
-// a fase CT acrescentou `pendencias` ao lado de `total` e este check quebrou
-// sem que nada do grupo tributário tivesse mudado. Um teste que reclama de
-// campo novo ensina a não acrescentar campo.
-check('a rota devolve total', /sendJson\(res, \{ products: list, total: list\.length\b/.test(serverSrc));
+// O QUE ESTE CHECK QUER: o `total` e da SELECAO, e nao da pagina -- e' dele que
+// sai "3.078 produtos sem grupo" no cartao.
+//
+// E ele ja foi reescrito duas vezes por prender a GRAFIA em vez do
+// comportamento. A primeira versao prendia a chave-de-fechamento e quebrou
+// quando a fase CT acrescentou `pendencias`. A segunda prendia
+// `total: list.length` e quebrou quando a fase DG renomeou a variavel para
+// `ordenada` (a rota passou a ordenar antes de responder). Nas duas vezes nada
+// do grupo tributario havia mudado.
+//
+// Entao agora ele mede a INTENCAO: existe um `total`, e ele NAO sai da pagina
+// fatiada. Um total tirado do `.slice()` diria "100 produtos sem grupo" em vez
+// de 3.078, e o cartao mentiria sem nada quebrar.
+const rotaProdutos = serverSrc.slice(
+  serverSrc.indexOf("if (pathname === '/api/stock/products' && req.method === 'GET')"),
+  serverSrc.indexOf("// Status do Produto: posição por depósito")
+);
+check('a rota de produtos foi encontrada', rotaProdutos.length > 500, `${rotaProdutos.length} caracteres`);
+check('a rota devolve total', /total: [a-zA-Z]+\.length/.test(rotaProdutos));
+check('  e o total NAO sai da pagina fatiada',
+  !/total: [a-zA-Z]+\.slice\(/.test(rotaProdutos),
+  'total da selecao, nao dos 100 da tela');
+// E a lista que ele conta e a FILTRADA: contar antes dos filtros daria 5.475
+// sempre, e o cartao de "sem grupo" perderia a razao de existir.
+const posFiltroGrupo = rotaProdutos.indexOf("grupoTributario === 'sem'");
+const posTotal = rotaProdutos.search(/total: [a-zA-Z]+\.length/);
+check('  e conta DEPOIS dos filtros', posFiltroGrupo > -1 && posTotal > posFiltroGrupo,
+  `filtro ${posFiltroGrupo}, total ${posTotal}`);
 
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);
 process.exit(falhas === 0 ? 0 : 1);

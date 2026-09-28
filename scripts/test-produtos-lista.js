@@ -66,6 +66,10 @@ const check = (nome, cond, det) => {
 
 const tela = ler('public/modules/stock/subs/products.js');
 const codigo = semComentarios(tela);
+// A ordem saiu da tela na fase DG: o servidor manda so a pagina, e as regras
+// viraram um modulo que os dois leem. Estes dois fontes entram por isso.
+const servidor = semComentarios(ler('server.js'));
+const fonteOrdem = semComentarios(ler('public/modules/shared/ordem_de_produtos.js'));
 
 // ---------------------------------------------------------------------------
 console.log('--- 1. a unidade do produto importado (roda de verdade) ---');
@@ -102,53 +106,123 @@ check('a unidade tributável também cai na coluna',
   ).unidadeTributavel === 'KG');
 
 // ---------------------------------------------------------------------------
-console.log('--- 2. a ordem é da lista inteira, não da página ---');
-const posOrdenar = codigo.indexOf('const todos = ordenar(await fetchProducts());');
-const posCorte = codigo.indexOf('const visiveis = todos.slice(');
-check('ordena a lista que veio do servidor', posOrdenar > 0);
-// ESTE é o check que importa. Se o corte viesse antes, cada página se ordenaria
-// sozinha: a página 2 começaria de novo no "A" e quem clicasse em "Custo"
-// procurando o mais caro acharia o mais caro DAQUELE PEDAÇO.
-check('  e corta em páginas DEPOIS', posCorte > posOrdenar,
-  `ordena na linha ${codigo.slice(0, posOrdenar).split('\n').length}, corta na ${codigo.slice(0, posCorte).split('\n').length}`);
-check('são 100 por página', /const POR_PAGINA = 100;/.test(codigo));
-check('  e a página fica presa entre 1 e o total',
+console.log('--- 2. a ordem e da lista inteira, nao da pagina ---');
+// A ORDEM MUDOU DE CASA NA FASE DG, e o que este bloco guarda nao mudou.
+//
+// A tela baixava os 5.475 produtos e fatiava no navegador: 3.713 KB crus para
+// mostrar 100 linhas. Agora o SERVIDOR manda so a pagina -- 69 KB crus, 6 KB no
+// fio -- e para isso ele precisa ordenar. As regras viraram
+// public/modules/shared/ordem_de_produtos.js, que os DOIS leem: a tela por
+// window.MavisOrdemDeProdutos e o server.js por require.
+//
+// Entao os checks abaixo passaram a EXERCITAR o modulo em vez de casar com a
+// grafia do fonte da tela. E melhor assim: um deles chegou a fixar um defeito
+// (ver o bloco 4).
+const ORDEM = require('../public/modules/shared/ordem_de_produtos');
+
+check('a ordem mora num modulo compartilhado', typeof ORDEM.ordenar === 'function');
+check('  e a tela le as colunas dele', /const COLUNAS_ORDENAVEIS = ORDEM\.COLUNAS;/.test(codigo));
+check('  e o servidor tambem o usa', /ordemDeProdutos\.ordenar\(/.test(servidor));
+// ESTE e o check que importa. O servidor tem de ORDENAR a selecao inteira e
+// ENTAO fatiar. Fatiando antes, cada pagina se ordenaria sozinha: a pagina 2
+// comecaria de novo no "A" e quem clicasse em "Custo" procurando o mais caro
+// acharia o mais caro DAQUELE PEDACO.
+const rotaProdutos = servidor.slice(
+  servidor.indexOf("if (pathname === '/api/stock/products' && req.method === 'GET')"),
+  servidor.indexOf('// Status do Produto')
+);
+const posOrdena = rotaProdutos.indexOf('ordemDeProdutos.ordenar(');
+const posFatia = rotaProdutos.indexOf('ordenada.slice(inicio');
+check('o servidor ordena a selecao inteira e ENTAO fatia',
+  posOrdena > -1 && posFatia > posOrdena, `ordena ${posOrdena}, fatia ${posFatia}`);
+check('sao 100 por pagina', /const POR_PAGINA = 100;/.test(codigo));
+check('  e a tela manda a pagina e a ordem ao servidor',
+  /params\.set\('page', String\(pagina\)\);/.test(codigo)
+  && /params\.set\('sort', ordem\.campo\);/.test(codigo));
+check('  e a pagina fica presa entre 1 e o total',
   /const paginaAtual = Math\.min\(Math\.max\(1, pagina\), totalPaginas\);/.test(codigo));
 
 // ---------------------------------------------------------------------------
-console.log('--- 3. cada coluna é comparada pelo que ela é ---');
-check('há um catálogo de colunas', /const COLUNAS_ORDENAVEIS = \{/.test(codigo));
+console.log('--- 3. cada coluna e comparada pelo que ela e ---');
+check('ha um catalogo de colunas', Object.keys(ORDEM.COLUNAS).length === 10,
+  Object.keys(ORDEM.COLUNAS).join(', '));
 for (const [campo, tipo] of [['name', 'texto'], ['sku', 'texto'], ['categoryName', 'texto'],
                              ['unit', 'texto'], ['costPrice', 'numero'], ['salePrice', 'numero'],
                              ['margin', 'numero'], ['stockQuantity', 'numero'],
                              ['situation', 'alerta'], ['status', 'texto']]) {
-  check(`  ${campo.padEnd(14)} como ${tipo}`,
-    new RegExp(`${campo}: \\{ rotulo: '[^']+', tipo: '${tipo}' \\}`).test(codigo));
+  check(`  ${campo.padEnd(14)} como ${tipo}`, (ORDEM.COLUNAS[campo] || {}).tipo === tipo,
+    (ORDEM.COLUNAS[campo] || {}).tipo);
 }
-// O que NÃO pode aparecer: o replace(/\D/g,'') que Cadastros usa. Aqui ele
-// destruiria o sinal e a vírgula — -100,0% de margem viraria 1000.
-check('número NÃO arranca os dígitos (destruiria negativo e decimal)',
-  /resultado = Number\(va\) - Number\(vb\);/.test(codigo) && !/replace\(\/\\D\/g, ''\)/.test(codigo));
-// "Álvaro" tem de ficar junto de "Alvaro"; e numeric:true é o que põe o SKU
-// 100 depois do 99 sem eu ter de adivinhar se o SKU é número ou texto.
-check('texto compara em pt-BR, sem acento nem caixa, e ciente de número',
-  /new Intl\.Collator\('pt-BR', \{ sensitivity: 'base', numeric: true \}\)/.test(codigo));
-check('a Situação ordena por urgência, não por alfabeto',
-  /const URGENCIA = \{ zerado: 0, 'abaixo-minimo': 1, 'acima-maximo': 2, normal: 3 \};/.test(codigo));
+// O EFEITO, e nao a grafia. O que NAO pode acontecer e o que Cadastros faz com
+// 'codigo' (arrancar os digitos): aqui isso destruiria o sinal e a virgula.
+const porMargem = ORDEM.ordenar([
+  { id: '1', name: 'A', margin: -100.5 },
+  { id: '2', name: 'B', margin: 12.75 },
+  { id: '3', name: 'C', margin: 2.5 }
+], 'margin', 'asc').map((x) => x.margin).join(' ');
+check('numero compara como numero, com negativo e decimal', porMargem === '-100.5 2.5 12.75', porMargem);
+// "Alvaro" tem de ficar junto de "Álvaro"; e numeric:true e o que poe o SKU 100
+// depois do 99 sem eu ter de adivinhar se o SKU e numero ou texto.
+const comAcento = ORDEM.ordenar([
+  { id: '1', name: 'Alvaro' }, { id: '2', name: 'Álvaro' }, { id: '3', name: 'Bruno' }
+], 'name', 'asc').map((x) => x.name).join(' ');
+check('texto compara em pt-BR, sem acento nem caixa', /^(Alvaro Álvaro|Álvaro Alvaro) Bruno$/.test(comAcento), comAcento);
+const skuNumerico = ORDEM.ordenar([
+  { id: '1', name: 'A', sku: '100' }, { id: '2', name: 'B', sku: '99' }
+], 'sku', 'asc').map((x) => x.sku).join(' ');
+check('  e ciente de numero dentro do texto', skuNumerico === '99 100', skuNumerico);
+const urgencia = ORDEM.ordenar([
+  { id: '1', name: 'A', situation: 'normal' },
+  { id: '2', name: 'B', situation: 'zerado' },
+  { id: '3', name: 'C', situation: 'abaixo-minimo' }
+], 'situation', 'asc').map((x) => x.situation).join(' ');
+check('a Situacao ordena por urgencia, nao por alfabeto',
+  urgencia === 'zerado abaixo-minimo normal', urgencia);
 
 // ---------------------------------------------------------------------------
 console.log('--- 4. vazio e empate ---');
-// Inverter o vazio junto com a direção encheria o topo de traços ao pedir
-// "maior primeiro". Pesa aqui: a importação entrou sem categoria nenhuma.
+// Inverter o vazio junto com a direcao encheria o topo de tracos ao pedir
+// "maior primeiro". Pesa aqui: a importacao entrou sem categoria nenhuma, nos
+// 5.475 produtos.
+const umVazio = [{ id: '1', name: 'A', sku: 'X' }, { id: '2', name: 'B', sku: '' }];
 check('vazio vai para o fim nos DOIS sentidos',
-  /if \(vazioA && vazioB\) return 0;\s*\n\s*if \(vazioA\) return 1;\s*\n\s*if \(vazioB\) return -1;/.test(codigo));
+  ORDEM.ordenar(umVazio, 'sku', 'asc').map((x) => x.id).join('') === '12'
+  && ORDEM.ordenar(umVazio, 'sku', 'desc').map((x) => x.id).join('') === '12');
+
+// ESTE CHECK FIXAVA UM DEFEITO, e foi a fase DG que o descobriu.
+//
+// Ele exigia, pela grafia, a linha `if (vazioA && vazioB) return 0;`. Esse
+// `return 0` PULA o desempate de baixo, e `Array.prototype.sort` e estavel --
+// entao a ordem entre dois vazios passava a ser a ordem de ENTRADA da lista.
+//
+// No navegador nunca apareceu: a entrada era sempre a mesma lista do servidor.
+// Com a pagina vindo do servidor, apareceu na hora -- ordenando por Categoria,
+// onde TODOS os 5.475 estao vazios, a pagina 1 do servidor nao batia com a
+// pagina 1 da referencia (18 de 20 combinacoes passavam).
+//
+// O estrago nao e a ordem ser "outra": e ela poder MUDAR entre duas
+// requisicoes, e ai um produto aparece em duas paginas e outro em nenhuma.
+const doisVazios = [{ id: 'a', name: 'Zebra', sku: '' }, { id: 'b', name: 'Abelha', sku: '' }];
+check('  e dois vazios NAO empatam em "tanto faz"',
+  ORDEM.ordenar(doisVazios, 'sku', 'asc').map((x) => x.id).join('')
+  === ORDEM.ordenar(doisVazios.slice().reverse(), 'sku', 'asc').map((x) => x.id).join(''),
+  'a ordem nao pode depender de como a lista entrou');
+
 // Sem desempate, dois produtos de mesmo custo trocariam de lugar entre um
 // render e outro, e a lista pareceria se mexer sozinha.
-check('empate é resolvido pelo nome, e depois pelo id',
-  /if \(resultado === 0\) resultado = comparadorDePtBr\.compare\(String\(a\.name \|\| ''\), String\(b\.name \|\| ''\)\);/.test(codigo)
-  && /if \(resultado === 0\) resultado = String\(a\.id\)\.localeCompare\(String\(b\.id\)\);/.test(codigo));
-check('a direção inverte o resultado, e não a comparação',
-  /return ordem\.direcao === 'asc' \? resultado : -resultado;/.test(codigo));
+const mesmoCusto = [
+  { id: 'z', name: 'Bruno', costPrice: 10 },
+  { id: 'a', name: 'Bruno', costPrice: 10 },
+  { id: 'm', name: 'Ana', costPrice: 10 }
+];
+const desempatado = ORDEM.ordenar(mesmoCusto, 'costPrice', 'asc').map((x) => x.id).join('');
+check('empate e resolvido pelo nome, e depois pelo id', desempatado === 'maz', desempatado);
+check('  e nao depende da ordem de entrada',
+  ORDEM.ordenar(mesmoCusto.slice().reverse(), 'costPrice', 'asc').map((x) => x.id).join('') === desempatado);
+// A direcao inverte o RESULTADO, e nao a comparacao -- e por isso as saidas do
+// vazio ficam fora dela (ver o primeiro check deste bloco).
+check('a direcao inverte o resultado, e nao a comparacao',
+  /return direcao === 'asc' \? resultado : -resultado;/.test(fonteOrdem));
 
 // ---------------------------------------------------------------------------
 console.log('--- 5. o cabeçalho ---');
@@ -186,7 +260,16 @@ check('  e a condição de "tem linha" também', /\$\{visiveis\.length === 0/.te
 check('  e nada mais desenha a lista inteira', !/\$\{products\.map\(\(product\) => `/.test(tela));
 // Somar só a página diria "Valor a custo: R$ 40 mil" de uma lista de R$ 2
 // milhões — um número errado em cima de uma tabela certa.
-check('os totais somam a LISTA INTEIRA, não a página', /\$\{totalsPanel\(todos\)\}/.test(tela));
+//
+// FASE DG: a lista inteira ja nao esta no navegador, entao os quatro cartoes
+// nao tem o que somar aqui -- a soma vem PRONTA do servidor, contada antes de
+// fatiar. O check virou o contrario: garantir que a tela NAO soma nada.
+check('os cartoes leem os totais do servidor', /const t = totais \|\| \{\};/.test(codigo));
+check('  e a tela nao soma a pagina',
+  !/products\.reduce\(\(sum, p\) => sum \+ Number\(p\.stockQuantity/.test(codigo)
+  && !/visiveis\.reduce\(/.test(codigo));
+check('  e o servidor conta ANTES de fatiar',
+  servidor.indexOf('const totais = {') < servidor.indexOf('ordenada.slice(inicio'));
 
 // ---------------------------------------------------------------------------
 console.log('--- 8. o comportamento do clique ---');
@@ -217,9 +300,14 @@ console.log('--- 9. o excluir não pode ler a variável que sumiu ---');
 // um `products.find` para trás: ReferenceError no clique, botão sem fazer nada
 // e o erro só no console. É o mesmo tipo de engano que o navegador pegou na
 // fase CF; foi por isso que rodei o clique de excluir lá também.
-check('excluir procura em `todos`', /const product = todos\.find\(\(p\) => p\.id === btn\.dataset\.delete\);/.test(codigo));
-check('  e não sobrou nenhum `products.` solto no render',
-  !/const product = products\.find/.test(codigo));
+//
+// E ACONTECEU DE NOVO na fase DG: `todos` virou `visiveis` quando a pagina
+// passou a vir do servidor, e este check pegou. E o certo: o botao de excluir
+// so existe em linha que esta na tela, entao procurar na pagina basta -- e a
+// lista inteira nao esta mais aqui para procurar.
+check('excluir procura em `visiveis`', /const product = visiveis\.find\(\(p\) => p\.id === btn\.dataset\.delete\);/.test(codigo));
+check('  e não sobrou nenhum `products.` nem `todos.` solto no render',
+  !/const product = products\.find/.test(codigo) && !/\btodos\.(find|slice|map|length)/.test(codigo));
 
 // ---------------------------------------------------------------------------
 console.log('--- 10. o estilo é o mesmo das duas telas ---');

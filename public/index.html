@@ -22,6 +22,11 @@
     <!-- Como um produto se chama dentro de um seletor. Antes dos modulos porque
          Estoque e Compras montam a lista de opcoes no topo das telas. -->
     <script src="/modules/shared/rotulo_produto.js"></script>
+    <!-- A ordem da lista de Produtos. Aqui e no server.js, que o carrega por
+         require: o SERVIDOR manda so a pagina, e para isso ordena com estas
+         mesmas regras. Escritas nos dois lados, um produto apareceria em duas
+         paginas e outro em nenhuma no dia em que alguem corrigisse um lado so. -->
+    <script src="/modules/shared/ordem_de_produtos.js"></script>
     <!-- Quando um <select> deixa de servir. Depois do rotulo_produto.js, que
          ele usa para montar o rotulo de produto. -->
     <script src="/modules/shared/campo_de_busca.js"></script>

@@ -1,6 +1,6 @@
 // O QUE FAZ AS TELAS ABRIREM — e o que voltaria a fazê-las demorar.
 //
-// Quatro consertos medidos, cada um com uma armadilha própria:
+// Cinco consertos medidos, cada um com uma armadilha própria:
 //
 //   1. OS ESTÁTICOS. `public/index.html` carrega 142 `<script>` mais o CSS e o
 //      logo. Servidos com `Cache-Control: no-cache`, eram 144 requisições a
@@ -24,6 +24,14 @@
 //      UMA das sete usa os dois. Quem abria o Painel para ver quatro números
 //      pagava 4 MB. Com o recorte e a condição: 1.022 KB para aquela tela, e
 //      nada para as outras seis.
+//
+//   5. A LISTA DE PRODUTOS FATIADA NO NAVEGADOR. Mostrava 100 por página depois
+//      de baixar 5.475: 3.713 KB crus, 257 KB no fio. A página passou a vir do
+//      servidor — 69 KB crus, 6 KB no fio, 54x — e para isso a ORDEM teve de
+//      virar um módulo compartilhado, porque agora ela decide quem cai em qual
+//      página. Foi ali que apareceu um comparador indiferente: dois valores
+//      vazios devolviam 0 antes do desempate, e a ordem passava a depender da
+//      ordem de entrada da lista.
 //
 // SEM BANCO E SEM SERVIDOR: este teste lê fonte e exercita as funções puras.
 // O comportamento HTTP foi provado à parte, contra a base real.
@@ -213,6 +221,92 @@ const subs = fs.readdirSync(DIR_SUBS).filter((f) => f.endsWith('.js')).map((f) =
 const desperdicio = subs.filter((n) => !usamCatalogo.includes(n) && !listadas.includes(n));
 check('  e nenhuma paga o catalogo a toa', desperdicio.length === 0,
   desperdicio.length ? 'pagando sem usar: ' + desperdicio.join(', ') : `${subs.length} telas`);
+
+console.log('\n--- 5. Estoque manda a PAGINA, e a ordem tem um dono so (fase DG) ---');
+// A lista de Produtos baixava os 5.475 e fatiava no navegador: 3.713 KB crus
+// (257 KB no fio) para mostrar 100 linhas. Com a pagina vindo do servidor:
+// 69 KB crus, 6 KB no fio -- 54x.
+//
+// Para o servidor mandar so a pagina ele precisa ORDENAR, e a ordem e' de quem
+// desenha a tela, com quatro decisoes que nao se adivinham: vazio sempre no
+// fim (nos dois sentidos), urgencia da Situacao, colacao pt-BR com
+// numeric:true, e desempate estavel. Escritas nos dois lados, elas
+// concordariam ate o dia em que alguem corrigisse um lado so.
+const ordemProdutos = require('../public/modules/shared/ordem_de_produtos');
+const fonteOrdem = ler('public/modules/shared/ordem_de_produtos.js');
+const telaProdutos = ler('public/modules/stock/subs/products.js');
+
+check('o modulo de ordem carrega por require', typeof ordemProdutos.ordenar === 'function');
+check('  com as 10 colunas da tela', Object.keys(ordemProdutos.COLUNAS).length === 10,
+  Object.keys(ordemProdutos.COLUNAS).join(', '));
+check('o servidor usa o modulo, e nao um sort proprio',
+  /const ordemDeProdutos = require\('\.\/public\/modules\/shared\/ordem_de_produtos'\);/.test(servidor)
+  && /ordemDeProdutos\.ordenar\(/.test(servidor));
+// A tela NAO pode ter as definicoes de volta: duas verdades sobre a ordem e um
+// produto aparecendo em duas paginas.
+check('a tela le as colunas do modulo',
+  /const COLUNAS_ORDENAVEIS = ORDEM\.COLUNAS;/.test(telaProdutos));
+check('  e nao tem collator proprio', !/new Intl\.Collator/.test(telaProdutos),
+  'o unico Intl.Collator mora no modulo compartilhado');
+check('  nem tabela de urgencia propria', !/const URGENCIA =/.test(telaProdutos));
+check('e o script esta no index.html', /modules\/shared\/ordem_de_produtos\.js/.test(ler('public/index.html')),
+  'sem isto window.MavisOrdemDeProdutos e undefined e a tela quebra');
+
+console.log('\n--- e a ordem e TOTAL: sem isso, um produto cai em duas paginas ---');
+// O DEFEITO QUE A PROVA PEGOU. O comparador vinha do navegador com
+// `if (vazioA && vazioB) return 0;`, que PULA o desempate. `sort` e estavel,
+// entao a ordem passava a ser a ordem de ENTRADA da lista.
+//
+// No navegador nao aparecia: a entrada era sempre a mesma lista do servidor.
+// Com a pagina vindo do servidor, apareceu -- ordenando por Categoria, onde os
+// 5.475 produtos desta base estao TODOS sem categoria, a pagina 1 do servidor
+// nao batia com a pagina 1 da referencia (18 de 20 combinacoes passavam).
+//
+// O estrago nao e a ordem ser "outra": e ela poder MUDAR entre duas
+// requisicoes, e ai um produto aparece em duas paginas e outro em nenhuma.
+check('o comparador nao devolve 0 cru quando os dois estao vazios',
+  !/if \(vazioA && vazioB\) return 0;/.test(fonteOrdem));
+// O EFEITO, e nao a grafia: dois produtos indistinguiveis no campo pedido tem
+// de sair sempre na mesma ordem, e ela nao pode depender de como entraram.
+const A = { id: 'a', name: 'Zebra', categoryName: '' };
+const B = { id: 'b', name: 'Abelha', categoryName: '' };
+const numaOrdem = ordemProdutos.ordenar([A, B], 'categoryName', 'asc').map((x) => x.id).join('');
+const naOutra = ordemProdutos.ordenar([B, A], 'categoryName', 'asc').map((x) => x.id).join('');
+check('  e a ordem nao depende da entrada', numaOrdem === naOutra, `${numaOrdem} e ${naOutra}`);
+// O vazio no fim vale nos DOIS sentidos -- e por isso aquelas duas saidas nao
+// passam pela inversao da direcao.
+const comVazio = [{ id: '1', name: 'A', sku: 'X' }, { id: '2', name: 'B', sku: '' }];
+const asc = ordemProdutos.ordenar(comVazio, 'sku', 'asc').map((x) => x.id).join('');
+const desc = ordemProdutos.ordenar(comVazio, 'sku', 'desc').map((x) => x.id).join('');
+check('  e o vazio fica no fim em asc E em desc', asc === '12' && desc === '12', `asc ${asc}, desc ${desc}`);
+// numeric:true -- 'Cabo 9' antes de 'Cabo 10', que e' o que uma comparacao de
+// texto pura erraria.
+const numerico = ordemProdutos.ordenar(
+  [{ id: '1', name: 'Cabo 10' }, { id: '2', name: 'Cabo 9' }], 'name', 'asc'
+).map((x) => x.name).join(' | ');
+check('  e numero dentro do texto compara como numero', numerico === 'Cabo 9 | Cabo 10', numerico);
+// A urgencia da Situacao: zerado antes de normal, que o alfabeto inverteria.
+const urg = ordemProdutos.ordenar(
+  [{ id: '1', name: 'A', situation: 'normal' }, { id: '2', name: 'B', situation: 'zerado' }], 'situation', 'asc'
+).map((x) => x.situation).join(' | ');
+check('  e a Situacao ordena por urgencia, nao por alfabeto', urg === 'zerado | normal', urg);
+
+console.log('\n--- e paginar e OPCIONAL: quem classifica em lote recebe tudo ---');
+// A tela de Grupos Tributarios pede ?grupoTributario=sem e ?search=... para
+// classificar em lote. Paginar por padrao a quebraria em silencio: ela
+// classificaria os 100 primeiros e diria que acabou.
+check('a pagina so sai quando pedida',
+  /const querPagina = url\.searchParams\.has\('page'\) \|\| url\.searchParams\.has\('limit'\);/.test(servidor));
+check('  e a tela de produtos pede', /params\.set\('page', String\(pagina\)\);/.test(telaProdutos));
+check('  enquanto Grupos Tributarios nao',
+  !/grupoTributario=sem[^']*page=/.test(ler('public/modules/fiscal/subs/grupos_tributarios.js')));
+// Os quatro cartoes somam a SELECAO. Somando a pagina, "Unidades em estoque"
+// mudaria ao virar a pagina e ninguem entenderia por que.
+check('os totais dos cartoes vem do servidor',
+  /totais = res\.totais \|\| null;/.test(telaProdutos)
+  && /const totais = \{\s*\n\s*produtos: list\.length,/.test(servidor));
+check('  e a tela nao os soma da pagina',
+  !/products\.reduce\(\(sum, p\) => sum \+ Number\(p\.stockQuantity/.test(telaProdutos));
 
 console.log('\n--- e o que sobrou de select * está lá porque precisa ---');
 // Não é para zerar: a Busca Avançada filtra por campos de TODOS os registros, e
