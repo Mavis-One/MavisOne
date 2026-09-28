@@ -12495,13 +12495,50 @@ async function tratarRequisicao(req, res) {
     if (!user || !user.allowedModules.includes('purchases')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    const [products, purchases] = await Promise.all([db.getProducts(), db.getPurchases()]);
+    // O CATÁLOGO SÓ VAI PARA QUEM O USA, E SÓ COM OS CAMPOS QUE A TELA LÊ (fase DG).
+    //
+    // Esta rota serve as SETE telas de Compras, porque o roteador do módulo a
+    // chama antes de saber qual subtela abrir. Medido nesta base:
+    //
+    //     products .....  2.545 KB   (5.475 itens, 23 campos cada)
+    //     directory ....  1.476 KB   (6.492 pessoas, dez campos cada)
+    //     purchases ....      0 KB
+    //     deposits .....      0 KB
+    //     ------------------------------
+    //     resposta .....  4.026 KB  ->  557 KB no fio
+    //
+    // E UMA das sete usa os dois: `new_purchase_order`. As outras seis — painel,
+    // histórico, documentos, fornecedores, entrada de NF-e — pagavam 4 MB para
+    // ler `purchases`.
+    //
+    // O RECORTE: aquela tela lê QUATRO campos do produto. `id` e o rótulo
+    // (`name` e `sku`, que `MavisRotuloProduto.rotulo` junta porque 457 produtos
+    // têm nome repetido com custos diferentes) e `costPrice`, que preenche o
+    // campo de custo ao escolher o produto. Do diretório, lê `id` e `name` — o
+    // mesmo corte da fase CJ, e pelo mesmo motivo: é um seletor, não um
+    // formulário de cadastro. Medido: 4.026 KB -> 1.022 KB, 3,9x.
+    //
+    // `formulario=0` É A TELA DIZENDO QUE NÃO PRECISA, e o padrão é MANDAR.
+    // Invertido — mandar só para quem pedisse — uma subtela nova nasceria com o
+    // seletor de produto VAZIO, e "nenhum produto cadastrado" é do tipo de erro
+    // que a pessoa acredita. Assim o pior caso é pagar o que se pagava antes.
+    const querFormulario = url.searchParams.get('formulario') !== '0';
+    const [products, purchases] = await Promise.all([
+      querFormulario ? db.getProducts() : [],
+      db.getPurchases()
+    ]);
     // `deposits` veio junto na fase AQ: a ordem de compra diz em QUE depósito a
     // mercadoria entra, e sem a lista o formulário só ofereceria "sem depósito".
     // syncCadastroData já os carregou logo acima — é dado que já está na mão.
+    // Fica sempre: são dezenas de linhas, não milhares.
     return sendJson(res, {
-      purchases, products,
-      directory: getCadastroDirectory(data),
+      purchases,
+      products: products.map((p) => ({
+        id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice
+      })),
+      directory: querFormulario
+        ? getCadastroDirectory(data).map((c) => ({ id: c.id, name: c.name }))
+        : [],
       deposits: data.deposits || []
     });
   }

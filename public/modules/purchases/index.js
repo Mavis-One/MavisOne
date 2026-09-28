@@ -1,16 +1,62 @@
 window.MavisModuleRegistry = window.MavisModuleRegistry || {};
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 
+/**
+ * AS SUBTELAS QUE NÃO PRECISAM DO CATÁLOGO (fase DG).
+ *
+ * `/api/purchases` é chamada aqui, uma vez, para qualquer subtela de Compras —
+ * e leva o catálogo de produtos e o diretório de pessoas porque UMA delas monta
+ * um formulário com os dois. Medido nesta base:
+ *
+ *     products ..... 2.545 KB   (5.475 itens)
+ *     directory .... 1.476 KB   (6.492 pessoas)
+ *     resposta ..... 4.026 KB  ->  557 KB no fio
+ *
+ * Quem abre o Painel de Compras para ver quatro números pagava isso.
+ *
+ * A LISTA É DE QUEM **NÃO** PRECISA, e não de quem precisa. As duas dariam a
+ * mesma resposta hoje; elas diferem no dia em que alguém criar a oitava subtela.
+ * Com a lista de quem precisa, a nova não estaria nela, a requisição sairia com
+ * `formulario=0` e o seletor de produto apareceria VAZIO — e "nenhum produto
+ * cadastrado" é do tipo de erro em que a pessoa acredita. Com esta lista, a
+ * subtela nova recebe o catálogo: fica tão lenta quanto era antes, e correta.
+ *
+ * Conferido subtela por subtela: só `new_purchase_order` lê `data.products` e
+ * `data.directory`. As cinco abaixo leem `data.purchases`, e `entrada_nfe`
+ * busca produtos pela própria rota (`/api/stock/products`) quando precisa.
+ */
+const PURCHASES_SEM_CATALOGO = new Set([
+  'painel',
+  'purchase_history',
+  'purchase_documents',
+  'suppliers',
+  'entrada_nfe'
+]);
+
 window.MavisModuleRegistry.purchases = async function renderPurchases(ctx) {
   const { api, state } = ctx;
-  const data = await api('/api/purchases');
-  const sub = state.activeSub || 'painel';
 
+  // A SUBTELA É RESOLVIDA ANTES DA REQUISIÇÃO, e não depois.
+  //
+  // Resolvida depois, a requisição já teria saído sem saber para quem — que é
+  // exatamente como esta rota chegou a carregar 4 MB para o Painel. É a mesma
+  // lição da lista de Vendas: quem decide o recorte decide antes de pedir.
+  //
+  // `registry[sub] || registry.painel` é o desvio que já existia: subtela não
+  // registrada cai no Painel. O recorte segue a tela que VAI renderizar, e não
+  // a que foi pedida — senão uma chave inválida na URL pediria o catálogo para
+  // desenhar o Painel.
   const registry = window.MavisSubscreenRegistry.purchases || {};
-  const renderer = registry[sub] || registry.painel;
-  if (!registry[sub]) {
+  const pedida = state.activeSub || 'painel';
+  const efetiva = registry[pedida] ? pedida : 'painel';
+  if (!registry[pedida]) {
     state.activeSub = 'painel';
   }
+
+  const params = PURCHASES_SEM_CATALOGO.has(efetiva) ? '?formulario=0' : '';
+  const data = await api(`/api/purchases${params}`);
+
+  const renderer = registry[efetiva];
   if (!renderer) return;
 
   await renderer({ ...ctx, data });

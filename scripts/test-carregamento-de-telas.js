@@ -1,6 +1,6 @@
 // O QUE FAZ AS TELAS ABRIREM — e o que voltaria a fazê-las demorar.
 //
-// Três consertos medidos, cada um com uma armadilha própria:
+// Quatro consertos medidos, cada um com uma armadilha própria:
 //
 //   1. OS ESTÁTICOS. `public/index.html` carrega 142 `<script>` mais o CSS e o
 //      logo. Servidos com `Cache-Control: no-cache`, eram 144 requisições a
@@ -17,6 +17,13 @@
 //      a reserva de estoque lia as ~60 colunas de 14.864 pedidos para usar
 //      quatro; os relatórios liam o mesmo para somar; e a lista de Vendas lia
 //      27,3 MB para mostrar 15 registros.
+//
+//   4. O CATÁLOGO INTEIRO PARA QUEM NÃO O USA. `/api/purchases` serve as SETE
+//      telas de Compras, porque o roteador do módulo a chama antes de saber
+//      qual subtela abrir: 2.545 KB de produtos mais 1.476 KB de diretório, e
+//      UMA das sete usa os dois. Quem abria o Painel para ver quatro números
+//      pagava 4 MB. Com o recorte e a condição: 1.022 KB para aquela tela, e
+//      nada para as outras seis.
 //
 // SEM BANCO E SEM SERVIDOR: este teste lê fonte e exercita as funções puras.
 // O comportamento HTTP foi provado à parte, contra a base real.
@@ -157,6 +164,55 @@ check('  e a página é remontada NA ORDEM, não na que o banco devolveu',
 // no SQL seria uma segunda ordenação, que concordaria até o dia em que não.
 check('  sem um "order by" paralelo no SQL das chaves',
   !/getChavesDeOrdenacao[\s\S]{0,400}\.order\(/.test(vendasDb));
+
+console.log('\n--- 4. Compras nao manda o catalogo para quem nao o usa (fase DG) ---');
+// /api/purchases serve as SETE telas de Compras, porque o roteador do modulo a
+// chama antes de saber qual subtela abrir. Medido: 2.545 KB de produtos +
+// 1.476 KB de diretorio, e UMA das sete usa os dois. 4.026 KB -> 1.022 KB com o
+// recorte (3,9x), e 0 KB para as seis que nao usam.
+const indiceCompras = ler('public/modules/purchases/index.js');
+check('a rota corta o produto para os quatro campos da tela',
+  /products: products\.map\(\(p\) => \(\{\s*\n?\s*id: p\.id, name: p\.name, sku: p\.sku, costPrice: p\.costPrice/.test(servidor));
+// O mesmo corte da fase CJ, e pelo mesmo motivo: e um seletor, nao um cadastro.
+check('  e o diretorio para id e name',
+  /getCadastroDirectory\(data\)\.map\(\(c\) => \(\{ id: c\.id, name: c\.name \}\)\)/.test(servidor));
+check('e `formulario=0` e a tela dizendo que nao precisa',
+  /const querFormulario = url\.searchParams\.get\('formulario'\) !== '0';/.test(servidor));
+// A SUBTELA E RESOLVIDA ANTES DA REQUISICAO. Resolvida depois, a requisicao ja
+// teria saido sem saber para quem -- e foi assim que esta rota carregava 4 MB
+// para o Painel. Mesma licao da lista de Vendas.
+const posEfetiva = indiceCompras.indexOf('const efetiva =');
+const posFetch = indiceCompras.indexOf("await api(`/api/purchases");
+check('a subtela e resolvida ANTES do pedido', posEfetiva > -1 && posFetch > posEfetiva,
+  `resolve ${posEfetiva}, pede ${posFetch}`);
+
+// E O GUARDA QUE IMPORTA: a lista tem de bater com o uso real.
+//
+// A lista e de quem NAO precisa, e nao de quem precisa -- as duas dao a mesma
+// resposta hoje e diferem no dia em que alguem criar a oitava subtela. Com a
+// lista de quem precisa, a nova nao estaria nela e o seletor de produto
+// apareceria VAZIO; "nenhum produto cadastrado" e do tipo de erro em que a
+// pessoa acredita. Com esta, a subtela nova paga o que se pagava antes.
+//
+// Mas se uma tela JA LISTADA passar a ler data.products, ela renderiza vazia e
+// nada quebra para avisar. E isso que este check pega.
+const bloco = (indiceCompras.match(/PURCHASES_SEM_CATALOGO = new Set\(\[([\s\S]*?)\]\)/) || ['', ''])[1];
+const listadas = [...bloco.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+check('a lista existe e tem telas', listadas.length > 3, listadas.join(', '));
+const DIR_SUBS = path.join(RAIZ, 'public/modules/purchases/subs');
+const usamCatalogo = fs.readdirSync(DIR_SUBS)
+  .filter((f) => f.endsWith('.js'))
+  .filter((f) => /data\.products|data\.directory/.test(fs.readFileSync(path.join(DIR_SUBS, f), 'utf8')))
+  .map((f) => f.replace(/\.js$/, ''));
+const errados = listadas.filter((n) => usamCatalogo.includes(n));
+check('  nenhuma tela listada le data.products/directory', errados.length === 0,
+  errados.length ? 'RENDERIZARIA VAZIA: ' + errados.join(', ') : `${listadas.length} conferidas`);
+// O outro lado nao e defeito, e desperdicio: tela que nao usa e nao esta
+// listada paga o catalogo a toa.
+const subs = fs.readdirSync(DIR_SUBS).filter((f) => f.endsWith('.js')).map((f) => f.replace(/\.js$/, ''));
+const desperdicio = subs.filter((n) => !usamCatalogo.includes(n) && !listadas.includes(n));
+check('  e nenhuma paga o catalogo a toa', desperdicio.length === 0,
+  desperdicio.length ? 'pagando sem usar: ' + desperdicio.join(', ') : `${subs.length} telas`);
 
 console.log('\n--- e o que sobrou de select * está lá porque precisa ---');
 // Não é para zerar: a Busca Avançada filtra por campos de TODOS os registros, e
