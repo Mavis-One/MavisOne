@@ -122,9 +122,22 @@ check('"De" maior que "Até" devolve vazio, não se conserta sozinho',
 // Pedido nunca enviado não pertence a "enviados em agosto".
 check('registro sem a data escolhida fica de fora', /return d && d >= dateFrom/.test(filtro) && /return d && d <= dateTo/.test(filtro));
 
-console.log('\n--- a lista recebe as opções de transportadora e categoria ---');
-check('o meta manda as transportadoras', /carriers: getCarriersDirectory\(data\)/.test(rota));
-check('e as categorias', /productCategories: \(data\.productCategories \|\| \[\]\)/.test(rota));
+console.log('\n--- a lista recebe as opcoes de transportadora e categoria ---');
+// O `meta` saiu do corpo da rota e virou `montarRespostaDeVendas` na fase DE:
+// a busca passou a ter dois caminhos (com filtro e sem), e os dois devolvem a
+// mesma forma. Escrita duas vezes, ela divergiria no primeiro campo novo.
+const respostaDaLista = serverSrc.slice(
+  serverSrc.indexOf('function montarRespostaDeVendas'),
+  serverSrc.indexOf('function codigoDoRegistro')
+);
+check('a resposta da lista e montada num lugar so', respostaDaLista.length > 500,
+  `${respostaDaLista.length} caracteres`);
+check('o meta manda as transportadoras', /carriers: getCarriersDirectory\(data\)/.test(respostaDaLista));
+check('e as categorias', /productCategories: \(data\.productCategories \|\| \[\]\)/.test(respostaDaLista));
+// E os DOIS caminhos passam por ela -- senao um deles devolveria uma Busca
+// Avancada sem os selects, e so quem filtrasse notaria.
+const chamadas = (rota.match(/montarRespostaDeVendas\(\{/g) || []).length;
+check('e os dois caminhos da busca passam por ela', chamadas === 2, `${chamadas} chamada(s)`);
 
 console.log('\n--- campo sem dado por trás não finge que filtra ---');
 // Habilitado sobre dado que ninguém consegue preencher devolveria "nenhum

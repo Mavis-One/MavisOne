@@ -9,6 +9,7 @@ const crypto = require('crypto');
 // Quantas vezes da' para errar a senha. Regra pura, em modulo proprio, para o
 // teste nao precisar de servidor nem de esperar o relogio.
 const limiteTentativas = require('./lib/limite-tentativas');
+const versaoEstatica = require('./lib/versao-dos-estaticos');
 const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
@@ -1787,6 +1788,57 @@ async function syncSalesDataResumida(data) {
 // (Financeiro) e a checagem de produto-em-uso (Estoque) continuarem lendo
 // data.purchases normalmente. Escrita (criar/mudar status) usa
 // db.createPurchase/updatePurchase direto nas rotas de Compras.
+/**
+ * A LISTA DE VENDAS EM DOIS PASSOS — só a página sai do banco (fase DE).
+ *
+ * `syncSalesData` traz `select *` dos 14.864 pedidos e 78 orçamentos: 27,3 MB
+ * de linhas atravessando o driver e virando objeto JavaScript, para a tela
+ * mostrar 15. Aqui vem primeiro só `id, code, date` de cada registro — o
+ * bastante para decidir QUAIS 15 — e depois os 15 inteiros, por id.
+ *
+ *   select * das duas tabelas ..... 366 ms
+ *   chaves + a página .............. 21 ms   <- 17,5x
+ *
+ * É exatamente a mesma ordem da lista completa: quem ordena é
+ * `ordenarSalesRecords(x, '', 'desc')`, a mesma função e a mesma chamada do
+ * outro caminho, e ela só lê `code`, `date` e `id` — que é o que as chaves têm.
+ *
+ * SÓ SERVE A BUSCA SEM FILTRO, e quem decide isso é `buscaDeVendasSemFiltro`,
+ * ANTES da onda de sincronização. Filtrar exige os campos de todos os
+ * registros, e aí não há como não trazê-los.
+ *
+ * `data.orders` E `data.quotes` FICAM COM A PÁGINA, E NÃO COM TUDO — é a parte
+ * perigosa desta função, e por isso está escrita aqui: qualquer código que leia
+ * `data.orders.length` depois disto lê 15, não 14.864. É por isso que as
+ * contagens dos quatro cartões passaram a ser PASSADAS para
+ * `montarRespostaDeVendas` em vez de tiradas de `data` lá dentro, e por isso
+ * esta função devolve os totais em vez de deixá-los implícitos.
+ */
+async function syncSalesDataDaPagina(data, { page, limit }) {
+  const chaves = await db.getChavesDeOrdenacao();
+  const todas = [
+    ...chaves.orders.map((r) => ({ ...r, __de: 'orders' })),
+    ...chaves.quotes.map((r) => ({ ...r, __de: 'quotes' }))
+  ];
+  const ordenadas = ordenarSalesRecords(todas, '', 'desc');
+  const start = (page - 1) * limit;
+  const daPagina = ordenadas.slice(start, start + limit);
+
+  const cheios = await db.getVendasPorIds({
+    orders: daPagina.filter((r) => r.__de === 'orders').map((r) => r.id),
+    quotes: daPagina.filter((r) => r.__de === 'quotes').map((r) => r.id)
+  });
+  // Devolvidos NA ORDEM da página: `where id = any(...)` não promete ordem
+  // nenhuma, e a lista sairia embaralhada dentro da própria página.
+  const porId = new Map([...cheios.orders, ...cheios.quotes].map((r) => [r.id, r]));
+  data.orders = cheios.orders;
+  data.quotes = cheios.quotes;
+  return {
+    registros: daPagina.map((r) => porId.get(r.id)).filter(Boolean),
+    totais: { orders: chaves.orders.length, quotes: chaves.quotes.length }
+  };
+}
+
 async function syncPurchasesData(data) {
   data.purchases = await db.getPurchases();
 }
@@ -2514,7 +2566,7 @@ function serializeSalesRecord(record, data) {
   return {
     id: record.id,
     type: record.type,
-    code: record.code || String(record.id).slice(-6),
+    code: codigoDoRegistro(record),
     date: record.date,
     dueDate: record.dueDate || '',
     clientSupplierId: record.clientSupplierId || '',
@@ -2627,6 +2679,156 @@ const CAMPOS_DE_DATA = {
 // comparar o nome do cliente. E mesmo assim os campos que a Busca Avançada
 // precisa — número da NF-e, transportadora, data de faturamento — só existem
 // depois de serializar. Serializar uma vez antes de filtrar resolve os dois.
+/**
+ * O CÓDIGO EFETIVO DE UM PEDIDO/ORÇAMENTO — num lugar só.
+ *
+ * Registro sem `code` ganha um do próprio id, e isso NÃO é detalhe de exibição:
+ * a ordem padrão da lista de Vendas é por código decrescente. Enquanto a conta
+ * morava dentro de `serializeSalesRecord`, ordenar o registro CRU e ordenar o
+ * SERIALIZADO davam listas diferentes — para o cru, `Number('') || 0` põe o
+ * registro no fim; para o serializado, o sufixo do id pode virar número e
+ * pô-lo em qualquer lugar.
+ *
+ * São 6 pedidos sem código nesta base (de 14.864) e 0 orçamentos — quantidade
+ * que faria o defeito passar despercebido numa conferência por amostra. Com a
+ * conta aqui, `ordenarSalesRecords` chama a mesma função nos dois casos e as
+ * duas ordens são iguais POR CONSTRUÇÃO, e não por sorte com os dados de hoje.
+ *
+ * É idempotente de propósito: aplicada a um registro já serializado, devolve o
+ * mesmo código, porque `code` já está preenchido e `id` foi preservado.
+ */
+/**
+ * ESTA BUSCA NÃO FILTRA NADA? — e por que a pergunta é feita ao contrário.
+ *
+ * A lista de Vendas serializa os 14.942 registros para devolver 15, e o
+ * comentário da rota explica por quê: a Busca Avançada filtra por campos que só
+ * existem depois de serializar (o número da NF-e, a transportadora, a data de
+ * faturamento). Ordenar antes poria empresa e vendedor em ordem de id.
+ *
+ * Só que quando NINGUÉM filtrou e ninguém clicou num cabeçalho — que é abrir a
+ * tela e virar página, o caminho de longe mais andado — nada disso é preciso:
+ * a ordem é a padrão (código decrescente, que sai do registro cru), e só os 15
+ * da página precisam virar objeto de tela.
+ *
+ * A PERGUNTA É "SÓ SOBROU PARÂMETRO INERTE?", E NÃO "ALGUM DOS 18 FILTROS ESTÁ
+ * PREENCHIDO?". As duas dão a mesma resposta hoje; elas diferem no dia em que
+ * alguém acrescentar o 19º filtro. Com a lista dos filtros, o filtro novo NÃO
+ * estaria nela, a busca cairia no caminho rápido e o filtro seria IGNORADO em
+ * silêncio — a tela mostraria a lista inteira como se nada tivesse sido pedido.
+ * Com a lista dos inertes, o parâmetro novo não está nela, a busca cai no
+ * caminho lento, e o pior que acontece é ficar tão lenta quanto era antes.
+ *
+ * Errar para o lado de trabalhar demais, e nunca para o lado de responder
+ * errado.
+ *
+ * `sort` mora na lista mas é conferido à parte: a chave pode vir vazia (a tela
+ * a manda assim), e preenchida ela ordena por campo que só o serializado tem.
+ */
+const PARAMETROS_QUE_NAO_FILTRAM = new Set(['view', 'page', 'limit', 'sort', 'dir', 'meta']);
+
+function buscaDeVendasSemFiltro(searchParams) {
+  if (String(searchParams.get('sort') || '').trim()) return false;
+  for (const [chave, valor] of searchParams) {
+    if (!String(valor === null || valor === undefined ? '' : valor).trim()) continue;
+    if (!PARAMETROS_QUE_NAO_FILTRAM.has(chave)) return false;
+  }
+  return true;
+}
+
+/**
+ * O CORPO DA RESPOSTA DA LISTA DE VENDAS — um só, para os dois caminhos.
+ *
+ * A rota tem um caminho rápido (sem filtro) e um completo, e os dois devolvem
+ * exatamente a mesma forma. Escrito duas vezes, o dia em que um campo mudasse
+ * num lado e não no outro daria uma tela que funciona até alguém filtrar.
+ */
+function montarRespostaDeVendas({ records, total, page, limit, contagens, data, url }) {
+  // `meta=0`: QUEM JÁ TEM AS LISTAS DO FILTRO NÃO AS RECEBE DE NOVO (fase DE).
+  //
+  // O `meta` só alimenta os selects da Busca Avançada — cliente, empresa,
+  // vendedor, transportadora, categoria. Nenhum deles muda porque alguém
+  // virou a página, e ia junto de TODA resposta:
+  //
+  //     meta .......  435 KB   (429 são as 6.492 pessoas do diretório)
+  //     records .....  35 KB   <- a página de 15 registros que a tela pede
+  //
+  // Doze vezes o dado pedido, a cada paginação, a cada ordenação, a cada
+  // mudança de filtro. Quem pede `meta=0` é a tela que já desenhou os
+  // selects e os guardou (ver salesMetaEmCache, em public/app.js); ela
+  // reaproveita por um minuto e depois pergunta de novo, para cadastro
+  // novo aparecer no filtro sem precisar recarregar a página.
+  //
+  // A CHAVE SOME DA RESPOSTA, em vez de vir vazia: a tela tem de distinguir
+  // "você já tem" de "não há nenhum cliente cadastrado". Vinda vazia, o
+  // primeiro caso apagaria os selects do segundo.
+  const querMeta = url.searchParams.get('meta') !== '0';
+
+  return {
+    records,
+    total,
+    page,
+    limit,
+    // CONTAGEM, E NAO AS LISTAS (fase CI).
+    //
+    // Aqui iam `orders: data.orders` e `quotes: data.quotes` inteiros, ao
+    // lado de uma pagina de 15 registros. A tela usa os quatro para UMA
+    // COISA SO': o numero dentro de quatro cartoes de contagem. Medido no
+    // navegador depois da importacao do historico do ViperERP:
+    //
+    //     orders ....... 27.772 KB   (14.864 itens)
+    //     meta .........  1.482 KB
+    //     quotes .......    137 KB   (78 itens)
+    //     records ......     35 KB   (15 itens)  <- a pagina que a tela usa
+    //     -------------------------------------
+    //     resposta .....  29.426 KB   ·   6,2 s so para buscar
+    //
+    // 99,9% do peso existia para a tela imprimir "14864" num cartao. Com uma
+    // duzia de pedidos ninguem nota; com 14.864 a lista de Vendas levava 17
+    // segundos para abrir em localhost, e numa rede de verdade nao abriria.
+    //
+    // As outras views desta rota (`nfes`, `import_logs`) tem resposta propria
+    // e continuam entregando a lista — quem precisa dela pede por lá.
+    // AS CONTAGENS CHEGAM PRONTAS, e não saem de `data` aqui dentro (fase DE).
+    //
+    // No caminho da página, `data.orders` tem 15 registros — são os 15 que a
+    // tela mostra. Contar `data.orders.length` aqui escreveria "15 pedidos" no
+    // cartão em vez de "14.864", e nada quebraria para avisar: o número
+    // simplesmente estaria errado. Quem sabe o total é quem carregou, então é
+    // quem informa. Ver syncSalesDataDaPagina.
+    contagens,
+    meta: !querMeta ? undefined : {
+      companies: data.companies,
+      sellers: getSellersDirectory(data),
+      deposits: data.deposits,
+      // SÓ id E name (fase CJ). O diretório completo carrega dez campos por
+      // pessoa — documento, endereço, cidade, CEP, inscrição estadual —
+      // porque o FORMULÁRIO do pedido precisa deles para preencher entrega e
+      // nota. Esta lista aqui não é o formulário: é o <option> do filtro
+      // "Cliente/Fornecedor" da Busca Avançada, que usa o id no value e o
+      // nome no texto. Mais nada.
+      //
+      // Medido: 1.476 KB com os dez campos, para 6.492 pessoas — em TODA
+      // página da lista, inclusive quando ninguém abre a Busca Avançada.
+      // Era 97% da resposta de uma rota que devolve 15 registros.
+      //
+      // O corte é aqui, e não em getCadastroDirectory: a mesma função serve
+      // o formulário de pedido (/api/sales/meta), e lá os dez campos são o
+      // motivo de ela existir.
+      directory: getCadastroDirectory(data).map((c) => ({ id: c.id, name: c.name })),
+      // Transportadora e Categoria viram select na Busca Avançada, e as
+      // duas listas vêm do Cadastro. Digitadas à mão virariam "Revenda",
+      // "revenda" e "Revensa" como se fossem coisas diferentes, e aí
+      // nenhum filtro por categoria fecha.
+      carriers: getCarriersDirectory(data),
+      productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo')
+    }
+  };
+}
+
+function codigoDoRegistro(record) {
+  return (record && record.code) || String((record && record.id) || '').slice(-6);
+}
+
 function filterSalesRecords(registros, query) {
   let result = registros.slice();
   const texto = (v) => String(v === null || v === undefined ? '' : v).trim().toLowerCase();
@@ -4170,28 +4372,63 @@ const CONTENT_TYPES = {
 // formatos comprimidos. Só texto entra.
 const EXTENSOES_COMPRIMIVEIS = new Set(['.html', '.css', '.js', '.json', '.svg']);
 
-function serveStatic(res, filePath, req) {
+/**
+ * UM ANO DE VALIDADE, e por que isso não serve arquivo velho.
+ *
+ * Só sai para quem pediu a URL COM o carimbo certo (`?v=<hash do conteúdo>`).
+ * Mudou o arquivo, mudou o hash, mudou o endereço — o navegador não tem o
+ * endereço novo guardado e baixa. A versão velha continua no cache dele, numa
+ * URL que ninguém mais pede. O raciocínio inteiro está em
+ * lib/versao-dos-estaticos.js.
+ */
+const CACHE_IMUTAVEL = 'public, max-age=31536000, immutable';
+
+/**
+ * @param {object} [opcoes]
+ * @param {(conteudo: Buffer) => (Buffer|string)} [opcoes.transformar] muda o
+ *   conteúdo ANTES do ETag e do gzip — é o que carimba os `<script src>` do
+ *   index.html. O ETag tem de ser do que sai, e não do que está no disco:
+ *   senão um deploy que muda só um módulo deixaria o index.html respondendo
+ *   304 com os endereços antigos dentro.
+ */
+function serveStatic(res, filePath, req, opcoes = {}) {
   const ext = path.extname(filePath).toLowerCase();
 
-  fs.readFile(filePath, (err, content) => {
+  fs.readFile(filePath, (err, bruto) => {
     if (err) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Arquivo não encontrado');
       return;
     }
 
+    let content = bruto;
+    if (typeof opcoes.transformar === 'function') {
+      const saida = opcoes.transformar(bruto);
+      content = Buffer.isBuffer(saida) ? saida : Buffer.from(String(saida), 'utf8');
+    }
+
     // ETag do conteúdo, não do mtime: `git checkout` mexe na data sem mudar o
     // arquivo, e um deploy que só recopia tudo invalidaria o cache inteiro à toa.
     const etag = `"${crypto.createHash('sha1').update(content).digest('base64url')}"`;
 
-    // `no-cache` NÃO é "não guarde" — é "guarde, mas confirme antes de usar".
-    // Aqui estava `no-store`, que proibia guardar: cada abertura do sistema
-    // rebaixava ~1,2 MB em 107 arquivos. Com revalidação, o navegador continua
-    // nunca servindo versão velha (a razão do no-store original), só que o
-    // arquivo inalterado custa um 304 sem corpo em vez do download inteiro.
+    // COM CARIMBO CONFERIDO, um ano; sem ele, `no-cache`.
+    //
+    // `no-cache` NÃO é "não guarde" — é "guarde, mas confirme antes de usar", e
+    // a confirmação é uma requisição. Eram 144 delas por abertura do sistema
+    // (os 142 `<script>` do index.html, o CSS e o logo): 24 ondas de HTTP/1.1
+    // em fila, ~1,2 s só de ida e volta num VPS a 50 ms de ping, antes de a
+    // primeira tela pedir o primeiro dado. Com o carimbo, sobra UMA: o próprio
+    // index.html.
+    //
+    // A conferência do `v` importa: endereço com hash velho — aba aberta há
+    // dias, link guardado — recebe o conteúdo de hoje com `no-cache`, e não um
+    // ano de validade gravado sobre um endereço que já não corresponde.
+    const pedido = req && req.url && req.url.indexOf('?') >= 0
+      ? new URLSearchParams(req.url.slice(req.url.indexOf('?') + 1)).get('v')
+      : '';
     const headersBase = {
       'Content-Type': CONTENT_TYPES[ext] || 'application/octet-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': versaoEstatica.versaoConfere(filePath, pedido) ? CACHE_IMUTAVEL : 'no-cache',
       ETag: etag
     };
 
@@ -5899,13 +6136,43 @@ const CAMPOS_ORDENAVEIS = {
   saleOrigin: (r) => String(r.saleOrigin || '').toLowerCase()
 };
 
+/**
+ * O ÚLTIMO CRITÉRIO DE DESEMPATE — e por que ele precisou existir (fase DE).
+ *
+ * `Array.prototype.sort` é ESTÁVEL: registros que empatam em todos os critérios
+ * ficam na ordem em que entraram. Enquanto a lista sempre entrava do mesmo
+ * jeito, isso bastava; e ela entrava do mesmo jeito por acaso, porque
+ * `getOrders()` tinha um `order by code desc` que ninguém pedira para a ordem
+ * da TELA — era só como a consulta estava escrita.
+ *
+ * O carregamento por página (syncSalesDataDaPagina) lê as chaves SEM `order by`,
+ * porque a ordem é decidida aqui. Aí os empates entraram noutra ordem, e a
+ * página 996 saiu diferente da mesma página pelo caminho completo. Medido: 11
+ * de 12 páginas idênticas, e a décima segunda — justamente a do fim da lista,
+ * onde caem os 6 pedidos sem código — diferente.
+ *
+ * O `id` fecha isso: não há dois registros com o mesmo, então a ordem passa a
+ * ser TOTAL e não depende mais de como a lista chegou.
+ *
+ * Isso não é só conserto do caminho novo. Duas linhas empatadas trocavam de
+ * lugar conforme o que o Postgres devolvesse primeiro — o "ordenei e a lista
+ * mudou sozinha" que o comentário do desempate por código já temia, uma camada
+ * abaixo.
+ */
+function desempateFinal(a, b) {
+  return String((b && b.id) || '').localeCompare(String((a && a.id) || ''));
+}
+
 function ordenarSalesRecords(registros, campo, direcao) {
   const ler = CAMPOS_ORDENAVEIS[campo];
   // Sem campo válido, a ordem histórica: código decrescente, que é "o mais
   // recente primeiro" para quem cria pedido em sequência.
   if (!ler) {
-    return registros.sort((a, b) => (Number(b.code) || 0) - (Number(a.code) || 0)
-      || String(b.date || '').localeCompare(String(a.date || '')));
+    // `codigoDoRegistro` e nao `b.code` cru: e' o que faz esta ordem ser a
+    // mesma para o registro cru e para o serializado. Ver o cabecalho dela.
+    return registros.sort((a, b) => (Number(codigoDoRegistro(b)) || 0) - (Number(codigoDoRegistro(a)) || 0)
+      || String(b.date || '').localeCompare(String(a.date || ''))
+      || desempateFinal(a, b));
   }
   const sinal = direcao === 'asc' ? 1 : -1;
   return registros.sort((a, b) => {
@@ -5915,7 +6182,8 @@ function ordenarSalesRecords(registros, campo, direcao) {
     if (x > y) return 1 * sinal;
     // Desempate estável pelo código: sem isto, duas linhas com a mesma data
     // trocam de lugar a cada recarga e parecem bug de paginação.
-    return (Number(b.code) || 0) - (Number(a.code) || 0);
+    return (Number(codigoDoRegistro(b)) || 0) - (Number(codigoDoRegistro(a)) || 0)
+      || desempateFinal(a, b);
   });
 }
 
@@ -6278,14 +6546,46 @@ async function sincronizarRazao(data) {
   return data;
 }
 
+/**
+ * O CONTEXTO DE ESTOQUE — numa onda só, e com o recorte da reserva (fase DE).
+ *
+ * Eram QUATRO IDAS AO BANCO EM FILA, e as quatro são independentes: cada uma
+ * escreve em chaves distintas de `data` (ou nem toca em `data`) e nenhuma lê o
+ * resultado da outra. Em sequência, a rota pagava a soma; em paralelo, paga a
+ * mais lenta. Medido neste banco:
+ *
+ *   syncCadastroData ..... 110 ms   (6.492 pessoas)
+ *   sincronizarRazão ....... 1 ms
+ *   os pedidos da reserva . 106 ms  (era 321 ms com `select *` — ver abaixo)
+ *   getProducts ........... 35 ms   (5.475 produtos)
+ *   ----------------------------
+ *   em fila ............... 252 ms
+ *   numa onda ............. 110 ms
+ *
+ * E A RESERVA DEIXOU DE LER `select *`. `db.getOrders()` trazia as ~60 colunas
+ * dos 14.864 pedidos para `calcularReservas` usar QUATRO campos (id, code,
+ * status, items) — 321 ms contra 106 ms do recorte, 3,0x. O porquê de cada
+ * coluna do recorte está em `getOrdersParaReservas`, em lib/db/vendas-compras.js.
+ *
+ * Isto vale para TODA tela de Estoque: a lista de produtos, o Gestor de Preços e
+ * o Status do Produto passam por aqui. A lista levava 679 ms.
+ *
+ * O `try` continua envolvendo SÓ a reserva, e não a onda inteira: falha ao ler
+ * pedido deixa as colunas de reserva em branco (null, não zero) e a tela abre;
+ * falha ao ler produto ou cadastro é outra história, e essa tem de subir.
+ */
 async function loadStockContext({ comReservas = false } = {}) {
   const data = loadData();
-  await syncCadastroData(data);
-  await sincronizarRazao(data);
+  const [, , pedidosDaReserva, todos] = await Promise.all([
+    syncCadastroData(data),
+    sincronizarRazao(data),
+    comReservas ? db.getOrdersParaReservas().catch(() => null) : null,
+    db.getProducts({ incluirEscriturais: true })
+  ]);
   let reservas = null;
-  if (comReservas) {
+  if (comReservas && pedidosDaReserva) {
     try {
-      reservas = reservasLib.calcularReservas(await db.getOrders());
+      reservas = reservasLib.calcularReservas(pedidosDaReserva);
     } catch (erroReservas) {
       // Falha ao ler pedidos não pode derrubar a tela de Estoque: sem reservas
       // as colunas saem em branco (null, não zero), e o saldo continua certo.
@@ -6297,7 +6597,6 @@ async function loadStockContext({ comReservas = false } = {}) {
   //   productsById — o que se RESOLVE por id, completo.
   // Filtrar o índice junto faria qualquer registro histórico que apontasse
   // para um escritural responder "produto não encontrado".
-  const todos = await db.getProducts({ incluirEscriturais: true });
   return {
     data,
     reservas,
@@ -7999,11 +8298,33 @@ async function tratarRequisicao(req, res) {
     // Uma ONDA so de ida ao banco, e nao 5 em fila. Cada consulta ao Supabase
     // custa ~300ms de rede (medido), e estes syncs sao independentes: cada um
     // escreve em chaves diferentes de `data` e nenhum le o do outro.
+    //
+    // O RECORTE RESUMIDO, E NAO `select *` (fase DE). Este helper serve tres
+    // rotas — o Relatorio Geral e as duas exportacoes — e NENHUMA delas mostra
+    // pedido: saem dali soma por vendedor, serie por periodo e contagem.
+    // `buildSalesDashboardSummary` e `buildSalesChartSeries` leem `amount`,
+    // `status`, `date`, `sellerId` e o nome do cliente; e' exatamente o recorte
+    // de `getOrdersResumidos`. Medido neste banco:
+    //
+    //   syncSalesData (select *) ..... 321 ms   <- era o tempo da rota inteira,
+    //   syncSalesDataResumida ......... 96 ms      porque os cinco correm juntos
+    //                                             e este era o mais lento
+    //
+    // As duas exportacoes pagam os 96 ms sem usar pedido nenhum (elas leem so
+    // `serieFinanceiro` e `produtosComSaldo`). Deixei assim de proposito: pular
+    // vendas para elas faria `data.orders` chegar VAZIO a quem passasse por
+    // aqui depois, e colecão vazia por decisao de outra rota e' o tipo de
+    // engano que nao levanta erro — e' o que scripts/test-sync-obrigatorio.js
+    // existe para pegar.
+    //
+    // `importLogs` DEIXOU DE VIR (o recorte resumido nao o traz), e por isso ele
+    // saiu tambem da lista de POPULA daquele guarda. Nenhuma das tres rotas o
+    // le; se alguma passar a ler, o guarda reclama em vez de a tela mostrar zero.
     await Promise.all([
       syncNfeData(data),
       syncPurchasesData(data),
       syncCadastroData(data),
-      syncSalesData(data),
+      syncSalesDataResumida(data),
       syncFinanceData(data)
     ]);
     const products = await db.getProducts();
@@ -8331,7 +8652,9 @@ async function tratarRequisicao(req, res) {
     // a conta por linha de item, e um Map não atravessa JSON.
     let reservas = {};
     try {
-      const calculadas = reservasLib.calcularReservas(await db.getOrders());
+      // Recorte da fase DE: quatro colunas em vez das ~60. Ver
+      // getOrdersParaReservas — as reservas leem id, code, status e items.
+      const calculadas = reservasLib.calcularReservas(await db.getOrdersParaReservas());
       reservas = Object.fromEntries(calculadas.porChave);
     } catch (erroReservas) {
       // Sem reservas a tela cai no comportamento antigo (saldo físico) em vez
@@ -8527,22 +8850,68 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/sales/records' && req.method === 'GET') {
     const data = loadData();
+    const view = url.searchParams.get('view') || 'orders_quotes';
+
+    // A DECISÃO VEM ANTES DA ONDA, e é o que faz o caminho rápido valer alguma
+    // coisa (fase DE). Decidida depois, a rota já teria pago os `select *` que
+    // ela existe para evitar — foi assim na primeira versão disto, e o ganho
+    // medido ficou em 6%: economizava a serialização (34 ms) e mantinha a
+    // carga (366 ms). Com a decisão aqui em cima, são 17,5x na carga.
+    const { page, limit } = parsePageParams(url.searchParams, 15);
+    const listaSemFiltro = view === 'orders_quotes' && buscaDeVendasSemFiltro(url.searchParams);
+
     // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
     // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
     // Em sequencia, a rota pagava 3x essa latencia por nada.
-    await Promise.all([
+    const [, pagina] = await Promise.all([
       syncCadastroData(data),
-      syncSalesData(data),
-      syncNfeData(data)
-    ]);
+      listaSemFiltro ? syncSalesDataDaPagina(data, { page, limit }) : syncSalesData(data),
+      syncNfeData(data),
+      // A CONTAGEM é pedida só no caminho da página, e só porque lá a lista de
+      // importações não é carregada. No caminho completo `data.importLogs` já
+      // veio com o sync, e uma consulta a mais seria desperdício.
+      listaSemFiltro ? db.contarImportLogs().catch(() => 0) : null
+    ]).then(([a, b, c, d]) => [a, listaSemFiltro ? { ...b, importLogs: d } : null]);
+
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    const view = url.searchParams.get('view') || 'orders_quotes';
     if (view === 'orders_quotes') {
+      const start = (page - 1) * limit;
+
+      // O CAMINHO DE QUEM SÓ ABRIU A TELA E VIROU PÁGINA (fase DE).
+      //
+      // Sem filtro e sem ordenação escolhida, ORDENA -> FATIA -> SERIALIZA: a
+      // ordem padrão sai do registro cru (código decrescente, ver
+      // `codigoDoRegistro`) e só os 15 da página precisam virar objeto de tela.
+      // Antes, 14.942 registros eram serializados — cada um resolvendo cliente,
+      // empresa, vendedor e depósito no cadastro — para 15 serem mostrados.
+      //
+      // Quando a pessoa filtra ou ordena, cai no caminho de baixo, que continua
+      // exatamente como era. Quem decide é `buscaDeVendasSemFiltro`, e o
+      // cabeçalho dela explica por que a pergunta é feita pelos parâmetros
+      // INERTES e não pelos filtros.
+    if (listaSemFiltro) {
+        return sendJson(res, montarRespostaDeVendas({
+          records: pagina.registros.map((r) => serializeSalesRecord(r, data)),
+          total: pagina.totais.orders + pagina.totais.quotes,
+          page,
+          limit,
+          contagens: {
+            orders: pagina.totais.orders,
+            quotes: pagina.totais.quotes,
+            nfes: (data.nfes || []).length,
+            importLogs: pagina.importLogs
+          },
+          data,
+          url
+        }));
+      }
+
       const combined = [...data.orders, ...data.quotes];
+
       // SERIALIZA -> FILTRA -> ORDENA -> FATIA, nesta ordem.
       //
       // Serializar primeiro porque a Busca Avançada filtra por campos que só
@@ -8553,72 +8922,25 @@ async function tratarRequisicao(req, res) {
       // mudou só um pedaço da lista".
       const serializados = combined.map((record) => serializeSalesRecord(record, data));
       const filtered = filterSalesRecords(serializados, url.searchParams);
-      const { page, limit } = parsePageParams(url.searchParams, 15);
       const ordenados = ordenarSalesRecords(
         filtered,
         url.searchParams.get('sort') || '',
         url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
       );
-      const start = (page - 1) * limit;
-      const records = ordenados.slice(start, start + limit);
-      return sendJson(res, {
-        records,
+      return sendJson(res, montarRespostaDeVendas({
+        records: ordenados.slice(start, start + limit),
         total: filtered.length,
         page,
         limit,
-        // CONTAGEM, E NAO AS LISTAS (fase CI).
-        //
-        // Aqui iam `orders: data.orders` e `quotes: data.quotes` inteiros, ao
-        // lado de uma pagina de 15 registros. A tela usa os quatro para UMA
-        // COISA SO': o numero dentro de quatro cartoes de contagem. Medido no
-        // navegador depois da importacao do historico do ViperERP:
-        //
-        //     orders ....... 27.772 KB   (14.864 itens)
-        //     meta .........  1.482 KB
-        //     quotes .......    137 KB   (78 itens)
-        //     records ......     35 KB   (15 itens)  <- a pagina que a tela usa
-        //     -------------------------------------
-        //     resposta .....  29.426 KB   ·   6,2 s so para buscar
-        //
-        // 99,9% do peso existia para a tela imprimir "14864" num cartao. Com uma
-        // duzia de pedidos ninguem nota; com 14.864 a lista de Vendas levava 17
-        // segundos para abrir em localhost, e numa rede de verdade nao abriria.
-        //
-        // As outras views desta rota (`nfes`, `import_logs`) tem resposta propria
-        // e continuam entregando a lista — quem precisa dela pede por lá.
         contagens: {
           orders: (data.orders || []).length,
           quotes: (data.quotes || []).length,
           nfes: (data.nfes || []).length,
           importLogs: (data.importLogs || []).length
         },
-        meta: {
-          companies: data.companies,
-          sellers: getSellersDirectory(data),
-          deposits: data.deposits,
-          // SÓ id E name (fase CJ). O diretório completo carrega dez campos por
-          // pessoa — documento, endereço, cidade, CEP, inscrição estadual —
-          // porque o FORMULÁRIO do pedido precisa deles para preencher entrega e
-          // nota. Esta lista aqui não é o formulário: é o <option> do filtro
-          // "Cliente/Fornecedor" da Busca Avançada, que usa o id no value e o
-          // nome no texto. Mais nada.
-          //
-          // Medido: 1.476 KB com os dez campos, para 6.492 pessoas — em TODA
-          // página da lista, inclusive quando ninguém abre a Busca Avançada.
-          // Era 97% da resposta de uma rota que devolve 15 registros.
-          //
-          // O corte é aqui, e não em getCadastroDirectory: a mesma função serve
-          // o formulário de pedido (/api/sales/meta), e lá os dez campos são o
-          // motivo de ela existir.
-          directory: getCadastroDirectory(data).map((c) => ({ id: c.id, name: c.name })),
-          // Transportadora e Categoria viram select na Busca Avançada, e as
-          // duas listas vêm do Cadastro. Digitadas à mão virariam "Revenda",
-          // "revenda" e "Revensa" como se fossem coisas diferentes, e aí
-          // nenhum filtro por categoria fecha.
-          carriers: getCarriersDirectory(data),
-          productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo')
-        }
-      });
+        data,
+        url
+      }));
     }
     if (view === 'nfes') {
       return sendJson(res, { nfes: data.nfes });
@@ -15896,7 +16218,12 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname === '/' || pathname === '/index.html') {
-    serveStatic(res, path.join(PUBLIC_DIR, 'index.html'), req);
+    // O ÚNICO arquivo que continua sendo confirmado a cada abertura — e é ele
+    // que carrega os endereços carimbados de todos os outros. Ver
+    // lib/versao-dos-estaticos.js.
+    serveStatic(res, path.join(PUBLIC_DIR, 'index.html'), req, {
+      transformar: (html) => versaoEstatica.carimbarHtml(html.toString('utf8'), PUBLIC_DIR)
+    });
     return;
   }
 

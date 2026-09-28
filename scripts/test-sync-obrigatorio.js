@@ -116,7 +116,10 @@ const POPULA = {
   // passar.
   baseDosRelatoriosGerais: [
     'people', 'cnpjs', 'deposits',
-    'orders', 'quotes', 'importLogs',
+    // Fase DE: o recorte resumido (`syncSalesDataResumida`), e nao `select *`.
+    // `importLogs` saiu junto porque aquele recorte nao o traz — e nenhuma das
+    // tres rotas que usam este helper o le.
+    'orders', 'quotes',
     'purchases',
     'nfes', 'nfe',
     'finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'

@@ -636,6 +636,18 @@ async function api(path, options = {}) {
   // não é GET mudou alguma coisa — não precisa saber o quê.
   if (options.method && options.method.toUpperCase() !== 'GET') {
     atencaoBuscadaEm = 0;
+    // E MEXEU NO CADASTRO, AS LISTAS DO FILTRO DE VENDAS ENVELHECERAM JUNTO.
+    //
+    // Mesmo lugar e mesmo motivo do sino: quem cadastra um cliente e vai
+    // filtrar por ele não deveria esperar o minuto de validade passar. Aqui
+    // é mais estreito de propósito — só escrita em /api/cadastros/ — porque
+    // salvar um PEDIDO não muda a lista de clientes, e jogar fora 435 KB a
+    // cada pedido salvo desfaria o que o cache existe para fazer.
+    //
+    // Fica aqui, e não nas sete telas que gravam cadastro (Pessoas, CNPJs, os
+    // atalhos, a entrada de NF-e): `api` é o único caminho até o servidor, e
+    // cada um dos outros lugares seria mais um para alguém esquecer.
+    if (String(path).startsWith('/api/cadastros/')) esquecerSalesMeta();
   }
   return data;
 }
@@ -1028,6 +1040,35 @@ let ultimoPainelAtencao = null;
 const ATENCAO_VALIDADE_MS = 60000;
 let atencaoBuscadaEm = 0;
 let atencaoEmVoo = null;
+
+/**
+ * AS LISTAS DOS FILTROS DE VENDAS, guardadas por um minuto.
+ *
+ * Mesma ideia do sino logo acima, e pelo mesmo motivo medido: o `meta` da rota
+ * /api/sales/records alimenta os selects da Busca Avançada — cliente, empresa,
+ * vendedor, transportadora, categoria — e vinha junto de TODA resposta.
+ *
+ *     meta .......  435 KB   (429 são as 6.492 pessoas do diretório)
+ *     records .....  35 KB   <- a página de 15 registros que a tela pediu
+ *
+ * Doze vezes o dado pedido, a cada vez que alguém vira a página, clica num
+ * cabeçalho para ordenar ou mexe num filtro. E essas listas não mudam porque
+ * a pessoa virou a página.
+ *
+ * UM MINUTO, e não "enquanto a tela estiver aberta": cadastro feito agora tem
+ * de aparecer no filtro sem obrigar ninguém a recarregar o sistema. É o mesmo
+ * tempo do sino, pela mesma razão — curto o bastante para ninguém notar, longo
+ * o bastante para cobrir uma sessão de paginar e filtrar.
+ */
+const SALES_META_VALIDADE_MS = 60000;
+let salesMetaEmCache = null;
+let salesMetaBuscadaEm = 0;
+
+/** Esquece as listas do filtro: cadastro novo tem de aparecer na próxima busca. */
+function esquecerSalesMeta() {
+  salesMetaEmCache = null;
+  salesMetaBuscadaEm = 0;
+}
 
 const SEVERIDADE_ROTULO = { alta: 'Crítico', media: 'Atenção', baixa: 'Observar' };
 
@@ -2507,10 +2548,22 @@ async function loadModule(moduleName) {
         if (sort) { params.set('sort', sort); params.set('dir', dir); }
         salesEscreverUrl(filters, { page, limit, sort, dir });
 
+        // Só pede as listas do filtro quando não as tem frescas. Ver
+        // SALES_META_VALIDADE_MS: são 435 KB que não mudam entre uma página e
+        // outra. `meta=0` só sai com o cache NA MÃO — pedir para omitir sem ter
+        // o que reaproveitar desenharia a Busca Avançada com os selects vazios.
+        const metaFresca = salesMetaEmCache
+          && (Date.now() - salesMetaBuscadaEm) < SALES_META_VALIDADE_MS;
+        if (metaFresca) params.set('meta', '0');
+
         const data = await api(`/api/sales/records?${params.toString()}`);
         const records = data.records || [];
         const totalPages = Math.max(1, Math.ceil((data.total || 0) / limit));
-        const meta = data.meta || { companies: [], sellers: [], deposits: [], directory: [], carriers: [], productCategories: [] };
+        if (data.meta) {
+          salesMetaEmCache = data.meta;
+          salesMetaBuscadaEm = Date.now();
+        }
+        const meta = salesMetaEmCache || { companies: [], sellers: [], deposits: [], directory: [], carriers: [], productCategories: [] };
 
         content.innerHTML = `
           <div class="finance-stat-cards">

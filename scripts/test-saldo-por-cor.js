@@ -87,9 +87,22 @@ const posSync = transicao.indexOf('await sincronizarRazao(data)');
 const posProjecao = transicao.indexOf('stockCore.classValueBalance(');
 check('  e carrega ANTES da projeção, não depois',
   posSync >= 0 && posProjecao >= 0 && posSync < posProjecao);
-// loadStockContext continua sendo a porta do módulo Estoque; o que mudou é que
-// ela passa pela mesma função, para não haver duas verdades sobre o razão.
-check('loadStockContext usa a mesma função', /await sincronizarRazao\(data\);/.test(corpoDe('loadStockContext')));
+// loadStockContext continua sendo a porta do modulo Estoque; o que mudou e que
+// ela passa pela mesma funcao, para nao haver duas verdades sobre o razao.
+//
+// SEM `await` NA FRENTE desde a fase DE: as quatro cargas do contexto de
+// Estoque sao independentes e passaram a correr numa onda so (252 ms -> 110 ms),
+// entao a chamada mora dentro de um Promise.all. O que este check guarda nao e
+// a palavra `await` -- e que o razao venha de `sincronizarRazao` e de mais
+// lugar nenhum.
+const contexto = corpoDe('loadStockContext');
+check('loadStockContext usa a mesma funcao', /sincronizarRazao\(data\)/.test(contexto));
+// E a onda tem de estar mesmo la: em fila, a tela de Estoque pagava a soma das
+// quatro em vez da mais lenta.
+check('  e carrega as quatro numa onda so', /await Promise\.all\(\[/.test(contexto));
+// O razao nao pode ser lido direto aqui, senao haveria duas verdades -- que e
+// exatamente o que a funcao existe para impedir.
+check('  sem ler o razao por fora', !/razaoEstoque\.listarMovimentos\(/.test(contexto));
 
 console.log('--- 2. o movimento nasce no depósito de quem o originou ---');
 

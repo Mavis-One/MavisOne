@@ -55,9 +55,14 @@ console.log('\n--- o servidor ordena a lista INTEIRA, não a página ---');
 const rota = serverSrc.slice(serverSrc.indexOf("if (view === 'orders_quotes')"), serverSrc.indexOf("if (view === 'nfes')"));
 // A Busca Avancada (passo 4) empurrou a serializacao para ANTES do filtro:
 // numero da NF-e e transportadora so existem depois de serializar.
-const posSerializa = rota.indexOf('combined.map((record) => serializeSalesRecord');
-const posOrdena = rota.indexOf('ordenarSalesRecords(');
-const posFatia = rota.indexOf('.slice(start, start + limit)');
+//
+// Isso vale para o CAMINHO COMPLETO, que e' o que filtra. A fase DE pos um
+// caminho para a busca SEM filtro, e la a ordem e decidida antes -- ver o bloco
+// seguinte, que confere as tres coisas que fazem os dois caminhos concordarem.
+const completo = rota.slice(rota.indexOf('const combined = [...data.orders'));
+const posSerializa = completo.indexOf('combined.map((record) => serializeSalesRecord');
+const posOrdena = completo.indexOf('ordenarSalesRecords(');
+const posFatia = completo.indexOf('.slice(start, start + limit)');
 check('serializa antes de ordenar', posSerializa > -1 && posOrdena > posSerializa, `serializa ${posSerializa}, ordena ${posOrdena}`);
 // Fatiar antes de ordenar ordena só a página — o clássico "ordenei e mudou só
 // um pedaço da lista".
@@ -65,10 +70,57 @@ check('e fatia DEPOIS de ordenar', posFatia > posOrdena, `fatia ${posFatia}`);
 // Campo vindo da query string sem lista branca é entregar a leitura do objeto
 // inteiro a quem chama.
 check('o campo de ordenação passa por lista branca', /const ler = CAMPOS_ORDENAVEIS\[campo\];/.test(serverSrc));
-check('campo inválido cai na ordem padrão', /if \(!ler\) \{[\s\S]{0,200}Number\(b\.code\)/.test(serverSrc));
+// `codigoDoRegistro(b)` e nao `b.code`: registro sem codigo ganha um do id, e a
+// conta tem de ser a MESMA no registro cru e no serializado -- senao os 6
+// pedidos sem codigo desta base caem em posicoes diferentes conforme o caminho.
+check('campo inválido cai na ordem padrão',
+  /if \(!ler\) \{[\s\S]{0,400}Number\(codigoDoRegistro\(b\)\)/.test(serverSrc));
 // Sem desempate, duas linhas de mesma data trocam de lugar a cada recarga e
 // parecem bug de paginação.
 check('empate é desempatado pelo código', /Desempate estável pelo código/.test(serverSrc));
+
+console.log('\n--- e os DOIS caminhos dao a mesma lista (fase DE) ---');
+// A busca sem filtro carrega so a PAGINA (366 ms -> 21 ms, 17,5x), e para isso
+// ordena as CHAVES (id, code, date) em vez dos registros serializados. Tres
+// coisas fazem os dois caminhos concordarem, e cada uma ja falhou uma vez:
+//
+//   1. o codigo efetivo sai de UM lugar so (`codigoDoRegistro`) -- senao os 6
+//      pedidos sem codigo caem em posicoes diferentes conforme o caminho;
+//   2. a ordem e TOTAL (desempate final pelo id) -- `sort` e estavel, entao sem
+//      isso o empate seguia a ordem em que a lista chegou do banco, e a pagina
+//      996 saiu diferente da mesma pagina pelo outro caminho (medido: 11 de 12
+//      paginas iguais, e a diferente foi a do fim, onde caem os sem codigo);
+//   3. quem decide o caminho decide ANTES da onda de sincronizacao -- decidido
+//      depois, a rota ja teria pago o `select *` que o caminho existe para
+//      evitar (medido: 6% de ganho contra os 3,98x da versao certa).
+check('o codigo efetivo tem um dono so', /function codigoDoRegistro\(record\) \{/.test(serverSrc));
+check('  e o serializer o usa', /code: codigoDoRegistro\(record\),/.test(serverSrc));
+check('a ordem e total: desempata pelo id no fim', /function desempateFinal\(a, b\)/.test(serverSrc));
+const usosDoDesempate = (serverSrc.match(/\|\| desempateFinal\(a, b\)/g) || []).length;
+check('  nos DOIS ramos de ordenarSalesRecords', usosDoDesempate === 2, `${usosDoDesempate} uso(s)`);
+// A pergunta e pelos parametros INERTES e nao pelos 18 filtros: com a lista dos
+// filtros, o 19o filtro que alguem criasse nao estaria nela, a busca cairia no
+// caminho rapido e o filtro seria IGNORADO em silencio. Com a lista dos
+// inertes, o parametro novo derruba a busca para o caminho lento -- o pior que
+// acontece e ficar tao lenta quanto era antes.
+check('o caminho rapido e escolhido pelos parametros INERTES',
+  /const PARAMETROS_QUE_NAO_FILTRAM = new Set\(\[/.test(serverSrc)
+  && /if \(!PARAMETROS_QUE_NAO_FILTRAM\.has\(chave\)\) return false;/.test(serverSrc));
+const posDecide = serverSrc.indexOf('const listaSemFiltro = view ===');
+const posOnda = serverSrc.indexOf('listaSemFiltro ? syncSalesDataDaPagina(data');
+check('e a decisao vem ANTES da onda de sincronizacao',
+  posDecide > -1 && posOnda > posDecide, `decide ${posDecide}, sincroniza ${posOnda}`);
+// A contagem dos quatro cartoes NAO pode sair de data.orders.length: no caminho
+// da pagina `data.orders` tem 15 registros -- sao os 15 que a tela mostra -- e o
+// cartao escreveria "15 pedidos" no lugar de "14.864", sem nada quebrar.
+check('as contagens dos cartoes chegam prontas, nao saem de data',
+  /montarRespostaDeVendas\(\{ records, total, page, limit, contagens, data, url \}\)/.test(serverSrc));
+const corpoDaResposta = serverSrc.slice(
+  serverSrc.indexOf('function montarRespostaDeVendas'),
+  serverSrc.indexOf('function codigoDoRegistro')
+);
+check('  e o corpo da resposta nao conta data.orders',
+  !/orders: \(data\.orders \|\| \[\]\)\.length/.test(corpoDaResposta));
 
 console.log('\n--- paginação ---');
 check('as opções são 15/30/50/100', /const SALES_POR_PAGINA = \[15, 30, 50, 100\]/.test(appSrc));

@@ -102,8 +102,14 @@ const corpoBase = base.slice(0, base.indexOf('\n  async function montarRelatorio
 check('  confere a permissão ANTES de sincronizar',
   corpoBase.indexOf('podeVerRelatorios') < corpoBase.indexOf('syncNfeData'),
   'trabalho feito para quem vai levar 403');
-check('  e os cinco syncs saem numa onda só',
-  /await Promise\.all\(\[\s*\n\s*syncNfeData\(data\),\s*\n\s*syncPurchasesData\(data\),\s*\n\s*syncCadastroData\(data\),\s*\n\s*syncSalesData\(data\),\s*\n\s*syncFinanceData\(data\)\s*\n\s*\]\);/.test(corpoBase));
+check('  e os cinco syncs saem numa onda so',
+  /await Promise\.all\(\[\s*\n\s*syncNfeData\(data\),\s*\n\s*syncPurchasesData\(data\),\s*\n\s*syncCadastroData\(data\),\s*\n\s*syncSalesDataResumida\(data\),\s*\n\s*syncFinanceData\(data\)\s*\n\s*\]\);/.test(corpoBase));
+// E O DE VENDAS E O RESUMIDO, e nao `select *` (fase DE). As tres rotas que
+// usam esta base -- o Relatorio Geral e as duas exportacoes -- somam, contam e
+// fazem serie; nenhuma mostra pedido. Medido: 321 ms contra 96 ms, e como os
+// cinco correm juntos, o de vendas ERA o tempo da rota inteira.
+check('  e o de vendas e o recorte resumido', !/syncSalesData\(data\)/.test(corpoBase),
+  /syncSalesData\(data\)/.test(corpoBase) ? 'voltou a ser select *' : 'syncSalesDataResumida');
 check('  devolve a série do financeiro pronta',
   /serieFinanceiro: buildFinanceChartSeries\(lancamentos, granularity\)/.test(corpoBase));
 check('  e os produtos com o valor parado', /produtosComSaldo/.test(corpoBase));
