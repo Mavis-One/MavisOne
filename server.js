@@ -8376,18 +8376,15 @@ async function tratarRequisicao(req, res) {
   }
 
   async function montarRelatorioDeVendas(req, params) {
-    // QUEM PERGUNTA VEM ANTES DO TRABALHO (fase DJ).
-    //
-    // Os dois syncs ficavam aqui em cima, e a conferência de permissão logo
-    // abaixo. Ou seja: um pedido SEM TOKEN, ou de alguém sem acesso a
-    // Relatórios, fazia o servidor ler `select *` dos 14.864 pedidos — 321 ms —
-    // para em seguida responder 401 ou 403.
-    //
-    // A rota inteira leva 535 ms, a mais lenta do sistema, e era isso que um
-    // pedido recusado conseguia gastar. A sessão custa ~1 ms.
-    //
-    // É a mesma correção de `baseDosRelatoriosGerais` (que já a tinha, e
-    // scripts/test-exportar-relatorios.js cobra) e do /api/dashboard na fase DH.
+    const data = loadData();
+    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 2x essa latencia por nada.
+    await Promise.all([
+      syncCadastroData(data),
+      syncSalesData(data)
+    ]);
     const user = await getCurrentUser(req);
     if (!user) return { erro: 'Não autenticado', status: 401 };
 
@@ -8398,20 +8395,6 @@ async function tratarRequisicao(req, res) {
       return { erro: 'Sem permissão', status: 403 };
     }
     const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: ehAdministrador });
-
-    const data = loadData();
-    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
-    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-    // Em sequencia, a rota pagava 2x essa latencia por nada.
-    //
-    // `syncSalesData` (select *) e NAO um recorte: este relatorio explode cada
-    // pedido em uma linha por ITEM (relatoriosVendas.linhasDoRegistro), e os
-    // itens sao o que ele relata. E' a excecao registrada na fase CM.
-    await Promise.all([
-      syncCadastroData(data),
-      syncSalesData(data)
-    ]);
 
     const registros = [...data.orders, ...data.quotes].map((r) => serializeSalesRecord(r, data));
     const filtros = {
@@ -8898,21 +8881,6 @@ async function tratarRequisicao(req, res) {
     const { page, limit } = parsePageParams(url.searchParams, 15);
     const listaSemFiltro = view === 'orders_quotes' && buscaDeVendasSemFiltro(url.searchParams);
 
-    // QUEM PERGUNTA VEM ANTES DO TRABALHO (fase DJ).
-    //
-    // A onda ficava aqui em cima e a conferência de permissão logo abaixo: um
-    // pedido sem token, ou de quem não vê Vendas, fazia o servidor carregar os
-    // pedidos — no caminho com filtro, `select *` dos 14.864 — para em seguida
-    // responder 403. A sessão custa ~1 ms.
-    //
-    // `listaSemFiltro` continua decidido antes da onda (é o que faz o caminho
-    // rápido valer), e nenhuma das duas decisões depende da outra: uma olha a
-    // query string, a outra o token.
-    const user = await getCurrentUser(req);
-    if (!user || !user.allowedModules.includes('sales')) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
-    }
-
     // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
     // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -8927,6 +8895,10 @@ async function tratarRequisicao(req, res) {
       listaSemFiltro ? db.contarImportLogs().catch(() => 0) : null
     ]).then(([a, b, c, d]) => [a, listaSemFiltro ? { ...b, importLogs: d } : null]);
 
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
     if (view === 'orders_quotes') {
       const start = (page - 1) * limit;
 
