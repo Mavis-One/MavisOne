@@ -9064,12 +9064,29 @@ async function tratarRequisicao(req, res) {
           await transitionOrderFinanceEffect(data, { record, wasApplied: false, willApply: true, user });
         }
       } else if (type === 'nfe') {
+        // O NÚMERO É EXIGIDO, e não inventado (fase DK).
+        //
+        // Aqui havia `body.number || createId('nfe-num')`: sem número no corpo,
+        // a rota fabricava um e gravava um documento fiscal com número que não
+        // existe em nota nenhuma. `customer: 'Cliente'` e `status: 'emitida'`
+        // vinham do mesmo lugar — três valores plausíveis para um documento que
+        // a EFD escrituraria.
+        //
+        // `customer` continua com padrão porque nome de destinatário é dado de
+        // cadastro, e o participante sem nome aparece como pendência no
+        // pré-check. Número, não: ele é a identidade do documento.
+        const numeroDaNota = String(body.number || '').trim();
+        if (!numeroDaNota) {
+          return sendJson(res, {
+            error: 'Informe o número da NF-e. Documento fiscal não se cria sem o número que o emitente atribuiu.'
+          }, 400);
+        }
         record = await db.createNfe({
-          number: body.number || createId('nfe-num'),
+          number: numeroDaNota,
           customer: body.customer || 'Cliente',
           date: body.date || new Date().toISOString().slice(0, 10),
           amount: Number(body.amount || 0),
-          status: body.status || 'emitida',
+          status: body.status || '',
           key: body.key || '',
           createdBy: user.id,
           createdByName: user.name
@@ -9730,7 +9747,25 @@ async function tratarRequisicao(req, res) {
       // nos defaults de buildOrderQuoteRow (items: [], etc.). clientSupplierName
       // preenchido explicitamente com o nome da planilha, não só o fallback
       // da coluna antiga "customer".
+      // AS LINHAS RECUSADAS, com o motivo de cada uma (fase DK).
+      //
+      // Antes desta fase, a importação com tipo "NF-e" INVENTAVA o número da
+      // nota quando a planilha não trazia: `row.number || createId('nfe-num')`.
+      // Entrava um documento fiscal com número fabricado, sem chave de acesso e
+      // com zero itens — e era o único caminho vivo que gravava documento
+      // fiscal neste sistema. A EFD escrituraria exatamente isso.
+      //
+      // Número de nota não se deduz. Ele é atribuído pelo emitente, entra na
+      // chave de acesso e é o que o fisco cruza. Uma linha sem ele é uma linha
+      // que não descreve nota nenhuma, e a resposta certa é dizer isso.
+      //
+      // RECUSA POR LINHA, e não a importação inteira: uma planilha de 300
+      // linhas com 2 ruins deve importar 298 e nomear as 2. Abortar tudo
+      // obrigaria a caçar as duas sem saber quais são.
+      const recusadas = [];
+      let numeroDaLinha = 0;
       for (const row of rows) {
+        numeroDaLinha += 1;
         const customer = row.customer || row.cliente || row.Cliente || '';
         const amount = Number(row.amount || row.valor || row.total || 0);
         const date = row.date || row.data || new Date().toISOString().slice(0, 10);
@@ -9738,9 +9773,9 @@ async function tratarRequisicao(req, res) {
         // Planilha traz o status escrito à mão ("faturado", "Em aberto"…) —
         // normaliza contra o tipo escolhido na importação para não entrar valor
         // fora do catálogo nem status de orçamento num pedido. NF-e tem catálogo
-        // próprio e fica de fora.
+        // próprio: quatro situações, e `createNfe` recusa o que não reconhece.
         const status = type === 'nfe'
-          ? (statusBruto || 'emitida')
+          ? statusBruto
           : salesStatus.normalizar(statusBruto, type === 'quote' ? 'quote' : 'order');
         if (type === 'order') {
           const record = await db.createOrder({
@@ -9755,18 +9790,56 @@ async function tratarRequisicao(req, res) {
           });
           created.push(record);
         } else if (type === 'nfe') {
-          const record = await db.createNfe({
-            number: row.number || row.numero || createId('nfe-num'),
-            customer, date, amount, status, key: row.key || '',
-            createdBy: user.id, createdByName: user.name
-          }, []);
-          data.nfes.push(record);
-          created.push(record);
+          const numeroDaNota = String(row.number || row.numero || '').trim();
+          if (!numeroDaNota) {
+            recusadas.push({
+              linha: numeroDaLinha,
+              motivo: 'Sem número de nota. Documento fiscal não se importa sem o número que o emitente atribuiu — a coluna precisa se chamar "number" ou "numero".'
+            });
+            continue;
+          }
+          try {
+            const record = await db.createNfe({
+              number: numeroDaNota,
+              customer, date, amount, status, key: row.key || '',
+              createdBy: user.id, createdByName: user.name
+            }, []);
+            data.nfes.push(record);
+            created.push(record);
+          } catch (erro) {
+            // Status fora do catálogo e número repetido chegam aqui: os dois são
+            // recusa do banco ou de `situacaoDoStatus`, e os dois são problema
+            // DA LINHA, não da importação. Sem este catch, a linha 7 derrubaria
+            // as 293 seguintes.
+            //
+            // 23505 = unique_violation. Ela vem do índice de numeração de
+            // `fiscal_documentos`, e é o que faz reimportar a MESMA planilha ser
+            // seguro: as linhas que já entraram são recusadas por repetição em
+            // vez de entrarem em dobro. Sem traduzir, a pessoa leria
+            // "duplicate key value violates unique constraint
+            // idx_fiscal_documentos_numeracao", que não diz o que fazer.
+            const motivo = erro && erro.code === '23505'
+              ? `Nota ${numeroDaNota} já está registrada. Reimportar a mesma planilha é seguro: as linhas repetidas são recusadas, não duplicadas.`
+              : erro.message;
+            recusadas.push({ linha: numeroDaLinha, motivo });
+          }
         }
       }
+      // O LOG DE IMPORTAÇÃO CONTA O QUE ENTROU, e não o que foi tentado: ele é
+      // o histórico que a tela mostra, e "300 itens" numa importação que gravou
+      // 298 seria a mentira mais fácil de contar aqui.
       await db.addImportLog({ type, source: body.source || 'manual', count: created.length });
       saveData(data);
-      return sendJson(res, { success: true, created, count: created.length });
+      return sendJson(res, {
+        success: true,
+        created,
+        count: created.length,
+        // `recusadas` sempre presente, mesmo vazia: cliente que testa
+        // `if (res.recusadas)` funciona igual nos dois casos, e cliente que
+        // itera não precisa de guarda.
+        recusadas,
+        recusadasCount: recusadas.length
+      });
     } catch (error) {
       return sendErro(res, error, 'Erro ao importar vendas', 400);
     }
@@ -15115,9 +15188,28 @@ async function tratarRequisicao(req, res) {
         }
       }
 
+      // O TERCEIRO CAMINHO QUE INVENTAVA NÚMERO DE NOTA (fase DK).
+      //
+      // Aqui era `body.number || String(Date.now()).slice(-8)`: os últimos oito
+      // dígitos do relógio. Parece um número de nota — tem oito dígitos, é
+      // crescente, nunca repete no mesmo dia — e não é: não existe em nota
+      // nenhuma, e duas notas criadas no mesmo milissegundo colidiriam.
+      //
+      // Os três caminhos que gravavam documento fiscal inventavam o número de
+      // um jeito diferente cada um: `createId('nfe-num')` na importação de
+      // planilha, `createId('nfe-num')` na rota de venda, e o relógio aqui.
+      // Nenhum deles tinha como acertar, porque o número é atribuído pelo
+      // emitente e entra na chave de acesso.
+      const numeroDaNota = String(body.number || '').trim();
+      if (!numeroDaNota) {
+        return sendJson(res, {
+          error: 'Informe o número da NF-e. Documento fiscal não se cria sem o número que o emitente atribuiu.'
+        }, 400);
+      }
+
       const nfe = await db.createNfe({
         orderId: body.orderId || '',
-        number: body.number || String(Date.now()).slice(-8),
+        number: numeroDaNota,
         series: body.series || '1',
         date: body.date || new Date().toISOString().slice(0, 10),
         status: 'autorizada',

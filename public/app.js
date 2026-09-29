@@ -5699,7 +5699,7 @@ async function loadModule(moduleName) {
           event.preventDefault();
           const formData = new FormData(event.target);
           try {
-            await api('/api/sales/import', {
+            const resposta = await api('/api/sales/import', {
               method: 'POST',
               body: JSON.stringify({
                 type: formData.get('importType'),
@@ -5707,7 +5707,38 @@ async function loadModule(moduleName) {
                 text: formData.get('csvText')
               })
             });
-            showToast('Importação realizada com sucesso.', 'success');
+            // AS LINHAS RECUSADAS APARECEM, E A TELA NÃO RECARREGA (fase DK).
+            //
+            // A rota passou a recusar linha por linha em vez de importar tudo:
+            // NF-e sem número não entra, porque antes a rota INVENTAVA o número
+            // e gravava um documento fiscal fabricado. Com o `loadModule` logo
+            // depois do toast, a lista de recusas somia junto com o textarea —
+            // e a pessoa ficaria com "importação realizada" e menos linhas do
+            // que colou, sem saber quais.
+            //
+            // Então o painel fica na tela, com o CSV ainda no textarea para a
+            // correção ser feita ali. Recarrega só quando não há recusa.
+            const recusadas = resposta && resposta.recusadas ? resposta.recusadas : [];
+            if (recusadas.length) {
+              showToast(
+                `${resposta.count} importada(s), ${recusadas.length} recusada(s).`,
+                'warning'
+              );
+              const aviso = document.createElement('div');
+              aviso.className = 'panel';
+              aviso.innerHTML = `
+                <h3>${recusadas.length} linha(s) não importada(s)</h3>
+                <p class="muted">O restante entrou. Corrija estas no texto acima e importe de novo: reimportar a planilha inteira é seguro, porque nota com número já registrado é recusada em vez de entrar em dobro.</p>
+                <table class="table">
+                  <thead><tr><th>Linha</th><th>Motivo</th></tr></thead>
+                  <tbody>
+                    ${recusadas.map((r) => `<tr><td>${Number(r.linha) || '-'}</td><td>${escapeHtml(r.motivo || '')}</td></tr>`).join('')}
+                  </tbody>
+                </table>`;
+              content.prepend(aviso);
+              return;
+            }
+            showToast(`Importação realizada: ${resposta ? resposta.count : 0} item(ns).`, 'success');
             loadModule('sales');
           } catch (error) {
             showToast(error.message || 'Erro ao importar vendas.', 'error');
