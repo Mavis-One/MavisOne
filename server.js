@@ -14,6 +14,7 @@ const ordemDeProdutos = require('./public/modules/shared/ordem_de_produtos');
 const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
+const spedPreCheck = require('./lib/db/sped-pre-check');
 // Fase CF: a chave mestra da conta Focus NFe (o token principal), separada do
 // token de emissão de cada CNPJ, que continua em lib/db/fiscal.js.
 const integracoesDb = require('./lib/db/integracoes');
@@ -4921,6 +4922,10 @@ function resolveFiscalPermission(pathname, method) {
   // PRE-CHECK e' LEITURA, e por isso pede 'visualizar' e nao 'emitir': quem
   // confere os pedidos do dia de manha nao precisa poder transmitir. Exigir
   // 'emitir' faria a conferencia so' existir para quem ja' pode errar caro.
+  // O PRE-CHECK DO SPED e 'visualizar', igual ao da emissao: conferir o que
+  // falta para fechar o mes e' leitura. Ele nao gera arquivo, nao grava e nao
+  // mostra documento nenhum -- so conta o que esta faltando.
+  if (pathname === '/api/fiscal/sped/pre-check') return 'visualizar';
   if (pathname === '/api/fiscal/pre-check') return 'visualizar';
 
   // O ACERVO DO PERÍODO (fase CN). Três rotas e duas permissões diferentes, e a
@@ -10992,6 +10997,51 @@ async function tratarRequisicao(req, res) {
       // NAO GRAVA NADA: nenhum rascunho, nenhuma numeracao, nenhuma chamada a'
       // Focus. E' seguro rodar sobre trinta pedidos.
       // ----------------------------------------------------------------
+      // ----------------------------------------------------------------
+      // O PRÉ-CHECK DO SPED — o que falta para gerar a EFD da competência.
+      //
+      // Vizinho do pré-check da emissão, e a mesma ideia num prazo diferente:
+      // aquele responde "esta nota seria recusada agora?", este responde "o
+      // arquivo do mês fecharia?". A EFD vence no dia 20 do mês seguinte, e
+      // descobrir no dia 19 que 661 participantes estão sem código de município
+      // não é a mesma coisa que descobrir no dia 1.
+      //
+      // ANTES DE `/api/fiscal/pre-check`? Não precisa: os caminhos são
+      // diferentes e a comparação é por igualdade exata. Fica DEPOIS por ordem
+      // de leitura — o pré-check da emissão é o mais antigo e o mais usado.
+      //
+      // NÃO GRAVA NADA e não gera arquivo nenhum. Só conta.
+      // ----------------------------------------------------------------
+      if (pathname === '/api/fiscal/sped/pre-check' && req.method === 'GET') {
+        // A competência padrão é o MÊS PASSADO, e não este.
+        //
+        // A EFD que se está preparando em outubro é a de setembro. Abrir na
+        // competência corrente mostraria um mês incompleto e daria a impressão
+        // de que falta menos do que falta.
+        const agora = new Date();
+        const anterior = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() - 1, 1));
+        const padrao = anterior.toISOString().slice(0, 7);
+        const competencia = url.searchParams.get('competencia') || padrao;
+        try {
+          return sendJson(res, await spedPreCheck.preCheckDoSped({ competencia }));
+        } catch (erro) {
+          // A MENSAGEM É LITERAL AQUI, e não `erro.message`.
+          //
+          // `janelaDaCompetencia` lança com um texto bom, e repassá-lo seria o
+          // segundo ponto do servidor mandando `.message` cru para a resposta —
+          // que a fase CC fechou justamente porque erro de banco leva nome de
+          // constraint e de coluna junto. A guarda não distingue "minha
+          // validação" de "erro do Postgres", e é assim que ela continua
+          // valendo: uma exceção abre a porta para a próxima.
+          if (erro.status === 400) {
+            return sendJson(res, {
+              error: `Competência inválida. Use o formato aaaa-mm, por exemplo ${padrao}.`
+            }, 400);
+          }
+          throw erro;
+        }
+      }
+
       if (pathname === '/api/fiscal/pre-check' && req.method === 'GET') {
         const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
         if (!estabelecimentoId) {

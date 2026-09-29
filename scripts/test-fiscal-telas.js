@@ -39,7 +39,7 @@ const check = (n, c, d) => { console.log(`${c ? '  OK ' : '  XX '} ${n}${d ? ' -
 const chavesFiscal = moduleSubItems.fiscal.map((i) => i.key);
 
 console.log('\n--- as telas pedidas estão no menu do Fiscal ---');
-const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'arquivos', 'notas_presas', 'grupos_tributarios', 'regras'];
+const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'arquivos', 'notas_presas', 'grupos_tributarios', 'regras', 'sped_pre_check'];
 ESPERADAS.forEach((k) => {
   const item = moduleSubItems.fiscal.find((i) => i.key === k);
   check(`fiscal.${k}`, Boolean(item), item ? item.label : 'AUSENTE');
@@ -66,10 +66,30 @@ console.log('\n--- e nenhuma tela registrada ficou fora do menu ---');
 const foraDoMenu = [...registradas].filter((k) => !chavesFiscal.includes(k));
 check('nenhuma tela órfã', foraDoMenu.length === 0, foraDoMenu.join(', ') || 'nenhuma');
 
-console.log('\n--- todos os arquivos novos são carregados pelo index.html ---');
-['shared.js', 'subs/eventos.js', 'subs/inutilizar.js', 'subs/logs.js', 'subs/regras.js', 'subs/nfe_espelho.js', 'subs/operacoes.js', 'subs/arquivos.js'].forEach((arq) => {
-  check(`index.html carrega fiscal/${arq}`, indexSrc.includes(`/modules/fiscal/${arq}`));
-});
+console.log('\n--- TODO arquivo do módulo é carregado pelo index.html ---');
+// A LISTA É DERIVADA DA PASTA, e não escrita à mão. Aqui havia oito nomes
+// fixos, e a brecha era o QUARTO lugar em que uma tela se registra: uma tela
+// nova pode estar no menu (app.js), ter arquivo, e registrar-se corretamente —
+// e se ninguém puser o <script> no index.html, o arquivo nunca carrega. A tela
+// aparece no menu, o clique cai no fallback do módulo, e o Painel abre no lugar
+// dela. Nada de errado em tela nenhuma; só uma linha que faltou.
+//
+// Com a lista fixa, os três primeiros checks passavam e o quarto nem existia
+// para o arquivo novo. Derivada, a tela nova entra na conta sozinha.
+const arquivosDoModulo = [];
+(function anda(dir, prefixo) {
+  for (const nome of fs.readdirSync(dir).sort()) {
+    const p = path.join(dir, nome);
+    if (fs.statSync(p).isDirectory()) { anda(p, prefixo + nome + '/'); continue; }
+    if (nome.endsWith('.js')) arquivosDoModulo.push(prefixo + nome);
+  }
+})(path.join(RAIZ, 'public/modules/fiscal'), '');
+
+check('a varredura achou os arquivos do módulo', arquivosDoModulo.length >= 15, `${arquivosDoModulo.length} arquivos`);
+const naoCarregados = arquivosDoModulo.filter((arq) => !indexSrc.includes(`/modules/fiscal/${arq}`));
+check('nenhum arquivo do módulo fica fora do index.html',
+  naoCarregados.length === 0,
+  naoCarregados.join(', ') || `${arquivosDoModulo.length} de ${arquivosDoModulo.length} carregados`);
 // shared.js define MavisFiscalDocs, que os subs recebem NA CARGA (IIFE). Se
 // vier depois, eles recebem undefined e o módulo inteiro morre no load.
 const posShared = indexSrc.indexOf('/modules/fiscal/shared.js');

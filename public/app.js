@@ -1778,6 +1778,11 @@ const moduleSubItems = {
     // "isto vai passar?" só tinha uma resposta possível, que era transmitir e
     // ver — e nota recusada consome a numeração, que não volta.
     { key: 'pre_check', label: 'Pré-check Fiscal', desc: 'Quais pedidos do dia seriam recusados se fossem transmitidos agora.' },
+    // VIZINHO DO PRE-CHECK, e o prazo e' o que os separa: aquele responde
+    // "esta nota passa agora?", este responde "o arquivo do mes fecha?". A EFD
+    // vence no dia 20 do mes seguinte, e nao gera arquivo nenhum -- ela diz o
+    // que estaria faltando se gerasse.
+    { key: 'sped_pre_check', label: 'Pré-check do SPED', desc: 'O que falta para gerar a EFD ICMS/IPI da competência, registro por registro.' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     { key: 'inutilizadas', label: 'NF-e Inutilizadas', desc: 'Faixas de numeração queimadas na SEFAZ.' },
     { key: 'inutilizar', label: 'Inutilizar NF-e', desc: 'Declara que uma faixa de números não virará nota.' },

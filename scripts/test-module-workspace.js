@@ -189,7 +189,13 @@ const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
 // propósito: tela nova sem renderizador cai como "pendente" e o check acima já
 // pegaria — mas tela nova que ninguém registrou no menu passaria batido sem
 // este.
-check('fiscal tem as 16 telas reais', reais('fiscal') === 16, `${reais('fiscal')} real(is)`);
+//
+// São 17 com "Pré-check do SPED": o que falta para gerar a EFD ICMS/IPI da
+// competência, registro por registro. Ela NÃO gera o arquivo — a lista de
+// registros dela foi levantada do arquivo que o sistema antigo gerou para
+// agosto de 2026, e o layout de serialização de cada campo ainda não está em
+// mãos.
+check('fiscal tem as 17 telas reais', reais('fiscal') === 17, `${reais('fiscal')} real(is)`);
 // Sem nenhuma tela pendente em lugar nenhum, o menu não pode mais oferecer um
 // destino que não abre.
 const pendentesNoSistema = Object.entries(moduleSubItems)
