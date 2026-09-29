@@ -188,5 +188,86 @@ check('a borda vermelha é a mesma regra', /\.documento-invalido,\s*\n\.campo-in
 check('o texto de erro é a mesma regra', /\.documento-erro,\s*\n\.campo-erro/.test(css));
 check('a validação roda no blur, não a cada tecla', /addEventListener\('blur'/.test(campos) && !/addEventListener\('input'[\s\S]{0,200}campo-erro'\);\s*\n\s*caixa/.test(campos));
 
+// ---------------------------------------------------------------------------
+// A CHAVE (input[type=checkbox]) NÃO SE ENCOLHE PELA METADE.
+//
+// O QUE ISTO PEGOU, em 29/09/2026: duas regras — `.matriz-contas td.col-estab`
+// e `.user-form-switch` — declaravam `width` e `height` menores para caber numa
+// célula de tabela e numa linha de campos. Nenhuma das duas desfazia o
+// `min-width: 40px` da regra global, e nenhuma mexia no círculo do `::before`.
+//
+// `min-width` ganha de `width`, então o trilho NÃO encolhia na largura; só na
+// altura. O resultado era um trilho de 40x16 com uma bola de 18px dentro de
+// 14px úteis, saindo 4px para fora em cima e embaixo. Ninguém escreveu isso de
+// propósito: cada regra declarou dois dos quatro números que a chave tem.
+//
+// São dois checks, e eles pegam coisas diferentes:
+//
+//   1. quem mexe no tamanho desfaz o min-width TAMBÉM (a regra que falhou);
+//   2. a aritmética da chave fecha (o defeito que sobra se alguém mexer na
+//      definição global e esquecer o translateX do :checked).
+//
+// O segundo é o que importa a longo prazo: ele não conhece nenhum seletor, só
+// a conta. Trocar o trilho de 40 para 34 sem recalcular o deslocamento faria o
+// círculo parar fora do trilho, e é exatamente o mesmo sintoma por outra porta.
+console.log('\n--- a chave tem um tamanho só, e a conta dela fecha ---');
+
+const decl = (corpo, prop) => {
+  const m = corpo.match(new RegExp('(?:^|[;{\\s])' + prop + '\\s*:\\s*([^;}]+)'));
+  return m ? m[1].trim() : null;
+};
+const px = (v) => (v && /^-?[\d.]+px$/.test(v) ? parseFloat(v) : null);
+
+// Blocos cujo SELETOR fala de input[type=checkbox] sem ser pseudo-elemento.
+const blocosChave = [...css.matchAll(/([^{}]*\binput\s*\[\s*type\s*=\s*["']?checkbox["']?\s*\][^{}]*)\{([^{}]*)\}/g)]
+  .map((m) => ({ sel: m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim().replace(/\s+/g, ' '), corpo: m[2] }));
+
+const pelaMetade = blocosChave.filter((b) => {
+  if (/::before|::after/.test(b.sel)) return false;
+  if (/^input\s*\[/.test(b.sel)) return false;              // a própria regra global
+  if (!decl(b.corpo, 'width') && !decl(b.corpo, 'height')) return false;
+  return !decl(b.corpo, 'min-width');
+});
+check('nenhuma regra muda o tamanho da chave sem desfazer o min-width',
+  pelaMetade.length === 0,
+  pelaMetade.map((b) => b.sel).join(' | ') || '0 regras');
+
+const regraGlobal = blocosChave.find((b) => /^input\s*\[\s*type\s*=\s*["']?checkbox["']?\s*\]$/.test(b.sel));
+check('a regra global da chave existe', !!regraGlobal);
+
+// O bloco do círculo e o do :checked são procurados pelo seletor exato para o
+// teste não medir o tique quadrado de `.sales-col-selecao` por engano.
+const circulo = blocosChave.find((b) => /^input\s*\[[^\]]+\]::before$/.test(b.sel));
+const ligada = blocosChave.find((b) => /^input\s*\[[^\]]+\]:checked::before$/.test(b.sel));
+check('o círculo e o estado ligado são regras próprias', !!circulo && !!ligada);
+
+if (regraGlobal && circulo && ligada) {
+  const borda = px((decl(regraGlobal.corpo, 'border') || '').split(/\s+/)[0]) || 0;
+  const trilhoL = px(decl(regraGlobal.corpo, 'width'));
+  const trilhoA = px(decl(regraGlobal.corpo, 'height'));
+  const bolaL = px(decl(circulo.corpo, 'width'));
+  const bolaA = px(decl(circulo.corpo, 'height'));
+  const esq = px(decl(circulo.corpo, 'left'));
+  const topo = px(decl(circulo.corpo, 'top'));
+  const desloca = px((decl(ligada.corpo, 'transform') || '').replace(/translateX\(([^)]*)\)/, '$1'));
+
+  // `* { box-sizing: border-box }` é global (linha ~98), então a área interna
+  // em que o círculo se posiciona é o trilho MENOS as duas bordas.
+  const utilL = trilhoL - 2 * borda;
+  const utilA = trilhoA - 2 * borda;
+
+  check('o box-sizing global é border-box (a conta acima depende disso)', /\*\s*\{[^}]*box-sizing:\s*border-box/.test(css));
+  check('todos os números da chave são px legíveis',
+    [trilhoL, trilhoA, bolaL, bolaA, esq, topo, desloca].every((n) => n !== null),
+    JSON.stringify({ trilhoL, trilhoA, bolaL, bolaA, esq, topo, desloca, borda }));
+  check('desligada, o círculo cabe na largura', esq + bolaL <= utilL, `${esq} + ${bolaL} <= ${utilL}`);
+  check('LIGADA, o círculo cabe na largura', esq + desloca + bolaL <= utilL, `${esq} + ${desloca} + ${bolaL} <= ${utilL}`);
+  check('o círculo cabe na ALTURA — o defeito de 29/09/2026', topo + bolaA <= utilA, `${topo} + ${bolaA} <= ${utilA}`);
+  // Sem isto, um trilho largo com deslocamento curto deixaria o círculo parado
+  // no meio quando ligado: caberia na conta acima e pareceria meio-ligado.
+  check('ligada, o círculo encosta na direita (folga <= 2px)',
+    utilL - (esq + desloca + bolaL) <= 2, `folga ${utilL - (esq + desloca + bolaL)}px`);
+}
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
