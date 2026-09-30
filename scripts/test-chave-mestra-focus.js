@@ -218,70 +218,83 @@ function tokenUsado(resposta) {
     && /alter table if exists empresas_integracoes enable row level security/.test(migracao));
 
   // -------------------------------------------------------------------------
-  // 8. A TELA TEM DE DIZER A VERDADE SOBRE QUAL TOKEN ELA TESTOU (30/09/2026)
+  // 8. O PAINEL DO TOKEN DE RESERVA SAIU DA TELA FISCAL (30/09/2026)
   // -------------------------------------------------------------------------
-  // O item 3 acima protege a ORDEM da fila de reserva. Faltava proteger o que
-  // a tela AFIRMA sobre ela — e a tela estava afirmando o contrário.
+  // "Integração — Focus NFe" era um parágrafo, um botão e uma caixinha que,
+  // sem token, dizia "Não configurado". Saiu por pedido do usuário.
   //
-  // O texto "o teste abaixo usa SÓ o token padrão do servidor (FOCUS_NFE_TOKEN
-  // no .env)" e o botão "Testar token padrão" nasceram em 01/09, quando eram
-  // verdade. A fase CF (16/09) pôs a chave mestra na frente do .env e não
-  // encostou na tela: por 29 dias o painel descreveu a ordem invertida.
+  // O QUE ESTES CHECKS GUARDAM não é a ausência dele — é que a saída dele não
+  // levou nada junto. Ele era a função que INTERPOLAVA os dois painéis de
+  // baixo (`${renderChaveMestraSection()}` e `${renderEmpresasDaContaSection()}`
+  // moravam dentro do template dele), então apagar o painel inteiro apagaria
+  // com ele o formulário da chave mestra e a lista de CNPJs da conta — as duas
+  // coisas que esta tela realmente precisa ter.
   //
-  // É o tipo de defeito que teste de comportamento não pega, porque o código
-  // fazia a coisa certa — quem mentia era a legenda. Por isso estes checks são
-  // estáticos, e moram aqui em vez de num arquivo novo: a afirmação e o
-  // mecanismo que ela descreve ficam no mesmo teste, e quem mexer num vai ler
-  // o outro.
-  console.log('\n--- 8. a tela diz qual token respondeu ---');
+  // Testar conexão continua existindo em três lugares, e nenhum deles é este:
+  // por estabelecimento (o token que EMITE), em NF-e emitidas ("Consultar
+  // status do serviço") e em "Buscar empresas na Focus".
+  console.log('\n--- 8. o painel saiu, e os dois de baixo ficaram ---');
   const telaSrc = ler('public/modules/settings/subs/fiscal.js');
   const focusSrc = ler('lib/focusnfe.js');
+  const nfeSrc = ler('public/modules/finance/subs/nfe_emitidas.js');
 
-  check('a tela não afirma mais que o teste usa só o .env',
-    !/teste abaixo usa só o token padrão/.test(telaSrc));
-  check('o botão não promete testar o token padrão', !/Testar token padrão/.test(telaSrc)
-    && /id="focusNfeRefresh">Testar conexão<\/button>/.test(telaSrc));
-  check('o texto descreve a ordem real: chave mestra e, se não houver, o .env',
-    /usando a chave mestra cadastrada abaixo e, se não houver nenhuma, o token padrão do servidor/.test(telaSrc));
+  // O corpo do arquivo, sem comentário: o painel é citado nos comentários de
+  // propósito (é onde está escrito por que ele saiu), e um check que olhasse o
+  // arquivo cru daria verde para o texto errado.
+  const telaCodigo = telaSrc.replace(/^\s*\/\/.*$/gm, '');
+  check('a caixa de status não existe mais', !/focusNfeStatusBox/.test(telaCodigo));
+  check('o botão que a atualizava não existe mais', !/focusNfeRefresh/.test(telaCodigo));
+  check('nenhum "Não configurado" sobrou na tela', !/Não configurado/.test(telaCodigo));
+  check('a tela fiscal não chama mais /api/focusnfe/status',
+    !/focusnfe\/status/.test(telaCodigo));
 
-  // DERIVADO da biblioteca, e não uma lista de nomes copiada: uma origem nova
-  // em contaCredentials sem legenda na tela derruba este check.
-  const origens = [...new Set((focusSrc.match(/origem: '([a-z-]+)'/g) || [])
-    .map((m) => m.replace(/.*'([a-z-]+)'.*/, '$1')))].filter((o) => o !== 'nenhuma');
-  check('a biblioteca devolve as duas origens conhecidas', origens.length === 2, origens.join(', '));
-  for (const origem of origens) {
-    check(`a tela tem legenda para origem "${origem}"`,
-      new RegExp(`(^|\\s)'?${origem}'?:\\s`, 'm').test(
-        (telaSrc.match(/const ORIGEM_DO_TOKEN = \{[\s\S]*?\};/) || [''])[0]));
-  }
-  check('o resultado imprime a origem nos três ramos',
-    (telaSrc.match(/\$\{comToken\}/g) || []).length >= 2
-    && /ORIGEM_DO_TOKEN\[status\.origem\]/.test(telaSrc));
+  check('o formulário da chave mestra continua renderizado',
+    /\$\{renderChaveMestraSection\(\)\}/.test(telaCodigo)
+    && /function renderChaveMestraSection\(\)/.test(telaCodigo));
+  check('a lista de empresas da conta continua renderizada',
+    /\$\{renderEmpresasDaContaSection\(\)\}/.test(telaCodigo)
+    && /function renderEmpresasDaContaSection\(\)/.test(telaCodigo));
+  check('e as duas são alcançadas por renderAll',
+    /renderIntegracaoFocusSections\(\)\}/.test(telaCodigo)
+    && /function renderIntegracaoFocusSections\(\)/.test(telaCodigo));
 
-  // A rota calcula `origem` justamente para a tela poder dizer isso; se a tela
-  // voltar a ignorá-lo, o campo passa a ser peso morto no JSON.
-  check('a rota ainda devolve origem', /return \{ \.\.\.status, origem: creds\.origem \};/.test(focusSrc));
+  console.log('\n--- 9. a fila de reserva perdeu a vitrine, não o mecanismo ---');
+  // A tela era a única menção na interface ao FOCUS_NFE_TOKEN do .env. Ela
+  // podia sair; a reserva, não — é o que faz um sistema já de pé continuar
+  // emitindo sem cadastrar chave mestra nenhuma (item 4 acima).
+  check('o .env continua sendo a última da fila',
+    /const env = envCredentials\(\);\s*\n\s*if \(env\.token\) return \{ \.\.\.relato, token: env\.token, origem: 'env' \};/.test(focusSrc));
+  check('e a chave mestra continua na frente dele',
+    focusSrc.indexOf("origem: 'chave-mestra'") < focusSrc.indexOf("origem: 'env'"));
+  check('o .env segue documentado onde a decisão mora',
+    /FOCUS_NFE_TOKEN do \.env/.test(focusSrc));
 
-  console.log('\n--- 9. "Não configurado" manda para o caminho que existe na tela ---');
-  // O .env exige shell no servidor; a chave mestra é um formulário logo abaixo,
-  // na mesma página. Mandar para o .env primeiro era mandar para o lugar
-  // difícil existindo o fácil à vista.
-  check('manda cadastrar a chave mestra no painel abaixo',
-    /Cadastre a <strong>chave mestra da conta<\/strong> no painel abaixo/.test(telaSrc));
-  check('não manda mais mexer no .env e reiniciar o servidor',
-    !/no \.env do servidor e reinicie-o/.test(telaSrc));
-  check('e ainda diz que o .env existe como alternativa',
-    /nem <code>FOCUS_NFE_TOKEN<\/code> no \.env do servidor/.test(telaSrc));
-
-  console.log('\n--- 10. o aviso de homologação chega à tela ---');
+  console.log('\n--- 10. o aviso de homologação chega a uma tela ---');
   // A biblioteca escreve "notas emitidas aqui NÃO têm valor fiscal" na mensagem
-  // do sucesso. O ramo `connected` da tela descartava status.message, então o
-  // aviso morria no JSON e sobrava um "Conectado" verde num ambiente que não
-  // emite nota com valor.
+  // do sucesso. O painel removido nem a mostrava (descartava status.message);
+  // quem a mostra é a tela de quem emite, que é onde ela importa. Se ESSA
+  // também parar de mostrar, o aviso não chega a ninguém.
   check('a biblioteca avisa que homologação não tem valor fiscal',
     /notas emitidas aqui NÃO têm valor fiscal/.test(focusSrc));
-  check('a tela mostra esse aviso quando a trava está ligada',
-    /status\.travadoEmHomologacao && status\.message/.test(telaSrc));
+  check('NF-e emitidas avisa quando a trava está ligada',
+    /travadoEmHomologacao \? ' Notas daqui NÃO têm valor fiscal\.' : ''/.test(nfeSrc));
+  // ANCORADO NA FUNÇÃO, e não no arquivo: `/api/focusnfe/status` aparece duas
+  // vezes em nfe_emitidas.js — a outra decide se as ações fiscais nascem
+  // habilitadas. Sem a âncora, uma mutação que tirasse a consulta DAQUI
+  // continuava achando a string lá em cima, e o check dava verde. Foi o que
+  // aconteceu: 13 de 14 na primeira rodada.
+  const consultaSrc = (nfeSrc.match(/async function consultarStatusServico\(\) \{[\s\S]*?\n  \}\n/) || [''])[0];
+  check('e "Consultar status do serviço" pergunta à rota de verdade',
+    /await api\('\/api\/focusnfe\/status'\)/.test(consultaSrc), consultaSrc ? 'função achada' : 'FUNÇÃO NÃO ACHADA');
+
+  console.log('\n--- 11. o token que EMITE continua testável, por estabelecimento ---');
+  // É a diferença que o painel removido embaralhava: ele testava o token da
+  // CONTA, que não emite. Um "Conectado" ali não dizia que algum CNPJ
+  // conseguia emitir nota.
+  check('cada estabelecimento tem o seu "Testar conexão"',
+    /class="secondary fiscal-test-estab"/.test(telaCodigo));
+  check('e ele bate na rota do estabelecimento, não na da conta',
+    /api\(`\/api\/fiscal\/estabelecimentos\/\$\{btn\.dataset\.id\}\/focus-status`\)/.test(telaCodigo));
 
   console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
   process.exit(falhas ? 1 : 0);
