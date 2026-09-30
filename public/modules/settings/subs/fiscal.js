@@ -554,20 +554,33 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
     `;
   }
 
-  // Token padrao do .env (FOCUS_NFE_TOKEN) — a reserva de quando o
-  // estabelecimento nao tem token proprio. Este painel morava na tela
-  // "Empresa", que deixou de existir: os dados da empresa passaram a ter um
-  // lugar so, e este era o unico conteudo dela que valia a pena trazer junto.
+  // A CONEXAO COM A CONTA FOCUS — e o que este teste realmente testa.
+  //
+  // Este painel morava na tela "Empresa", que deixou de existir: os dados da
+  // empresa passaram a ter um lugar so, e este era o unico conteudo dela que
+  // valia a pena trazer junto.
+  //
+  // O TEXTO DESTA SECAO ESTAVA VENCIDO (corrigido em 30/09/2026). Ele dizia
+  // "o teste abaixo usa SO o token padrao do servidor (FOCUS_NFE_TOKEN no
+  // .env)", e o botao se chamava "Testar token padrao". Isso era verdade ate
+  // 01/09; na fase CF (16/09) contaCredentials passou a tentar a CHAVE MESTRA
+  // do banco primeiro e o .env so como reserva — ver lib/focusnfe.js. A tela
+  // ficou afirmando o contrario da ordem real por 29 dias.
+  //
+  // Por que a mentira importava: quem le "usa so o .env" e ve "Conectado"
+  // conclui que o .env esta certo, e quem le "Nao configurado" vai mexer no
+  // .env do servidor — que e o caminho que exige shell no VPS, quando o
+  // caminho normal e o formulario que esta LOGO ABAIXO nesta mesma pagina.
   function renderFocusPadraoSection() {
     return `
       <div class="panel">
         <div class="cadastro-page-head">
           <div>
             <h3>Integração — Focus NFe</h3>
-            <p class="muted">Cada estabelecimento acima tem o seu próprio token. O teste abaixo usa só o token padrão do servidor (FOCUS_NFE_TOKEN no .env), que serve de reserva.</p>
+            <p class="muted">Cada estabelecimento acima tem o seu próprio token, e é ele que emite a nota. O teste abaixo não emite nada: ele só pergunta à Focus se a <strong>conta</strong> responde, usando a chave mestra cadastrada abaixo e, se não houver nenhuma, o token padrão do servidor (<code>FOCUS_NFE_TOKEN</code> no .env). O resultado diz qual dos dois foi usado.</p>
           </div>
           <div class="cadastro-list-actions">
-            <button type="button" class="secondary" id="focusNfeRefresh">Testar token padrão</button>
+            <button type="button" class="secondary" id="focusNfeRefresh">Testar conexão</button>
           </div>
         </div>
         <div id="focusNfeStatusBox" class="muted">Verificando conexão...</div>
@@ -722,6 +735,15 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
     renderAll();
   }
 
+  // QUAL TOKEN RESPONDEU. A rota devolve `origem` desde a fase CF, e o
+  // comentário dela em server.js diz por quê: *"'conectado' sozinho não
+  // responde a pergunta de quem acabou de trocar a chave e quer saber se
+  // pegou"*. A tela recebia esse campo e o jogava fora.
+  const ORIGEM_DO_TOKEN = {
+    'chave-mestra': 'a chave mestra da conta, cadastrada abaixo',
+    env: 'o token padrão do servidor (FOCUS_NFE_TOKEN no .env)'
+  };
+
   async function carregarStatusFocusPadrao() {
     const box = document.getElementById('focusNfeStatusBox');
     if (!box) return;
@@ -729,12 +751,23 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
     try {
       const status = await api('/api/focusnfe/status');
       const ambienteLabel = status.ambiente === 'producao' ? 'Produção' : 'Homologação';
+      const origem = ORIGEM_DO_TOKEN[status.origem] || '';
+      const comToken = origem ? ` Token usado: ${escapeHtml(origem)}.` : '';
       if (!status.configured) {
-        box.innerHTML = `<span class="finance-badge finance-badge-muted">Não configurado</span> Defina <code>FOCUS_NFE_TOKEN</code> no .env do servidor e reinicie-o.`;
+        // O .env vem em SEGUNDO, porque é o caminho que pede acesso ao
+        // servidor. Mandar o usuário para lá primeiro era mandá-lo para o
+        // lugar difícil existindo o fácil na mesma tela.
+        box.innerHTML = `<span class="finance-badge finance-badge-muted">Não configurado</span> Não há token nenhum para testar: nem chave mestra cadastrada, nem <code>FOCUS_NFE_TOKEN</code> no .env do servidor. Cadastre a <strong>chave mestra da conta</strong> no painel abaixo — é o caminho normal e não exige mexer no servidor.`;
       } else if (status.connected) {
-        box.innerHTML = `<span class="finance-badge finance-badge-success">Conectado</span> Ambiente: ${escapeHtml(ambienteLabel)}.`;
+        // A mensagem da rota carrega o aviso de que nota em homologação NÃO
+        // tem valor fiscal. Este ramo a descartava, e o aviso nunca chegava
+        // à tela: sobrava um "Conectado" verde num ambiente que não emite.
+        const aviso = status.travadoEmHomologacao && status.message
+          ? ` <strong>${escapeHtml(status.message)}</strong>`
+          : '';
+        box.innerHTML = `<span class="finance-badge finance-badge-success">Conectado</span> Ambiente: ${escapeHtml(ambienteLabel)}.${comToken}${aviso}`;
       } else {
-        box.innerHTML = `<span class="finance-badge finance-badge-danger">Falha na conexão</span> Ambiente: ${escapeHtml(ambienteLabel)}. ${escapeHtml(status.message || '')}`;
+        box.innerHTML = `<span class="finance-badge finance-badge-danger">Falha na conexão</span> Ambiente: ${escapeHtml(ambienteLabel)}.${comToken} ${escapeHtml(status.message || '')}`;
       }
     } catch (error) {
       box.textContent = 'Erro ao verificar Focus NFe: ' + (error.message || error);

@@ -217,6 +217,72 @@ function tokenUsado(resposta) {
     /alter table if exists integracoes\s+enable row level security/.test(migracao)
     && /alter table if exists empresas_integracoes enable row level security/.test(migracao));
 
+  // -------------------------------------------------------------------------
+  // 8. A TELA TEM DE DIZER A VERDADE SOBRE QUAL TOKEN ELA TESTOU (30/09/2026)
+  // -------------------------------------------------------------------------
+  // O item 3 acima protege a ORDEM da fila de reserva. Faltava proteger o que
+  // a tela AFIRMA sobre ela — e a tela estava afirmando o contrário.
+  //
+  // O texto "o teste abaixo usa SÓ o token padrão do servidor (FOCUS_NFE_TOKEN
+  // no .env)" e o botão "Testar token padrão" nasceram em 01/09, quando eram
+  // verdade. A fase CF (16/09) pôs a chave mestra na frente do .env e não
+  // encostou na tela: por 29 dias o painel descreveu a ordem invertida.
+  //
+  // É o tipo de defeito que teste de comportamento não pega, porque o código
+  // fazia a coisa certa — quem mentia era a legenda. Por isso estes checks são
+  // estáticos, e moram aqui em vez de num arquivo novo: a afirmação e o
+  // mecanismo que ela descreve ficam no mesmo teste, e quem mexer num vai ler
+  // o outro.
+  console.log('\n--- 8. a tela diz qual token respondeu ---');
+  const telaSrc = ler('public/modules/settings/subs/fiscal.js');
+  const focusSrc = ler('lib/focusnfe.js');
+
+  check('a tela não afirma mais que o teste usa só o .env',
+    !/teste abaixo usa só o token padrão/.test(telaSrc));
+  check('o botão não promete testar o token padrão', !/Testar token padrão/.test(telaSrc)
+    && /id="focusNfeRefresh">Testar conexão<\/button>/.test(telaSrc));
+  check('o texto descreve a ordem real: chave mestra e, se não houver, o .env',
+    /usando a chave mestra cadastrada abaixo e, se não houver nenhuma, o token padrão do servidor/.test(telaSrc));
+
+  // DERIVADO da biblioteca, e não uma lista de nomes copiada: uma origem nova
+  // em contaCredentials sem legenda na tela derruba este check.
+  const origens = [...new Set((focusSrc.match(/origem: '([a-z-]+)'/g) || [])
+    .map((m) => m.replace(/.*'([a-z-]+)'.*/, '$1')))].filter((o) => o !== 'nenhuma');
+  check('a biblioteca devolve as duas origens conhecidas', origens.length === 2, origens.join(', '));
+  for (const origem of origens) {
+    check(`a tela tem legenda para origem "${origem}"`,
+      new RegExp(`(^|\\s)'?${origem}'?:\\s`, 'm').test(
+        (telaSrc.match(/const ORIGEM_DO_TOKEN = \{[\s\S]*?\};/) || [''])[0]));
+  }
+  check('o resultado imprime a origem nos três ramos',
+    (telaSrc.match(/\$\{comToken\}/g) || []).length >= 2
+    && /ORIGEM_DO_TOKEN\[status\.origem\]/.test(telaSrc));
+
+  // A rota calcula `origem` justamente para a tela poder dizer isso; se a tela
+  // voltar a ignorá-lo, o campo passa a ser peso morto no JSON.
+  check('a rota ainda devolve origem', /return \{ \.\.\.status, origem: creds\.origem \};/.test(focusSrc));
+
+  console.log('\n--- 9. "Não configurado" manda para o caminho que existe na tela ---');
+  // O .env exige shell no servidor; a chave mestra é um formulário logo abaixo,
+  // na mesma página. Mandar para o .env primeiro era mandar para o lugar
+  // difícil existindo o fácil à vista.
+  check('manda cadastrar a chave mestra no painel abaixo',
+    /Cadastre a <strong>chave mestra da conta<\/strong> no painel abaixo/.test(telaSrc));
+  check('não manda mais mexer no .env e reiniciar o servidor',
+    !/no \.env do servidor e reinicie-o/.test(telaSrc));
+  check('e ainda diz que o .env existe como alternativa',
+    /nem <code>FOCUS_NFE_TOKEN<\/code> no \.env do servidor/.test(telaSrc));
+
+  console.log('\n--- 10. o aviso de homologação chega à tela ---');
+  // A biblioteca escreve "notas emitidas aqui NÃO têm valor fiscal" na mensagem
+  // do sucesso. O ramo `connected` da tela descartava status.message, então o
+  // aviso morria no JSON e sobrava um "Conectado" verde num ambiente que não
+  // emite nota com valor.
+  check('a biblioteca avisa que homologação não tem valor fiscal',
+    /notas emitidas aqui NÃO têm valor fiscal/.test(focusSrc));
+  check('a tela mostra esse aviso quando a trava está ligada',
+    /status\.travadoEmHomologacao && status\.message/.test(telaSrc));
+
   console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
   process.exit(falhas ? 1 : 0);
 })();
