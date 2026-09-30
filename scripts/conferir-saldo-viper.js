@@ -70,7 +70,7 @@ const cent = (v) => Math.round(Number(v || 0) * 100) / 100;
 // Nome comparável: o Viper escreve "CHAPA - CHAPEADO" e o MavisONE
 // "CHAPA | CHAPEADO"; o importador do cadastro trocou a pontuação, e isso não
 // é divergência de produto.
-const chave = (s) => String(s || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Z0-9]/g, '');
+const chave = (s) => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/g, '');
 
 (async () => {
   const skus = DO_VIPER.map((l) => l.sku);
