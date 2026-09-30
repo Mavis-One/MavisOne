@@ -22,9 +22,11 @@
 //      sistema não tem o campo. Uma coluna sempre em R$ 0,00 sugere que
 //      alguém controla seguro por pedido, e ninguém controla.
 //
-//   4. CABEÇALHO SEM DADOS tem de dizer onde cadastrar. `empresa` e
-//      `estabelecimento` têm 0 linhas nesta base: moldura vazia parece defeito
-//      de impressora, e uma frase diz o que fazer.
+//   4. CABEÇALHO SEM DADOS tem de dizer onde cadastrar. Moldura vazia parece
+//      defeito de impressora; uma frase diz o que fazer. Deixou de ser o caso
+//      desta base em 30/09/2026 — o banco de produção veio para cá e trouxe 1
+//      empresa e 10 estabelecimentos —, mas continua sendo o caso de toda
+//      instalação nova, e é o ramo mais fácil de quebrar sem ninguém ver.
 //
 // A renderização de verdade é conferida por scripts/prova-impressao-pedido.js,
 // que sobe o servidor. Aqui é estático: roda sem banco e sem rede.
@@ -129,6 +131,20 @@ check('o cabeçalho sem dados diz onde cadastrar',
 check('  e não é o mesmo tom do cabeçalho preenchido',
   /class="sem-emitente"/.test(template));
 
+console.log('\n--- 6b. CPF e CNPJ com máscara, como no modelo ---');
+// Sem isto o cabeçalho saía "43792899000135" — o mesmo número, e não o mesmo
+// documento aos olhos de quem confere o papel.
+check('existe o formatador de documento', /const mascaraDocumento = \(valor\) =>/.test(template));
+check('  catorze dígitos viram CNPJ',
+  /d\.length === 14\) return `\$\{d\.slice\(0, 2\)\}\.\$\{d\.slice\(2, 5\)\}\.\$\{d\.slice\(5, 8\)\}\/\$\{d\.slice\(8, 12\)\}-\$\{d\.slice\(12\)\}`/.test(template));
+check('  onze viram CPF', /d\.length === 11\) return/.test(template));
+check('  e o que não é nem um nem outro sai como veio',
+  /return String\(valor \|\| ''\);/.test(template));
+check('o CNPJ do emitente usa a máscara',
+  /CNPJ: \$\{escapeHtml\(mascaraDocumento\(emitente\.cnpj\)\)\}/.test(template));
+check('o documento do cliente também',
+  /escapeHtml\(mascaraDocumento\(cliente\?\.document\)\)/.test(template));
+
 console.log('\n--- 7. o papel continua dizendo o que ele é ---');
 // Ele não é NF-e. O cabeçalho com CNPJ pode ser lido como emissão fiscal, e é
 // justamente por isso que a frase tem de continuar lá.
@@ -150,7 +166,7 @@ console.log('\n--- 8. nada escapa sem escapar ---');
 check('o helper das linhas do cliente escapa o valor',
   /const linhaCliente = \(rotulo, valor\) => `<tr><th>\$\{rotulo\}<\/th><td>\$\{escapeHtml\(valor \|\| ''\)\}<\/td>`/.test(template));
 for (const campo of [
-  "cliente?.phone || ''", "cliente?.document || ''",
+  "cliente?.phone || ''", 'mascaraDocumento(cliente?.document)',
   'formState.note', 'formState.salesTerms', 'fretePorConta',
   'SalesStatus.rotulo(formState.status)', "formState.date || '-'"
 ]) {

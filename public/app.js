@@ -3630,6 +3630,17 @@ async function loadModule(moduleName) {
           //   nome diz. Frete e despesas aparecem nas próprias colunas.
           const emitente = meta.emitente || null;
           const catalogo = new Map((meta.products || []).map((p) => [p.id, p]));
+          // CPF e CNPJ COM MÁSCARA, como no modelo ("46.877.837/0001-14"). Sem
+          // isto o cabeçalho saía "43792899000135", que é o mesmo número e não
+          // é o mesmo documento aos olhos de quem confere. Onze dígitos viram
+          // CPF, catorze viram CNPJ, e qualquer outra coisa sai como veio — um
+          // documento estrangeiro ou incompleto não pode ser "corrigido" aqui.
+          const mascaraDocumento = (valor) => {
+            const d = String(valor || '').replace(/\D/g, '');
+            if (d.length === 14) return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
+            if (d.length === 11) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+            return String(valor || '');
+          };
           const enderecoDoCliente = () => {
             if (!cliente) return '';
             const linha = [cliente.address, cliente.city && cliente.state ? `${cliente.city}-${cliente.state}` : (cliente.city || cliente.state || '')]
@@ -3691,7 +3702,7 @@ async function loadModule(moduleName) {
                 <img src="${escapeHtml(location.origin)}/assets/logo.png" alt="" />
                 ${emitente ? `
                   <div class="doc-emit">
-                    <strong>${escapeHtml(emitente.razaoSocial || emitente.nomeFantasia || '')}</strong>${emitente.cnpj ? `, CNPJ: ${escapeHtml(emitente.cnpj)}` : ''}<br />
+                    <strong>${escapeHtml(emitente.razaoSocial || emitente.nomeFantasia || '')}</strong>${emitente.cnpj ? `, CNPJ: ${escapeHtml(mascaraDocumento(emitente.cnpj))}` : ''}<br />
                     ${escapeHtml(enderecoDoEmitente())}<br />
                     ${[emitente.email, emitente.telefone].filter(Boolean).map(escapeHtml).join(' / ')}
                     ${emitente.unidades > 1 ? `<br /><span style="color:#666">Dados da matriz${emitente.nomeFantasia ? ` (${escapeHtml(emitente.nomeFantasia)})` : ''} — há ${emitente.unidades} estabelecimentos cadastrados.</span>` : ''}
@@ -3713,7 +3724,7 @@ async function loadModule(moduleName) {
               <table class="cli">
                 <tbody>
                   ${linhaCliente('Cliente:', cliente?.name || '-')}<th>Telefone:</th><td>${escapeHtml(cliente?.phone || '')}</td></tr>
-                  ${linhaCliente('Endereço:', enderecoDoCliente())}<th>CPF/CNPJ:</th><td>${escapeHtml(cliente?.document || '')}</td></tr>
+                  ${linhaCliente('Endereço:', enderecoDoCliente())}<th>CPF/CNPJ:</th><td>${escapeHtml(mascaraDocumento(cliente?.document))}</td></tr>
                   ${linhaCliente('Condições:', condicoes)}<th>Frete por Conta:</th><td>${escapeHtml(fretePorConta)}</td></tr>
                   ${linhaCliente('Vendedor:', vendedor?.name || '-')}<th>Status:</th><td>${escapeHtml(SalesStatus.rotulo(formState.status))}</td></tr>
                   ${formState.saleOrigin || formState.customerPoCode || empresa?.name ? `

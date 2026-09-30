@@ -156,6 +156,7 @@ const semTags = (h) => String(h).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').t
     check(`  ${r}`, html.includes(`<th>${r}</th>`));
   }
   check('o telefone do cliente sai impresso', html.includes('91983467510'));
+  check('  e o CPF sai com mascara', /137.473.309-16/.test(html));
   check('o endereço junta rua, cidade-UF e CEP',
     /Rua Major Júlio Ferreira, Jaraguá do Sul-SC - 89256210/.test(html));
   check('"À vista" vem do paymentTerm', /À vista/.test(html));
@@ -172,7 +173,7 @@ const semTags = (h) => String(h).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').t
   check('o papel continua dizendo que não tem valor fiscal',
     /Documento interno, sem valor fiscal/.test(html) && /Documento interno, sem valor fiscal/.test(semTermos));
 
-  console.log('\n--- 7. sem estabelecimento cadastrado (o caso real desta base) ---');
+  console.log('\n--- 7. com e sem estabelecimento cadastrado ---');
   const semEmitente = renderizar({ ...base, meta: { ...meta, emitente: null } });
   check('o cabeçalho não sai vazio', /Cabeçalho sem dados da empresa/.test(semEmitente));
   check('  e diz onde cadastrar', /Configurações › Fiscal/.test(semEmitente));
@@ -181,14 +182,16 @@ const semTags = (h) => String(h).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').t
     meta: {
       ...meta,
       emitente: {
-        razaoSocial: 'SAL INFINITY ELECTRIC LTDA', cnpj: '46.877.837/0001-14', nomeFantasia: 'SAL INFINITY',
+        razaoSocial: 'SAL INFINITY ELECTRIC LTDA', cnpj: '46877837000114', nomeFantasia: 'SAL INFINITY',
         email: 'contato@salinfinityplus.com.br', telefone: '4732043738',
         logradouro: 'Rua Bernardo Dornbusch', numero: '2054', complemento: '', bairro: 'Vila Lalau',
         municipio: 'Jaraguá do Sul', uf: 'SC', cep: '89256100', unidades: 1
       }
     }
   });
-  check('com estabelecimento, o cabeçalho traz razão social e CNPJ',
+  // O CNPJ entra SEM máscara (é como o banco guarda) e tem de sair COM,
+  // igual ao modelo. Antes saía "46877837000114" no papel.
+  check('com estabelecimento, o cabeçalho traz razão social e CNPJ com máscara',
     /SAL INFINITY ELECTRIC LTDA/.test(comEmitente) && /CNPJ: 46\.877\.837\/0001-14/.test(comEmitente));
   check('  o endereço completo', /Rua Bernardo Dornbusch, 2054, Vila Lalau, 89256100, Jaraguá do Sul-SC/.test(comEmitente));
   check('  e-mail e telefone', /contato@salinfinityplus\.com\.br \/ 4732043738/.test(comEmitente));
