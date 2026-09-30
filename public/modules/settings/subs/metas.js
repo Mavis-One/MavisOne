@@ -65,9 +65,9 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
           <div>
             <strong>Metas de Venda</strong>
             <p class="muted">
-              O alvo de faturamento de cada loja e de cada vendedor, por mês. Aparece como barra no
-              cartão Faturamento do Início — quem vê todas as vendas compara com a meta das lojas;
-              quem vê só as próprias compara com a meta dele.
+              O alvo de faturamento de cada <strong>filial</strong> e de cada vendedor, por mês. Aparece como
+              barra no cartão Faturamento do Início — quem vê todas as vendas compara com a
+              <strong>soma</strong> das metas de filial; quem vê só as próprias compara com a meta dele.
             </p>
           </div>
         </div>
@@ -93,14 +93,21 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
           </div>
           <div class="form-grid">
             <div class="row">
+              <!-- "LOJA" SAIU DAQUI (30/09/2026), e era a PRIMEIRA opção.
+                   O escopo "empresa" se compara com orders.company_id, que
+                   está vazio em 14.864 de 14.864 pedidos — medido, e o mesmo
+                   fato que lib/filial-da-venda.js ja registrava. Uma meta de
+                   Loja ficava em 0% para sempre, e ainda descartava as metas de
+                   filial no "Todas as filiais" do Início.
+                   A filial é a divisão que EXISTE nos dados: ela sai do sufixo
+                   da categoria do pedido. -->
               <label>A meta é de *
                 <select name="escopo" id="metaEscopo" required>
-                  <option value="empresa">Loja</option>
                   <option value="filial">Filial</option>
                   <option value="vendedor">Vendedor</option>
                 </select>
               </label>
-              <label>Loja / Vendedor *
+              <label>Filial / Vendedor *
                 <select name="referenciaId" id="metaReferencia" required></select>
               </label>
               <label>Mês *
@@ -122,8 +129,11 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
           <div class="row">
             <label>Mostrar
               <select name="escopo">
-                <option value="" ${estado.escopo === '' ? 'selected' : ''}>Lojas e vendedores</option>
-                <option value="empresa" ${estado.escopo === 'empresa' ? 'selected' : ''}>Só lojas</option>
+                <option value="" ${estado.escopo === '' ? 'selected' : ''}>Tudo</option>
+                <!-- "Loja" continua no FILTRO, e saiu so da criacao: sem ele,
+                     quem tem meta de Loja cadastrada nao teria como achar e
+                     remover a dela. -->
+                <option value="empresa" ${estado.escopo === 'empresa' ? 'selected' : ''}>Só lojas (não medem nada)</option>
                 <option value="filial" ${estado.escopo === 'filial' ? 'selected' : ''}>Só filiais</option>
                 <option value="vendedor" ${estado.escopo === 'vendedor' ? 'selected' : ''}>Só vendedores</option>
               </select>
@@ -134,20 +144,34 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
           </div>
         </form>
         <div class="finance-stat-cards">
-          <article class="kpi-card"><h3>Meta das lojas em ${escapeHtml(mesLegivel(estado.competencia))}</h3>
-            <p class="kpi-valor">${brl(totalDoMes('empresa'))}</p></article>
           <article class="kpi-card"><h3>Meta das filiais em ${escapeHtml(mesLegivel(estado.competencia))}</h3>
-            <p class="kpi-valor">${brl(totalDoMes('filial'))}</p></article>
+            <p class="kpi-valor">${brl(totalDoMes('filial'))}</p>
+            <p class="muted">É esta que o Início usa em "Todas as filiais".</p></article>
           <article class="kpi-card"><h3>Meta dos vendedores em ${escapeHtml(mesLegivel(estado.competencia))}</h3>
             <p class="kpi-valor">${brl(totalDoMes('vendedor'))}</p></article>
         </div>
-        <!-- OS DOIS TOTAIS NÃO SE SOMAM, e a tela diz isso: a meta da loja já
-             contém as dos vendedores dela. Um terceiro cartão "total" seria
-             exatamente o número errado. -->
+        <!-- AS METAS DE LOJA VIRARAM PENDÊNCIA, e não um cartão (30/09/2026).
+             Elas tinham um cartão igual aos outros dois, o que sugeria que os
+             tres funcionavam do mesmo jeito. Nao funcionam: company_id esta
+             vazio em todos os pedidos, então a meta de Loja não tem venda para
+             comparar. Zero delas é o estado certo; uma delas é um problema, e é
+             assim que aparece agora. -->
+        ${totalDoMes('empresa') > 0 || metas.some((m) => m.escopo === 'empresa') ? `
+          <p class="sales-totals-alerta">
+            Há meta cadastrada no escopo <strong>Loja</strong>, e ela <strong>não mede nada</strong>:
+            o campo que ela compara (<code>company_id</code> do pedido) está vazio em
+            <strong>todos</strong> os pedidos. Ela ficaria em 0% para sempre.
+            Recadastre como <strong>Filial</strong> — que é a divisão que existe nos dados — e remova
+            a de Loja na tabela abaixo. O escopo saiu do formulário justamente para não entrar mais.
+          </p>` : ''}
+        <!-- OS DOIS TOTAIS NÃO SE SOMAM, e a tela diz isso: a meta da filial e a
+             do vendedor cobram o mesmo faturamento por caminhos diferentes. Um
+             terceiro cartão "total" seria exatamente o número errado. -->
         <p class="muted">
-          Os totais <strong>não se somam</strong>: a meta da loja já contém as metas dos vendedores dela.
-          São jeitos diferentes de cobrar o mesmo faturamento. A meta de filial é a que desenha a
-          linha de meta no Fluxo de Vendas do Início.
+          Os totais <strong>não se somam</strong>: a meta da filial e a do vendedor cobram o mesmo
+          faturamento por caminhos diferentes. A meta de filial é a que desenha a
+          linha de meta no Fluxo de Vendas do Início, e em "Todas as filiais" ela é a
+          <strong>soma</strong> das filiais que têm meta.
         </p>
       </div>
 
@@ -179,7 +203,9 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
     const selectEsc = document.getElementById('metaEscopo');
     function preencherReferencias() {
       if (!selectRef || !selectEsc) return;
-      const lista = selectEsc.value === 'empresa' ? empresas : (selectEsc.value === 'filial' ? filiais : vendedores);
+      // Sem o ramo de 'empresa': a opcao saiu do seletor, e um ramo para um
+      // valor que nao existe mais e' codigo que ninguem exercita.
+      const lista = selectEsc.value === 'filial' ? filiais : vendedores;
       selectRef.innerHTML = lista.length
         ? lista.map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name)}</option>`).join('')
         : '<option value="">Nenhum cadastrado</option>';

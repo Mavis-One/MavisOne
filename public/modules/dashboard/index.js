@@ -217,6 +217,13 @@ function dashboardCartaoKpi(kpi, escapeHtml) {
               : `${dashboardValorCurto(kpi.faixa.valor).prefixo} ${dashboardValorCurto(kpi.faixa.valor).numero} ${dashboardValorCurto(kpi.faixa.valor).sufixo} ${escapeHtml(kpi.faixa.rotulo)}`}</span>
             <span>${kpi.faixa.percentual}%</span>
           </div>
+          ${kpi.metaCobertura && kpi.metaCobertura.percentual < 99.5 ? `
+            <p class="kpi-faixa-nota muted">
+              O percentual compara ${dashboardValorCurto(kpi.metaCobertura.valor).prefixo}
+              ${dashboardValorCurto(kpi.metaCobertura.valor).numero}${dashboardValorCurto(kpi.metaCobertura.valor).sufixo}
+              — as filiais que têm meta, ${kpi.metaCobertura.percentual.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% do faturamento do cartão.
+              O resto não tem meta cadastrada.
+            </p>` : ''}
         </div>
       ` : (kpi.serie ? dashboardSparkline(kpi.serie) : '')}
     </article>`;

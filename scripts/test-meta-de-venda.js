@@ -138,8 +138,25 @@ check('e a tabela tem RLS', /alter table metas_de_venda enable row level securit
 
 console.log('\n--- 5. o cartão usa a meta ---');
 const kpisSrc = semComentarios(ler('lib/kpis.js'));
-check('kpiFaturamento recebe a meta', /function kpiFaturamento\(\{ pedidos, intervalo, serie, statusQueFaturam, meta \}\)/.test(kpisSrc));
-check('  e a faixa sai de faixaDaMeta', /faixa: metas\.faixaDaMeta\(valor, meta\)/.test(kpisSrc));
+check('kpiFaturamento recebe a meta',
+  /function kpiFaturamento\(\{ pedidos, intervalo, serie, statusQueFaturam, meta, metaCobre = null \}\)/.test(kpisSrc));
+// O NUMERADOR DA FAIXA DEIXOU DE SER O VALOR DO CARTAO (30/09/2026).
+//
+// Era `faixaDaMeta(valor, meta)`, e `valor` e' o faturamento INTEIRO do
+// recorte. Quando a meta e' a soma das metas de filial isso compara coisas
+// diferentes: 6,5% do faturado de 2026 (R$ 874.912, medido) nao pertence a
+// filial nenhuma -- entrava no numerador sem ter alvo no denominador, e o
+// percentual saia inflado por uma margem que ninguem sabia qual era.
+//
+// `metaCobre` e' o faturamento das MESMAS referencias que formam a meta,
+// calculado na rota. Nulo quando nao ha recorte a fazer, e ai o numerador
+// volta a ser o valor do cartao -- que e' o caso do vendedor comparando com
+// a meta dele.
+check('  e a faixa compara com metaCobre quando ele existe',
+  /faixa: metas\.faixaDaMeta\(metaCobre === null \? valor : metaCobre, meta\)/.test(kpisSrc));
+check('  e o VALOR do cartao continua o faturamento inteiro',
+  /const valor = soma\(doIntervalo/.test(kpisSrc),
+  'o cartao se chama Faturamento e continua sendo o faturamento');
 check('montarKpis repassa metaDeVenda', /meta: metaDeVenda/.test(kpisSrc));
 // O módulo é PURO: quem decide de quem é a meta é a rota.
 check('e kpis.js não sabe de quem é a meta',
@@ -152,7 +169,13 @@ const servidor = semComentarios(ler('server.js'));
 // linha de meta do gráfico usarem a MESMA regra. O comportamento é provado lá
 // (scripts/test-meta-por-filial.js); aqui, que o cartão a chama com o escopo.
 check('o cartão escolhe a meta pelo escopo de quem pergunta',
-  /metasLib\.metasDoRecorte\(\s*await metasDb\.listarPorCompetencias\(competencias\),\s*\{ sellerIds: escopoVendas\.sellerIds \}/.test(servidor));
+  /metasLib\.metasDoRecorte\(\s*await metasDb\.listarPorCompetencias\(competencias\),\s*\{ sellerIds: escopoVendas\.sellerIds, mesmaFilial: filialDaVenda\.mesmaFilial \}/.test(servidor));
+// `mesmaFilial` PASSOU A SER OBRIGATORIO aqui, e a ausencia dele era um
+// defeito calado: o default de metasDoRecorte comparava `a === b` cru, e uma
+// meta cadastrada em "Timbó" nao casaria com a filial "Timbo" dos pedidos.
+// O comparador canonico mora em lib/filial-da-venda.js.
+check('  com o comparador canonico de filial, e nao o `===` cru',
+  /mesmaFilial: filialDaVenda\.mesmaFilial/.test(servidor));
 check('  quem vê tudo compara com a meta das EMPRESAS',
   metas.metasDoRecorte([{ escopo: 'empresa', valor: 1 }, { escopo: 'vendedor', referenciaId: 'v', valor: 2 }])
     .every((m) => m.escopo === 'empresa'));

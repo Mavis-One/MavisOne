@@ -256,7 +256,19 @@ check('classifica receita x despesa', /tipo: classifyFinanceEntry\(e\)/.test(ser
 check('a série vem de buildSalesChartSeries, COM escopo',
   /serieVendas: canSales \? buildSalesChartSeries\(data, 'month', escopoVendas\)/.test(serverSrc));
 check('  e os pedidos do cartão também são filtrados pelo escopo',
-  /pedidos: canSales \? \(data\.orders \|\| \[\]\)\.filter\(\(o\) => escopoLib\.vendaVisivel\(escopoVendas, o\.sellerId\)\) : \[\]/.test(serverSrc));
+  /pedidos: canSales\s*\n\s*\? \(data\.orders \|\| \[\]\)\s*\n\s*\.filter\(\(o\) => escopoLib\.vendaVisivel\(escopoVendas, o\.sellerId\)\)/.test(serverSrc));
+// E MOVIMENTAÇÃO INTERNA TAMBÉM SAI DO CARTÃO (30/09/2026), pela mesma regra
+// que a tirou do gráfico. Hoje o filtro de status já a excluía — transferência
+// não gera financeiro —, e esta é a trava explícita: cartão e gráfico
+// discordando na mesma tela é o pior dos dois, como o comentário do sparkline
+// em lib/kpis.js diz.
+// ANCORADO NO BLOCO DO CARTÃO, e não solto no arquivo. A primeira versão era
+// `/\.filter\(filialDaVenda\.ehVenda\)/` sobre o server.js inteiro, e uma
+// mutação passou por ela: tirar o filtro do cartão deixava a MESMA linha no
+// bloco que calcula o numerador da meta, e o teste dava verde sobre um cartão
+// que voltou a somar transferência.
+check('  e movimentacao interna sai do cartao pela mesma regra do grafico',
+  /pedidos: canSales\s*\n\s*\? \(data\.orders \|\| \[\]\)\s*\n\s*\.filter\(\(o\) => escopoLib\.vendaVisivel\(escopoVendas, o\.sellerId\)\)\s*\n\s*\.filter\(filialDaVenda\.ehVenda\)/.test(serverSrc));
 check('o período é parametrizável', /getPeriodRange\(url\.searchParams\.get\('period'\) \|\| 'month'/.test(serverSrc));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);

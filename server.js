@@ -4198,7 +4198,25 @@ function buildSalesChartSeries(data, granularity, escopo, { filial = '', metas =
     throw new Error('buildSalesChartSeries exige um escopo (lib/relatorios-escopo.js). Sem ele a serie vazaria as vendas de todos os vendedores.');
   }
   const buckets = buildPeriodBuckets(granularity);
-  const visivel = (record) => escopoLib.vendaVisivel(escopo, record.sellerId) && filialDaVenda.daFilial(record, filial);
+  // MOVIMENTAÇÃO INTERNA FICA FORA DAS TRÊS LINHAS (30/09/2026).
+  //
+  // A linha "Pedidos" somava todo pedido não cancelado, e nisso entrava a
+  // transferência entre filiais: R$ 8.778.283,24 em 2026, 37,7% da linha
+  // (medido). Era por isso que "Pedidos" ficava tão acima de "Faturado" —
+  // mercadoria andando de uma loja para outra, contada como pedido.
+  //
+  // O "Faturado" já estava certo, mas POR ACIDENTE: transferência usa o status
+  // `pedido-aprovado-sem-faturamento`, que `geraFinanceiro` recusa. O status não
+  // identifica transferência nenhuma — 35 vendas de verdade (R$ 899 mil) usam o
+  // mesmo status. Então a regra entra aqui, pela CATEGORIA, e vale para as três
+  // linhas: o gráfico se chama Fluxo de VENDAS, e movimentação interna não é
+  // venda em nenhuma das três.
+  //
+  // NUM LUGAR SÓ, no filtro que orders e quotes compartilham. Aplicada linha por
+  // linha, a próxima linha nasceria sem ela.
+  const visivel = (record) => escopoLib.vendaVisivel(escopo, record.sellerId)
+    && filialDaVenda.daFilial(record, filial)
+    && filialDaVenda.ehVenda(record);
   const orders = (data.orders || []).filter(visivel);
   const quotes = (data.quotes || []).filter(visivel);
   const amountOf = (record) => (typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || 0));
@@ -7474,14 +7492,47 @@ async function tratarRequisicao(req, res) {
     // passou a ter duas fontes possíveis, e cartão e gráfico escolhendo cada
     // um a sua mostrariam dois alvos na mesma tela.
     let metaDeVenda = null;
+    // O FATURAMENTO DAS MESMAS FILIAIS QUE FORMAM A META (30/09/2026).
+    //
+    // A barra do cartão comparava o faturamento INTEIRO com a soma das metas de
+    // filial, e 6,5% do faturado de 2026 (R$ 874.912, medido) não pertence a
+    // filial nenhuma — entrava no numerador sem ter alvo no denominador, e o
+    // percentual saía inflado por uma margem que ninguém sabia qual era.
+    //
+    // A conta mora AQUI e não em lib/kpis.js porque quem sabe a filial de uma
+    // venda é `lib/filial-da-venda.js`, e o módulo de KPI é puro de propósito —
+    // ele não conhece categoria, nem grafia de loja, nem escopo de usuário.
+    let metaCobre = null;
     if (canSales) {
       try {
         const competencias = metasLib.mesesDoIntervalo(intervalo).map((m) => m.competencia);
         const minhas = metasLib.metasDoRecorte(
           await metasDb.listarPorCompetencias(competencias),
-          { sellerIds: escopoVendas.sellerIds }
+          { sellerIds: escopoVendas.sellerIds, mesmaFilial: filialDaVenda.mesmaFilial }
         );
         metaDeVenda = metasLib.metaDoPeriodo(minhas, intervalo);
+
+        // SÓ QUANDO A META É POR FILIAL. Para um vendedor comparando com a meta
+        // dele, o numerador certo é o valor do cartão — que já são as vendas
+        // dele — e recortar por filial ali daria zero.
+        const referencias = escopoVendas.sellerIds === null ? metasLib.referenciasDaMeta(minhas) : [];
+        if (metaDeVenda !== null && referencias.length) {
+          const chaves = new Set(referencias.map((r) => filialDaVenda.chaveDaFilial(r)));
+          const faturam = new Set(salesStatus.CATALOGO.filter((s) => s.geraFinanceiro).map((s) => s.value));
+          metaCobre = (data.orders || [])
+            .filter((o) => escopoLib.vendaVisivel(escopoVendas, o.sellerId))
+            .filter((o) => o.date >= intervalo.from && o.date <= intervalo.to)
+            .filter((o) => faturam.has(String(o.status || '').toLowerCase()))
+            // `ehVenda` aqui e redundante hoje (movimentacao interna nao tem
+            // sufixo de filial, entao o `chaves.has` abaixo ja a exclui) e nao
+            // e' de graca: ela torna a redundancia EXPLICITA. Uma categoria
+            // "Transferencia entre Filiais / Timbo" passaria pelo filtro de
+            // baixo, e ai o numerador da barra teria transferencia dentro.
+            .filter(filialDaVenda.ehVenda)
+            .filter((o) => chaves.has(filialDaVenda.chaveDaFilial(filialDaVenda.filialDaCategoria(o.category))))
+            .reduce((soma, o) => soma + Number(o.totalAmount ?? o.amount ?? 0), 0);
+          metaCobre = Math.round(metaCobre * 100) / 100;
+        }
       } catch (erroMeta) {
         console.error('Dashboard: nao consegui ler as metas de venda', erroMeta.message);
       }
@@ -7491,7 +7542,16 @@ async function tratarRequisicao(req, res) {
       // ESCOPADO (fase DC). Era `data.orders || []`, e o cartao Faturamento de
       // um vendedor restrito trazia o numero da empresa inteira -- identico ao
       // do admin, medido. Ver a nota em buildSalesChartSeries.
-      pedidos: canSales ? (data.orders || []).filter((o) => escopoLib.vendaVisivel(escopoVendas, o.sellerId)) : [],
+      // E `ehVenda` junto (30/09/2026): movimentacao interna nao entra no
+      // cartao Faturamento pelo mesmo motivo que saiu do grafico. Hoje o
+      // filtro de status ja a excluia (transferencia nao gera financeiro), e
+      // isto e a trava explicita -- cartao e grafico discordando na mesma tela
+      // e o pior dos dois, como o comentario do sparkline em lib/kpis.js diz.
+      pedidos: canSales
+        ? (data.orders || [])
+          .filter((o) => escopoLib.vendaVisivel(escopoVendas, o.sellerId))
+          .filter(filialDaVenda.ehVenda)
+        : [],
       compras: activePurchases,
       entradas: entradasClassificadas,
       // serializeProduct traz `situation` (abaixo-minimo/zerado), que é o que
@@ -7506,6 +7566,9 @@ async function tratarRequisicao(req, res) {
       statusQueFaturam: salesStatus.CATALOGO.filter((s) => s.geraFinanceiro).map((s) => s.value),
       // Ja rateada para o intervalo e filtrada pelo escopo, logo acima.
       metaDeVenda,
+      // E o faturamento das MESMAS filiais que formam a meta, para a barra
+      // comparar coisas iguais. Nulo quando nao ha recorte a fazer.
+      metaCobre,
       permissoes: { sales: canSales, finance: canFinance, stock: canStock, purchases: canPurchases },
       hoje: toDateStr(getTodayLocal())
     });
@@ -7695,7 +7758,7 @@ async function tratarRequisicao(req, res) {
         metas = metasLib.metasDoRecorte(await metasDb.listarPorCompetencias(competencias), {
           sellerIds: escopoVendas.sellerIds,
           filial,
-          mesmaFilial: (a, b) => filialDaVenda.chaveDaFilial(a) === filialDaVenda.chaveDaFilial(b)
+          mesmaFilial: filialDaVenda.mesmaFilial
         });
       } catch (erroMeta) {
         console.error('Dashboard: nao consegui ler as metas do grafico', erroMeta.message);
@@ -8582,7 +8645,28 @@ async function tratarRequisicao(req, res) {
         const body = await readBody(req);
         const escopo = String(body.escopo || '').trim();
         if (!metasLib.ESCOPOS.includes(escopo)) {
-          return sendJson(res, { error: 'Escolha se a meta é da loja, da filial ou do vendedor.' }, 400);
+          return sendJson(res, { error: 'Escolha se a meta é da filial ou do vendedor.' }, 400);
+        }
+        // META DE LOJA NÃO SE CRIA MAIS (30/09/2026).
+        //
+        // `empresa` continua em ESCOPOS porque o GET e o DELETE precisam dele:
+        // quem já cadastrou uma meta de Loja tem de conseguir achar e remover a
+        // dela. O que não se aceita é criar OUTRA.
+        //
+        // O motivo, medido: o escopo se compara com `orders.company_id`, vazio
+        // em 14.864 de 14.864 pedidos. A meta ficava em 0% para sempre — e, até
+        // esta data, uma única meta de Loja descartava TODAS as metas de filial
+        // no "Todas as filiais" do Início (ver metasDoRecorte em lib/metas.js).
+        //
+        // A recusa é na ROTA e não só no formulário: esconder a opção do seletor
+        // não impede um POST, e é a mesma razão pela qual o botão "Definir meta"
+        // não é o controle de quem pode definir meta.
+        if (escopo === 'empresa') {
+          return sendJson(res, {
+            error: 'Meta de Loja não é mais aceita: o campo que ela compara (company_id do pedido) '
+              + 'está vazio em todos os pedidos, então ela ficaria em 0% para sempre. '
+              + 'Cadastre como Filial — é a divisão que existe nos dados.'
+          }, 400);
         }
         const referenciaId = String(body.referenciaId || '').trim();
         if (!referenciaId) {
