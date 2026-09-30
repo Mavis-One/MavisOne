@@ -3606,52 +3606,173 @@ async function loadModule(moduleName) {
           const win = window.open('', '_blank');
           if (!win) { showToast('O navegador bloqueou a janela de impressão. Libere os pop-ups deste site e tente de novo.', 'warning'); return; }
           win.opener = null;
+
+          // -------------------------------------------------------------------
+          // O MODELO DO PAPEL (30/09/2026)
+          // -------------------------------------------------------------------
+          // O layout é o do documento que a empresa já usa e já entrega ao
+          // cliente — cabeçalho com emitente e número, DADOS DO CLIENTE em
+          // caixa, PRODUTOS E SERVIÇOS com Código/NCM/Unidade, TOTAIS em faixa,
+          // termos, assinatura e observações. Padronizar os dois evita a
+          // pergunta que o papel diferente sempre gera: "este aqui é o mesmo
+          // pedido daquele outro?".
+          //
+          // O QUE NÃO ENTROU, e por que não é esquecimento:
+          //
+          //   SEGURO. O modelo tem a coluna; este sistema não tem o campo. Uma
+          //   coluna que só pode dizer R$ 0,00 sugere que alguém controla
+          //   seguro por pedido, e ninguém controla. `fiscal_documentos` tem
+          //   `valor_seguro`, mas o formulário do pedido não — quando tiver, a
+          //   coluna entra com o dado atrás dela.
+          //
+          //   "Total Sem Desconto" É `base`, e não `base + frete`: é o valor de
+          //   produtos e serviços antes de qualquer abatimento, que é o que o
+          //   nome diz. Frete e despesas aparecem nas próprias colunas.
+          const emitente = meta.emitente || null;
+          const catalogo = new Map((meta.products || []).map((p) => [p.id, p]));
+          const enderecoDoCliente = () => {
+            if (!cliente) return '';
+            const linha = [cliente.address, cliente.city && cliente.state ? `${cliente.city}-${cliente.state}` : (cliente.city || cliente.state || '')]
+              .map((p) => String(p || '').trim()).filter(Boolean).join(', ');
+            return [linha, cliente.zipCode].filter(Boolean).join(' - ');
+          };
+          const enderecoDoEmitente = () => {
+            if (!emitente) return '';
+            const rua = [emitente.logradouro, emitente.numero, emitente.complemento]
+              .map((p) => String(p || '').trim()).filter(Boolean).join(', ');
+            const cidade = [emitente.bairro, emitente.cep, emitente.municipio && emitente.uf ? `${emitente.municipio}-${emitente.uf}` : emitente.municipio]
+              .map((p) => String(p || '').trim()).filter(Boolean).join(', ');
+            return [rua, cidade].filter(Boolean).join(', ');
+          };
+          // "Outros" reúne o que o modelo não tem coluna própria para mostrar e
+          // que aqui existe: despesas gerais e taxa de montagem. Somadas, e não
+          // omitidas — sem elas as parcelas impressas não fechariam com o total,
+          // que era o defeito da versão anterior deste documento.
+          const outros = Number(totais.despesasGerais || 0) + Number(totais.taxaMontagem || 0);
+          const condicoes = (formState.paymentInfo && formState.paymentInfo.paymentTerm) === 'aprazo' ? 'A prazo' : 'À vista';
+          const fretePorConta = (formState.delivery && formState.delivery.shippingMethod) || '';
+          const linhaCliente = (rotulo, valor) => `<tr><th>${rotulo}</th><td>${escapeHtml(valor || '')}</td>`;
+
           win.document.write(`
             <html><head><meta charset="utf-8" /><title>${title} ${escapeHtml(String(editRecord?.code || ''))}</title><style>
-              body { font-family: Arial, sans-serif; padding: 24px; color: #10213a; }
-              h1 { font-size: 18px; margin: 0 0 2px; }
-              .muted { color: #666; font-size: 12px; }
-              .info { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 18px; margin: 14px 0; font-size: 13px; }
-              table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-              th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 12px; }
-              .num { text-align: right; }
-              .tot { text-align: right; margin-top: 10px; font-size: 13px; }
-              .tot strong { font-size: 15px; }
+              @page { margin: 12mm; }
+              body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 12px; margin: 0; padding: 16px; }
+              .doc-head { display: flex; align-items: flex-start; gap: 16px; }
+              .doc-head img { height: 54px; width: auto; flex: 0 0 auto; }
+              .doc-emit { flex: 1 1 auto; line-height: 1.45; }
+              .doc-emit strong { font-size: 13px; }
+              .doc-num { flex: 0 0 auto; text-align: right; font-weight: bold; line-height: 1.5; }
+              .doc-num .n { font-size: 15px; }
+              .sem-emitente { flex: 1 1 auto; color: #8a5a00; background: #fff6e0; border: 1px solid #f0d28a; padding: 8px 10px; line-height: 1.45; }
+              h2 { font-size: 13px; text-align: center; margin: 18px 0 6px; letter-spacing: .3px; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #333; padding: 5px 7px; text-align: left; vertical-align: top; }
+              thead th { text-align: center; font-size: 11px; }
+              .cli th { width: 14%; text-align: right; background: #f6f6f6; }
+              .cli td { width: 36%; }
+              .num { text-align: right; white-space: nowrap; }
+              .cen { text-align: center; }
+              tfoot td, .tot-final { font-weight: bold; }
+              .termos { white-space: pre-wrap; line-height: 1.5; margin: 6px 0 0; }
+              .assina { margin-top: 18px; line-height: 2.4; }
+              .assina span { display: inline-block; min-width: 260px; border-bottom: 1px solid #333; }
+              .obs { white-space: pre-wrap; line-height: 1.5; }
+              .rodape { margin-top: 20px; color: #666; font-size: 10.5px; }
             </style></head><body>
-              <h1>${title} ${editRecord?.code ? '#' + escapeHtml(String(editRecord.code)) : ''}</h1>
-              <p class="muted">Documento interno, sem valor fiscal.</p>
-              <div class="info">
-                <div><strong>Cliente:</strong> ${escapeHtml(cliente?.name || '-')}</div>
-                <div><strong>Data:</strong> ${escapeHtml(formState.date || '-')}</div>
-                <div><strong>Empresa:</strong> ${escapeHtml(empresa?.name || '-')}</div>
-                <div><strong>Vendedor:</strong> ${escapeHtml(vendedor?.name || '-')}</div>
-                <div><strong>Status:</strong> ${escapeHtml(SalesStatus.rotulo(formState.status))}</div>
-                <div><strong>Origem da venda:</strong> ${escapeHtml(formState.saleOrigin || '-')}</div>
-                ${formState.dueDate ? `<div><strong>Validade:</strong> ${escapeHtml(formState.dueDate)}</div>` : ''}
-                ${formState.customerPoCode ? `<div><strong>Ordem de compra do cliente:</strong> ${escapeHtml(formState.customerPoCode)}</div>` : ''}
+              <div class="doc-head">
+                <!-- SEM onerror PARA ESCONDER LOGO QUEBRADO, e a recusa é
+                     deliberada: um único atributo inline em app.js obrigaria a
+                     reabrir 'unsafe-inline' na CSP, e aí ela deixa de valer
+                     contra XSS (ver scripts/test-cabecalhos-de-seguranca.js).
+                     O arquivo é servido pelo próprio app; se ele faltar, o
+                     ícone de imagem quebrada é um preço muito menor. A URL é
+                     absoluta porque a janela nasce em about:blank e caminho
+                     relativo não resolve. -->
+                <img src="${escapeHtml(location.origin)}/assets/logo.png" alt="" />
+                ${emitente ? `
+                  <div class="doc-emit">
+                    <strong>${escapeHtml(emitente.razaoSocial || emitente.nomeFantasia || '')}</strong>${emitente.cnpj ? `, CNPJ: ${escapeHtml(emitente.cnpj)}` : ''}<br />
+                    ${escapeHtml(enderecoDoEmitente())}<br />
+                    ${[emitente.email, emitente.telefone].filter(Boolean).map(escapeHtml).join(' / ')}
+                    ${emitente.unidades > 1 ? `<br /><span style="color:#666">Dados da matriz${emitente.nomeFantasia ? ` (${escapeHtml(emitente.nomeFantasia)})` : ''} — há ${emitente.unidades} estabelecimentos cadastrados.</span>` : ''}
+                  </div>
+                ` : `
+                  <div class="sem-emitente">
+                    <strong>Cabeçalho sem dados da empresa.</strong><br />
+                    Cadastre o estabelecimento em <strong>Configurações › Fiscal</strong> para que razão social, CNPJ, endereço e telefone saiam impressos aqui.
+                  </div>
+                `}
+                <div class="doc-num">
+                  <div class="n">${escapeHtml(title.toUpperCase())}${editRecord?.code ? ` Nº ${escapeHtml(String(editRecord.code))}` : ''}</div>
+                  <div>Emissão ${escapeHtml(formState.date || '-')}</div>
+                  ${formState.dueDate ? `<div>Validade ${escapeHtml(formState.dueDate)}</div>` : ''}
+                </div>
               </div>
-              <table>
-                <thead><tr><th>Produto</th><th>SKU</th><th class="num">Qtd.</th><th class="num">Valor unit.</th><th class="num">Total</th></tr></thead>
-                <tbody>${items.map((i) => `<tr>
-                  <td>${escapeHtml(i.name || '')}</td><td>${escapeHtml(i.sku || '-')}</td>
-                  <td class="num">${i.quantity}</td>
-                  <td class="num">${salesFormatBRL(i.unitPrice)}</td>
-                  <td class="num">${salesFormatBRL(Number(i.quantity) * Number(i.unitPrice))}</td>
-                </tr>`).join('')}</tbody>
+
+              <h2>DADOS DO CLIENTE</h2>
+              <table class="cli">
+                <tbody>
+                  ${linhaCliente('Cliente:', cliente?.name || '-')}<th>Telefone:</th><td>${escapeHtml(cliente?.phone || '')}</td></tr>
+                  ${linhaCliente('Endereço:', enderecoDoCliente())}<th>CPF/CNPJ:</th><td>${escapeHtml(cliente?.document || '')}</td></tr>
+                  ${linhaCliente('Condições:', condicoes)}<th>Frete por Conta:</th><td>${escapeHtml(fretePorConta)}</td></tr>
+                  ${linhaCliente('Vendedor:', vendedor?.name || '-')}<th>Status:</th><td>${escapeHtml(SalesStatus.rotulo(formState.status))}</td></tr>
+                  ${formState.saleOrigin || formState.customerPoCode || empresa?.name ? `
+                  ${linhaCliente('Origem:', formState.saleOrigin || '')}<th>${formState.customerPoCode ? 'OC do cliente:' : 'Loja:'}</th><td>${escapeHtml(formState.customerPoCode || empresa?.name || '')}</td></tr>` : ''}
+                </tbody>
               </table>
-              <!-- Mesmas linhas do resumo da tela, e pela mesma fonte de cálculo:
-                   antes o documento listava desconto em % e R$ separados e omitia
-                   despesas gerais e taxa de montagem, então as parcelas impressas
-                   não fechavam com o total. -->
-              <div class="tot">
-                <div>Produtos + Serviços: ${salesFormatBRL(totais.base)}</div>
-                ${totais.descontoTotal ? `<div>Descontos${totais.percentualAplicado ? ` (${totais.percentualAplicado}% + ${salesFormatBRL(totais.descontoValor)})` : ''}: -${salesFormatBRL(totais.descontoTotal)}</div>` : ''}
-                ${totais.freteCobrado ? `<div>Frete: ${salesFormatBRL(totais.freteCobrado)}</div>` : ''}
-                ${totais.despesasGerais ? `<div>Desp. gerais: ${salesFormatBRL(totais.despesasGerais)}</div>` : ''}
-                ${totais.taxaMontagem ? `<div>Taxa de montagem: ${salesFormatBRL(totais.taxaMontagem)}</div>` : ''}
-                <div><strong>Total: ${salesFormatBRL(totais.totalAmount)}</strong></div>
-              </div>
-              ${formState.note ? `<p class="muted" style="margin-top:14px;"><strong>Observações:</strong> ${escapeHtml(formState.note)}</p>` : ''}
+
+              <h2>PRODUTOS E SERVIÇOS</h2>
+              <table>
+                <thead><tr>
+                  <th>Código</th><th>NCM</th><th>Descrição</th><th>Qtd.</th><th>Unidade</th><th>Valor Unitário</th><th>Valor Total</th>
+                </tr></thead>
+                <tbody>${items.map((i) => {
+                  const produto = catalogo.get(i.productId) || {};
+                  const descricao = [i.name, i.classValueName, i.chassi].filter(Boolean).join(' — ');
+                  return `<tr>
+                    <td>${escapeHtml(i.sku || '-')}</td>
+                    <td>${escapeHtml(produto.ncm || '')}</td>
+                    <td>${escapeHtml(descricao)}</td>
+                    <td class="cen">${escapeHtml(Number(i.quantity).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 }))}</td>
+                    <td class="cen">${escapeHtml(produto.unidadeComercial || '')}</td>
+                    <td class="num">${salesFormatBRL(i.unitPrice)}</td>
+                    <td class="num">${salesFormatBRL(Number(i.quantity) * Number(i.unitPrice))}</td>
+                  </tr>`;
+                }).join('')}</tbody>
+                <tfoot><tr><td colspan="6" class="num">TOTAL</td><td class="num">${salesFormatBRL(totais.valorProdutos + totais.valorServicos)}</td></tr></tfoot>
+              </table>
+
+              <h2>TOTAIS</h2>
+              <table>
+                <thead><tr>
+                  <th>Frete</th><th>Outros</th><th>Desconto${totais.percentualAplicado ? ` (${totais.percentualAplicado}%)` : ''}</th>
+                  <th>Total Sem Desconto</th><th>Total Final</th>
+                </tr></thead>
+                <tbody><tr>
+                  <td class="num">${salesFormatBRL(totais.freteCobrado)}</td>
+                  <td class="num">${salesFormatBRL(outros)}</td>
+                  <td class="num">${totais.descontoTotal ? '-' : ''}${salesFormatBRL(totais.descontoTotal)}</td>
+                  <td class="num">${salesFormatBRL(totais.base)}</td>
+                  <td class="num tot-final">${salesFormatBRL(totais.totalAmount)}</td>
+                </tr></tbody>
+              </table>
+
+              ${formState.salesTerms ? `
+                <h2>TERMOS E CONDIÇÕES DA VENDA</h2>
+                <p class="termos">${escapeHtml(formState.salesTerms)}</p>
+                <div class="assina">
+                  Nome: <span></span><br />
+                  CPF: <span></span><br />
+                  Assinatura: <span></span>
+                </div>
+              ` : ''}
+
+              ${formState.note ? `
+                <h2>OBSERVAÇÕES</h2>
+                <p class="obs">${escapeHtml(formState.note)}</p>
+              ` : ''}
+
+              <p class="rodape">Documento interno, sem valor fiscal.</p>
             </body></html>`);
           win.document.close();
           win.focus();

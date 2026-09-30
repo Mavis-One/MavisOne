@@ -1615,6 +1615,15 @@ function indiceDoCadastro(data) {
     name: record.name,
     code: record.code,
     document: record.document,
+    // O telefone entrou em 30/09/2026 para a impressão do pedido: o modelo que
+    // o usuário quer padronizado traz "Telefone" no bloco do cliente, e sem
+    // este campo a linha sairia vazia em todo pedido. Ele já está em `people`
+    // e em `cnpjs` — o que faltava era chegar até aqui.
+    //
+    // Não engorda a lista da página: /api/sales (a lista) mapeia isto para
+    // { id, name } logo depois, pelo motivo escrito lá. Quem recebe o campo é
+    // /api/sales/meta, que é o formulário, e é ele quem imprime.
+    phone: record.phone || '',
     address: record.address || record.street || '',
     city: record.city || '',
     state: record.state || '',
@@ -1643,6 +1652,54 @@ function indiceDoCadastro(data) {
 
 function getCadastroDirectory(data) {
   return indiceDoCadastro(data).lista;
+}
+
+/**
+ * O EMITENTE DO CABEÇALHO DA IMPRESSÃO — contato, não declaração fiscal.
+ *
+ * Devolve `null` quando não há estabelecimento cadastrado, e `null` é a
+ * resposta certa: a impressão então mostra uma linha dizendo onde cadastrar, em
+ * vez de um cabeçalho com quatro campos vazios. Papel com moldura vazia parece
+ * defeito de impressora; uma frase dizendo "cadastre em Configurações › Fiscal"
+ * diz o que fazer.
+ *
+ * NENHUM SEGREDO SAI DAQUI: os campos são escolhidos um a um, e não por spread
+ * de `mapEstabelecimentoRow` — que carrega `focusAmbiente` e
+ * `focusTokenConfigured`. Nada disso tem o que fazer num pedido impresso.
+ *
+ * O catch é estreito: banco sem a fase fiscal ainda imprime, sem cabeçalho. É a
+ * mesma degradação de `reservas` e `saldosPorDeposito` nesta rota.
+ */
+async function emitenteParaImpressao() {
+  let lista;
+  try {
+    lista = await fiscalDb.getEstabelecimentos();
+  } catch (erro) {
+    return null;
+  }
+  const ativos = (lista || []).filter((e) => e && e.ativo !== false);
+  if (!ativos.length) return null;
+  const escolhido = ativos.length === 1
+    ? ativos[0]
+    : (ativos.find((e) => String(e.tipo || '').toUpperCase() === 'MATRIZ') || ativos[0]);
+  return {
+    razaoSocial: escolhido.razaoSocial || '',
+    nomeFantasia: escolhido.nomeFantasia || '',
+    cnpj: escolhido.cnpj || '',
+    inscricaoEstadual: escolhido.inscricaoEstadual || '',
+    email: escolhido.email || '',
+    telefone: escolhido.telefone || '',
+    logradouro: escolhido.logradouro || '',
+    numero: escolhido.numero || '',
+    complemento: escolhido.complemento || '',
+    bairro: escolhido.bairro || '',
+    municipio: escolhido.municipio || '',
+    uf: escolhido.uf || '',
+    cep: escolhido.cep || '',
+    // Para a tela poder dizer "são vários, este é o da matriz" sem que quem
+    // imprime tenha de adivinhar de onde vieram os dados.
+    unidades: ativos.length
+  };
 }
 
 // Um cadastro pelo id, sem varrer a lista. Devolve `null` quando não existe —
@@ -8813,6 +8870,22 @@ async function tratarRequisicao(req, res) {
       deposits: data.deposits,
       directory: getCadastroDirectory(data),
       products,
+      // O CABEÇALHO DA IMPRESSÃO (30/09/2026). Razão social, CNPJ, endereço,
+      // e-mail e telefone de quem emite — é o que o modelo que o usuário quer
+      // padronizar traz no topo, e o único cadastro que tem tudo isso é
+      // `estabelecimento` (Configurações › Fiscal).
+      //
+      // QUAL ESTABELECIMENTO, e por que a escolha é explícita: o pedido não
+      // aponta para nenhum. `orders.company_id` está vazio em 14.864 de 14.864
+      // (ver lib/filial-da-venda.js), então não há vínculo para seguir. Com um
+      // só cadastrado, é ele. Com vários, é a MATRIZ — e o `nomeFantasia` vai
+      // junto para quem lê o papel ver de qual unidade são os dados. Nenhuma
+      // heurística de casar a filial da categoria com o estabelecimento: seria
+      // adivinhar CNPJ, e CNPJ errado num papel é pior que cabeçalho sem CNPJ.
+      //
+      // O documento continua dizendo "sem valor fiscal" — ele não é NF-e, e o
+      // cabeçalho aqui é contato, não declaração de emitente.
+      emitente: await emitenteParaImpressao(),
       // Categoria e Tabela de Preços eram texto livre na tela de venda. Digitar
       // à mão gera "Revenda", "revenda" e "Revensa" como se fossem coisas
       // diferentes, e aí nenhum relatório por categoria fecha.
