@@ -112,6 +112,56 @@ for (const anotado of (leiaute.NOMES_ACENTUADOS_NO_GUIA || [])) {
 check('  e cada anotação aponta para um campo que existe, em ASCII',
   anotacoesTortas.length === 0, anotacoesTortas.slice(0, 3).join(' | ') || 'todas conferidas');
 
+console.log('\n--- 3b. nome truncado: o defeito que a CONTAGEM não pega ---');
+// No PDF o nome vem partido quando não cabe na coluna, e o resto cai na coluna
+// 0 da linha seguinte: "VL_BC_ICMS_" + "ST" no C190, "VL_SLD_CREDOR_TRA" +
+// "NSPORTAR" no E110. Com o nome truncado o NÚMERO de campos continua certo, e
+// a conferência de 40 em 40 passa — foi o que aconteceu na primeira versão
+// deste arquivo. Quem pega é o nome.
+const truncados = [];
+const repetidosIndevidos = [];
+for (const [reg, campos] of decodificados) {
+  const legitimos = (leiaute.DUPLICADOS_LEGITIMOS || {})[reg] || [];
+  const vistos = new Set();
+  for (const c of campos) {
+    if (c.nome.endsWith('_')) truncados.push(reg + '.' + c.nome);
+    if (vistos.has(c.nome) && !legitimos.includes(c.nome)) repetidosIndevidos.push(reg + '.' + c.nome);
+    vistos.add(c.nome);
+  }
+}
+// Os dois campos que a apuração usa, e que vinham truncados.
+const c190_8 = leiaute.camposDe('C190')[7];
+const e110_14 = leiaute.camposDe('E110')[13];
+check('C190 campo 08 é VL_BC_ICMS_ST, e não VL_BC_ICMS_',
+  c190_8.nome === 'VL_BC_ICMS_ST', c190_8.nome);
+check('E110 campo 14 é VL_SLD_CREDOR_TRANSPORTAR',
+  e110_14.nome === 'VL_SLD_CREDOR_TRANSPORTAR', e110_14.nome);
+
+// Os suspeitos que sobraram têm de estar DECLARADOS, e nenhum pode ser dos 40.
+const usados = new Set(observado.REGISTROS.map((r) => r.reg));
+const suspeitos = new Set(leiaute.NOMES_SUSPEITOS || []);
+const suspeitosNaoDeclarados = [...new Set([...truncados, ...repetidosIndevidos]
+  .map((x) => x.split('.')[0]))].filter((reg) => !suspeitos.has(reg));
+check('todo registro com nome duvidoso está em NOMES_SUSPEITOS',
+  suspeitosNaoDeclarados.length === 0,
+  suspeitosNaoDeclarados.join(', ') || `${suspeitos.size} declarados`);
+check('e NENHUM dos 40 usados em agosto é suspeito',
+  [...suspeitos].every((reg) => !usados.has(reg)),
+  [...suspeitos].filter((reg) => usados.has(reg)).join(', ') || 'nenhum');
+// Nome repetido só passa se estiver na lista de duplicados conferidos no Guia.
+check('nome repetido no mesmo registro só com justificativa conferida',
+  Object.keys(leiaute.DUPLICADOS_LEGITIMOS || {}).length > 0
+  && (leiaute.DUPLICADOS_LEGITIMOS.C170 || []).includes('ALIQ_PIS'),
+  'C170: ' + ((leiaute.DUPLICADOS_LEGITIMOS || {}).C170 || []).join(', '));
+// E o C170 de fato os tem duas vezes — o Guia é que é assim (campo 27 em
+// percentual, 29 em reais; 33 e 35 idem para a COFINS).
+const nomesC170 = leiaute.camposDe('C170').map((c) => c.nome);
+check('  e o C170 realmente tem ALIQ_PIS duas vezes',
+  nomesC170.filter((n) => n === 'ALIQ_PIS').length === 2
+  && nomesC170.filter((n) => n === 'ALIQ_COFINS').length === 2);
+check('  e o campo 34 dele não ficou em QUANT_BC_COF',
+  nomesC170[33] === 'QUANT_BC_COFINS', nomesC170[33]);
+
 console.log('\n--- 4. tipo chutado é pior que tipo ausente ---');
 // A célula de descrição desce uma linha no PDF, então tipo/tamanho são casados
 // por ORDEM e só quando as contagens batem. Quando não batem, o registro fica

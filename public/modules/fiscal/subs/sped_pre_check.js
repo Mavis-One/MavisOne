@@ -201,15 +201,22 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           Isso não é pendência de cadastro — é desenvolvimento que não estava previsto, e apareceu
           porque o arquivo de verdade foi lido. O <code>0100</code> é o cadastro do contabilista;
           o <code>0450</code> e o <code>C110</code> são os textos legais de cada lançamento;
-          o <code>C190</code> é a agregação dos itens por CST, CFOP e alíquota; o Bloco E é a
-          apuração, cujos códigos de ajuste são tabela oficial por UF.
+          o Bloco E é a apuração, cujos códigos de ajuste são tabela oficial por UF.
         </p>
         <p class="muted">
-          E o gerador em si continua faltando o layout de serialização de cada registro, que sai do
-          Guia Prático da versão <code>${escapeHtml(ref.codVer)}</code>. A contagem de campos ao lado
-          de cada registro é conferência, não especificação: quando o gerador existir, o número de
-          campos que ele produzir tem de bater com o do arquivo antigo. Bater não prova que está
-          certo; não bater prova que está errado.
+          <strong>O leiaute deixou de faltar.</strong> O Guia Prático da versão
+          <code>${escapeHtml(ref.codVer)}</code> está em <code>lib/sped-leiaute.js</code>: 268
+          registros, campo por campo, com a contagem conferida contra o arquivo de agosto em 40 de 40.
+          A agregação do <code>C190</code> e a totalização dos 15 campos do <code>E110</code> também
+          já existem, em <code>lib/sped-apuracao.js</code>.
+        </p>
+        <p class="muted">
+          O que ainda impede o gerador não é mais especificação: é o <strong>saldo credor do período
+          anterior</strong>, que é o campo 14 do E110 do mês passado e exige guardar a apuração de
+          cada competência; os <strong>ajustes</strong> do E111/C197; e as obrigações a recolher do
+          <code>E116</code> e do <code>E250</code>, com código de receita e vencimento. Enquanto o
+          saldo anterior for assumido como zero, a apuração sai marcada como assumida — e um número
+          assumido não vira arquivo entregue.
         </p>
       </div>`;
 

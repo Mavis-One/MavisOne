@@ -88,11 +88,25 @@ check('modelos 55 e 65 (tem NFC-e na escrituracao)',
 
 console.log('\n--- os registros SEM FONTE neste sistema ---');
 const semFonte = sped.semFonte().map((r) => r.reg);
-// Estes seis foram os achados de ler o arquivo, e nenhum estava previsto em
-// fase nenhuma do plano.
-for (const reg of ['0100', '0450', 'C110', 'C190', 'E110', 'E116', 'E200', 'E210', 'E250', '1010']) {
+// Estes foram os achados de ler o arquivo, e nenhum estava previsto em fase
+// nenhuma do plano.
+//
+// O C190 SAIU DA LISTA em 30/09/2026 e por isso nao esta aqui: a agregacao por
+// CST x CFOP x aliquota passou a existir em lib/sped-apuracao.js. Ele ganhou o
+// check proprio logo abaixo — tirar um registro desta lista tem de ser uma
+// afirmacao, nao uma ausencia.
+for (const reg of ['0100', '0450', 'C110', 'E110', 'E116', 'E200', 'E210', 'E250', '1010']) {
   check(`  ${reg} nao sai de lugar nenhum`, semFonte.includes(reg));
 }
+// A AFIRMACAO sobre o C190: ele TEM fonte agora, e a fonte e' a tabela de onde
+// o dado sai de verdade. Sem este check, remover o C190 da lista acima
+// passaria por descuido.
+const c190 = sped.REGISTROS.find((r) => r.reg === 'C190');
+check('  C190 TEM fonte, e a agregacao existe',
+  c190 && c190.fonte === 'fiscal_documento_itens', c190 && String(c190.fonte));
+check('    e quem a faz e lib/sped-apuracao.js',
+  typeof require('../lib/sped-apuracao').linhasC190 === 'function');
+
 // E o contrario: registro COM fonte nao pode estar na lista, senao a tela pede
 // desenvolvimento para algo que ja existe.
 for (const reg of ['0000', '0150', '0190', '0200', 'C100', 'C170']) {
@@ -153,7 +167,15 @@ console.log('\n--- a tela diz que NAO gera o arquivo ---');
 // estar escrita: o layout de serializacao de cada registro sai do Guia Pratico,
 // e sem ele um botao "Gerar" produziria arquivo que o PVA recusa.
 check('a tela afirma isso em texto visivel', /<strong>Esta tela não gera o arquivo<\/strong>/.test(tela));
-check('  e explica que falta o layout de serializacao', /Guia Prático/.test(tela));
+// O QUE A TELA DIZ QUE FALTA MUDOU EM 30/09/2026, e o check mudou com ele.
+// Antes ela dizia "o gerador continua faltando o layout de serializacao" — e
+// isso passou a ser FALSO no dia em que o Guia virou lib/sped-leiaute.js. Uma
+// tela que declara faltando o que existe manda procurar o que ja' esta' aqui.
+check('  e nao afirma mais que o leiaute falta',
+  !/continua faltando o layout/.test(tela) && /O leiaute deixou de faltar/.test(tela));
+check('  e aponta onde o leiaute mora', /lib\/sped-leiaute\.js/.test(tela));
+check('  e diz o que AINDA impede, sem ser especificacao',
+  /saldo credor do per[íi]odo\s*\n?\s*anterior/.test(tela) && /E116/.test(tela));
 check('  e a rota nao devolve conteudo de arquivo',
   !/txt:|conteudo:|arquivo:\s*gerar/.test(fonteCheck));
 

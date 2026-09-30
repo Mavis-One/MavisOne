@@ -116,7 +116,19 @@ async function chamar(caminho, opcoes = {}) {
     check('os registros sem fonte estao marcados', semFonte.length >= 5, `${semFonte.length}`);
     check('  e o 0100 (contabilista) esta entre eles',
       semFonte.some((c) => c.reg === '0100'), semFonte.map((c) => c.reg).join(', '));
-    check('  e o C190 (analitico) tambem', semFonte.some((c) => c.reg === 'C190'));
+    // O C190 SAIU DESTA LISTA em 30/09/2026, e esta prova cobrava que ele
+    // estivesse nela. A agregacao por CST x CFOP x aliquota passou a existir
+    // em lib/sped-apuracao.js, provada em scripts/test-sped-apuracao.js: ele
+    // deixou de ser "nao sai de lugar nenhum" e virou conferencia de DADO.
+    // Hoje vem SEM BASE, porque ha 0 documentos -- nao "ok", que diria que
+    // esta' resolvido, nem "semFonte", que diria que falta codigo.
+    const analitico = todas.find((c) => c.id === 'analitico');
+    check('  e o C190 NAO esta mais entre eles', !semFonte.some((c) => c.reg === 'C190'),
+      semFonte.map((c) => c.reg).join(', '));
+    check('  o C190 virou conferencia de dado', !!analitico && analitico.gravidade !== 'semFonte',
+      analitico && analitico.gravidade);
+    check('    e vem SEM BASE, nao ok', !!analitico && analitico.semBase === true && analitico.ok === false,
+      analitico && `semBase=${analitico.semBase} ok=${analitico.ok} avaliados=${analitico.avaliados}`);
 
     // 2. Sem base: o Bloco C hoje, porque ha 0 documentos.
     const itemCfop = todas.find((c) => c.id === 'item_cfop_ncm');
