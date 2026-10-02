@@ -4368,7 +4368,7 @@ async function loadModule(moduleName) {
                       <p class="sales-itens-alerta">
                         Estoque disponível não cobre ${itensSemSaldo().length === 1 ? '1 produto' : `${itensSemSaldo().length} produtos`}:
                         ${escapeHtml(itensSemSaldo().map((item) => item.name + (item.classValueName ? ` (${item.classValueName})` : '')).join(', '))}.
-                        Dá para salvar o pedido, mas faturar será recusado enquanto não houver saldo livre — parte do estoque já está reservada em outros pedidos.
+                        Parte do estoque já está reservada em outros pedidos.
                       </p>` : ''}
                   </div>
                 </div>
