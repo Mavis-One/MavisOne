@@ -29,13 +29,17 @@ window.MavisSubscreenRegistry.settings.users = async function renderSettingsUser
   // duas decisoes nao deviam ficar em telas diferentes.
   const estabelecimentos = data.estabelecimentos || [];
   function resumoDeEstabelecimento(user) {
-    if (!user.estabelecimentoId) return '<span class="muted">Todos</span>';
+    // Fase DR: além do principal, as outras empresas da grade da ficha.
+    const outras = (user.estabelecimentosLiberados || []).filter((id) => estabelecimentos.some((e) => e.id === id)).length;
+    const texto = user.podeTrocarEstabelecimento
+      ? 'lança por todas'
+      : (outras ? `lança por mais ${outras}` : '');
+    const troca = texto ? `<br><span class="muted" style="font-size:11px">${texto}</span>` : '';
+    if (!user.estabelecimentoId) return troca ? `<span class="muted">Sem principal</span>${troca}` : '<span class="muted">Todos</span>';
     const dono = estabelecimentos.find((e) => e.id === user.estabelecimentoId);
     if (!dono) return '<span class="muted">-</span>';
     const ehMatriz = String(dono.tipo || '').toUpperCase() === 'MATRIZ';
     const nome = escapeHtml(dono.nomeFantasia || dono.razaoSocial || 'Sem nome');
-    const troca = user.podeTrocarEstabelecimento
-      ? '<br><span class="muted" style="font-size:11px">pode lançar por outros</span>' : '';
     return `${nome} <span class="chip-estab ${ehMatriz ? 'is-matriz' : ''}">${ehMatriz ? 'matriz' : 'filial'}</span>${troca}`;
   }
 
@@ -81,7 +85,7 @@ window.MavisSubscreenRegistry.settings.users = async function renderSettingsUser
             ${usuarios.length ? usuarios.map((user) => `
               <tr data-user-id="${user.id}">
                 <td>${escapeHtml(user.username)}</td>
-                <td>${escapeHtml(user.name)}</td>
+                <td>${escapeHtml(user.name)}${user.active === false ? ' <span class="muted">(inativo)</span>' : ''}</td>
                 <td>${escapeHtml(user.role)}</td>
                 <td>${escapeHtml((user.allowedModules || []).join(', '))}</td>
                 <td>${resumoDeTelas(user)}</td>

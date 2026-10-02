@@ -820,6 +820,17 @@ function podeTrocarDeEstabelecimento(user, ehAdministrador) {
 }
 
 /**
+ * Por quais estabelecimentos a pessoa pode lancar (fase DR). `null` quer dizer
+ * todos -- administrador, ou a chave "Todas" da ficha --, e e' diferente de uma
+ * lista com todos os de hoje: filial cadastrada amanha entra no `null` sozinha.
+ */
+function estabelecimentosQuePodeUsar(user, ehAdministrador) {
+  if (podeTrocarDeEstabelecimento(user, ehAdministrador)) return null;
+  const principal = String((user && user.estabelecimentoId) || '').trim();
+  return [...new Set([principal, ...((user && user.estabelecimentosLiberados) || [])].filter(Boolean))];
+}
+
+/**
  * De qual estabelecimento e' esta operacao.
  *
  * Sem nada no corpo, e' o do usuario -- que e' o caso comum e por isso nao pede
@@ -834,9 +845,12 @@ function estabelecimentoDaOperacao(user, ehAdministrador, pedido) {
   if (!pedidoLimpo) return { id: doUsuario };
   if (pedidoLimpo === doUsuario) return { id: doUsuario };
   if (podeTrocarDeEstabelecimento(user, ehAdministrador)) return { id: pedidoLimpo };
+  // Fase DR: a grade "Empresas do Usuário" da ficha libera alguns, sem liberar
+  // todos.
+  if ((user.estabelecimentosLiberados || []).includes(pedidoLimpo)) return { id: pedidoLimpo };
 
-  const erro = new Error('Você só pode lançar pelo seu próprio estabelecimento. '
-    + 'Quem administra o sistema libera isso em Configurações › Usuários.');
+  const erro = new Error('Este estabelecimento não está liberado para você. '
+    + 'Quem administra o sistema libera em Configurações › Usuários › Empresas do Usuário.');
   erro.status = 403;
   return { id: doUsuario, erro };
 }
@@ -1105,6 +1119,60 @@ function sanitizarTelasBloqueadas(valor) {
     if (lista.length) limpo[modulo] = lista;
   }
   return limpo;
+}
+
+/**
+ * A grade "Empresas do Usuário" (fase DR). Só entra id de estabelecimento que
+ * existe: a coluna é uuid[], e um texto qualquer num POST à mão derrubaria a
+ * gravação inteira com erro de sintaxe de uuid — em vez de ser só ignorado.
+ * O principal sai da lista porque já vale por ser o principal; guardá-lo nos
+ * dois lugares deixaria um "desliberar" que não desliberaria nada.
+ */
+async function sanitizarEstabelecimentosLiberados(valor, principal) {
+  if (!Array.isArray(valor)) return [];
+  const existentes = new Set((await fiscalDb.getEstabelecimentos().catch(() => [])).map((e) => String(e.id)));
+  const principalLimpo = String(principal || '').trim();
+  return [...new Set(valor.map((v) => String(v || '').trim()))]
+    .filter((id) => id && id !== principalLimpo && existentes.has(id))
+    .slice(0, 200);
+}
+
+/**
+ * PAPÉIS, EXCEÇÕES E "ATIVO" VINDOS DA FICHA DO USUÁRIO (fase DR).
+ *
+ * Antes a ficha só mexia na coluna `role`, e papéis e exceções moravam em
+ * Papéis e Permissões — editar uma pessoa era abrir duas telas e torcer para as
+ * duas concordarem. Agora a ficha manda os três, e cada um só é tocado quando
+ * VEIO no corpo: a troca de vendedor da lista de Usuários salva por esta mesma
+ * rota sem eles, e não pode apagar o papel de ninguém.
+ *
+ * Sem as tabelas do RBAC (migração pendente) os papéis são ignorados e vale a
+ * coluna `role`, como antes — filtrar contra uma lista vazia transformaria todo
+ * administrador em usuário comum.
+ */
+async function acessoPedidoNaFicha(body) {
+  const pedido = {};
+  if (Array.isArray(body.roles)) {
+    const validos = new Set((await db.rbac.listarPapeis()).map((papel) => papel.slug));
+    if (validos.size) {
+      const papeis = [...new Set(body.roles.filter((slug) => typeof slug === 'string' && validos.has(slug)))];
+      // Sem papel nenhum o portão central nega tudo: nunca gravar vazio.
+      pedido.roles = papeis.length ? papeis : ['usuario'];
+    }
+  }
+  if (Array.isArray(body.exceptions)) {
+    const validas = new Set((await db.rbac.listarPermissoes()).map((permissao) => permissao.slug));
+    const vistas = new Set();
+    pedido.exceptions = [];
+    for (const item of body.exceptions) {
+      const slug = item && item.permission_slug;
+      if (!validas.has(slug) || vistas.has(slug) || !['PERMITIR', 'NEGAR'].includes(item.effect)) continue;
+      vistas.add(slug);
+      pedido.exceptions.push({ permission_slug: slug, effect: item.effect });
+    }
+  }
+  if (body.active !== undefined) pedido.active = body.active !== false;
+  return pedido;
 }
 
 function serializeUserForClient(user, acesso = null) {
@@ -15329,7 +15397,12 @@ async function tratarRequisicao(req, res) {
         .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia })),
       contasPorEstabelecimento: vinculosMeta,
       estabelecimentoDoUsuario: user.estabelecimentoId || '',
-      podeTrocarEstabelecimento: podeTrocarDeEstabelecimento(user, ehAdministrador),
+      // Fase DR: "pode trocar" passou a ser "tem mais de um para escolher", e a
+      // lista diz quais (null = todos). A lista de estabelecimentos continua
+      // inteira porque a regra das contas precisa saber quem é a matriz.
+      podeTrocarEstabelecimento: estabelecimentosQuePodeUsar(user, ehAdministrador) === null
+        || estabelecimentosQuePodeUsar(user, ehAdministrador).some((id) => id !== (user.estabelecimentoId || '')),
+      estabelecimentosLiberados: estabelecimentosQuePodeUsar(user, ehAdministrador),
       directory: getCadastroDirectory(data),
       // Produtos com a classificação fiscal: é o que permite montar o item da
       // NF-e a partir do cadastro em vez de digitar NCM e origem a cada
@@ -16745,7 +16818,10 @@ async function tratarRequisicao(req, res) {
           // precisa abrir com o vínculo que já existe, senão salvar o nome de
           // alguém desvincularia a pessoa do estabelecimento dela.
           estabelecimentoId: entry.estabelecimentoId || '',
-          podeTrocarEstabelecimento: entry.podeTrocarEstabelecimento === true
+          podeTrocarEstabelecimento: entry.podeTrocarEstabelecimento === true,
+          // Fase DR: a ficha abre com o que já está gravado, pelo mesmo motivo.
+          estabelecimentosLiberados: entry.estabelecimentosLiberados || [],
+          active: entry.active !== false
         }))
       : [];
     return sendJson(res, {
@@ -16786,11 +16862,14 @@ async function tratarRequisicao(req, res) {
         if (!(await ehAdmin(user))) {
           return sendJson(res, { error: 'Sem permissão para gerenciar usuários' }, 403);
         }
+        const acessoDaFicha = await acessoPedidoNaFicha(body.payload || {});
         const newUser = await db.createUser({
           username: body.payload.username,
           password: body.payload.password,
           name: body.payload.name,
-          role: body.payload.role || 'user',
+          role: acessoDaFicha.roles
+            ? (acessoDaFicha.roles.includes('admin') ? 'admin' : 'user')
+            : (body.payload.role || 'user'),
           allowedModules: body.payload.allowedModules || ['dashboard'],
           // Gravar só o que o portão sabe exigir. Sem isto, um POST à mão
           // salvaria 'manifestar' na coluna e ela voltaria a aparecer na tela.
@@ -16802,6 +16881,9 @@ async function tratarRequisicao(req, res) {
           // filtrado, que e' o comportamento de antes desta fase.
           estabelecimentoId: String(body.payload.estabelecimentoId || '').trim(),
           podeTrocarEstabelecimento: body.payload.podeTrocarEstabelecimento === true,
+          estabelecimentosLiberados: await sanitizarEstabelecimentosLiberados(
+            body.payload.estabelecimentosLiberados, body.payload.estabelecimentoId
+          ),
           // Fase AN: telas que este usuario nao ve dentro dos modulos liberados.
           blockedSubs: sanitizarTelasBloqueadas(body.payload.blockedSubs)
         });
@@ -16825,13 +16907,20 @@ async function tratarRequisicao(req, res) {
         //
         // Falhar aqui NÃO desfaz o usuário: ele existe, e o admin consegue dar
         // o papel pela outra tela. Mas tem de aparecer no log.
+        //
+        // Fase DR: a ficha agora escolhe o Tipo de Usuário (o papel) e as
+        // exceções já na criação. Sem eles no corpo, vale o padrão de antes.
         try {
           await db.rbac.definirPapeisDoUsuario(
-            newUser.id, [newUser.role === 'admin' ? 'admin' : 'usuario'], user.id
+            newUser.id, acessoDaFicha.roles || [newUser.role === 'admin' ? 'admin' : 'usuario'], user.id
           );
+          if (acessoDaFicha.exceptions && acessoDaFicha.exceptions.length) {
+            await db.rbac.definirPermissoesDoUsuario(newUser.id, acessoDaFicha.exceptions);
+          }
         } catch (erroPapel) {
           console.error('Usuario criado, mas nao consegui dar o papel padrao', newUser.id, erroPapel.message);
         }
+        if (acessoDaFicha.active === false) await db.definirUsuarioAtivo(newUser.id, false);
         saveData(data);
         return sendJson(res, { success: true, user: newUser });
       }
@@ -17137,9 +17226,19 @@ async function tratarRequisicao(req, res) {
       const body = await readBody(req);
       const name = String(body.name || '').trim();
       if (!name) return sendJson(res, { error: 'Informe o nome do usuário' }, 400);
-      const role = body.role || target.role;
+      const acessoDaFicha = await acessoPedidoNaFicha(body);
+      // Com os papéis no corpo, a coluna `role` SEGUE os papéis: as duas
+      // dizendo coisas diferentes é o defeito descrito logo abaixo.
+      const role = acessoDaFicha.roles
+        ? (acessoDaFicha.roles.includes('admin') ? 'admin' : 'user')
+        : (body.role || target.role);
       if (requester.id === id && role !== 'admin') {
         return sendJson(res, { error: 'Não é permitido remover o próprio acesso de administrador' }, 400);
+      }
+      // A mesma trava de Papéis e Permissões: quem se bloqueia sozinho precisa
+      // de outro administrador para voltar — e, sendo o único, não volta.
+      if (requester.id === id && acessoDaFicha.active === false) {
+        return sendJson(res, { error: 'Não é permitido bloquear o próprio usuário.' }, 400);
       }
       const updated = await db.updateUser(id, {
         name,
@@ -17158,7 +17257,15 @@ async function tratarRequisicao(req, res) {
         estabelecimentoId: body.estabelecimentoId === undefined
           ? undefined : String(body.estabelecimentoId || '').trim(),
         podeTrocarEstabelecimento: body.podeTrocarEstabelecimento === undefined
-          ? undefined : body.podeTrocarEstabelecimento === true
+          ? undefined : body.podeTrocarEstabelecimento === true,
+        // Fase DR. O principal que vale para tirá-lo da lista é o que está
+        // sendo gravado agora, e não o de antes.
+        estabelecimentosLiberados: body.estabelecimentosLiberados === undefined
+          ? undefined
+          : await sanitizarEstabelecimentosLiberados(
+            body.estabelecimentosLiberados,
+            body.estabelecimentoId === undefined ? target.estabelecimentoId : body.estabelecimentoId
+          )
       });
       // PROMOVER E REBAIXAR TEM DE CHEGAR AO PAPEL, NÃO SÓ À COLUNA.
       //
@@ -17172,7 +17279,11 @@ async function tratarRequisicao(req, res) {
       // gerencia papéis: quem faz isso é Controle de Acesso. Reescrever a lista
       // inteira apagaria um 'gerente' concedido lá toda vez que alguém
       // corrigisse o nome do usuário aqui.
-      if (role !== target.role) {
+      if (acessoDaFicha.roles) {
+        // Fase DR: a ficha manda a lista inteira de papéis, então ela vale
+        // como está — inclusive para tirar um 'gerente'.
+        await db.rbac.definirPapeisDoUsuario(id, acessoDaFicha.roles, requester.id);
+      } else if (role !== target.role) {
         try {
           const acessoAlvo = await db.rbac.carregarAcessoDoUsuario(id);
           const atuais = new Set((acessoAlvo && acessoAlvo.roles) || []);
@@ -17192,6 +17303,16 @@ async function tratarRequisicao(req, res) {
       // acrescentar um passo aqui embaixo leria a versão de antes do UPDATE,
       // memorizada no começo da requisição — e o bug seria "salvei e a tela
       // mostra o valor velho", que ninguém procura no cache.
+      if (acessoDaFicha.exceptions) await db.rbac.definirPermissoesDoUsuario(id, acessoDaFicha.exceptions);
+      if (acessoDaFicha.active !== undefined) await db.definirUsuarioAtivo(id, acessoDaFicha.active);
+      if (acessoDaFicha.roles || acessoDaFicha.exceptions || acessoDaFicha.active !== undefined) {
+        await db.rbac.registrarAcesso({
+          userId: requester.id, userName: requester.name, action: 'usuarios.gerenciar',
+          resourceType: 'usuario', resourceId: id, result: 'PERMITIDO', ip: ipDaRequisicao(req),
+          detail: { alvo: target.username, papeis: acessoDaFicha.roles, excecoes: acessoDaFicha.exceptions, ativo: acessoDaFicha.active }
+        });
+      }
+
       if (id === requester.id) esquecerUsuarioDaRequisicao(req);
       const data = loadData();
       data.auditLogs = data.auditLogs || [];

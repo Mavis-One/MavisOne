@@ -68,8 +68,10 @@ const rotaCriar = src.slice(
   src.indexOf("return sendJson(res, { error: 'Tipo de configuração inválido' }, 400);")
 );
 check('achei a criação de usuário', rotaCriar.length > 200, `${rotaCriar.length} caracteres`);
+// Fase DR: a ficha pode mandar o Tipo de Usuário já na criação; sem ele no
+// corpo, o padrão de antes continua valendo — nunca "nenhum papel".
 check('ela dá um papel ao usuário novo',
-  /await db\.rbac\.definirPapeisDoUsuario\(\s*\n?\s*newUser\.id, \[newUser\.role === 'admin' \? 'admin' : 'usuario'\], user\.id/.test(rotaCriar));
+  /await db\.rbac\.definirPapeisDoUsuario\(\s*\n?\s*newUser\.id, acessoDaFicha\.roles \|\| \[newUser\.role === 'admin' \? 'admin' : 'usuario'\], user\.id/.test(rotaCriar));
 // Falhar ao dar o papel não pode desfazer o usuário: ele existe, e o admin
 // consegue conceder o papel pela outra tela. Mas tem de aparecer no log.
 check('  e falhar nisso não derruba a criação',

@@ -118,8 +118,13 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     return String(e.tipo || '').toUpperCase() === 'MATRIZ' ? `${nome} (matriz)` : nome;
   }
 
+  // Fase DR: so' os estabelecimentos liberados para esta pessoa (null = todos),
+  // mais o que o lancamento ja' tem -- sem ele, editar um lancamento de outra
+  // filial abriria o select em outro valor e o salvamento trocaria a filial.
+  const liberados = Array.isArray(meta.estabelecimentosLiberados) ? meta.estabelecimentosLiberados : null;
   function estabelecimentoOptions() {
     return (meta.estabelecimentos || [])
+      .filter((e) => !liberados || liberados.includes(e.id) || e.id === estabelecimentoAtual)
       .map((e) => `<option value="${e.id}" ${estabelecimentoAtual === e.id ? 'selected' : ''}>${escapeHtml(nomeDoEstab(e))}</option>`)
       .join('');
   }
@@ -167,7 +172,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           <div class="row">
             <label>Estabelecimento
               <select name="estabelecimentoId" id="financeEstabSelect" ${podeTrocarEstab ? '' : 'disabled title="Você lança pelo seu próprio estabelecimento. Quem administra o sistema libera a troca em Configurações › Usuários."'}>
-                ${podeTrocarEstab ? '<option value="">Nenhum</option>' : ''}
+                ${podeTrocarEstab && !liberados ? '<option value="">Nenhum</option>' : ''}
                 ${estabelecimentoOptions()}
               </select>
             </label>

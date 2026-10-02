@@ -4421,6 +4421,44 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 
 /* ===========================================================================
+   FICHA DO USUÁRIO (fase DR) — o layout do Viper
+   ---------------------------------------------------------------------------
+   Abas de Cadastros (.cadastro-tabs), campos em duas colunas e as caixas de
+   marcar como chaves em grade de três: módulos, telas, empresas e permissões
+   fiscais têm a mesma cara, para que "ligado" se leia igual em todas.
+   =========================================================================== */
+.usuario-chaves {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px 22px;
+}
+@media (max-width: 1100px) { .usuario-chaves { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .usuario-chaves { grid-template-columns: 1fr; } }
+.usuario-chave {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.usuario-chave input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+.usuario-chave span { min-width: 0; overflow-wrap: anywhere; }
+/* A chave "Ativo" fica sozinha na linha: sem isto o rótulo ocupa a largura
+   inteira e clicar no vazio à direita também liga e desliga. */
+.cadastro-tab-panel > .usuario-chave { justify-self: start; }
+.usuario-secao-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.usuario-ficha .cadastro-actions { gap: 10px; }
+.usuario-ficha .telas-modulo .usuario-chaves { margin-top: 10px; }
+
+/* ===========================================================================
    PÁGINAS DA LISTA (fases CF e CG)
    ---------------------------------------------------------------------------
    A barra aparece acima e abaixo da tabela. Com 100 linhas, ter só a de baixo
