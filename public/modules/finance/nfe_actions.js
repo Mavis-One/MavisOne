@@ -108,6 +108,8 @@ window.MavisNfeActions = (function () {
       enabled: (ctx) => {
         const regra = (typeof window !== 'undefined' && window.MavisPrazoCancelamento)
           || (typeof require === 'function' ? require('../shared/prazo_cancelamento') : null);
+        // NFC-e não tem extemporâneo: depois dos 30 minutos, NF-e de estorno.
+        if (Number(ctx.nfe.modelo) === 65) return 'NFC-e não tem cancelamento extemporâneo: depois dos 30 minutos, a correção é uma NF-e de estorno.';
         if (!regra) return true;
         const prazo = regra.avaliar(ctx.nfe.autorizadoEm);
         if (prazo.semReferencia) return true;
@@ -135,7 +137,8 @@ window.MavisNfeActions = (function () {
         // Sem a regra carregada, NÃO liberar calado nem bloquear calado: o
         // servidor tem a mesma trava e é ele quem decide.
         if (!regra) return true;
-        const prazo = regra.avaliar(ctx.nfe.autorizadoEm);
+        // O prazo é do MODELO: 24 h na NF-e, 30 minutos na NFC-e.
+        const prazo = regra.avaliar(ctx.nfe.autorizadoEm, null, ctx.nfe.modelo);
         return prazo.dentroDoPrazo ? true : prazo.motivo;
       },
       run: (ctx) => ctx.cancelar(ctx.nfe.id)
@@ -143,6 +146,7 @@ window.MavisNfeActions = (function () {
     {
       id: 'carta_correcao', label: 'Carta de Correção', icon: ICONS.file, scope: 'single',
       needsApi: true, needsAuthorized: true, soFiscal: true,
+      enabled: (ctx) => (Number(ctx.nfe.modelo) === 65 ? 'NFC-e não tem Carta de Correção.' : true),
       run: (ctx) => ctx.cartaCorrecao(ctx.nfe)
     },
     {

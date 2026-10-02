@@ -936,8 +936,10 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
           uf: daFocus.uf || '',
           cep: daFocus.cep || '',
           emiteNfe: daFocus.habilitaNfe !== false,
-          // A Focus tem NFC-e ligada nos dez, mas o sistema não emite NFC-e.
-          // Herdar esse `true` marcaria uma caixa que não significa nada aqui.
+          // A Focus tem `habilita_nfce` ligado nos dez, mas isso não diz que o
+          // CSC da NFC-e está cadastrado lá — e sem CSC a nota é recusada.
+          // Herdar o `true` liberaria a ação "Emitir NFC-e" numa loja que não
+          // emite. A caixa se marca à mão, depois de cadastrar o CSC.
           emiteNfce: false
         };
         renderAll();

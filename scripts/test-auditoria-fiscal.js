@@ -42,15 +42,19 @@ check('e ela está dentro do fallback', /data\.auditLogs\.push\(/.test(registrar
 check('marcada como pendente de sincronia', /pendenteDeSincronia: true/.test(registrar));
 
 console.log('\n--- toda ação fiscal passa pelo ponto único ---');
+// A emissão de NF-e e a de NFC-e passam pela mesma função, e o nome da ação
+// sai do modelo (`action: nfce ? 'emitirNfceFiscal' : 'emitirNfeFiscal'`): por
+// isso o padrão aceita uma expressão antes do nome.
 const ACOES = [
   ['emitirNfeFiscal', 'emissão'],
+  ['emitirNfceFiscal', 'emissão de NFC-e'],
   ['cancelarNfeFiscal', 'cancelamento'],
   ['emitirCartaCorrecaoFiscal', 'carta de correção'],
   ['inutilizarNumeracaoFiscal', 'inutilização de numeração']
 ];
 ACOES.forEach(([acao, rotulo]) => {
-  check(`${rotulo} registra`, new RegExp(`registrarAuditoria\\(\\{[\\s\\S]{0,200}action: '${acao}'`).test(serverSrc)
-    || new RegExp(`action: '${acao}'`).test(serverSrc));
+  check(`${rotulo} registra`, new RegExp(`registrarAuditoria\\(\\{[\\s\\S]{0,200}action: [^,]*'${acao}'`).test(serverSrc)
+    || new RegExp(`action: [^,]*'${acao}'`).test(serverSrc));
   check(`  ${rotulo} não usa mais o arquivo`,
     !new RegExp(`data\\.auditLogs\\.push\\([\\s\\S]{0,120}${acao}`).test(serverSrc));
 });

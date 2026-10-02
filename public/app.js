@@ -779,6 +779,50 @@ function confirmModal(message) {
 }
 
 /**
+ * Confirma uma ação que precisa de UMA escolha antes (ex.: qual loja emite a
+ * NFC-e). Resolve com o `valor` escolhido, ou null se a pessoa desistir. Com
+ * uma opção só, não mostra lista: a pergunta vira só a confirmação.
+ */
+function escolhaModal({ mensagem, opcoes, rotuloEscolha = 'Escolha', rotuloConfirmar = 'Confirmar' }) {
+  return new Promise((resolve) => {
+    const existing = document.getElementById('confirmModal');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'confirmModal';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-body">
+          <p class="modal-message"></p>
+          ${opcoes.length > 1 ? `<label class="escolha-modal-campo"><span></span><select></select></label>` : ''}
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-muted" data-action="cancel">Cancelar</button>
+          <button class="btn btn-primary" data-action="confirm"></button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.modal-message').textContent = mensagem;
+    overlay.querySelector('[data-action=confirm]').textContent = rotuloConfirmar;
+    const select = overlay.querySelector('select');
+    if (select) {
+      overlay.querySelector('.escolha-modal-campo span').textContent = rotuloEscolha;
+      opcoes.forEach((o) => {
+        const opt = document.createElement('option');
+        opt.value = o.valor;
+        opt.textContent = o.rotulo;
+        select.appendChild(opt);
+      });
+    }
+    const fechar = (valor) => { overlay.remove(); resolve(valor); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) fechar(null); });
+    overlay.querySelector('[data-action=cancel]').addEventListener('click', () => fechar(null));
+    overlay.querySelector('[data-action=confirm]').addEventListener('click', () => fechar(select ? select.value : opcoes[0].valor));
+  });
+}
+
+/**
  * Pergunta um TEXTO, no componente do sistema, no lugar do window.prompt().
  *
  * Resolve com a string digitada, ou null se a pessoa desistir.
@@ -4043,6 +4087,84 @@ async function loadModule(moduleName) {
             state.activeSub = 'nova_nfe_avulsa';
             renderApp();
             loadModule('finance');
+          },
+
+          // NFC-e: a nota do balcão sai do pedido SALVO, montada no servidor
+          // (emitirNfceDoPedido), e volta autorizada ou rejeitada na hora.
+          // Autorizada, ela fatura o pedido e o DANFCe abre para imprimir.
+          emitirNfce: async () => {
+            let lojas = [];
+            try {
+              const r = await api('/api/fiscal/estabelecimentos');
+              lojas = (r.estabelecimentos || []).filter((e) => e.ativo && e.emiteNfce);
+            } catch (error) {
+              showToast(error.message || 'Não consegui ler os estabelecimentos.', 'error');
+              return;
+            }
+            if (!lojas.length) {
+              showToast('Nenhum estabelecimento emite NFC-e. Marque "Emite NFC-e" no estabelecimento, em Configurações › Empresa.', 'error', 8000);
+              return;
+            }
+            const total = Number(editRecord.totalAmount || editRecord.amount || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            const estabelecimentoId = await escolhaModal({
+              mensagem: `Emitir NFC-e do pedido ${editRecord.code} (${total})?\n\nA nota sai do pedido como está salvo. Autorizada, o pedido é faturado: o estoque baixa e a conta a receber é criada.`,
+              opcoes: lojas.map((e) => ({ valor: e.id, rotulo: `${e.nomeFantasia || e.razaoSocial} — ${e.cnpj}` })),
+              rotuloEscolha: 'Estabelecimento',
+              rotuloConfirmar: 'Emitir NFC-e'
+            });
+            if (!estabelecimentoId) return;
+
+            // A janela do DANFCe abre DENTRO do clique — depois da resposta o
+            // navegador a trataria como pop-up. Se a nota não sair, ela fecha.
+            const janela = window.open('', '_blank');
+            if (janela) {
+              janela.opener = null;
+              janela.document.write('<title>NFC-e</title><p style="font:16px system-ui;padding:24px">Emitindo a NFC-e…</p>');
+            }
+            let nota = null;
+            try {
+              const r = await api('/api/fiscal/nfce/emitir', {
+                method: 'POST',
+                body: JSON.stringify({ orderId: editRecord.id, estabelecimentoId })
+              });
+              nota = r.nfe;
+            } catch (error) {
+              if (janela) janela.close();
+              showToast(error.message || 'A NFC-e não foi emitida.', 'error', 12000);
+              return;
+            }
+            if (!nota || nota.status !== 'AUTORIZADO') {
+              if (janela) janela.close();
+              showToast(nota && nota.status === 'PROCESSANDO'
+                ? 'A NFC-e ficou em processamento na SEFAZ. Consulte o status em Financeiro › NF-e Emitidas.'
+                : `NFC-e não autorizada: ${(nota && nota.mensagemSefaz) || 'sem resposta da SEFAZ'}`, 'error', 12000);
+              return;
+            }
+            showToast(`NFC-e ${nota.numero || ''} autorizada. Pedido faturado.`, 'success', 7000);
+
+            // O servidor baixa o DANFCe da Focus logo depois da autorização, e
+            // isso leva um instante: tenta por alguns segundos antes de desistir.
+            if (janela) {
+              let aberto = false;
+              for (let tentativa = 0; tentativa < 8 && !aberto && !janela.closed; tentativa += 1) {
+                const resposta = await fetch(`/api/fiscal/nfe/${encodeURIComponent(nota.id)}/danfe`, {
+                  headers: { 'x-auth-token': getSessionToken() || '' }
+                }).catch(() => null);
+                if (resposta && resposta.ok) {
+                  await window.MavisDanfe.mostrar(janela, await resposta.blob(), 'DANFCe');
+                  aberto = true;
+                } else {
+                  await new Promise((r) => setTimeout(r, 1000));
+                }
+              }
+              if (!aberto && !janela.closed) {
+                janela.document.body.innerHTML = '<p style="font:16px system-ui;padding:24px">O DANFCe ainda não chegou da Focus. Abra pela tela NF-e Emitidas em instantes.</p>';
+              }
+            }
+            state.salesDraft.editRecord = null;
+            state.activeSub = 'orders_quotes';
+            renderApp();
+            loadModule('sales');
           }
         });
 

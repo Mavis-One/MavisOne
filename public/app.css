@@ -1230,7 +1230,7 @@ button.success:hover { background: var(--success-hover); }
 .modal-overlay { position: fixed; inset: 0; background: rgba(2,6,23,0.5); display: grid; place-items: center; z-index: 1200; }
 .modal { background: var(--panel); border-radius: 12px; padding: 18px; width: min(92%, 420px); box-shadow: 0 12px 30px rgba(2,6,23,0.3); border: 1px solid var(--border); }
 .modal-body { margin-bottom: 12px; }
-.modal-message { margin: 0; font-weight: 600; }
+.modal-message { margin: 0; font-weight: 600; white-space: pre-line; }
 .modal-actions { display:flex; gap:8px; justify-content:flex-end; }
 .btn { padding: 8px 12px; border-radius:8px; border: none; cursor: pointer; }
 .btn-muted { background: var(--panel-alt-hover); color: var(--text); }
@@ -1241,6 +1241,7 @@ button.success:hover { background: var(--success-hover); }
    neon e exige texto quase preto. */
 .btn-primary { background: var(--primary); color: var(--on-primary); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.escolha-modal-campo { display: grid; gap: 6px; margin-top: 14px; }
 
 /* ---- promptModal: pergunta de TEXTO no lugar do window.prompt() ---------
    Só o corpo é novo; .modal-overlay, .modal e .modal-actions vêm de cima. */

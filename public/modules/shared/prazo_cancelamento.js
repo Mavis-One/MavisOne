@@ -17,6 +17,13 @@
 
   const HORAS = 24;
   const MS = HORAS * 60 * 60 * 1000;
+  // NFC-e (modelo 65): 30 MINUTOS da autorização, em SC e na documentação da
+  // Focus (cancelar_nfce). Depois disso a correção é NF-e de estorno — não
+  // existe cancelamento extemporâneo de NFC-e.
+  const MINUTOS_NFCE = 30;
+  const MS_NFCE = MINUTOS_NFCE * 60 * 1000;
+
+  const ehNfce = (modelo) => String(modelo || '') === '65';
 
   function paraData(valor) {
     if (!valor) return null;
@@ -35,7 +42,8 @@
    * cujo carimbo ainda não voltou do webhook. Quem tem a palavra final é a
    * SEFAZ, que recusa com "prazo de cancelamento excedido".
    */
-  function avaliar(autorizadoEm, agora) {
+  function avaliar(autorizadoEm, agora, modelo) {
+    const limite = ehNfce(modelo) ? MS_NFCE : MS;
     const inicio = paraData(autorizadoEm);
     const referencia = paraData(agora) || new Date();
 
@@ -51,14 +59,14 @@
 
     const decorrido = referencia.getTime() - inicio.getTime();
     const horasDecorridas = decorrido / 3600000;
-    const expiraEm = new Date(inicio.getTime() + MS);
+    const expiraEm = new Date(inicio.getTime() + limite);
 
     // Relógio adiantado no cliente não pode "vencer" uma nota recém-autorizada.
     if (decorrido < 0) {
       return { dentroDoPrazo: true, semReferencia: false, horasDecorridas: 0, expiraEm, motivo: '' };
     }
 
-    if (decorrido <= MS) {
+    if (decorrido <= limite) {
       return { dentroDoPrazo: true, semReferencia: false, horasDecorridas, expiraEm, motivo: '' };
     }
 
@@ -67,7 +75,7 @@
       semReferencia: false,
       horasDecorridas,
       expiraEm,
-      motivo: mensagem(horasDecorridas)
+      motivo: ehNfce(modelo) ? mensagemNfce(horasDecorridas) : mensagem(horasDecorridas)
     };
   }
 
@@ -78,6 +86,12 @@
       + 'Depois disso a SEFAZ só aceita cancelamento extemporâneo, que depende de autorização específica dela.';
   }
 
+  function mensagemNfce(horasDecorridas) {
+    const minutos = Math.floor(horasDecorridas * 60);
+    return `O prazo de ${MINUTOS_NFCE} minutos para cancelar esta NFC-e terminou (${minutos < 120 ? `${minutos} minutos` : descreverAtraso(horasDecorridas)} desde a autorização). `
+      + 'Depois disso a correção é feita com uma NF-e de estorno.';
+  }
+
   function descreverAtraso(horas) {
     if (!Number.isFinite(horas)) return 'tempo desconhecido';
     if (horas < 48) return `${Math.floor(horas)} horas`;
@@ -85,7 +99,7 @@
     return `${dias} dia${dias === 1 ? '' : 's'}`;
   }
 
-  const api = { HORAS, MS, avaliar, descreverAtraso };
+  const api = { HORAS, MS, MINUTOS_NFCE, avaliar, descreverAtraso };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (raiz) raiz.MavisPrazoCancelamento = api;

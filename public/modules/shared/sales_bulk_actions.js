@@ -123,7 +123,9 @@
       id: 'nfe', icone: 'file', grupo: 'Fiscal', label: 'NF-e',
       elegivel: () => 'Emissão em lote não existe: cada nota exige escolher estabelecimento e operação fiscal. Emita pelo pedido.'
     },
-    { id: 'nfce', icone: 'barcode', grupo: 'Fiscal', label: 'NFC-e / CF-e', elegivel: EM_BREVE('NFC-e') },
+    // NFC-e sai uma por pedido, pela tela dele: escolher a loja e imprimir o
+    // DANFCe de cada uma não cabe num lote.
+    { id: 'nfce', icone: 'barcode', grupo: 'Fiscal', label: 'NFC-e / CF-e', elegivel: () => 'Emita pelo pedido: abra o pedido e use Mais Ações › Emitir NFC-e.' },
     { id: 'nfse', icone: 'tool', grupo: 'Fiscal', label: 'NFS-e', elegivel: EM_BREVE('NFS-e') },
     { id: 'cte', icone: 'truck', grupo: 'Fiscal', label: 'CT-e', elegivel: EM_BREVE('CT-e') },
 

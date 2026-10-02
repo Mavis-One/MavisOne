@@ -94,6 +94,21 @@ window.MavisSalesRecordActions = (function () {
       run: (ctx) => ctx.gerarNfe()
     },
     {
+      // NFC-e: a nota do balcão. Ao contrário da NF-e, NÃO espera o pedido ser
+      // faturado: é a autorização da NFC-e que fatura o pedido (baixa o estoque
+      // e cria a conta a receber). O servidor monta a nota do próprio pedido e
+      // recusa o que não é venda a consumidor — com o motivo.
+      id: 'emitir_nfce', label: 'Emitir NFC-e', icon: I.barcode, tone: 'success',
+      enabled: (ctx) => {
+        if (!ctx.isEditing) return SALVE_ANTES;
+        if (!ehPedido(ctx)) return 'Só pedido emite NFC-e — aprove o orçamento primeiro.';
+        if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não emite NFC-e.';
+        if (ctx.nfeId) return 'Este pedido já tem nota fiscal emitida.';
+        return true;
+      },
+      run: (ctx) => ctx.emitirNfce()
+    },
+    {
       id: 'imprimir', label: 'Imprimir Pedido', icon: I.printer,
       enabled: precisaSalvar,
       run: (ctx) => ctx.imprimir({ direta: false })

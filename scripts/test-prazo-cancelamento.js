@@ -54,6 +54,15 @@ console.log('\n--- falta de dado não pode virar bloqueio ---');
 // Relógio do cliente adiantado não pode vencer uma nota do futuro.
 check('data de autorização no futuro não vence', prazo.avaliar(maisHoras(5), AUTORIZACAO).dentroDoPrazo);
 
+console.log('\n--- NFC-e (modelo 65): 30 minutos, sem extemporâneo ---');
+check('30 minutos é o prazo declarado', prazo.MINUTOS_NFCE === 30);
+check('com 29 minutos ainda dá', prazo.avaliar(AUTORIZACAO, maisHoras(29 / 60), '65').dentroDoPrazo);
+check('com 31 minutos NÃO dá', prazo.avaliar(AUTORIZACAO, maisHoras(31 / 60), 65).dentroDoPrazo === false);
+const nfceVencida = prazo.avaliar(AUTORIZACAO, maisHoras(31 / 60), 65);
+check('o motivo fala de NFC-e e de NF-e de estorno, não de extemporâneo',
+  /NFC-e/.test(nfceVencida.motivo) && /estorno/.test(nfceVencida.motivo) && !/extempor/i.test(nfceVencida.motivo), nfceVencida.motivo.slice(0, 90));
+check('a NF-e continua com as 24 horas', prazo.avaliar(AUTORIZACAO, maisHoras(5), 55).dentroDoPrazo && prazo.avaliar(AUTORIZACAO, maisHoras(5)).dentroDoPrazo);
+
 console.log('\n--- a trava vive no SERVIDOR, não só no botão ---');
 // Botão desabilitado é conforto: a rota continua aberta para qualquer chamada.
 const serverSrc = ler('server.js');
@@ -62,8 +71,9 @@ check('o servidor carrega a MESMA regra do navegador',
 const cancelamento = serverSrc.slice(
   serverSrc.indexOf('async function cancelarNfeFiscal'),
   serverSrc.indexOf('async function emitirCartaCorrecaoFiscal'));
-check('a rota de cancelar avalia o prazo', /prazoCancelamento\.avaliar\(nfe\.autorizadoEm\)/.test(cancelamento));
-check('e recusa quando venceu', /!prazo\.dentroDoPrazo && !opcoes\.extemporaneo/.test(cancelamento));
+check('a rota de cancelar avalia o prazo DO MODELO', /prazoCancelamento\.avaliar\(nfe\.autorizadoEm, null, nfe\.modelo\)/.test(cancelamento));
+check('e recusa quando venceu (a NFC-e nunca vai para o extemporâneo)', /!prazo\.dentroDoPrazo && \(nfce \|\| !opcoes\.extemporaneo\)/.test(cancelamento));
+check('NFC-e cancela pelo endpoint dela', /nfce\s*\?\s*await client\.cancelarNfce\(/.test(cancelamento));
 // 409 (conflito de estado), não 400: o pedido está bem formado, o que mudou
 // foi o tempo.
 check('devolve 409, não 400', /err\.status = 409/.test(cancelamento));

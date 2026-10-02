@@ -202,12 +202,11 @@ async function nfePrint(nfe, layout = 'completo') {
       fechar();
       throw new Error(corpo.error || `Não foi possível abrir a DANFE (HTTP ${resposta.status}).`);
     }
-    const url = URL.createObjectURL(await resposta.blob());
-    win.location.replace(url);
     // O visualizador de PDF do navegador tem o próprio botão de imprimir;
     // chamar print() de fora dele não é confiável, e falhar em silêncio já
     // custou caro nesta tela. Melhor entregar a DANFE na tela, com o botão.
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    // O DANFCe da NFC-e é HTML e abre isolado (shared/abrir_danfe.js).
+    await window.MavisDanfe.mostrar(win, await resposta.blob(), Number(nfe.modelo) === 65 ? 'DANFCe' : 'DANFE');
     return;
   }
 
@@ -349,8 +348,14 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
         return;
       }
       const blob = await resposta.blob();
+      // DANFCe (NFC-e) é HTML: na aba, abre isolado; no disco, vai como .html.
+      const ehHtml = String(blob.type || '').includes('text/html');
+      if (aba && !aba.closed && ehHtml) {
+        await window.MavisDanfe.mostrar(aba, blob, 'DANFCe');
+        return;
+      }
       url = URL.createObjectURL(blob);
-      const nome = `nfe-${nfe.number || nfe.key || nfe.id}.${tipo === 'xml' ? 'xml' : 'pdf'}`;
+      const nome = `nfe-${nfe.number || nfe.key || nfe.id}.${tipo === 'xml' ? 'xml' : (ehHtml ? 'html' : 'pdf')}`;
 
       if (aba && !aba.closed) {
         // replace e não href: a aba não guarda o "carregando" no histórico, e

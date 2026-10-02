@@ -51,10 +51,11 @@ const check = (nome, cond, det) => {
 const src = ler('server.js');
 
 console.log('--- 1. a conferência é UMA SÓ ---');
-check('a validação virou função própria', /async function prepararNfeParaTransmitir\(body\) \{/.test(src));
+// `opcoes` existe desde a NFC-e: o modelo 65 passa pela mesma conferência.
+check('a validação virou função própria', /async function prepararNfeParaTransmitir\(body, opcoes = \{\}\) \{/.test(src));
 // Se a emissão voltar a validar por conta própria, o pré-check passa a conferir
 // outra coisa — e é exatamente isso que este teste existe para impedir.
-check('a emissão a chama', /\} = await prepararNfeParaTransmitir\(body\);/.test(src));
+check('a emissão a chama', /\} = await prepararNfeParaTransmitir\(body, \{ modelo: opcoes\.modelo \}\);/.test(src));
 check('o pré-check chama a MESMA', /await prepararNfeParaTransmitir\(corpo\);/.test(src));
 
 // A prova de que ela não grava: tudo o que escreve ficou do outro lado do corte.
@@ -103,7 +104,8 @@ const builder = ler('lib/nfePayloadBuilder.js');
 // formulário de emissão, então a nota avulsa sem CEP passava direto.
 check('a conferência existe', /function conferirDestinatarioDaNota\(payload\)/.test(builder));
 check('  e cobra o grupo enderDest', /enderDest/.test(builder));
-check('a emissão a usa', /const enderecoIncompleto = conferirDestinatarioDaNota\(payload\);/.test(src));
+// Na NF-e, sempre; a NFC-e não leva endereço do consumidor.
+check('a emissão a usa', /const enderecoIncompleto = nfce \? null : conferirDestinatarioDaNota\(payload\);/.test(src));
 const { conferirDestinatarioDaNota } = require('../lib/nfePayloadBuilder');
 const completo = {
   logradouro_destinatario: 'Rua A', bairro_destinatario: 'Centro',

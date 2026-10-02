@@ -24,7 +24,7 @@ const integracoesDb = require('./lib/db/integracoes');
 const modulosDb = require('./lib/db/modulos');
 const crmDb = require('./lib/db/crm');
 const {
-  buildNfePayload, conferirLimitesDeTexto, conferirPagamentosDaNota, conferirCartoesDaNota,
+  buildNfePayload, buildNfcePayload, conferirLimitesDeTexto, conferirPagamentosDaNota, conferirCartoesDaNota,
   conferirEscalaDosItens,
   conferirDestinatarioDaNota
 } = require('./lib/nfePayloadBuilder');
@@ -3862,6 +3862,9 @@ function fiscalNfeParaLista(nfe) {
   return {
     id: nfe.id,
     origem: 'fiscal',
+    // 55 = NF-e, 65 = NFC-e. A tela usa para o rótulo, o prazo de cancelamento
+    // (24 h contra 30 min) e para esconder a Carta de Correção da NFC-e.
+    modelo: Number(nfe.modelo || 55),
     number: nfe.numero || '',
     series: nfe.serie || '',
     date: String(nfe.dataEmissao || nfe.criadoEm || '').slice(0, 10),
@@ -5072,6 +5075,7 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/acervo/zip') return 'xml';
   if (pathname === '/api/fiscal/acervo/buscar-faltantes') return 'xml';
   if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
+  if (pathname === '/api/fiscal/nfce/emitir') return 'emitir';
   if (pathname.endsWith('/cancelar')) return 'cancelar';
   if (pathname.endsWith('/cce')) return 'cce';
   // Trilha de eventos do estabelecimento (CCE, cancelamento, inutilização).
@@ -5428,15 +5432,23 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
  * Lanca `Error` com `status` no primeiro problema — quem emite deixa subir,
  * quem faz o pre-check pega e mostra.
  */
-async function prepararNfeParaTransmitir(body) {
+// NFC-e (modelo 65) passa pelo MESMO caminho, com `opcoes.modelo = 65`: a
+// tributação de cada item, as regras fiscais e as conferências são as mesmas.
+// O que muda é pouco e está marcado com `nfce` abaixo — o consumidor é
+// opcional e não pode ser contribuinte, a operação é sempre interna e de
+// venda, e a nota de balcão não leva frete.
+async function prepararNfeParaTransmitir(body, opcoes = {}) {
+  const nfce = Number(opcoes.modelo) === 65;
   const estabelecimento = await fiscalDb.getEstabelecimentoById(body.estabelecimentoId);
   if (!estabelecimento) {
     const err = new Error('Estabelecimento não encontrado.');
     err.status = 404;
     throw err;
   }
-  if (!estabelecimento.ativo || !estabelecimento.emiteNfe) {
-    const err = new Error('Este estabelecimento não está habilitado para emitir NF-e.');
+  if (!estabelecimento.ativo || !(nfce ? estabelecimento.emiteNfce : estabelecimento.emiteNfe)) {
+    const err = new Error(nfce
+      ? 'Este estabelecimento não está habilitado para emitir NFC-e (Configurações › Empresa › "Emite NFC-e").'
+      : 'Este estabelecimento não está habilitado para emitir NF-e.');
     err.status = 400;
     throw err;
   }
@@ -5449,19 +5461,30 @@ async function prepararNfeParaTransmitir(body) {
   }
 
   const destinatario = body.destinatario || {};
-  if (!destinatario.nome || !destinatario.documento || !destinatario.uf) {
-    const err = new Error('Preencha os dados do destinatário (nome, documento e UF).');
-    err.status = 400;
-    throw err;
-  }
-  // "Contribuinte" marcado sem IE válida daria indicador 1 sem a tag IE — a
-  // SEFAZ rejeita depois de transmitir. A regra e o texto moram em
-  // shared/inscricao_estadual.js; aqui só se recusa antes de montar a nota.
-  const motivoIe = inscricaoEstadual.motivoParaRecusar(destinatario);
-  if (motivoIe) {
-    const err = new Error(motivoIe);
-    err.status = 400;
-    throw err;
+  if (nfce) {
+    // NFC-e é para CONSUMIDOR FINAL. Quem tem inscrição estadual é
+    // contribuinte, e a venda a ele sai em NF-e — a SEFAZ não aceita NFC-e com
+    // indicador de contribuinte.
+    if (destinatario.contribuinte) {
+      const err = new Error('O cliente deste pedido tem inscrição estadual (é contribuinte do ICMS): a venda sai em NF-e, não em NFC-e.');
+      err.status = 400;
+      throw err;
+    }
+  } else {
+    if (!destinatario.nome || !destinatario.documento || !destinatario.uf) {
+      const err = new Error('Preencha os dados do destinatário (nome, documento e UF).');
+      err.status = 400;
+      throw err;
+    }
+    // "Contribuinte" marcado sem IE válida daria indicador 1 sem a tag IE — a
+    // SEFAZ rejeita depois de transmitir. A regra e o texto moram em
+    // shared/inscricao_estadual.js; aqui só se recusa antes de montar a nota.
+    const motivoIe = inscricaoEstadual.motivoParaRecusar(destinatario);
+    if (motivoIe) {
+      const err = new Error(motivoIe);
+      err.status = 400;
+      throw err;
+    }
   }
 
   const itensBody = Array.isArray(body.itens) ? body.itens : [];
@@ -5474,7 +5497,25 @@ async function prepararNfeParaTransmitir(body) {
   const dataEmissao = body.dataEmissao || new Date().toISOString();
   const dataReferencia = dataEmissao.slice(0, 10);
   const tipoOperacao = body.tipoOperacao || 'VENDA';
-  const dentroDoEstado = destinatario.uf === estabelecimento.uf;
+  // NFC-e é sempre operação interna (idDest 1): a venda presencial acontece
+  // na loja, more onde morar o consumidor. A regra fiscal é a de dentro do
+  // estado, para não contribuinte.
+  const dentroDoEstado = nfce || destinatario.uf === estabelecimento.uf;
+  const ufDaRegra = nfce ? estabelecimento.uf : destinatario.uf;
+  if (nfce && tipoOperacao !== 'VENDA') {
+    const err = new Error('NFC-e é só para venda. Transferência, remessa, devolução e as demais operações saem em NF-e.');
+    err.status = 400;
+    throw err;
+  }
+  // A NFC-e daqui é a venda de balcão: sem frete, seguro ou despesa acessória.
+  // A entrega em domicílio (indPres 4) tem regras de transporte próprias, e a
+  // documentação da NFC-e na Focus não traz esses campos — antes de inventá-los,
+  // a venda com entrega sai em NF-e.
+  if (nfce && (Number(body.frete || 0) > 0 || Number(body.seguro || 0) > 0 || Number(body.outrasDespesas || 0) > 0)) {
+    const err = new Error('Este pedido tem frete, seguro ou despesa acessória (taxa de montagem, despesas gerais). A NFC-e é a venda de balcão: emita NF-e para ele.');
+    err.status = 400;
+    throw err;
+  }
 
   // A OPERAÇÃO manda na finalidade, não o que veio da tela: uma complementar
   // com finalidade 1 é recusada pela SEFAZ, e deixar a tela escolher abre
@@ -5586,9 +5627,9 @@ async function prepararNfeParaTransmitir(body) {
       grupoTributarioId: item.grupoTributarioId || '',
       origem: item.origem || 0,
       tipoOperacao,
-      ufDestino: destinatario.uf,
+      ufDestino: ufDaRegra,
       dentroDoEstado,
-      destinatarioContribuinte: Boolean(destinatario.contribuinte),
+      destinatarioContribuinte: nfce ? false : Boolean(destinatario.contribuinte),
       data: dataReferencia
     });
     if (!regra) {
@@ -5601,8 +5642,8 @@ async function prepararNfeParaTransmitir(body) {
       regraFiscal: regra,
       // DIFAL só existe em venda interestadual para quem NÃO é contribuinte.
       // Contribuinte recolhe por conta própria; operação interna não tem
-      // diferencial nenhum a partilhar.
-      difal: !dentroDoEstado && !destinatario.contribuinte,
+      // diferencial nenhum a partilhar. NFC-e é sempre interna.
+      difal: !nfce && !dentroDoEstado && !destinatario.contribuinte,
       // Percentual de crédito do Simples: é da EMPRESA (faixa do SN), não do
       // item. Só sai na nota quando o CSOSN é 101 ou 201.
       aliquotaCreditoSn: empresa.aliquotaCreditoIcmsSn
@@ -5644,7 +5685,17 @@ async function prepararNfeParaTransmitir(body) {
     throw err;
   }
 
-  const payload = buildNfePayload({
+  const payload = nfce ? buildNfcePayload({
+    estabelecimento,
+    destinatario,
+    itens,
+    naturezaOperacao,
+    dataEmissao,
+    pagamentos: await pagamentosComCredenciadora(body.pagamentos),
+    desconto: body.desconto,
+    informacoesAdicionais: body.informacoesAdicionais,
+    ambiente: focusNfe.ambienteEfetivo(estabelecimento.focusAmbiente).efetivo
+  }) : buildNfePayload({
     estabelecimento,
     empresa,
     destinatario,
@@ -5726,7 +5777,8 @@ async function prepararNfeParaTransmitir(body) {
   // E o ENDERECO do destinatario? So' nome, documento e UF eram conferidos la'
   // em cima; o resto do grupo enderDest ia em branco para a SEFAZ e voltava
   // rejeitado, sem a tela dizer qual campo faltava.
-  const enderecoIncompleto = conferirDestinatarioDaNota(payload);
+  // (NFC-e não leva endereço do consumidor.)
+  const enderecoIncompleto = nfce ? null : conferirDestinatarioDaNota(payload);
   if (enderecoIncompleto) {
     const err = new Error(enderecoIncompleto);
     err.status = 400;
@@ -5737,17 +5789,35 @@ async function prepararNfeParaTransmitir(body) {
   return {
     estabelecimento, destinatario, payload, referencia, naturezaOperacao,
     tipoDocumento, finalidadeEmissao, dataEmissao, tipoOperacao, valorTotal,
-    valorIcmsComplementar, chaveOriginal, pedidoDaNota
+    valorIcmsComplementar, chaveOriginal, pedidoDaNota, modelo: nfce ? 65 : 55
   };
 }
 
-async function emitirNfeFiscal(body, user) {
+/**
+ * O que a Focus diz quando a empresa não tem o CSC da NFC-e cadastrado
+ * ("Código CSC não configurado"), com o que fazer. Sem o CSC não há QR Code, e
+ * sem QR Code não há NFC-e.
+ */
+function explicarErroDaNfce(error) {
+  if (!/\bcsc\b/i.test(String(error && error.message))) return error;
+  const err = new Error('A Focus NFe não tem o CSC (Código de Segurança do Contribuinte) da NFC-e deste estabelecimento. '
+    + 'Gere o CSC no portal da SEF/SC e cadastre o código e o ID dele na Focus NFe (cadastro da empresa, NFC-e). '
+    + `Resposta da Focus: ${error.message}`);
+  err.status = error.status || 422;
+  err.payload = error.payload;
+  return err;
+}
+
+// `opcoes.modelo` é decidido pela ROTA, e nunca pelo corpo da requisição: a
+// tela de NF-e não pode virar emissora de NFC-e mandando `modelo: 65`.
+async function emitirNfeFiscal(body, user, opcoes = {}) {
   // A MESMA conferencia que o pre-check roda. Ver prepararNfeParaTransmitir.
   const {
     estabelecimento, destinatario, payload, referencia, naturezaOperacao,
     tipoDocumento, finalidadeEmissao, dataEmissao, tipoOperacao, valorTotal,
-    valorIcmsComplementar, chaveOriginal, pedidoDaNota
-  } = await prepararNfeParaTransmitir(body);
+    valorIcmsComplementar, chaveOriginal, pedidoDaNota, modelo
+  } = await prepararNfeParaTransmitir(body, { modelo: opcoes.modelo });
+  const nfce = modelo === 65;
 
   const nfeExistente = await encontrarNfeIdempotente(estabelecimento.id, payload);
   if (nfeExistente) {
@@ -5757,6 +5827,7 @@ async function emitirNfeFiscal(body, user) {
   let nfe = await fiscalDb.createNfeRascunho({
     estabelecimentoId: estabelecimento.id,
     referencia,
+    modelo,
     naturezaOperacao,
     tipoDocumento,
     finalidadeEmissao,
@@ -5807,7 +5878,14 @@ async function emitirNfeFiscal(body, user) {
 
   try {
     const client = await focusNfe.forEstabelecimento(estabelecimento.id);
-    const resposta = await client.emitirNfe(referencia, payload);
+    // A NFC-e volta autorizada ou rejeitada NESTA resposta (emissão síncrona):
+    // aplicarRespostaFocusNaNfe fatura o pedido na mesma chamada.
+    let resposta;
+    try {
+      resposta = nfce ? await client.emitirNfce(referencia, payload) : await client.emitirNfe(referencia, payload);
+    } catch (erroDaFocus) {
+      throw nfce ? explicarErroDaNfce(erroDaFocus) : erroDaFocus;
+    }
     // EMITIR FATURA O PEDIDO (fase AV) — a outra metade da unificação.
     // Faturar passou a exigir documento fiscal; sem isto, o usuário emitiria a
     // nota e ainda teria de voltar ao pedido para mudar o status à mão. Emitir
@@ -5824,7 +5902,7 @@ async function emitirNfeFiscal(body, user) {
     nfe = await aplicarRespostaFocusNaNfe(nfe, resposta, user);
     const data = loadData();
     data.auditLogs = data.auditLogs || [];
-    await registrarAuditoria({ action: 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referencia, byId: user.id, byName: user.name });
+    await registrarAuditoria({ action: nfce ? 'emitirNfceFiscal' : 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referencia, byId: user.id, byName: user.name });
     saveData(data);
     return nfe;
   } catch (error) {
@@ -5835,6 +5913,76 @@ async function emitirNfeFiscal(body, user) {
     });
     throw error;
   }
+}
+
+/**
+ * A NFC-e DE UM PEDIDO — a ação "Emitir NFC-e".
+ *
+ * Diferente da NF-e, que se confere numa tela inteira antes de transmitir, a
+ * NFC-e é a nota do balcão: o pedido JÁ É a conferência. O servidor monta a
+ * nota do pedido (montarNfeDoPedido, a mesma tradução do pré-check) e a
+ * transmite pelo caminho da NF-e com o modelo 65.
+ *
+ * A NOTA FATURA O PEDIDO: autorizada, o pedido vai para faturado, o estoque é
+ * baixado e nasce a conta a receber (aplicarRespostaFocusNaNfe). Rejeitada,
+ * o pedido fica como estava e pode tentar de novo.
+ */
+async function emitirNfceDoPedido({ orderId, estabelecimentoId }, user) {
+  const data = loadData();
+  await Promise.all([syncSalesData(data), syncCadastroData(data)]);
+  const pedido = (data.orders || []).find((p) => p.id === orderId);
+  const recusar = (mensagem, status = 400) => {
+    const err = new Error(mensagem);
+    err.status = status;
+    throw err;
+  };
+  if (!pedido) recusar('Pedido não encontrado. Só pedido emite NFC-e — orçamento precisa ser aprovado antes.', 404);
+  if (salesStatus.ehCancelado(pedido.status)) recusar('Pedido cancelado não emite NFC-e.');
+  if (filialDaVenda.ehMovimentacaoInterna(pedido.category)) {
+    recusar('Transferência e remessa não são venda a consumidor: saem em NF-e.');
+  }
+  if (!estabelecimentoId) recusar('Escolha o estabelecimento que vai emitir a NFC-e.');
+  // A loja primeiro: é a recusa que diz o que fazer (marcar "Emite NFC-e"),
+  // e não adianta conferir estoque para uma loja que não emite. A mesma trava
+  // está em prepararNfeParaTransmitir; aqui ela só vem antes.
+  const loja = await fiscalDb.getEstabelecimentoById(estabelecimentoId);
+  if (!loja) recusar('Estabelecimento não encontrado.', 404);
+  if (!loja.ativo || !loja.emiteNfce) {
+    recusar('Este estabelecimento não está habilitado para emitir NFC-e (Configurações › Empresa › "Emite NFC-e").');
+  }
+
+  // O ESTOQUE ANTES DA NOTA. Autorizada, a NFC-e fatura o pedido, e faturar
+  // baixa o estoque — que recusa saldo insuficiente (transitionOrderStockEffect).
+  // Sem esta conferência a nota sairia para a SEFAZ e o faturamento falharia
+  // depois: documento fiscal emitido, pedido em aberto, nada a receber. A conta
+  // é a mesma do faturamento: por cor quando o item tem cor, senão o saldo do
+  // produto. Pedido que já baixou estoque (aprovado sem faturamento) não baixa
+  // de novo.
+  if (!salesStatus.baixaEstoque(pedido.status)) {
+    await sincronizarRazao(data);
+    const precisa = new Map();
+    for (const item of pedido.items || []) {
+      if (!item.productId) continue;
+      const chave = `${item.productId}|${item.classValueId || ''}`;
+      const atual = precisa.get(chave) || { item, quantidade: 0 };
+      atual.quantidade += Number(item.quantity || 0);
+      precisa.set(chave, atual);
+    }
+    for (const { item, quantidade } of precisa.values()) {
+      const produto = await db.getProductById(item.productId);
+      if (!produto) continue;
+      const disponivel = item.classValueId
+        ? stockCore.classValueBalance(data, item.productId, item.classValueId)
+        : Number(produto.stockQuantity || 0);
+      if (disponivel < quantidade) {
+        const cor = item.classValueName || item.classValueId;
+        recusar(`Estoque insuficiente para "${item.name || produto.name}"${cor ? ` (${cor})` : ''}: disponível ${disponivel}, necessário ${quantidade}. `
+          + 'A NFC-e fatura o pedido quando é autorizada, e o faturamento baixa o estoque — dê entrada no estoque antes de emitir.');
+      }
+    }
+  }
+
+  return emitirNfeFiscal(montarNfeDoPedido(pedido, estabelecimentoId, data), user, { modelo: 65 });
 }
 
 // Usado tanto pela resposta síncrona da emissão quanto pelo webhook — é o
@@ -5975,7 +6123,8 @@ async function aplicarRespostaFocusNaNfe(nfe, resposta, user) {
     // referência de nota complementar.
     chaveAcesso: String(resposta.chave_nfe || '').replace(/\D/g, '') || null,
     mensagemSefaz: resposta.mensagem_sefaz,
-    protocolo: resposta.protocolo,
+    // A consulta da NFC-e devolve `numero_protocolo` (doc consultar_nfce).
+    protocolo: resposta.protocolo || resposta.numero_protocolo,
     urlXml: resposta.caminho_xml_nota_fiscal,
     urlDanfe: resposta.caminho_danfe,
     respostaFocus: resposta,
@@ -6128,15 +6277,20 @@ async function cancelarNfeFiscal(id, justificativa, user, opcoes = {}) {
   // Nota sem carimbo de autorização NÃO é bloqueada: seria impedir o
   // cancelamento legítimo de uma nota recém-autorizada cujo horário ainda não
   // voltou. Nesse caso quem decide é a SEFAZ, que recusa por prazo excedido.
-  const prazo = prazoCancelamento.avaliar(nfe.autorizadoEm);
-  if (!prazo.dentroDoPrazo && !opcoes.extemporaneo) {
+  // NFC-e: 30 minutos, e sem cancelamento extemporâneo — depois do prazo a
+  // correção é uma NF-e de estorno (ver prazo_cancelamento.js).
+  const nfce = String(nfe.modelo) === '65';
+  const prazo = prazoCancelamento.avaliar(nfe.autorizadoEm, null, nfe.modelo);
+  if (!prazo.dentroDoPrazo && (nfce || !opcoes.extemporaneo)) {
     const err = new Error(prazo.motivo);
     err.status = 409;
     throw err;
   }
 
   const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
-  const resposta = await client.cancelarNfe(nfe.referencia, justificativa);
+  const resposta = nfce
+    ? await client.cancelarNfce(nfe.referencia, justificativa)
+    : await client.cancelarNfe(nfe.referencia, justificativa);
   const updated = await fiscalDb.updateNfeAposResposta(nfe.id, {
     status: mapFocusStatusToNfeStatus(resposta.status) === 'AUTORIZADO' ? 'CANCELADO' : mapFocusStatusToNfeStatus(resposta.status),
     mensagemSefaz: resposta.mensagem_sefaz,
@@ -6170,6 +6324,11 @@ async function emitirCartaCorrecaoFiscal(id, correcao, user) {
   if (!nfe) {
     const err = new Error('NF-e não encontrada.');
     err.status = 404;
+    throw err;
+  }
+  if (String(nfe.modelo) === '65') {
+    const err = new Error('NFC-e não tem Carta de Correção. Dentro de 30 minutos, cancele e emita de novo.');
+    err.status = 400;
     throw err;
   }
   if (nfe.status !== 'AUTORIZADO') {
@@ -11584,6 +11743,17 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { success: true, nfe });
       }
 
+      // NFC-e do pedido: só o id do pedido e do estabelecimento vêm da tela; a
+      // nota o servidor monta do pedido. Mesma permissão da NF-e ("emitir").
+      if (pathname === '/api/fiscal/nfce/emitir' && req.method === 'POST') {
+        const body = await readBody(req);
+        const nfe = await emitirNfceDoPedido({
+          orderId: String(body.orderId || ''),
+          estabelecimentoId: String(body.estabelecimentoId || '')
+        }, user);
+        return sendJson(res, { success: true, nfe });
+      }
+
       if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/cancelar') && req.method === 'POST') {
         const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', '').replace('/cancelar', ''));
         const body = await readBody(req);
@@ -11620,6 +11790,25 @@ async function tratarRequisicao(req, res) {
         if (!arquivo || !arquivo.conteudo) {
           return sendJson(res, { error: `${tipo.toUpperCase()} ainda não disponível para esta NF-e (só existe depois de autorizada).` }, 404);
         }
+        // O DANFCe DA NFC-e É HTML, não PDF (caminho_danfe da emitir_nfce). O
+        // tipo sai do próprio conteúdo: PDF começa com "%PDF".
+        const ehPdf = tipo === 'danfe' && Buffer.from(arquivo.conteudo).subarray(0, 4).toString('latin1') === '%PDF';
+        if (tipo === 'danfe' && !ehPdf) {
+          // HTML que veio da Focus, servido daqui: `sandbox` o isola numa
+          // origem própria e sem script — ele não enxerga a sessão do sistema.
+          // O <base> faz imagem e estilo de caminho relativo virem da Focus.
+          const nota = await fiscalDb.getNfeById(id);
+          const estab = nota ? await fiscalDb.getEstabelecimentoById(nota.estabelecimentoId) : null;
+          const raiz = focusNfe.raizDosArquivos(estab && estab.focusAmbiente);
+          const html = Buffer.from(arquivo.conteudo).toString('utf8');
+          const comBase = /<base\s/i.test(html) ? html : html.replace(/<head[^>]*>/i, (m) => `${m}<base href="${raiz}/">`);
+          res.writeHead(200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Content-Security-Policy': 'sandbox allow-modals allow-popups',
+            'Content-Disposition': `inline; filename="nfce-${id}.html"`
+          });
+          return res.end(comBase);
+        }
         res.writeHead(200, {
           'Content-Type': tipo === 'xml' ? 'application/xml; charset=utf-8' : 'application/pdf',
           'Content-Disposition': `inline; filename="nfe-${id}.${tipo === 'xml' ? 'xml' : 'pdf'}"`
@@ -11651,7 +11840,9 @@ async function tratarRequisicao(req, res) {
         if (nfe.status === 'PROCESSANDO' && nfe.referencia && nfe.estabelecimentoId) {
           try {
             const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
-            const resposta = await client.consultarNfe(nfe.referencia);
+            const resposta = String(nfe.modelo) === '65'
+              ? await client.consultarNfce(nfe.referencia)
+              : await client.consultarNfe(nfe.referencia);
             nfe = await aplicarRespostaFocusNaNfe(nfe, resposta, user);
           } catch (error) {
             // Falha ao consultar NÃO é falha ao ler: a nota continua existindo
