@@ -46,6 +46,13 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
     const result = await load();
     const product = result ? result.product : null;
     const movements = result ? result.movements : [];
+    const historicoDePreco = result && Array.isArray(result.historicoDePreco) ? result.historicoDePreco : [];
+    const deParaPreco = (par) => {
+      if (!par) return '-';
+      if (par.de === null || par.de === undefined) return S.formatBRL(par.para);
+      if (Math.round(par.de * 100) === Math.round(par.para * 100)) return S.formatBRL(par.para);
+      return `${S.formatBRL(par.de)} → ${S.formatBRL(par.para)}`;
+    };
 
     content.innerHTML = `
       <div class="panel">
@@ -85,6 +92,24 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
             </table>
           </div>
         </div>
+
+        ${historicoDePreco.length ? `
+        <div class="panel">
+          <h3>Histórico de preço</h3>
+          <div class="table-scroll">
+            <table class="table">
+              <thead><tr><th>Data</th><th>Usuário</th><th>Custo</th><th>Venda</th><th>Origem</th></tr></thead>
+              <tbody>${historicoDePreco.map((h) => `
+                <tr>
+                  <td>${S.escape(new Date(h.at).toLocaleString('pt-BR'))}</td>
+                  <td>${S.escape(h.byName || '-')}</td>
+                  <td>${deParaPreco(h.custo)}</td>
+                  <td>${deParaPreco(h.venda)}</td>
+                  <td>${S.escape(h.origem || '-')}</td>
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>
+        </div>` : ''}
 
         <div class="panel">
           <div class="finance-actions-row">

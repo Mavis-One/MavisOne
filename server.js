@@ -3586,6 +3586,35 @@ async function registrarAuditoria({ action, targetId, targetUsername, byId, byNa
   }
 }
 
+/**
+ * QUEM MUDOU O PREÇO, E QUANDO (VM-PLT-04). O produto guarda só o valor atual,
+ * e o access_logs registra "POST /api/stock/price-manager" sem produto nem
+ * valor: um preço trocado não deixava rastro. Uma linha por produto cujo custo
+ * ou venda mudou, com o de/para; `antes` nulo é o cadastro do produto.
+ *
+ * O custo que a nota de entrada recalcula (atualizarCusto) não passa por aqui:
+ * ele já tem rastro no razão, no custo unitário de cada entrada.
+ */
+async function auditarPrecoDoProduto(user, antes, depois, origem) {
+  const centavos = (v) => Math.round(Number(v || 0) * 100);
+  const custoMudou = !antes || centavos(antes.costPrice) !== centavos(depois.costPrice);
+  const vendaMudou = !antes || centavos(antes.salePrice) !== centavos(depois.salePrice);
+  if (!custoMudou && !vendaMudou) return null;
+  const valor = (v) => centavos(v) / 100;
+  return registrarAuditoria({
+    action: 'produto.preco',
+    targetId: depois.id,
+    targetUsername: `${depois.sku || ''} · ${depois.name || ''}`.trim(),
+    byId: user ? user.id : '',
+    byName: user ? user.name : '',
+    details: {
+      origem,
+      custo: { de: antes ? valor(antes.costPrice) : null, para: valor(depois.costPrice) },
+      venda: { de: antes ? valor(antes.salePrice) : null, para: valor(depois.salePrice) }
+    }
+  });
+}
+
 async function addFinanceAuditLog(_data, { action, entry, byId, byName, details }) {
   return registrarAuditoria({
     action,
@@ -13428,6 +13457,15 @@ async function tratarRequisicao(req, res) {
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
         .slice(0, 50)
         .map((m) => stockCore.serializeMovement(m, data, productsById));
+      // Quem mudou o preço (auditarPrecoDoProduto). Falhar aqui não pode
+      // derrubar a tela do produto: sem o histórico, ela continua respondendo.
+      let historicoDePreco = [];
+      try {
+        historicoDePreco = (await db.getAuditLogs({ targetId: id, action: 'produto.preco', limit: 50 })).auditLogs
+          .map((log) => ({ at: log.at, byName: log.byName, ...(log.details || {}) }));
+      } catch (erroHistorico) {
+        console.error('Falha ao ler o histórico de preço:', erroHistorico.message);
+      }
       // A quebra por cor da reserva vai junto: quem escolhe a cor na venda ou
       // na saída precisa saber quanto DAQUELA cor já está prometido, não só o
       // total do produto.
@@ -13439,7 +13477,8 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, {
         product: stockCore.serializeProduct(product, data, reservas),
         reservasPorCor,
-        movements
+        movements,
+        historicoDePreco
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar produto', 500);
@@ -13511,6 +13550,7 @@ async function tratarRequisicao(req, res) {
         cnpjFabricante: String(body.cnpjFabricante ?? '').trim()
       });
 
+      await auditarPrecoDoProduto(user, existing, product, 'Cadastro do produto');
       data.productMeta[product.id] = stockCore.buildProductMeta(body, stockCore.productMeta(data, product.id));
 
       if (!existing && initialQuantity > 0) {
@@ -14541,6 +14581,7 @@ async function tratarRequisicao(req, res) {
           costPrice,
           salePrice
         });
+        await auditarPrecoDoProduto(user, product, { ...product, costPrice, salePrice }, 'Gestor de Preços');
       }
 
       // Preço fixo digitado na tabela é gravado como item dela.
@@ -14749,6 +14790,7 @@ async function tratarRequisicao(req, res) {
       }
 
       const body = await readBody(req);
+      const anterior = body.id ? await db.getProductById(body.id) : null;
       const product = await db.upsertProduct({
         id: body.id,
         name: body.name,
@@ -14757,6 +14799,7 @@ async function tratarRequisicao(req, res) {
         costPrice: Number(body.costPrice || 0),
         salePrice: Number(body.salePrice || 0)
       });
+      await auditarPrecoDoProduto(user, anterior, product, 'Cadastro do produto');
 
       return sendJson(res, { success: true, product });
     } catch (error) {
