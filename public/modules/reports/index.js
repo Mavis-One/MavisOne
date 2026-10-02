@@ -13,6 +13,11 @@ window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 // saem de /api/reports/overview. No catálogo elas são as entradas `especial`.
 window.MavisModuleRegistry.reports = async function renderReports(ctx) {
   const { api, content, state, escapeHtml } = ctx;
+  // O Personalizado não é um grupo do catálogo: o relatório dele é dado salvo,
+  // e a tela é outra (subs/personalizado.js).
+  if (state.activeSub === 'personalizado' && window.MavisRelatoriosPersonalizados) {
+    return window.MavisRelatoriosPersonalizados.desenhar(ctx);
+  }
   const especiais = window.MavisRelatoriosEspeciais || {};
   const telas = window.MavisRelatoriosCatalogo;
 

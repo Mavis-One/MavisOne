@@ -95,6 +95,8 @@ const relatoriosCsv = require('./lib/relatorios-csv');
 // definição por relatório e um motor só para filtrar, somar e exportar.
 const catalogoDeRelatorios = require('./lib/relatorios');
 const motorDeRelatorios = require('./lib/relatorios/motor');
+const relatorioPersonalizado = require('./lib/relatorios/personalizado');
+const relatoriosPersonalizadosDb = require('./lib/db/relatorios-personalizados');
 // Fase DC: a meta de venda. O rateio por dias corridos e' regra pura em
 // lib/metas.js; as linhas vem de lib/db/metas.js.
 const metasLib = require('./lib/metas');
@@ -8799,14 +8801,16 @@ async function tratarRequisicao(req, res) {
       const porta = await portaDoCatalogo(req);
       if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
       const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
-      const [depositos, contas, vendedores, filiais] = await Promise.all([
+      const [depositos, contas, vendedores, filiais, estabelecimentos] = await Promise.all([
         consultarBanco('select id, name from deposits order by name'),
         consultarBanco('select id, name from bank_accounts where coalesce(ativo, true) order by name'),
         escopo.podeEscolherVendedor
           ? consultarBanco(`select id, name from people where extra->'roles' @> '["Vendedor"]'::jsonb order by name`)
           : Promise.resolve({ rows: [] }),
         consultarBanco(`select distinct btrim(regexp_replace(category, '^.*/', '')) as nome
-                          from orders where position('/' in coalesce(category, '')) > 0`)
+                          from orders where position('/' in coalesce(category, '')) > 0`),
+        consultarBanco(`select id::text as id, coalesce(nullif(btrim(nome_fantasia), ''), razao_social) as name
+                          from estabelecimento where coalesce(ativo, true) order by 2`)
       ]);
       // Duas grafias da mesma loja ("Timbó" e "Timbo") são uma opção só.
       const porChave = new Map();
@@ -8821,6 +8825,7 @@ async function tratarRequisicao(req, res) {
           contas: contas.rows,
           vendedores: vendedores.rows,
           filiais: [...porChave.values()].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+          estabelecimentos: estabelecimentos.rows,
           podeEscolherVendedor: escopo.podeEscolherVendedor
         }
       });
@@ -8855,6 +8860,105 @@ async function tratarRequisicao(req, res) {
         });
       } catch (error) {
         return sendErro(res, error, 'Erro ao montar o relatório', 500);
+      }
+    }
+  }
+
+  // ==========================================================================
+  // O RELATÓRIO PERSONALIZADO (lib/relatorios/personalizado.js, fase DQ)
+  //
+  // As portas do catálogo, e mais duas. A FONTE pede o módulo dela (montar
+  // relatório de Lançamentos pede Financeiro), e o relatório só aparece para
+  // quem pode ver a fonte. EDITAR e EXCLUIR são de quem criou, ou do
+  // administrador: o compartilhado a equipe vê e roda, mas não muda.
+  //
+  // O que vem da tela passa por validarDefinicao antes de ser gravado, e a
+  // consulta é montada no servidor a cada execução — com o escopo de vendas
+  // de quem roda, não de quem criou.
+  // ==========================================================================
+  const podeVerModulo = (porta, modulo) => porta.ehAdministrador || (porta.user.allowedModules || []).includes(modulo);
+  const podeVerPersonalizado = (porta, rel) => {
+    const fonte = relatorioPersonalizado.fonte(rel.fonte);
+    if (!fonte || !podeVerModulo(porta, fonte.modulo)) return false;
+    return rel.compartilhado || rel.criadoPor === porta.user.id || porta.ehAdministrador;
+  };
+  const podeMexerNoPersonalizado = (porta, rel) => porta.ehAdministrador || rel.criadoPor === porta.user.id;
+
+  if (pathname === '/api/reports/personalizados' && (req.method === 'GET' || req.method === 'POST')) {
+    try {
+      const porta = await portaDoCatalogo(req);
+      if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
+      if (req.method === 'POST') {
+        const def = relatorioPersonalizado.validarDefinicao(await readBody(req));
+        if (!podeVerModulo(porta, relatorioPersonalizado.fonte(def.fonte).modulo)) return sendJson(res, { error: 'Sem permissão para esta fonte de dados' }, 403);
+        return sendJson(res, { relatorio: await relatoriosPersonalizadosDb.criar(def, porta.user) }, 201);
+      }
+      const fontes = relatorioPersonalizado.fontesVisiveis((modulo) => podeVerModulo(porta, modulo));
+      const relatorios = (await relatoriosPersonalizadosDb.listar())
+        .filter((rel) => podeVerPersonalizado(porta, rel))
+        .map((rel) => ({
+          ...rel,
+          fonteTitulo: relatorioPersonalizado.fonte(rel.fonte).titulo,
+          podeEditar: podeMexerNoPersonalizado(porta, rel)
+        }));
+      return sendJson(res, { fontes, operadores: relatorioPersonalizado.OPERADORES, relatorios });
+    } catch (error) {
+      return sendErro(res, error, 'Erro nos relatórios personalizados', error.status || 500);
+    }
+  }
+
+  {
+    const casa = pathname.match(/^\/api\/reports\/personalizados\/([A-Za-z0-9_-]+)(\/executar(\/export)?)?$/);
+    if (casa) {
+      try {
+        const porta = await portaDoCatalogo(req);
+        if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
+        const rel = await relatoriosPersonalizadosDb.buscar(casa[1]);
+        // Inexistente e invisível respondem igual: 404 não confirma a quem não
+        // pode ver que o relatório existe.
+        if (!rel || !podeVerPersonalizado(porta, rel)) return sendJson(res, { error: 'Relatório não encontrado' }, 404);
+
+        if (casa[2] && req.method === 'GET') {
+          const de = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('de') || '') ? url.searchParams.get('de') : '';
+          const ate = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('ate') || '') ? url.searchParams.get('ate') : '';
+          const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
+          // A definição gravada é conferida de novo: a fonte pode ter perdido
+          // um campo desde que o relatório foi salvo.
+          const def = relatorioPersonalizado.validarDefinicao(rel);
+          const resultado = await relatorioPersonalizado.executar(def, {
+            sql: async (texto, parametros) => (await consultarBanco(texto, parametros)).rows,
+            de: de && ate && de > ate ? ate : de,
+            ate: de && ate && de > ate ? de : ate,
+            vendedores: escopoLib.vendedoresPermitidos(escopo, ''),
+            id: rel.id
+          });
+          await relatoriosPersonalizadosDb.marcarExecucao(rel.id);
+          if (casa[3]) {
+            const arquivo = motorDeRelatorios.paraCsv(resultado);
+            res.writeHead(200, {
+              'Content-Type': 'text/csv; charset=utf-8',
+              'Content-Disposition': `attachment; filename="${motorDeRelatorios.nomeDoArquivo(resultado)}"`
+            });
+            return res.end(arquivo);
+          }
+          const LIMITE = 2000;
+          return sendJson(res, { ...resultado, linhas: resultado.linhas.slice(0, LIMITE), totalLinhas: resultado.linhas.length });
+        }
+
+        if (!casa[2] && req.method === 'GET') return sendJson(res, { relatorio: { ...rel, podeEditar: podeMexerNoPersonalizado(porta, rel) } });
+        if (!casa[2] && (req.method === 'PUT' || req.method === 'DELETE')) {
+          if (!podeMexerNoPersonalizado(porta, rel)) return sendJson(res, { error: 'Só quem criou o relatório pode alterá-lo' }, 403);
+          if (req.method === 'DELETE') {
+            await relatoriosPersonalizadosDb.excluir(rel.id);
+            return sendJson(res, { ok: true });
+          }
+          const def = relatorioPersonalizado.validarDefinicao(await readBody(req));
+          if (!podeVerModulo(porta, relatorioPersonalizado.fonte(def.fonte).modulo)) return sendJson(res, { error: 'Sem permissão para esta fonte de dados' }, 403);
+          return sendJson(res, { relatorio: await relatoriosPersonalizadosDb.atualizar(rel.id, def) });
+        }
+        return sendJson(res, { error: 'Método não suportado' }, 405);
+      } catch (error) {
+        return sendErro(res, error, 'Erro no relatório personalizado', error.status || 500);
       }
     }
   }

@@ -1866,6 +1866,7 @@ const moduleSubItems = {
   // seus relatórios (lib/relatorios). `requerModulo` esconde o grupo de quem
   // não tem o módulo — o servidor recusa do mesmo jeito.
   reports: [
+    { key: 'personalizado', label: 'Personalizado', desc: 'Relatórios montados e salvos por você.' },
     { key: 'financeiro', label: 'Financeiro', desc: 'Fluxo de caixa, extrato, DRE, inadimplentes.', requerModulo: 'finance' },
     { key: 'vendas', label: 'Vendas', desc: 'Pedidos, curva ABC, rentabilidade, condensados.', requerModulo: 'sales' },
     { key: 'compras', label: 'Compras', desc: 'Notas de entrada, ordens de compra, fornecedores.', requerModulo: 'purchases' },

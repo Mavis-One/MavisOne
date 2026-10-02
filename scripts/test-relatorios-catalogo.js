@@ -67,6 +67,25 @@ check('de/até invertidos são trocados', trocado.de === '2026-09-01' && trocado
 check('data torta vira vazia, não erro', motor.normalizarFiltros(def({}), { de: "2026-09-01'; drop table x" }, agora).de === '');
 check('dias fora do limite são contidos', motor.normalizarFiltros(def({}), { dias: '99999' }, agora).dias === 3650);
 check('"hoje" é a data do Brasil, não a de Londres', motor.hojeNoBrasil('2026-10-03T01:30:00Z') === '2026-10-02');
+const doze = motor.normalizarFiltros(def({ periodoPadrao: '12meses' }), {}, agora);
+check('"12meses" vai do 1º dia de 11 meses atrás até hoje', doze.de === '2025-11-01' && doze.ate === '2026-10-02', `${doze.de}..${doze.ate}`);
+check('  e atravessa a virada do ano', motor.normalizarFiltros(def({ periodoPadrao: '12meses' }), {}, '2026-01-15T15:00:00Z').de === '2025-02-01');
+
+console.log('\n--- 4b. escolhas (o "Filtrar por" do Viper) ---');
+const comEscolha = def({ escolhas: [{ campo: 'valor', rotulo: 'Valor', itens: [['previsto', 'Previsto'], ['realizado', 'Realizado']] }] });
+check('sem escolha pedida, vale o primeiro item', motor.normalizarFiltros(comEscolha, {}, agora).valor === 'previsto');
+check('a escolha da lista passa', motor.normalizarFiltros(comEscolha, { valor: 'realizado' }, agora).valor === 'realizado');
+// O valor vai para dentro do SQL (num CASE): o que não está na lista não pode
+// passar, nem como texto livre.
+check('valor fora da lista vira o padrão, não texto livre', motor.normalizarFiltros(comEscolha, { valor: "x' or 1=1 --" }, agora).valor === 'previsto');
+check('nenhuma escolha usa o nome de um filtro comum',
+  catalogo.RELATORIOS.every((r) => (r.escolhas || []).every((e) => !motor.CAMPOS_RESERVADOS.has(e.campo))));
+check('toda escolha tem itens', catalogo.RELATORIOS.every((r) => (r.escolhas || []).every((e) => Array.isArray(e.itens) && e.itens.length > 1)));
+const visivelComEscolha = catalogo.catalogoVisivel({ allowedModules: [] }, true).flatMap((g) => g.relatorios).find((r) => r.escolhas.length);
+check('a tela recebe as escolhas', Boolean(visivelComEscolha) && Array.isArray(visivelComEscolha.escolhas[0].itens));
+const telaCatalogo = ler('public/modules/reports/subs/catalogo.js');
+check('  e desenha um select para cada uma', /\(def\.escolhas \|\| \[\]\)\.map\(\(e\) =>/.test(telaCatalogo) && /data-rel-cat="\$\{escapeHtml\(e\.campo\)\}"/.test(telaCatalogo));
+check('o filtro de estabelecimento chega à tela', /estabelecimentos: estabelecimentos\.rows/.test(servidor) && /usa\('estabelecimento'\)/.test(telaCatalogo));
 
 console.log('\n--- 5. totais ---');
 (async () => {
@@ -80,6 +99,20 @@ console.log('\n--- 5. totais ---');
   }, motor.normalizarFiltros({ filtros: [] }, {}, agora));
   check('"numericas" soma dinheiro e quantidade', r.totais.valor === 0.3, String(r.totais.valor));
   check('  mas não percentual nem coluna marcada semTotal', !('margem' in r.totais) && !('unitario' in r.totais));
+  // A escolha pode trocar as colunas (Ranking por clientes não tem
+  // quantidade): o total de uma coluna que não veio não pode aparecer.
+  const trocada = await motor.executar({
+    key: 't', grupo: 'vendas', titulo: 'T', totais: ['quantidade', 'valor'], colunas: [],
+    executar: async () => ({ colunas: [{ campo: 'nome', tipo: 'texto' }, { campo: 'valor', tipo: 'moeda' }], linhas: [{ nome: 'a', valor: 2 }] })
+  }, motor.normalizarFiltros({ filtros: [] }, {}, agora));
+  check('total só das colunas que a execução devolveu', JSON.stringify(trocada.totais) === '{"valor":2}', JSON.stringify(trocada.totais));
+
+  console.log('\n--- 6. o escopo de vendas também nas conferências ---');
+  // Consistência e Lançamentos dos Vendedores leem pedido: o vendedor comum
+  // não pode conferir o pedido dos outros.
+  const vendas = ler('lib/relatorios/vendas.js');
+  const consistencia = vendas.slice(vendas.indexOf("key: 'consistencia-dos-valores'"));
+  check('Consistência filtra pelos vendedores do escopo (nas duas conferências)', (consistencia.match(/o\.seller_id = any\(\$3::text\[\]\)/g) || []).length === 2);
 
   console.log(falhas ? `\n===== ${falhas} CHECK(S) FALHARAM =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
   process.exit(falhas ? 1 : 0);

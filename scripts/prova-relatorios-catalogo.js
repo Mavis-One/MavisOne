@@ -45,7 +45,13 @@ function lerEstado() {
   for (const def of lista) {
     // "só de": período com uma ponta só. Era erro de SQL nos relatórios que
     // usavam `between` (o "até" chegava vazio).
-    for (const [rotulo, bruto] of [['padrão', {}], ['largo', { de: '2020-01-01', ate: hoje, dias: 365 }], ['só de', { de: '2026-01-01' }]]) {
+    const recortes = [['padrão', {}], ['largo', { de: '2020-01-01', ate: hoje, dias: 365 }], ['só de', { de: '2026-01-01' }]];
+    // Cada opção de cada escolha, no recorte largo: a opção que nunca roda é
+    // o SQL que só quebra no dia em que alguém a escolhe.
+    for (const e of def.escolhas || []) {
+      for (const [valor] of e.itens.slice(1)) recortes.push([`${e.campo}=${valor}`, { de: '2020-01-01', ate: hoje, dias: 365, [e.campo]: valor }]);
+    }
+    for (const [rotulo, bruto] of recortes) {
       const nome = `${def.grupo}/${def.key} (${rotulo})`;
       try {
         const filtros = motor.normalizarFiltros(def, bruto);

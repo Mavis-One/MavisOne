@@ -103,7 +103,15 @@ window.MavisRelatoriosCatalogo = (function () {
       usa('deposito') ? select('depositoId', 'Depósito', opcoes.depositos, 'Todos') : '',
       usa('conta') ? select('contaId', 'Conta', opcoes.contas, 'Todas') : '',
       usa('vendedor') && opcoes.podeEscolherVendedor ? select('vendedorId', 'Vendedor', opcoes.vendedores, 'Todos') : '',
-      usa('filial') ? select('filial', 'Filial', opcoes.filiais, 'Todas', (o) => o, (o) => o) : ''
+      usa('filial') ? select('filial', 'Filial', opcoes.filiais, 'Todas', (o) => o, (o) => o) : '',
+      usa('estabelecimento') ? select('estabelecimentoId', 'Estabelecimento', opcoes.estabelecimentos, 'Todos') : '',
+      // As escolhas não têm "Todos": o primeiro item já é o padrão do relatório.
+      ...(def.escolhas || []).map((e) => `
+        <label>${escapeHtml(e.rotulo)}
+          <select data-rel-cat="${escapeHtml(e.campo)}">
+            ${e.itens.map(([valor, rotulo]) => `<option value="${escapeHtml(valor)}" ${String(valor) === String(filtros[e.campo] || '') ? 'selected' : ''}>${escapeHtml(rotulo)}</option>`).join('')}
+          </select>
+        </label>`)
     ].join('');
     return `
       <section class="panel rel-filtros">
@@ -147,10 +155,15 @@ window.MavisRelatoriosCatalogo = (function () {
   }
 
   async function exportar(ctx, def, filtros) {
+    return baixar(ctx, `/api/reports/catalogo/${encodeURIComponent(def.key)}/export?${query(filtros)}`, `${def.key}.csv`);
+  }
+
+  /** Baixa o CSV que o servidor montou. O Personalizado usa o mesmo caminho. */
+  async function baixar(ctx, endereco, nomePadrao) {
     const { showToast } = ctx;
     let url = null;
     try {
-      const resposta = await fetch(`/api/reports/catalogo/${encodeURIComponent(def.key)}/export?${query(filtros)}`, {
+      const resposta = await fetch(endereco, {
         headers: { 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' }
       });
       if (!resposta.ok) {
@@ -158,7 +171,7 @@ window.MavisRelatoriosCatalogo = (function () {
         showToast(corpo.error || `Não consegui exportar (HTTP ${resposta.status}).`, 'error');
         return;
       }
-      const nome = (/filename="([^"]+)"/.exec(resposta.headers.get('Content-Disposition') || '') || [])[1] || `${def.key}.csv`;
+      const nome = (/filename="([^"]+)"/.exec(resposta.headers.get('Content-Disposition') || '') || [])[1] || nomePadrao;
       url = URL.createObjectURL(await resposta.blob());
       const link = document.createElement('a');
       link.href = url;
@@ -209,5 +222,5 @@ window.MavisRelatoriosCatalogo = (function () {
     content.querySelector('#relCatExportar')?.addEventListener('click', () => { ler(); exportar(ctx, def, filtros); });
   }
 
-  return { lista, relatorio, comVolta, formatar, LIMITE_NA_TELA };
+  return { lista, relatorio, comVolta, formatar, tabela, baixar, query, LIMITE_NA_TELA };
 }());
