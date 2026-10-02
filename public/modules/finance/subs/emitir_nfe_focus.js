@@ -19,8 +19,10 @@ const NFE_FORMAS_PAGAMENTO = [
 ];
 
 const NFE_FOCUS_TIPO_OPERACAO_OPTIONS = [
-  { value: 'VENDA', label: 'Venda' },
-  { value: 'TRANSFERENCIA', label: 'Transferência' },
+  // `natureza` é o natOp sugerido — o mesmo de lib/operacaoFiscal.js, que veio
+  // das regras do sistema anterior. Sem ele, vale o rótulo.
+  { value: 'VENDA', label: 'Venda', natureza: 'VENDA DE MERCADORIA ADQUIRIDA OU RECEBIDA DE TERCEIROS' },
+  { value: 'TRANSFERENCIA', label: 'Transferência', natureza: 'TRANSFERENCIA DE MERCADORIA' },
   { value: 'REMESSA', label: 'Remessa' },
   { value: 'RETORNO', label: 'Retorno' },
   { value: 'DEVOLUCAO', label: 'Devolução' },
@@ -405,11 +407,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               </label>
               <label>Tipo de operação (define a tributação)
                 <select name="tipoOperacao">
-                  ${NFE_FOCUS_TIPO_OPERACAO_OPTIONS.map((o) => `<option value="${o.value}">${o.label}</option>`).join('')}
+                  ${NFE_FOCUS_TIPO_OPERACAO_OPTIONS.map((o) => `<option value="${o.value}" ${o.value === tipoOperacao ? 'selected' : ''}>${o.label}</option>`).join('')}
                 </select>
               </label>
             </div>
-            <label>Natureza da operação<input name="naturezaOperacao" required value="Venda de mercadoria" /></label>
+            <label>Natureza da operação<input name="naturezaOperacao" required value="${escapeHtml((NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).natureza || (NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).label || '')}" /></label>
             <label>Data de emissão<input type="date" name="dataEmissao" required value="${today}" /></label>
           </div>
 

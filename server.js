@@ -5315,7 +5315,7 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
   return {
     estabelecimentoId,
     tipoOperacao: 'VENDA',
-    naturezaOperacao: 'Venda de mercadoria',
+    naturezaOperacao: operacaoFiscal.naturezaDaOperacao('VENDA'),
     orderId: pedido.id,
     destinatario: {
       nome: pessoa ? pessoa.name : (pedido.clientSupplierName || ''),
@@ -5587,7 +5587,7 @@ async function prepararNfeParaTransmitir(body) {
   const tipoDocumento = body.tipoDocumento !== undefined ? Number(body.tipoDocumento) : 1;
   const finalidadeEmissao = operacaoFiscal.finalidadeDaOperacao(tipoOperacao, body.finalidadeEmissao);
   const naturezaOperacao = body.naturezaOperacao
-    || (opFiscal ? opFiscal.rotulo : 'Venda de mercadoria');
+    || operacaoFiscal.naturezaDaOperacao(tipoOperacao);
 
   // Trava da operação ANTES de gravar rascunho e de falar com a Focus: erro de
   // preenchimento não pode virar rascunho órfão nem chamada gasta.

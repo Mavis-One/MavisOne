@@ -84,6 +84,12 @@ check('a conversão de CFOP é avisada', doXml.avisos.some((a) => /5102->1102/.t
 const propria = documentoDoXml(xml, { cnpjEstabelecimento: '11222333000181' });
 check('o mesmo XML, visto pelo emitente, é SAÍDA própria com o CFOP original',
   propria.payload.emissaoPropria && propria.payload.sentido === 'SAIDA' && propria.itens[0].cfop === '5102' && propria.payload.participante.code === '52998224725000');
+check('a tabela da empresa (fase DN) vence a regra genérica',
+  cfopDeEntrada('5102', { 5102: '1556' }).cfop === '1556' && cfopDeEntrada('5102', { 5102: '1556' }).daTabela === true);
+check('  e sem linha para o CFOP, vale a regra genérica', cfopDeEntrada('6405', { 5102: '1556' }).cfop === '2403');
+const comTabela = documentoDoXml(xml, { cnpjEstabelecimento: ESTAB.cnpj, conversoesCfop: { 5102: '1556' } });
+check('  no documento: o item sai com o CFOP da tabela, e isso não vira aviso',
+  comTabela.itens.every((i) => i.cfop === '1556') && !comTabela.avisos.some((a) => /CFOP de entrada derivado/.test(a)));
 check('CSOSN vira CST 90 com a origem na frente', cstIcms(0, '102').cst === '090' && cstIcms(1, '00').cst === '100');
 
 console.log('\n--- 2. o mês ---');
