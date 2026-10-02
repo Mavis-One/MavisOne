@@ -1778,17 +1778,12 @@ const moduleSubItems = {
     // "isto vai passar?" só tinha uma resposta possível, que era transmitir e
     // ver — e nota recusada consome a numeração, que não volta.
     { key: 'pre_check', label: 'Pré-check Fiscal', desc: 'Quais pedidos do dia seriam recusados se fossem transmitidos agora.' },
-    // VIZINHO DO PRE-CHECK, e o prazo e' o que os separa: aquele responde
-    // "esta nota passa agora?", este responde "o arquivo do mes fecha?". A EFD
-    // vence no dia 20 do mes seguinte, e nao gera arquivo nenhum -- ela diz o
-    // que estaria faltando se gerasse.
-    // GERAR vem antes do pré-check e da conferência: é a tarefa; os outros dois
-    // são o que se olha quando ela não sai. Fase DL.
+    // O SPED: gerar (fase DL) e, ao lado, conferir o arquivo do sistema
+    // anterior. Havia um terceiro, "Pré-check do SPED", removido em 01/10/2026
+    // a pedido do usuário: o que ele contava, a geração diz ao recusar.
     { key: 'sped_gerar', label: 'SPED Fiscal', desc: 'Gera a EFD ICMS/IPI do mês com as notas emitidas e as entradas deste sistema, e guarda os arquivos gerados.' },
-    { key: 'sped_pre_check', label: 'Pré-check do SPED', desc: 'O que falta para gerar a EFD ICMS/IPI da competência, registro por registro.' },
-    // Logo depois do pré-check: este responde "o que falta para gerar daqui",
-    // aquela responde "o arquivo do sistema anterior está certo?". Enquanto as
-    // notas saem pelo Viper, é por ela que o SPED do mês é entregue.
+    // Enquanto as notas saem pelo Viper, é por esta que o SPED do mês é
+    // entregue: ela confere e corrige a forma do arquivo de lá.
     { key: 'sped_conferir', label: 'Conferir SPED', desc: 'Lê o SPED do sistema anterior, aponta os erros e devolve um arquivo corrigido.' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     { key: 'inutilizadas', label: 'NF-e Inutilizadas', desc: 'Faixas de numeração queimadas na SEFAZ.' },
