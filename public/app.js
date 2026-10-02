@@ -1783,6 +1783,10 @@ const moduleSubItems = {
     // vence no dia 20 do mes seguinte, e nao gera arquivo nenhum -- ela diz o
     // que estaria faltando se gerasse.
     { key: 'sped_pre_check', label: 'Pré-check do SPED', desc: 'O que falta para gerar a EFD ICMS/IPI da competência, registro por registro.' },
+    // Logo depois do pré-check: este responde "o que falta para gerar daqui",
+    // aquela responde "o arquivo do sistema anterior está certo?". Enquanto as
+    // notas saem pelo Viper, é por ela que o SPED do mês é entregue.
+    { key: 'sped_conferir', label: 'Conferir SPED', desc: 'Lê o SPED do sistema anterior, aponta os erros e devolve um arquivo corrigido.' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     { key: 'inutilizadas', label: 'NF-e Inutilizadas', desc: 'Faixas de numeração queimadas na SEFAZ.' },
     { key: 'inutilizar', label: 'Inutilizar NF-e', desc: 'Declara que uma faixa de números não virará nota.' },

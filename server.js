@@ -15,6 +15,7 @@ const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
 const spedPreCheck = require('./lib/db/sped-pre-check');
+const spedConferencia = require('./lib/sped-conferencia');
 // Fase CF: a chave mestra da conta Focus NFe (o token principal), separada do
 // token de emissão de cada CNPJ, que continua em lib/db/fiscal.js.
 const integracoesDb = require('./lib/db/integracoes');
@@ -5001,6 +5002,10 @@ function resolveFiscalPermission(pathname, method) {
   // falta para fechar o mes e' leitura. Ele nao gera arquivo, nao grava e nao
   // mostra documento nenhum -- so conta o que esta faltando.
   if (pathname === '/api/fiscal/sped/pre-check') return 'visualizar';
+  // A CONFERÊNCIA DE UM SPED PRONTO também é 'visualizar': ela lê o arquivo
+  // que o próprio usuário mandou, não lê o banco e não grava nada. O arquivo
+  // corrigido que ela devolve é o mesmo conteúdo que chegou, reescrito.
+  if (pathname === '/api/fiscal/sped/conferir') return 'visualizar';
   if (pathname === '/api/fiscal/pre-check') return 'visualizar';
 
   // O ACERVO DO PERÍODO (fase CN). Três rotas e duas permissões diferentes, e a
@@ -11197,6 +11202,27 @@ async function tratarRequisicao(req, res) {
           }
           throw erro;
         }
+      }
+
+      // ----------------------------------------------------------------
+      // A CONFERÊNCIA DE UM SPED PRONTO (lib/sped-conferencia.js).
+      //
+      // Recebe o arquivo que o sistema antigo gerou, em base64 dentro do JSON
+      // (o mesmo transporte do anexo de pedido), e devolve o relatório e o
+      // arquivo corrigido. Não toca no banco: o arquivo é do usuário e volta
+      // para ele.
+      //
+      // O teto é o do anexo. O maior SPED desta empresa (março/2026) tem 452 KB;
+      // 16 MB de base64 são uns 12 MB de arquivo, folga de vinte e tantas vezes.
+      // ----------------------------------------------------------------
+      if (pathname === '/api/fiscal/sped/conferir' && req.method === 'POST') {
+        const body = await readBody(req, 16 * 1024 * 1024);
+        const base64 = typeof body.conteudoBase64 === 'string' ? body.conteudoBase64 : '';
+        if (!base64) return sendJson(res, { error: 'Nenhum arquivo enviado.' }, 400);
+        const bytes = Buffer.from(base64, 'base64');
+        if (!bytes.length) return sendJson(res, { error: 'O arquivo enviado está vazio.' }, 400);
+        const nome = String(body.nome || 'sped.txt').replace(/[^\w.\- ]+/g, '_').slice(0, 120);
+        return sendJson(res, spedConferencia.conferirEfd(bytes, { nome }));
       }
 
       if (pathname === '/api/fiscal/pre-check' && req.method === 'GET') {
