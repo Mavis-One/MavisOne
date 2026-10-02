@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.nova_tarefa = window.MavisCadastros.makeFormScreen({
   title: 'Nova Tarefa',
-  subtitle: 'Ao marcar como concluída, a data de conclusão é registrada automaticamente.',
   entityLabel: 'tarefa',
   endpoint: '/api/cadastros/tasks',
   itemKey: 'task',

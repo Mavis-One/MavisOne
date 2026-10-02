@@ -10,7 +10,6 @@ const BANK_ACCOUNT_TYPE_LABELS = {
 // bloqueada quando há movimento vinculado.
 window.MavisSubscreenRegistry.cadastros.contas_bancarias = window.MavisCadastros.makeListScreen({
   title: 'Contas Bancárias',
-  subtitle: 'Contas usadas nos lançamentos e baixas do Financeiro.',
   tableTitle: 'Contas cadastradas',
   endpoint: '/api/cadastros/bank-accounts',
   listKey: 'bankAccounts',

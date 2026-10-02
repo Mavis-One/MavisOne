@@ -64,21 +64,8 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
         <div class="cadastro-page-head">
           <div>
             <strong>Metas de Venda</strong>
-            <p class="muted">
-              O alvo de faturamento de cada <strong>filial</strong> e de cada vendedor, por mês. Aparece como
-              barra no cartão Faturamento do Início — quem vê todas as vendas compara com a
-              <strong>soma</strong> das metas de filial; quem vê só as próprias compara com a meta dele.
-            </p>
           </div>
         </div>
-        <!-- A PERGUNTA QUE A TELA PRECISA RESPONDER ANTES DE ALGUÉM CADASTRAR:
-             "por que a meta do dia é tão pequena?". Dizer isso aqui evita o
-             chamado. -->
-        <p class="muted">
-          A meta é <strong>mensal</strong>. Nos recortes Diário e Semanal ela é dividida por dias
-          corridos do mês (a meta de um dia em setembro é a do mês ÷ 30); no Anual, é a soma dos
-          meses cadastrados. Mês sem meta não mostra barra nenhuma — em vez de mostrar 0%.
-        </p>
         ${podeEditar ? '' : `
           <p class="entrada-aviso">
             Você pode consultar as metas, e só administrador define ou exclui.
@@ -88,9 +75,7 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
 
       ${podeEditar ? `
         <form class="panel" id="metaForm">
-          <div class="cadastro-section-header"><h4>Definir meta</h4>
-            <p>Salvar de novo o mesmo escopo, referência e mês <strong>atualiza</strong> o valor, não soma outro.</p>
-          </div>
+          <div class="cadastro-section-header"><h4>Definir meta</h4></div>
           <div class="form-grid">
             <div class="row">
               <!-- "LOJA" SAIU DAQUI (30/09/2026), e era a PRIMEIRA opção.
@@ -145,8 +130,7 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
         </form>
         <div class="finance-stat-cards">
           <article class="kpi-card"><h3>Meta das filiais em ${escapeHtml(mesLegivel(estado.competencia))}</h3>
-            <p class="kpi-valor">${brl(totalDoMes('filial'))}</p>
-            <p class="muted">É esta que o Início usa em "Todas as filiais".</p></article>
+            <p class="kpi-valor">${brl(totalDoMes('filial'))}</p></article>
           <article class="kpi-card"><h3>Meta dos vendedores em ${escapeHtml(mesLegivel(estado.competencia))}</h3>
             <p class="kpi-valor">${brl(totalDoMes('vendedor'))}</p></article>
         </div>
@@ -164,15 +148,6 @@ window.MavisSubscreenRegistry.settings.metas = async function renderMetas(ctx) {
             Recadastre como <strong>Filial</strong> — que é a divisão que existe nos dados — e remova
             a de Loja na tabela abaixo. O escopo saiu do formulário justamente para não entrar mais.
           </p>` : ''}
-        <!-- OS DOIS TOTAIS NÃO SE SOMAM, e a tela diz isso: a meta da filial e a
-             do vendedor cobram o mesmo faturamento por caminhos diferentes. Um
-             terceiro cartão "total" seria exatamente o número errado. -->
-        <p class="muted">
-          Os totais <strong>não se somam</strong>: a meta da filial e a do vendedor cobram o mesmo
-          faturamento por caminhos diferentes. A meta de filial é a que desenha a
-          linha de meta no Fluxo de Vendas do Início, e em "Todas as filiais" ela é a
-          <strong>soma</strong> das filiais que têm meta.
-        </p>
       </div>
 
       <div class="panel">

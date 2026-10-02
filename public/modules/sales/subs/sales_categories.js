@@ -13,7 +13,6 @@ window.MavisSubscreenRegistry.sales = window.MavisSubscreenRegistry.sales || {};
 window.MavisSubscreenRegistry.sales.sales_categories = window.MavisStock.makeListScreen({
   modulo: 'sales',
   title: 'Categorias de Vendas',
-  subtitle: 'Como a VENDA é classificada — varejo, atacado, bonificação. Diferente da categoria do produto, que diz o que se vende.',
   endpoint: '/api/sales/categories',
   listKey: 'categories',
   newSub: 'new_sales_category',

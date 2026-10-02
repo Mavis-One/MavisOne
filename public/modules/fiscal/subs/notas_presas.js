@@ -147,8 +147,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       <div class="workspace-head">
         <div>
           <h2>Notas com Problema</h2>
-          <p class="muted">O que a SEFAZ recusou, o que ficou em processamento e o que nunca
-            foi transmitido — com o motivo de cada uma.</p>
         </div>
         ${F.seletorEstabelecimento(escapeHtml, lista, escolhido)}
       </div>
@@ -169,15 +167,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           <h3>Nenhuma nota parada</h3>
           <p class="muted">Toda nota deste estabelecimento está autorizada ou cancelada.
             Rejeitada, denegada, em processamento e rascunho: nenhuma.</p>
-        </div>`}
-
-      <div class="panel">
-        <h3>Onde esta tela não vai</h3>
-        <p class="muted">Ela não corrige a nota e não apaga nada. A correção acontece no
-          pedido de origem, pela tela de emissão — é para lá que o botão leva. Documento
-          fiscal não se exclui: nota denegada, em especial, consumiu numeração e continua
-          existindo para o fisco.</p>
-      </div>`;
+        </div>`}`;
 
     F.ligarSeletor(ctx, redesenhar);
 

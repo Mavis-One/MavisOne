@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.novo_agendamento = window.MavisCadastros.makeFormScreen({
   title: 'Novo Agendamento',
-  subtitle: 'O horário final precisa ser depois do inicial, e o responsável não pode ter dois compromissos sobrepostos.',
   entityLabel: 'agendamento',
   endpoint: '/api/cadastros/appointments',
   itemKey: 'appointment',

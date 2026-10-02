@@ -10,7 +10,6 @@ window.MavisSubscreenRegistry.sales.new_sales_origin = window.MavisStock.makeFor
   // O aviso sobre renomear fica aqui, e não só na resposta do servidor: quem
   // vai renomear lê isto ANTES de digitar. O registro guarda o NOME da origem,
   // não o id — renomear não reescreve os pedidos e orçamentos antigos.
-  subtitle: 'Por onde a venda chegou (balcão, televendas, e-commerce, indicação). Atenção ao renomear: o registro guarda o nome, então pedidos e orçamentos antigos continuam com o nome anterior.',
   endpoint: '/api/sales/origins',
   itemKey: 'origin',
   listSub: 'sales_origins',

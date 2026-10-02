@@ -5,7 +5,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 // venda atual do produto (que mora no Supabase).
 window.MavisSubscreenRegistry.cadastros.cashback = window.MavisCadastros.makeListScreen({
   title: 'CashBack por Produto',
-  subtitle: 'Percentual ou valor fixo devolvido ao cliente na compra de cada produto.',
   tableTitle: 'Regras de cashback',
   endpoint: '/api/cadastros/product-cashbacks',
   listKey: 'cashbacks',

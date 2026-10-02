@@ -201,9 +201,5 @@ check('product_status não promete mais um cadastro de situações',
 check('e fala de posição/saldo/histórico',
   /Posição|saldo|histórico/i.test(linhaStatus));
 
-const telaStatus = fs.readFileSync(path.join(RAIZ, 'public/modules/stock/subs/product_status.js'), 'utf8');
-check('  que é o que a própria tela diz no subtítulo',
-  /Posição atual e histórico/.test(telaStatus));
-
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);
 process.exit(falhas === 0 ? 0 : 1);

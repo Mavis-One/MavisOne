@@ -216,8 +216,6 @@ check('sem motivo, não manda valor desonerado', !('icms_valor_desonerado' in is
 
 console.log('\n--- a tela pede o benefício onde a alíquota some ---');
 check('a linha do benefício existe', /data-icms-beneficio/.test(telaRegrasSrc));
-// Quem preenche precisa saber que errar o código NÃO passa despercebido.
-check('a tela diz de onde vem o código e o que acontece se errar', /SEF\/SC[\s\S]{0,140}931/.test(telaRegrasSrc));
 check('e é o espelho da linha de alíquota', /linhaBeneficio\.hidden = mostrarTributo/.test(telaRegrasSrc));
 check('os campos novos são enviados no submit', /'codigoBeneficioFiscal', 'icmsMotivoDesoneracao'/.test(telaRegrasSrc));
 check('o banco lê os dois', /codigoBeneficioFiscal: row\.codigo_beneficio_fiscal/.test(dbFiscalSrc) && /icmsMotivoDesoneracao: row\.icms_motivo_desoneracao/.test(dbFiscalSrc));

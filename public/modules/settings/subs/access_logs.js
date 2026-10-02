@@ -62,7 +62,7 @@ window.MavisSubscreenRegistry.settings.access_logs = async function renderAccess
     <div class="cadastro-page-head">
       <div>
         <h3>Auditoria de Acesso</h3>
-        <p class="muted">${logs.length} registro${logs.length === 1 ? '' : 's'} — ações de escrita e toda tentativa negada.</p>
+        <p class="muted">${logs.length} registro${logs.length === 1 ? '' : 's'}</p>
       </div>
     </div>
 
@@ -116,7 +116,6 @@ window.MavisSubscreenRegistry.settings.access_logs = async function renderAccess
     <div class="cadastro-page-head" style="margin-top: 24px;">
       <div>
         <h3>Ações registradas</h3>
-        <p class="muted">O que foi feito no sistema — usuário criado, lançamento baixado, nota emitida.</p>
       </div>
       <div class="cadastro-list-actions">
         <button type="button" class="secondary" id="auditRefresh">Atualizar</button>

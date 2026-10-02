@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
 window.MavisSubscreenRegistry.stock.new_deposit = window.MavisStock.makeFormScreen({
   title: 'Novo Depósito',
-  subtitle: 'Depósitos com movimentações não podem ser excluídos.',
   endpoint: '/api/stock/deposits',
   itemKey: 'deposit',
   listSub: 'deposits',
@@ -30,8 +29,7 @@ window.MavisSubscreenRegistry.stock.new_deposit = window.MavisStock.makeFormScre
       label: 'Filial (empresa dona do depósito)',
       type: 'select',
       empty: 'Todas as filiais',
-      options: (meta) => (meta && meta.companies) || [],
-      hint: 'Em branco, o depósito serve a qualquer filial. Escolhida, ele passa a ser oferecido só nas vendas dessa filial.'
+      options: (meta) => (meta && meta.companies) || []
     },
     { name: 'manager', label: 'Responsável' },
     { name: 'address', label: 'Endereço' },

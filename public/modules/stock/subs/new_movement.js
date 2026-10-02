@@ -119,7 +119,7 @@ window.MavisSubscreenRegistry.stock.new_movement = async function renderNewMovem
     const today = new Date().toISOString().slice(0, 10);
     content.innerHTML = `
       <div class="panel">
-        ${S.pageHead('Nova Movimentação', 'Entrada aumenta e saída reduz o saldo do depósito escolhido.')}
+        ${S.pageHead('Nova Movimentação')}
 
         <div class="finance-period-group" style="margin-bottom:18px;">
           <button type="button" class="finance-pill ${type === 'entrada' ? 'active' : ''}" data-mov-type="entrada">Entrada</button>

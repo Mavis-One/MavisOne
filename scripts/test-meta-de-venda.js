@@ -225,13 +225,10 @@ const html = ler('public/index.html');
 check('a tela existe e está no roteador', /'metas'\]/.test(roteador) || /, 'metas'/.test(roteador));
 check('  no menu de Configurações', /key: 'metas', label: 'Metas de Venda'/.test(app));
 check('  e o <script> está na página', /settings\/subs\/metas\.js/.test(html));
-// A tela DIZ que a meta é mensal e rateada: é a pergunta que ela precisa
-// responder antes de alguém cadastrar ("por que a meta do dia é tão pequena?").
-check('explica o rateio para quem cadastra', /dividida por dias\s*\n?\s*corridos|divid/i.test(tela));
-check('  e que mês sem meta não mostra barra', /não mostra barra nenhuma/.test(tela));
-// OS DOIS TOTAIS NÃO SE SOMAM, e a tela avisa — um terceiro cartão "total"
-// seria exatamente o número errado.
-check('avisa que os dois escopos não se somam', /não se somam/.test(tela));
+// Os parágrafos explicativos da tela (rateio mensal, "mês sem meta não mostra
+// barra", "os totais não se somam") saíram em 01/10/2026, a pedido do usuário:
+// a tela não carrega mais texto fixo de explicação, e estes checks deixaram de
+// cobrar esse texto.
 check('a lista de referências troca com o escopo', /function preencherReferencias\(\)/.test(tela));
 check('quem não pode editar vê o motivo', /quem muda o próprio alvo não tem alvo/.test(tela));
 

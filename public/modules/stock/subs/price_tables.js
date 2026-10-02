@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
 window.MavisSubscreenRegistry.stock.price_tables = window.MavisStock.makeListScreen({
   title: 'Tabelas de Preços',
-  subtitle: 'Markup aplica um percentual sobre o custo; preço fixo usa o valor definido por produto.',
   endpoint: '/api/stock/price-tables',
   listKey: 'priceTables',
   newSub: 'new_price_table',

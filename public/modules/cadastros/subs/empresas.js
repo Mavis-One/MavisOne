@@ -14,7 +14,6 @@ function maskCnpjValue(value) {
 
 window.MavisSubscreenRegistry.cadastros.empresas = window.MavisCadastros.makeListScreen({
   title: 'Empresas',
-  subtitle: 'Empresas do grupo usadas como emitente nos documentos de venda.',
   tableTitle: 'Empresas cadastradas',
   endpoint: '/api/cadastros/companies',
   listKey: 'companies',

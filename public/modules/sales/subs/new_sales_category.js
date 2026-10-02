@@ -10,7 +10,6 @@ window.MavisSubscreenRegistry.sales.new_sales_category = window.MavisStock.makeF
   // O aviso sobre renomear fica aqui, e não só na resposta do servidor: quem
   // vai renomear lê isto ANTES de digitar. O pedido guarda o NOME da categoria,
   // não o id — renomear não reescreve os pedidos antigos.
-  subtitle: 'Classifica a venda (varejo, atacado, bonificação). Atenção ao renomear: o pedido guarda o nome, então os pedidos antigos continuam com o nome anterior.',
   endpoint: '/api/sales/categories',
   itemKey: 'category',
   listSub: 'sales_categories',

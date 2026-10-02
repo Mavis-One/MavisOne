@@ -347,11 +347,6 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
               ${entry.feeAmount != null ? `<div><span class="muted">Taxa em reais</span><strong>${financeFormatBRL(entry.feeAmount)}</strong></div>` : ''}
               ${entry.netAmount != null ? `<div><span class="muted">Crédito previsto</span><strong>${financeFormatBRL(entry.netAmount)} em ${financeFormatDate(entry.dueDate)}</strong></div>` : ''}
             </div>
-            ${entry.netAmount != null ? `<p class="muted">
-              O valor previsto acima é o BRUTO da venda — é o que o cliente pagou. A credenciadora
-              credita ${financeFormatBRL(entry.netAmount)}, já descontada a taxa. É esse o número que vai
-              aparecer no extrato.
-            </p>` : ''}
           </div>` : ''}
         ${entry.note ? `<p class="muted">Obs: ${escapeHtml(entry.note)}</p>` : ''}
 
@@ -404,11 +399,6 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
               <label>Multa<input type="number" step="0.01" name="fine" value="0" /></label>
               <label>Desconto<input type="number" step="0.01" name="discount" value="${Number(taxaAAbater).toFixed(2)}" /></label>
             </div>
-            ${taxaAAbater > 0 ? `<p class="muted">
-              Já preenchido com o crédito líquido e a taxa da credenciadora no desconto: assim o título
-              fecha pelo bruto e a conta recebe o que recebeu. Sem o desconto, sobrariam
-              ${financeFormatBRL(taxaAAbater)} em aberto para sempre.
-            </p>` : ''}
             <label>Observação<input name="note" /></label>
             <button type="submit">Registrar ${isReceita ? 'recebimento' : 'pagamento'}</button>
           </form>

@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
 window.MavisSubscreenRegistry.stock.new_product_category = window.MavisStock.makeFormScreen({
   title: 'Nova Categoria de Produtos',
-  subtitle: 'Categorias são usadas para filtrar produtos e agrupar relatórios.',
   endpoint: '/api/stock/product-categories',
   itemKey: 'category',
   listSub: 'product_categories',

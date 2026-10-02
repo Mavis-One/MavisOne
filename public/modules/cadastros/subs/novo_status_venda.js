@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.novo_status_venda = window.MavisCadastros.makeFormScreen({
   title: 'Novo Status de Venda',
-  subtitle: 'A ordem define a posição do status no funil; a cor identifica o pedido nas listas.',
   entityLabel: 'status',
   endpoint: '/api/cadastros/sale-statuses',
   itemKey: 'saleStatus',

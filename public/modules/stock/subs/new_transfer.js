@@ -202,7 +202,7 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
     content.innerHTML = `
       <form id="transferForm">
         <div class="panel">
-          ${S.pageHead('Nova Transferência Entre Depósitos', 'O saldo total do produto não muda — apenas a distribuição entre depósitos.')}
+          ${S.pageHead('Nova Transferência Entre Depósitos')}
           <div class="form-grid">
             <div class="row">
               <label>Depósito de origem *<select name="originDepositId" id="transferOrigem" required>${S.options(meta.deposits, '', { empty: 'Selecione' })}</select></label>
@@ -224,12 +224,6 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
               <input type="checkbox" name="conferirNaChegada" checked />
               Conferir na chegada (a carga fica em trânsito)
             </label>
-            <p class="muted" style="margin-top:-4px;">
-              Ligado, a mercadoria sai da origem e fica <strong>em trânsito</strong> até alguém
-              conferir no destino — o destino só pode vendê-la depois disso, e o que faltar na
-              chegada aparece como carga pendente. Desligado, ela chega na hora, como uma mudança
-              de prateleira dentro do mesmo galpão.
-            </p>
           </div>
         </div>
 

@@ -110,7 +110,6 @@ window.MavisSubscreenRegistry.settings.access_control = async function renderAcc
     <div class="cadastro-page-head">
       <div>
         <h3>Papéis e Permissões</h3>
-        <p class="muted">Cada permissão é um par recurso + ação. O administrador tem acesso total por definição.</p>
       </div>
     </div>
 
@@ -162,10 +161,6 @@ window.MavisSubscreenRegistry.settings.access_control = async function renderAcc
           </div>
 
           <h4 style="margin-top: 18px;">Exceções desta pessoa</h4>
-          <p class="muted">
-            Marcado = permitido. Desmarcar o que vem do papel cria uma negação explícita para
-            esta pessoa — e negação vence qualquer papel, inclusive o de administrador.
-          </p>
           ${gradeDePermissoes(
             new Set([...heradadas, ...extras].filter((slug) => !negadasDoUsuario.has(slug))),
             'permissaoUsuario',

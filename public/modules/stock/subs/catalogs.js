@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
 window.MavisSubscreenRegistry.stock.catalogs = window.MavisStock.makeListScreen({
   title: 'Catálogos de Produtos',
-  subtitle: 'Conjuntos de produtos com uma tabela de preços associada.',
   endpoint: '/api/stock/catalogs',
   listKey: 'catalogs',
   newSub: 'new_catalog',

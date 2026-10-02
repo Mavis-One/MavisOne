@@ -95,8 +95,7 @@ window.MavisWorkspace = {
     content.innerHTML = `
       <div class="panel workspace-pendente">
         <span class="workspace-pendente-icone">${svgDoTipo('pendente')}</span>
-        <h3>${escapeHtml(item.label)}</h3>
-        <p class="muted">${escapeHtml(item.desc || '')}</p>
+        <h3 title="${escapeHtml(item.desc || '')}">${escapeHtml(item.label)}</h3>
         <p>Esta tela está desenhada, mas ainda não tem onde gravar: as tabelas
         de <strong>${escapeHtml(modulo)}</strong> são criadas pela migração
         <code>banco/migrations/fase-r-modulos-novos.sql</code>, que ainda não
@@ -181,11 +180,11 @@ window.MavisWorkspace = {
             return `
               <div class="workspace-tile workspace-tile-${tipo}${item.pendente ? ' is-pendente' : ''}"
                 role="button" tabindex="0"
-                data-open-sub="${escapeHtml(item.key)}">
+                data-open-sub="${escapeHtml(item.key)}"
+                title="${escapeHtml(item.desc || '')}">
                 <span class="workspace-tile-icon">${svgDoTipo(tipo)}</span>
                 <span class="workspace-tile-text">
                   <strong>${escapeHtml(item.label)}${item.pendente ? '<em class="workspace-tag">em preparo</em>' : ''}</strong>
-                  <span>${escapeHtml(item.desc || '')}</span>
                 </span>
                 ${botaoFixar(item)}
               </div>

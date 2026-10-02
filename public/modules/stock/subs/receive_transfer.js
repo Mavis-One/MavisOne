@@ -65,7 +65,7 @@ window.MavisSubscreenRegistry.stock.receive_transfer = async function renderRece
       <div class="panel">
         ${S.pageHead(
     `Conferir carga ${S.escape(primeira.code || '')}`,
-    'Informe o que realmente chegou. O que faltar continua em trânsito e a carga segue pendente.',
+    '',
     '<button type="button" class="secondary" id="receiveBack">Voltar</button>'
   )}
         <div class="sales-info-grid">
@@ -114,10 +114,6 @@ window.MavisSubscreenRegistry.stock.receive_transfer = async function renderRece
         </div>
 
         ${pendentes.length ? `
-          <p class="muted" style="margin-top:12px;">
-            Deixe o número que chegou. <strong>Zero é uma resposta válida</strong> — a linha continua
-            pendente e a mercadoria continua contada em trânsito, para alguém procurar.
-          </p>
           <div class="finance-actions-row" style="margin-top:12px;">
             <button type="submit">Confirmar recebimento</button>
             <button type="button" class="secondary" id="receiveNothing">Nada chegou</button>

@@ -11,12 +11,12 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 // botão de criar nem de editar. Mudança neles vem de ato normativo, por
 // migração, não por tela.
 const GRUPOS = [
-  { chave: 'cfop', titulo: 'CFOP', ajuda: 'Código Fiscal de Operações e Prestações. O primeiro dígito é o âmbito: 1/2/3 entrada, 5/6/7 saída.' },
-  { chave: 'cstIcms', titulo: 'CST ICMS', ajuda: 'Situação tributária do ICMS no regime normal (Lucro Presumido e Lucro Real).' },
-  { chave: 'csosn', titulo: 'CSOSN', ajuda: 'Substitui o CST de ICMS quando a empresa é do Simples Nacional.' },
-  { chave: 'cstPisCofins', titulo: 'CST PIS/COFINS', ajuda: 'Situação tributária de PIS e COFINS, separada entre saída (débito) e entrada (crédito).' },
-  { chave: 'cstIpi', titulo: 'CST IPI', ajuda: 'Situação tributária do IPI.' },
-  { chave: 'origem', titulo: 'Origem', ajuda: 'Origem da mercadoria — é o primeiro dígito do CST/CSOSN na NF-e.' }
+  { chave: 'cfop', titulo: 'CFOP' },
+  { chave: 'cstIcms', titulo: 'CST ICMS' },
+  { chave: 'csosn', titulo: 'CSOSN' },
+  { chave: 'cstPisCofins', titulo: 'CST PIS/COFINS' },
+  { chave: 'cstIpi', titulo: 'CST IPI' },
+  { chave: 'origem', titulo: 'Origem' }
 ];
 
 function semAcentoFiscal(texto) {
@@ -61,13 +61,12 @@ window.MavisSubscreenRegistry.fiscal.tabelas = async function renderTabelasFisca
   const grupoAtivo = state.fiscalTabelaAtiva && linhas[state.fiscalTabelaAtiva] ? state.fiscalTabelaAtiva : 'cfop';
 
   function desenhar() {
-    const grupo = GRUPOS.find((g) => g.chave === grupoAtivo);
     const dados = linhas[grupoAtivo] || [];
 
     content.innerHTML = `
       <div class="workspace">
         <section class="panel workspace-head">
-          <p class="muted">${dados.length} código${dados.length === 1 ? '' : 's'} — texto oficial da legislação, somente consulta.</p>
+          <p class="muted">${dados.length} código${dados.length === 1 ? '' : 's'}</p>
           <input type="search" class="workspace-filter" id="fiscalFiltro"
             placeholder="Filtrar por código ou descrição…" autocomplete="off"
             aria-label="Filtrar códigos fiscais" />
@@ -78,7 +77,6 @@ window.MavisSubscreenRegistry.fiscal.tabelas = async function renderTabelasFisca
         </div>
 
         <section class="panel">
-          <p class="muted">${escapeHtml(grupo.ajuda)}</p>
           <div class="table-scroll">
             <table class="table">
               <thead><tr><th style="width:110px;">Código</th><th>Descrição</th><th style="width:110px;">Aplicação</th></tr></thead>

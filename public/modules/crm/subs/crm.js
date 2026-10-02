@@ -27,7 +27,7 @@ window.MavisSubscreenRegistry.crm = window.MavisSubscreenRegistry.crm || {};
 
     content.innerHTML = `
       <div class="panel cadastros-shell">
-        ${C.pageHead('Conexão com o CRM externo', 'O ERP lê os dados de lá; nada de oportunidade ou conta é gravado aqui.', '', situacao)}
+        ${C.pageHead('Conexão com o CRM externo', '', '', situacao)}
 
         <form id="crmForm" class="cadastro-form">
           ${C.section('Endereço e credencial', `
@@ -35,22 +35,18 @@ window.MavisSubscreenRegistry.crm = window.MavisSubscreenRegistry.crm || {};
               <label class="cadastro-field">
                 <span>Endereço base (URL) *</span>
                 <input name="baseUrl" value="${C.escape(conexao.baseUrl)}" placeholder="https://crm.suaempresa.com/api" required />
-                <span class="cadastro-field-hint muted">É onde o teste de conexão bate.</span>
               </label>
               <label class="cadastro-field">
                 <span>Token de acesso</span>
                 <input name="apiToken" type="password" autocomplete="new-password"
                   placeholder="${conexao.temToken ? 'Token salvo — preencha só para trocar' : 'Cole o token do CRM'}" />
-                <span class="cadastro-field-hint muted">${conexao.temToken
-                  ? 'Já existe um token guardado. Ele nunca é devolvido para a tela — deixe em branco para mantê-lo.'
-                  : 'Enviado no cabeçalho Authorization das consultas.'}</span>
               </label>
             </div>
             <label class="cadastro-check">
               <input type="checkbox" name="active" ${conexao.active ? 'checked' : ''} />
               <span>Conexão ativa</span>
             </label>
-          `, 'O token é guardado no servidor e nunca volta para o navegador.')}
+          `)}
 
           ${conexao.lastError ? `<p class="form-error">Último teste falhou: ${C.escape(conexao.lastError)}</p>` : ''}
           ${conexao.lastOkAt && !conexao.lastError ? `<p class="muted">Última resposta com sucesso em ${C.formatDate(conexao.lastOkAt)}.</p>` : ''}
@@ -103,7 +99,7 @@ window.MavisSubscreenRegistry.crm = window.MavisSubscreenRegistry.crm || {};
   // As duas telas de leitura só existem depois que a ponte estiver de pé, e o
   // formato do que vem de lá depende de qual CRM é. Em vez de inventar colunas
   // que podem não existir, a tela diz o que falta para ela funcionar.
-  function telaDeLeitura(titulo, descricao, oQueFalta) {
+  function telaDeLeitura(titulo, oQueFalta) {
     return async function render(ctx) {
       const { content, api, escapeHtml } = ctx;
       let conexao = { baseUrl: '', active: false, lastOkAt: null };
@@ -115,26 +111,16 @@ window.MavisSubscreenRegistry.crm = window.MavisSubscreenRegistry.crm || {};
       content.innerHTML = `
         <div class="panel workspace-pendente">
           <h3>${escapeHtml(titulo)}</h3>
-          <p class="muted">${escapeHtml(descricao)}</p>
           ${pronta
             ? `<p>A conexão com <strong>${escapeHtml(conexao.baseUrl)}</strong> está ativa e respondeu.
-               Falta só definir de qual caminho do CRM ${escapeHtml(oQueFalta)} vêm e quais campos exibir —
-               isso muda conforme o CRM, então precisa da documentação dele.</p>`
-            : `<p>Esta tela lê ${escapeHtml(oQueFalta)} do CRM externo, e a ponte ainda não está de pé.
+               Falta definir de qual caminho do CRM ${escapeHtml(oQueFalta)} vêm e quais campos exibir.</p>`
+            : `<p>A conexão com o CRM externo ainda não está de pé.
                Configure e teste em <strong>CRM &gt; Conexão</strong>.</p>`}
         </div>
       `;
     };
   }
 
-  R.oportunidades = telaDeLeitura(
-    'Oportunidades',
-    'Funil de vendas — lido do CRM externo, não gravado aqui.',
-    'as oportunidades'
-  );
-  R.contas = telaDeLeitura(
-    'Contas',
-    'Clientes e prospects — lidos do CRM externo, não gravados aqui.',
-    'as contas'
-  );
+  R.oportunidades = telaDeLeitura('Oportunidades', 'as oportunidades');
+  R.contas = telaDeLeitura('Contas', 'as contas');
 })(window.MavisCadastros);

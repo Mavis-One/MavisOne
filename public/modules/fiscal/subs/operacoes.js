@@ -96,9 +96,6 @@ window.MavisSubscreenRegistry.fiscal.operacoes = async function renderOperacoesF
       <div class="cadastro-page-head">
         <div>
           <h3>Operações Fiscais</h3>
-          <p class="muted">O que cada tipo de operação faz quando uma nota é emitida por ela.
-          É <strong>consulta</strong>: essas bandeiras são obedecidas pelo código de emissão, então
-          operação nova entra por código — ver <code>lib/operacaoFiscal.js</code>.</p>
         </div>
       </div>
       <div class="table-scroll">
@@ -113,12 +110,6 @@ window.MavisSubscreenRegistry.fiscal.operacoes = async function renderOperacoesF
           <tbody>${linhas}</tbody>
         </table>
       </div>
-      <p class="muted">
-        <strong>Como ler:</strong> "Move estoque" e "Gera financeiro" são o que a operação faz sozinha,
-        e valem <em>mesmo que o produto diga o contrário</em> — é o que impede um complemento de ICMS
-        de baixar mercadoria que não saiu. As colunas de "Exige" são o que a emissão cobra de quem
-        preenche: faltando, a nota é barrada aqui, antes de consumir numeração na SEFAZ.
-      </p>
     </div>
   `;
 };

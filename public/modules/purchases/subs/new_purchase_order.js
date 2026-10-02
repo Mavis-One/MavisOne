@@ -72,7 +72,7 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
 
   function linhasDeItens() {
     if (!documento.items.length) {
-      return '<tr><td colspan="5" class="muted">Nenhum item. Escolha o produto, a quantidade e o custo, e clique em Adicionar.</td></tr>';
+      return '<tr><td colspan="5" class="muted">Nenhum item.</td></tr>';
     }
     return documento.items.map((item, indice) => `
       <tr>

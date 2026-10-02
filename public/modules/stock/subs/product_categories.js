@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
 window.MavisSubscreenRegistry.stock.product_categories = window.MavisStock.makeListScreen({
   title: 'Categorias de Produtos',
-  subtitle: 'Organize os produtos por categoria. Uma categoria pode ter uma categoria pai.',
   endpoint: '/api/stock/product-categories',
   listKey: 'categories',
   newSub: 'new_product_category',

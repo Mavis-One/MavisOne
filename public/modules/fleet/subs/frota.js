@@ -67,7 +67,6 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
   R.veiculos = C.makeListScreen({
     ...base,
     title: 'Veículos',
-    subtitle: 'A frota cadastrada. O odômetro avança sozinho a cada abastecimento ou manutenção com leitura maior — o valor digitado aqui é só o ponto de partida.',
     tableTitle: 'Veículos',
     endpoint: '/api/fleet/vehicles',
     listKey: 'vehicles',
@@ -90,7 +89,6 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
   R.novo_veiculo = C.makeFormScreen({
     ...base,
     title: 'Novo Veículo',
-    subtitle: 'A placa não pode repetir, mesmo escrita em outra caixa.',
     entityLabel: 'veículo',
     endpoint: '/api/fleet/vehicles',
     itemKey: 'vehicle',
@@ -100,8 +98,8 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
       {
         title: 'Identificação',
         fields: [
-          { name: 'plate', label: 'Placa', required: true, hint: 'ABC1D23', mascara: 'placa' },
-          { name: 'description', label: 'Descrição', hint: 'Como a equipe chama o veículo' },
+          { name: 'plate', label: 'Placa', required: true, mascara: 'placa' },
+          { name: 'description', label: 'Descrição' },
           { name: 'status', label: 'Situação', type: 'select', empty: null, default: 'ativo', options: STATUS_VEICULO }
         ]
       },
@@ -121,7 +119,6 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
   R.manutencoes = C.makeListScreen({
     ...base,
     title: 'Manutenções',
-    subtitle: 'Preventivas e corretivas, com custo e oficina.',
     tableTitle: 'Manutenções registradas',
     endpoint: '/api/fleet/maintenances',
     listKey: 'maintenances',
@@ -145,7 +142,6 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
   R.nova_manutencao = C.makeFormScreen({
     ...base,
     title: 'Nova Manutenção',
-    subtitle: 'O veículo é obrigatório: manutenção sem veículo não tem a quem pertencer.',
     entityLabel: 'manutenção',
     endpoint: '/api/fleet/maintenances',
     itemKey: 'maintenance',
@@ -180,7 +176,6 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
   R.abastecimentos = C.makeListScreen({
     ...base,
     title: 'Abastecimentos',
-    subtitle: 'Litros, valor e posto — a base para acompanhar o gasto por veículo.',
     tableTitle: 'Abastecimentos',
     endpoint: '/api/fleet/refuels',
     listKey: 'refuels',
@@ -206,7 +201,6 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
   R.novo_abastecimento = C.makeFormScreen({
     ...base,
     title: 'Novo Abastecimento',
-    subtitle: 'O preço por litro é calculado a partir do total e dos litros.',
     entityLabel: 'abastecimento',
     endpoint: '/api/fleet/refuels',
     itemKey: 'refuel',

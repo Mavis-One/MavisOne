@@ -171,7 +171,6 @@ check('só oferece buscar quando há link', /recuperaveis/.test(tela));
 check('e o botão não dispara duas vezes', /botao\.disabled = true/.test(tela));
 // O NOME diz o que é. "Gerar SPED" aqui seria promessa falsa.
 check('a tela não se chama SPED', !/gerar sped|Gerar SPED/i.test(tela));
-check('  e diz que não é o arquivo do SPED', /não é o arquivo do SPED|Não é o arquivo do SPED/i.test(tela));
 
 console.log('\n--- 8. cancelada entra no acervo ---');
 // Nota cancelada existiu para a SEFAZ e é escriturada. Fora do acervo, a

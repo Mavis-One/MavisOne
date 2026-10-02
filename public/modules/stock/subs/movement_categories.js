@@ -5,7 +5,6 @@ const MOVEMENT_KIND_LABELS = { entrada: 'Entrada', saida: 'Saída', ambos: 'Entr
 
 window.MavisSubscreenRegistry.stock.movement_categories = window.MavisStock.makeListScreen({
   title: 'Categorias de Movimentações',
-  subtitle: 'Motivos de entrada e saída (compra, venda, perda, ajuste de inventário...).',
   endpoint: '/api/stock/movement-categories',
   listKey: 'categories',
   newSub: 'new_movement_category',

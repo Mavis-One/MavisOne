@@ -91,7 +91,6 @@ window.MavisCadastros = window.MavisCadastros || {};
     const val = value ?? def.default ?? '';
     const errorClass = hasError ? ' cadastro-field-invalid' : '';
     const errorMsg = hasError ? '<span class="cadastro-field-error-msg">Campo obrigatório*</span>' : '';
-    const hint = def.hint ? `<span class="cadastro-field-hint muted">${C.escape(def.hint)}</span>` : '';
 
     if (def.type === 'checkbox') {
       return `
@@ -141,7 +140,6 @@ window.MavisCadastros = window.MavisCadastros || {};
       <label class="cadastro-field${errorClass}${def.full ? ' cadastro-field-full' : ''}">
         <span>${C.escape(def.label)}${def.required ? ' *' : ''}</span>
         ${inner}
-        ${hint}
         ${errorMsg}
       </label>
     `;
@@ -188,7 +186,7 @@ window.MavisCadastros = window.MavisCadastros || {};
   // --------------------------------------------------------------------------
   // Fábrica: tela de LISTA
   // --------------------------------------------------------------------------
-  // config: { title, subtitle, endpoint, listKey, newSub, newLabel, editStateKey,
+  // config: { title, endpoint, listKey, newSub, newLabel, editStateKey,
   //           columns: [{label, render(item, meta, todosOsItens)}],
   //           filters: [{name, label, type, options}], searchFields,
   //           rowActions: [{icon, title, tone, run(item, ctx)}] }
@@ -240,7 +238,7 @@ window.MavisCadastros = window.MavisCadastros || {};
         // filtrar, o que seria simplesmente errado.
         content.innerHTML = `
           <div class="panel cadastros-shell">
-            ${C.pageHead(config.title, config.subtitle, '', `
+            ${C.pageHead(config.title, '', '', `
               ${config.newSub ? `<button type="button" class="success" id="cadastroListNew">+ ${C.escape(config.newLabel || 'Novo')}</button>` : ''}
               <button type="button" class="secondary" id="cadastroListFilterToggle">Filtros</button>
             `)}
@@ -391,7 +389,7 @@ window.MavisCadastros = window.MavisCadastros || {};
   // lista com `newSub` precisa do par "Novo X" cadastrado ao lado dela, e o
   // menu de RH ficaria com o dobro de itens só de formulários de duas linhas.
   //
-  // config: { module, metaEndpoint, title, subtitle, tableTitle, entityLabel,
+  // config: { module, metaEndpoint, title, tableTitle, entityLabel,
   //           endpoint, listKey, itemKey, searchFields, searchPlaceholder,
   //           columns: [{label, render(item, meta)}],
   //           filters: [{name, label, type:'select', options}],
@@ -450,7 +448,7 @@ window.MavisCadastros = window.MavisCadastros || {};
         const colunas = config.columns.length + 1;
         content.innerHTML = `
           <div class="panel cadastros-shell">
-            ${C.pageHead(config.title, config.subtitle, '', `
+            ${C.pageHead(config.title, '', '', `
               ${definicoesFiltro.map((def) => `
                 <label class="cadastro-inline-filtro">
                   <span>${C.escape(def.label)}</span>
@@ -494,8 +492,7 @@ window.MavisCadastros = window.MavisCadastros || {};
             <form id="cadastroInlineForm" class="cadastro-form">
               ${C.section(
                 editando ? `Editar ${config.entityLabel || 'registro'}` : `Novo ${config.entityLabel || 'registro'}`,
-                C.fieldGrid(campos, valores, meta, erros, config.formColumns || 3),
-                editando ? 'Alterando um registro que já existe.' : 'Preencha e salve — a lista acima atualiza na hora.'
+                C.fieldGrid(campos, valores, meta, erros, config.formColumns || 3)
               )}
               ${erroForm ? `<p class="form-error">${C.escape(erroForm)}</p>` : ''}
               <div class="cadastro-actions">
@@ -630,8 +627,8 @@ window.MavisCadastros = window.MavisCadastros || {};
   // --------------------------------------------------------------------------
   // Fábrica: tela de FORMULÁRIO
   // --------------------------------------------------------------------------
-  // config: { title, subtitle, endpoint, itemKey, listSub, editStateKey,
-  //           sections: [{title, description, columns, fields: [...]}],
+  // config: { title, endpoint, itemKey, listSub, editStateKey,
+  //           sections: [{title, columns, fields: [...]}],
   //           tabs: [{key, label, sections: [...]}] }
   C.makeFormScreen = function makeFormScreen(config) {
     return async function renderForm(ctx) {
@@ -666,8 +663,7 @@ window.MavisCadastros = window.MavisCadastros || {};
       function renderSections(sections) {
         return sections.map((s) => C.section(
           s.title,
-          C.fieldGrid(s.fields, values, meta, errors, s.columns || 3),
-          s.description || ''
+          C.fieldGrid(s.fields, values, meta, errors, s.columns || 3)
         )).join('');
       }
 
@@ -677,7 +673,7 @@ window.MavisCadastros = window.MavisCadastros || {};
           <div class="panel cadastros-shell">
             ${C.pageHead(
               current ? `Editar ${config.title}` : config.title,
-              config.subtitle,
+              '',
               current && current.code ? `Código ${current.code}` : (current ? 'Edição' : 'Novo')
             )}
             <form id="cadastroEntityForm" class="cadastro-form">

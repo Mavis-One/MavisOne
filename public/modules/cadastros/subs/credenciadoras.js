@@ -15,7 +15,6 @@ const CREDENCIADORA_BANDEIRAS = {
 // aparece DEPOIS de transmitir.
 window.MavisSubscreenRegistry.cadastros.credenciadoras = window.MavisCadastros.makeListScreen({
   title: 'Credenciadoras de Cartão',
-  subtitle: 'Rede, Cielo, Stone. O CNPJ daqui é o que a NF-e exige no grupo do cartão.',
   tableTitle: 'Credenciadoras cadastradas',
   endpoint: '/api/cadastros/card-acquirers',
   listKey: 'cardAcquirers',

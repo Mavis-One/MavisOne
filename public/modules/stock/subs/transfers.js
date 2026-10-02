@@ -60,10 +60,9 @@ async function renderTransfers(ctx, situacaoInicial) {
     content.innerHTML = `
       <div class="panel">
         ${situacaoInicial === 'enviada'
-        ? S.pageHead('Cargas a Conferir',
-          'O que saiu de um depósito e ainda não foi conferido no destino. Enquanto estiver aqui, a mercadoria está em trânsito e o destino não pode vendê-la.',
+        ? S.pageHead('Cargas a Conferir', '',
           '<button type="button" id="transferNew">Nova transferência</button>')
-        : S.pageHead('Entre Depósitos', 'Transferências de saldo entre depósitos.',
+        : S.pageHead('Entre Depósitos', '',
           '<button type="button" id="transferNew">Nova transferência</button>')}
         <form id="transferFilters" class="form-grid">
           <div class="row">
@@ -110,7 +109,7 @@ async function renderTransfers(ctx, situacaoInicial) {
         </div>
         <p class="muted" style="margin-top:12px;">
           ${transfers.length} transferência(s).
-          ${pendentes.length ? `<strong>${pendentes.length} aguardando conferência</strong> — a mercadoria está em trânsito e o destino ainda não pode vendê-la.` : ''}
+          ${pendentes.length ? `<strong>${pendentes.length} aguardando conferência</strong>` : ''}
         </p>
       </div>
     `;

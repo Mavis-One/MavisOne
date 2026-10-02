@@ -32,7 +32,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <div class="cadastro-page-head">
           <div>
             <h3>Inutilizar NF-e</h3>
-            <p class="muted">Avisa a SEFAZ de que esses números não virarão nota — é o que explica um pulo na sequência.</p>
           </div>
           ${F.seletorEstabelecimento(escapeHtml, lista, escolhido)}
         </div>
@@ -53,7 +52,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             </label>
             <label>Número final
               <input name="numeroFinal" required inputmode="numeric" value="${escapeHtml(rascunho.numeroFinal)}" />
-              <small class="muted">Para um número só, repita o inicial.</small>
             </label>
           </div>
 

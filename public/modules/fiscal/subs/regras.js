@@ -139,11 +139,10 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
      * Select de código oficial; vira <input> se a tabela não existir no banco.
      * O valor gravado é sempre só o código — a descrição é ajuda de tela.
      */
-    function campoCodigo(nome, rotulo, linhas, valor, { obrigatorio = false, ajuda = '' } = {}) {
+    function campoCodigo(nome, rotulo, linhas, valor, { obrigatorio = false } = {}) {
       const req = obrigatorio ? 'required' : '';
-      const dica = ajuda ? `<small class="muted">${escapeHtml(ajuda)}</small>` : '';
       if (!linhas || !linhas.length) {
-        return `<label>${escapeHtml(rotulo)}<input name="${nome}" ${req} value="${escapeHtml(valor || '')}" placeholder="código" />${dica}</label>`;
+        return `<label>${escapeHtml(rotulo)}<input name="${nome}" ${req} value="${escapeHtml(valor || '')}" placeholder="código" /></label>`;
       }
       return `
         <label>${escapeHtml(rotulo)}
@@ -153,7 +152,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
               const codigo = String(l.codigo).trim();
               return `<option value="${escapeHtml(codigo)}" ${String(valor || '').trim() === codigo ? 'selected' : ''}>${escapeHtml(rotuloCodigo(l))}</option>`;
             }).join('')}
-          </select>${dica}
+          </select>
         </label>`;
     }
 
@@ -177,9 +176,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <label>Classificação tributária (cClassTrib)
           <input name="classTrib" list="listaClassTrib" maxlength="6" inputmode="numeric" value="${valor}" placeholder="6 dígitos — ex.: 000001" />
           <datalist id="listaClassTrib">${sugestoes}</datalist>
-          <small class="muted">${linhas.length
-            ? `${linhas.length} código(s) sugeridos — a tabela oficial é maior, pode digitar um que não esteja na lista.`
-            : 'Tabela ainda não carregada — digite o código.'}</small>
+          ${linhas.length ? '' : '<small class="muted">Tabela ainda não carregada — digite o código.</small>'}
         </label>`;
     }
 
@@ -291,14 +288,12 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           <div class="cadastro-page-head">
             <div>
               <h3>${editando ? 'Editar regra fiscal' : 'Nova regra fiscal'}</h3>
-              <p class="muted">Critério em branco vale como <strong>qualquer</strong>. Quanto mais critérios preenchidos, mais específica — e a mais específica ganha na emissão.</p>
             </div>
           </div>
           <form id="fiscalRegraForm" class="form-grid">
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>Quando esta regra se aplica</h4>
-                <p>São os critérios comparados com o item da nota na hora de emitir.</p></div>
+              <div class="cadastro-section-header"><h4>Quando esta regra se aplica</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
                   <label>Tipo de operação *
@@ -311,11 +306,9 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                       <option value="">qualquer</option>
                       ${gruposTributarios.map((g) => `<option value="${escapeHtml(g.id)}" ${form.grupoTributarioId === g.id ? 'selected' : ''}>${escapeHtml(g.nome)}</option>`).join('')}
                     </select>
-                    <small class="muted">O tratamento GERAL. Uma regra por grupo cobre centenas de produtos.</small>
                   </label>
                   <label>NCM
                     <input name="ncm" data-campo="ncm" value="${escapeHtml(form.ncm || '')}" placeholder="qualquer" />
-                    <small class="muted">8 dígitos, sem ponto. É a EXCEÇÃO: ganha do grupo quando os dois casam.</small>
                   </label>
                   ${campoCodigo('origem', 'Origem da mercadoria', tabelas.origemMercadoria, form.origem === null || form.origem === undefined ? '' : String(form.origem))}
                   <label>UF de destino
@@ -330,18 +323,16 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                   ${campoTriEstado('destinatarioContribuinte', 'Destinatário é contribuinte', form.destinatarioContribuinte)}
                   <label>Prioridade
                     <input name="prioridade" type="number" step="1" value="${Number(form.prioridade ?? 0)}" />
-                    <small class="muted">Desempata entre regras igualmente específicas: maior ganha.</small>
                   </label>
                 </div>
               </div>
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>ICMS</h4>
-                <p>CSOSN para Simples Nacional; CST para Lucro Presumido e Lucro Real. Preencha o do regime da empresa.</p></div>
+              <div class="cadastro-section-header"><h4>ICMS</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
-                  ${campoCodigo('cfop', 'CFOP *', tabelas.cfop, form.cfop, { obrigatorio: true, ajuda: '1/2/3 = entrada · 5/6/7 = saída' })}
+                  ${campoCodigo('cfop', 'CFOP *', tabelas.cfop, form.cfop, { obrigatorio: true })}
                   ${campoCodigo('csosn', 'CSOSN (Simples Nacional)', tabelas.csosn, form.csosn)}
                   ${campoCodigo('cstIcms', 'CST ICMS (Regime Normal)', tabelas.cstIcms, form.cstIcms)}
                 </div>
@@ -370,7 +361,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                 <div class="row" data-icms-beneficio hidden>
                   <label>Código do benefício fiscal (cBenef)
                     <input name="codigoBeneficioFiscal" maxlength="10" value="${form.codigoBeneficioFiscal ?? ''}" placeholder="da tabela da UF" />
-                    <small class="muted">Peça ao contador o código da tabela da SEF/SC. A SEFAZ confere um a um: código errado volta como "931 — benefício fiscal incompatível com CST e UF", e a nota não sai.</small>
                   </label>
                   <label>Motivo da desoneração
                     <select name="icmsMotivoDesoneracao">
@@ -384,25 +374,21 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>DIFAL — venda interestadual para não contribuinte</h4>
-                <p>Só se aplica a venda para consumidor final de OUTRO estado que não é contribuinte de ICMS. Deixe em branco em operação interna, em venda para contribuinte e no Simples Nacional — o Simples é dispensado do DIFAL (ADI 5.464 do STF).</p></div>
+              <div class="cadastro-section-header"><h4>DIFAL — venda interestadual para não contribuinte</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
                   <label>Alíquota interna da UF de destino (%)
                     <input name="aliquotaInternaUfDestino" type="number" step="0.01" min="0" max="100" value="${form.aliquotaInternaUfDestino ?? ''}" />
-                    <small class="muted">É a alíquota do estado do CLIENTE, não a sua. Varia por UF e por produto.</small>
                   </label>
                   <label>FCP da UF de destino (%)
                     <input name="aliquotaFcpUfDestino" type="number" step="0.01" min="0" max="100" value="${form.aliquotaFcpUfDestino ?? ''}" />
-                    <small class="muted">Fundo de Combate à Pobreza, quando o estado de destino cobrar.</small>
                   </label>
                 </div>
               </div>
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>ICMS-ST</h4>
-                <p>Só para operação com substituição tributária. Em branco, a nota sai sem ST.</p></div>
+              <div class="cadastro-section-header"><h4>ICMS-ST</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
                   ${campoCodigo('cstIcmsSt', 'CST ICMS-ST', tabelas.cstIcms, form.cstIcmsSt)}
@@ -413,8 +399,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>PIS e COFINS</h4>
-                <p>No Simples costuma ser CST 49 ou 99 com alíquota zero; no Presumido e no Real, 01 com alíquota.</p></div>
+              <div class="cadastro-section-header"><h4>PIS e COFINS</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
                   ${campoCodigo('cstPis', 'CST PIS', tabelas.cstPisCofins, form.cstPis)}
@@ -426,8 +411,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>IPI</h4>
-                <p>Relevante para indústria e importadora — a importadora é contribuinte de IPI na revenda.</p></div>
+              <div class="cadastro-section-header"><h4>IPI</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
                   ${campoCodigo('cstIpi', 'CST IPI', tabelas.cstIpi, form.cstIpi)}
@@ -440,8 +424,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>IBS e CBS — Reforma Tributária</h4>
-                <p>Os 3 primeiros dígitos da classificação tributária <strong>são</strong> o CST — digitar "011" já reduz a lista sozinho. Em 2026 vale a fase de teste (CBS 0,9% e IBS 0,1%, compensáveis com PIS/COFINS); confirme as alíquotas com o contador.</p></div>
+              <div class="cadastro-section-header"><h4>IBS e CBS — Reforma Tributária</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
                   ${campoCodigo('cstIbsCbs', 'CST IBS/CBS', tabelas.cstIbsCbs, form.cstIbsCbs)}
@@ -462,14 +445,11 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>Vigência e observação</h4>
-                <p>Mudou a lei? Feche a regra antiga com uma data de fim e crie a nova — assim a nota de mês passado continua reemitindo com a tributação da época.</p></div>
+              <div class="cadastro-section-header"><h4>Vigência e observação</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
                   <label>Início da vigência *<input name="vigenciaInicio" type="date" required value="${escapeHtml(form.vigenciaInicio || hoje())}" /></label>
-                  <label>Fim da vigência<input name="vigenciaFim" type="date" value="${escapeHtml(form.vigenciaFim || '')}" />
-                    <small class="muted">Em branco = sem prazo.</small>
-                  </label>
+                  <label>Fim da vigência<input name="vigenciaFim" type="date" value="${escapeHtml(form.vigenciaFim || '')}" /></label>
                 </div>
                 <label>Observação para o fisco
                   <textarea name="observacaoFisco" rows="2" maxlength="500" placeholder="Texto exigido por lei, vai no campo de informações adicionais do item (máx. 500).">${escapeHtml(form.observacaoFisco || '')}</textarea>
@@ -491,7 +471,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <div class="cadastro-page-head">
           <div>
             <h3>Regras Fiscais</h3>
-            <p class="muted">${regras.length} regra${regras.length === 1 ? '' : 's'} — definem o CFOP e a tributação usados na emissão de NF-e.</p>
+            <p class="muted">${regras.length} regra${regras.length === 1 ? '' : 's'}</p>
           </div>
           <div class="cadastro-list-actions">
             ${Docs.seletorEmpresa(escapeHtml, empresas, empresaId)}
@@ -506,7 +486,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
       <details class="panel fiscal-simulador" ${simulacao ? 'open' : ''}>
         <summary><strong>Simular</strong> — qual regra se aplicaria a um item?</summary>
-        <p class="muted">Responde com a MESMA função que a emissão usa. Serve para conferir uma regra nova antes de emitir, e para descobrir por que uma nota foi recusada.</p>
         <form id="fiscalSimularForm" class="form-grid">
           <div class="row">
             <label>Tipo de operação *
@@ -564,7 +543,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             <tbody id="fiscalRegraCorpo">
               ${regras.length
                 ? regras.map(linhaRegra).join('')
-                : '<tr><td colspan="9" class="muted">Nenhuma regra cadastrada. Sem pelo menos uma, a emissão de NF-e não sabe qual CFOP usar e é recusada.</td></tr>'}
+                : '<tr><td colspan="9" class="muted">Nenhuma regra cadastrada.</td></tr>'}
             </tbody>
           </table>
         </div>

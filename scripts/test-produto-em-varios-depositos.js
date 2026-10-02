@@ -295,8 +295,10 @@ check('o saldo sem depósito tem cartão próprio, neutro',
   /SEM DEPÓSITO DEFINIDO/.test(compartilhado)
   && /\.estoque-card\.sem-deposito \{[\s\S]{0,120}background: var\(--panel-alt\)/.test(css));
 check('  e só aparece quando existe', /if \(Number\(product\.unallocated \|\| 0\) !== 0\)/.test(compartilhadoCodigo));
-check('sem depósito nenhum, o painel explica em vez de sair vazio',
-  /Nenhum depósito cadastrado\. Cadastre um depósito/.test(compartilhado));
+// A segunda frase ("Cadastre um depósito para ver...") saiu em 01/10/2026, na
+// limpeza das descrições; o que importa é o painel não sair vazio.
+check('sem depósito nenhum, o painel diz isso em vez de sair vazio',
+  /Nenhum depósito cadastrado\./.test(compartilhado));
 
 // ---------------------------------------------------------------------------
 console.log('--- 8. a guarda: nenhum deposito pode ficar negativo ---');
@@ -380,8 +382,6 @@ check('  e a meta do estoque manda as empresas',
 // Em branco e escolha legitima e e o padrao: um galpao central serve a rede
 // inteira, e obrigar a escolher mentiria sobre ele.
 check('"Todas as filiais" e o padrao', /empty: 'Todas as filiais'/.test(telaDeposito));
-check('a dica explica o que o vazio significa',
-  /Em branco, o dep\u00f3sito serve a qualquer filial/.test(telaDeposito));
 // A dica era aceita na descricao do campo e descartada no desenho — pior que
 // nao existir, porque quem escreveu acha que esta na tela.
 check('  e Stock.field passou a DESENHAR a dica',

@@ -84,7 +84,7 @@ window.MavisSubscreenRegistry.stock.new_catalog = async function renderNewCatalo
 
     content.innerHTML = `
       <div class="panel">
-        ${S.pageHead(current ? 'Editar Catálogo' : 'Novo Catálogo de Produtos', 'Selecione os produtos que fazem parte do catálogo.')}
+        ${S.pageHead(current ? 'Editar Catálogo' : 'Novo Catálogo de Produtos')}
         <form id="catalogForm" class="form-grid">
           <div class="row">
             <label>Nome<input name="name" required value="${S.escape(current ? current.name : '')}" /></label>

@@ -65,7 +65,7 @@ window.MavisSubscreenRegistry.stock.counts = async function renderStockCounts(ct
       <div class="panel">
         ${S.pageHead(
           'Contagem de Estoque',
-          'A folha por depósito. Aberta, não mexe em saldo; fechada, gera os ajustes.',
+          '',
           '<button type="button" id="countNew">Nova contagem</button>'
         )}
         ${semDeposito ? `
@@ -137,10 +137,7 @@ window.MavisSubscreenRegistry.stock.counts = async function renderStockCounts(ct
             </tbody>
           </table>
         </div>
-        <p class="muted" style="margin-top:12px;">
-          ${counts.length} contagem(ns). Contagem fechada não volta atrás por aqui — o que se
-          estorna é o movimento que ela gerou, em <strong>Movimentações</strong>.
-        </p>
+        <p class="muted" style="margin-top:12px;">${counts.length} contagem(ns).</p>
       </div>
     `;
 

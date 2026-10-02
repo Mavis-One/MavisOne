@@ -9,7 +9,6 @@ const PAYMENT_TYPE_LABELS = {
 
 window.MavisSubscreenRegistry.cadastros.formas_pagamento = window.MavisCadastros.makeListScreen({
   title: 'Formas de Pagamento',
-  subtitle: 'Como o dinheiro entra e sai: parcelas, taxa e prazo de recebimento.',
   tableTitle: 'Formas de pagamento cadastradas',
   endpoint: '/api/cadastros/payment-methods',
   listKey: 'paymentMethods',

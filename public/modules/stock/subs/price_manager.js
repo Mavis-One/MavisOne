@@ -113,7 +113,7 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
 
     content.innerHTML = `
       <div class="panel">
-        ${S.pageHead('Gestor de Preços', 'Ajuste custo e preço de venda em lote. A margem é recalculada enquanto você digita.')}
+        ${S.pageHead('Gestor de Preços')}
         <div class="row">
           <label>Tabela de preços
             <select id="priceManagerTable">${S.options(priceTables, priceTableId, { empty: 'Nenhuma (preço do cadastro)' })}</select>
@@ -129,9 +129,7 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
             </select>
           </label>
         </div>
-        ${table ? `<p class="muted">${isFixed
-          ? 'Tabela de preço fixo: o valor da última coluna é gravado como preço do produto nesta tabela.'
-          : `Tabela por markup de ${Number(table.markupPercent || 0).toFixed(2)}% sobre o custo — a coluna "Preço na tabela" é calculada.`}</p>` : ''}
+        ${table && !isFixed ? `<p class="muted">Markup de ${Number(table.markupPercent || 0).toFixed(2)}% sobre o custo.</p>` : ''}
       </div>
 
       <div class="panel">

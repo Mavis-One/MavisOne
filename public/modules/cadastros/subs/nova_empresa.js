@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.nova_empresa = window.MavisCadastros.makeFormScreen({
   title: 'Nova Empresa',
-  subtitle: 'O CNPJ é validado ao salvar e não pode se repetir em outra empresa.',
   entityLabel: 'empresa',
   endpoint: '/api/cadastros/companies',
   itemKey: 'company',

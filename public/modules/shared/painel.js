@@ -305,8 +305,7 @@ window.MavisPainel = (function () {
     return `
       <section class="panel painel-bloco ${largo ? 'painel-bloco-largo' : ''}">
         <div class="painel-bloco-topo">
-          <h3>${escapeHtml(titulo)}</h3>
-          ${subtitulo ? `<p class="muted">${escapeHtml(subtitulo)}</p>` : ''}
+          <h3${subtitulo ? ` title="${escapeHtml(subtitulo)}"` : ''}>${escapeHtml(titulo)}</h3>
         </div>
         ${conteudo}
       </section>
@@ -352,8 +351,7 @@ window.MavisPainel = (function () {
       <div class="painel-modulo">
         <section class="painel-cabecalho">
           <div>
-            <h2>${escapeHtml(titulo)}</h2>
-            ${subtitulo ? `<p class="muted">${escapeHtml(subtitulo)}</p>` : ''}
+            <h2${subtitulo ? ` title="${escapeHtml(subtitulo)}"` : ''}>${escapeHtml(titulo)}</h2>
           </div>
           ${periodo ? seletorPeriodo(periodo, escapeHtml) : ''}
         </section>

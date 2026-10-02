@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 
 window.MavisSubscreenRegistry.stock.new_movement_category = window.MavisStock.makeFormScreen({
   title: 'Nova Categoria de Movimentações',
-  subtitle: 'Define o motivo que aparece nas movimentações de estoque.',
   endpoint: '/api/stock/movement-categories',
   itemKey: 'category',
   listSub: 'movement_categories',

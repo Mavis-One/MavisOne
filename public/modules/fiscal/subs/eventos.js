@@ -50,9 +50,9 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     return 'info';
   }
 
-  async function desenhar(ctx, { titulo, ajuda, tipoFixo }) {
+  async function desenhar(ctx, { titulo, tipoFixo }) {
     const { api, content, escapeHtml, state } = ctx;
-    const redesenhar = () => desenhar(ctx, { titulo, ajuda, tipoFixo });
+    const redesenhar = () => desenhar(ctx, { titulo, tipoFixo });
 
     const { lista, escolhido, erro } = await F.carregarEstabelecimentos(ctx);
     if (!lista.length) { content.innerHTML = F.semEstabelecimento(escapeHtml, titulo, erro); return; }
@@ -79,7 +79,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <div class="cadastro-page-head">
           <div>
             <h3>${escapeHtml(titulo)}</h3>
-            <p class="muted">${escapeHtml(ajuda)}</p>
           </div>
           ${F.seletorEstabelecimento(escapeHtml, lista, escolhido)}
         </div>
@@ -152,13 +151,11 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
   window.MavisSubscreenRegistry.fiscal.eventos = (ctx) => desenhar(ctx, {
     titulo: 'Eventos NF-e',
-    ajuda: 'Cartas de correção, cancelamentos e inutilizações, do mais recente para o mais antigo.',
     tipoFixo: null
   });
 
   window.MavisSubscreenRegistry.fiscal.inutilizadas = (ctx) => desenhar(ctx, {
     titulo: 'NF-e Inutilizadas',
-    ajuda: 'Faixas de numeração queimadas na SEFAZ. Nenhuma delas virou nota — é o que justifica o pulo na sequência.',
     tipoFixo: 'INUTILIZACAO'
   });
 })(window.MavisFiscalDocs);

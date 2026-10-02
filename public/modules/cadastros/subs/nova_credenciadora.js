@@ -15,7 +15,6 @@ const CREDENCIADORA_CAIXAS_DE_BANDEIRA = window.MavisBandeiraCartao.CATALOGO
 
 window.MavisSubscreenRegistry.cadastros.nova_credenciadora = window.MavisCadastros.makeFormScreen({
   title: 'Nova Credenciadora de Cartão',
-  subtitle: 'O CNPJ vai para a SEFAZ no grupo do cartão da NF-e — confira antes de salvar.',
   entityLabel: 'credenciadora',
   endpoint: '/api/cadastros/card-acquirers',
   itemKey: 'cardAcquirer',
@@ -24,14 +23,9 @@ window.MavisSubscreenRegistry.cadastros.nova_credenciadora = window.MavisCadastr
   sections: [
     {
       title: 'Identificação',
-      description: 'Quem processa o cartão e repassa o dinheiro. A mesma credenciadora '
-        + 'atende várias formas de pagamento e várias lojas — cadastre uma vez só.',
       fields: [
-        { name: 'name', label: 'Nome', required: true, hint: 'Ex.: Rede, Cielo, Stone' },
-        {
-          name: 'cnpj', label: 'CNPJ da credenciadora', required: true, documento: true,
-          hint: 'É este número que vai em pag/detPag/card/CNPJ da NF-e. CNPJ inválido volta como rejeição depois de transmitir.'
-        },
+        { name: 'name', label: 'Nome', required: true },
+        { name: 'cnpj', label: 'CNPJ da credenciadora', required: true, documento: true },
         { name: 'status', label: 'Status', type: 'select', empty: null, default: 'ativo', options: [{ id: 'ativo', name: 'Ativo' }, { id: 'inativo', name: 'Inativo' }] }
       ]
     }
@@ -43,8 +37,6 @@ window.MavisSubscreenRegistry.cadastros.nova_credenciadora = window.MavisCadastr
       sections: [
         {
           title: 'Bandeiras aceitas',
-          description: 'Deixe todas desmarcadas para não restringir. Marcar limita o que o '
-            + 'vendedor pode escolher no pedido — útil quando o contrato com a credenciadora não cobre todas.',
           fields: CREDENCIADORA_CAIXAS_DE_BANDEIRA
         }
       ]

@@ -953,7 +953,6 @@ function renderAuth(error = '') {
           <span class="brand-full"><span class="brand-mavis">Mavis</span><span class="brand-one">ONE</span></span>
           <span class="brand-short"><span class="brand-mavis">M</span><span class="brand-one">O</span></span>
         </h1>
-        <p class="muted">Faça login com suas credenciais</p>
         <form id="loginForm" class="form-grid">
           <label>Usuário
             <input name="username" required placeholder="Digite seu usuário" />
@@ -1417,14 +1416,14 @@ function renderApp() {
                 </button>
 
                 ${hasModuleAccess('settings') ? `
-                <button type="button" class="topbar-conta-item" id="contaConfig" role="menuitem">
+                <button type="button" class="topbar-conta-item" id="contaConfig" role="menuitem" title="Usuários, permissões e empresa">
                   <span class="topbar-conta-icone">
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <circle cx="12" cy="12" r="3"></circle>
                       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
                     </svg>
                   </span>
-                  <span class="topbar-conta-texto">Configurações<em>Usuários, permissões e empresa</em></span>
+                  <span class="topbar-conta-texto">Configurações</span>
                 </button>
                 ` : ''}
 
@@ -2600,7 +2599,7 @@ async function loadModule(moduleName) {
 
           ${mostrandoSeletor ? `
             <div class="panel" id="salesColunasPainel" style="margin-bottom:12px;">
-              <p class="muted" style="margin-top:0;">Colunas visíveis — a escolha fica guardada na sua conta.</p>
+              <p class="muted" style="margin-top:0;">Colunas visíveis</p>
               <div class="cadastro-filter-grid-5">
                 ${SALES_COLUNAS.map((col) => `
                   <label class="muted" style="display:flex;align-items:center;gap:6px;">
@@ -4175,7 +4174,6 @@ async function loadModule(moduleName) {
             <div class="cadastro-page-head">
               <div>
                 <h3>${isEditing ? `Editar ${title} #${escapeHtml(String(editRecord.code))}` : `Novo ${title}`}</h3>
-                <p class="muted">${isEditing ? 'Código gerado automaticamente na criação.' : 'O código é gerado automaticamente ao salvar.'}</p>
               </div>
               ${window.MavisActionsMenu.barHtml(
                 { id: 'salesRecordActions', actions: window.MavisSalesRecordActions.CATALOG, saveLabel: isEditing ? 'Salvar' : `Salvar ${title.toLowerCase()}` },
@@ -4254,7 +4252,6 @@ async function loadModule(moduleName) {
                 <div class="cadastro-section">
                   <div class="cadastro-section-header">
                     <h4>Produtos</h4>
-                    <p>Os produtos desta venda.</p>
                   </div>
                   <div class="cadastro-section-body">
                     <div class="row sales-produto-add">
@@ -4446,7 +4443,6 @@ async function loadModule(moduleName) {
                 <div class="cadastro-section">
                   <div class="cadastro-section-header">
                     <h4>Informações Gerais</h4>
-                    <p>Acompanhamento do ${title.toLowerCase()}: datas, contato do cliente e e-mails de envio.</p>
                   </div>
                   <div class="cadastro-section-body">
                     <!-- Ordem dos campos = leitura em linha (data | cliente | e-mails | aprovação).
@@ -4585,7 +4581,6 @@ async function loadModule(moduleName) {
                   <div class="cadastro-section">
                     <div class="cadastro-section-header">
                       <h4>Pagamentos (Informação para NF-e/NFC-e)</h4>
-                      <p>Formas e vencimentos que acompanham a nota. A soma precisa fechar com o total da venda.</p>
                     </div>
                     <div class="cadastro-section-body">
                       <div class="table-scroll">
@@ -4708,7 +4703,6 @@ async function loadModule(moduleName) {
                   <div class="cadastro-section">
                     <div class="cadastro-section-header">
                       <h4>Endereço de Entrega</h4>
-                      <p>Buscar pelo CEP preenche município, bairro, logradouro e o código do IBGE.</p>
                     </div>
                     <div class="cadastro-section-body">
                       <div class="sales-info-grid">
@@ -4861,9 +4855,8 @@ async function loadModule(moduleName) {
                       registro, e ele precisa existir para receber arquivo.
                     </p>` : `
                     <div class="sales-anexos">
-                      <label class="sales-anexo-envio">
+                      <label class="sales-anexo-envio" title="Vários de uma vez. Até 10 MB por arquivo.">
                         <input type="file" id="salesAnexoInput" multiple ${anexosOcupado ? 'disabled' : ''} />
-                        <span class="muted">Vários de uma vez. Até 10 MB por arquivo.</span>
                       </label>
                       ${anexosOcupado ? '<p class="sales-totals-nota">Enviando…</p>' : ''}
 
@@ -5631,7 +5624,7 @@ async function loadModule(moduleName) {
             <div class="cadastro-page-head">
               <div>
                 <h3>Minhas vendas</h3>
-                <p class="muted">${painel.vendas.length} pedido${painel.vendas.length === 1 ? '' : 's'}${de || ate ? ' no período' : ''}. Os cancelados aparecem na lista e ficam de fora dos totais acima.</p>
+                <p class="muted">${painel.vendas.length} pedido${painel.vendas.length === 1 ? '' : 's'}${de || ate ? ' no período' : ''}</p>
               </div>
             </div>
             <div class="table-scroll">
@@ -5701,10 +5694,6 @@ async function loadModule(moduleName) {
             ${financeStatCard({ tone: 'green', label: 'Pedidos faturados', value: String(overview.pedidosFaturados) })}
             ${financeStatCard({ tone: 'red', label: 'Pedidos pendentes', value: String(overview.pedidosPendentes) })}
             ${financeStatCard({ tone: 'teal', label: 'Ticket médio', value: salesFormatBRL(overview.ticketMedio) })}
-          </div>
-          <div class="panel">
-            <h3>Painel de Vendas</h3>
-            <p class="muted">Acompanhamento de performance de vendas e indicadores${escopo && !escopo.podeEscolherVendedor ? ', restrito às suas vendas' : ''}.</p>
           </div>
         `;
         return;
@@ -5789,7 +5778,7 @@ async function loadModule(moduleName) {
           <div class="panel">
             ${escopo && !escopo.podeEscolherVendedor ? `
               <h3>${escapeHtml(selected.sellerName)}</h3>
-              <p class="muted">${escapeHtml(escopo.rotulo)} — este painel é privado, só você e o gestor o enxergam.</p>
+              <p class="muted">${escapeHtml(escopo.rotulo)}</p>
             ` : `
               <label>Vendedor
                 <select id="sellerDashboardSelect">
@@ -5814,7 +5803,6 @@ async function loadModule(moduleName) {
         content.innerHTML = `
           <div class="panel">
             <h3>Importar Vendas</h3>
-            <p class="muted">Cole um CSV simples com colunas: customer,date,amount,status</p>
             <form id="salesImportForm" class="form-grid">
               <textarea name="csvText" rows="6" placeholder="customer,date,amount,status\nCliente A,2026-01-10,1200.00,pendente\nCliente B,2026-01-11,2500.00,faturado"></textarea>
               <div class="row">
@@ -5979,12 +5967,11 @@ async function loadModule(moduleName) {
         'Cliente', 'Transportadora', 'Técnico', 'Fornecedor', 'Colaborador', 'Representada', 'Vendedor', 'Líder', 'Gerente', 'Credenciadora', 'Fabricante'
       ];
 
-      const section = (title, body, description = '') => `
+      const section = (title, body) => `
         <section class="cadastro-section">
           <div class="cadastro-section-header">
             <div>
               <h4>${title}</h4>
-              ${description ? `<p>${description}</p>` : ''}
             </div>
           </div>
           <div class="cadastro-section-body">${body}</div>
@@ -6030,7 +6017,6 @@ async function loadModule(moduleName) {
             <div class="cadastro-page-head">
               <div>
                 <h3>${isEditMode ? 'Edição de cadastro' : 'Cadastro de pessoas'}</h3>
-                <p class="muted">${isEditMode ? 'Tela exclusiva para atualização de cadastros existentes.' : 'Padronizado para pessoa física e jurídica, com validação de documento.'}</p>
               </div>
               <div class="cadastro-page-chip">${peopleDraft.code ? `Código ${escapeHtml(peopleDraft.code)}` : (isEditMode ? 'Edição' : 'Dados básicos')}</div>
             </div>
@@ -6054,7 +6040,7 @@ async function loadModule(moduleName) {
                   ])}
                 </div>
                 ${peopleDraft.error ? `<p class="form-error">${escapeHtml(peopleDraft.error)}</p>` : ''}
-              `, 'Informações essenciais para identificar o cadastro.')}
+              `)}
 
               <div class="cadastro-tabs" role="tablist">
                 <button type="button" class="cadastro-tab active" data-tab="dados" role="tab" aria-selected="true">
@@ -6202,7 +6188,7 @@ async function loadModule(moduleName) {
                     ${field('Cód. Cidade (IBGE)', 'billingIbgeCityCode', peopleDraft.billingIbgeCityCode || '')}
                     ${field('País', 'billingCountry', peopleDraft.billingCountry || 'Brasil')}
                   </div>
-                `, 'Endereço usado para cobrança, diferente do endereço principal do cliente.')}
+                `)}
               </div>
 
               <div class="cadastro-tab-panel" data-tab-panel="delivery" hidden>
@@ -6222,7 +6208,7 @@ async function loadModule(moduleName) {
                     ${field('Cód. Cidade (IBGE)', 'deliveryIbgeCityCode', peopleDraft.deliveryIbgeCityCode || '')}
                     ${field('País', 'deliveryCountry', peopleDraft.deliveryCountry || 'Brasil')}
                   </div>
-                `, 'Endereço usado para entrega, diferente do endereço principal do cliente.')}
+                `)}
               </div>
 
               ${section('Observações', `
@@ -6250,7 +6236,6 @@ async function loadModule(moduleName) {
             <div class="cadastro-page-head">
               <div>
                 <h3>Cadastro de CNPJs</h3>
-                <p class="muted">Consulta o CNPJ na API e preenche os dados da empresa automaticamente.</p>
               </div>
               <div class="cadastro-page-chip">Pessoa jurídica</div>
             </div>
@@ -6277,12 +6262,12 @@ async function loadModule(moduleName) {
                 </div>
                 <div class="cadastro-grid cadastro-grid-1">
                   <div class="cadastro-help-row">
-                    <span>${cnpjDraft.validationMessage ? escapeHtml(cnpjDraft.validationMessage) : 'Consulte o CNPJ para validar e preencher os dados oficiais.'}</span>
+                    <span>${cnpjDraft.validationMessage ? escapeHtml(cnpjDraft.validationMessage) : ''}</span>
                     <button type="button" id="consultCnpjBtn" ${canLookupCnpj ? '' : 'disabled'}>Consultar CNPJ</button>
                   </div>
                 </div>
                 ${cnpjDraft.error ? `<p class="form-error">${escapeHtml(cnpjDraft.error)}</p>` : ''}
-              `, 'Dados principais da empresa.')}
+              `)}
 
               ${section('Mais dados', `
                 <div class="cadastro-grid cadastro-grid-3">
@@ -6373,7 +6358,6 @@ async function loadModule(moduleName) {
           <div class="cadastro-page-head">
             <div>
               <h3>${isEditMode ? 'Edição de depósito' : 'Cadastro de depósito'}</h3>
-              <p class="muted">${isEditMode ? 'Atualize os dados de armazenagem.' : 'Preencha os dados do novo depósito.'}</p>
             </div>
             <div class="cadastro-page-chip">${isEditMode ? 'Edição' : 'Novo'}</div>
           </div>
@@ -6436,7 +6420,6 @@ async function loadModule(moduleName) {
           <div class="cadastro-page-head">
             <div>
               <h3>Depósitos</h3>
-              <p class="muted">Histórico e gerenciamento de depósitos.</p>
             </div>
             <div class="cadastro-list-actions">
               <button type="button" class="success" id="cadastroDepositNewBtn">+ Novo depósito</button>
@@ -6487,7 +6470,6 @@ async function loadModule(moduleName) {
             <div class="cadastro-section-header">
               <div>
                 <h4>Depósitos cadastrados</h4>
-                <p>Registros salvos nesta sessão.</p>
               </div>
             </div>
             <div class="cadastro-section-body">
@@ -6761,7 +6743,6 @@ async function loadModule(moduleName) {
             <div class="cadastro-page-head">
               <div>
                 <h3>Cadastros</h3>
-                <p class="muted">Consulta unificada de Pessoas e CNPJs.</p>
               </div>
               <div class="cadastro-list-actions">
                 <button type="button" class="success" id="cadastroNewBtn">+ Novo cadastro</button>

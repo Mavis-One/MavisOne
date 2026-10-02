@@ -37,7 +37,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.ordens = C.makeListScreen({
     ...base,
     title: 'Ordens de Produção',
-    subtitle: 'O que está para produzir, em curso e concluído.',
     tableTitle: 'Ordens',
     endpoint: '/api/pcp/orders',
     listKey: 'orders',
@@ -78,7 +77,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.nova_ordem = C.makeFormScreen({
     ...base,
     title: 'Nova Ordem Produção',
-    subtitle: 'O produzido é somado pelos apontamentos, não digitado aqui — por isso o campo não existe neste formulário.',
     entityLabel: 'ordem',
     endpoint: '/api/pcp/orders',
     itemKey: 'order',
@@ -95,7 +93,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       },
       {
         title: 'Situação',
-        description: 'A etapa é o que o sistema entende (é por "Concluída" que ele sabe que a ordem terminou). O status é o rótulo que a sua fábrica usa dentro daquela etapa.',
         fields: [
           { name: 'status', label: 'Etapa', type: 'select', empty: null, default: 'aberta', options: ETAPAS_OP },
           { name: 'statusId', label: 'Status', type: 'select', empty: 'Usar a etapa', options: (meta) => meta.statuses || [] }
@@ -117,7 +114,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.setores = C.makeListScreen({
     ...base,
     title: 'Setores PCP',
-    subtitle: 'Os centros de trabalho, na ordem em que a peça caminha pela fábrica. A sequência é o que permite ler a lista como o fluxo, e não em ordem alfabética.',
     tableTitle: 'Setores',
     endpoint: '/api/pcp/sectors',
     listKey: 'sectors',
@@ -139,7 +135,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.novo_setor = C.makeFormScreen({
     ...base,
     title: 'Novo Setor PCP',
-    subtitle: 'Excluir um setor NÃO exclui as ordens que passaram por ele: a ordem apenas fica sem setor.',
     entityLabel: 'setor',
     endpoint: '/api/pcp/sectors',
     itemKey: 'sector',
@@ -149,15 +144,15 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       {
         title: 'Identificação',
         fields: [
-          { name: 'name', label: 'Nome do setor', required: true, hint: 'Ex.: Corte, Solda, Pintura, Montagem' },
-          { name: 'sequencia', label: 'Sequência no fluxo', type: 'number', step: '1', min: 0, default: 0, hint: '1 = primeiro setor da linha.' },
+          { name: 'name', label: 'Nome do setor', required: true },
+          { name: 'sequencia', label: 'Sequência no fluxo', type: 'number', step: '1', min: 0, default: 0 },
           { name: 'responsibleId', label: 'Responsável', type: 'select', empty: 'Sem responsável', options: (meta) => meta.employees || [] }
         ]
       },
       {
         title: 'Capacidade',
         fields: [
-          { name: 'capacidadeHora', label: 'Capacidade por hora', type: 'number', step: '0.0001', min: 0, hint: 'Na unidade do produto. Deixe em branco se o ritmo não for constante.' },
+          { name: 'capacidadeHora', label: 'Capacidade por hora', type: 'number', step: '0.0001', min: 0 },
           { name: 'active', label: 'Setor ativo', type: 'checkbox', default: true }
         ]
       },
@@ -173,7 +168,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.status_pcp = C.makeInlineRegisterScreen({
     ...base,
     title: 'Status PCP',
-    subtitle: 'Os status que a sua fábrica usa. Cada um pertence a uma ETAPA — é a etapa que o sistema lê para saber se a ordem terminou; o status só rotula. Assim dá para ter "Aguardando matéria-prima", "Em setup" e "Parada por manutenção" todos dentro de "Em produção".',
     tableTitle: 'Status de produção',
     entityLabel: 'status',
     endpoint: '/api/pcp/statuses',
@@ -192,10 +186,10 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     ],
     formColumns: 4,
     fields: [
-      { name: 'name', label: 'Nome do status', required: true, hint: 'Ex.: Aguardando matéria-prima' },
+      { name: 'name', label: 'Nome do status', required: true },
       { name: 'etapa', label: 'Etapa do fluxo', type: 'select', empty: null, default: 'em_producao', options: ETAPAS_OP },
       { name: 'ordem', label: 'Ordem de exibição', type: 'number', step: '1', min: 0, default: 0 },
-      { name: 'color', label: 'Cor', hint: 'Opcional, para destacar na lista.' },
+      { name: 'color', label: 'Cor' },
       { name: 'isDefault', label: 'Status padrão da etapa', type: 'checkbox' },
       { name: 'active', label: 'Status ativo', type: 'checkbox', default: true },
       { name: 'description', label: 'Descrição', type: 'textarea', rows: 2, full: true }
@@ -206,7 +200,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.qualidade = C.makeInlineRegisterScreen({
     ...base,
     title: 'Controle Qualidade',
-    subtitle: 'Inspeção por ordem de produção. Só a quantidade APROVADA é guardada — a reprovada é a diferença, pelo mesmo motivo de "Falta" ser derivado na lista de ordens: um terceiro número guardado pode discordar dos outros dois.',
     tableTitle: 'Inspeções',
     entityLabel: 'inspeção',
     endpoint: '/api/pcp/quality-checks',
@@ -241,9 +234,9 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       { name: 'date', label: 'Data', type: 'date', required: true },
       { name: 'inspectorId', label: 'Inspetor', type: 'select', empty: 'Não informado', options: (meta) => meta.employees || [] },
       { name: 'quantidadeInspecionada', label: 'Quantidade inspecionada', type: 'number', step: '0.0001', min: 0, default: 0 },
-      { name: 'quantidadeAprovada', label: 'Quantidade aprovada', type: 'number', step: '0.0001', min: 0, default: 0, hint: 'O que sobra é reprovado — a tela calcula.' },
+      { name: 'quantidadeAprovada', label: 'Quantidade aprovada', type: 'number', step: '0.0001', min: 0, default: 0 },
       { name: 'resultado', label: 'Resultado', type: 'select', empty: null, default: 'aprovado', options: RESULTADOS_QUALIDADE },
-      { name: 'motivo', label: 'Motivo da reprovação', hint: 'Obrigatório quando reprova — é o que a auditoria vai ler depois.' },
+      { name: 'motivo', label: 'Motivo da reprovação' },
       { name: 'notes', label: 'Observação', type: 'textarea', rows: 2, full: true }
     ]
   });
@@ -252,7 +245,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.estrutura = C.makeListScreen({
     ...base,
     title: 'Estrutura de Produto',
-    subtitle: 'O que cada produto consome para ser feito. Um componente não se repete na mesma ficha.',
     tableTitle: 'Itens de estrutura',
     endpoint: '/api/pcp/bom',
     listKey: 'bom',
@@ -270,7 +262,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.nova_estrutura = C.makeFormScreen({
     ...base,
     title: 'Novo Item de Estrutura',
-    subtitle: 'A perda é o percentual que se perde no processo e entra no consumo.',
     entityLabel: 'item',
     endpoint: '/api/pcp/bom',
     itemKey: 'bomItem',
@@ -293,7 +284,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.apontamentos = C.makeListScreen({
     ...base,
     title: 'Apontamentos',
-    subtitle: 'O que foi produzido em cada ordem, por data.',
     tableTitle: 'Apontamentos',
     endpoint: '/api/pcp/entries',
     listKey: 'entries',
@@ -312,7 +302,6 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   R.novo_apontamento = C.makeFormScreen({
     ...base,
     title: 'Novo Apontamento',
-    subtitle: 'Excluir a ordem apaga os apontamentos dela junto.',
     entityLabel: 'apontamento',
     endpoint: '/api/pcp/entries',
     itemKey: 'entry',

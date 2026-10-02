@@ -28,17 +28,14 @@ window.MavisSubscreenRegistry.purchases.suppliers = async function renderPurchas
   // cadastradas e vê a tela vazia conclui que o cadastro sumiu.
   const vazia = `
     <tr><td colspan="3" class="muted">
-      Nenhuma compra registrada ainda. Esta lista é montada a partir dos
-      documentos de compra — cada fornecedor aparece aqui na primeira ordem
-      lançada para ele, com o total acumulado. Para ver ou cadastrar
-      fornecedores, use Cadastros &rsaquo; Pessoas.
+      Nenhuma compra registrada ainda. Para ver ou cadastrar fornecedores,
+      use Cadastros &rsaquo; Pessoas.
     </td></tr>
   `;
 
   content.innerHTML = `
     <div class="panel">
       <h3>Fornecedores</h3>
-      <p class="muted">De quem já se comprou, com o que cada um somou em compras.</p>
       <table class="table">
         <thead><tr><th>Fornecedor</th><th>Compras</th><th>Total</th></tr></thead>
         <tbody>

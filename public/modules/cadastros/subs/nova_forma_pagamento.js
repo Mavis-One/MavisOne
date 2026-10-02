@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.nova_forma_pagamento = window.MavisCadastros.makeFormScreen({
   title: 'Nova Forma de Pagamento',
-  subtitle: 'Marcar como padrão remove o padrão da forma anterior.',
   entityLabel: 'forma de pagamento',
   endpoint: '/api/cadastros/payment-methods',
   itemKey: 'paymentMethod',
@@ -32,7 +31,6 @@ window.MavisSubscreenRegistry.cadastros.nova_forma_pagamento = window.MavisCadas
     },
     {
       title: 'Condições',
-      description: 'Usado para calcular parcelas e a previsão de recebimento.',
       fields: [
         { name: 'installmentsMax', label: 'Máximo de parcelas', type: 'number', min: 1, default: 1 },
         { name: 'feePercent', label: 'Taxa (%)', type: 'number', step: '0.01', min: 0, default: 0 },
@@ -49,8 +47,7 @@ window.MavisSubscreenRegistry.cadastros.nova_forma_pagamento = window.MavisCadas
           // "Cartao de Credito Rede 2-6x" tem uma credenciadora, uma taxa e um
           // prazo. O vendedor escolhe a forma; o CNPJ vai junto.
           name: 'cardAcquirerId', label: 'Credenciadora do cartão', type: 'select',
-          empty: 'Nenhuma', options: (meta) => meta.cardAcquirers || [],
-          hint: 'Só para cartão. Sem ela, a NF-e não pode declarar o pagamento como integrado.'
+          empty: 'Nenhuma', options: (meta) => meta.cardAcquirers || []
         },
         { name: 'status', label: 'Status', type: 'select', empty: null, default: 'ativo', options: [{ id: 'ativo', name: 'Ativo' }, { id: 'inativo', name: 'Inativo' }] },
         { name: 'isDefault', label: 'Forma de pagamento padrão', type: 'checkbox' }

@@ -90,7 +90,7 @@ window.MavisSubscreenRegistry.stock.new_price_table = async function renderNewPr
 
     content.innerHTML = `
       <div class="panel">
-        ${S.pageHead(current ? 'Editar Tabela de Preços' : 'Nova Tabela de Preços', 'Markup aplica um percentual sobre o custo. Preço fixo usa o valor informado por produto.')}
+        ${S.pageHead(current ? 'Editar Tabela de Preços' : 'Nova Tabela de Preços')}
         <form id="priceTableForm" class="form-grid">
           <div class="row">
             <label>Nome<input name="name" required value="${S.escape(current ? current.name : '')}" /></label>
@@ -117,7 +117,6 @@ window.MavisSubscreenRegistry.stock.new_price_table = async function renderNewPr
 
           <div id="priceTableItems" class="${type === 'fixo' ? '' : 'hidden'}">
             <h4 style="margin:8px 0;">Preços por produto</h4>
-            <p class="muted">Deixe em branco para o produto usar o preço de venda do cadastro.</p>
             <label>Buscar produto<input type="search" id="priceItemSearch" value="${S.escape(itemSearch)}" placeholder="Nome ou SKU" /></label>
             ${barraDePaginas('acima')}
             <div class="table-scroll">
@@ -127,7 +126,7 @@ window.MavisSubscreenRegistry.stock.new_price_table = async function renderNewPr
               </table>
             </div>
             ${barraDePaginas('abaixo')}
-            ${itemPrices.size ? `<p class="muted">${itemPrices.size.toLocaleString('pt-BR')} produto${itemPrices.size === 1 ? '' : 's'} com preço informado — o que foi digitado em outras páginas continua valendo ao salvar.</p>` : ''}
+            ${itemPrices.size ? `<p class="muted">${itemPrices.size.toLocaleString('pt-BR')} produto${itemPrices.size === 1 ? '' : 's'} com preço informado.</p>` : ''}
           </div>
 
           <div class="finance-actions-row">

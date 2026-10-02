@@ -107,7 +107,7 @@ window.MavisStock = window.MavisStock || {};
     }
 
     if (!cartoes.length) {
-      return '<p class="muted">Nenhum depósito cadastrado. Cadastre um depósito para ver a posição por estoque.</p>';
+      return '<p class="muted">Nenhum depósito cadastrado.</p>';
     }
 
     const negativos = (product.balances || []).filter((b) => Number(b.quantity || 0) < 0);
@@ -289,7 +289,7 @@ window.MavisStock = window.MavisStock || {};
         const colCount = config.columns.length + 1;
         content.innerHTML = `
           <div class="panel">
-            ${Stock.pageHead(config.title, config.subtitle, `<button type="button" id="stockListNew">${config.newLabel || 'Novo'}</button>`)}
+            ${Stock.pageHead(config.title, '', `<button type="button" id="stockListNew">${config.newLabel || 'Novo'}</button>`)}
             <label>Buscar<input type="search" id="stockListSearch" value="${Stock.escape(search)}" placeholder="${config.searchPlaceholder || 'Nome ou código'}" /></label>
           </div>
           <div class="panel">
@@ -389,7 +389,7 @@ window.MavisStock = window.MavisStock || {};
       const rows = config.rows || config.fields.map((_, index) => [index]);
       content.innerHTML = `
         <div class="panel">
-          ${Stock.pageHead(current ? `Editar ${config.title}` : config.title, config.subtitle)}
+          ${Stock.pageHead(current ? `Editar ${config.title}` : config.title)}
           <form id="stockEntityForm" class="form-grid">
             ${rows.map((row) => `<div class="row">${row.map((index) => Stock.field(config.fields[index], current ? current[config.fields[index].name] : undefined, meta)).join('')}</div>`).join('')}
             <div class="finance-actions-row">

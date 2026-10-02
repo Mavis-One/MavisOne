@@ -169,7 +169,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
   window.MavisSubscreenRegistry.purchases.purchase_quotes = montarRenderizador({
     tipo: 'quote',
     titulo: 'Cotações',
-    vazio: 'Nenhuma cotação ainda. Uma cotação vira ordem de compra sem virar outro documento — o mesmo registro muda de status.'
+    vazio: 'Nenhuma cotação ainda.'
   });
 
   window.MavisSubscreenRegistry.purchases.purchase_orders = montarRenderizador({

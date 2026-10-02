@@ -59,7 +59,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <div class="cadastro-page-head">
           <div>
             <h3>Logs NF-e</h3>
-            <p class="muted">O que foi enviado e o que a SEFAZ respondeu, nota por nota.</p>
           </div>
           ${F.seletorEstabelecimento(escapeHtml, lista, escolhido)}
         </div>

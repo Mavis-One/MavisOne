@@ -8,7 +8,6 @@ const SALE_STATUS_KIND_LABELS = {
 
 window.MavisSubscreenRegistry.cadastros.status_venda = window.MavisCadastros.makeListScreen({
   title: 'Status de Venda',
-  subtitle: 'Etapas pelas quais um pedido passa, com cor e ordem de exibição.',
   tableTitle: 'Status cadastrados',
   endpoint: '/api/cadastros/sale-statuses',
   listKey: 'saleStatuses',

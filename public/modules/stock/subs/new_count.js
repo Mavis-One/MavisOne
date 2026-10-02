@@ -69,7 +69,7 @@ window.MavisSubscreenRegistry.stock.new_count = async function renderNewCount(ct
       <div class="panel">
         ${S.pageHead(
           'Nova Contagem de Estoque',
-          'Escolha o depósito a contar. A contagem nasce aberta e não mexe em saldo até ser fechada.',
+          '',
           '<button type="button" class="secondary" id="countBack">Voltar</button>'
         )}
         ${semDeposito ? `
@@ -90,11 +90,6 @@ window.MavisSubscreenRegistry.stock.new_count = async function renderNewCount(ct
           </form>
           <!-- Sem crase neste comentario: ele mora dentro de um template
                literal, e uma crase fecharia a string. -->
-          <p class="muted">
-            Para a CARGA INICIAL de uma loja, abra a contagem do depósito e informe
-            a quantidade de cada produto: o saldo do sistema é zero, então o ajuste
-            é a quantidade contada. É a mesma folha do inventário.
-          </p>
         `}
       </div>
     `;
@@ -234,7 +229,6 @@ window.MavisSubscreenRegistry.stock.new_count = async function renderNewCount(ct
             <label>Observação da linha<input name="note" placeholder="Caixa violada, produto em outro corredor..." /></label>
             <div class="finance-actions-row">
               <button type="submit">Registrar leitura</button>
-              <span class="muted">Contar o mesmo produto de novo SUBSTITUI a leitura anterior.</span>
             </div>
           </form>
         </div>
@@ -262,18 +256,9 @@ window.MavisSubscreenRegistry.stock.new_count = async function renderNewCount(ct
             <button type="button" id="countClose" ${itens.length === 0 ? 'disabled' : ''}>Fechar contagem e aplicar ajustes</button>
             <button type="button" class="secondary" id="countCancel">Cancelar contagem</button>
           </div>
-          <p class="muted">
-            Fechar gera um movimento de ajuste por linha divergente — as linhas em que o
-            contado bate com o saldo não geram movimento nenhum, e ficam na folha como
-            prova de que foram conferidas.
-          </p>
-        ` : `
-          <p class="muted">
-            ${count.status === 'fechada'
-              ? 'Contagem fechada. Para desfazer um ajuste, estorne o movimento em <strong>Movimentações</strong> — a folha fica como registro.'
-              : 'Contagem cancelada. Nenhum ajuste foi aplicado.'}
-          </p>
-        `}
+        ` : (count.status === 'fechada' ? '' : `
+          <p class="muted">Contagem cancelada. Nenhum ajuste foi aplicado.</p>
+        `)}
       </div>
     `;
 

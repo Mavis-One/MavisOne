@@ -19,7 +19,6 @@ window.MavisSubscreenRegistry.sales = window.MavisSubscreenRegistry.sales || {};
 window.MavisSubscreenRegistry.sales.sales_origins = window.MavisStock.makeListScreen({
   modulo: 'sales',
   title: 'Origens de Venda',
-  subtitle: 'Por onde a venda chegou — balcão, televendas, e-commerce, indicação. Diferente da categoria, que diz o que a venda é.',
   endpoint: '/api/sales/origins',
   listKey: 'origins',
   newSub: 'new_sales_origin',

@@ -80,7 +80,7 @@ window.MavisSubscreenRegistry.cadastros.consulta_cnpj = async function renderCon
   function render() {
     content.innerHTML = `
       <div class="panel cadastros-shell">
-        ${C.pageHead('Consulta CNPJ SEFAZ', 'Busca os dados oficiais do CNPJ e permite abrir o cadastro já preenchido.', 'Consulta')}
+        ${C.pageHead('Consulta CNPJ SEFAZ', '', 'Consulta')}
         <form id="cnpjConsultaForm" class="cadastro-form">
           ${C.section('CNPJ', `
             <div class="cadastro-grid cadastro-grid-3 cadastro-align-bottom">
@@ -94,7 +94,7 @@ window.MavisSubscreenRegistry.cadastros.consulta_cnpj = async function renderCon
               </div>
             </div>
             ${errorMessage ? `<p class="form-error">${C.escape(errorMessage)}</p>` : ''}
-          `, 'Informe os 14 dígitos. A validação do dígito verificador é feita antes da consulta.')}
+          `)}
         </form>
       </div>
       ${resultPanel()}

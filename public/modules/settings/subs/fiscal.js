@@ -219,7 +219,6 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             <textarea name="observacaoPadraoNfe" rows="5" maxlength="5000"
               placeholder="Vazio = usa o texto padrão do sistema.">${escapeHtml(empresaForm.observacaoPadraoNfe || '')}</textarea>
           </label>
-          <p class="muted">Nasce no campo "Observações adicionais" de toda nota emitida por este CNPJ, e continua editável nota a nota. Vai para o campo livre impresso no DANFE (infCpl) — não altera imposto, CFOP nem base de cálculo. Limite da SEFAZ: 5000 caracteres.</p>
 
           <div class="checkbox-grid">
             <label><input type="checkbox" name="opcaoTransferenciaTributada" ${empresaForm.opcaoTransferenciaTributada ? 'checked' : ''} /> Opção por transferência tributada (Convênio ICMS 109/2024)</label>
@@ -243,7 +242,6 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         <div class="cadastro-page-head">
           <div>
             <h3>Certificado digital — ${escapeHtml(empresa.razaoSocial)}</h3>
-            <p class="muted">Só controla a validade e avisa quando estiver vencendo — o arquivo (.pfx) e a senha ficam só na Focus NFe, nunca aqui.</p>
           </div>
           <div class="cadastro-list-actions">
             <button type="button" id="fiscalNewCertificadoBtn">+ Novo certificado</button>
@@ -313,7 +311,6 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         <div class="cadastro-page-head">
           <div>
             <h3>Estabelecimentos — ${escapeHtml(empresa.razaoSocial)}</h3>
-            <p class="muted">Matriz e filiais desta empresa. Cada uma tem IE, endereço e token da Focus NFe próprios.</p>
             ${travadoEmHomologacao ? '<p class="fiscal-aviso-homologacao"><strong>Ambiente de testes.</strong> Todas as emissões vão para a homologação da Focus NFe e <strong>não têm valor fiscal</strong> — não geram obrigação, não vão para a apuração e não servem para acompanhar mercadoria.</p>' : ''}
           </div>
           <div class="cadastro-list-actions">
@@ -367,7 +364,6 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         <div class="cadastro-page-head">
           <div>
             <h3>Regras fiscais — ${escapeHtml(empresa.razaoSocial)}</h3>
-            <p class="muted">Define CFOP e tributação (ICMS/PIS/COFINS) por NCM e tipo de operação. Deixe um campo em branco pra ele valer como "qualquer" — a regra mais específica cadastrada é usada na emissão.</p>
           </div>
           <div class="cadastro-list-actions">
             <button type="button" id="fiscalNewRegraBtn">+ Nova regra</button>
@@ -400,7 +396,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             </tbody>
           </table>
           </div>
-        ` : '<p class="muted">Nenhuma regra fiscal cadastrada ainda — sem regra, a emissão de NF-e não sabe qual CFOP/tributação usar.</p>'}
+        ` : '<p class="muted">Nenhuma regra fiscal cadastrada ainda.</p>'}
       </div>
       ${renderRegraForm()}
     `;
@@ -621,11 +617,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         <div class="cadastro-page-head">
           <div>
             <h3>Chave mestra da conta</h3>
-            <p class="muted">
-              O token <strong>principal</strong> da conta Focus — o que não pertence a nenhum CNPJ.
-              Ele <strong>não emite nota</strong>: serve para listar as empresas da conta e trazer o token de cada uma,
-              para você não cadastrar um por um. Fica guardado criptografado, e nenhuma tela devolve o valor dele.
-            </p>
+            <p class="muted">O token fica guardado criptografado, e nenhuma tela devolve o valor dele.</p>
           </div>
         </div>
         <form id="fiscalChaveMestraForm" class="form-grid">
@@ -661,10 +653,6 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         <div class="cadastro-page-head">
           <div>
             <h3>Empresas da conta Focus</h3>
-            <p class="muted">
-              O que a Focus tem cadastrado, lado a lado com os estabelecimentos daqui. O vínculo é pelo CNPJ.
-              Esta consulta é <strong>só leitura</strong> e não emite nada.
-            </p>
           </div>
           <div class="cadastro-list-actions">
             <button type="button" class="secondary" id="fiscalBuscarEmpresasFocus">Buscar empresas na Focus</button>
@@ -702,10 +690,6 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
             </div>
             <div class="cadastro-page-head" style="margin-top:12px">
               <div>
-                <p class="muted">
-                  Importar grava o token de cada CNPJ no estabelecimento correspondente, criptografado,
-                  <strong>sem o token passar pelo navegador</strong>. Só entram os que estão cadastrados aqui.
-                </p>
                 ${importAmbiente === 'producao' ? `<p class="fiscal-aviso-homologacao"><strong>Atenção.</strong> Importar os tokens de produção também muda o ambiente desses estabelecimentos para Produção — o token e o ambiente são a mesma decisão.${travadoEmHomologacao ? ' A trava do servidor continua ligada, então nenhuma nota sai com valor fiscal até ela ser desligada.' : ' <strong>A trava está DESLIGADA: a próxima nota emitida por eles vale de verdade.</strong>'}</p>` : ''}
               </div>
               <div class="cadastro-list-actions">
@@ -795,7 +779,6 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
         <div class="cadastro-page-head">
           <div>
             <h3>Empresas</h3>
-            <p class="muted">Cadastro fiscal completo — usado pra emissão real de NF-e via Focus NFe. Uma linha por raiz de CNPJ.</p>
           </div>
           <div class="cadastro-list-actions">
             <button type="button" id="fiscalNewEmpresaBtn">+ Nova empresa</button>

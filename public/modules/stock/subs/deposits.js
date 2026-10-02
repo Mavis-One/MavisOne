@@ -5,7 +5,6 @@ window.MavisSubscreenRegistry.stock = window.MavisSubscreenRegistry.stock || {};
 // dentro do Estoque, que é onde os depósitos são efetivamente usados.
 window.MavisSubscreenRegistry.stock.deposits = window.MavisStock.makeListScreen({
   title: 'Depósitos',
-  subtitle: 'Locais físicos de armazenagem. O saldo de cada produto é controlado por depósito.',
   endpoint: '/api/stock/deposits',
   listKey: 'deposits',
   newSub: 'new_deposit',

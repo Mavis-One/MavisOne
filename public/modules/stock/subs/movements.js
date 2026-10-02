@@ -83,7 +83,6 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
           <label>Observação
             <textarea rows="4" readonly placeholder="Sem observação registrada.">${S.escape(movement.note || '')}</textarea>
           </label>
-          <p class="muted" style="margin:8px 0 0;">Somente leitura. Para corrigir, estorne a movimentação e lance novamente.</p>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn-muted" id="movDetailClose">Fechar</button>
@@ -139,7 +138,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
 
     content.innerHTML = `
       <div class="panel">
-        ${S.pageHead('Movimentações', 'Entradas e saídas de estoque por depósito.', '<button type="button" id="movNew">Nova movimentação</button>')}
+        ${S.pageHead('Movimentações', '', '<button type="button" id="movNew">Nova movimentação</button>')}
         <form id="movFilters" class="form-grid">
           <div class="row">
             <label>Buscar<input type="search" name="search" value="${S.escape(filters.search)}" placeholder="Código, documento, produto" /></label>

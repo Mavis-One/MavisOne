@@ -8,7 +8,6 @@ const APPOINTMENT_TYPE_LABELS = {
 
 window.MavisSubscreenRegistry.cadastros.agendamentos = window.MavisCadastros.makeListScreen({
   title: 'Agendamentos',
-  subtitle: 'Compromissos com clientes. O sistema avisa se o responsável já tem outro no mesmo horário.',
   tableTitle: 'Agendamentos',
   endpoint: '/api/cadastros/appointments',
   listKey: 'appointments',

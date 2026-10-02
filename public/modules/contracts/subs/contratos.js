@@ -106,7 +106,6 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   R.contratos = C.makeListScreen({
     ...base,
     title: 'Contratos',
-    subtitle: 'Contratos com clientes e fornecedores, com valor e vigência.',
     tableTitle: 'Contratos',
     endpoint: '/api/contracts/contracts',
     listKey: 'contracts',
@@ -149,7 +148,6 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   R.novo_contrato = C.makeFormScreen({
     ...base,
     title: 'Novo Contrato',
-    subtitle: 'Cliente gera receita, fornecedor gera despesa — é o que a parte define.',
     entityLabel: 'contrato',
     endpoint: '/api/contracts/contracts',
     itemKey: 'contract',
@@ -162,7 +160,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
         fields: [
           { name: 'title', label: 'Título', required: true },
           { name: 'code', label: 'Número', type: 'number', min: 1 },
-          { name: 'typeId', label: 'Tipo de contrato', type: 'select', empty: 'Sem tipo', options: (meta) => meta.types || [], hint: 'É o tipo que define o prazo de aviso prévio.' },
+          { name: 'typeId', label: 'Tipo de contrato', type: 'select', empty: 'Sem tipo', options: (meta) => meta.types || [] },
           { name: 'status', label: 'Situação', type: 'select', empty: null, default: 'ativo', options: STATUS }
         ]
       },
@@ -173,7 +171,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
           { name: 'partyId', label: 'Cadastro', type: 'select', empty: 'Não vincular', options: (meta) => meta.directory || [] },
           // Nome livre além do vínculo: contrato com quem ainda não está no
           // cadastro não pode ficar esperando o cadastro existir.
-          { name: 'partyName', label: 'Nome da parte', hint: 'Preencha quando não houver cadastro' }
+          { name: 'partyName', label: 'Nome da parte' }
         ]
       },
       {
@@ -198,7 +196,6 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   R.tipos = C.makeListScreen({
     ...base,
     title: 'Tipos de Contratos',
-    subtitle: 'A classificação do contrato — e, principalmente, com quantos dias de antecedência cada uma precisa ser avisada antes de vencer.',
     tableTitle: 'Tipos',
     endpoint: '/api/contracts/types',
     listKey: 'types',
@@ -222,7 +219,6 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   R.novo_tipo = C.makeFormScreen({
     ...base,
     title: 'Novo Tipo de Contrato',
-    subtitle: 'Excluir um tipo NÃO exclui os contratos classificados nele: eles apenas ficam sem tipo, e passam a usar o aviso prévio padrão de 30 dias.',
     entityLabel: 'tipo',
     endpoint: '/api/contracts/types',
     itemKey: 'type',
@@ -232,17 +228,16 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
       {
         title: 'Identificação',
         fields: [
-          { name: 'name', label: 'Nome do tipo', required: true, hint: 'Ex.: Prestação de serviço, Locação de equipamento' },
-          { name: 'natureza', label: 'Natureza', type: 'select', empty: null, default: 'receita', options: NATUREZAS, hint: 'De que lado do caixa este tipo costuma cair.' },
+          { name: 'name', label: 'Nome do tipo', required: true },
+          { name: 'natureza', label: 'Natureza', type: 'select', empty: null, default: 'receita', options: NATUREZAS },
           { name: 'ordem', label: 'Ordem de exibição', type: 'number', step: '1', min: 0, default: 0 }
         ]
       },
       {
         title: 'Aviso prévio',
-        description: 'Contrato não se encerra no dia do vencimento — se encerra no prazo de aviso antes dele. Passar dessa data faz o contrato renovar sozinho por mais um ciclo inteiro sem ninguém ter decidido.',
         fields: [
-          { name: 'avisoPreviaDias', label: 'Dias de antecedência', type: 'number', step: '1', min: 0, default: 30, hint: '30 é o mais comum em prestação de serviço; locação costuma pedir 90.' },
-          { name: 'templateId', label: 'Modelo padrão', type: 'select', empty: 'Nenhum', options: (meta) => meta.templates || [], hint: 'O texto que costuma acompanhar este tipo.' },
+          { name: 'avisoPreviaDias', label: 'Dias de antecedência', type: 'number', step: '1', min: 0, default: 30 },
+          { name: 'templateId', label: 'Modelo padrão', type: 'select', empty: 'Nenhum', options: (meta) => meta.templates || [] },
           { name: 'active', label: 'Tipo ativo', type: 'checkbox', default: true }
         ]
       },
@@ -312,7 +307,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
 
     content.innerHTML = `
       <div class="panel cadastros-shell">
-        ${C.pageHead('Vencimentos e Renovações', 'Contratos encerrados ficam de fora: não há o que vencer neles.', '', `
+        ${C.pageHead('Vencimentos e Renovações', '', '', `
           ${[30, 60, 90, 180].map((d) => `<button type="button" class="finance-pill finance-pill-sm ${d === dias ? 'active' : ''}" data-janela="${d}">${d} dias</button>`).join('')}
         `)}
 
@@ -324,8 +319,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
 
         ${vencidos.length ? C.section(
           `Já venceram (${vencidos.length})`,
-          tabela(vencidos),
-          'Passaram da data de término e continuam fora do status "encerrado".'
+          tabela(vencidos)
         ) : ''}
 
         ${C.section(
@@ -347,7 +341,6 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   R.modelos = C.makeListScreen({
     ...base,
     title: 'Modelos de Contrato',
-    subtitle: 'Textos-padrão reaproveitados na hora de emitir.',
     tableTitle: 'Modelos',
     endpoint: '/api/contracts/templates',
     listKey: 'templates',
@@ -365,7 +358,6 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   R.novo_modelo = C.makeFormScreen({
     ...base,
     title: 'Novo Modelo',
-    subtitle: 'Excluir um modelo NÃO exclui os contratos que o usaram: eles ficam sem modelo.',
     entityLabel: 'modelo',
     endpoint: '/api/contracts/templates',
     itemKey: 'template',

@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.equipamentos = window.MavisCadastros.makeListScreen({
   title: 'Equipamentos',
-  subtitle: 'Máquinas e equipamentos, próprios ou em posse de clientes. A garantia é contada a partir da NF-e que vendeu — passe o mouse sobre a data para ver a conta.',
   tableTitle: 'Equipamentos cadastrados',
   endpoint: '/api/cadastros/equipments',
   listKey: 'equipments',

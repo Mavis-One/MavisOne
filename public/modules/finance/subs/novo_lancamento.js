@@ -145,9 +145,6 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
             <h3>${editEntry
               ? escapeHtml(window.MavisLancamentoCodigo.rotulo(editEntry.code, 'Editar Lançamento'))
               : 'Novo Lançamento'}</h3>
-            <p class="muted">${editEntry
-              ? 'Mesma tela do lançamento novo: o que muda é o que a origem já preencheu.'
-              : 'Registre uma receita, despesa ou transferência.'}</p>
           </div>
         </div>
         ${vinculado ? `
@@ -173,9 +170,6 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
                 ${podeTrocarEstab ? '<option value="">Nenhum</option>' : ''}
                 ${estabelecimentoOptions()}
               </select>
-            </label>
-            <label class="finance-estab-nota">&nbsp;
-              <span class="muted">A lista de contas bancárias abaixo mostra só o que este estabelecimento pode usar.</span>
             </label>
           </div>` : ''}
 
@@ -213,7 +207,6 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       // travação vem no HTML, não depois — ver renderSearchableSelect.
       readonly: vinculado
     })}
-                <span class="muted">Em branco, use o nome livre ao lado.</span>
               </label>
               <label>Nome livre (se não cadastrado)<input name="clientSupplierName" value="${editEntry && !editEntry.clientSupplierId ? escapeHtml(editEntry.clienteFornecedor || '') : ''}" ${travado('clientSupplierName')} /></label>
             </div>

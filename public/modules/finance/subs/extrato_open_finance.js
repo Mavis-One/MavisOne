@@ -92,7 +92,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       <div class="cadastro-page-head">
         <div>
           <h3>Extrato Open Finance</h3>
-          <p class="muted">${result.total} movimentação${result.total === 1 ? '' : 'ões'} · Importação manual/CSV (sem provedor bancário conectado)</p>
+          <p class="muted">${result.total} movimentação${result.total === 1 ? '' : 'ões'}</p>
         </div>
         <div class="cadastro-list-actions">
           <button type="button" id="extratoNewBtn">+ Nova movimentação</button>
@@ -328,7 +328,6 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     overlay.innerHTML = `
       <div class="modal modal-lg">
         <h3>Importar extrato (CSV)</h3>
-        <p class="muted">Cole o conteúdo do CSV com cabeçalho <code>data,descricao,valor,tipo</code> (tipo: entrada/saida). Sem provedor Open Finance conectado — esta é a importação manual.</p>
         <form id="extratoImportForm" class="form-grid">
           <label>Conta bancária de destino<select name="bankAccountId" required><option value="">Selecione</option>${bankAccountOptions('')}</select></label>
           <label>Conteúdo CSV<textarea name="csvText" rows="8" placeholder="data,descricao,valor,tipo
@@ -391,7 +390,6 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     overlay.innerHTML = `
       <div class="modal modal-lg">
         <h3>Conciliar movimentação</h3>
-        <p class="muted">Possíveis correspondências (por valor e data). Escolha uma ou busque manualmente abaixo.</p>
         <div class="finance-due-list" id="extratoMatchesList">
           ${matches.length ? matches.map((m) => `
             <div class="finance-due-item">

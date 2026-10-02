@@ -74,13 +74,12 @@ function relQueryDeFiltros(filtros) {
   return p.toString();
 }
 
-function relCabecalho(ctx, titulo, descricao, comPeriodo) {
+function relCabecalho(ctx, titulo, comPeriodo) {
   const { escapeHtml, granularidade } = ctx;
   return `
     <section class="panel workspace-head">
       <div>
         <strong>${escapeHtml(titulo)}</strong>
-        <p class="muted">${escapeHtml(descricao)}</p>
       </div>
       ${comPeriodo ? `
         <div class="finance-granularity-group" role="tablist">
@@ -468,7 +467,7 @@ function relTabela(ctx, rel) {
     <section class="panel">
       <div class="rel-tabela-topo">
         <h3>Vendas</h3>
-        <span class="muted">${p.total} ${p.total === 1 ? 'linha' : 'linhas'} · uma linha por produto vendido</span>
+        <span class="muted">${p.total} ${p.total === 1 ? 'linha' : 'linhas'}</span>
       </div>
       <div class="table-scroll">
         <table class="table rel-tabela">
@@ -697,7 +696,7 @@ window.MavisSubscreenRegistry.reports.vendas = async function relVendas(ctx) {
 
   content.innerHTML = `
     <div class="workspace">
-      ${relCabecalho(ctx, 'Relatório de Vendas', 'O que foi vendido, por quem, para quem e por quanto.', false)}
+      ${relCabecalho(ctx, 'Relatório de Vendas', false)}
       ${relBarraDeFiltros(ctx, rel)}
       ${rel.escopo?.motivo ? `<p class="entrada-aviso entrada-aviso-bloqueio">${escapeHtml(rel.escopo.motivo)}</p>` : ''}
       ${relIndicadores(rel)}
@@ -734,7 +733,6 @@ window.MavisSubscreenRegistry.reports.vendedores = async function relVendedores(
     return `
       <section class="panel">
         <h3>${escapeHtml(eu.vendedorNome)}</h3>
-        <p class="muted">Meu desempenho no recorte escolhido.</p>
       </section>
       <div class="finance-stat-cards">
         ${financeStatCard({ tone: 'green', label: 'Faturamento', value: relBRL(i.faturamento) })}
@@ -750,7 +748,6 @@ window.MavisSubscreenRegistry.reports.vendedores = async function relVendedores(
     <section class="panel">
       <div class="rel-tabela-topo">
         <h3>Ranking de vendedores</h3>
-        <span class="muted">Do maior faturamento para o menor.</span>
       </div>
       <div class="table-scroll">
         <table class="table rel-tabela">
@@ -779,8 +776,7 @@ window.MavisSubscreenRegistry.reports.vendedores = async function relVendedores(
 
   content.innerHTML = `
     <div class="workspace">
-      ${relCabecalho(ctx, souEuSozinho ? 'Meu Desempenho' : 'Relatório por Vendedor',
-        souEuSozinho ? 'Seus números de venda no recorte escolhido.' : 'Quanto cada vendedor fechou, do maior para o menor.', false)}
+      ${relCabecalho(ctx, souEuSozinho ? 'Meu Desempenho' : 'Relatório por Vendedor', false)}
       ${relBarraDeFiltros(ctx, rel)}
       ${souEuSozinho ? meuDesempenho() : ranking()}
       ${souEuSozinho ? '' : `
@@ -803,7 +799,7 @@ window.MavisSubscreenRegistry.reports.financeiro = async function relFinanceiro(
   const serie = dados.serieFinanceiro || [];
   content.innerHTML = `
     <div class="workspace">
-      ${relCabecalho(ctx, 'Relatório Financeiro', 'Receitas, despesas e o que está em aberto.', true)}
+      ${relCabecalho(ctx, 'Relatório Financeiro', true)}
       <div class="finance-stat-cards">
         ${financeStatCard({ tone: 'green', label: 'A receber', value: relBRL(receber.total), sub: `Vencidas ${relBRL(receber.vencidas)}` })}
         ${financeStatCard({ tone: 'red', label: 'A pagar', value: relBRL(pagar.total), sub: `Vencidas ${relBRL(pagar.vencidas)}` })}
@@ -829,7 +825,6 @@ window.MavisSubscreenRegistry.reports.financeiro = async function relFinanceiro(
       <section class="panel">
         <div class="rel-tabela-topo">
           <h3>Fluxo período a período</h3>
-          <span class="muted">Saldo é receitas menos despesas, no recorte escolhido acima.</span>
         </div>
         <div class="table-scroll">
           <table class="table rel-tabela">
@@ -867,7 +862,7 @@ window.MavisSubscreenRegistry.reports.estoque = async function relEstoque(ctx) {
   const maiores = e.maiores || [];
   content.innerHTML = `
     <div class="workspace">
-      ${relCabecalho(ctx, 'Relatório de Estoque', 'Quanto dinheiro está parado, e em quê.', false)}
+      ${relCabecalho(ctx, 'Relatório de Estoque', false)}
       <div class="finance-stat-cards">
         ${financeStatCard({ tone: 'blue', label: 'Produtos', value: String(e.totalProdutos || 0) })}
         ${financeStatCard({ tone: 'teal', label: 'Valor em estoque', value: relBRL(e.valorTotal) })}
@@ -882,7 +877,7 @@ window.MavisSubscreenRegistry.reports.estoque = async function relEstoque(ctx) {
                pergunta, a que percorre o estoque todo. Sem o aviso, quem
                exportasse contaria 5.475 linhas onde viu 15 e acharia defeito. -->
           <span class="muted">
-            Custo × quantidade, do maior para o menor. Os ${maiores.length} primeiros —
+            Os ${maiores.length} primeiros —
             <strong>a exportação leva os ${Number(e.totalProdutos || 0).toLocaleString('pt-BR')} produtos</strong>.
           </span>
         </div>

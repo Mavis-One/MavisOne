@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.contatos = window.MavisCadastros.makeListScreen({
   title: 'Contatos',
-  subtitle: 'Pessoas de contato vinculadas aos cadastros de pessoa física e jurídica.',
   tableTitle: 'Contatos cadastrados',
   endpoint: '/api/cadastros/contacts',
   listKey: 'contacts',

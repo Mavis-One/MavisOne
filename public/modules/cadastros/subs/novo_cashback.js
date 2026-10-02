@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.novo_cashback = window.MavisCadastros.makeFormScreen({
   title: 'Nova Regra de CashBack',
-  subtitle: 'Cada produto pode ter uma regra ativa por vez — inative a anterior para criar outra.',
   entityLabel: 'regra',
   endpoint: '/api/cadastros/product-cashbacks',
   itemKey: 'cashback',
@@ -19,7 +18,6 @@ window.MavisSubscreenRegistry.cadastros.novo_cashback = window.MavisCadastros.ma
     },
     {
       title: 'Regra',
-      description: 'No tipo percentual o valor é limitado a 100%.',
       fields: [
         {
           name: 'type',

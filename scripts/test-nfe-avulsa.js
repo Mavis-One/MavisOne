@@ -82,7 +82,6 @@ check('e desiste sem condição de pagamento', /if \(!condicao\) return 0;/.test
 // A Focus reenvia webhook. Sem idempotência, cada reenvio criaria as parcelas de novo.
 check('idempotente: não cria se já existe lançamento da nota',
   /some\(\(entry\) => entry\.nfeId === nfe\.id\)\) return 0/.test(gerador));
-check('a tela avisa quando o financeiro é do pedido', /o contas a receber já é dele/.test(focusSrc));
 
 console.log('\n--- o recebível só nasce quando a SEFAZ autoriza ---');
 // Gerar na emissão deixaria contas a receber de nota rejeitada.

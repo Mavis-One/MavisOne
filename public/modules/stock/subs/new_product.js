@@ -68,7 +68,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
   // "Classes" seria eco.
   function blocoClasses() {
     if (!current) {
-      return '<p class="muted">Salve o produto primeiro. As classes são atribuídas ao produto já cadastrado.</p>';
+      return '<p class="muted">Salve o produto primeiro.</p>';
     }
     if (!catalogoClasses.length) {
       return `
@@ -76,8 +76,6 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
         <button type="button" class="secondary" id="produtoIrParaClasses">Cadastrar classes e cores</button>`;
     }
     return `
-      <p class="muted">Marque a classe e, dentro dela, apenas os valores que <strong>este</strong> produto tem.
-         Cada valor passa a ter saldo de estoque próprio.</p>
       <!-- A cor que falta só aparece na hora de marcar. Sem esta saída, o
            caminho seria sair do produto, achar o catálogo no menu e voltar
            procurando o produto de novo. -->
@@ -125,9 +123,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
   content.innerHTML = `
     <div class="produto-form-wrap">
       <div class="panel">
-        ${S.pageHead(current ? 'Editar Produto' : 'Novo Produto', current
-          ? 'O saldo não é alterado por aqui — use Nova Movimentação.'
-          : 'O estoque inicial vira uma movimentação de entrada no depósito escolhido.')}
+        ${S.pageHead(current ? 'Editar Produto' : 'Novo Produto')}
 
         <form id="stockProductForm" class="form-grid">
           <div class="cadastro-tabs" role="tablist" aria-label="Seções do cadastro de produto">
@@ -174,7 +170,6 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
                ficarem no cadastro do produto e não na hora de emitir: quem emite
                não tem como saber a classificação de cada produto. -->
           ${painel('fiscal', `
-            <p class="muted">Usado na emissão de NF-e — o NCM e a origem são o que casam o item com a regra fiscal.</p>
             <div class="row produto-row-fiscal">
               <label>NCM
                 <input name="ncm" data-campo="ncm" value="${value('ncm')}" />
@@ -200,9 +195,9 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
             <div class="row">
               <label class="produto-campo-2">Grupo tributário
                 <select name="grupoTributarioId">${S.options(meta.grupoTributarios, current ? current.grupoTributarioId : '', { empty: 'Sem grupo' })}</select>
-                <small class="muted">${(meta.grupoTributarios || []).length
-    ? 'Como a empresa tributa este produto. A regra fiscal usa o grupo como critério.'
-    : 'Nenhum grupo cadastrado ainda — crie em Fiscal → Grupos Tributários.'}</small>
+                ${(meta.grupoTributarios || []).length
+    ? ''
+    : '<small class="muted">Nenhum grupo cadastrado ainda — crie em Fiscal → Grupos Tributários.</small>'}
               </label>
             </div>
 
@@ -217,7 +212,6 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
             <div class="row produto-row-fiscal">
               <label>CST do IPI
                 <input name="cstIpi" maxlength="2" inputmode="numeric" value="${value('cstIpi')}" placeholder="da regra" />
-                <small class="muted">Preenchido, vence a regra fiscal.</small>
               </label>
               <label>Alíquota de IPI (%)
                 <input name="aliquotaIpi" type="number" step="0.01" min="0" max="100"
@@ -248,11 +242,9 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
                   <option value="1" ${current && current.escalaRelevante === false ? 'selected' : ''}>Sim — escala não relevante</option>
                   <option value="0" ${current && current.escalaRelevante === true ? 'selected' : ''}>Não — escala relevante</option>
                 </select>
-                <small class="muted">Convênio ICMS 52/2017. "Não declarado" omite o campo da nota.</small>
               </label>
               <label class="produto-campo-2">CNPJ do fabricante
                 <input name="cnpjFabricante" data-campo="cnpj" value="${value('cnpjFabricante')}" placeholder="exigido em escala não relevante" />
-                <small class="muted">A SEFAZ recusa a nota sem ele quando a escala é não relevante.</small>
               </label>
             </div>
           `)}
@@ -273,7 +265,6 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
                 <label>Estoque inicial<input type="number" step="0.001" min="0" name="stockQuantity" value="0" /></label>
                 <label class="produto-campo-2">Categoria da movimentação inicial<select name="movementCategoryId">${S.options(meta.movementCategories, '', { empty: 'Sem categoria' })}</select></label>
               </div>
-              <p class="muted">Se informar estoque inicial maior que zero, selecione também o depósito padrão — é nele que a entrada será registrada.</p>
             `}
           `)}
 

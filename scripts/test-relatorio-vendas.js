@@ -239,8 +239,10 @@ const appSrc = usuariosSrc + usuarioFormSrc;
 // Ver lib/relatorios-escopo.js (escopoPessoal) e scripts/test-meu-painel.js.
 check('  o seletor de vendedor aparece para TODO usuário, admin incluído',
   !/Admin — vê todas as vendas/.test(appSrc));
-check('  e a tela explica ao admin para que serve o vínculo dele',
-  /Meu Painel dele/.test(appSrc));
+// A nota sob o seletor do admin ("o vínculo aqui é o que enche o Meu Painel
+// dele") saiu em 01/10/2026, junto com os outros textos explicativos fixos das
+// telas, a pedido do usuário. O check que a cobrava só continuava verde porque
+// a frase sobrevive num comentário de users.js — por isso saiu também.
 // O servidor precisa mandar a lista, senão o select nasce vazio.
 check('o servidor manda os vendedores para a tela de Usuários',
   /sellers: canManageUsers \? getSellersDirectory\(data\)/.test(serverSrc));

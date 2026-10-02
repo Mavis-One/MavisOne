@@ -49,7 +49,7 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
 
     content.innerHTML = `
       <div class="panel">
-        ${S.pageHead('Status do Produto', 'Posição atual e histórico de movimentações.')}
+        ${S.pageHead('Status do Produto')}
         <label>Produto
           ${meta.products.length
             ? renderSearchableSelect({ id: 'statusProduto', name: 'statusProduto', options: opcoesProduto, selectedValue: productId, placeholder: 'Buscar por nome ou SKU...' })

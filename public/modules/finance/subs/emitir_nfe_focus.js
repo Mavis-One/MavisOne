@@ -378,7 +378,6 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         <div class="cadastro-page-head">
           <div>
             <h3>Emitir NF-e (Focus NFe)</h3>
-            <p class="muted">Transmite de verdade à SEFAZ via Focus NFe — diferente da "Nova NF-e Avulsa", que só registra localmente.</p>
           </div>
         </div>
 
@@ -445,16 +444,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 
           ${ehComplemento() ? `
           <div class="cadastro-tab-panel" data-tab-panel="complemento" hidden>
-            <p class="fiscal-aviso-homologacao">
-              <strong>Nota complementar de ICMS.</strong> Não movimenta estoque, não gera
-              contas a receber e não acrescenta valor de mercadoria — destaca apenas o imposto
-              que faltou na nota original. O item sai como <strong>escritural</strong>
-              (código CFOP5.949), com quantidade e valor zerados, conforme orientação da SEF/SC.
-            </p>
-
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>NF-e original</h4>
-                <p>Obrigatória: a SEFAZ recusa uma complementar que não diga qual documento ela complementa.</p></div>
+              <div class="cadastro-section-header"><h4>NF-e original</h4></div>
               <div class="cadastro-section-body">
                 <label>Chave de acesso da NF-e original *
                   <input name="complementoChave" required inputmode="numeric" maxlength="44"
@@ -468,8 +459,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>ICMS a complementar</h4>
-                <p>A base é o valor que ficou de fora da nota original — não o valor do item, que é zero.</p></div>
+              <div class="cadastro-section-header"><h4>ICMS a complementar</h4></div>
               <div class="cadastro-section-body">
                 <div class="row">
                   <label>Base de cálculo do ICMS (R$) *
@@ -480,15 +470,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                   </label>
                   <label>Valor do ICMS (R$) *
                     <input name="complementoValor" type="number" step="0.01" min="0" required value="${complemento.valorIcms || ''}" />
-                    <small class="muted">Calculado ao preencher base e alíquota. Pode ser ajustado para o valor efetivamente apurado.</small>
                   </label>
                 </div>
               </div>
             </div>
 
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>Informações complementares</h4>
-                <p>Vai no corpo da nota. É o que liga este documento à nota original para quem lê o DANFE.</p></div>
+              <div class="cadastro-section-header"><h4>Informações complementares</h4></div>
               <div class="cadastro-section-body">
                 <label>Texto *
                   <textarea name="complementoInformacoes" rows="3" required>${escapeHtml(complemento.informacoes)}</textarea>
@@ -519,29 +507,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="pagamento" hidden>
-            <p class="muted">
-              O grupo de pagamento é <strong>obrigatório no layout 4.0</strong> — nota sem ele é
-              rejeitada pela SEFAZ.
-            </p>
-            ${orderIdOrigem ? `
-              <p class="muted">
-                Esta nota vem de um pedido, e <strong>o contas a receber já é dele</strong> —
-                as parcelas abaixo não serão criadas de novo. A forma de pagamento continua
-                valendo: ela vai na nota.
-              </p>
-            ` : `
-              <p class="muted">
-                Sem pedido de origem, é daqui que sai o contas a receber: as parcelas são
-                criadas em Lançamentos <strong>quando a SEFAZ autorizar</strong> a nota — não na
-                hora de enviar, para uma nota rejeitada não deixar recebível para trás.
-              </p>
-            `}
             ${pagamentosDoPedido.length ? `
             <div class="cadastro-section">
-              <div class="cadastro-section-header"><h4>Pagamentos da venda</h4>
-                <p>São estas as linhas que vão no grupo <code>pag</code> da NF-e, como foram
-                  lançadas no pedido. Para mudar, altere os pagamentos do pedido — a nota tem
-                  de dizer como a venda foi paga de verdade.</p></div>
+              <div class="cadastro-section-header"><h4>Pagamentos da venda</h4></div>
               <div class="cadastro-section-body">
                 <table class="data-table">
                   <thead><tr><th>Forma</th><th>Código SEFAZ</th><th>Cartão</th><th class="num">Valor</th></tr></thead>
@@ -591,11 +559,6 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="observacoes" hidden>
-            <p class="muted">
-              Vai no campo <strong>Informações Complementares</strong> da nota e é impresso no
-              DANFE — é o texto que o cliente lê no papel, e o que vale numa discussão de
-              garantia. Não é campo fiscal: não altera imposto, base de cálculo nem CFOP.
-            </p>
             <!-- Campo dedicado para o chassi: é o único dado da ficha que muda
                  a cada nota, e procurá-lo no meio de vinte linhas de texto a
                  cada emissão é onde o erro de digitação aparece. O que se

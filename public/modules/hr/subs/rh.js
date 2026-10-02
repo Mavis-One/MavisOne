@@ -51,7 +51,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.colaboradores = C.makeListScreen({
     ...base,
     title: 'Colaboradores',
-    subtitle: 'O quadro de pessoal, com cargo, admissão e situação.',
     tableTitle: 'Colaboradores',
     endpoint: '/api/hr/employees',
     listKey: 'employees',
@@ -79,7 +78,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.novo_colaborador = C.makeFormScreen({
     ...base,
     title: 'Novo Colaborador',
-    subtitle: 'Desligar alguém é preencher a data de saída e mudar a situação — não excluir o registro.',
     entityLabel: 'colaborador',
     endpoint: '/api/hr/employees',
     itemKey: 'employee',
@@ -97,7 +95,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
       },
       {
         title: 'Lotação e vínculo',
-        description: 'Departamento diz ONDE trabalha; tipo diz SOB QUE VÍNCULO; categoria diz COMO é remunerado; expediente diz EM QUE HORÁRIO.',
         columns: 4,
         fields: [
           { name: 'departmentId', label: 'Departamento', type: 'select', empty: 'Sem departamento', options: (meta) => meta.departments || [] },
@@ -111,7 +108,7 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
         fields: [
           { name: 'admittedAt', label: 'Admissão', type: 'date' },
           { name: 'dismissedAt', label: 'Desligamento', type: 'date' },
-          { name: 'salary', label: 'Salário (R$)', type: 'number', step: '0.01', min: 0, hint: 'Na base da categoria: mensal, por hora ou por dia.' },
+          { name: 'salary', label: 'Salário (R$)', type: 'number', step: '0.01', min: 0 },
           { name: 'status', label: 'Situação', type: 'select', empty: null, default: 'ativo', options: STATUS_COLAB }
         ]
       },
@@ -129,7 +126,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.departamentos = C.makeInlineRegisterScreen({
     ...base,
     title: 'Departamentos',
-    subtitle: 'Os setores da empresa. Excluir um departamento NÃO exclui quem trabalha nele — o colaborador apenas fica sem lotação.',
     tableTitle: 'Departamentos',
     entityLabel: 'departamento',
     endpoint: '/api/hr/departments',
@@ -147,7 +143,7 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
     fields: [
       { name: 'name', label: 'Nome do departamento', required: true },
       { name: 'managerId', label: 'Responsável', type: 'select', empty: 'Sem responsável', options: (meta) => meta.employees || [] },
-      { name: 'costCenter', label: 'Centro de custo', hint: 'Como aparece no Financeiro.' },
+      { name: 'costCenter', label: 'Centro de custo' },
       { name: 'description', label: 'Descrição', type: 'textarea', rows: 2, full: true },
       { name: 'active', label: 'Departamento ativo', type: 'checkbox', default: true }
     ]
@@ -157,7 +153,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.expedientes = C.makeListScreen({
     ...base,
     title: 'Expedientes',
-    subtitle: 'A jornada CONTRATADA de cada escala. É contra ela que o registro de ponto é comparado para apurar atraso e hora extra.',
     tableTitle: 'Expedientes',
     endpoint: '/api/hr/work-schedules',
     listKey: 'workSchedules',
@@ -180,7 +175,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.novo_expediente = C.makeFormScreen({
     ...base,
     title: 'Novo Expediente',
-    subtitle: 'Isto define o horário que a pessoa DEVE cumprir. O que ela realmente marcou fica em Registro de Ponto — são registros diferentes de propósito, e é a comparação entre os dois que produz atraso e hora extra.',
     entityLabel: 'expediente',
     endpoint: '/api/hr/work-schedules',
     itemKey: 'workSchedule',
@@ -190,14 +184,13 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
       {
         title: 'Identificação',
         fields: [
-          { name: 'name', label: 'Nome do expediente', required: true, hint: 'Ex.: Administrativo, Produção 1º turno' },
+          { name: 'name', label: 'Nome do expediente', required: true },
           { name: 'diasSemana', label: 'Escala', type: 'select', empty: 'Não informada', options: ESCALAS },
-          { name: 'cargaSemanal', label: 'Carga semanal (horas)', type: 'number', step: '0.5', min: 0, hint: 'O número do contrato: 44, 40, 30, 20.' }
+          { name: 'cargaSemanal', label: 'Carga semanal (horas)', type: 'number', step: '0.5', min: 0 }
         ]
       },
       {
         title: 'Horário',
-        description: 'Deixe o intervalo em branco para jornada sem pausa — abaixo de 6 horas diárias a lei não exige.',
         columns: 4,
         fields: [
           { name: 'entrada', label: 'Entrada', type: 'time' },
@@ -209,7 +202,7 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
       {
         title: 'Regras',
         fields: [
-          { name: 'toleranciaMinutos', label: 'Tolerância (minutos)', type: 'number', step: '1', min: 0, default: 5, hint: 'A CLT trata até 5 min por marcação, 10 no dia, como não computáveis.' },
+          { name: 'toleranciaMinutos', label: 'Tolerância (minutos)', type: 'number', step: '1', min: 0, default: 5 },
           { name: 'active', label: 'Expediente ativo', type: 'checkbox', default: true }
         ]
       },
@@ -225,7 +218,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.tipos_colaborador = C.makeInlineRegisterScreen({
     ...base,
     title: 'Tipo Colaboradores',
-    subtitle: 'O VÍNCULO: CLT, PJ, estágio, jovem aprendiz, temporário, autônomo. É diferente da categoria, que diz como a pessoa é remunerada.',
     tableTitle: 'Tipos de colaborador',
     entityLabel: 'tipo',
     endpoint: '/api/hr/employee-types',
@@ -240,7 +232,7 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
       { label: 'Situação', render: (i) => C.statusBadge(i.active === false ? 'inativo' : 'ativo') }
     ],
     fields: [
-      { name: 'name', label: 'Nome do tipo', required: true, hint: 'Ex.: CLT, PJ, Estágio' },
+      { name: 'name', label: 'Nome do tipo', required: true },
       { name: 'registroClt', label: 'Tem registro em carteira', type: 'checkbox', default: true },
       { name: 'active', label: 'Tipo ativo', type: 'checkbox', default: true },
       { name: 'description', label: 'Descrição', type: 'textarea', rows: 2, full: true }
@@ -251,7 +243,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.categorias_colaborador = C.makeInlineRegisterScreen({
     ...base,
     title: 'Categoria Colaboradores',
-    subtitle: 'A FORMA DE REMUNERAÇÃO: mensalista, horista, diarista, comissionado. A base de cálculo diz o que o salário cadastrado significa.',
     tableTitle: 'Categorias de colaborador',
     entityLabel: 'categoria',
     endpoint: '/api/hr/employee-categories',
@@ -266,7 +257,7 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
       { label: 'Situação', render: (i) => C.statusBadge(i.active === false ? 'inativo' : 'ativo') }
     ],
     fields: [
-      { name: 'name', label: 'Nome da categoria', required: true, hint: 'Ex.: Mensalista, Horista' },
+      { name: 'name', label: 'Nome da categoria', required: true },
       { name: 'baseCalculo', label: 'Base de cálculo', type: 'select', empty: null, default: 'mensal', options: BASE_CALCULO },
       { name: 'active', label: 'Categoria ativa', type: 'checkbox', default: true },
       { name: 'description', label: 'Descrição', type: 'textarea', rows: 2, full: true }
@@ -279,7 +270,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.profissoes = C.makeInlineRegisterScreen({
     ...base,
     title: 'Profissões',
-    subtitle: 'Profissões e faixas salariais do quadro. Excluir uma profissão NÃO exclui quem a exerce: o colaborador apenas fica sem profissão.',
     tableTitle: 'Profissões',
     entityLabel: 'profissão',
     endpoint: '/api/hr/positions',
@@ -297,7 +287,7 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
     formColumns: 4,
     fields: [
       { name: 'name', label: 'Nome da profissão', required: true },
-      { name: 'cbo', label: 'CBO', hint: 'Classificação Brasileira de Ocupações — exigido pelo eSocial.' },
+      { name: 'cbo', label: 'CBO' },
       { name: 'salaryMin', label: 'Salário mínimo (R$)', type: 'number', step: '0.01', min: 0 },
       { name: 'salaryMax', label: 'Salário máximo (R$)', type: 'number', step: '0.01', min: 0 },
       { name: 'description', label: 'Descrição / atribuições', type: 'textarea', rows: 2, full: true },
@@ -309,7 +299,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.ferias = C.makeListScreen({
     ...base,
     title: 'Férias e Afastamentos',
-    subtitle: 'Férias, licenças, afastamentos e faltas registradas.',
     tableTitle: 'Ausências',
     endpoint: '/api/hr/leaves',
     listKey: 'leaves',
@@ -331,7 +320,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.nova_ausencia = C.makeFormScreen({
     ...base,
     title: 'Nova Ausência',
-    subtitle: 'Deixe o fim em branco enquanto a ausência não tiver data de retorno.',
     entityLabel: 'ausência',
     endpoint: '/api/hr/leaves',
     itemKey: 'leave',
@@ -355,7 +343,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.ponto = C.makeListScreen({
     ...base,
     title: 'Registro de Ponto',
-    subtitle: 'Marcações por colaborador e dia. Só uma linha por pessoa em cada data.',
     tableTitle: 'Marcações',
     endpoint: '/api/hr/time-entries',
     listKey: 'timeEntries',
@@ -377,7 +364,6 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   R.novo_ponto = C.makeFormScreen({
     ...base,
     title: 'Novo Registro de Ponto',
-    subtitle: 'O banco recusa dois registros do mesmo colaborador na mesma data.',
     entityLabel: 'registro',
     endpoint: '/api/hr/time-entries',
     itemKey: 'timeEntry',

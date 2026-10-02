@@ -126,8 +126,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     const apuracao = ap ? `
       <div class="panel">
         <h3>Apuração do ICMS (E110)</h3>
-        <p class="muted">O &ldquo;declarado&rdquo; é o que está no arquivo. O &ldquo;pelas notas&rdquo; é o mesmo E110 refeito
-        a partir das notas do próprio arquivo (registro C190), com o saldo anterior e os ajustes que o arquivo declara.</p>
         <div class="table-scroll">
           <table class="table">
             <thead><tr><th>Campo</th><th class="num">Declarado</th><th class="num">Pelas notas</th><th></th></tr></thead>
@@ -181,16 +179,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <div class="cadastro-page-head">
           <div>
             <h3>Conferir SPED</h3>
-            <p class="muted">
-              Escolha o arquivo da EFD ICMS/IPI gerado pelo sistema anterior (<code>.txt</code>).
-              A conferência diz o que está errado e devolve um arquivo corrigido.
-            </p>
-            <p class="muted">
-              <strong>O corrigido muda só a forma</strong> — contagens de linhas, casas decimais, espaços
-              e a codificação que o Guia Prático pede. <strong>Valores não são alterados</strong>: crédito,
-              débito e obrigações a recolher mudam o imposto, e aparecem como &ldquo;não corrigido&rdquo;
-              para o contador decidir.
-            </p>
           </div>
         </div>
         <div class="row" style="align-items: center; gap: 12px;">

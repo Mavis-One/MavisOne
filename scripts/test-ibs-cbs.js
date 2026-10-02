@@ -100,7 +100,6 @@ console.log('\n--- a lista parcial não vira camisa de força ---');
 // Select fechado impediria cadastrar um código oficial que ainda não subiu.
 check('cClassTrib aceita digitação', /<input name="classTrib" list="listaClassTrib"/.test(telaSrc));
 check('com sugestão por datalist', /<datalist id="listaClassTrib">/.test(telaSrc));
-check('e avisa que a lista não é exaustiva', /pode digitar um que não esteja na lista/.test(telaSrc));
 check('o servidor marca a carga como parcial', /classificacaoTributariaParcial: true/.test(dbSrc));
 check('a migração diz que está parcial', /PARCIAL de propósito/.test(migracao));
 

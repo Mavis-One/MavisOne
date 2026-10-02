@@ -107,9 +107,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <div class="cadastro-page-head">
           <div>
             <h3>Arquivos Fiscais</h3>
-            <p class="muted">O XML de cada nota do período — as suas e as que você recebeu —
-            em um zip só, para o escritório de contabilidade. <strong>Não é o arquivo do SPED</strong>:
-            é a matéria-prima dele.</p>
           </div>
           ${F.seletorEstabelecimento(escapeHtml, lista, escolhido)}
         </div>
@@ -130,10 +127,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
           ${saidas.semXml > 0 ? `
             <div class="fiscal-aviso-cst">
-              <p><strong>${saidas.semXml} nota(s) do período sem o XML guardado aqui.</strong>
-              O download é feito uma vez, quando a nota é autorizada, e a Focus gera o arquivo
-              alguns instantes depois — quando a primeira tentativa chega antes, o arquivo ficava
-              sem ser buscado de novo. É isso que o botão abaixo faz.</p>
+              <p><strong>${saidas.semXml} nota(s) do período sem o XML guardado aqui.</strong></p>
               <p class="muted">Faltando:
                 ${faltantes.slice(0, 20).map((f) => `<code>${escapeHtml(String(f.numero))}${f.temUrl ? '' : ' (sem link na Focus)'}</code>`).join(', ')}
                 ${faltantes.length > 20 ? ` e mais ${faltantes.length - 20}` : ''}

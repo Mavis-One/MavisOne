@@ -91,7 +91,6 @@ window.MavisSubscreenRegistry.settings.users = async function renderSettingsUser
                     <option value="">Nenhum</option>
                     ${vendedores.map((v) => `<option value="${escapeHtml(v.id)}" ${v.id === user.sellerId ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}
                   </select>
-                  ${user.role === 'admin' ? '<div class="muted" style="margin-top:6px">Admin vê todas as vendas nos relatórios; o vínculo aqui é o que enche o Meu Painel dele.</div>' : ''}
                 </td>
                 <td>
                   <button class="copy-user icon-button" data-id="${user.id}" title="Duplicar acessos deste usuário" aria-label="Duplicar acessos deste usuário">

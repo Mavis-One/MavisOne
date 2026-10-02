@@ -202,7 +202,6 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
               <button type="button" class="btn btn-primary" id="entradaCadastrarFornecedor">
                 Cadastrar com os dados do XML
               </button>
-              <span class="muted">Razão social, CNPJ, inscrição estadual e endereço vêm prontos. Dá para ajustar depois em Cadastros.</span>
             </div>
           ` : `
             <p class="entrada-fornecedor-pergunta">
@@ -238,10 +237,6 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       return `
         <section class="panel">
           <h4>Itens da nota (${itens.length})</h4>
-          <p class="muted">
-            Cada item precisa apontar para um produto seu para movimentar estoque.
-            Item sem produto é gravado na nota do mesmo jeito — a entrada fica marcada como “a revisar”.
-          </p>
           <!-- SEM .table-scroll aqui, de propósito: aquele container tem
                overflow-x: auto, e overflow em um eixo faz o navegador recortar
                o outro também. O dropdown do campo de busca de produto é
@@ -375,11 +370,6 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             </select>
           </label>
         </div>
-        <p class="muted entrada-nota-custo">
-          A ordem escolhida ficará marcada como recebida por esta nota. O estoque entra
-          pelos dados da NOTA, não pelos da ordem — e a ordem não poderá mais ser recebida
-          por conta própria, o que evitaria lançar a mesma mercadoria duas vezes.
-        </p>
       `;
     }
 
@@ -401,10 +391,6 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             </label>
           </div>
           ${blocoOrdemDeCompra()}
-          <p class="muted entrada-nota-custo">
-            O custo gravado é o valor unitário da mercadoria (vUnCom). Não inclui frete, IPI nem ST —
-            ratear isso é decisão de quem apura, não de quem lança a nota.
-          </p>
           <div class="entrada-rodape-acoes">
             <button type="button" class="btn btn-muted" id="entradaCancelar">Descartar</button>
             <button type="button" class="btn btn-primary" id="entradaLancar" ${bloqueado ? 'disabled' : ''}>
@@ -461,10 +447,6 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         <div class="entrada-nfe">
           <section class="panel">
             <h3>Entrada de NF-e</h3>
-            <p class="muted">
-              Solte aqui o XML que o fornecedor mandou. O sistema lê a nota, identifica o fornecedor
-              e casa os itens com os seus produtos. Nada é gravado até você conferir e mandar lançar.
-            </p>
             <div class="entrada-drop ${tela.analisando ? 'entrada-drop-ocupada' : ''}" id="entradaDrop">
               <input type="file" id="entradaArquivo" accept=".xml,text/xml,application/xml" hidden />
               <p>${tela.analisando ? 'Lendo a nota...' : 'Arraste o XML da NF-e ou <button type="button" class="entrada-link" id="entradaEscolher">escolha o arquivo</button>'}</p>

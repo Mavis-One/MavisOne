@@ -9,7 +9,6 @@ const TASK_PRIORITY_META = {
 
 window.MavisSubscreenRegistry.cadastros.agenda = window.MavisCadastros.makeListScreen({
   title: 'Agenda de Tarefas',
-  subtitle: 'Tarefas internas com responsável, prazo e prioridade.',
   tableTitle: 'Tarefas',
   endpoint: '/api/cadastros/tasks',
   listKey: 'tasks',

@@ -101,11 +101,6 @@ window.MavisSubscreenRegistry.settings.contas_por_estabelecimento = async functi
       </div>
 
       <div class="panel">
-        <p class="muted" style="margin-top:0">
-          Marque quem pode <strong>usar</strong> cada conta nos lançamentos do Financeiro.
-          Sem marcação nenhuma, a conta segue a <strong>regra padrão</strong>:
-          a matriz usa todas; a filial usa as contas das filiais e as contas sem dono, mas não a da matriz.
-        </p>
         ${semDono ? `<p class="sales-totals-alerta">
           ${semDono} conta${semDono === 1 ? '' : 's'} sem dono — ${semDono === 1 ? 'ela vale' : 'elas valem'} para todo mundo.
           Para a regra padrão distinguir, diga de qual estabelecimento ${semDono === 1 ? 'ela é' : 'elas são'} em Cadastros › Contas Bancárias.

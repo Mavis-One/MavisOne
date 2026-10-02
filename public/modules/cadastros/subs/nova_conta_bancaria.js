@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.nova_conta_bancaria = window.MavisCadastros.makeFormScreen({
   title: 'Nova Conta Bancária',
-  subtitle: 'Banco, agência e número não podem se repetir em outra conta.',
   entityLabel: 'conta',
   endpoint: '/api/cadastros/bank-accounts',
   itemKey: 'bankAccount',
@@ -12,9 +11,8 @@ window.MavisSubscreenRegistry.cadastros.nova_conta_bancaria = window.MavisCadast
   sections: [
     {
       title: 'Identificação',
-      description: 'O nome é o que aparece nos lançamentos do Financeiro.',
       fields: [
-        { name: 'name', label: 'Nome da conta', required: true, hint: 'Ex.: Banco do Brasil - CC' },
+        { name: 'name', label: 'Nome da conta', required: true },
         {
           name: 'type',
           label: 'Tipo',
@@ -40,7 +38,6 @@ window.MavisSubscreenRegistry.cadastros.nova_conta_bancaria = window.MavisCadast
           label: 'Estabelecimento',
           type: 'select',
           empty: 'Sem dono — vale para todos',
-          hint: 'Quem pode usar esta conta sai daqui. Configurações › Contas por Estabelecimento ajusta caso a caso.',
           options: (meta) => (meta.estabelecimentos || []).map((e) => ({
             id: e.id,
             name: `${e.nomeFantasia || e.razaoSocial}${String(e.tipo || '').toUpperCase() === 'MATRIZ' ? ' (matriz)' : ''}`
@@ -51,7 +48,7 @@ window.MavisSubscreenRegistry.cadastros.nova_conta_bancaria = window.MavisCadast
     {
       title: 'Dados bancários',
       fields: [
-        { name: 'bankCode', label: 'Código do banco', hint: 'Ex.: 001' },
+        { name: 'bankCode', label: 'Código do banco' },
         { name: 'bank', label: 'Banco' },
         { name: 'agency', label: 'Agência' },
         { name: 'agencyDigit', label: 'Dígito da agência' },

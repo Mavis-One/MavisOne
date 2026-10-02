@@ -85,8 +85,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       <div class="workspace-head">
         <div>
           <h2>Grupos Tributários</h2>
-          <p class="muted">Como a empresa tributa cada produto. A regra fiscal usa o grupo
-            como critério, no lugar de uma regra por NCM.</p>
         </div>
         ${F.seletorEmpresa(escapeHtml, empresas, escolhida)}
       </div>
@@ -101,8 +99,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
       <div class="panel">
         <h3>${editando ? 'Editar grupo' : 'Novo grupo'}</h3>
-        <p class="muted">Um nome que diga o TRATAMENTO, não o produto: "Revenda tributada",
-          "Com substituição tributária", "Monofásico PIS/COFINS".</p>
         <form id="gtForm" class="form-grid">
           <label>Nome *<input name="nome" required minlength="2" maxlength="80"
             placeholder="Revenda tributada" value="${escapeHtml(editando ? editando.nome : '')}" /></label>
@@ -125,8 +121,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
       <div class="panel">
         <h3>Classificar produtos</h3>
-        <p class="muted">Aplica um grupo a todos os produtos que casam com a busca. É assim
-          que 5.475 produtos são classificados sem abrir um por um.</p>
         ${ativos.length ? `
         <form id="gtLoteForm" class="form-grid">
           <label>Buscar produtos<input name="busca" maxlength="60" placeholder="Nome, SKU ou NCM" /></label>

@@ -3,7 +3,6 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 
 window.MavisSubscreenRegistry.cadastros.novo_contato = window.MavisCadastros.makeFormScreen({
   title: 'Novo Contato',
-  subtitle: 'Vincule a pessoa de contato ao cadastro de pessoa física ou jurídica.',
   entityLabel: 'contato',
   endpoint: '/api/cadastros/contacts',
   itemKey: 'contact',
@@ -12,7 +11,6 @@ window.MavisSubscreenRegistry.cadastros.novo_contato = window.MavisCadastros.mak
   sections: [
     {
       title: 'Identificação',
-      description: 'Quem é a pessoa e a qual cadastro ela pertence.',
       fields: [
         { name: 'name', label: 'Nome do contato', required: true },
         { name: 'personId', label: 'Pessoa/empresa vinculada', type: 'select', empty: 'Nenhuma', options: (meta) => meta.directory },

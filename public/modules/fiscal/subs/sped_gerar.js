@@ -134,7 +134,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       <div style="margin-top: 12px;">
         <p class="sales-totals-nota"><strong>SPED de ${escapeHtml(mesBr(resultado.competencia))} gerado</strong> —
         ${r.documentos || 0} nota(s), ICMS a recolher ${brl(resultado.apuracao && resultado.apuracao.VL_ICMS_RECOLHER)}.
-        O download começou; ele também fica em &ldquo;Arquivos gerados&rdquo;. Valide no PVA da Receita antes de transmitir.</p>
+        Valide no PVA da Receita antes de transmitir.</p>
         ${(resultado.avisos || []).length ? `<ul style="list-style: none; padding: 0; margin: 0;">${resultado.avisos.map((x) => linha('warning', 'aviso', x)).join('')}</ul>` : ''}
       </div>`;
   }
@@ -181,8 +181,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             ? `<span class="finance-badge finance-badge-danger">falta: ${escapeHtml(falta.join(', '))}</span>`
             : '<span class="finance-badge finance-badge-success">completo</span>'}
         </summary>
-        <p class="muted">O que o arquivo precisa e não vem de nota nenhuma. O jeito mais seguro de preencher é a partir do último SPED
-        que o sistema anterior gerou para este CNPJ.
+        <p>
           <button type="button" class="secondary" id="spedImportarEscolher">Preencher a partir do último SPED anterior</button>
           <input type="file" id="spedImportarArquivo" accept=".txt,text/plain" hidden />
         </p>
@@ -195,8 +194,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           </div>` : ''}
 
         <h4>Crédito do ICMS das entradas</h4>
-        <p class="muted">Os SPEDs do sistema anterior declaram <strong>crédito zero</strong> em todos os meses, mesmo com ICMS destacado
-        nas notas de entrada. As duas escolhas dão impostos diferentes — <strong>decida com o contador</strong>. Sem escolha, o SPED não é gerado.</p>
         <div class="checkbox-grid">
           <label><input type="radio" ${RADIO} name="spedCredito" value="DESTACADO" ${v.credito_icms_entradas === 'DESTACADO' ? 'checked' : ''} /> Tomar o crédito do ICMS destacado nas entradas</label>
           <label><input type="radio" ${RADIO} name="spedCredito" value="NENHUM" ${v.credito_icms_entradas === 'NENHUM' ? 'checked' : ''} /> Não tomar crédito (entradas sem base e sem ICMS)</label>
@@ -221,8 +218,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           ${campo(escapeHtml, 'competencia_inicial', 'Primeira competência gerada aqui', v.competencia_inicial, '', 'month')}
           ${campo(escapeHtml, 'saldo_credor_inicial', 'Saldo credor inicial (R$)', v.saldo_credor_inicial, '0,00')}
         </div>
-        <p class="muted">O saldo credor inicial é o do último SPED do sistema anterior (campo 14 do E110); daí em diante cada mês passa o
-        saldo ao seguinte.</p>
 
         <h4>Contabilista</h4>
         <div class="row" style="gap: 12px; flex-wrap: wrap;">
@@ -230,7 +225,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         </div>
 
         <h4>Registro 1010 — a empresa tem…</h4>
-        <p class="muted">Cada &ldquo;sim&rdquo; obriga um registro do Bloco 1 que este sistema ainda não gera.</p>
         <div class="checkbox-grid">
           ${INDICADORES.map(([k, r]) => `<label><input type="checkbox" data-ind="${k}" ${ind[k] === 'S' ? 'checked' : ''} /> ${escapeHtml(r)}</label>`).join('')}
           <label><input type="checkbox" data-cfg="bloco_k_obrigatorio" ${v.bloco_k_obrigatorio ? 'checked' : ''} /> Obrigado ao Bloco K (estoque)</label>
@@ -315,8 +309,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           <label><input type="checkbox" id="spedRetificadora" /> Arquivo retificador (substitui um já entregue)</label>
           <button type="button" id="spedGerar">Gerar SPED</button>
         </div>
-        <p class="muted" style="margin-top: 8px;">Entram as notas emitidas e as entradas lançadas por XML <strong>neste sistema</strong>.
-        Nota que saiu por outro sistema no mesmo mês não está aqui.</p>
         ${restrito && falta.length ? `<p class="fiscal-aviso-cst">Os dados do SPED deste estabelecimento estão incompletos
           (falta: ${escapeHtml(falta.join(', '))}). Só um administrador pode completá-los.</p>` : ''}
         <div id="spedResultado">${blocoResultado(escapeHtml)}</div>

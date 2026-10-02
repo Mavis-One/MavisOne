@@ -143,7 +143,7 @@ window.MavisAtalhos = (function () {
   function campoHtml(campo, escapeHtml) {
     const valor = campo.valorHoje ? hoje() : (campo.valor ?? '');
     const obrigatorio = campo.required ? 'required' : '';
-    const dica = campo.hint ? `<small class="muted">${escapeHtml(campo.hint)}</small>` : '';
+    const dica = campo.hint ? ` title="${escapeHtml(campo.hint)}"` : '';
     let controle;
     if (campo.type === 'select') {
       controle = `<select name="${campo.name}" ${obrigatorio}>${campo.opcoes.map((o) => {
@@ -162,10 +162,9 @@ window.MavisAtalhos = (function () {
       controle = `<input type="${campo.type || 'text'}" name="${campo.name}" value="${escapeHtml(valor)}" ${passo} ${min} ${doc} ${mascara} ${exemplo} ${obrigatorio} />`;
     }
     return `
-      <label class="atalho-campo">
+      <label class="atalho-campo"${dica}>
         <span>${escapeHtml(campo.label)}${campo.required ? ' *' : ''}</span>
         ${controle}
-        ${dica}
       </label>`;
   }
 

@@ -61,14 +61,14 @@ const MODULOS = [
   'fiscal', 'reports', 'fleet', 'crm', 'hr', 'pcp', 'contracts'
 ];
 
-console.log('\n--- toda tela tem descrição (senão o bloco nasce vazio) ---');
+console.log('\n--- toda tela tem descrição (é o tooltip do bloco, senão ele nasce sem dica) ---');
 let semDesc = [];
 MODULOS.forEach((m) => {
   (moduleSubItems[m] || []).forEach((item) => {
     if (!item.desc || !String(item.desc).trim()) semDesc.push(`${m}.${item.key}`);
   });
 });
-check('todas as telas descritas', semDesc.length === 0, semDesc.join(', ') || `${MODULOS.reduce((s, m) => s + moduleSubItems[m].length, 0)} telas`);
+check('todas as telas descritas (tooltip)', semDesc.length === 0, semDesc.join(', ') || `${MODULOS.reduce((s, m) => s + moduleSubItems[m].length, 0)} telas`);
 
 console.log('\n--- cada módulo desenha um bloco por tela ---');
 MODULOS.forEach((m) => {

@@ -136,10 +136,6 @@ check('não faz nenhuma chamada de exclusão',
   !/method: 'DELETE'/.test(tela) && !/\bDELETE\b/.test(tela));
 check('e não tem botão de excluir',
   !/<button[^>]*>\s*(Excluir|Apagar)/i.test(tela) && !/data-(excluir|apagar)=/.test(tela));
-check('e diz por que não', /fiscal não se exclui/.test(tela));
-check('não promete corrigir a nota aqui',
-  /Ela não corrige a nota/.test(tela),
-  'o VM-FIS-04 pedia "botão que leva ao campo culpado"; esse caminho não existe');
 
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);
 process.exit(falhas === 0 ? 0 : 1);

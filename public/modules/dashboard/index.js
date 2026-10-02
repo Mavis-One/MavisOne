@@ -326,8 +326,6 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
         <button type="button" class="secondary" data-dashboard-meta-remover hidden>Remover</button>
         <button type="button" class="secondary" data-dashboard-meta-fechar>Fechar</button>
       </div>
-      <p class="muted dashboard-meta-dica">A meta é mensal. No Diário e no Semanal a linha mostra a parte proporcional do mês, por dias corridos.
-        Em "Todas as filiais" a linha é a soma das metas das filiais.</p>
     </form>
   ` : '';
 
@@ -500,7 +498,6 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
       <section class="panel">
         <div class="dashboard-favoritos-topo">
           <h3>Favoritos</h3>
-          <p class="muted">Somente os módulos e abas fixados aparecem aqui.</p>
         </div>
         ${favoriteModules.length ? `
           <div class="dashboard-favorites-grid">

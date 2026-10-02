@@ -71,15 +71,13 @@ function renderSettingsUserForm(ctx, mode) {
     <div class="cadastro-page-head">
       <div>
         <h3>${isEditing ? `Editar usuário — ${escapeHtml(editUser.name)}` : (copiaDe ? `Novo usuário — copiando os acessos de ${escapeHtml(copiaDe.name)}` : 'Novo usuário')}</h3>
-        <p class="muted">${isEditing
-          ? 'O usuário de login não pode ser alterado.'
+        ${copiaDe
           // O vínculo com vendedor NÃO é copiado, e dizer isso aqui é mais
           // barato do que descobrir depois: ele responde "quem esta pessoa é"
           // no Meu Painel, não "o que ela pode". Dois usuários apontando para o
           // mesmo vendedor veriam as vendas um do outro como suas.
-          : (copiaDe
-            ? 'Módulos, telas, função e permissões fiscais vieram prontos. Falta o nome, o login e a senha — e o vínculo com vendedor, que não é copiado porque diz quem a pessoa é, não o que ela pode.'
-            : 'Preencha os dados e os módulos liberados para o novo usuário.')}</p>
+          ? '<p class="muted">Módulos, telas, função e permissões fiscais vieram prontos. Falta o nome, o login e a senha — e o vínculo com vendedor, que não é copiado porque diz quem a pessoa é, não o que ela pode.</p>'
+          : ''}
       </div>
     </div>
 
@@ -128,9 +126,6 @@ function renderSettingsUserForm(ctx, mode) {
             <input type="checkbox" name="podeTrocarEstabelecimento" ${editUser?.podeTrocarEstabelecimento ? 'checked' : ''} />
             Pode lançar por outro estabelecimento
           </label>
-          <label>&nbsp;
-            <span class="muted">Quem administra o sistema pode sempre, independente desta caixa.</span>
-          </label>
         </div>` : ''}
         <div class="checkbox-grid">
           ${SETTINGS_USER_MODULES.map((module) => `<label><input type="checkbox" name="module" class="user-form-module" value="${module}" ${(modelo?.allowedModules || []).includes(module) ? 'checked' : ''} /> ${moduleLabels[module]}</label>`).join('')}
@@ -138,7 +133,6 @@ function renderSettingsUserForm(ctx, mode) {
         <div id="telasPorModulo"></div>
         <div id="fiscalPermissionsSection" hidden>
           <h4>Permissões fiscais</h4>
-          <p class="muted">Só vale se o usuário tiver acesso a Fiscal, Financeiro ou Configurações — os mesmos módulos que o servidor aceita.</p>
           <div class="checkbox-grid">
             ${SETTINGS_FISCAL_PERMISSIONS.map((perm) => `<label title="${escapeHtml(perm.descricao || '')}"><input type="checkbox" name="fiscalPermission" value="${perm.value}" ${(modelo?.fiscalPermissions || []).includes(perm.value) ? 'checked' : ''} /> ${perm.label}</label>`).join('')}
           </div>
@@ -183,7 +177,7 @@ function renderSettingsUserForm(ctx, mode) {
     // Admin enxerga tudo por definição (ver telasVisiveis() no app.js), então
     // oferecer o recorte aqui seria um controle que não controla nada.
     if (document.querySelector('[name="role"]')?.value === 'admin') {
-      caixa.innerHTML = '<p class="muted">Administrador vê todas as telas dos módulos marcados. O recorte por tela vale para a função "Usuário".</p>';
+      caixa.innerHTML = '<p class="muted">Administrador vê todas as telas dos módulos marcados.</p>';
       return;
     }
 
@@ -197,7 +191,6 @@ function renderSettingsUserForm(ctx, mode) {
 
     caixa.innerHTML = `
       <h4>Telas liberadas</h4>
-      <p class="muted">Todas as telas vêm marcadas. Desmarque o que este usuário não deve ver — o módulo continua liberado, e tela criada depois nasce visível.</p>
       ${modulos.map((modulo) => {
         const telas = telasDoModulo(modulo);
         const bloqueadas = telasBloqueadas[modulo] || [];

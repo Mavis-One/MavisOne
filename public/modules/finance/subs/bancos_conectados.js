@@ -64,7 +64,6 @@ window.MavisSubscreenRegistry.finance.bancos_conectados = async function renderB
       <div class="cadastro-page-head">
         <div>
           <h3>Bancos Conectados</h3>
-          <p class="muted">Conexões de Open Finance (Pluggy/Polp/Celcoin) por estabelecimento.</p>
         </div>
         <div class="cadastro-list-actions">
           <button type="button" id="bancosConectarBtn">+ Conectar banco</button>
@@ -79,7 +78,6 @@ window.MavisSubscreenRegistry.finance.bancos_conectados = async function renderB
           </div>
           <h3>Nenhum provedor bancário configurado</h3>
           <p class="muted">${escapeHtml(status.message || 'Configure OPEN_FINANCE_PROVIDER e as credenciais no .env do servidor para conectar um banco de verdade.')}</p>
-          <p class="muted">Até lá, o Extrato Open Finance continua funcionando no modo manual/CSV.</p>
         </div>
       ` : `
         <div class="panel">

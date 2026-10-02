@@ -240,7 +240,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
 
     content.innerHTML = `
       <div class="panel">
-        ${S.pageHead('Produtos', 'Cadastro e posição de estoque. O saldo por depósito vem das movimentações.', '<button type="button" id="stockNewProduct">Novo produto</button>')}
+        ${S.pageHead('Produtos', '', '<button type="button" id="stockNewProduct">Novo produto</button>')}
         <form id="stockProductFilters" class="form-grid">
           <div class="row">
             <label>Buscar<input type="search" name="search" value="${S.escape(filters.search)}" placeholder="Nome, SKU ou código de barras" /></label>

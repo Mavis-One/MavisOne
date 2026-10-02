@@ -234,7 +234,7 @@ window.MavisSubscreenRegistry.stock.classes = async function renderStockClasses(
               </tbody>
             </table>
           </div>
-        ` : '<p class="muted">Nenhum valor cadastrado ainda. Sem valores, esta classe não aparece como opção no produto.</p>'}
+        ` : '<p class="muted">Nenhum valor cadastrado ainda.</p>'}
       </section>
     `;
   }
@@ -250,18 +250,12 @@ window.MavisSubscreenRegistry.stock.classes = async function renderStockClasses(
 
     content.innerHTML = `
       <div class="panel">
-        ${S.pageHead('Classes de Produto',
-          'Cor, voltagem, tamanho. Cada valor passa a ter saldo de estoque próprio — o mesmo produto em preto e em branco são dois saldos.',
-          acoes)}
-        <p class="muted">
-          Aqui se cadastra o catálogo, que vale para todos os produtos.
-          <strong>Quais</strong> cores cada produto tem se define no cadastro do produto.
-        </p>
+        ${S.pageHead('Classes de Produto', '', acoes)}
       </div>
 
       ${catalogo.length ? catalogo.map(cartaoClasse).join('') : `
         <div class="panel">
-          <p class="muted">Nenhuma classe cadastrada. Comece criando "Cor" e, dentro dela, as cores que você usa.</p>
+          <p class="muted">Nenhuma classe cadastrada.</p>
         </div>
       `}
     `;

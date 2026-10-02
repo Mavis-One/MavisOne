@@ -73,10 +73,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <div class="cadastro-page-head">
           <div>
             <h3>Pré-check fiscal</h3>
-            <p class="muted">
-              Quais pedidos seriam recusados se fossem transmitidos agora. Roda a mesma
-              conferência da emissão, sem emitir nada — nenhum rascunho, nenhuma numeração.
-            </p>
           </div>
           ${F.seletorEstabelecimento(escapeHtml, lista, escolhido)}
         </div>
@@ -89,28 +85,19 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         ${erroConsulta ? `<p class="form-error">${escapeHtml(erroConsulta)}</p>` : ''}
 
         ${!erroConsulta && !pedidos.length ? `
-          <p class="muted">
-            Nenhum pedido pendente de faturamento neste período. Orçamentos, pedidos já
-            faturados e cancelados ficam de fora — não vão virar nota.
-          </p>` : ''}
+          <p class="muted">Nenhum pedido pendente de faturamento neste período.</p>` : ''}
 
         ${pedidos.length ? `
           <p class="${comProblema.length ? 'sales-totals-alerta' : 'sales-totals-nota'}">
             ${comProblema.length
               ? `<strong>${comProblema.length} de ${pedidos.length} ${pedidos.length === 1 ? 'pedido seria recusado' : 'pedidos seriam recusados'}.</strong>
                  Corrija antes de transmitir: cada recusa consome a numeração e ela não volta.`
-              : `<strong>Os ${pedidos.length} ${pedidos.length === 1 ? 'pedido passa' : 'pedidos passam'} na conferência.</strong>
-                 Isso não garante autorização — a SEFAZ tem regras que só ela conhece —, mas nenhum
-                 cai pelo que o sistema consegue conferir aqui.`}
+              : `<strong>Os ${pedidos.length} ${pedidos.length === 1 ? 'pedido passa' : 'pedidos passam'} na conferência.</strong>`}
           </p>` : ''}
 
         ${repetidos.length ? `
           <div class="fiscal-detalhe">
             <h4>O mesmo problema em mais de um pedido</h4>
-            <p class="muted">
-              Erro repetido quase nunca é um pedido ruim: é um cadastro errado, uma vez, que
-              atinge todos eles. Corrigir na origem resolve a lista inteira.
-            </p>
             <ul>
               ${repetidos.map(([problema, codes]) => `
                 <li><strong>${codes.length} pedidos</strong> (${codes.map((c) => escapeHtml(String(c))).join(', ')}):
@@ -143,10 +130,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             `).join('')}
           </tbody>
         </table>
-        <p class="muted">
-          A mensagem é a MESMA que apareceria ao tentar emitir — não um resumo. Resumir aqui
-          criaria um texto que não existe em lugar nenhum e que ninguém consegue procurar.
-        </p>
         ` : ''}
       </div>`;
 
