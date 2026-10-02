@@ -1,5 +1,7 @@
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
-window.MavisSubscreenRegistry.reports = window.MavisSubscreenRegistry.reports || {};
+// As quatro telas que já existiam antes do catálogo (ver ../index.js): o
+// catálogo as chama pelo nome da entrada `especial` de lib/relatorios.
+window.MavisRelatoriosEspeciais = window.MavisRelatoriosEspeciais || {};
 
 // As telas de Relatórios vivem no mesmo arquivo porque compartilham o cabeçalho,
 // a barra de filtros e os formatadores — separá-las duplicaria os três.
@@ -688,7 +690,7 @@ function relLigarCliques(ctx) {
 }
 
 // --- Relatório de Vendas ---------------------------------------------------
-window.MavisSubscreenRegistry.reports.vendas = async function relVendas(ctx) {
+window.MavisRelatoriosEspeciais.vendas = async function relVendas(ctx) {
   const { content, escapeHtml, state } = ctx;
   const rel = ctx.relatorioVendas || {};
   const f = relFiltros(state);
@@ -718,7 +720,7 @@ window.MavisSubscreenRegistry.reports.vendas = async function relVendas(ctx) {
 // Para quem vê todos, é um ranking. Para o vendedor comum, é o próprio
 // desempenho — e não uma lista de um item só, que pareceria um ranking
 // quebrado.
-window.MavisSubscreenRegistry.reports.vendedores = async function relVendedores(ctx) {
+window.MavisRelatoriosEspeciais.vendedores = async function relVendedores(ctx) {
   const { content, escapeHtml, state } = ctx;
   const rel = ctx.relatorioVendas || {};
   const grupos = rel.porVendedor || [];
@@ -792,7 +794,7 @@ window.MavisSubscreenRegistry.reports.vendedores = async function relVendedores(
 };
 
 // --- Relatório Financeiro --------------------------------------------------
-window.MavisSubscreenRegistry.reports.financeiro = async function relFinanceiro(ctx) {
+window.MavisRelatoriosEspeciais.financeiro = async function relFinanceiro(ctx) {
   const { content, dados, escapeHtml } = ctx;
   const pagar = dados.financeiro?.contasAPagar || {};
   const receber = dados.financeiro?.contasAReceber || {};
@@ -856,7 +858,7 @@ window.MavisSubscreenRegistry.reports.financeiro = async function relFinanceiro(
 };
 
 // --- Relatório de Estoque --------------------------------------------------
-window.MavisSubscreenRegistry.reports.estoque = async function relEstoque(ctx) {
+window.MavisRelatoriosEspeciais.estoque = async function relEstoque(ctx) {
   const { content, dados, escapeHtml } = ctx;
   const e = dados.estoque || {};
   const maiores = e.maiores || [];

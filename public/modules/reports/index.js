@@ -1,30 +1,52 @@
 window.MavisModuleRegistry = window.MavisModuleRegistry || {};
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 
-// DUAS FONTES, E CADA TELA BUSCA SÓ A SUA.
+// RELATÓRIOS POR GRUPO, como no Viper: cada item do menu é um grupo
+// (Financeiro, Vendas, Estoque...), que abre a lista dos seus relatórios.
 //
-// Financeiro e Estoque continuam saindo do /api/reports/overview, que traz os
-// três resumos de uma vez — trocar entre eles não dispara requisição nova.
+// O catálogo vem de /api/reports/catalogo, já recortado pelo que esta pessoa
+// pode ver, e fica guardado no state: trocar de grupo não busca de novo.
 //
-// Vendas e Por Vendedor saem de /api/reports/vendas, que é outra coisa: recebe
-// filtros, devolve linha a linha e — o que importa — aplica o ESCOPO do usuário
-// autenticado. Buscar as duas coisas juntas obrigaria o overview a carregar
-// todas as vendas do sistema em toda abertura de Relatórios, inclusive para
-// quem só vai olhar o estoque.
+// QUATRO TELAS JÁ EXISTIAM e continuam sendo as mesmas (subs/relatorios.js):
+// Pedidos e Vendas por Vendedor saem de /api/reports/vendas, que recebe
+// filtros e aplica o ESCOPO do usuário; Síntese Financeira e Valor em Estoque
+// saem de /api/reports/overview. No catálogo elas são as entradas `especial`.
 window.MavisModuleRegistry.reports = async function renderReports(ctx) {
   const { api, content, state, escapeHtml } = ctx;
-  const registry = window.MavisSubscreenRegistry.reports || {};
-  const sub = registry[state.activeSub] ? state.activeSub : 'vendas';
-  if (sub !== state.activeSub) state.activeSub = sub;
-
-  const granularidade = state.reportsGranularidade || 'month';
-  const ehVendas = sub === 'vendas' || sub === 'vendedores';
+  const especiais = window.MavisRelatoriosEspeciais || {};
+  const telas = window.MavisRelatoriosCatalogo;
 
   const falhar = (erro) => {
     content.innerHTML = `<div class="panel"><h3>Relatórios</h3><p class="muted">${escapeHtml(erro.message || 'Não foi possível carregar os relatórios.')}</p></div>`;
   };
 
-  if (ehVendas) {
+  let catalogo = state.relatoriosCatalogo;
+  if (!catalogo) {
+    try {
+      catalogo = await api('/api/reports/catalogo');
+      state.relatoriosCatalogo = catalogo;
+    } catch (error) {
+      return falhar(error);
+    }
+  }
+  const grupos = catalogo.grupos || [];
+  const grupo = grupos.find((g) => g.key === state.activeSub) || grupos[0];
+  if (!grupo) {
+    content.innerHTML = '<div class="panel"><h3>Relatórios</h3><p class="muted">Nenhum relatório disponível para o seu usuário.</p></div>';
+    return;
+  }
+  if (grupo.key !== state.activeSub) state.activeSub = grupo.key;
+
+  state.relatorioAberto = state.relatorioAberto || {};
+  const aberto = grupo.relatorios.find((r) => r.key === state.relatorioAberto[grupo.key]);
+  if (!aberto) return telas.lista(ctx, grupo);
+  if (!aberto.especial) return telas.relatorio(ctx, grupo, aberto, catalogo.opcoes);
+
+  const desenhar = especiais[aberto.especial];
+  if (!desenhar) return telas.lista(ctx, grupo);
+  const granularidade = state.reportsGranularidade || 'month';
+
+  if (aberto.especial === 'vendas' || aberto.especial === 'vendedores') {
     // Os filtros vêm do state e são montados pela própria tela — ver
     // relFiltros/relQueryDeFiltros em subs/relatorios.js.
     const filtros = state.reportsVendasFiltros || {};
@@ -39,7 +61,8 @@ window.MavisModuleRegistry.reports = async function renderReports(ctx) {
     } catch (error) {
       return falhar(error);
     }
-    await registry[sub]({ ...ctx, relatorioVendas, granularidade });
+    await desenhar({ ...ctx, relatorioVendas, granularidade });
+    telas.comVolta(ctx, grupo);
     return;
   }
 
@@ -49,5 +72,6 @@ window.MavisModuleRegistry.reports = async function renderReports(ctx) {
   } catch (error) {
     return falhar(error);
   }
-  await registry[sub]({ ...ctx, dados, granularidade });
+  await desenhar({ ...ctx, dados, granularidade });
+  telas.comVolta(ctx, grupo);
 };

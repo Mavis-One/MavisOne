@@ -91,6 +91,10 @@ const relatoriosVendas = require('./lib/relatorios-vendas');
 // Fase DB: as colunas do CSV do Financeiro e do Estoque, que nao tinham
 // exportacao nenhuma. Puro, como o de vendas.
 const relatoriosCsv = require('./lib/relatorios-csv');
+// O catálogo de relatórios por grupo (Financeiro, Vendas, Estoque...): uma
+// definição por relatório e um motor só para filtrar, somar e exportar.
+const catalogoDeRelatorios = require('./lib/relatorios');
+const motorDeRelatorios = require('./lib/relatorios/motor');
 // Fase DC: a meta de venda. O rateio por dias corridos e' regra pura em
 // lib/metas.js; as linhas vem de lib/db/metas.js.
 const metasLib = require('./lib/metas');
@@ -8590,6 +8594,110 @@ async function tratarRequisicao(req, res) {
       porPagina: params.get('porPagina') || 25
     };
     return { relatorio: relatoriosVendas.montarRelatorio({ registros, filtros, escopo }), filtros, escopo, registros };
+  }
+
+  // ==========================================================================
+  // O CATÁLOGO DE RELATÓRIOS (lib/relatorios)
+  //
+  // Três rotas: o menu (grupos e relatórios que esta pessoa pode ver, mais as
+  // listas dos filtros), o relatório e a exportação. As duas últimas rodam a
+  // MESMA execução — a planilha nunca discorda da tela.
+  //
+  // Duas portas: o módulo Relatórios (podeVerRelatorios) e o módulo do grupo
+  // (financeiro pede Financeiro, estoque pede Estoque...). E todo relatório
+  // que lê pedido recebe os vendedores permitidos pelo escopo de vendas: o
+  // vendedor comum vê só as próprias vendas, escolha o que escolher na tela.
+  // ==========================================================================
+  async function portaDoCatalogo(req) {
+    const user = await getCurrentUser(req);
+    if (!user) return { erro: 'Não autenticado', status: 401 };
+    const ehAdministrador = await ehAdmin(user);
+    if (!podeVerRelatorios(user, ehAdministrador)) return { erro: 'Sem permissão', status: 403 };
+    return { user, ehAdministrador };
+  }
+
+  async function executarDoCatalogo(req, chave, params) {
+    const porta = await portaDoCatalogo(req);
+    if (porta.erro) return porta;
+    const def = catalogoDeRelatorios.relatorio(chave);
+    if (!def || def.especial) return { erro: 'Relatório não encontrado', status: 404 };
+    if (!catalogoDeRelatorios.podeVerGrupo(porta.user, catalogoDeRelatorios.grupoDe(def.grupo), porta.ehAdministrador)) {
+      return { erro: 'Sem permissão', status: 403 };
+    }
+    const filtros = motorDeRelatorios.normalizarFiltros(def, Object.fromEntries(params.entries()));
+    const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
+    const resultado = await motorDeRelatorios.executar(def, filtros, {
+      sql: async (texto, parametros) => (await consultarBanco(texto, parametros)).rows,
+      // db.json: tarefas, agendamentos, contatos e metadados de produto ainda moram lá.
+      data: loadData(),
+      vendedores: escopoLib.vendedoresPermitidos(escopo, filtros.vendedorId)
+    });
+    return { resultado };
+  }
+
+  if (pathname === '/api/reports/catalogo' && req.method === 'GET') {
+    try {
+      const porta = await portaDoCatalogo(req);
+      if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
+      const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
+      const [depositos, contas, vendedores, filiais] = await Promise.all([
+        consultarBanco('select id, name from deposits order by name'),
+        consultarBanco('select id, name from bank_accounts where coalesce(ativo, true) order by name'),
+        escopo.podeEscolherVendedor
+          ? consultarBanco(`select id, name from people where extra->'roles' @> '["Vendedor"]'::jsonb order by name`)
+          : Promise.resolve({ rows: [] }),
+        consultarBanco(`select distinct btrim(regexp_replace(category, '^.*/', '')) as nome
+                          from orders where position('/' in coalesce(category, '')) > 0`)
+      ]);
+      // Duas grafias da mesma loja ("Timbó" e "Timbo") são uma opção só.
+      const porChave = new Map();
+      for (const { nome } of filiais.rows) {
+        const chave = filialDaVenda.chaveDaFilial(nome);
+        if (chave && !porChave.has(chave)) porChave.set(chave, nome);
+      }
+      return sendJson(res, {
+        grupos: catalogoDeRelatorios.catalogoVisivel(porta.user, porta.ehAdministrador),
+        opcoes: {
+          depositos: depositos.rows,
+          contas: contas.rows,
+          vendedores: vendedores.rows,
+          filiais: [...porChave.values()].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+          podeEscolherVendedor: escopo.podeEscolherVendedor
+        }
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao carregar os relatórios', 500);
+    }
+  }
+
+  {
+    const casa = pathname.match(/^\/api\/reports\/catalogo\/([a-z0-9-]+)(\/export)?$/);
+    if (casa && req.method === 'GET') {
+      try {
+        const { erro, status, resultado } = await executarDoCatalogo(req, casa[1], url.searchParams);
+        if (erro) return sendJson(res, { error: erro }, status);
+        if (casa[2]) {
+          // Montado ANTES do cabeçalho: se a montagem falhar, a resposta ainda
+          // pode ser um erro, e não um 200 pela metade.
+          const arquivo = motorDeRelatorios.paraCsv(resultado);
+          res.writeHead(200, {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${motorDeRelatorios.nomeDoArquivo(resultado)}"`
+          });
+          return res.end(arquivo);
+        }
+        // A TELA MOSTRA ATÉ 2.000 LINHAS; o arquivo leva todas. Os totais são
+        // sempre do resultado inteiro, e a tela diz quantas ficaram de fora.
+        const LIMITE = 2000;
+        return sendJson(res, {
+          ...resultado,
+          linhas: resultado.linhas.slice(0, LIMITE),
+          totalLinhas: resultado.linhas.length
+        });
+      } catch (error) {
+        return sendErro(res, error, 'Erro ao montar o relatório', 500);
+      }
+    }
   }
 
   if (pathname === '/api/reports/vendas' && req.method === 'GET') {

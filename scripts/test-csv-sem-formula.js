@@ -166,7 +166,10 @@ check('  nem a sua própria vírgula decimal',
 // regra é: cada uma passa por um montador, e o montador passa por lib/csv.js.
 const servidor = semComentarios(ler('server.js'));
 const rotasCsv = (servidor.match(/text\/csv/g) || []).length;
-const montagens = (servidor.match(/relatoriosVendas\.montarCsv\(|relatoriosCsv\.(financeiro|estoque)\(/g) || []).length;
+// O catálogo de relatórios (lib/relatorios) monta TODOS os seus arquivos por
+// um só montador, motorDeRelatorios.paraCsv — conferido no fim deste teste.
+const MONTADOR = /relatoriosVendas\.montarCsv\(|relatoriosCsv\.(financeiro|estoque)\(|motorDeRelatorios\.paraCsv\(/;
+const montagens = (servidor.match(new RegExp(MONTADOR.source, 'g')) || []).length;
 check(`toda rota de CSV chama um montador (${rotasCsv} rota(s), ${montagens} montagem(ns))`,
   rotasCsv > 0 && montagens >= rotasCsv,
   'rota nova sem montador cai aqui');
@@ -183,9 +186,7 @@ while (de >= 0) {
 }
 check(`achei o corpo das ${corposDeCsv.length} rota(s) de CSV`, corposDeCsv.length === rotasCsv);
 check('cada uma chama um montador, e nenhuma junta células por conta própria',
-  corposDeCsv.every((corpo) =>
-    /relatoriosVendas\.montarCsv\(|relatoriosCsv\.(financeiro|estoque)\(/.test(corpo)
-    && !/join\(';'\)/.test(corpo)),
+  corposDeCsv.every((corpo) => MONTADOR.test(corpo) && !/join\(';'\)/.test(corpo)),
   'montar a mao e o caminho de volta para o buraco da fase DA');
 
 // Os montadores do Financeiro e do Estoque passam por lib/csv.js — se um deles
@@ -199,6 +200,22 @@ check('  sem join manual', !/\.join\(';'\)/.test(outros));
 // a planilha pararia de somar a coluna).
 check('  texto pelo celula e número pelo numero',
   /csv\.celula\(texto\(/.test(outros) && /csv\.numero\(/.test(outros));
+
+// O MOTOR DO CATÁLOGO, e um arquivo de verdade passando por ele: texto
+// perigoso neutralizado, número intacto, total no fim.
+const motorSrc = semComentarios(ler('lib/relatorios/motor.js'));
+check('o motor do catálogo requer lib/csv', /require\('\.\.\/csv'\)/.test(ler('lib/relatorios/motor.js')));
+check('  monta o documento por ele, sem join manual', /csv\.documento\(/.test(motorSrc) && !/\.join\(';'\)/.test(motorSrc));
+const motor = require('../lib/relatorios/motor');
+const arquivoDoMotor = motor.paraCsv({
+  key: 'x', titulo: 'X', filtros: { hoje: '2026-10-02' },
+  colunas: [{ campo: 'nome', rotulo: 'Nome', tipo: 'texto' }, { campo: 'valor', rotulo: 'Valor', tipo: 'moeda' }],
+  linhas: [{ nome: '=HYPERLINK("http://x")', valor: -10 }],
+  totais: { valor: -10 }
+});
+check('  texto perigoso sai neutralizado', arquivoDoMotor.includes(`"'=HYPERLINK(""http://x"")"`), arquivoDoMotor.split('\r\n')[1]);
+check('  número negativo sai intacto', /;-10,00\r\n/.test(arquivoDoMotor));
+check('  e a linha de total fecha o arquivo', /Total;-10,00\r\n$/.test(arquivoDoMotor));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

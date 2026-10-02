@@ -118,7 +118,11 @@ function telasVisiveis(moduleName) {
   // um módulo que ele continua tendo. Lista ausente ou vazia = vê todas, que é
   // como todo usuário nasce e como todo usuário anterior à fase AN continua.
   const bloqueadas = state.user?.blockedSubs?.[moduleName] || [];
-  return todas.filter((item) => !item.somenteAdmin && !bloqueadas.includes(item.key));
+  // `requerModulo`: tela que mostra dado de OUTRO módulo (os grupos de
+  // Relatórios) só aparece para quem tem aquele módulo.
+  const modulos = state.user?.allowedModules || [];
+  return todas.filter((item) => !item.somenteAdmin && !bloqueadas.includes(item.key)
+    && (!item.requerModulo || modulos.includes(item.requerModulo)));
 }
 
 /**
@@ -1814,12 +1818,22 @@ const moduleSubItems = {
   ],
 
   // ABA: Relatórios
-  // Montados sobre dados que já existem — nenhum depende de tabela nova.
+  // Um item por GRUPO, na ordem do menu do Viper; cada grupo abre a lista dos
+  // seus relatórios (lib/relatorios). `requerModulo` esconde o grupo de quem
+  // não tem o módulo — o servidor recusa do mesmo jeito.
   reports: [
-    { key: 'vendas', label: 'Relatório de Vendas', desc: 'Pedidos, orçamentos, faturamento e ticket médio.' },
-    { key: 'financeiro', label: 'Relatório Financeiro', desc: 'Receitas, despesas e saldo ao longo do período.' },
-    { key: 'estoque', label: 'Relatório de Estoque', desc: 'Saldo, custo e valor parado por produto.' },
-    { key: 'vendedores', label: 'Relatório por Vendedor', desc: 'Quanto cada vendedor fechou no período.' }
+    { key: 'financeiro', label: 'Financeiro', desc: 'Fluxo de caixa, extrato, DRE, inadimplentes.', requerModulo: 'finance' },
+    { key: 'vendas', label: 'Vendas', desc: 'Pedidos, curva ABC, rentabilidade, condensados.', requerModulo: 'sales' },
+    { key: 'compras', label: 'Compras', desc: 'Notas de entrada, ordens de compra, fornecedores.', requerModulo: 'purchases' },
+    { key: 'crm', label: 'CRM', desc: 'Clientes sem comprar, aniversariantes, cidades.', requerModulo: 'cadastros' },
+    { key: 'pcp', label: 'PCP', desc: 'Ordens de produção, apontamentos, materiais.', requerModulo: 'pcp' },
+    { key: 'estoque', label: 'Estoque', desc: 'Saldos, movimentações, inventário, previsão de compra.', requerModulo: 'stock' },
+    { key: 'fiscal', label: 'Fiscal', desc: 'NF-e emitidas, itens, faturamento fiscal, CFOP.', requerModulo: 'fiscal' },
+    { key: 'servicos', label: 'Serviços', desc: 'Equipamentos de clientes e garantias.', requerModulo: 'cadastros' },
+    { key: 'agendamentos', label: 'Agendamentos', desc: 'Agendamentos e tarefas.', requerModulo: 'cadastros' },
+    { key: 'rh', label: 'RH', desc: 'Colaboradores, afastamentos e férias.', requerModulo: 'hr' },
+    { key: 'contratos', label: 'Contratos', desc: 'Contratos, vencimentos e lançamentos.', requerModulo: 'contracts' },
+    { key: 'frota', label: 'Frota de Veículos', desc: 'Abastecimentos, manutenções e despesas.', requerModulo: 'fleet' }
   ],
 
   // ABA: Frota de Veículos
