@@ -58,10 +58,23 @@ const VIGENCIA = '2026-10-01';
 const PIS_COFINS_VENDA = { cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3 };
 const PIS_COFINS_TRANSF = { cstPis: '08', aliquotaPis: 0, cstCofins: '08', aliquotaCofins: 0 };
 
+// IBS/CBS — NÃO VEIO DO ERP VIP, que deixava o bloco vazio em todas as regras.
+// É obrigatório na NF-e/NFC-e do regime normal desde 03/08/2026 (Ato Conjunto
+// RFB/CGIBS nº 4/2026, NT 2025.002), e a rejeição 1115 só foi ADIADA: nota sem
+// o grupo é autorizada e está errada. Na venda: CST 000, cClassTrib 000001
+// (tributação integral) e as alíquotas de teste de 2026 — CBS 0,9%, IBS 0,1%
+// todo da UF (o do município é 0% e tem de ir informado; ver
+// lib/nfePayloadBuilder.js).
+//
+// A TRANSFERÊNCIA fica SEM: entre estabelecimentos do mesmo titular o
+// enquadramento é outro (não incidência), e o código não é chute — é pergunta
+// para o contador.
+const IBS_CBS_VENDA_2026 = { cstIbsCbs: '000', classTrib: '000001', aliquotaIbsUf: 0.1, aliquotaIbsMun: 0, aliquotaCbs: 0.9 };
+
 // grupo: 'ST' = o grupo "Substituição tributária (ST)"; null = sem grupo.
 const REGRAS = [
-  { vip: 'VENDA DE MERCADORIA › Venda - ST (interna)', tipo: 'VENDA', grupo: 'ST', cfop: '5405', cstIcms: '60', modalidadeBc: null, aliquotaIcms: 0, ...PIS_COFINS_VENDA },
-  { vip: 'VENDA DE MERCADORIA › Venda - tributado (interna)', tipo: 'VENDA', grupo: null, cfop: '5102', cstIcms: '00', modalidadeBc: 3, aliquotaIcms: 17, ...PIS_COFINS_VENDA },
+  { vip: 'VENDA DE MERCADORIA › Venda - ST (interna)', tipo: 'VENDA', grupo: 'ST', cfop: '5405', cstIcms: '60', modalidadeBc: null, aliquotaIcms: 0, ...PIS_COFINS_VENDA, ibsCbs: IBS_CBS_VENDA_2026 },
+  { vip: 'VENDA DE MERCADORIA › Venda - tributado (interna)', tipo: 'VENDA', grupo: null, cfop: '5102', cstIcms: '00', modalidadeBc: 3, aliquotaIcms: 17, ...PIS_COFINS_VENDA, ibsCbs: IBS_CBS_VENDA_2026 },
   { vip: 'TRANSFERENCIA ENTRE FILIAIS › Transferencia - ST', tipo: 'TRANSFERENCIA', grupo: 'ST', cfop: '5409', cstIcms: '60', modalidadeBc: null, aliquotaIcms: 0, ...PIS_COFINS_TRANSF },
   { vip: 'TRANSFERENCIA ENTRE FILIAIS › Transferencia - tributado', tipo: 'TRANSFERENCIA', grupo: null, cfop: '5152', cstIcms: '00', modalidadeBc: 3, aliquotaIcms: 17, ...PIS_COFINS_TRANSF }
 ];
@@ -111,7 +124,7 @@ const entradaDe = (cfopOrigem, final) => ({ 5: '1', 6: '2', 7: '3' }[cfopOrigem[
     for (const r of REGRAS) {
       const grupoId = r.grupo === 'ST' ? grupoSt.id : null;
       const { rows: existentes } = await c.query(
-        `select id, cfop, cst_icms, aliquota_icms, cst_pis, aliquota_pis, cst_cofins, aliquota_cofins from regra_fiscal
+        `select id, cfop, cst_icms, aliquota_icms, cst_pis, aliquota_pis, cst_cofins, aliquota_cofins, cst_ibs_cbs from regra_fiscal
           where empresa_id = $1 and tipo_operacao = $2 and grupo_tributario_id is not distinct from $3
             and dentro_do_estado is true and ncm is null and origem is null and uf_destino is null
             and destinatario_contribuinte is null and vigencia_fim is null`,
@@ -120,17 +133,36 @@ const entradaDe = (cfopOrigem, final) => ({ 5: '1', 6: '2', 7: '3' }[cfopOrigem[
         const e = existentes[0];
         const igual = e.cfop === r.cfop && String(e.cst_icms || '').trim() === r.cstIcms && Number(e.aliquota_icms) === r.aliquotaIcms
           && String(e.cst_pis || '').trim() === r.cstPis && Number(e.aliquota_pis) === r.aliquotaPis;
+        // A regra gravada antes desta versão do script não tinha IBS/CBS:
+        // completa — só o bloco IBS/CBS, e só se ele estiver vazio.
+        if (igual && r.ibsCbs && !e.cst_ibs_cbs) {
+          const t = r.ibsCbs;
+          await c.query(
+            `update regra_fiscal set cst_ibs_cbs = $2, class_trib = $3, aliquota_ibs_uf = $4, aliquota_ibs_mun = $5,
+               aliquota_ibs = $6, aliquota_cbs = $7 where id = $1`,
+            [e.id, t.cstIbsCbs, t.classTrib, t.aliquotaIbsUf, t.aliquotaIbsMun, t.aliquotaIbsUf + t.aliquotaIbsMun, t.aliquotaCbs]);
+          console.log(`  ~   ${r.vip}: já existia — completada com IBS/CBS (CST 000, cClassTrib 000001, CBS 0,9%, IBS 0,1%)`);
+          continue;
+        }
         console.log(`  ${igual ? '==' : '!!'}  ${r.vip}: já existe ${igual ? 'igual' : `DIFERENTE (CFOP ${e.cfop}, CST ${e.cst_icms}) — não mexo`}`);
         continue;
       }
+      const t = r.ibsCbs || {};
       await c.query(
         `insert into regra_fiscal (id, empresa_id, tipo_operacao, grupo_tributario_id, dentro_do_estado, cfop, cst_icms,
-           modalidade_bc_icms, aliquota_icms, cst_pis, aliquota_pis, cst_cofins, aliquota_cofins, prioridade, vigencia_inicio)
-         values (gen_random_uuid(), $1, $2, $3, true, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12)`,
-        [empresa.id, r.tipo, grupoId, r.cfop, r.cstIcms, r.modalidadeBc, r.aliquotaIcms, r.cstPis, r.aliquotaPis, r.cstCofins, r.aliquotaCofins, VIGENCIA]);
+           modalidade_bc_icms, aliquota_icms, cst_pis, aliquota_pis, cst_cofins, aliquota_cofins, prioridade, vigencia_inicio,
+           cst_ibs_cbs, class_trib, aliquota_ibs_uf, aliquota_ibs_mun, aliquota_ibs, aliquota_cbs)
+         values (gen_random_uuid(), $1, $2, $3, true, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15, $16, $17, $18)`,
+        [empresa.id, r.tipo, grupoId, r.cfop, r.cstIcms, r.modalidadeBc, r.aliquotaIcms, r.cstPis, r.aliquotaPis, r.cstCofins, r.aliquotaCofins, VIGENCIA,
+          t.cstIbsCbs || null, t.classTrib || null,
+          r.ibsCbs ? t.aliquotaIbsUf : null, r.ibsCbs ? t.aliquotaIbsMun : null,
+          r.ibsCbs ? t.aliquotaIbsUf + t.aliquotaIbsMun : null, r.ibsCbs ? t.aliquotaCbs : null]);
       console.log(`  +   ${r.vip}: ${r.tipo}${r.grupo ? ' · grupo ST' : ' · sem grupo'} · dentro do estado -> CFOP ${r.cfop}, CST ${r.cstIcms}`
         + `${r.aliquotaIcms ? ` ${r.aliquotaIcms}%` : ''}, PIS ${r.cstPis} ${String(r.aliquotaPis).replace('.', ',')}%, COFINS ${r.cstCofins} ${r.aliquotaCofins}%`);
     }
+
+    console.log('\n  As de TRANSFERENCIA ficam SEM IBS/CBS, de propósito: o enquadramento entre');
+    console.log('  estabelecimentos do mesmo titular é pergunta para o contador.');
 
     console.log('\n--- conversão de CFOP nas compras ---');
     const corrigidas = [];

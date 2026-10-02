@@ -5596,7 +5596,10 @@ async function prepararNfeParaTransmitir(body) {
     finalidade: finalidadeEmissao,
     referencias,
     itens,
-    valorIcmsComplementar
+    valorIcmsComplementar,
+    // NT 2026.002 (referência a NFC-e): depende de ser saída e da data.
+    tipoDocumento,
+    dataEmissao: body.dataEmissao
   });
   if (errosOperacao.length) {
     const err = new Error(errosOperacao.join(' '));
