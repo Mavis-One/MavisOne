@@ -69,6 +69,12 @@ check('  ANTES de reiniciar o PM2',
   deploy.indexOf('migracoes:aplicar') < deploy.indexOf('pm2 reload'));
 // `set -euo pipefail` no topo é o que faz a falha do aplicador parar o deploy.
 check('  e a falha dele derruba o deploy', /^set -euo pipefail$/m.test(deploy));
+// Migração que falha no meio não se desfaz sozinha: a cópia vem ANTES dela, e
+// cai no data/, que o git ignora — senão o próprio backup sujaria a árvore e
+// travaria o deploy seguinte na checagem de "alterações não commitadas".
+check('o deploy copia o banco ANTES de migrar',
+  /npm run --silent backup\n/.test(deploy) && deploy.indexOf('npm run --silent backup') < deploy.indexOf('migracoes:aplicar'));
+check('  e a cópia cai numa pasta que o git ignora', /^data\/$/m.test(ignore));
 
 // ---------------------------------------------------------------------------
 // "NÃO VEIO COMMIT NOVO" NÃO É "NÃO HÁ NADA A FAZER".

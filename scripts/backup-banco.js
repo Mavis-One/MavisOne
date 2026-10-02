@@ -18,10 +18,12 @@
  * E O QUE NÃO ESTÁ NO POSTGRES?
  * -----------------------------
  * Este era o buraco, e ele era silencioso. `pg_dump` copia o Postgres — e parte
- * do sistema não mora nele: o razão de ESTOQUE (stockMovements,
- * stockTransfers) e os lançamentos do Financeiro vivem em data/db.json, e não
- * existe tabela stock_movements no banco. O backup se anunciava como "o sistema
- * inteiro" e copiava o Postgres inteiro, que é outra coisa.
+ * do sistema não mora nele. Quando isto foi escrito, o razão de estoque e os
+ * lançamentos do Financeiro viviam em data/db.json; hoje estão no banco, mas o
+ * arquivo ainda guarda as empresas de Cadastros › Empresas (a que cada depósito
+ * aponta), as formas de pagamento e os metadados de produto (categoria,
+ * unidade, mínimo). O backup se anunciava como "o sistema inteiro" e copiava o
+ * Postgres inteiro, que é outra coisa.
  *
  * O artefato agora é um .tar.gz com as duas metades dentro:
  *

@@ -93,6 +93,13 @@ fi
 # Aplicar só quando algum arquivo de migração mudou seria uma economia falsa: a
 # rodada anterior pode ter parado no meio (é por isso que existe a marca lá em
 # cima), e o aplicador sai em um segundo quando não há nada a fazer.
+# CÓPIA DO BANCO ANTES DE MIGRAR. Migração que falha no meio não se desfaz
+# sozinha, e a última cópia automática pode ter até 24 h — ou nem existir, se o
+# serviço de backup não estiver de pé neste servidor. Se a cópia falhar, o
+# deploy para aqui: migrar sem cópia é justamente o risco que isto evita.
+echo "==> Copiando o banco antes de migrar..."
+npm run --silent backup
+
 echo "==> Aplicando migrações do banco..."
 npm run --silent migracoes:aplicar
 
