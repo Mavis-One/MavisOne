@@ -5019,6 +5019,10 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/sped/configuracao/importar') return 'configurar';
   if (pathname === '/api/fiscal/sped/previa') return 'visualizar';
   if (pathname === '/api/fiscal/sped/gerar') return 'xml';
+  // Fase DM: a lista dos gerados mostra só metadados; baixar um deles é
+  // levar a escrituração inteira, e por isso pede o mesmo 'xml' de gerar.
+  if (pathname === '/api/fiscal/sped/arquivos') return 'visualizar';
+  if (pathname.startsWith('/api/fiscal/sped/arquivos/')) return 'xml';
   if (pathname === '/api/fiscal/pre-check') return 'visualizar';
 
   // O ACERVO DO PERÍODO (fase CN). Três rotas e duas permissões diferentes, e a
@@ -11273,14 +11277,24 @@ async function tratarRequisicao(req, res) {
         }
       }
 
-      if ((pathname === '/api/fiscal/sped/previa' || pathname === '/api/fiscal/sped/gerar') && req.method === 'GET') {
-        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
-        const competencia = url.searchParams.get('competencia') || '';
+      // A PRÉVIA é GET (?estabelecimentoId&competencia&vencimento&retificadora);
+      // a GERAÇÃO é POST com os mesmos campos no corpo, porque ela GRAVA o
+      // arquivo em sped_arquivos (fase DM) e responde com o registro dele — o
+      // download vem depois, por /api/fiscal/sped/arquivos/:id.
+      if ((pathname === '/api/fiscal/sped/previa' && req.method === 'GET') || (pathname === '/api/fiscal/sped/gerar' && req.method === 'POST')) {
+        const entrada = pathname === '/api/fiscal/sped/gerar'
+          ? (await readBody(req)) || {}
+          : Object.fromEntries(url.searchParams.entries());
+        const estabelecimentoId = String(entrada.estabelecimentoId || '');
+        const competencia = String(entrada.competencia || '');
+        const vencimentoGuia = String(entrada.vencimento || '') || null;
+        const retificadora = entrada.retificadora === true || entrada.retificadora === '1' || entrada.retificadora === 'true';
         if (!estabelecimentoId) return sendJson(res, { error: 'Escolha o estabelecimento.' }, 400);
         if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(competencia)) return sendJson(res, { error: 'Competência no formato aaaa-mm.' }, 400);
+        if (vencimentoGuia && !/^\d{4}-\d{2}-\d{2}$/.test(vencimentoGuia)) return sendJson(res, { error: 'Vencimento da guia no formato aaaa-mm-dd.' }, 400);
         let r;
         try {
-          r = await spedEscrituracao.escriturarCompetencia({ estabelecimentoId, competencia });
+          r = await spedEscrituracao.escriturarCompetencia({ estabelecimentoId, competencia, vencimentoGuia, retificadora });
         } catch (erro) {
           return sendErro(res, erro, 'Erro ao montar o SPED', 500);
         }
@@ -11302,18 +11316,39 @@ async function tratarRequisicao(req, res) {
         const { buffer } = spedGerador.paraLatin1(arquivo.texto);
         const [ano, mes] = competencia.split('-');
         const ultimo = new Date(Date.UTC(Number(ano), Number(mes), 0)).getUTCDate();
-        const nome = `sped-${String(r.estabelecimento.cnpj).replace(/\D/g, '')}-01${mes}${ano}-${ultimo}${mes}${ano}.txt`;
+        const nome = `sped-${String(r.estabelecimento.cnpj).replace(/\D/g, '')}-01${mes}${ano}-${ultimo}${mes}${ano}${retificadora ? '-retificadora' : ''}.txt`;
+        const guardado = await spedEscrituracao.guardarArquivo({
+          estabelecimentoId, competencia, retificadora, nome, buffer, linhas: arquivo.linhas.length,
+          montagem: m, avisos: m.avisos, usuario: user
+        });
         await registrarAuditoria({
           action: 'gerarSpedFiscal', targetId: r.estabelecimento.id, targetUsername: competencia,
           byId: user.id, byName: user.name,
-          details: { linhas: arquivo.linhas.length, documentos: m.resumo.documentos, icmsRecolher: m.apuracao.VL_ICMS_RECOLHER }
+          details: { arquivoId: guardado.id, sha256: guardado.sha256, linhas: arquivo.linhas.length, documentos: m.resumo.documentos, icmsRecolher: m.apuracao.VL_ICMS_RECOLHER, retificadora }
         });
+        return sendJson(res, {
+          arquivo: { id: guardado.id, nome, linhas: arquivo.linhas.length, bytes: buffer.length },
+          resumo: m.resumo, apuracao: m.apuracao, avisos: m.avisos
+        });
+      }
+
+      // OS ARQUIVOS GERADOS (fase DM). A lista é 'visualizar' — nome, mês,
+      // quantas notas, quem gerou —; o download é 'xml', como o próprio gerar.
+      if (pathname === '/api/fiscal/sped/arquivos' && req.method === 'GET') {
+        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
+        if (!estabelecimentoId) return sendJson(res, { error: 'Escolha o estabelecimento.' }, 400);
+        return sendJson(res, { arquivos: await spedEscrituracao.listarArquivos(estabelecimentoId) });
+      }
+      if (pathname.startsWith('/api/fiscal/sped/arquivos/') && req.method === 'GET') {
+        const id = decodeURIComponent(pathname.slice('/api/fiscal/sped/arquivos/'.length));
+        const a = await spedEscrituracao.obterArquivo(id);
+        if (!a) return sendJson(res, { error: 'Arquivo não encontrado.' }, 404);
         res.writeHead(200, {
           'Content-Type': 'text/plain; charset=iso-8859-1',
-          'Content-Disposition': `attachment; filename="${nome}"`,
-          'Content-Length': buffer.length
+          'Content-Disposition': `attachment; filename="${a.nome.replace(/[^\w.\-]/g, '_')}"`,
+          'Content-Length': a.conteudo.length
         });
-        return res.end(buffer);
+        return res.end(a.conteudo);
       }
 
       if (pathname === '/api/fiscal/sped/conferir' && req.method === 'POST') {

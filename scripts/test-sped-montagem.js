@@ -129,6 +129,15 @@ check('  e a base e o ICMS da entrada saem zerados no C170 e no C100',
   sem.blocos.C.filter((r) => r.REG === 'C170').every((r) => r.VL_ICMS === 0 && r.VL_BC_ICMS === 0)
   && sem.blocos.C.filter((r) => r.REG === 'C100' && r.IND_OPER === '0').every((r) => r.VL_ICMS === 0));
 
+const comVenc = montarEscrituracao({ ...base, documentos: [entrada, saida], vencimentoGuia: '2026-09-15' });
+check('o vencimento informado na tela vence o dia configurado', comVenc.blocos.E.find((r) => r.REG === 'E116').DT_VCTO === '15092026');
+const semDia = montarEscrituracao({ ...base, configuracao: { ...CONFIG, e116_dia_vencimento: null }, documentos: [entrada, saida] });
+check('  sem dia configurado e sem vencimento informado, impede', semDia.impedimentos.some((i) => i.codigo === 'E116'));
+const semDiaComVenc = montarEscrituracao({ ...base, configuracao: { ...CONFIG, e116_dia_vencimento: null }, documentos: [entrada, saida], vencimentoGuia: '2026-09-10' });
+check('  e o vencimento da tela basta', !semDiaComVenc.impedimentos.some((i) => i.codigo === 'E116'));
+check('arquivo retificador sai com COD_FIN 1; o original com 0',
+  montarEscrituracao({ ...base, documentos: [], retificadora: true }).registro0000.COD_FIN === '1' && m.registro0000.COD_FIN === '0');
+
 const credor = montarEscrituracao({ ...base, saldoCredorAnterior: 500, documentos: [entrada, saida] });
 const e110c = credor.blocos.E.find((r) => r.REG === 'E110');
 check('saldo credor anterior de 500 vira saldo a transportar, e não há E116',

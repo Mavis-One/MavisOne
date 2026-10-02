@@ -145,6 +145,22 @@ function xmlCom({ emitente, destinatario, chave, numero, dhEmi }) {
        values ($1, 'prova-sped-3', 55, 1, 99003, 'VENDA', 1, 1, 'AUTORIZADO', '2026-09-20T10:00:00-03:00')`, [est.id]);
     const r4 = await sped.escriturarCompetencia({ estabelecimentoId: est.id, competencia: '2026-09', cliente: c });
     check('autorizada sem XML baixado é pendência, não documento', r4.sincronia.pendentes.some((p) => /99003/.test(p)), r4.sincronia.pendentes.join(' | '));
+    check('  e a pendência IMPEDE a geração (o arquivo sairia sem ela)', r4.montagem.impedimentos.some((i) => i.codigo === 'NOTAS_PENDENTES'));
+
+    console.log('\n--- 6. o arquivo gerado fica guardado (fase DM) ---');
+    const buf = g.paraLatin1(arq.texto).buffer;
+    const guardado = await sped.guardarArquivo({
+      estabelecimentoId: est.id, competencia: '2026-09', retificadora: false, nome: 'prova.txt', buffer: buf,
+      linhas: arq.linhas.length, montagem: m, avisos: m.avisos, usuario: { id: null, name: 'Prova' }
+    }, { cliente: c });
+    const listados = await sped.listarArquivos(est.id, { cliente: c });
+    check('aparece na lista do estabelecimento, sem o conteúdo', listados[0].id === guardado.id && listados[0].conteudo === undefined);
+    check('  com competência, notas e ICMS a recolher', listados[0].competencia === '2026-09' && listados[0].documentos === 3);
+    const devolvido = await sped.obterArquivo(guardado.id, { cliente: c });
+    check('e volta BYTE A BYTE igual ao gerado', Buffer.compare(devolvido.conteudo, buf) === 0 && devolvido.bytes === buf.length);
+    check('  com o sha256 de quando foi gerado', devolvido.sha256 === require('crypto').createHash('sha256').update(buf).digest('hex'));
+    const ret = await sped.escriturarCompetencia({ estabelecimentoId: est.id, competencia: '2026-10', retificadora: true, vencimentoGuia: '2026-11-12', cliente: c });
+    check('retificadora e vencimento chegam à montagem', ret.montagem.registro0000.COD_FIN === '1');
 
     await c.query('rollback');
     console.log('\n(rollback: o banco ficou como estava)');

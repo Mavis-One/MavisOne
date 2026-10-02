@@ -1,24 +1,25 @@
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {};
 
-// GERAR SPED: a EFD ICMS/IPI de um estabelecimento num mês, a partir das notas
-// deste sistema — as emitidas pela Focus e as de entrada lançadas por XML.
+// SPED FISCAL (EFD ICMS/IPI): gera o arquivo do mês a partir das notas deste
+// sistema — as emitidas pela Focus e as entradas lançadas por XML.
 //
-// A TELA TEM TRÊS PARTES, e a ordem é a da pergunta que a pessoa faz:
+// SIMPLIFICADA EM 01/10/2026, a partir das telas de SPED que o usuário mostrou
+// (a do ViperERP e a de outro sistema): um formulário curto e um botão, e a
+// lista do que já foi gerado embaixo. A primeira versão abria com a prévia, a
+// apuração e o formulário de configuração inteiros na mesma página.
 //
-//   1. PODE GERAR? — o que impede, o que só avisa, e as notas que ainda não
-//      puderam ser escrituradas (autorizada sem XML baixado, por exemplo).
-//   2. O QUE VAI SAIR — quantas notas, e a apuração do ICMS do mês.
-//   3. OS DADOS DO SPED — o que não vem de nota nenhuma: contador, perfil,
-//      código de receita, saldo inicial, e a decisão sobre o crédito das
-//      entradas. Preenchíveis a partir do último SPED do sistema anterior.
+//   GERAR ARQUIVO       estabelecimento, mês, ano, vencimento da guia,
+//                       retificador — e o botão. O que impede aparece ali
+//                       mesmo, sob o botão; se nada impede, o arquivo baixa.
+//   ARQUIVOS GERADOS    cada SPED gerado fica guardado (fase DM) e baixa de
+//                       novo exatamente como foi entregue.
+//   DADOS DO SPED       o que não vem de nota (contador, crédito, perfil…),
+//                       recolhido — e aberto sozinho quando falta algo.
 //
-// O botão de gerar só existe quando nada impede. A prévia e o arquivo passam
-// pelo mesmo caminho no servidor: o que a tela diz é o que o arquivo será.
-//
-// O QUE ESTA TELA NÃO SABE: notas que saíram por OUTRO sistema no mesmo mês.
-// Enquanto parte das vendas sai pelo Viper, o SPED daqui não tem essas notas —
-// e isso está escrito na tela, perto do botão.
+// FORA, DE PROPÓSITO: "Inventário (Bloco H)" e "Bloco K", que as duas telas de
+// referência têm. Este sistema não tem estoque por estabelecimento com data, e
+// um botão que não faz o que promete é pior do que nenhum.
 (function (F) {
   const INDICADORES = [
     ['IND_EXP', 'Exportação (registro 1100)'],
@@ -51,22 +52,48 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     ['contador_codigo_municipio', 'Código IBGE do município', '7 dígitos']
   ];
 
-  // A sugestão lida do SPED do sistema anterior. Fica na tela até a pessoa
-  // salvar ou trocar de estabelecimento — não é gravada sozinha.
+  const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+  // Vive enquanto a tela está aberta: a sugestão lida do SPED anterior (ainda
+  // não salva) e o resultado da última geração (o que aparece sob o botão).
   let importada = null;
+  let resultado = null;
 
   const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   const mesBr = (iso) => {
     const m = /^(\d{4})-(\d{2})$/.exec(String(iso || ''));
     return m ? `${MESES[Number(m[2]) - 1]} de ${m[1]}` : String(iso || '');
   };
+  const dataHora = (iso) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
+  const token = () => (typeof getSessionToken === 'function' ? getSessionToken() : '') || '';
+
   // A EFD que se prepara em outubro é a de setembro: o padrão é o mês passado.
   function mesPassado() {
     const d = new Date();
     d.setDate(1);
     d.setMonth(d.getMonth() - 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return { ano: d.getFullYear(), mes: d.getMonth() + 1 };
+  }
+
+  /** O vencimento sugerido: o dia configurado, no mês seguinte à competência. */
+  function vencimentoSugerido(ano, mes, dia) {
+    if (!dia) return '';
+    const a = mes === 12 ? ano + 1 : ano;
+    const m = mes === 12 ? 1 : mes + 1;
+    const ultimo = new Date(a, m, 0).getDate();
+    return `${a}-${String(m).padStart(2, '0')}-${String(Math.min(Number(dia), ultimo)).padStart(2, '0')}`;
+  }
+
+  /** O que falta nos dados do SPED — e que faz a seção abrir sozinha. */
+  function faltando(cfg) {
+    const f = [];
+    if (!cfg.perfil_sped) f.push('perfil');
+    if (cfg.indicador_atividade === null || cfg.indicador_atividade === undefined) f.push('atividade');
+    if (!cfg.contador_nome || !(cfg.contador_cpf || cfg.contador_cnpj) || !cfg.contador_crc) f.push('contador');
+    if (!cfg.credito_icms_entradas) f.push('crédito das entradas');
+    if (!cfg.e116_codigo_receita) f.push('código de receita');
+    if (!cfg.competencia_inicial || cfg.saldo_credor_inicial === null || cfg.saldo_credor_inicial === undefined) f.push('início e saldo');
+    return f;
   }
 
   function paraBase64(buffer) {
@@ -76,74 +103,68 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     return btoa(bin);
   }
 
-  function lista(escapeHtml, itens) {
-    return itens && itens.length
-      ? `<ul class="muted" style="margin: 6px 0 0 18px;">${itens.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>` : '';
+  async function baixar(id) {
+    const resposta = await fetch(`/api/fiscal/sped/arquivos/${encodeURIComponent(id)}`, { headers: { 'x-auth-token': token() } });
+    if (!resposta.ok) {
+      const j = await resposta.json().catch(() => ({}));
+      throw new Error(j.error || `Falha ao baixar (${resposta.status}).`);
+    }
+    const nome = (/filename="([^"]+)"/.exec(resposta.headers.get('Content-Disposition') || '') || [])[1] || 'sped.txt';
+    const url = URL.createObjectURL(await resposta.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nome;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 
-  function blocoSituacao(escapeHtml, previa, erroPrevia) {
-    if (erroPrevia) return `<p class="fiscal-aviso-homologacao">${escapeHtml(erroPrevia)}</p>`;
-    const imp = previa.impedimentos || [];
-    const av = previa.avisos || [];
-    const pend = (previa.sincronia && previa.sincronia.pendentes) || [];
-    const veredito = imp.length
-      ? `<p class="sales-totals-alerta"><strong>${imp.length} ${imp.length === 1 ? 'ponto impede' : 'pontos impedem'}</strong> a geração do SPED de ${escapeHtml(mesBr(previa.competencia))}.</p>`
-      : `<p class="sales-totals-nota"><strong>Pronto para gerar.</strong> Nada impede o SPED de ${escapeHtml(mesBr(previa.competencia))}${av.length ? ` — ${av.length} ${av.length === 1 ? 'aviso' : 'avisos'} abaixo` : ''}.</p>`;
-    const linha = (tom, rotulo, x) => `
-      <tr>
-        <td><span class="finance-badge finance-badge-${tom}">${rotulo}</span></td>
-        <td><strong>${escapeHtml(x.titulo)}</strong><br><span class="muted">${escapeHtml(x.detalhe || '')}</span>${lista(escapeHtml, x.itens)}</td>
-      </tr>`;
-    const linhas = [
-      ...imp.map((x) => linha('danger', 'impede', x)),
-      ...(pend.length ? [linha('warning', 'pendente', {
-        titulo: `${pend.length} nota(s) do mês ainda não puderam ser escrituradas`,
-        detalhe: 'Elas ficam FORA do arquivo enquanto isso. Nota autorizada sem XML: busque o XML em Fiscal › Arquivos Fiscais.',
-        itens: pend.slice(0, 20)
-      })] : []),
-      ...av.map((x) => linha('warning', 'aviso', x))
-    ].join('');
-    return veredito + (linhas ? `<div class="table-scroll"><table class="table"><tbody>${linhas}</tbody></table></div>` : '');
+  function itens(escapeHtml, lista) {
+    return lista && lista.length
+      ? `<ul class="muted" style="margin: 4px 0 0 18px;">${lista.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>` : '';
   }
 
-  function blocoResumo(escapeHtml, previa) {
-    const r = previa.resumo || {};
-    const a = previa.apuracao || {};
-    const pode = !(previa.impedimentos || []).length;
-    const campos = [
-      ['VL_TOT_DEBITOS', 'Débitos (saídas)'],
-      ['VL_TOT_CREDITOS', 'Créditos (entradas)'],
-      ['VL_SLD_CREDOR_ANT', 'Saldo credor do mês anterior'],
-      ['VL_ICMS_RECOLHER', 'ICMS a recolher'],
-      ['VL_SLD_CREDOR_TRANSPORTAR', 'Saldo credor para o mês seguinte'],
-      ['DEB_ESP', 'Débito especial (extemporâneo)']
-    ];
+  /** O que aparece sob o botão depois de gerar. */
+  function blocoResultado(escapeHtml) {
+    if (!resultado) return '';
+    const linha = (tom, rotulo, x) => `<li style="margin-bottom: 6px;"><span class="finance-badge finance-badge-${tom}">${rotulo}</span>
+      <strong>${escapeHtml(x.titulo)}</strong><br><span class="muted">${escapeHtml(x.detalhe || '')}</span>${itens(escapeHtml, x.itens)}</li>`;
+    if (resultado.impedimentos) {
+      return `
+        <div class="fiscal-aviso-cst" style="margin-top: 12px;">
+          <p><strong>O SPED de ${escapeHtml(mesBr(resultado.competencia))} não foi gerado.</strong>
+          ${resultado.impedimentos.length === 1 ? 'Um ponto impede' : `${resultado.impedimentos.length} pontos impedem`}:</p>
+          <ul style="list-style: none; padding: 0; margin: 0;">${resultado.impedimentos.map((x) => linha('danger', 'impede', x)).join('')}</ul>
+        </div>`;
+    }
+    const r = resultado.resumo || {};
     return `
-      <div class="panel">
-        <h3>O que vai sair</h3>
-        <div class="cards">
-          <div class="card"><h3>Notas no mês</h3><p>${(r.documentos || 0).toLocaleString('pt-BR')}</p>
-            <span class="muted">${r.saidas || 0} saídas · ${r.entradas || 0} entradas · ${r.canceladas || 0} canceladas</span></div>
-          <div class="card"><h3>Participantes</h3><p>${(r.participantes || 0).toLocaleString('pt-BR')}</p><span class="muted">clientes e fornecedores (0150)</span></div>
-          <div class="card"><h3>Itens de entrada</h3><p>${(r.itensC170 || 0).toLocaleString('pt-BR')}</p><span class="muted">${r.itens || 0} produtos no 0200</span></div>
-          <div class="card"><h3>ICMS a recolher</h3><p>${brl(a.VL_ICMS_RECOLHER)}</p><span class="muted">apuração do mês (E110)</span></div>
-        </div>
-        <div class="table-scroll">
-          <table class="table">
-            <thead><tr><th>Apuração do ICMS (E110)</th><th class="num">Valor</th></tr></thead>
-            <tbody>${campos.map(([k, rotulo]) => `<tr><td>${escapeHtml(rotulo)} <span class="muted">${k}</span></td>
-              <td class="num">${a[k] === null || a[k] === undefined ? '—' : brl(a[k])}</td></tr>`).join('')}</tbody>
-          </table>
-        </div>
-        <p class="muted">
-          <strong>Só entram as notas deste sistema</strong>: as emitidas pela Focus e as entradas lançadas por XML.
-          Nota que saiu por outro sistema no mesmo mês não está aqui — e um SPED sem ela declara menos do que houve.
-        </p>
-        <div class="row" style="align-items: center; gap: 12px;">
-          ${pode
-            ? '<button type="button" id="spedGerarBaixar">Gerar e baixar o SPED</button><span class="muted">Arquivo em ISO 8859-1, pronto para o PVA da Receita. Valide no PVA antes de transmitir.</span>'
-            : '<button type="button" disabled>Gerar e baixar o SPED</button><span class="muted">Resolva o que impede, acima.</span>'}
-        </div>
+      <div style="margin-top: 12px;">
+        <p class="sales-totals-nota"><strong>SPED de ${escapeHtml(mesBr(resultado.competencia))} gerado</strong> —
+        ${r.documentos || 0} nota(s), ICMS a recolher ${brl(resultado.apuracao && resultado.apuracao.VL_ICMS_RECOLHER)}.
+        O download começou; ele também fica em &ldquo;Arquivos gerados&rdquo;. Valide no PVA da Receita antes de transmitir.</p>
+        ${(resultado.avisos || []).length ? `<ul style="list-style: none; padding: 0; margin: 0;">${resultado.avisos.map((x) => linha('warning', 'aviso', x)).join('')}</ul>` : ''}
+      </div>`;
+  }
+
+  function blocoArquivos(escapeHtml, arquivos) {
+    if (!arquivos.length) return '<p class="muted" style="text-align: center; padding: 24px 0;">Nenhum arquivo gerado para este estabelecimento.</p>';
+    return `
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr><th>Competência</th><th>Gerado em</th><th>Por</th><th class="num">Notas</th><th class="num">ICMS a recolher</th><th></th><th></th></tr></thead>
+          <tbody>${arquivos.map((a) => `
+            <tr>
+              <td>${escapeHtml(mesBr(a.competencia))}${a.retificadora ? ' <span class="finance-badge finance-badge-info">retificador</span>' : ''}</td>
+              <td>${escapeHtml(dataHora(a.geradoEm))}</td>
+              <td>${escapeHtml(a.geradoPor || '')}</td>
+              <td class="num">${a.documentos}</td>
+              <td class="num">${brl(a.icmsRecolher)}</td>
+              <td>${a.avisos.length ? `<span class="finance-badge finance-badge-warning" title="${escapeHtml(a.avisos.map((x) => x.titulo).join(' · '))}">${a.avisos.length} aviso(s)</span>` : ''}</td>
+              <td><button type="button" class="secondary" data-baixar="${escapeHtml(a.id)}">Baixar</button></td>
+            </tr>`).join('')}</tbody>
+        </table>
       </div>`;
   }
 
@@ -156,38 +177,34 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
   function blocoConfiguracao(escapeHtml, cfg, estab) {
     const v = importada ? { ...cfg, ...importada.sugestao } : cfg;
     const ind = v.indicadores_1010 || {};
+    const falta = faltando(cfg);
     const outroCnpj = importada && importada.origem.cnpj && estab && importada.origem.cnpj !== String(estab.cnpj).replace(/\D/g, '');
-    const banner = importada ? `
-      <div class="fiscal-aviso-cst">
-        <p><strong>Preenchido a partir do SPED de ${escapeHtml(mesBr(importada.origem.competencia))}</strong>
-        (${escapeHtml(importada.origem.empresa)}). <strong>Ainda não foi salvo</strong> — confira e salve.</p>
-        ${outroCnpj ? `<p class="form-error">Atenção: o arquivo é do CNPJ ${escapeHtml(importada.origem.cnpj)}, e não deste estabelecimento.</p>` : ''}
-        ${lista(escapeHtml, importada.observacoes)}
-      </div>` : '';
     return `
-      <div class="panel">
-        <div class="cadastro-page-head">
-          <div>
-            <h3>Dados do SPED deste estabelecimento</h3>
-            <p class="muted">O que o arquivo precisa e não vem de nota nenhuma. O jeito mais seguro de preencher é a partir
-            do último SPED que o sistema anterior gerou para este CNPJ.</p>
-          </div>
-          <div class="row" style="gap: 8px;">
-            <button type="button" id="spedImportarEscolher">Preencher a partir do último SPED anterior</button>
-            <input type="file" id="spedImportarArquivo" accept=".txt,text/plain" hidden />
-          </div>
-        </div>
-        ${banner}
+      <details class="panel" ${falta.length || importada ? 'open' : ''}>
+        <summary style="cursor: pointer;"><strong>Dados do estabelecimento para o SPED</strong>
+          ${falta.length
+            ? `<span class="finance-badge finance-badge-danger">falta: ${escapeHtml(falta.join(', '))}</span>`
+            : '<span class="finance-badge finance-badge-success">completo</span>'}
+        </summary>
+        <p class="muted">O que o arquivo precisa e não vem de nota nenhuma. O jeito mais seguro de preencher é a partir do último SPED
+        que o sistema anterior gerou para este CNPJ.
+          <button type="button" class="secondary" id="spedImportarEscolher">Preencher a partir do último SPED anterior</button>
+          <input type="file" id="spedImportarArquivo" accept=".txt,text/plain" hidden />
+        </p>
+        ${importada ? `
+          <div class="fiscal-aviso-cst">
+            <p><strong>Preenchido a partir do SPED de ${escapeHtml(mesBr(importada.origem.competencia))}</strong>
+            (${escapeHtml(importada.origem.empresa)}). <strong>Ainda não foi salvo</strong> — confira e salve.</p>
+            ${outroCnpj ? `<p class="form-error">Atenção: o arquivo é do CNPJ ${escapeHtml(importada.origem.cnpj)}, e não deste estabelecimento.</p>` : ''}
+            ${itens(escapeHtml, importada.observacoes)}
+          </div>` : ''}
 
         <h4>Crédito do ICMS das entradas</h4>
-        <p class="muted">Os SPEDs do sistema anterior declaram <strong>crédito zero</strong> em todos os meses, mesmo com ICMS
-        destacado nas notas de entrada. As duas escolhas abaixo dão impostos diferentes — <strong>decida com o contador</strong>.
-        Enquanto nada for escolhido, o SPED não é gerado.</p>
+        <p class="muted">Os SPEDs do sistema anterior declaram <strong>crédito zero</strong> em todos os meses, mesmo com ICMS destacado
+        nas notas de entrada. As duas escolhas dão impostos diferentes — <strong>decida com o contador</strong>. Sem escolha, o SPED não é gerado.</p>
         <div class="row" style="gap: 24px; flex-wrap: wrap;">
-          <label><input type="radio" name="spedCredito" value="DESTACADO" ${v.credito_icms_entradas === 'DESTACADO' ? 'checked' : ''} />
-            Tomar o crédito do ICMS destacado nas entradas</label>
-          <label><input type="radio" name="spedCredito" value="NENHUM" ${v.credito_icms_entradas === 'NENHUM' ? 'checked' : ''} />
-            Não tomar crédito (entradas sem base e sem ICMS)</label>
+          <label><input type="radio" name="spedCredito" value="DESTACADO" ${v.credito_icms_entradas === 'DESTACADO' ? 'checked' : ''} /> Tomar o crédito do ICMS destacado nas entradas</label>
+          <label><input type="radio" name="spedCredito" value="NENHUM" ${v.credito_icms_entradas === 'NENHUM' ? 'checked' : ''} /> Não tomar crédito (entradas sem base e sem ICMS)</label>
         </div>
 
         <h4>Identificação e apuração</h4>
@@ -204,21 +221,15 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
               <option value="1" ${String(v.indicador_atividade) === '1' ? 'selected' : ''}>1 — outros</option>
             </select>
           </label>
-          ${campo(escapeHtml, 'e116_codigo_receita', 'Código de receita do ICMS (E116)', v.e116_codigo_receita, '144910014')}
-          ${campo(escapeHtml, 'e116_dia_vencimento', 'Dia do vencimento no mês seguinte', v.e116_dia_vencimento, '10', 'number')}
-        </div>
-
-        <h4>Onde a escrituração deste sistema começa</h4>
-        <p class="muted">O saldo credor do primeiro mês é o do último SPED do sistema anterior (campo 14 do E110). Daí em diante
-        cada mês passa o saldo ao seguinte. Corrigir uma nota de um mês já entregue muda os meses depois dele.</p>
-        <div class="row" style="gap: 12px; flex-wrap: wrap;">
+          ${campo(escapeHtml, 'e116_codigo_receita', 'Código de receita do ICMS', v.e116_codigo_receita, '144910014')}
+          ${campo(escapeHtml, 'e116_dia_vencimento', 'Dia de vencimento da guia', v.e116_dia_vencimento, '10', 'number')}
           ${campo(escapeHtml, 'competencia_inicial', 'Primeira competência gerada aqui', v.competencia_inicial, '', 'month')}
-          ${campo(escapeHtml, 'saldo_credor_inicial', 'Saldo credor com que ela começa (R$)', v.saldo_credor_inicial, '0,00')}
-          <label style="align-self: end;"><input type="checkbox" data-cfg="bloco_k_obrigatorio" ${v.bloco_k_obrigatorio ? 'checked' : ''} />
-            Obrigado ao Bloco K (estoque)</label>
+          ${campo(escapeHtml, 'saldo_credor_inicial', 'Saldo credor inicial (R$)', v.saldo_credor_inicial, '0,00')}
         </div>
+        <p class="muted">O saldo credor inicial é o do último SPED do sistema anterior (campo 14 do E110); daí em diante cada mês passa o
+        saldo ao seguinte.</p>
 
-        <h4>Contabilista (registro 0100)</h4>
+        <h4>Contabilista</h4>
         <div class="row" style="gap: 12px; flex-wrap: wrap;">
           ${CONTADOR.map(([k, r, d]) => campo(escapeHtml, k, r, v[k], d)).join('')}
         </div>
@@ -227,13 +238,14 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <p class="muted">Cada &ldquo;sim&rdquo; obriga um registro do Bloco 1 que este sistema ainda não gera.</p>
         <div class="row" style="gap: 6px 24px; flex-wrap: wrap;">
           ${INDICADORES.map(([k, r]) => `<label><input type="checkbox" data-ind="${k}" ${ind[k] === 'S' ? 'checked' : ''} /> ${escapeHtml(r)}</label>`).join('')}
+          <label><input type="checkbox" data-cfg="bloco_k_obrigatorio" ${v.bloco_k_obrigatorio ? 'checked' : ''} /> Obrigado ao Bloco K (estoque)</label>
         </div>
 
         <div class="row" style="align-items: center; gap: 12px; margin-top: 12px;">
           <button type="button" id="spedSalvarConfig">Salvar dados do SPED</button>
-          ${importada ? '<button type="button" id="spedDescartarImport" class="secondary">Descartar o que foi preenchido</button>' : ''}
+          ${importada ? '<button type="button" class="secondary" id="spedDescartarImport">Descartar o que foi preenchido</button>' : ''}
         </div>
-      </div>`;
+      </details>`;
   }
 
   function lerFormulario(content) {
@@ -252,88 +264,116 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     const { api, content, escapeHtml, state, showToast } = ctx;
     const { lista: estabs, escolhido, erro } = await F.carregarEstabelecimentos(ctx);
     if (!estabs.length) {
-      content.innerHTML = F.semEstabelecimento(escapeHtml, 'Gerar SPED', erro);
+      content.innerHTML = F.semEstabelecimento(escapeHtml, 'SPED Fiscal', erro);
       return;
     }
     if (state.spedGerarEstab !== escolhido) {
-      // A sugestão importada é de UM estabelecimento; trocar de estabelecimento
-      // a descarta, senão o contador de uma filial iria parar em outra.
+      // A sugestão importada e o resultado são de UM estabelecimento.
       importada = null;
+      resultado = null;
       state.spedGerarEstab = escolhido;
     }
     const estab = estabs.find((e) => e.id === escolhido);
-    const competencia = state.spedGerarCompetencia || mesPassado();
     const q = `estabelecimentoId=${encodeURIComponent(escolhido)}`;
+    const padrao = mesPassado();
+    const ano = Number(state.spedAno || padrao.ano);
+    const mes = Number(state.spedMes || padrao.mes);
 
-    content.innerHTML = '<div class="panel"><h3>Gerar SPED</h3><p class="muted">Escriturando as notas do mês e montando a prévia...</p></div>';
     let cfg = {};
-    let previa = null;
-    let erroPrevia = null;
+    let arquivos = [];
     try {
-      const [c, p] = await Promise.all([
-        api(`/api/fiscal/sped/configuracao?${q}`),
-        api(`/api/fiscal/sped/previa?${q}&competencia=${encodeURIComponent(competencia)}`).catch((e) => { erroPrevia = e.message || 'Não foi possível montar a prévia.'; return null; })
-      ]);
+      const [c, a] = await Promise.all([api(`/api/fiscal/sped/configuracao?${q}`), api(`/api/fiscal/sped/arquivos?${q}`)]);
       cfg = c.configuracao || {};
-      previa = p;
+      arquivos = a.arquivos || [];
     } catch (e) {
-      content.innerHTML = `<div class="panel"><h3>Gerar SPED</h3><p class="form-error">${escapeHtml(e.message || 'Não foi possível carregar.')}</p></div>`;
+      content.innerHTML = `<div class="panel"><h3>SPED Fiscal (EFD ICMS/IPI)</h3><p class="form-error">${escapeHtml(e.message || 'Não foi possível carregar.')}</p></div>`;
       return;
     }
+    // O vencimento: o que a pessoa digitou para ESTA competência, ou o sugerido
+    // pelo dia configurado. Trocar mês/ano volta ao sugerido.
+    const chave = `${escolhido}|${ano}-${mes}`;
+    const vencimento = state.spedVencimentoChave === chave ? state.spedVencimento : vencimentoSugerido(ano, mes, cfg.e116_dia_vencimento);
+    const anoAtual = new Date().getFullYear();
+    const anos = [anoAtual - 2, anoAtual - 1, anoAtual];
 
     content.innerHTML = `
       <div class="panel">
-        <div class="cadastro-page-head">
-          <div>
-            <h3>Gerar SPED — ${escapeHtml(mesBr(competencia))}</h3>
-            <p class="muted">A EFD ICMS/IPI do estabelecimento, montada a partir das notas deste sistema.</p>
-          </div>
-          <div class="row" style="gap: 12px; align-items: end;">
-            ${F.seletorEstabelecimento(escapeHtml, estabs, escolhido)}
-            <label>Competência <input type="month" id="spedGerarCompetencia" value="${escapeHtml(competencia)}" /></label>
-          </div>
+        <h3>SPED Fiscal (EFD ICMS/IPI)</h3>
+        <h4>Gerar arquivo</h4>
+        <div class="row" style="gap: 12px; flex-wrap: wrap; align-items: end;">
+          ${F.seletorEstabelecimento(escapeHtml, estabs, escolhido)}
+          <label>Mês
+            <select id="spedMes">${MESES.map((m, i) => `<option value="${i + 1}" ${i + 1 === mes ? 'selected' : ''}>${m[0].toUpperCase() + m.slice(1)}</option>`).join('')}</select>
+          </label>
+          <label>Ano
+            <select id="spedAno">${anos.map((a) => `<option value="${a}" ${a === ano ? 'selected' : ''}>${a}</option>`).join('')}</select>
+          </label>
+          <label>Vencimento da guia do ICMS
+            <input type="date" id="spedVencimento" value="${escapeHtml(vencimento || '')}" />
+          </label>
         </div>
-        ${blocoSituacao(escapeHtml, previa || {}, erroPrevia)}
+        <div class="row" style="gap: 16px; align-items: center; margin-top: 12px;">
+          <label><input type="checkbox" id="spedRetificadora" /> Arquivo retificador (substitui um já entregue)</label>
+          <button type="button" id="spedGerar">Gerar SPED</button>
+        </div>
+        <p class="muted" style="margin-top: 8px;">Entram as notas emitidas e as entradas lançadas por XML <strong>neste sistema</strong>.
+        Nota que saiu por outro sistema no mesmo mês não está aqui.</p>
+        <div id="spedResultado">${blocoResultado(escapeHtml)}</div>
       </div>
-      ${previa ? blocoResumo(escapeHtml, previa) : ''}
+
+      <div class="panel">
+        <h3>Arquivos gerados</h3>
+        ${blocoArquivos(escapeHtml, arquivos)}
+      </div>
+
       ${blocoConfiguracao(escapeHtml, cfg, estab)}`;
 
-    F.ligarSeletor(ctx, () => desenhar(ctx));
-    content.querySelector('#spedGerarCompetencia').addEventListener('change', (ev) => {
-      state.spedGerarCompetencia = ev.target.value;
-      desenhar(ctx);
+    const redesenhar = () => desenhar(ctx);
+    F.ligarSeletor(ctx, redesenhar);
+    content.querySelector('#spedMes').addEventListener('change', (ev) => { state.spedMes = ev.target.value; resultado = null; redesenhar(); });
+    content.querySelector('#spedAno').addEventListener('change', (ev) => { state.spedAno = ev.target.value; resultado = null; redesenhar(); });
+    content.querySelector('#spedVencimento').addEventListener('change', (ev) => {
+      state.spedVencimento = ev.target.value;
+      state.spedVencimentoChave = chave;
     });
 
-    content.querySelector('#spedGerarBaixar')?.addEventListener('click', async (ev) => {
+    content.querySelector('#spedGerar').addEventListener('click', async (ev) => {
       const botao = ev.currentTarget;
+      const competencia = `${ano}-${String(mes).padStart(2, '0')}`;
       botao.disabled = true;
       botao.textContent = 'Gerando...';
       try {
-        // Binário (Latin-1): fetch cru com o token, como Arquivos Fiscais faz
-        // com o zip — `api()` faria .json() na resposta.
-        const resposta = await fetch(`/api/fiscal/sped/gerar?${q}&competencia=${encodeURIComponent(competencia)}`,
-          { headers: { 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' } });
-        if (!resposta.ok) {
-          const j = await resposta.json().catch(() => ({}));
+        // fetch cru, e não api(): o 409 traz a LISTA do que impede, e api() só
+        // repassa a mensagem.
+        const resposta = await fetch('/api/fiscal/sped/gerar', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-auth-token': token() },
+          body: JSON.stringify({
+            estabelecimentoId: escolhido, competencia,
+            vencimento: content.querySelector('#spedVencimento').value || null,
+            retificadora: content.querySelector('#spedRetificadora').checked
+          })
+        });
+        const j = await resposta.json().catch(() => ({}));
+        if (resposta.status === 409 && j.impedimentos) {
+          resultado = { competencia, impedimentos: j.impedimentos };
+        } else if (!resposta.ok) {
           throw new Error(j.error || `Falha ao gerar o SPED (${resposta.status}).`);
+        } else {
+          resultado = { competencia, resumo: j.resumo, apuracao: j.apuracao, avisos: j.avisos };
+          await baixar(j.arquivo.id);
         }
-        const nome = (/filename="([^"]+)"/.exec(resposta.headers.get('Content-Disposition') || '') || [])[1] || `sped-${competencia}.txt`;
-        const url = URL.createObjectURL(await resposta.blob());
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = nome;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-        showToast('SPED gerado. Valide no PVA da Receita antes de transmitir.', 'success');
+        redesenhar();
       } catch (e) {
         showToast(e.message || 'Não foi possível gerar o SPED.', 'error');
-      } finally {
         botao.disabled = false;
-        botao.textContent = 'Gerar e baixar o SPED';
+        botao.textContent = 'Gerar SPED';
       }
     });
+
+    content.querySelectorAll('[data-baixar]').forEach((b) => b.addEventListener('click', async () => {
+      try { await baixar(b.dataset.baixar); } catch (e) { showToast(e.message, 'error'); }
+    }));
 
     const arquivo = content.querySelector('#spedImportarArquivo');
     content.querySelector('#spedImportarEscolher').addEventListener('click', () => arquivo.click());
@@ -345,14 +385,14 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           method: 'POST',
           body: JSON.stringify({ estabelecimentoId: escolhido, conteudoBase64: paraBase64(await f.arrayBuffer()) })
         });
-        desenhar(ctx);
+        redesenhar();
       } catch (e) {
         showToast(e.message || 'Não foi possível ler o arquivo.', 'error');
       } finally {
         arquivo.value = '';
       }
     });
-    content.querySelector('#spedDescartarImport')?.addEventListener('click', () => { importada = null; desenhar(ctx); });
+    content.querySelector('#spedDescartarImport')?.addEventListener('click', () => { importada = null; redesenhar(); });
 
     content.querySelector('#spedSalvarConfig').addEventListener('click', async (ev) => {
       const botao = ev.currentTarget;
@@ -361,7 +401,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         await api(`/api/fiscal/sped/configuracao?${q}`, { method: 'PUT', body: JSON.stringify(lerFormulario(content)) });
         importada = null;
         showToast('Dados do SPED salvos.', 'success');
-        desenhar(ctx);
+        redesenhar();
       } catch (e) {
         showToast(e.message || 'Não foi possível salvar.', 'error');
         botao.disabled = false;
