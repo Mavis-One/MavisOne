@@ -16,6 +16,8 @@ const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
 const spedPreCheck = require('./lib/db/sped-pre-check');
 const spedConferencia = require('./lib/sped-conferencia');
+const spedEscrituracao = require('./lib/db/sped-escrituracao');
+const spedGerador = require('./lib/sped-gerador');
 // Fase CF: a chave mestra da conta Focus NFe (o token principal), separada do
 // token de emissão de cada CNPJ, que continua em lib/db/fiscal.js.
 const integracoesDb = require('./lib/db/integracoes');
@@ -5006,6 +5008,17 @@ function resolveFiscalPermission(pathname, method) {
   // que o próprio usuário mandou, não lê o banco e não grava nada. O arquivo
   // corrigido que ela devolve é o mesmo conteúdo que chegou, reescrito.
   if (pathname === '/api/fiscal/sped/conferir') return 'visualizar';
+  // GERAR O SPED (fase DL). Quatro rotas, três permissões, e a divisão segue o
+  // que cada uma entrega:
+  //   a PRÉVIA mostra contagens, impedimentos e a apuração -> 'visualizar';
+  //   a CONFIGURAÇÃO se lê com 'visualizar' e se grava com 'configurar' — ela
+  //     decide o crédito do ICMS, e isso muda o imposto;
+  //   o ARQUIVO entrega a escrituração inteira da empresa, com CPF de cliente
+  //     -> 'xml', a mesma permissão de baixar o XML das notas e o acervo.
+  if (pathname === '/api/fiscal/sped/configuracao') return method === 'GET' ? 'visualizar' : 'configurar';
+  if (pathname === '/api/fiscal/sped/configuracao/importar') return 'configurar';
+  if (pathname === '/api/fiscal/sped/previa') return 'visualizar';
+  if (pathname === '/api/fiscal/sped/gerar') return 'xml';
   if (pathname === '/api/fiscal/pre-check') return 'visualizar';
 
   // O ACERVO DO PERÍODO (fase CN). Três rotas e duas permissões diferentes, e a
@@ -11215,6 +11228,94 @@ async function tratarRequisicao(req, res) {
       // O teto é o do anexo. O maior SPED desta empresa (março/2026) tem 452 KB;
       // 16 MB de base64 são uns 12 MB de arquivo, folga de vinte e tantas vezes.
       // ----------------------------------------------------------------
+      // ----------------------------------------------------------------
+      // GERAR O SPED A PARTIR DO SISTEMA (fase DL).
+      //
+      // A prévia e o arquivo passam pelo MESMO caminho (escriturarCompetencia):
+      // escritura o que falta do mês, lê, encadeia o saldo e monta. Não existe
+      // uma segunda conta para a tela — se existisse, ela diria "pode gerar"
+      // para um arquivo que a geração recusa.
+      //
+      // A prévia ESCREVE em fiscal_documentos (a escrituração do que faltava), e
+      // é um GET mesmo assim: o que ela grava é derivado das notas que já
+      // existem, idempotente, e é o que a geração gravaria de qualquer forma.
+      // ----------------------------------------------------------------
+      if (pathname === '/api/fiscal/sped/configuracao') {
+        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
+        if (!estabelecimentoId) return sendJson(res, { error: 'Escolha o estabelecimento.' }, 400);
+        if (req.method === 'GET') {
+          const cfg = await spedEscrituracao.obterConfiguracao(estabelecimentoId);
+          if (!cfg) return sendJson(res, { error: 'Estabelecimento não encontrado.' }, 404);
+          return sendJson(res, { configuracao: cfg });
+        }
+        if (req.method === 'PUT') {
+          const body = await readBody(req);
+          try {
+            return sendJson(res, { configuracao: await spedEscrituracao.salvarConfiguracao(estabelecimentoId, body || {}, user) });
+          } catch (erro) {
+            // As validações de salvarConfiguracao lançam com .status e texto
+            // escrito aqui; sendErro mostra essas e esconde erro de banco.
+            return sendErro(res, erro, 'Erro ao salvar os dados do SPED');
+          }
+        }
+      }
+
+      if (pathname === '/api/fiscal/sped/configuracao/importar' && req.method === 'POST') {
+        const body = await readBody(req, 16 * 1024 * 1024);
+        const bytes = Buffer.from(String(body.conteudoBase64 || ''), 'base64');
+        if (!bytes.length) return sendJson(res, { error: 'Nenhum arquivo enviado.' }, 400);
+        try {
+          return sendJson(res, spedConferencia.configuracaoDoSpedAnterior(bytes));
+        } catch (erro) {
+          // O erro do leitor diz a linha que quebrou, mas é sobre o arquivo de
+          // outra pessoa: vai para o log com código, e a tela recebe o recado.
+          return sendErro(res, erro, 'Não consegui ler este arquivo como SPED (EFD ICMS/IPI)');
+        }
+      }
+
+      if ((pathname === '/api/fiscal/sped/previa' || pathname === '/api/fiscal/sped/gerar') && req.method === 'GET') {
+        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
+        const competencia = url.searchParams.get('competencia') || '';
+        if (!estabelecimentoId) return sendJson(res, { error: 'Escolha o estabelecimento.' }, 400);
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(competencia)) return sendJson(res, { error: 'Competência no formato aaaa-mm.' }, 400);
+        let r;
+        try {
+          r = await spedEscrituracao.escriturarCompetencia({ estabelecimentoId, competencia });
+        } catch (erro) {
+          return sendErro(res, erro, 'Erro ao montar o SPED', 500);
+        }
+        const m = r.montagem;
+        if (pathname === '/api/fiscal/sped/previa') {
+          return sendJson(res, {
+            competencia,
+            estabelecimento: { id: r.estabelecimento.id, cnpj: r.estabelecimento.cnpj, razaoSocial: r.estabelecimento.razao_social },
+            resumo: m.resumo, apuracao: m.apuracao, impedimentos: m.impedimentos, avisos: m.avisos, sincronia: r.sincronia
+          });
+        }
+        // O ARQUIVO. Com impedimento, NÃO sai — nem "com aviso": um SPED sem a
+        // apuração do ST ou com saldo inventado é declaração errada, não
+        // declaração incompleta.
+        if (m.impedimentos.length) {
+          return sendJson(res, { error: 'O SPED não pode ser gerado: ' + m.impedimentos.map((i) => i.titulo).join('; '), impedimentos: m.impedimentos }, 409);
+        }
+        const arquivo = spedGerador.gerarEfd({ registro0000: m.registro0000, blocos: m.blocos });
+        const { buffer } = spedGerador.paraLatin1(arquivo.texto);
+        const [ano, mes] = competencia.split('-');
+        const ultimo = new Date(Date.UTC(Number(ano), Number(mes), 0)).getUTCDate();
+        const nome = `sped-${String(r.estabelecimento.cnpj).replace(/\D/g, '')}-01${mes}${ano}-${ultimo}${mes}${ano}.txt`;
+        await registrarAuditoria({
+          action: 'gerarSpedFiscal', targetId: r.estabelecimento.id, targetUsername: competencia,
+          byId: user.id, byName: user.name,
+          details: { linhas: arquivo.linhas.length, documentos: m.resumo.documentos, icmsRecolher: m.apuracao.VL_ICMS_RECOLHER }
+        });
+        res.writeHead(200, {
+          'Content-Type': 'text/plain; charset=iso-8859-1',
+          'Content-Disposition': `attachment; filename="${nome}"`,
+          'Content-Length': buffer.length
+        });
+        return res.end(buffer);
+      }
+
       if (pathname === '/api/fiscal/sped/conferir' && req.method === 'POST') {
         const body = await readBody(req, 16 * 1024 * 1024);
         const base64 = typeof body.conteudoBase64 === 'string' ? body.conteudoBase64 : '';

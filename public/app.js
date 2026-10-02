@@ -1782,6 +1782,9 @@ const moduleSubItems = {
     // "esta nota passa agora?", este responde "o arquivo do mes fecha?". A EFD
     // vence no dia 20 do mes seguinte, e nao gera arquivo nenhum -- ela diz o
     // que estaria faltando se gerasse.
+    // GERAR vem antes do pré-check e da conferência: é a tarefa; os outros dois
+    // são o que se olha quando ela não sai. Fase DL.
+    { key: 'sped_gerar', label: 'Gerar SPED', desc: 'A EFD ICMS/IPI do mês, montada das notas emitidas e das entradas deste sistema.' },
     { key: 'sped_pre_check', label: 'Pré-check do SPED', desc: 'O que falta para gerar a EFD ICMS/IPI da competência, registro por registro.' },
     // Logo depois do pré-check: este responde "o que falta para gerar daqui",
     // aquela responde "o arquivo do sistema anterior está certo?". Enquanto as

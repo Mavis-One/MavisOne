@@ -198,7 +198,8 @@ const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
 //
 // São 18 com "Conferir SPED" (01/10/2026): lê o arquivo que o sistema anterior
 // gerou, aponta os erros e devolve um corrigido — só na forma, nunca no valor.
-check('fiscal tem as 18 telas reais', reais('fiscal') === 18, `${reais('fiscal')} real(is)`);
+// São 19 com "Gerar SPED" (fase DL): a EFD do mês a partir das notas daqui.
+check('fiscal tem as 19 telas reais', reais('fiscal') === 19, `${reais('fiscal')} real(is)`);
 // Sem nenhuma tela pendente em lugar nenhum, o menu não pode mais oferecer um
 // destino que não abre.
 const pendentesNoSistema = Object.entries(moduleSubItems)
