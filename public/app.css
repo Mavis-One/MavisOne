@@ -2579,7 +2579,10 @@ tr.is-selecionada > td { background: var(--panel-alt); }
    Blocos clicáveis com todas as telas do módulo. Herdam as variáveis de tema,
    então acompanham claro e escuro sem regra própria para cada um.
    ============================================================================ */
-.workspace { display: grid; gap: 16px; }
+/* `minmax(0, 1fr)`: sem isto a coluna da grade cresce até a largura do
+   conteúdo, e uma tabela larga (DRE anual, Relatório de Vendas) empurrava a
+   página inteira para os lados em vez de rolar dentro da própria caixa. */
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 
 /* Texto à esquerda, "Fixar módulo" à direita. Voltou a ser flex quando o
    botão de fixar entrou — com só o texto dentro, o flex não fazia nada. */
@@ -4199,6 +4202,26 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
    relatorios. Por isso pilulas, e nao abas com moldura -- aba sugere que o
    conteudo de baixo troca por inteiro. */
 .rel-visoes { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* A lista de relatórios de um grupo: uma linha por relatório, clicável inteira. */
+.rel-catalogo-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.rel-catalogo-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 14px 16px; text-align: left; font-weight: 600;
+  background: var(--panel-alt); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; cursor: pointer;
+}
+.rel-catalogo-item:hover { border-color: var(--primary); background: var(--panel-alt-hover); }
+.rel-voltar { margin-right: 12px; padding: 4px 12px; }
+.rel-voltar-linha { margin-bottom: 12px; }
+.rel-tabela tfoot td { border-top: 2px solid var(--border); }
+/* Texto quebra linha no relatório: a tabela do sistema não quebra (nowrap), e
+   um nome de produto de 173 caracteres empurrava as colunas de número para
+   fora da tela. Número continua numa linha só (.rel-num). */
+.rel-tabela td:not(.rel-num) { white-space: normal; max-width: 420px; overflow-wrap: anywhere; }
+/* `.table th, .table td { text-align: left }` vence `.rel-num` sozinho (elemento
+   + classe contra só classe): o número saía alinhado à esquerda. */
+.rel-tabela .rel-num { text-align: right; }
 
 .rel-tabela-topo { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
 .rel-tabela-topo h3 { margin: 0; }
