@@ -1792,6 +1792,8 @@ const moduleSubItems = {
     { key: 'notas_contra_cnpj', label: 'Notas contra CNPJ', desc: 'O que terceiros emitiram contra os nossos CNPJs, com manifestação do destinatário.' },
     { key: 'eventos', label: 'Eventos NF-e', desc: 'Cartas de correção, cancelamentos e inutilizações.' },
     { key: 'logs', label: 'Logs NF-e', desc: 'O que foi enviado à SEFAZ e o que ela respondeu.' },
+    // Fase DO: o cadastro de produtos contra as tabelas oficiais de NCM e CEST.
+    { key: 'analise_fiscal', label: 'Análise Fiscal', desc: 'Produtos com NCM ou CEST inexistente, incompatível ou fora da substituição tributária.' },
     { key: 'tabelas', label: 'Tabelas Fiscais', desc: 'Consulta os códigos oficiais: CFOP, CST, CSOSN e origem.' },
     // Entre Tabelas e Regras de propósito, porque é a peça do meio: Tabelas são
     // os CÓDIGOS, Operações são os TIPOS DE OPERAÇÃO, e Regras é quem casa um

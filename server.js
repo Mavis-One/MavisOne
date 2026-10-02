@@ -15,6 +15,7 @@ const db = require('./db');
 const focusNfe = require('./lib/focusnfe');
 const fiscalDb = require('./lib/db/fiscal');
 const spedConferencia = require('./lib/sped-conferencia');
+const analiseFiscalDb = require('./lib/db/analise-fiscal');
 const spedEscrituracao = require('./lib/db/sped-escrituracao');
 const spedGerador = require('./lib/sped-gerador');
 // Fase CF: a chave mestra da conta Focus NFe (o token principal), separada do
@@ -5003,6 +5004,9 @@ function resolveFiscalPermission(pathname, method) {
   // que o próprio usuário mandou, não lê o banco e não grava nada. O arquivo
   // corrigido que ela devolve é o mesmo conteúdo que chegou, reescrito.
   if (pathname === '/api/fiscal/sped/conferir') return 'visualizar';
+  // ANÁLISE FISCAL DO CADASTRO (fase DO): leitura do cadastro de produtos
+  // contra as tabelas oficiais de NCM e CEST.
+  if (pathname === '/api/fiscal/analise-fiscal') return 'visualizar';
   // GERAR O SPED (fase DL). Quatro rotas, três permissões, e a divisão segue o
   // que cada uma entrega:
   //   a PRÉVIA mostra contagens, impedimentos e a apuração -> 'visualizar';
@@ -11321,6 +11325,10 @@ async function tratarRequisicao(req, res) {
           'Content-Length': a.conteudo.length
         });
         return res.end(a.conteudo);
+      }
+
+      if (pathname === '/api/fiscal/analise-fiscal' && req.method === 'GET') {
+        return sendJson(res, await analiseFiscalDb.analisar());
       }
 
       if (pathname === '/api/fiscal/sped/conferir' && req.method === 'POST') {
