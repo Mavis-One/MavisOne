@@ -15,7 +15,10 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 //   ARQUIVOS GERADOS    cada SPED gerado fica guardado (fase DM) e baixa de
 //                       novo exatamente como foi entregue.
 //   DADOS DO SPED       o que não vem de nota (contador, crédito, perfil…),
-//                       recolhido — e aberto sozinho quando falta algo.
+//                       recolhido — e aberto sozinho quando falta algo. SÓ
+//                       PARA ADMINISTRADOR (01/10/2026): o servidor nem manda
+//                       a configuração a quem não é (`restrito`), só a lista
+//                       do que falta, para a pessoa saber a quem pedir.
 //
 // FORA, DE PROPÓSITO: "Inventário (Bloco H)" e "Bloco K", que as duas telas de
 // referência têm. Este sistema não tem estoque por estabelecimento com data, e
@@ -82,18 +85,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     const m = mes === 12 ? 1 : mes + 1;
     const ultimo = new Date(a, m, 0).getDate();
     return `${a}-${String(m).padStart(2, '0')}-${String(Math.min(Number(dia), ultimo)).padStart(2, '0')}`;
-  }
-
-  /** O que falta nos dados do SPED — e que faz a seção abrir sozinha. */
-  function faltando(cfg) {
-    const f = [];
-    if (!cfg.perfil_sped) f.push('perfil');
-    if (cfg.indicador_atividade === null || cfg.indicador_atividade === undefined) f.push('atividade');
-    if (!cfg.contador_nome || !(cfg.contador_cpf || cfg.contador_cnpj) || !cfg.contador_crc) f.push('contador');
-    if (!cfg.credito_icms_entradas) f.push('crédito das entradas');
-    if (!cfg.e116_codigo_receita) f.push('código de receita');
-    if (!cfg.competencia_inicial || cfg.saldo_credor_inicial === null || cfg.saldo_credor_inicial === undefined) f.push('início e saldo');
-    return f;
   }
 
   function paraBase64(buffer) {
@@ -174,10 +165,14 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     </label>`;
   }
 
-  function blocoConfiguracao(escapeHtml, cfg, estab) {
+  // Caixa de marcar e botão de opção ao lado do texto. A regra global de input
+  // estica o radio à largura toda (a bolinha ia parar longe do texto, visto no
+  // print de 01/10/2026); .checkbox-grid já alinha o checkbox.
+  const RADIO = 'style="width: auto; margin: 0;"';
+
+  function blocoConfiguracao(escapeHtml, cfg, estab, falta) {
     const v = importada ? { ...cfg, ...importada.sugestao } : cfg;
     const ind = v.indicadores_1010 || {};
-    const falta = faltando(cfg);
     const outroCnpj = importada && importada.origem.cnpj && estab && importada.origem.cnpj !== String(estab.cnpj).replace(/\D/g, '');
     return `
       <details class="panel" ${falta.length || importada ? 'open' : ''}>
@@ -202,9 +197,9 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         <h4>Crédito do ICMS das entradas</h4>
         <p class="muted">Os SPEDs do sistema anterior declaram <strong>crédito zero</strong> em todos os meses, mesmo com ICMS destacado
         nas notas de entrada. As duas escolhas dão impostos diferentes — <strong>decida com o contador</strong>. Sem escolha, o SPED não é gerado.</p>
-        <div class="row" style="gap: 24px; flex-wrap: wrap;">
-          <label><input type="radio" name="spedCredito" value="DESTACADO" ${v.credito_icms_entradas === 'DESTACADO' ? 'checked' : ''} /> Tomar o crédito do ICMS destacado nas entradas</label>
-          <label><input type="radio" name="spedCredito" value="NENHUM" ${v.credito_icms_entradas === 'NENHUM' ? 'checked' : ''} /> Não tomar crédito (entradas sem base e sem ICMS)</label>
+        <div class="checkbox-grid">
+          <label><input type="radio" ${RADIO} name="spedCredito" value="DESTACADO" ${v.credito_icms_entradas === 'DESTACADO' ? 'checked' : ''} /> Tomar o crédito do ICMS destacado nas entradas</label>
+          <label><input type="radio" ${RADIO} name="spedCredito" value="NENHUM" ${v.credito_icms_entradas === 'NENHUM' ? 'checked' : ''} /> Não tomar crédito (entradas sem base e sem ICMS)</label>
         </div>
 
         <h4>Identificação e apuração</h4>
@@ -236,7 +231,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
         <h4>Registro 1010 — a empresa tem…</h4>
         <p class="muted">Cada &ldquo;sim&rdquo; obriga um registro do Bloco 1 que este sistema ainda não gera.</p>
-        <div class="row" style="gap: 6px 24px; flex-wrap: wrap;">
+        <div class="checkbox-grid">
           ${INDICADORES.map(([k, r]) => `<label><input type="checkbox" data-ind="${k}" ${ind[k] === 'S' ? 'checked' : ''} /> ${escapeHtml(r)}</label>`).join('')}
           <label><input type="checkbox" data-cfg="bloco_k_obrigatorio" ${v.bloco_k_obrigatorio ? 'checked' : ''} /> Obrigado ao Bloco K (estoque)</label>
         </div>
@@ -280,10 +275,14 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     const mes = Number(state.spedMes || padrao.mes);
 
     let cfg = {};
+    let falta = [];
+    let restrito = true;
     let arquivos = [];
     try {
       const [c, a] = await Promise.all([api(`/api/fiscal/sped/configuracao?${q}`), api(`/api/fiscal/sped/arquivos?${q}`)]);
       cfg = c.configuracao || {};
+      falta = c.faltando || [];
+      restrito = c.restrito !== false;
       arquivos = a.arquivos || [];
     } catch (e) {
       content.innerHTML = `<div class="panel"><h3>SPED Fiscal (EFD ICMS/IPI)</h3><p class="form-error">${escapeHtml(e.message || 'Não foi possível carregar.')}</p></div>`;
@@ -312,12 +311,14 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
             <input type="date" id="spedVencimento" value="${escapeHtml(vencimento || '')}" />
           </label>
         </div>
-        <div class="row" style="gap: 16px; align-items: center; margin-top: 12px;">
+        <div class="row checkbox-grid" style="gap: 16px; align-items: center; margin-top: 12px;">
           <label><input type="checkbox" id="spedRetificadora" /> Arquivo retificador (substitui um já entregue)</label>
           <button type="button" id="spedGerar">Gerar SPED</button>
         </div>
         <p class="muted" style="margin-top: 8px;">Entram as notas emitidas e as entradas lançadas por XML <strong>neste sistema</strong>.
         Nota que saiu por outro sistema no mesmo mês não está aqui.</p>
+        ${restrito && falta.length ? `<p class="fiscal-aviso-cst">Os dados do SPED deste estabelecimento estão incompletos
+          (falta: ${escapeHtml(falta.join(', '))}). Só um administrador pode completá-los.</p>` : ''}
         <div id="spedResultado">${blocoResultado(escapeHtml)}</div>
       </div>
 
@@ -326,7 +327,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         ${blocoArquivos(escapeHtml, arquivos)}
       </div>
 
-      ${blocoConfiguracao(escapeHtml, cfg, estab)}`;
+      ${restrito ? '' : blocoConfiguracao(escapeHtml, cfg, estab, falta)}`;
 
     const redesenhar = () => desenhar(ctx);
     F.ligarSeletor(ctx, redesenhar);
@@ -375,6 +376,9 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       try { await baixar(b.dataset.baixar); } catch (e) { showToast(e.message, 'error'); }
     }));
 
+    // Daqui para baixo, só a seção de dados do SPED — que não existe para quem
+    // não é administrador.
+    if (restrito) return;
     const arquivo = content.querySelector('#spedImportarArquivo');
     content.querySelector('#spedImportarEscolher').addEventListener('click', () => arquivo.click());
     arquivo.addEventListener('change', async () => {

@@ -11247,12 +11247,25 @@ async function tratarRequisicao(req, res) {
       if (pathname === '/api/fiscal/sped/configuracao') {
         const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
         if (!estabelecimentoId) return sendJson(res, { error: 'Escolha o estabelecimento.' }, 400);
+        // SÓ O ADMINISTRADOR VÊ E ALTERA (pedido do usuário em 01/10/2026). A
+        // configuração tem o CPF do contador e a decisão sobre o crédito do
+        // ICMS, que muda o imposto. Quem só gera o SPED recebe o que a geração
+        // precisa — o dia de vencimento, para sugerir a data — e a LISTA do que
+        // falta, para saber por que o arquivo não sai e a quem pedir.
+        //
+        // Aqui, e não só na tela: esconder a seção e deixar a rota aberta seria
+        // esconder de quem usa a tela e mostrar a quem chama a rota.
         if (req.method === 'GET') {
           const cfg = await spedEscrituracao.obterConfiguracao(estabelecimentoId);
           if (!cfg) return sendJson(res, { error: 'Estabelecimento não encontrado.' }, 404);
-          return sendJson(res, { configuracao: cfg });
+          const faltando = spedEscrituracao.oQueFalta(cfg);
+          if (!(await ehAdmin(user))) {
+            return sendJson(res, { configuracao: { e116_dia_vencimento: cfg.e116_dia_vencimento }, faltando, restrito: true });
+          }
+          return sendJson(res, { configuracao: cfg, faltando, restrito: false });
         }
         if (req.method === 'PUT') {
+          if (!(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador altera os dados do SPED.' }, 403);
           const body = await readBody(req);
           try {
             return sendJson(res, { configuracao: await spedEscrituracao.salvarConfiguracao(estabelecimentoId, body || {}, user) });
@@ -11265,6 +11278,9 @@ async function tratarRequisicao(req, res) {
       }
 
       if (pathname === '/api/fiscal/sped/configuracao/importar' && req.method === 'POST') {
+        // A sugestão devolve o contador do arquivo; é dado de configuração, e a
+        // mesma regra vale: só administrador.
+        if (!(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador altera os dados do SPED.' }, 403);
         const body = await readBody(req, 16 * 1024 * 1024);
         const bytes = Buffer.from(String(body.conteudoBase64 || ''), 'base64');
         if (!bytes.length) return sendJson(res, { error: 'Nenhum arquivo enviado.' }, 400);
