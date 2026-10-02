@@ -177,6 +177,25 @@ for (const [reg, campos] of decodificados) {
 check('SEM_TIPO diz a verdade nos dois sentidos',
   mentindo.length === 0, mentindo.slice(0, 4).join(' | ') || `${todos.length - semTipo.size} com tipo, ${semTipo.size} sem`);
 
+// O DESLOCAMENTO QUE A CONTAGEM NÃO PEGA. Em 01/10/2026 o K200 (estoque do
+// Bloco K, que aparece no SPED de setembro) estava com todos os tipos um campo
+// para trás: REG:C8, DT_EST:N-.3, QTD:N5, IND_EST:C0. A contagem de campos
+// batia; o tipo, não. O primeiro campo de TODO registro é REG, texto de 4
+// posições — se o tipo dele não for C4, o casamento escorregou, e escorregou
+// para todos os campos do registro. B020, C177, C420 e C490 estavam assim
+// também e foram para SEM_TIPO; K200 e B990 (que o gerador escreve) foram
+// corrigidos à mão contra o Guia.
+const regTorto = [...decodificados]
+  .filter(([, campos]) => campos[0].tipo && !(campos[0].tipo === 'C' && campos[0].tam === 4))
+  .map(([reg, campos]) => `${reg}: REG:${campos[0].tipo}${campos[0].tam ?? '-'}`);
+check('todo registro com tipo começa em REG:C4',
+  regTorto.length === 0, regTorto.slice(0, 4).join(' | ') || 'nenhum escorregado');
+check('  e o K200 tem DT_EST data, QTD com 3 decimais e IND_EST de 1 posição',
+  (() => {
+    const k = Object.fromEntries(leiaute.camposDe('K200').map((c) => [c.nome, c]));
+    return k.DT_EST.tam === 8 && k.QTD.dec === 3 && k.IND_EST.tam === 1;
+  })());
+
 // DOS 40 QUE IMPORTAM, quantos estão sem tipo — e o que isso impede.
 const dos40SemTipo = observado.REGISTROS.filter((r) => semTipo.has(r.reg));
 check('dos 40 usados em agosto, no máximo um está sem tipo',
@@ -196,6 +215,9 @@ for (const [reg, campos] of decodificados) {
   for (const c of campos) {
     if (c.nome !== 'CHV_NFE') continue;
     comChave.push(reg);
+    // Registro em SEM_TIPO não tem tipo a conferir (o B020 foi para lá em
+    // 01/10/2026): conta como portador da chave, mas não como chave torta.
+    if (semTipo.has(reg)) continue;
     if (c.tipo !== 'N' || c.tam !== 44) chaveTorta.push(`${reg}: ${c.tipo}${c.tam}`);
   }
 }
