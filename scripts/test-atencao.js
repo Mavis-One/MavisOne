@@ -178,6 +178,19 @@ const comRef = montar({
 });
 check('  mas título de pedido importado sai da conta', !comRef.itens.some((i) => i.id === 'contas-vencidas'),
   JSON.stringify(comRef.itens.map((i) => i.id)));
+// O LANÇAMENTO IMPORTADO SEM PEDIDO (a conta a pagar do Viper) também é
+// histórico: eram os 433 vencidos e 69 a vencer do painel em 02/10/2026.
+const importados = montar({
+  entradas: [
+    { id: 'fin-viper-6d20d5b92d15', referenceId: '', status: 'pending', dueDate: '2025-11-01', amount: 500 },
+    { id: 'fin-viper-e60ec410e2e4', referenceId: '', status: 'pending', dueDate: '2026-08-12', amount: 700 },
+    { id: 'fin-1790000000000-aluguel', referenceId: '', status: 'pending', dueDate: '2026-07-01', amount: 900 }
+  ]
+});
+const soOAluguel = importados.itens.find((i) => i.id === 'contas-vencidas');
+check('lançamento importado do Viper sem pedido sai da conta', soOAluguel && soOAluguel.contagem === 1, String(soOAluguel?.contagem));
+check('  e não aparece nem como "a vencer"', !importados.itens.some((i) => i.id === 'contas-a-vencer'),
+  JSON.stringify(importados.itens.map((i) => i.id)));
 
 console.log('\n--- "zerado" só é pendência com mínimo declarado (fase CO) ---');
 // Os 5.475 produtos deste banco estão em zero porque o razão nunca foi
