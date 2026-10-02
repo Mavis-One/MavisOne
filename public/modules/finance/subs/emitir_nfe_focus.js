@@ -411,6 +411,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                 </select>
               </label>
             </div>
+            ${tipoOperacao === 'DEVOLUCAO' ? `
+            <label>Chave de acesso da NF-e devolvida *
+              <input name="devolucaoChave" required inputmode="numeric" maxlength="44" placeholder="44 dígitos" />
+            </label>` : ''}
             <label>Natureza da operação<input name="naturezaOperacao" required value="${escapeHtml((NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).natureza || (NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).label || '')}" /></label>
             <label>Data de emissão<input type="date" name="dataEmissao" required value="${today}" /></label>
           </div>
@@ -1051,9 +1055,24 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         return;
       }
 
+      // DEVOLUÇÃO REFERENCIA A NOTA DEVOLVIDA. O servidor exige a chave
+      // (operacaoFiscal: exigeReferencia), e até 02/10/2026 a tela não a
+      // pedia nem mandava — toda devolução emitida por aqui seria recusada.
+      let referenciasDevolucao;
+      if (formData.get('tipoOperacao') === 'DEVOLUCAO') {
+        const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
+        if (chave.length !== 44) {
+          showToast('Informe a chave de acesso da NF-e devolvida (44 dígitos).', 'error');
+          if (submitBtn) submitBtn.disabled = false;
+          return;
+        }
+        referenciasDevolucao = [{ chaveAcesso: chave }];
+      }
+
       const body = {
         estabelecimentoId: selectedEstabelecimentoId,
         tipoOperacao: formData.get('tipoOperacao'),
+        ...(referenciasDevolucao ? { referencias: referenciasDevolucao } : {}),
         naturezaOperacao: formData.get('naturezaOperacao'),
         dataEmissao: formData.get('dataEmissao') ? new Date(formData.get('dataEmissao')).toISOString() : undefined,
         destinatario: {
