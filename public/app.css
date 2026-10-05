@@ -896,6 +896,15 @@ button.success:hover { background: var(--success-hover); }
 @media (max-width: 640px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar { border-bottom: 1px solid #1e293b; width: 100% !important; padding: 12px !important; }
+  /* A FAIXA NÃO PODE GRUDAR. Sem estas duas linhas a barra herdava do desktop
+     o sticky com 100vh: virava um bloco da altura da tela presa no topo, e rolar
+     a página só passava o conteúdo POR BAIXO dela — no celular não se via
+     tela nenhuma, e as chaves (position: relative) vazavam por cima do menu.
+     Medido em 390px: barra com 844px de altura, conteúdo começando no 844.
+     Aqui ela é uma faixa no começo da página, que rola junto, com teto de meia
+     tela para o conteúdo aparecer logo abaixo. */
+  .sidebar { position: static; height: auto; max-height: 50vh; }
+  .secondary-sidebar { position: static; height: auto; }
   .sidebar .nav-item .text { opacity: 1; transform: none; }
   .sidebar .sidebar-pin-btn { opacity: 1; pointer-events: auto; transform: none; }
   /* No celular a barra é uma faixa de largura total com os nomes escritos, e
@@ -906,6 +915,11 @@ button.success:hover { background: var(--success-hover); }
   .secondary-sidebar.visible { width: 100%; min-width: 100%; max-height: 420px; padding: 16px 12px; }
   .cadastro-grid-2,
   .cadastro-grid-3 { grid-template-columns: 1fr; }
+  /* A barra de abas não quebrava linha e não encolhia abaixo de 318px, num
+     painel com 296px de espaço (tela de 390px): o painel inteiro esticava
+     junto, e todos os campos da ficha passavam da borda direita. As três abas
+     da ficha somam 383px, então nem fonte menor as põe numa linha só. */
+  .cadastro-tabs { flex-wrap: wrap; column-gap: 20px; }
   .cadastro-inline-action .icon-button { width: 44px; height: 44px; }
   .cadastro-page-head,
   .cadastro-help-row,

@@ -248,5 +248,15 @@ check('trocar o tema redesenha o chip', /if \(state\.user\) state\.user\.theme =
 // Sair é a única ação do menu que descarta o que está aberto.
 check('sair tem tom de perigo', /\.topbar-conta-sair \{ color: var\(--danger-text\); \}/.test(cssConta));
 
+console.log('\n--- celular ---');
+// No celular a barra vira faixa de largura total. Ela herdava do desktop o
+// sticky com 100vh e cobria a página inteira: medido em 390px, barra de 844px
+// presa no topo e o conteúdo rolando por baixo dela, sem aparecer.
+const blocoCelular = cssSrc.slice(cssSrc.indexOf('@media (max-width: 640px) {'), cssSrc.indexOf('@media (max-width: 1024px) {'));
+check('a barra não gruda no topo no celular', /\.sidebar \{ position: static; height: auto; max-height: 50vh; \}/.test(blocoCelular));
+check('  nem a barra secundária', /\.secondary-sidebar \{ position: static; height: auto; \}/.test(blocoCelular));
+// A barra de abas sem quebra esticava o painel da ficha 22px além da tela.
+check('as abas das fichas quebram linha no celular', /\.cadastro-tabs \{ flex-wrap: wrap;/.test(blocoCelular));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
