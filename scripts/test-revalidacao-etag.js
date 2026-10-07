@@ -5,8 +5,9 @@
 // `Cache-Control: private, no-cache` nos GET 200 a partir de 16 KB, e a
 // responder 304 sem corpo quando o If-None-Match do navegador bate. Onze telas
 // devolvem os mesmos bytes de uma abertura para a outra (Gestor de Preços 10 MB,
-// Pessoas 7,4 MB, metas de Vendas e Financeiro...), e eram retransmitidas,
-// recomprimidas e reparseadas inteiras a cada vez.
+// Pessoas 7,4 MB, metas de Vendas e Financeiro...), e eram retransmitidas e
+// recomprimidas inteiras a cada vez. (O parse no navegador continua: no 304 o
+// fetch entrega o corpo guardado e o response.json() o lê de novo.)
 //
 // Cada check abaixo guarda um modo de falha que não aparece na tela:
 //   - 304 para corpo DIFERENTE seria dado velho (o navegador mostraria o

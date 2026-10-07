@@ -78,6 +78,13 @@ module.exports = {
       // grep -i memory` (se o PM2 já reiniciou por memória). PM2_MAX_MEMORY no
       // ambiente do `pm2 start` troca o número sem mexer neste arquivo; a linha
       // `[saude]` do log (server.js) mostra o pico real de cada minuto ruim.
+      //
+      // Numa máquina pequena (1-2 GB), 1024M com o Postgres ao lado NÃO cabe:
+      // quem age antes do PM2 é o OOM killer do kernel, e ele pode matar o
+      // BANCO em vez do Node — pior que o reinício do PM2 que o teto evita.
+      // Nesse caso, subir com PM2_MAX_MEMORY menor (Node + shared_buffers do
+      // Postgres + folga do sistema têm de caber no `free -m`) e aceitar o
+      // reinício.
       max_memory_restart: process.env.PM2_MAX_MEMORY || '1024M',
       env: {
         NODE_ENV: 'production',

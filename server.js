@@ -1000,8 +1000,7 @@ const PISO_PARA_COMPRIMIR = 1400;
 // mudou: medido, onze rotas devolvem os MESMOS bytes de uma chamada para a
 // outra — Gestor de Preços 10 MB (326 KB no fio), Pessoas 7,4 MB (695 KB),
 // meta de Vendas 4,2 MB (609 KB), meta do Financeiro 2,8 MB (569 KB)... Tudo
-// isso voltava inteiro pelo link do escritório, era comprimido de novo no
-// servidor e parseado de novo no navegador (205 ms só no Gestor de Preços).
+// isso voltava inteiro pelo link do escritório a cada abertura.
 //
 // Agora o GET 200 grande leva um ETag — o sha1 do JSON — e
 // `Cache-Control: private, no-cache`. O `fetch` do navegador guarda a
@@ -1009,6 +1008,16 @@ const PISO_PARA_COMPRIMIR = 1400;
 // que o servidor acabou de montar tem o MESMO sha1, a resposta é um 304 sem
 // corpo, e o navegador entrega ao JS o corpo que já tinha, com status 200.
 // Nenhuma linha do app.js muda.
+//
+// O QUE O 304 POUPA, E O QUE NÃO POUPA: poupa a TRANSFERÊNCIA — os 326-695 KB
+// comprimidos por chamada, que no link do escritório são o tempo que a pessoa
+// espera — e a CPU do gzip (que já rodava fora do event loop, no zlib
+// assíncrono; o 304 não acelera nenhuma outra requisição). NÃO poupa o tempo de
+// montar a resposta no servidor (medido: meta do Financeiro 478 ms cheio contra
+// 484 ms com 304), nem o JSON.parse no navegador: o api() do app.js chama
+// response.json(), e no 304 o navegador entrega o corpo guardado como um 200
+// comum, que é parseado inteiro de novo (os ~205 ms do Gestor de Preços
+// continuam lá). Encurtar esse parse é trabalho do cliente, não deste trecho.
 //
 // NÃO É CACHE DE DADO, E NÃO SERVE DADO VELHO: o servidor continua montando a
 // resposta inteira a cada pedido — consultas, permissão, escopo de vendedor,
@@ -1022,8 +1031,8 @@ const PISO_PARA_COMPRIMIR = 1400;
 // o que se compara é o JSON, não a codificação do transporte.
 //
 // O PISO de 16 KB: abaixo disso o sha1 e a ida e volta não compram nada (o
-// corpo cabe em poucos pacotes). O sha1 custa 0,3 a 7 ms nos corpos grandes,
-// contra 8 a 83 ms do gzip que o 304 economiza.
+// corpo cabe em poucos pacotes). O sha1 custa 0,3 a 7 ms nos corpos grandes
+// (no event loop), contra 8 a 83 ms de CPU do gzip que o 304 deixa de gastar.
 //
 // Rotas que mudam a cada chamada (painel, resumo do Financeiro: dependem do
 // relógio) só pagam o sha1 e seguem como antes.
@@ -17517,8 +17526,16 @@ function startServer(port, retriesLeft) {
 //     o PM2 compara com o teto. Uma amostra por minuto perderia o pico.
 //
 // A linha só sai no minuto RUIM (atraso máximo acima de 200 ms ou RSS acima de
-// 400 MB): o log não enche num dia normal, e cada linha é um evento que vale
-// olhar. Vai para logs/pm2-out.log; para ver: grep "\[saude\]" logs/pm2-out.log
+// 700 MB), e cada linha é um evento que vale olhar. O limiar de memória NÃO é
+// 400 MB porque o pico normal passa disso (medido em 06-07/10/2026, banco com
+// os dados reais): a 1ª abertura de um processo novo chega a 492-524 MB, e três
+// aberturas juntas a 584-638 MB. Com 400 a linha sairia em todo minuto em que
+// alguém abre o sistema, e o pico ruim se perderia no meio do normal. 700 fica
+// acima desse normal e abaixo das rajadas seguidas que já passaram de 870 MB —
+// o caminho até o teto de 1024M do PM2 (ecosystem.config.js), que é o que
+// interessa ver antes de o processo ser reiniciado. O atraso de 200 ms continua:
+// um travamento desses é sentido por quem está usando, aconteça quando acontecer.
+// Vai para logs/pm2-out.log; para ver: grep "\[saude\]" logs/pm2-out.log
 //
 // Não toca rota, resposta nem banco. Os timers são `unref()`: não seguram o
 // processo de pé, nem num teste que carregue este arquivo.
@@ -17526,7 +17543,7 @@ function startServer(port, retriesLeft) {
 const SAUDE_INTERVALO_MS = 60 * 1000;
 const SAUDE_AMOSTRA_RSS_MS = 5 * 1000;
 const SAUDE_ATRASO_RUIM_MS = 200;
-const SAUDE_RSS_RUIM_MB = 400;
+const SAUDE_RSS_RUIM_MB = 700;
 let saudeLigada = false;
 
 function ligarLinhaDeSaude() {

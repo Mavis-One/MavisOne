@@ -3,7 +3,7 @@
 //
 // Queixa de lentidão só se mede no VPS, e o pico de memória que faz o PM2
 // reiniciar o processo some em dez segundos. O server.js passou a escrever
-// `[saude] ...` no minuto ruim (atraso do event loop > 200 ms ou RSS > 400 MB),
+// `[saude] ...` no minuto ruim (atraso do event loop > 200 ms ou RSS > 700 MB),
 // e só nele. Os dois modos de falha que este teste guarda:
 //   - a linha nunca sair (um timer que ninguém liga, um limiar trocado) — e a
 //     única medida de produção some sem ninguém notar;
@@ -35,12 +35,12 @@ const fim = src.indexOf(corpo) + corpo.length;
  * O trecho de verdade do server.js, com o "minuto" de 400 ms, a amostra de RSS
  * de 50 ms e os limiares que o caso pedir. Devolve a lista de linhas escritas.
  */
-function ligarComMinutoCurto({ atrasoRuimMs = 200, rssRuimMb = 400 } = {}) {
+function ligarComMinutoCurto({ atrasoRuimMs = 200, rssRuimMb = 700 } = {}) {
   const trecho = src.slice(inicio, fim)
     .replace('const SAUDE_INTERVALO_MS = 60 * 1000;', 'const SAUDE_INTERVALO_MS = 400;')
     .replace('const SAUDE_AMOSTRA_RSS_MS = 5 * 1000;', 'const SAUDE_AMOSTRA_RSS_MS = 50;')
     .replace('const SAUDE_ATRASO_RUIM_MS = 200;', `const SAUDE_ATRASO_RUIM_MS = ${atrasoRuimMs};`)
-    .replace('const SAUDE_RSS_RUIM_MB = 400;', `const SAUDE_RSS_RUIM_MB = ${rssRuimMb};`);
+    .replace('const SAUDE_RSS_RUIM_MB = 700;', `const SAUDE_RSS_RUIM_MB = ${rssRuimMb};`);
   const linhas = [];
   // eslint-disable-next-line no-new-func
   const ligar = new Function('require', 'console', `${trecho}\nreturn ligarLinhaDeSaude;`)(require, { log: (l) => linhas.push(l) });
@@ -56,7 +56,13 @@ function ligarComMinutoCurto({ atrasoRuimMs = 200, rssRuimMb = 400 } = {}) {
   const semCom = semComentarios(src);
   check('ligada quando o servidor abre a porta', /server\.listen\(port, HOST, \(\) => \{[\s\S]*?ligarLinhaDeSaude\(\);[\s\S]*?\n {2}\}\);/.test(semCom));
   check('os dois timers são unref()', (corpo.match(/\}, SAUDE_\w+\)\.unref\(\);/g) || []).length === 2);
-  check('limiares de 200 ms e 400 MB', /const SAUDE_ATRASO_RUIM_MS = 200;/.test(src) && /const SAUDE_RSS_RUIM_MB = 400;/.test(src));
+  check('atraso ruim acima de 200 ms', /const SAUDE_ATRASO_RUIM_MS = 200;/.test(src));
+  // O limiar de memória tem de ficar ACIMA do pico normal medido (1ª abertura
+  // 492-524 MB, três aberturas juntas 584-638 MB): abaixo dele a linha sai em
+  // toda abertura e perde o valor de alerta. E abaixo do teto do PM2 (conferido
+  // na seção 2), senão o processo é reiniciado antes de a linha avisar.
+  const rssRuim = Number((/const SAUDE_RSS_RUIM_MB = (\d+);/.exec(src) || [])[1]);
+  check('limiar de RSS acima do pico normal da abertura (638 MB)', rssRuim > 638, rssRuim);
   check('um minuto entre linhas', /const SAUDE_INTERVALO_MS = 60 \* 1000;/.test(src));
 
   console.log('\n--- 2. o teto do PM2 ---');
@@ -68,6 +74,7 @@ function ligarComMinutoCurto({ atrasoRuimMs = 200, rssRuimMb = 400 } = {}) {
   const padrao = (/max_memory_restart: process\.env\.PM2_MAX_MEMORY \|\| '(\d+)M'/.exec(eco) || [])[1];
   check('o PM2_MAX_MEMORY do deploy troca o número sem mexer no arquivo', padrao !== undefined);
   check('o teto padrão fica acima do pico medido (886 MB) e abaixo de 1,5 GB', Number(padrao) > 886 && Number(padrao) < 1536, `${padrao}M`);
+  check('o limiar de RSS da linha de saúde fica abaixo do teto do PM2', rssRuim < Number(padrao), `${rssRuim} < ${padrao}`);
   check('continua uma instância em fork', /instances: 1,/.test(eco) && /exec_mode: 'fork'/.test(eco));
 
   // Os timers da saúde são unref: este segura o processo durante o teste.
