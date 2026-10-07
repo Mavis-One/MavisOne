@@ -111,6 +111,14 @@ const POPULA = {
   // As notas só com o número: popula as duas chaves, com `{ id, numero }` e
   // `{ id, number }` — os campos que o serializer lê delas.
   syncNfeDataParaVendas: ['nfes', 'nfe'],
+  // dashboard-e-sino: os recortes do Início. Cada um é de UMA rota e traz só as
+  // linhas que ela pode somar (ver o cabeçalho deles em server.js e em
+  // lib/db/painel-inicio.js); para este guarda o que importa é que a coleção
+  // deixe de chegar vazia — e deixa.
+  syncSalesDataParaPainel: ['orders', 'quotes'],
+  syncLancamentosDoPainel: ['finance'],
+  syncLancamentosDoGrafico: ['finance'],
+  syncPendenciasDoSino: ['finance', 'orders'],
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],

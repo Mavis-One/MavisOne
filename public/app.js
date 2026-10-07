@@ -640,6 +640,11 @@ async function api(path, options = {}) {
   // não é GET mudou alguma coisa — não precisa saber o quê.
   if (options.method && options.method.toUpperCase() !== 'GET') {
     atencaoBuscadaEm = 0;
+    // E a busca que estava em voo ANTES desta escrita também envelheceu: ela
+    // leu o banco antes da mudança. Sem isto, a resposta dela chegaria depois,
+    // gravaria a marca de tempo e o sino mostraria o estado anterior à escrita
+    // por mais um minuto (ver buscarAtencao).
+    atencaoGeracao += 1;
     // E MEXEU NO CADASTRO, AS LISTAS DO FILTRO DE VENDAS ENVELHECERAM JUNTO.
     //
     // Mesmo lugar e mesmo motivo do sino: quem cadastra um cliente e vai
@@ -1087,6 +1092,11 @@ let ultimoPainelAtencao = null;
 const ATENCAO_VALIDADE_MS = 60000;
 let atencaoBuscadaEm = 0;
 let atencaoEmVoo = null;
+// Quantas escritas já passaram pelo `api` (dashboard-e-sino). Cada busca anota
+// a geração em que saiu: a que saiu antes de uma escrita não é reaproveitada
+// por quem pede depois dela, nem gravada como o painel "fresco".
+let atencaoGeracao = 0;
+let atencaoEmVooGeracao = -1;
 
 /**
  * AS LISTAS DOS FILTROS DE VENDAS, guardadas por um minuto.
@@ -1198,22 +1208,37 @@ function desenharPainelAtencao(painel) {
  *      saíam, se atropelavam e a última demorava 7 s.
  *
  * Abrir o painel do sino passa `forcar`: aí a pessoa está olhando a lista, e
- * pendência resolvida há um minuto não pode continuar listada.
+ * pendência resolvida há um minuto não pode continuar listada. O painel do
+ * Início também passa (dashboard-e-sino): ele pedia a rota direto, e na
+ * abertura ela saía DUAS vezes — a do sino e a dele.
+ *
+ * `forcar` não devolve o painel guardado, mas aceita a busca em voo — ela saiu
+ * agora há pouco. Só não aceita a que saiu ANTES de uma escrita
+ * (atencaoGeracao): essa leu o banco antes da mudança.
  */
 async function buscarAtencao({ forcar = false } = {}) {
   const fresco = ultimoPainelAtencao && (Date.now() - atencaoBuscadaEm) < ATENCAO_VALIDADE_MS;
   if (!forcar && fresco) return ultimoPainelAtencao;
-  if (atencaoEmVoo) return atencaoEmVoo;
-  atencaoEmVoo = api('/api/dashboard/atencao')
+  if (atencaoEmVoo && atencaoEmVooGeracao === atencaoGeracao) return atencaoEmVoo;
+  const geracao = atencaoGeracao;
+  const voo = api('/api/dashboard/atencao')
     .then((painel) => {
-      ultimoPainelAtencao = painel;
-      // A marca de tempo só é gravada no SUCESSO: erro de rede não pode
-      // silenciar o sino por um minuto.
-      atencaoBuscadaEm = Date.now();
+      // Uma escrita no meio do caminho: a resposta serve a quem pediu antes
+      // dela, mas não vira o painel "fresco" de ninguém.
+      if (geracao === atencaoGeracao) {
+        ultimoPainelAtencao = painel;
+        // A marca de tempo só é gravada no SUCESSO: erro de rede não pode
+        // silenciar o sino por um minuto.
+        atencaoBuscadaEm = Date.now();
+      }
       return painel;
     })
-    .finally(() => { atencaoEmVoo = null; });
-  return atencaoEmVoo;
+    // Só limpa se ainda for ELA a busca em voo: uma busca mais nova, que saiu
+    // depois de uma escrita, não pode ser esquecida pela antiga que terminou.
+    .finally(() => { if (atencaoEmVoo === voo) atencaoEmVoo = null; });
+  atencaoEmVoo = voo;
+  atencaoEmVooGeracao = geracao;
+  return voo;
 }
 
 async function alternarPainelAtencao() {
@@ -1238,12 +1263,62 @@ async function alternarPainelAtencao() {
   }
 }
 
-async function atualizarSinoDeAtencao() {
+/**
+ * O SINO SAI DEPOIS DA TELA (front-end:10, dashboard-e-sino).
+ *
+ * renderApp chama isto ANTES de loadModule. Com o painel fresco (< 60 s) a
+ * marca é pintada na hora, do que já está guardado — como sempre foi. Com o
+ * painel vencido, a busca saía JUNTO com a requisição que a tela acabou de
+ * fazer para desenhar a si mesma, e as duas dividiam o único event loop do
+ * servidor: medido, a tela que tinha o azar de abrir quando o sino vencia (uma
+ * vez por minuto de uso) levava +0,6 a +1,0 s — Estoque › Produtos 425-568 ms
+ * com o sino fresco, 1.180-1.711 ms com ele vencido.
+ *
+ * Agora, vencido, o sino ESPERA: loadModule o solta quando a tela terminou de
+ * buscar e desenhar (o `finally` dela), e um temporizador de reserva o solta
+ * sozinho para os renderApp() que não são seguidos de loadModule (trocar o
+ * tema). Nada muda em validade (60 s) nem no esquecimento em escrita; enquanto
+ * espera, a marca fica como fica durante qualquer busca do sino — escondida —,
+ * por uma tela em vez de por uma ida ao servidor. No Início isso ainda poupa a
+ * chamada: o painel de lá busca pela mesma porta (buscarAtencao) e, quando o
+ * sino é solto, o painel já está fresco.
+ */
+const SINO_RESERVA_MS = 2000;
+let sinoEsperandoATela = null;
+
+function atualizarSinoDeAtencao() {
+  const fresco = ultimoPainelAtencao && (Date.now() - atencaoBuscadaEm) < ATENCAO_VALIDADE_MS;
+  if (fresco) {
+    pintarSinoDeAtencao();
+    return;
+  }
+  if (!sinoEsperandoATela) sinoEsperandoATela = setTimeout(soltarSinoDeAtencao, SINO_RESERVA_MS);
+}
+
+/** Chamada no fim de loadModule (e pelo temporizador de reserva). */
+function soltarSinoDeAtencao() {
+  if (!sinoEsperandoATela) return;
+  clearTimeout(sinoEsperandoATela);
+  sinoEsperandoATela = null;
+  pintarSinoDeAtencao();
+}
+
+async function pintarSinoDeAtencao() {
+  let painel = null;
+  let erroDoSino = null;
+  try {
+    painel = await buscarAtencao();
+  } catch (erro) {
+    erroDoSino = erro;
+  }
+  // Os elementos são lidos DEPOIS da espera: um renderApp no meio do caminho
+  // troca a barra inteira, e pintar o sino antigo seria pintar um botão que
+  // já não está na tela.
   const marca = document.getElementById('notifDot');
   const botao = document.getElementById('notifBtn');
   if (!marca || !botao) return;
   try {
-    const painel = await buscarAtencao();
+    if (erroDoSino) throw erroDoSino;
     const criticos = Number(painel.criticos || 0);
     const total = Number(painel.total || 0);
     marca.hidden = total === 0;
@@ -8285,6 +8360,11 @@ async function loadModule(moduleName) {
   } catch (error) {
     showToast(error.message || 'Erro ao carregar módulo.', 'error');
     content.innerHTML = `<div class="panel"><p>${error.message}</p></div>`;
+  } finally {
+    // A tela terminou de buscar e desenhar (o roteador só resolve depois
+    // disso): agora o sino vencido pode ir ao servidor sem disputar com ela.
+    // Ver atualizarSinoDeAtencao.
+    soltarSinoDeAtencao();
   }
 }
 

@@ -395,10 +395,38 @@ const ondas = (rotaPainel.match(/await Promise\.all\(\[/g) || []).length;
 check('e as cargas saem numa onda so', ondas === 1, `${ondas} onda(s)`);
 // As condicionadas por permissao CONTINUAM condicionadas: quem nao ve Estoque
 // nao deve pagar os 5.475 produtos so porque a onda foi unificada.
+// dashboard-e-sino (07/10/2026): os recortes do Inicio (produtos para o valor,
+// pedidos em seis colunas, lancamentos nao pagos) -- condicionados do MESMO
+// jeito, e o financeiro passou a ser condicionado tambem: sem Financeiro nenhum
+// cartao le lancamento, e a rota carregava os 27.362 de qualquer forma.
 check('  sem perder as condicoes de permissao',
-  /canStock \? db\.getProducts\(\) : Promise\.resolve\(\[\]\)/.test(rotaPainel)
-  && /canSales \? syncSalesDataParaAgregado\(data\) : null/.test(rotaPainel)
-  && /canPurchases \? syncPurchasesData\(data\) : null/.test(rotaPainel));
+  /canStock \? painelInicioDb\.getProductsParaValor\(\) : Promise\.resolve\(\[\]\)/.test(rotaPainel)
+  && /canSales \? syncSalesDataParaPainel\(data\) : null/.test(rotaPainel)
+  && /canPurchases \? syncPurchasesData\(data\) : null/.test(rotaPainel)
+  && /canFinance \? syncLancamentosDoPainel\(data\) : null/.test(rotaPainel));
+// O razao, as NF-e e o financeiro inteiro saíram: so serializeProduct e
+// serializeSalesRecord os liam, e o cartao le quatro campos do produto e dois
+// numeros de venda. Nenhum campo da resposta tem saldo por deposito.
+check('  e sem o razao, as NF-e e o financeiro inteiro, que a resposta nao le',
+  !/sincronizarRazao\(data\)/.test(rotaPainel) && !/syncNfeData\(data\)/.test(rotaPainel) && !/syncFinanceData\(data\)/.test(rotaPainel));
+
+// O GRAFICO TAMBEM PERGUNTA O USUARIO PRIMEIRO (dashboard-e-sino). Carregava os
+// 27.362 lancamentos com as baixas ANTES de saber quem pergunta -- quem nao tem
+// Financeiro pagava a carga inteira, e requisicao sem sessao tambem -- e o sync
+// de vendas ia em fila atras dele.
+const rotaGrafico = servidor.slice(
+  servidor.indexOf("if (pathname === '/api/dashboard/charts'"),
+  servidor.indexOf('\n  if (pathname', servidor.indexOf("if (pathname === '/api/dashboard/charts'") + 10)
+);
+const gUser = rotaGrafico.indexOf('await getCurrentUser(req)');
+const gOnda = rotaGrafico.indexOf('await Promise.all([');
+check('o grafico do Inicio pergunta o usuario antes de ir ao banco',
+  gUser > -1 && gOnda > gUser && rotaGrafico.indexOf('loadData()') > gUser, `usuario ${gUser}, onda ${gOnda}`);
+check('  e carrega numa onda so, condicionada por permissao',
+  (rotaGrafico.match(/await Promise\.all\(\[/g) || []).length === 1
+  && /canFinance\s*\n?\s*\? syncLancamentosDoGrafico\(data, /.test(rotaGrafico)
+  && /canSales \? syncSalesDataParaPainel\(data\) : null/.test(rotaGrafico)
+  && !/syncFinanceData\(data\)/.test(rotaGrafico) && !/await syncSalesDataParaAgregado/.test(rotaGrafico));
 // O cadastro INTEIRO fica, e isso e' decisao registrada da fase CM: enxuga-lo
 // funcionava por acidente, e o guarda de sync apontou na hora.
 check('  e o cadastro continua inteiro (decisao da fase CM)',

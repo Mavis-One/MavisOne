@@ -321,8 +321,13 @@ check('a tela só desenha o seletor para quem pode escolher vendedor',
 // Na fase DC o escopo saiu da chamada para a variável `escopoVendas`, declarada
 // logo antes — para os cartões e o gráfico usarem o MESMO. O teste confere as
 // duas metades: a variável vem de escopoDeVendas(user), e o resumo a recebe.
+// Desde dashboard-e-sino (07/10/2026) o cartão usa totaisDePedidosDoEscopo: os
+// dois números (totalPedidos, valorPedidos) sem serializar os 14.864 pedidos e
+// sem montar a lista por vendedor que a rota jogava fora — com o MESMO escopo
+// obrigatório, conferido logo abaixo. Lido sem comentários porque entre as duas
+// linhas há agora um comentário explicando a troca.
 check('o Dashboard Geral passa escopo no cartão de vendas',
-  /const escopoVendas = escopoLib\.escopoDeVendas\(user[^\n]*\n\s*const salesSummary = canSales\s*\n\s*\? buildSalesDashboardSummary\(data, escopoVendas\)/.test(servidor));
+  /const escopoVendas = escopoLib\.escopoDeVendas\(user[^\n]*\n\s*const salesSummary = canSales\s*\n\s*\? (buildSalesDashboardSummary|totaisDePedidosDoEscopo)\(data, escopoVendas\)/.test(codigoServidor));
 // O RELATÓRIO NÃO TEM MAIS BLOCO DE VENDEDORES (06/10/2026). O
 // /api/reports/overview calculava vendas, vendedores e a série de vendas —
 // escopados, conferido aqui — e nenhuma tela os lia; saíram junto com a leitura
@@ -334,6 +339,39 @@ check('o Dashboard Geral passa escopo no cartão de vendas',
   check('o Relatório (overview) não calcula vendas — ou, se calcular, com escopo',
     inicio > 0 && (!/buildSalesDashboardSummary|buildSalesChartSeries/.test(overview)
       || /buildSalesDashboardSummary\(data, escopoVendas\)/.test(overview)));
+}
+{
+  const recortar = (nome) => {
+    const inicio = servidor.indexOf(`\nfunction ${nome}(`);
+    const fim = servidor.indexOf('\n}\n', inicio);
+    return inicio < 0 ? '' : servidor.slice(inicio, fim + 3);
+  };
+  const corpoTotal = recortar('totaisDePedidosDoEscopo');
+  check('  e totaisDePedidosDoEscopo QUEBRA sem escopo (falha fechado)', /if \(!escopo\) \{\s*\n\s*throw new Error/.test(corpoTotal));
+  check('  e filtra por vendaVisivel', /escopoLib\.vendaVisivel\(escopo, record\.sellerId\)/.test(corpoTotal));
+  // O MESMO valor que serializeSalesRecord devolve em `amount` (e que
+  // buildSalesDashboardSummary somava): a expressão de valorDoRegistroDeVenda
+  // tem de ser, letra a letra, a da linha `const totalAmount` de lá. Se alguém
+  // mudar uma e não a outra, o cartão e o Painel de Vendas passam a discordar.
+  const doSerializer = /function serializeSalesRecord\(record, data\) \{\n([\s\S]*?)\n  const totalAmount = ([^\n]*);/.exec(servidor);
+  const doValor = /function valorDoRegistroDeVenda\(record\) \{\n([\s\S]*?)\n  return ([^\n]*);/.exec(servidor);
+  check('  e soma o MESMO valor de serializeSalesRecord',
+    Boolean(doSerializer && doValor) && doSerializer[1] === doValor[1] && doSerializer[2] === doValor[2],
+    doSerializer && doValor ? doValor[2] : 'não achei as duas expressões');
+  check('  e soma com valorDoRegistroDeVenda', /valorDoRegistroDeVenda\(record\)/.test(corpoTotal));
+  // E o comportamento, rodando a função de verdade com o escopo de verdade.
+  const F = new Function('escopoLib', `${recortar('valorDoRegistroDeVenda')}${corpoTotal} return totaisDePedidosDoEscopo;`)(escopoLib);
+  const dados = { orders: [
+    { sellerId: 'v1', totalAmount: 100.1 }, { sellerId: 'v2', totalAmount: 50.2 },
+    { sellerId: 'v1', totalAmount: 0.3 }, { sellerId: '', totalAmount: 7 }
+  ] };
+  let quebrou = false;
+  try { F(dados, null); } catch (_) { quebrou = true; }
+  check('  sem escopo, lança', quebrou);
+  const todos = F(dados, escopoLib.escopoDeVendas({ id: 'adm', role: 'admin' }, { ehAdmin: true }));
+  check('  admin soma todos', todos.totalPedidos === 4 && todos.valorPedidos === 157.6, JSON.stringify(todos));
+  const dele = F(dados, escopoLib.escopoDeVendas({ id: 'u1', role: 'user', sellerId: 'v1' }, { ehAdmin: false }));
+  check('  vendedor soma só os dele', dele.totalPedidos === 2 && dele.valorPedidos === 100.4, JSON.stringify(dele));
 }
 
 
