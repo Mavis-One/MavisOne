@@ -92,5 +92,61 @@ check('o catálogo só é lido quando há regra',
 check('  e com regra continua o índice completo, com escriturais',
   /productsById = new Map\(\(await db\.getProducts\(\{ incluirEscriturais: true \}\)\)\.map\(\(p\) => \[p\.id, p\]\)\)/.test(cashback));
 
+// ---------------------------------------------------------------------------
+// 4-6. A TELA DE PESSOAS DEIXOU DE BAIXAR AS 6.492 A CADA CLIQUE.
+//
+// Ela pedia /pessoas + /cnpjs + /deposits inteiros para QUALQUER sub-tela, e
+// de novo a cada um dos 31 redesenhos (virar página, ordenar, Buscar, abrir a
+// edição, cada erro de validação): 7.425 KB cru, 695 KB gzip por clique. Agora
+// a lista vem paginada do servidor (~6 KB gzip), a edição abre pelo id e a
+// duplicidade é perguntada na hora de salvar.
+// ---------------------------------------------------------------------------
+const app = semComentarios(ler('public/app.js'));
+const bloco = app.slice(app.indexOf("if (moduleName === 'cadastros') {"), app.indexOf("const renderPeopleRegister = (mode = 'register') => {"));
+
+console.log('\n--- 4. cada sub-tela de Pessoas busca só o que usa ---');
+check('nenhuma sub-tela baixa mais as listas inteiras de pessoas e CNPJs',
+  !/api\('\/api\/cadastros\/pessoas'\)/.test(app) && !/api\('\/api\/cadastros\/cnpjs'\)/.test(app));
+check('a lista pede SÓ a página, com os filtros e os limites de data do navegador',
+  /if \(sub === 'list'\) \{[\s\S]{0,200}Lista\.limitesDeData\(listFilters\.dateStart, listFilters\.dateEnd\)[\s\S]{0,250}await api\(`\/api\/cadastros\/lista\?\$\{consulta\.toString\(\)\}`\)/.test(bloco));
+check('Depósitos pede só os depósitos', /\} else if \(sub === 'deposits'\) \{\s*\n\s*const depositsResponse = await api\('\/api\/cadastros\/deposits'\);/.test(bloco));
+check('  e nenhuma outra sub-tela pede nada (o rascunho vem do estado)',
+  (bloco.match(/await api\(/g) || []).length === 2, String((bloco.match(/await api\(/g) || []).length));
+
+console.log('\n--- 5. editar abre com o registro INTEIRO; salvar pergunta a duplicidade ---');
+// A linha da lista traz só o que a tabela desenha. Abrir o formulário com ela
+// e salvar gravaria vazio por cima de endereço, contatos e dados bancários.
+const abrir = app.slice(app.indexOf('const openCadastroRowForEdit = async (kind, id) => {'));
+check('a edição busca o cadastro pelo id', /\/api\/cadastros\/cnpjs\/\$\{encodeURIComponent\(id\)\}/.test(abrir.slice(0, 900))
+  && /\/api\/cadastros\/pessoas\/\$\{encodeURIComponent\(id\)\}/.test(abrir.slice(0, 900)));
+check('  e não abre se não conseguir', /if \(!registro\) return;/.test(abrir.slice(0, 1200)));
+check('  em vez de abrir com a linha da lista', !/people\.find\(|cnpjs\.find\(/.test(app));
+check('o servidor devolve o registro completo, pela mesma função da lista',
+  /const registro = ehCnpj \? await db\.getCnpjById\(id\) : await db\.getPersonById\(id\);/.test(servidor));
+check('a duplicidade é perguntada nos dois formulários antes de salvar',
+  (app.match(/duplicidadeDoCadastro = await perguntarDuplicidadeDeCadastro\(payload, payload\.id\)/g) || []).length === 2);
+
+console.log('\n--- 6. a página sai do servidor, pelas regras do módulo compartilhado ---');
+const rotaLista = trecho("if (pathname === '/api/cadastros/lista' && req.method === 'GET')", 'const registro = ehCnpj');
+check('a rota monta a página com o módulo da tela',
+  /listaDeCadastros\.montarPagina\(people, cnpjs, filtros, limites, memoDaBuscaDeCadastros\)/.test(rotaLista));
+check('  sobre o mesmo cache que /pessoas e /cnpjs devolvem',
+  /const \[people, cnpjs\] = await Promise\.all\(\[db\.getPeople\(\), db\.getCnpjs\(\)\]\);/.test(rotaLista));
+check('  e usa os limites de data que vieram do navegador quando vieram',
+  /url\.searchParams\.has\('inicio'\) \|\| url\.searchParams\.has\('fim'\)/.test(rotaLista));
+{
+  // O texto de busca guardado é chaveado pelo CONTEÚDO da linha: editar uma
+  // pessoa tem de fazer a busca enxergar o nome novo, e não o guardado.
+  const Lista = require(path.join(RAIZ, 'public/modules/shared/lista_de_cadastros.js'));
+  const memo = new Map();
+  const filtros = Lista.normalizarFiltros({ query: 'beatriz' });
+  const busca = (pessoas) => Lista.filtrar(Lista.projetar(pessoas, []), filtros, {}, memo).map((r) => r.id).join(',');
+  const antes = [{ id: 'p1', code: '1', name: 'Ana' }, { id: 'p2', code: '2', name: 'Beatriz' }];
+  check('com o texto guardado, a busca acha o mesmo que sem ele', busca(antes) === 'p2'
+    && Lista.filtrar(Lista.projetar(antes, []), filtros, {}).map((r) => r.id).join(',') === 'p2');
+  const depois = [{ id: 'p1', code: '1', name: 'Ana Beatriz' }, { id: 'p2', code: '2', name: 'Bia' }];
+  check('  e linha editada é normalizada de novo (nada velho sai do guardado)', busca(depois) === 'p1', busca(depois));
+}
+
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);
 process.exit(falhas === 0 ? 0 : 1);

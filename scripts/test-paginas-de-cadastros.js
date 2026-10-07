@@ -41,30 +41,35 @@ const check = (nome, cond, det) => {
 
 const app = ler('public/app.js');
 const appCodigo = semComentarios(app);
+// O FILTRO, A ORDEM E O CORTE SAÍRAM DO app.js (rodada de desempenho, out/2026)
+// para public/modules/shared/lista_de_cadastros.js, que o SERVIDOR roda para
+// mandar só a página (/api/cadastros/lista) — a tela baixava as 6.492 pessoas a
+// cada clique para mostrar 100. O código foi MOVIDO sem mudar regra, com os
+// mesmos nomes (`listFilters`, `merged`), então as checagens das seções 1 e 2
+// são as de antes, apontadas para o módulo. A seção 7 roda o módulo de verdade.
+const modulo = semComentarios(ler('public/modules/shared/lista_de_cadastros.js'));
+const Lista = require(path.join(RAIZ, 'public/modules/shared/lista_de_cadastros.js'));
 
 console.log('--- 1. o corte ---');
-check('são 100 por página', /const POR_PAGINA = 100;/.test(appCodigo));
+check('são 100 por página', /const POR_PAGINA = 100;/.test(modulo));
 check('  e o total de páginas arredonda para cima',
-  /const totalPaginas = Math\.max\(1, Math\.ceil\(totalRegistros \/ POR_PAGINA\)\);/.test(appCodigo));
+  /const totalPaginas = Math\.max\(1, Math\.ceil\(totalRegistros \/ POR_PAGINA\)\);/.test(modulo));
 // A página fica presa entre 1 e o total: um filtro que encolhe a lista enquanto
 // a pessoa está na página 40 não pode deixá-la olhando para o vazio.
 check('a página fica presa entre 1 e o total',
-  /const paginaAtual = Math\.min\(Math\.max\(1, listFilters\.pagina\), totalPaginas\);/.test(appCodigo));
+  /const paginaAtual = Math\.min\(Math\.max\(1, listFilters\.pagina\), totalPaginas\);/.test(modulo));
 check('  e a fatia sai da página atual',
-  /merged\.slice\(primeiroDaPagina, primeiroDaPagina \+ POR_PAGINA\)/.test(appCodigo));
+  /merged\.slice\(primeiroDaPagina, primeiroDaPagina \+ POR_PAGINA\)/.test(modulo));
 
 console.log('--- 2. corta DEPOIS de filtrar e ordenar ---');
 // Se o slice viesse antes do filter, a página 1 seria "a primeira centena do
 // banco, filtrada" — e uma busca com 12 resultados espalhados voltaria vazia.
-const posFilter = appCodigo.indexOf('.some((field) => normalize(field).includes(query));');
-// A ordenação deixou de ser a linha fixa por `createdAt` e passou a ser o
-// `merged.sort` escolhido pelo cabeçalho (fase CF). A INTENÇÃO desta checagem é
-// a mesma: o corte tem de vir depois de ordenar, senão cada página se ordenaria
-// sozinha. Só o alvo mudou.
-const posSort = appCodigo.indexOf('merged.sort((a, b) => {', posFilter);
-const posSlice = appCodigo.indexOf('const visiveis = merged.slice(');
-check('o filtro vem antes do corte', posFilter > 0 && posSlice > posFilter);
-check('  e a ordenação também', posSort > 0 && posSlice > posSort);
+// No módulo, cada passo é uma função; a ORDEM em que rodam é a da montagem
+// da página. A seção 7 prova o mesmo executando.
+check('o filtro vem antes do corte, e a ordenação também',
+  /const merged = ordenar\(filtrar\(projetar\(people, cnpjs\), listFilters, limites, memo\), listFilters\);\s*\n\s*return paginar\(merged, listFilters\);/.test(modulo));
+check('  e a tela não corta nem filtra mais por conta própria',
+  !/merged\.slice\(/.test(appCodigo) && !/merged\.sort\(/.test(appCodigo) && !/\.some\(\(field\) => normalize\(field\)/.test(appCodigo));
 
 console.log('--- 3. a tabela desenha SÓ a página ---');
 check('as linhas saem de `visiveis`', /\$\{visiveis\.map\(\(row\) => `/.test(appCodigo));
@@ -120,7 +125,8 @@ check('Buscar volta para a página 1', /pagina: 1/.test(aplicar.slice(0, 2200)))
 const limpar = appCodigo.slice(appCodigo.indexOf("getElementById('cadastroFilterClearBtn')"));
 check('  e Limpar filtros também', /pagina: 1/.test(limpar.slice(0, 1600)));
 check('a página mora junto dos filtros no estado',
-  /pagina: Number\(state\.cadastroDraft\.listFilters\?\.pagina\) \|\| 1/.test(appCodigo));
+  /pagina: Number\(g\.pagina\) \|\| 1/.test(modulo)
+  && /const listFilters = Lista\.normalizarFiltros\(state\.cadastroDraft\.listFilters\);/.test(appCodigo));
 
 console.log('--- 6. o estilo existe ---');
 const css = ler('public/app.css');
@@ -130,6 +136,34 @@ check('  com a de cima e a de baixo diferenciadas',
 // Botão desligado continua ocupando o lugar: a barra não pode dançar ao chegar
 // na primeira ou na última página.
 check('  e botão desligado não some', /\.lista-paginas-botoes button\[disabled\]/.test(css));
+
+console.log('--- 7. o módulo, executado ---');
+{
+  // 250 cadastros: códigos 1..250, nomes repetidos de 10 em 10, metade inativa.
+  const pessoas = Array.from({ length: 250 }, (_, i) => ({
+    id: `p${i + 1}`, code: String(i + 1), type: 'pessoa-fisica', name: `Nome ${(i % 10) + 1}`,
+    status: i % 2 ? 'inativo' : 'ativo', roles: ['Cliente'], createdAt: new Date(Date.UTC(2026, 0, 1 + i)).toISOString()
+  }));
+  const pagina = (filtros) => Lista.montarPagina(pessoas, [], filtros, { inicio: '', fim: '' });
+  const p1 = pagina({});
+  check('página 1: 100 linhas, a mais nova em cima', p1.visiveis.length === 100 && p1.visiveis[0].code === '250', p1.visiveis[0].code);
+  check('  3 páginas para 250', p1.totalPaginas === 3 && p1.totalRegistros === 250);
+  const p3 = pagina({ pagina: 3 });
+  check('última página com o resto (50)', p3.visiveis.length === 50 && p3.primeiroDaPagina === 200);
+  const p99 = pagina({ pagina: 99 });
+  check('página além do fim fica presa na última', p99.paginaAtual === 3 && p99.visiveis.length === 50);
+  const p0 = pagina({ pagina: -4 });
+  check('  e abaixo de 1, na primeira', p0.paginaAtual === 1);
+  // Cortar ANTES de filtrar daria só os ativos da 1ª centena (50), e não 100.
+  const ativos = pagina({ status: 'ativo' });
+  check('o corte é DEPOIS do filtro', ativos.totalRegistros === 125 && ativos.visiveis.length === 100,
+    `${ativos.totalRegistros} / ${ativos.visiveis.length}`);
+  // Ordenar só a página faria a página 2 recomeçar do menor código.
+  const porCodigo2 = pagina({ ordemCampo: 'code', ordemDirecao: 'asc', pagina: 2 });
+  check('a ordem é da lista inteira: página 2 por código começa no 101', porCodigo2.visiveis[0].code === '101', porCodigo2.visiveis[0].code);
+  const vazio = pagina({ query: 'não existe ninguém assim' });
+  check('nada encontrado: 0 registros, página 1 de 1', vazio.totalRegistros === 0 && vazio.totalPaginas === 1 && vazio.paginaAtual === 1);
+}
 
 console.log('--- o que foi medido no Chrome, com os 6.492 ---');
 for (const [caso, resultado] of [

@@ -148,9 +148,29 @@ for (const [onde, fonte] of [['server.js', servidor], ['public/app.js', app]]) {
     !/function buildAddressKey/.test(fonte) && !/function buildRegistrationAddressKey/.test(fonte));
 }
 
-check('o cliente delega o bloqueio',
-  /return duplicidadeCadastro\(\)\.bloqueio\(existingRecords, record, excludeId\)/.test(app));
-check('  e o aviso', /duplicidadeCadastro\(\)\.textoDoAviso\(/.test(app));
+// A TELA NÃO CONFERE MAIS: PERGUNTA (rodada de desempenho, out/2026).
+//
+// Ela conferia contra as 6.492 pessoas que baixava a cada clique (7,4 MB). A
+// lista passou a vir paginada do servidor, então a tela pergunta a
+// /api/cadastros/duplicidade — que aplica ESTE módulo sobre a mesma lista.
+// Estes dois checks exigiam a casca do cliente sobre o módulo; agora exigem
+// que a rota use o módulo e que a tela mande os campos que ele lê.
+const rotaDup = servidor.slice(servidor.indexOf("pathname === '/api/cadastros/duplicidade'"));
+check('a rota de duplicidade aplica o bloqueio do módulo',
+  /bloqueio: findDuplicateRegistration\(dados, registro, excluirId\)/.test(rotaDup.slice(0, 1500)));
+check('  e o aviso', /aviso: duplicidade\.textoDoAviso\(avisosDeDuplicidade\(dados, registro, excluirId\)\)/.test(rotaDup.slice(0, 1500)));
+check('  sobre pessoas E CNPJs, a mesma lista de antes',
+  /const dados = \{ people, cnpjs \};/.test(rotaDup.slice(0, 1500)));
+check('a tela e a rota leem os campos da lista que mora no módulo',
+  /duplicidadeCadastro\(\)\.CAMPOS_LIDOS\.forEach/.test(app) && /duplicidade\.CAMPOS_LIDOS\.forEach/.test(rotaDup.slice(0, 1500)));
+// A lista cobre tudo o que a regra lê: um campo novo lido e não mandado faria
+// a pergunta responder diferente da recusa do POST.
+const lidosNoModulo = new Set([...ler('public/modules/shared/duplicidade_cadastro.js')
+  .matchAll(/registro\.([a-zA-Z]+)/g)].map((m) => m[1]));
+const declarados = require(path.join(RAIZ, 'public/modules/shared/duplicidade_cadastro.js')).CAMPOS_LIDOS;
+const faltando = [...lidosNoModulo].filter((c) => !declarados.includes(c));
+check('CAMPOS_LIDOS cobre todo campo que a regra lê do cadastro', faltando.length === 0,
+  faltando.length ? `faltando: ${faltando.join(', ')}` : [...lidosNoModulo].join(', '));
 
 // O módulo escreve os combinantes por CÓDIGO. A cópia do app.js os tinha
 // LITERAIS dentro do regex — caractere invisível no fonte é o defeito que
@@ -176,8 +196,11 @@ check('e não há combinante literal no arquivo',
 console.log('\n--- 7. o aviso chega ANTES de gravar, na tela ---');
 check('a tela pergunta e desiste no "não"',
   /if \(avisoDup && !\(await confirmModal\(avisoDup\)\)\) return;/.test(app));
-check('  nos DOIS formulários (pessoa e CNPJ)',
-  (app.match(/avisoDeDuplicidadeCliente\(\[\.\.\.people, \.\.\.cnpjs\], payload, payload\.id\)/g) || []).length === 2);
+check('  nos DOIS formulários (pessoa e CNPJ), com a resposta do servidor',
+  (app.match(/duplicidadeDoCadastro = await perguntarDuplicidadeDeCadastro\(payload, payload\.id\)/g) || []).length === 2
+  && (app.match(/const avisoDup = duplicidadeDoCadastro\.aviso;/g) || []).length === 2);
+check('  e o documento repetido continua recusando antes de enviar',
+  (app.match(/const duplicateMessage = duplicidadeDoCadastro\.bloqueio;/g) || []).length === 2);
 check('e não usa window.prompt', !/window\.prompt/.test(app));
 
 console.log('\n--- 8. o servidor também devolve os avisos ---');

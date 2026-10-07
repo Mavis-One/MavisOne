@@ -47,6 +47,10 @@ const inscricaoEstadual = require('./public/modules/shared/inscricao_estadual');
 // Fase CW: a regra de duplicidade de cadastro, num lugar só. Estava escrita
 // duas vezes — aqui e no public/app.js — com as duas cópias idênticas.
 const duplicidade = require('./public/modules/shared/duplicidade_cadastro');
+// Rodada de desempenho: filtro, ordem e página da lista de Cadastros › Pessoas,
+// num lugar só. A tela fazia isso no navegador depois de baixar as 6.492
+// pessoas a cada clique; agora a página sai daqui, pelas MESMAS regras.
+const listaDeCadastros = require('./public/modules/shared/lista_de_cadastros');
 // Painel "Atenção" do hub: junta o que já está errado e espalhado por seis
 // telas — conta vencida, NF-e rejeitada, pedido faturado sem nota, estoque
 // abaixo do mínimo.
@@ -2103,6 +2107,21 @@ const PARTES_DA_META_DE_CADASTROS = Object.freeze([
   'directory', 'products', 'deposits', 'bankAccounts', 'estabelecimentos', 'paymentMethods',
   'cardAcquirers', 'saleStatuses', 'companies', 'users', 'notasFiscais'
 ]);
+
+// O texto de busca já normalizado de cada linha da lista de Cadastros › Pessoas
+// (ver `memo` em public/modules/shared/lista_de_cadastros.js). Guardado PELA
+// PRÓPRIA LINHA: a chave é o conteúdo dos campos, então linha editada é
+// normalizada de novo, e nada velho sai daqui. Sem ele a busca prenderia o
+// event loop ~70 ms normalizando 12 campos de 6.492 linhas a cada página.
+const memoDaBuscaDeCadastros = new Map();
+
+/** O JSON dos filtros da lista de Pessoas, ou null se não for um objeto. */
+function filtrosDaListaDeCadastros(texto) {
+  let valor = null;
+  try { valor = JSON.parse(texto); } catch (erro) { valor = null; }
+  return valor && typeof valor === 'object' && !Array.isArray(valor) ? valor : null;
+}
+
 
 function normalizeSalesItems(rawItems) {
   if (!Array.isArray(rawItems)) return [];
@@ -10663,6 +10682,103 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     return sendJson(res, { cnpjs: await db.getCnpjs() });
+  }
+
+  // A LISTA DE CADASTROS › PESSOAS, UMA PÁGINA POR VEZ (rodada de desempenho).
+  //
+  // A tela baixava as rotas acima inteiras — 7.425 KB cru, 695 KB gzip — e
+  // filtrava, ordenava e cortava no navegador, DE NOVO a cada clique (virar
+  // página, ordenar, Buscar, abrir os filtros). Agora pede só a página: ~32 KB
+  // cru, ~6 KB gzip. Filtro, ordem e corte são os MESMOS, do mesmo arquivo que
+  // a tela usava (public/modules/shared/lista_de_cadastros.js), sobre o mesmo
+  // cache de pessoas e CNPJs que /pessoas e /cnpjs devolvem.
+  //
+  // `filtros` é o JSON do estado da tela; o que faltar ganha o padrão de
+  // sempre. `inicio`/`fim` são os limites de data já convertidos em instante
+  // NO NAVEGADOR — "a partir de 05/10" é 05/10 no fuso de quem digitou, e este
+  // servidor não está nele. Sem eles (quem chama a API direto), os limites são
+  // calculados aqui, no fuso do servidor.
+  //
+  // As rotas /pessoas e /cnpjs continuam: são o contrato de quem as usa por
+  // fora (scripts/smoke-api.js), e a tela deixou de ser uma delas.
+  if (pathname === '/api/cadastros/lista' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const brutos = url.searchParams.get('filtros');
+      const guardados = brutos ? filtrosDaListaDeCadastros(brutos) : {};
+      if (!guardados) return sendJson(res, { error: 'Filtros inválidos.' }, 400);
+      const filtros = listaDeCadastros.normalizarFiltros(guardados);
+      const limites = (url.searchParams.has('inicio') || url.searchParams.has('fim'))
+        ? { inicio: url.searchParams.get('inicio') || '', fim: url.searchParams.get('fim') || '' }
+        : listaDeCadastros.limitesDeData(filtros.dateStart, filtros.dateEnd);
+      const [people, cnpjs] = await Promise.all([db.getPeople(), db.getCnpjs()]);
+      const pagina = listaDeCadastros.montarPagina(people, cnpjs, filtros, limites, memoDaBuscaDeCadastros);
+      return sendJson(res, {
+        linhas: pagina.visiveis,
+        total: pagina.totalRegistros,
+        pagina: pagina.paginaAtual,
+        totalPaginas: pagina.totalPaginas,
+        primeiro: pagina.primeiroDaPagina
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao listar os cadastros', 500);
+    }
+  }
+
+  // UM CADASTRO INTEIRO, para abrir a edição (rodada de desempenho).
+  //
+  // A lista agora traz só os campos que ela desenha. Abrir o formulário com a
+  // linha da lista e salvar gravaria vazio por cima de endereço, contatos e
+  // dados bancários — o formulário manda TODOS os campos. Por isso a tela busca
+  // o registro completo aqui antes de abrir, e não abre se não conseguir.
+  if ((pathname.startsWith('/api/cadastros/pessoas/') || pathname.startsWith('/api/cadastros/cnpjs/')) && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const ehCnpj = pathname.startsWith('/api/cadastros/cnpjs/');
+      const id = decodeURIComponent(pathname.replace(ehCnpj ? '/api/cadastros/cnpjs/' : '/api/cadastros/pessoas/', ''));
+      const registro = ehCnpj ? await db.getCnpjById(id) : await db.getPersonById(id);
+      if (!registro) return sendJson(res, { error: 'Cadastro não encontrado.' }, 404);
+      return sendJson(res, ehCnpj ? { cnpj: registro } : { person: registro });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao abrir o cadastro', 500);
+    }
+  }
+
+  // A PERGUNTA DE DUPLICIDADE ANTES DE SALVAR (rodada de desempenho).
+  //
+  // A tela conferia contra as 6.492 pessoas que tinha baixado. Sem baixá-las,
+  // pergunta aqui — mesma regra (duplicidade_cadastro.js, a que o POST/PUT
+  // também usa), mesma lista ([...pessoas, ...CNPJs], do mesmo cache). Devolve
+  // o bloqueio (documento repetido: recusa) e o texto do aviso (nome ou
+  // endereço repetido: pergunta). GET, e não POST: só lê, e um método de
+  // escrita faria a tela jogar fora os caches de leitura dela à toa.
+  if (pathname === '/api/cadastros/duplicidade' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const registro = {};
+      // Só os campos que a regra lê, pela lista que mora junto dela.
+      duplicidade.CAMPOS_LIDOS.forEach((campo) => {
+        if (url.searchParams.has(campo)) registro[campo] = url.searchParams.get(campo);
+      });
+      const excluirId = url.searchParams.get('excluirId') || undefined;
+      const [people, cnpjs] = await Promise.all([db.getPeople(), db.getCnpjs()]);
+      const dados = { people, cnpjs };
+      return sendJson(res, {
+        bloqueio: findDuplicateRegistration(dados, registro, excluirId),
+        aviso: duplicidade.textoDoAviso(avisosDeDuplicidade(dados, registro, excluirId))
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao conferir a duplicidade', 500);
+    }
   }
 
   if (pathname.startsWith('/api/cnpj/') && req.method === 'GET') {

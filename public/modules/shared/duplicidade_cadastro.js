@@ -155,7 +155,16 @@
     return `${lista.map((a) => a.mensagem).join(' ')} Cadastrar mesmo assim?`;
   }
 
-  const api = { normalizarTexto, soDigitos, linhaDeEndereco, chaveDeEndereco, bloqueio, avisos, textoDoAviso };
+  // Os campos do cadastro que esta regra lê (documento, nome e as partes do
+  // endereço). A tela de Pessoas manda só estes ao servidor para perguntar
+  // "duplicado?" antes de salvar (/api/cadastros/duplicidade), e o servidor só
+  // aceita estes — a lista mora junto da regra para as duas pontas não
+  // divergirem quando ela passar a ler um campo novo.
+  const CAMPOS_LIDOS = Object.freeze([
+    'name', 'document', 'address', 'street', 'streetNumber', 'addressNumber', 'neighborhood', 'city', 'state', 'zipCode'
+  ]);
+
+  const api = { normalizarTexto, soDigitos, linhaDeEndereco, chaveDeEndereco, bloqueio, avisos, textoDoAviso, CAMPOS_LIDOS };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (raiz) raiz.MavisDuplicidade = api;
