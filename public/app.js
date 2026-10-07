@@ -2141,6 +2141,22 @@ function textoDeBusca(valor) {
   return String(valor || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 }
 
+// O índice de busca de uma lista de opções, guardado pela identidade da lista.
+// Ver o comentário em attachSearchableSelect. Também pelo TAMANHO: quem
+// acrescentar opção no mesmo array (push) e reconectar o campo ganha índice
+// novo, em vez de uma busca que não acha a opção recém-incluída.
+const INDICES_DE_BUSCA = new WeakMap();
+function indiceDeBuscaDe(options) {
+  const guardado = INDICES_DE_BUSCA.get(options);
+  if (guardado && guardado.tamanho === options.length) return guardado.indice;
+  const indice = options.map((o) => {
+    const busca = textoDeBusca(o.label);
+    return { opcao: o, busca, palavras: busca.split(/[^a-z0-9]+/).filter(Boolean) };
+  });
+  INDICES_DE_BUSCA.set(options, { tamanho: options.length, indice });
+  return indice;
+}
+
 function attachSearchableSelect({ id, options, onSelect }) {
   const input = document.getElementById(`${id}Input`);
   const hidden = document.getElementById(`${id}Value`);
@@ -2223,10 +2239,13 @@ function attachSearchableSelect({ id, options, onSelect }) {
   // `palavras` entra junto pelo mesmo motivo. Ele serve para dar preferência a
   // quem casa uma PALAVRA INTEIRA — ver a pontuação mais abaixo — e recortá-lo
   // a cada tecla, sobre 5.476 rótulos, seria fazer 5.476 splits por letra.
-  const indice = options.map((o) => {
-    const busca = textoDeBusca(o.label);
-    return { opcao: o, busca, palavras: busca.split(/[^a-z0-9]+/).filter(Boolean) };
-  });
+  //
+  // E UMA VEZ POR LISTA, NÃO POR ATTACH (fase DS): quem redesenha a tela e
+  // reconecta o campo com o MESMO array de opções (a Nova Venda guarda as
+  // listas dela) reaproveita o índice já montado. Lista nova, índice novo — a
+  // chave é a identidade do array, e um WeakMap não segura lista que ninguém
+  // mais usa.
+  const indice = indiceDeBuscaDe(options);
 
   function renderDropdown(filterText, { mostrarTudo = false } = {}) {
     const term = textoDeBusca(filterText).trim();
@@ -2548,7 +2567,14 @@ async function loadModule(moduleName) {
         if (!y || !m || !d) return value;
         return `${d}/${m}/${y}`;
       };
-      const salesFormatBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      // UM FORMATADOR SÓ, e não um por chamada (fase DS). `toLocaleString` com
+      // opções monta um formatador novo do ICU a cada número: no rótulo dos
+      // 5.560 produtos da Nova Venda eram 469 ms por redesenho. A especificação
+      // (ECMA-402) define `Number.prototype.toLocaleString(locais, opções)` como
+      // `new Intl.NumberFormat(locais, opções).format(x)` — o texto é o mesmo,
+      // só não se monta o formatador de novo.
+      const formatadorBRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+      const salesFormatBRL = (value) => formatadorBRL.format(Number(value || 0));
       // Tamanho de arquivo em unidade legivel. "1048576 bytes" nao diz nada a
       // quem esta conferindo se cabe no limite de 10 MB.
       const salesFormatTamanho = (bytes) => {
@@ -2619,11 +2645,44 @@ async function loadModule(moduleName) {
         // SALES_META_VALIDADE_MS: são 435 KB que não mudam entre uma página e
         // outra. `meta=0` só sai com o cache NA MÃO — pedir para omitir sem ter
         // o que reaproveitar desenharia a Busca Avançada com os selects vazios.
+        //
+        // E SÓ COM A BUSCA AVANÇADA ABERTA (fase DS): as listas só são
+        // desenhadas dentro do painel. Com ele fechado, a primeira página
+        // pagava 445 KB de diretório que ninguém via; ao abrir o painel a tela
+        // recarrega e pede as listas, porque aí não há cache na mão.
         const metaFresca = salesMetaEmCache
           && (Date.now() - salesMetaBuscadaEm) < SALES_META_VALIDADE_MS;
-        if (metaFresca) params.set('meta', '0');
+        if (metaFresca || !showFilters) params.set('meta', '0');
 
-        const data = await api(`/api/sales/records?${params.toString()}`);
+        // REDESENHAR SEM IR AO SERVIDOR quando o clique só muda a APARÊNCIA
+        // (fase DS): marcar uma caixa, marcar todas, abrir o menu de lote ou o
+        // seletor de colunas, abrir/fechar a Busca Avançada. Cada um desses
+        // refazia o GET da lista inteira e o redesenho — 60 ms aqui, um ida e
+        // volta ao VPS lá. Quem marca `redesenhoSemBusca` é o próprio clique, e
+        // a marca vale UMA vez.
+        //
+        // Só reaproveita a resposta da MESMA consulta (mesma página, filtros,
+        // ordem e tamanho — a chave é a URL sem `meta`) e só a que está na tela
+        // agora: o dado não fica mais velho do que o que a pessoa já está vendo.
+        // Paginar, filtrar, ordenar e voltar depois de gravar continuam indo ao
+        // servidor, porque não marcam nada. Abrir a Busca Avançada sem as
+        // listas frescas também vai: o painel precisa delas.
+        const chaveDaLista = (() => {
+          const semMeta = new URLSearchParams(params);
+          semMeta.delete('meta');
+          return semMeta.toString();
+        })();
+        const soAparencia = draft.redesenhoSemBusca === true;
+        draft.redesenhoSemBusca = false;
+        const reaproveitavel = soAparencia && draft.ultimaLista && draft.ultimaLista.chave === chaveDaLista
+          && (!showFilters || metaFresca);
+
+        const data = reaproveitavel
+          ? draft.ultimaLista.dados
+          : await api(`/api/sales/records?${params.toString()}`);
+        // Guardada SEM o `meta`: senão reaproveitá-la renovaria o relógio do
+        // cache das listas (ver o `if (data.meta)` abaixo) sem buscar nada.
+        draft.ultimaLista = { chave: chaveDaLista, dados: { ...data, meta: undefined } };
         const records = data.records || [];
         const totalPages = Math.max(1, Math.ceil((data.total || 0) / limit));
         if (data.meta) {
@@ -2982,9 +3041,15 @@ async function loadModule(moduleName) {
           </div>
         `;
 
+        // Os cliques que só mudam a APARÊNCIA marcam `redesenhoSemBusca` antes
+        // de redesenhar — ver o comentário junto do `api(...)` lá em cima.
+        const redesenharSemBuscar = () => {
+          draft.redesenhoSemBusca = true;
+          loadModule('sales');
+        };
         document.getElementById('salesFilterToggleBtn')?.addEventListener('click', () => {
           state.salesDraft.showOrdersFilters = !showFilters;
-          loadModule('sales');
+          redesenharSemBuscar();
         });
         document.getElementById('salesQuickSearchForm')?.addEventListener('submit', (event) => {
           event.preventDefault();
@@ -3030,7 +3095,7 @@ async function loadModule(moduleName) {
           } else {
             draft.selecionados = draft.selecionados.filter((id) => !idsDaPagina.includes(id));
           }
-          loadModule('sales');
+          redesenharSemBuscar();
         });
         content.querySelectorAll('.sales-selecionar').forEach((caixa) => {
           caixa.addEventListener('change', () => {
@@ -3038,17 +3103,17 @@ async function loadModule(moduleName) {
             draft.selecionados = caixa.checked
               ? [...new Set([...draft.selecionados, id])]
               : draft.selecionados.filter((x) => x !== id);
-            loadModule('sales');
+            redesenharSemBuscar();
           });
         });
         document.getElementById('salesLoteLimparBtn')?.addEventListener('click', () => {
           draft.selecionados = [];
           draft.showLoteMenu = false;
-          loadModule('sales');
+          redesenharSemBuscar();
         });
         document.getElementById('salesLoteMenuBtn')?.addEventListener('click', () => {
           draft.showLoteMenu = !draft.showLoteMenu;
-          loadModule('sales');
+          redesenharSemBuscar();
         });
         content.querySelectorAll('.sales-lote-acao').forEach((botao) => {
           botao.addEventListener('click', async () => {
@@ -3095,7 +3160,7 @@ async function loadModule(moduleName) {
 
         document.getElementById('salesColunasBtn')?.addEventListener('click', () => {
           state.salesDraft.showOrdersColunas = !mostrandoSeletor;
-          loadModule('sales');
+          redesenharSemBuscar();
         });
         document.querySelectorAll('[data-coluna-visivel]').forEach((caixa) => {
           caixa.addEventListener('change', () => {
@@ -3115,7 +3180,9 @@ async function loadModule(moduleName) {
             // preferência parecer embaralhada ao reabrir.
             const emOrdem = SALES_COLUNAS.map((c) => c.chave).filter((c) => escolhidas.includes(c));
             salvarPreferencia('sales_lista', { colunas: emOrdem });
-            loadModule('sales');
+            // A coluna escolhida não muda o que o servidor devolve — cada
+            // registro já vem com todos os campos; muda só o que se desenha.
+            redesenharSemBuscar();
           });
         });
         document.querySelectorAll('.sales-ordenar').forEach((botao) => {
@@ -3257,11 +3324,38 @@ async function loadModule(moduleName) {
         // que ele está zerado é o erro que a coluna Saldo Estoque só pega
         // depois de adicionado. Renderização e attach usam o MESMO rótulo,
         // senão a lista aberta mostra um texto e o campo preenche outro.
+        //
+        // O RESERVADO DE CADA PRODUTO, SOMADO UMA VEZ POR ABERTURA (fase DS).
+        //
+        // Era um `Object.entries(meta.reservas).filter(...)` DENTRO do rótulo:
+        // as ~140 reservas varridas para cada um dos 5.560 produtos, duas vezes
+        // por redesenho do formulário — e o formulário redesenha a cada item,
+        // quantidade, desconto, interruptor. Medido: 690 ms só nisso, por
+        // redesenho. `meta` não muda enquanto a tela está aberta, então a soma
+        // é feita aqui, uma vez.
+        //
+        // A CONTA É A MESMA, NA MESMA ORDEM, até o último bit do número: a chave
+        // sem cor (`id|`) de um lado, e do outro a soma, a partir de zero, das
+        // chaves com cor na ordem de `Object.entries` — exatamente as parcelas e
+        // a ordem do `reduce` antigo. Somar tudo junto daria o mesmo na prática,
+        // mas não por construção com quantidade fracionária. O id é o que vem
+        // antes da PRIMEIRA barra: id de produto não tem `|` (createId não o
+        // produz; 0 no banco em 07/10/2026), e é por isso que a chave usa `|`.
+        const reservadoPorProduto = (() => {
+          const semCor = new Map();
+          const comCor = new Map();
+          for (const [chave, qtd] of Object.entries(meta.reservas || {})) {
+            const barra = chave.indexOf('|');
+            if (barra < 0) continue;
+            const id = chave.slice(0, barra);
+            if (chave === `${id}|`) semCor.set(id, Number(qtd || 0));
+            else comCor.set(id, (comCor.get(id) || 0) + Number(qtd || 0));
+          }
+          return { semCor, comCor };
+        })();
         const rotuloProduto = (p) => {
-          const reservado = Number((meta.reservas || {})[`${p.id}|`] || 0)
-            + Object.entries(meta.reservas || {})
-              .filter(([chave]) => chave.startsWith(`${p.id}|`) && chave !== `${p.id}|`)
-              .reduce((soma, [, qtd]) => soma + Number(qtd || 0), 0);
+          const reservado = Number(reservadoPorProduto.semCor.get(String(p.id)) || 0)
+            + (reservadoPorProduto.comCor.get(String(p.id)) || 0);
           const livre = Number(p.stockQuantity || 0) - reservado;
           const cabecalho = `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)} · `;
 
@@ -3288,6 +3382,67 @@ async function loadModule(moduleName) {
             + (reservado > 0
               ? `disponível ${salesFormatQty(livre)} de ${salesFormatQty(p.stockQuantity)}`
               : `saldo ${salesFormatQty(p.stockQuantity)}`);
+        };
+        // AS OPÇÕES DOS DOIS CAMPOS DE BUSCA, MONTADAS UMA VEZ (fase DS).
+        //
+        // `renderForm` redesenha o formulário inteiro a cada mexida, e montava
+        // as opções DUAS vezes por redesenho (no HTML e no attach): 5.560
+        // rótulos de produto e 6.492 nomes de cliente, refeitos a cada item
+        // adicionado. O rótulo do produto depende só de `meta` (fixo enquanto a
+        // tela está aberta) e do DEPÓSITO escolhido — então a lista é guardada
+        // por depósito, e trocar o depósito a remonta. A de clientes não depende
+        // de nada.
+        //
+        // O MESMO array no render e no attach, de propósito: é também a chave do
+        // índice de busca (ver indiceDeBuscaDe), que assim é montado uma vez.
+        let opcoesDeProdutoGuardadas = { deposito: null, lista: null };
+        const opcoesDeProduto = () => {
+          const deposito = String((typeof formState !== 'undefined' ? formState.depositId : '') || '').trim();
+          if (opcoesDeProdutoGuardadas.lista && opcoesDeProdutoGuardadas.deposito === deposito) {
+            return opcoesDeProdutoGuardadas.lista;
+          }
+          const lista = meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p), product: p }));
+          opcoesDeProdutoGuardadas = { deposito, lista };
+          return lista;
+        };
+        let opcoesDeClienteGuardadas = null;
+        const opcoesDeCliente = () => {
+          if (!opcoesDeClienteGuardadas) {
+            opcoesDeClienteGuardadas = meta.directory.map((entry) => ({ value: entry.id, label: entry.name }));
+          }
+          return opcoesDeClienteGuardadas;
+        };
+        // OS DADOS DO CLIENTE PARA A IMPRESSÃO, SÓ DO ESCOLHIDO (fase DS).
+        //
+        // `meta.directory` chega só com id e nome — é o que a busca usa. Documento,
+        // telefone e endereço são do papel impresso, e vinham para as 6.492
+        // pessoas a cada abertura do formulário. Agora são pedidos ao escolher o
+        // cliente (e ao abrir um pedido que já tem cliente), e guardados aqui
+        // enquanto a tela está aberta. A impressão espera por eles se ainda não
+        // chegaram; se a busca falhar, imprime com o nome — como já acontecia
+        // com cliente que não estava no cadastro.
+        const clientesDetalhados = new Map();
+        const dadosDoCliente = (id) => {
+          const chave = String(id || '');
+          if (!chave) return Promise.resolve(null);
+          if (!clientesDetalhados.has(chave)) {
+            clientesDetalhados.set(chave, api(`/api/sales/clientes/${encodeURIComponent(chave)}`)
+              .then((resposta) => resposta.cliente || null)
+              .catch((erro) => {
+                // QUEM O SERVIDOR RESPONDEU FICA GUARDADO, MESMO SEM CLIENTE.
+                // dadosDoCliente roda a cada redesenho do formulário (item,
+                // quantidade, aba); um pedido cujo cliente saiu do cadastro
+                // responde 404, e descartar isso repetiria o GET a cada clique.
+                // Cliente inexistente não passa a existir com a tela aberta — a
+                // impressão sai com o nome, como já saía. Só a falha de REDE
+                // (o fetch rejeita com TypeError, antes de haver resposta) é
+                // descartada, para a próxima chamada tentar de novo. Reabrir o
+                // formulário começa um Map novo.
+                if (erro instanceof TypeError) clientesDetalhados.delete(chave);
+                return null;
+              }));
+          }
+          return clientesDetalhados.get(chave);
         };
         // O servidor recusa faturar sem saldo (transitionOrderStockEffect) —
         // avisar aqui evita descobrir isso só na hora de aprovar. Vale só para
@@ -3649,13 +3804,13 @@ async function loadModule(moduleName) {
           };
         };
 
-        const salesRecordPrint = ({ direta }) => {
+        const salesRecordPrint = async ({ direta }) => {
           // formState só é atualizado nos redesenhos. Sem isto, imprimir logo
           // depois de digitar (sem tocar em item/total) sairia com cliente, data
           // e status antigos — o que o usuário vê na tela não é o que imprime.
           syncFormState();
           const totais = computeTotals();
-          const cliente = meta.directory.find((e) => e.id === formState.clientSupplierId);
+          const clienteId = formState.clientSupplierId;
           const empresa = meta.companies.find((c) => c.id === formState.companyId);
           const vendedor = meta.sellers.find((s) => s.id === formState.sellerId);
           // SEM 'noopener': por especificação ele faz window.open devolver
@@ -3668,6 +3823,16 @@ async function loadModule(moduleName) {
           const win = window.open('', '_blank');
           if (!win) { showToast('O navegador bloqueou a janela de impressão. Libere os pop-ups deste site e tente de novo.', 'warning'); return; }
           win.opener = null;
+          // A janela abre ANTES de esperar pelo cliente: aberta depois de um
+          // `await`, ela já não conta como resposta ao clique e o bloqueador de
+          // pop-up a barra. Quase sempre os dados já chegaram (são pedidos ao
+          // escolher o cliente); sem eles, sai com o nome da busca.
+          const cliente = (await dadosDoCliente(clienteId))
+            || meta.directory.find((e) => e.id === clienteId);
+          // A pessoa pode ter fechado a janela enquanto o cliente chegava:
+          // escrever nela daria erro sem dono (rejeição não tratada) e não
+          // haveria papel para imprimir.
+          if (win.closed) return;
 
           // -------------------------------------------------------------------
           // O MODELO DO PAPEL (30/09/2026)
@@ -4336,7 +4501,7 @@ async function loadModule(moduleName) {
                 <div class="sales-tab-panel" data-aba="dados" ${abaAtiva === 'dados' ? '' : 'hidden'}>
                 <div class="row sales-row-cliente">
                   <label>Cliente/Fornecedor *
-                    ${renderSearchableSelect({ id: 'salesClientSupplier', name: 'clientSupplierId', options: meta.directory.map((entry) => ({ value: entry.id, label: entry.name })), selectedValue: formState.clientSupplierId, placeholder: 'Buscar por nome...', required: true })}
+                    ${renderSearchableSelect({ id: 'salesClientSupplier', name: 'clientSupplierId', options: opcoesDeCliente(), selectedValue: formState.clientSupplierId, placeholder: 'Buscar por nome...', required: true })}
                   </label>
                   <label>Empresa
                     ${renderSearchableSelect({ id: 'salesCompany', name: 'companyId', options: meta.companies.map((c) => ({ value: c.id, label: c.name })), selectedValue: formState.companyId, placeholder: 'Buscar empresa...' })}
@@ -4395,7 +4560,7 @@ async function loadModule(moduleName) {
                   <div class="cadastro-section-body">
                     <div class="row sales-produto-add">
                       <label style="flex: 2;">Adiciona novos Produtos
-                        ${renderSearchableSelect({ id: 'salesProduct', name: 'productPick', options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p) })), selectedValue: '', placeholder: 'Buscar produto...' })}
+                        ${renderSearchableSelect({ id: 'salesProduct', name: 'productPick', options: opcoesDeProduto(), selectedValue: '', placeholder: 'Buscar produto...' })}
                       </label>
                       <!-- A cor só aparece depois de escolher o produto, e só
                            para produto que tem cor. Um campo vazio permanente
@@ -5049,7 +5214,11 @@ async function loadModule(moduleName) {
             }
           }, salesRecordActionsContext());
 
-          attachSearchableSelect({ id: 'salesClientSupplier', options: meta.directory.map((entry) => ({ value: entry.id, label: entry.name })) });
+          // Os dados de impressão do cliente vêm ao escolhê-lo, e já do que o
+          // pedido aberto tiver — ver dadosDoCliente. Guardados: repetir a cada
+          // redesenho não vai ao servidor de novo.
+          attachSearchableSelect({ id: 'salesClientSupplier', options: opcoesDeCliente(), onSelect: (value) => { dadosDoCliente(value); } });
+          dadosDoCliente(formState.clientSupplierId);
           // Fase AW: trocar a loja mexe no depósito. `onSelect` religa o campo
           // de depósito com as opções da loja nova e sugere a dela quando não
           // há dúvida — ver depositoSugeridoDaLoja.
@@ -5146,7 +5315,7 @@ async function loadModule(moduleName) {
 
           attachSearchableSelect({
             id: 'salesProduct',
-            options: meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p), product: p })),
+            options: opcoesDeProduto(),
             onSelect: (value) => { montarCampoCor(value); }
           });
 
@@ -5820,7 +5989,10 @@ async function loadModule(moduleName) {
 
       // Sub-aba: Painel Vendas
       if (sub === 'sales_dashboard') {
-        const { overview, escopo } = await api('/api/sales/dashboard');
+        // `parte=resumo`: esta tela lê só os cartões. Sem o parâmetro a rota
+        // manda também a lista de pedidos de cada vendedor — 683 KB que aqui
+        // ninguém desenha (fase DS).
+        const { overview, escopo } = await api('/api/sales/dashboard?parte=resumo');
         content.innerHTML = `
           ${escopo && !escopo.podeEscolherVendedor ? `
             <div class="panel">
@@ -5855,7 +6027,13 @@ async function loadModule(moduleName) {
           `;
           return;
         }
-        const { bySeller, escopo } = await api('/api/sales/dashboard');
+        // A LISTA DE PEDIDOS VEM SÓ DO VENDEDOR ESCOLHIDO (fase DS). Os totais
+        // vêm de todos — são o seletor —, mas os pedidos de cada um iam juntos
+        // na mesma resposta: 683 KB para a tela mostrar os de uma pessoa. O
+        // servidor resolve o escolhido pela mesma regra de baixo (o pedido, se
+        // estiver na lista; senão o primeiro), e só ele vem com `orders`.
+        const draft = state.salesDraft || {};
+        const { bySeller, escopo } = await api(`/api/sales/dashboard?vendedor=${encodeURIComponent(draft.sellerDashboardId || '')}`);
 
         // Lista vazia tem DUAS causas diferentes, e dizer a errada manda a
         // pessoa procurar o problema no lugar errado: "cadastre um vendedor"
@@ -5874,7 +6052,6 @@ async function loadModule(moduleName) {
           return;
         }
 
-        const draft = state.salesDraft || {};
         const selectedSellerId = bySeller.some((s) => s.sellerId === draft.sellerDashboardId) ? draft.sellerDashboardId : bySeller[0].sellerId;
         const selected = bySeller.find((s) => s.sellerId === selectedSellerId);
 

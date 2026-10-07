@@ -137,19 +137,27 @@ const rota = servidor.slice(servidor.indexOf("if (pathname === '/api/sales/recor
 const viewOrdersQuotes = rota.slice(0, rota.indexOf("if (view === 'nfes')"));
 
 check('a resposta manda CONTAGEM', /contagens: \{/.test(viewOrdersQuotes));
-for (const campo of ['orders', 'quotes', 'nfes', 'importLogs']) {
+for (const campo of ['orders', 'quotes', 'nfes']) {
   check(`  ${campo.padEnd(11)} como número`,
     new RegExp(`${campo}: \\(data\\.${campo} \\|\\| \\[\\]\\)\\.length`).test(viewOrdersQuotes));
 }
+// Fase DS: o caminho com filtro deixou de carregar o histórico de importações
+// (só a lista de Vendas o usava, e só para contar) — a contagem vem de
+// `db.contarImportLogs()`, que conta sem carregar, nos dois caminhos.
+check('  importLogs  como número (contado, sem carregar o histórico)',
+  /importLogs: importacoes/.test(viewOrdersQuotes) && /db\.contarImportLogs\(\)/.test(rota.slice(0, rota.indexOf("if (view === 'nfes')"))));
 // O que NÃO pode voltar: os quatro arrays ao lado de uma página de 15.
 check('e NÃO manda mais as listas completas',
   !/^\s*orders: data\.orders,$/m.test(viewOrdersQuotes)
   && !/^\s*quotes: data\.quotes,$/m.test(viewOrdersQuotes));
 // As outras views existem justamente para quem precisa da lista, e elas não
 // podem ter sido levadas na mudança.
+//
+// Fase DS: `import_logs` responde ANTES da onda, lendo só o histórico
+// (getImportLogs) — a mesma lista, sem carregar pedido nenhum.
 check('as outras views continuam entregando a lista',
   /if \(view === 'nfes'\) \{\s*\n\s*return sendJson\(res, \{ nfes: data\.nfes \}\);/.test(rota)
-  && /if \(view === 'import_logs'\) \{\s*\n\s*return sendJson\(res, \{ importLogs: data\.importLogs \}\);/.test(rota));
+  && /if \(view === 'import_logs'\) \{[\s\S]{0,300}return sendJson\(res, \{ importLogs: await db\.getImportLogs\(\) \}\);/.test(rota));
 
 console.log('--- 3. a tela lê a contagem ---');
 const app = ler('public/app.js');

@@ -1953,10 +1953,15 @@ function getCarriersDirectory(data) {
 // orders/quotes são Supabase de verdade a partir desta fase — mesma
 // estratégia de syncCadastroData(): popula data.orders/data.quotes com o
 // conteúdo atual do Supabase logo após loadData(), pra buildSalesDashboardSummary/
-// buildSalesChartSeries/filterSalesRecords/serializeSalesRecord (todas leem
-// data.orders/data.quotes) continuarem exatamente como eram antes da
+// buildSalesChartSeries/filterSalesRecords/serializeSalesRecord — todas leem
+// data.orders/data.quotes — continuarem exatamente como eram antes da
 // migração. Escrita (criar/editar/excluir) é código novo, não passa por
 // aqui — ver db.createOrder/updateOrder/deleteOrder direto nas rotas.
+//
+// (Travessão, e não parêntese, depois do nome da função, desde a fase DS: o
+// guarda de scripts/test-sync-obrigatorio.js lê "nome (" como CHAMADA, e este
+// comentário fazia getCarriersDirectory — a função logo acima — parecer
+// chamar o serializer.)
 async function syncSalesData(data) {
   const [orders, quotes, importLogs] = await Promise.all([db.getOrders(), db.getQuotes(), db.getImportLogs()]);
   data.orders = orders;
@@ -2028,6 +2033,161 @@ async function syncSalesDataResumida(data) {
   const [orders, quotes] = await Promise.all([db.getOrdersResumidos(), db.getQuotesResumidos()]);
   data.orders = orders;
   data.quotes = quotes;
+}
+
+/**
+ * A LISTA DE VENDAS COM FILTRO: TODOS OS REGISTROS, MAS SÓ AS COLUNAS QUE A
+ * BUSCA LÊ (fase DS).
+ *
+ * Com filtro ou ordenação escolhida não há atalho: todo registro precisa ser
+ * avaliado. Mas a avaliação lê vinte e poucos campos, e `select *` trazia
+ * os ~60 — 713 ms de carga contra 261 ms deste recorte (getVendasParaBusca diz
+ * quais colunas e por quê). A página que vai para a tela é relida inteira,
+ * por id, depois de filtrar e ordenar.
+ *
+ * `importLogs` não vem: a rota conta as importações à parte.
+ *
+ * NÃO SERVE PARA DEVOLVER REGISTRO À TELA. Os campos fora do recorte (itens,
+ * frete, pagamentos...) voltam vazios do serializer.
+ */
+async function syncSalesDataParaBusca(data) {
+  const { orders, quotes } = await db.getVendasParaBusca();
+  data.orders = orders;
+  data.quotes = quotes;
+}
+
+/**
+ * SÓ OS REGISTROS PEDIDOS, COMPLETOS (fase DS).
+ *
+ * Abrir um pedido, gravar um pedido, anexar arquivo, a ação em lote: todas
+ * mexem em UM registro (ou nos até 200 selecionados) e carregavam os 14.942
+ * com `select *` para achá-los com `.find`. Medido: 414 ms para abrir um
+ * pedido, e o PUT pagava isso dentro de uma onda de 1,4 s — CPU no único event
+ * loop, todo mundo esperando.
+ *
+ * Mesmo mapper e mesmas colunas de `getOrders`/`getQuotes` (ver
+ * getVendasPorIds), então o registro é indistinguível. E a mesma prioridade do
+ * `[...data.orders, ...data.quotes].find(...)`: pedido antes de orçamento.
+ *
+ * `data.orders` E `data.quotes` FICAM COM O RECORTE — o mesmo aviso de
+ * syncSalesDataDaPagina. Quem chama isto não pode contar nem somar nada a
+ * partir dessas listas: `data.orders.length` é 1, não 14.864.
+ */
+async function syncSalesDataDosIds(data, ids) {
+  const lista = [...new Set((ids || []).map(String).filter(Boolean))];
+  const { orders, quotes } = await db.getVendasPorIds({ orders: lista, quotes: lista });
+  data.orders = orders;
+  data.quotes = quotes;
+}
+
+/**
+ * O FINANCEIRO DOS PEDIDOS, E NÃO O DA EMPRESA (fase DS).
+ *
+ * Gravar um pedido carregava os 27.362 lançamentos e as 25.709 baixas — 37 MB
+ * de linhas viradas objeto — para o efeito financeiro olhar os lançamentos DO
+ * pedido. Todo leitor de `data.finance`/`data.financialPayments` no caminho da
+ * gravação filtra por isso: `transitionOrderFinanceEffect` (referenceId do
+ * pedido, e as baixas desses lançamentos por getFinanceEntryPayments) e a lista
+ * `entryIds` da resposta do PUT (referenceId de novo). O recorte devolve
+ * exatamente esse conjunto.
+ *
+ *   onda do PUT, hoje ......... 1.436 ms
+ *   com este recorte ..........    16 ms
+ *
+ * Categorias, centros de custo e contas vêm inteiros, como no sync completo:
+ * são tabelas pequenas e o lançamento tem chave para as três.
+ *
+ * Lista de ids vazia (o POST, que só acrescenta parcela nova) não vai ao banco
+ * atrás de lançamento nenhum.
+ *
+ * `data.finance` FICA COM O RECORTE. Proibido usar para total ou contagem — é
+ * o mesmo aviso de syncSalesDataDosIds, pelo mesmo motivo.
+ */
+async function syncFinanceDataDosPedidos(data, ids) {
+  const referencias = [...new Set((ids || []).map(String).filter(Boolean))];
+  const [entries, categories, costCenters, bankAccounts] = await Promise.all([
+    referencias.length ? db.getFinancialEntriesPorReferencia(referencias) : [],
+    db.getFinancialCategories(),
+    db.getCostCenters(),
+    db.getBankAccounts()
+  ]);
+  data.finance = entries;
+  data.financialCategories = categories;
+  data.costCenters = costCenters;
+  data.bankAccounts = bankAccounts;
+  data.financialPayments = entries.length
+    ? await db.getFinancialPaymentsDosLancamentos(entries.map((entry) => entry.id))
+    : [];
+}
+
+/**
+ * AS NOTAS, SÓ O NÚMERO — para as telas de Vendas que só mostram o número (fase DS).
+ *
+ * `syncNfeData` traz `select *` de `nfe`, com `payload_enviado` e
+ * `resposta_focus` (jsonb), e os documentos manuais com itens e participantes.
+ * Nas rotas de LEITURA de Vendas o único uso disso é escrever o número da nota
+ * na coluna NF-e (serializeSalesRecord, por id) e contar as manuais no cartão
+ * da lista. Hoje são 0 notas neste banco; em produção são as NFC-e de cada dia,
+ * e cada abertura da lista de pedidos parseava todas.
+ *
+ * MESMA FORMA DOS CAMPOS LIDOS: `data.nfe` com `{ id, numero }` (o que
+ * mapNfeRow devolve nesses dois) e `data.nfes` com `{ id, number }` (o que
+ * comoNfe devolve). O mesmo `.catch` da fiscal: tabela fiscal indisponível não
+ * derruba a lista, só deixa o número em branco, como antes.
+ *
+ * SÓ EM ROTA QUE NÃO GRAVA. `nfe` não está em NAO_PERSISTIR — saveData() a
+ * escreve no db.json —, e uma rota que gravasse depois disto deixaria lá a
+ * lista magra no lugar da inteira. As rotas de escrita de Vendas continuam com
+ * `syncNfeData`.
+ */
+async function syncNfeDataParaVendas(data) {
+  const { fiscais, manuais } = await db.getNumerosDasNotas();
+  data.nfes = manuais;
+  data.nfe = fiscais;
+}
+
+/**
+ * A PÁGINA DA LISTA DE VENDAS, RELIDA INTEIRA POR ID (fase DS).
+ *
+ * A lista com filtro decide QUAIS registros vão para a página sobre o recorte
+ * de colunas (syncSalesDataParaBusca) e relê só esses, completos. Recebe a
+ * página na ordem final, de qual tabela veio cada um (`tabelaDe`, um Map pelo
+ * próprio objeto: o id sozinho não diz, a troca de tipo o mantém) e a função
+ * que busca por ids ({ orders: [...], quotes: [...] } -> { orders, quotes }).
+ * Devolve os registros completos NA ORDEM da página.
+ *
+ * ENTRE OS DOIS PASSOS OUTRA REQUISIÇÃO PODE TER GRAVADO:
+ *
+ *   - registro apagado não volta — a mesma regra de syncSalesDataDaPagina;
+ *   - registro que trocou de tabela (orçamento convertido em pedido: o PUT cria
+ *     em orders e apaga de quotes, com o mesmo id) é procurado na OUTRA tabela.
+ *     Essa segunda consulta só acontece quando falta alguém.
+ *
+ * Quem mudou de status no meio-tempo é tratado por quem chama, que passa a
+ * página relida de novo pelo filtro. Sem gravação concorrente, todo id volta
+ * da própria tabela numa consulta só, e a página é a mesma de antes.
+ */
+async function relerPaginaDeVendas(daPagina, tabelaDe, buscar) {
+  const cheios = await buscar({
+    orders: daPagina.filter((r) => tabelaDe.get(r) === 'orders').map((r) => r.id),
+    quotes: daPagina.filter((r) => tabelaDe.get(r) === 'quotes').map((r) => r.id)
+  });
+  const pedidoPorId = new Map(cheios.orders.map((r) => [r.id, r]));
+  const orcamentoPorId = new Map(cheios.quotes.map((r) => [r.id, r]));
+  const daTabela = (r) => (tabelaDe.get(r) === 'orders' ? pedidoPorId : orcamentoPorId);
+  const daOutraTabela = (r) => (tabelaDe.get(r) === 'orders' ? orcamentoPorId : pedidoPorId);
+  const faltando = daPagina.filter((r) => !daTabela(r).has(r.id));
+  if (faltando.length) {
+    const mudaram = await buscar({
+      orders: faltando.filter((r) => tabelaDe.get(r) === 'quotes').map((r) => r.id),
+      quotes: faltando.filter((r) => tabelaDe.get(r) === 'orders').map((r) => r.id)
+    });
+    mudaram.orders.forEach((r) => { if (!pedidoPorId.has(r.id)) pedidoPorId.set(r.id, r); });
+    mudaram.quotes.forEach((r) => { if (!orcamentoPorId.has(r.id)) orcamentoPorId.set(r.id, r); });
+  }
+  return daPagina
+    .map((r) => daTabela(r).get(r.id) || daOutraTabela(r).get(r.id))
+    .filter(Boolean);
 }
 
 
@@ -2461,9 +2621,17 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
     ...(willApply ? newItems : []).map((item) => item.productId)
   ].filter(Boolean));
 
+  // OS PRODUTOS DO PEDIDO NUMA IDA SÓ (fase DS), e não um `getProductById` por
+  // item em fila: 20 itens eram 35 ms de idas ao banco, contra ~1 ms aqui.
+  //
+  // O Map continua com TODO id envolvido, inclusive o que não existe mais
+  // (valor `null`, como `getProductById` devolvia). Não é detalhe: a projeção
+  // abaixo pergunta `produtos.has(id)` — e um produto apagado continua
+  // projetando contra saldo zero, como sempre projetou.
+  const achados = await db.getProdutosPorIds([...idsEnvolvidos]);
   const produtos = new Map();
   for (const id of idsEnvolvidos) {
-    produtos.set(id, await db.getProductById(id));
+    produtos.set(id, achados.get(id) || null);
   }
 
   // A projeção é por PRODUTO + COR, não só por produto. Vender 3 pretos com 10
@@ -2537,11 +2705,15 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
     }
   }
   if (willApply) {
+    // A releitura continua servindo para saber se o produto ainda existe — no
+    // MESMO ponto do fluxo de antes (depois dos estornos, antes das baixas),
+    // só que numa consulta para todos os itens em vez de uma por item (fase DS).
+    const existentesAgora = await db.getProdutosPorIds(newItems.map((item) => item.productId));
     for (const item of newItems) {
       if (!item.productId) continue;
       // A releitura continua servindo para saber se o produto ainda existe; o
       // total dele nao e' mais calculado aqui (ver a nota acima).
-      const produtoAtual = await db.getProductById(item.productId);
+      const produtoAtual = existentesAgora.get(item.productId);
       if (!produtoAtual) continue;
       registrarMovimentoEstoque(data, {
         productId: item.productId, productName: item.name, type: 'venda',
@@ -2673,6 +2845,24 @@ function pagamentosCabemNoPedido(record) {
     + `(${total.toFixed(2)}). Corrija os valores das parcelas ou o total antes de faturar.`;
 }
 
+/**
+ * AS CREDENCIADORAS, LIDAS UMA VEZ POR REQUISIÇÃO (fase DS).
+ *
+ * Faturar em lote (até 200 pedidos com nota) relia a lista de credenciadoras
+ * uma vez POR PEDIDO — 3,7 ms cada, em fila. Dentro de uma requisição a lista
+ * é a mesma; guardá-la no WeakMap pelo `data` da requisição, como
+ * indiceDoCadastro faz com o cadastro, lê uma vez por lote. A entrada morre com
+ * o `data`: a requisição seguinte relê do banco.
+ */
+const CACHE_CREDENCIADORAS = new WeakMap();
+
+async function credenciadorasDaRequisicao(data) {
+  if (CACHE_CREDENCIADORAS.has(data)) return CACHE_CREDENCIADORAS.get(data);
+  const porId = new Map((await adquirentesDb.listar()).map((a) => [a.id, a]));
+  CACHE_CREDENCIADORAS.set(data, porId);
+  return porId;
+}
+
 async function transitionOrderFinanceEffect(data, { record, wasApplied, willApply, user }) {
   if (wasApplied === willApply) return { criadas: 0, canceladas: 0, mantidas: 0 };
 
@@ -2725,7 +2915,7 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
     // BX). Sem isto o titulo teria o id de uma credenciadora e a tela nao
     // saberia de quem e — e o extrato dela casa por NSU e bandeira, nao por
     // numero de pedido.
-    credenciadorasPorId: new Map((await adquirentesDb.listar()).map((a) => [a.id, a]))
+    credenciadorasPorId: await credenciadorasDaRequisicao(data)
   });
   let quitadas = 0;
   for (const parcela of parcelas) {
@@ -2793,6 +2983,51 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
     }
   }
   return { criadas: parcelas.length, canceladas: 0, mantidas: 0, quitadas };
+}
+
+/**
+ * AS NOTAS POR ID, MONTADAS UMA VEZ POR LISTA (fase DS).
+ *
+ * O mesmo desenho de indiceDoCadastro: cache num WeakMap pelo `data` da
+ * requisição, conferido pela IDENTIDADE dos dois arrays — um sync novo atribui
+ * array novo e o índice é remontado. Aqui também pelo TAMANHO: a criação de
+ * NF-e manual faz `data.nfes.push(...)` no mesmo array, e um índice que não
+ * visse a nota nova responderia "sem número" para ela.
+ *
+ * Só guarda a PRIMEIRA ocorrência de cada id — é a que o `.find` antigo achava.
+ */
+const CACHE_NOTAS = new WeakMap();
+
+function indiceDasNotas(data) {
+  const fiscais = data.nfe || [];
+  const manuais = data.nfes || [];
+  const guardado = CACHE_NOTAS.get(data);
+  // `(data.nfes || []).length` escrito assim, e não `manuais.length`, de
+  // propósito: é a forma que scripts/test-sync-obrigatorio.js reconhece como
+  // LEITURA da coleção. Escrito pela variável, o guarda deixaria de ver que o
+  // serializer lê as notas manuais — e uma rota nova sem sync de notas
+  // passaria calada, com a coluna NF-e em branco.
+  if (guardado && guardado.listaFiscal === fiscais && guardado.listaManual === manuais
+    && guardado.tamanhoFiscal === fiscais.length && guardado.tamanhoManual === (data.nfes || []).length) {
+    return guardado;
+  }
+  const porId = (lista) => {
+    const mapa = new Map();
+    for (const nota of lista) {
+      if (nota && !mapa.has(nota.id)) mapa.set(nota.id, nota);
+    }
+    return mapa;
+  };
+  const indice = {
+    listaFiscal: fiscais,
+    listaManual: manuais,
+    tamanhoFiscal: fiscais.length,
+    tamanhoManual: manuais.length,
+    fiscais: porId(fiscais),
+    manuais: porId(manuais)
+  };
+  CACHE_NOTAS.set(data, indice);
+  return indice;
 }
 
 // Pedidos/orçamentos antigos (importados via CSV ou criados antes desta fase) não têm
@@ -2892,11 +3127,17 @@ function serializeSalesRecord(record, data) {
     // O NÚMERO da nota, não o id: a coluna "NF-e" da lista mostra "1042", e o
     // id é um uuid que não diz nada a quem lê. Resolvido aqui porque é aqui que
     // se tem `data` em mãos — na tela seria uma varredura por linha.
+    //
+    // Pelo índice (fase DS), e não por `.find`: esta função roda uma vez por
+    // registro, e com as NFC-e de produção a varredura linear virava pedidos ×
+    // notas. Mesma resposta — a fiscal antes da manual, a primeira de cada
+    // lista quando há id repetido. Ver indiceDasNotas.
     nfeNumero: (() => {
       if (!record.nfeId) return '';
-      const fiscal = (data.nfe || []).find((n) => n.id === record.nfeId);
+      const indice = indiceDasNotas(data);
+      const fiscal = indice.fiscais.get(record.nfeId);
       if (fiscal) return String(fiscal.numero || '');
-      const manual = (data.nfes || []).find((n) => n.id === record.nfeId);
+      const manual = indice.manuais.get(record.nfeId);
       return manual ? String(manual.number || '') : '';
     })(),
     // Data de envio: mora dentro do grupo de entrega, e a lista precisa dela
@@ -3199,9 +3440,17 @@ async function montarContextoFiscalDoPedido(body, data) {
     contribuinte: inscricaoEstadual.ehContribuinte(cliente && cliente.stateRegistration)
   };
 
-  const produtos = await db.getProducts();
-  const itens = (Array.isArray(body.items) ? body.items : []).map((item) => {
-    const produto = produtos.find((p) => p.id === item.productId) || null;
+  // SÓ OS PRODUTOS DO PEDIDO, e não o catálogo (fase DS). Eram os 5.560 de
+  // getProducts() — 54 ms a cada clique na aba Impostos — para achar os dois
+  // ou três dos itens. O objeto de cada um é o mesmo (mesmo mapper), e o
+  // ESCRITURAL continua virando `null`, como quando getProducts() o deixava de
+  // fora da lista: item de complemento fiscal não é mercadoria, e a regra do
+  // cálculo para ele não muda com esta troca.
+  const listaDeItens = Array.isArray(body.items) ? body.items : [];
+  const produtosPorId = await db.getProdutosPorIds(listaDeItens.map((item) => item && item.productId));
+  const itens = listaDeItens.map((item) => {
+    const doBanco = produtosPorId.get(item.productId);
+    const produto = (doBanco && !doBanco.escritural) ? doBanco : null;
     return {
       codigoProduto: item.sku || (produto && produto.sku) || '',
       descricao: item.name || (produto && produto.name) || '',
@@ -3667,6 +3916,99 @@ function buildSalesDashboardSummary(data, escopo) {
   });
 
   return { overview, bySeller };
+}
+
+/**
+ * OS MESMOS NÚMEROS DO PAINEL, SEM SERIALIZAR NEM LISTAR NINGUÉM (fase DS).
+ *
+ * buildSalesDashboardSummary serializa os 14.942 registros (cliente, empresa,
+ * vendedor resolvidos no cadastro) e devolve em `bySeller` a lista de pedidos
+ * de cada vendedor: 683 KB. O Painel Vendas lê só `overview` (0,4 KB); o
+ * Painel Vendedor lê os totais de cada vendedor e a lista de UM — o do
+ * seletor.
+ *
+ * AS CONTAS SÃO AS MESMAS, LINHA POR LINHA, E NA MESMA ORDEM. Valor e status de
+ * cada registro saem exatamente como o serializer os produz (`valorDoRegistro`
+ * é a conta dele; o status é `normalizar(status, type)`, como lá), o recorte é
+ * o mesmo `vendaVisivel`, e as somas percorrem os registros na ordem em que o
+ * carregamento os entrega — código decrescente, como em getOrdersResumidos —
+ * para o arredondamento de dinheiro ser o mesmo, centavo por centavo.
+ * scripts/test-vendas-desempenho.js confere contra buildSalesDashboardSummary
+ * (e roda dentro de test-meu-painel.js, que está no npm test).
+ *
+ * O ESCOPO É OBRIGATÓRIO, pelo mesmo motivo escrito em buildSalesDashboardSummary.
+ *
+ * `registros` aqui pode ser o recorte de AGREGADO (syncSalesDataParaAgregado):
+ * nada abaixo lê cliente, item ou empresa.
+ */
+function valorDoRegistro(record) {
+  const items = Array.isArray(record.items) ? record.items : [];
+  const itemsTotal = items.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  return typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || itemsTotal || 0);
+}
+
+function resumoDoPainelDeVendas(data, escopo) {
+  if (!escopo) {
+    throw new Error('resumoDoPainelDeVendas exige um escopo (lib/relatorios-escopo.js). Sem ele a resposta vazaria as vendas de todos os vendedores.');
+  }
+  const visivel = (record) => escopoLib.vendaVisivel(escopo, record.sellerId);
+  const enxuto = (record) => ({
+    sellerId: record.sellerId || '',
+    amount: valorDoRegistro(record),
+    status: salesStatus.normalizar(record.status, record.type)
+  });
+  const orders = (data.orders || []).filter(visivel).map(enxuto);
+  const quotes = (data.quotes || []).filter(visivel).map(enxuto);
+
+  // Daqui até o `overview`, a MESMA conta de buildSalesDashboardSummary.
+  const valorPedidos = Math.round(orders.reduce((sum, o) => sum + Number(o.amount || 0), 0) * 100) / 100;
+  const valorOrcamentos = Math.round(quotes.reduce((sum, q) => sum + Number(q.amount || 0), 0) * 100) / 100;
+  const pedidosFaturados = orders.filter((o) => salesStatus.geraFinanceiro(o.status)).length;
+  const pedidosPendentes = orders.filter((o) => !salesStatus.baixaEstoque(o.status) && !salesStatus.ehCancelado(o.status)).length;
+  const overview = {
+    totalPedidos: orders.length,
+    valorPedidos,
+    totalOrcamentos: quotes.length,
+    valorOrcamentos,
+    pedidosFaturados,
+    pedidosPendentes,
+    ticketMedio: orders.length ? Math.round((valorPedidos / orders.length) * 100) / 100 : 0
+  };
+
+  // Totais por vendedor: mesmo agrupamento por `sellerId` exato, mesma lista
+  // de vendedores recortada pelo escopo — só que sem a lista de pedidos.
+  const porVendedor = new Map();
+  for (const pedido of orders) {
+    const atual = porVendedor.get(pedido.sellerId);
+    if (atual) atual.push(pedido);
+    else porVendedor.set(pedido.sellerId, [pedido]);
+  }
+  const totaisPorVendedor = () => getSellersDirectory(data)
+    .filter((seller) => escopoLib.vendaVisivel(escopo, seller.id))
+    .map((seller) => {
+      const sellerOrders = porVendedor.get(seller.id) || [];
+      const valorTotal = Math.round(sellerOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0) * 100) / 100;
+      return {
+        sellerId: seller.id,
+        sellerName: seller.name,
+        totalPedidos: sellerOrders.length,
+        valorTotal,
+        ticketMedio: sellerOrders.length ? Math.round((valorTotal / sellerOrders.length) * 100) / 100 : 0
+      };
+    });
+  return { overview, totaisPorVendedor };
+}
+
+/**
+ * A lista de pedidos de UM vendedor, no formato de `bySeller[].orders` (fase DS).
+ * Mesmo mapeamento e mesma ordenação de buildSalesDashboardSummary; quem chama
+ * entrega os pedidos já recortados (getOrdersResumidosDoVendedor).
+ */
+function pedidosDoVendedorNoPainel(registros, data) {
+  return registros
+    .map((record) => serializeSalesRecord(record, data))
+    .map((o) => ({ id: o.id, code: o.code, customer: o.customer, amount: o.amount, date: o.date, status: o.status }))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 }
 
 function getFinanceEntryPayments(data, entryId) {
@@ -9525,10 +9867,17 @@ async function tratarRequisicao(req, res) {
         // As filiais (fase DD) só servem ao formulário, que só o administrador
         // vê — e saem dos pedidos (lib/filial-da-venda.js), uma carga enxuta
         // que o vendedor comum não precisa pagar.
-        await Promise.all([syncCadastroData(data), admin ? syncSalesDataParaAgregado(data) : null]);
+        //
+        // FASE DS: só a coluna categoria, que é tudo o que `listarFiliais` lê —
+        // e não as dez do agregado (145 ms -> 36 ms). Mesma ordem (código
+        // decrescente): a grafia exibida de cada filial é decidida pela ordem.
+        const [, categorias] = await Promise.all([
+          syncCadastroData(data),
+          admin ? db.getCategoriasDasVendas() : null
+        ]);
         return sendJson(res, {
           metas: lista,
-          filiais: admin ? filialDaVenda.listarFiliais([...(data.orders || []), ...(data.quotes || [])]) : [],
+          filiais: admin ? filialDaVenda.listarFiliais([...categorias.orders, ...categorias.quotes]) : [],
           // Boolean() e nao `admin` cru: `ehAdmin` devolve valor falsy que nao
           // e' `false`, e `undefined` DESAPARECE do JSON -- a tela recebia o
           // campo ausente em vez de um "nao". Funciona por acidente enquanto
@@ -9649,13 +9998,38 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/sales/meta' && req.method === 'GET') {
     const data = loadData();
-    await syncCadastroData(data);
-    await syncNfeData(data);
-    const user = await getCurrentUser(req);
+    // UMA ONDA, E NÃO SETE IDAS EM FILA (fase DS).
+    //
+    // Cadastro, usuário, produtos, pedidos da reserva, razão, emitente, origens,
+    // categorias de venda e credenciadoras são independentes: cada um escreve
+    // numa chave diferente (ou em nenhuma) e ninguém lê o do outro. Em fila a
+    // rota pagava a soma; numa onda, paga a mais lenta.
+    //
+    // `syncNfeData` SAIU: nada desta resposta lê nota fiscal, e ele trazia
+    // `select *` da tabela `nfe` (com payload e resposta da Focus) a cada
+    // abertura do formulário.
+    //
+    // Os pedidos da reserva e o razão continuam com o `catch` estreito de
+    // antes, cada um no seu: sem eles a tela cai no saldo físico em vez de não
+    // abrir. Os demais derrubam a rota, como sempre derrubaram.
+    const [, user, products, pedidosDaReserva, razaoCarregado, emitente, origensAtivas, categoriasAtivas, formas] = await Promise.all([
+      syncCadastroData(data),
+      getCurrentUser(req),
+      // Oito campos por produto, e não os vinte e três de getProducts() — ver
+      // getProdutosParaVenda. Escriturais continuam fora.
+      db.getProdutosParaVenda(),
+      db.getOrdersParaReservas().catch((erro) => ({ erro })),
+      sincronizarRazao(data).then(() => true, () => false),
+      emitenteParaImpressao(),
+      origensVendaDb.listar({ apenasAtivas: true }),
+      categoriasVendaDb.listar({ apenasAtivas: true }),
+      // Lê `data.paymentMethods`, que vem do db.json pelo loadData() — não
+      // depende de nenhum sync desta onda.
+      formasComCredenciadora(data)
+    ]);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    const products = await db.getProducts();
     // Reserva: o que outros pedidos abertos já prometeram. Sem este número a
     // tela mostra o saldo físico, e dois vendedores prometem as mesmas dez
     // unidades sem que nada reclame até o segundo faturamento.
@@ -9664,9 +10038,11 @@ async function tratarRequisicao(req, res) {
     // a conta por linha de item, e um Map não atravessa JSON.
     let reservas = {};
     try {
-      // Recorte da fase DE: quatro colunas em vez das ~60. Ver
-      // getOrdersParaReservas — as reservas leem id, code, status e items.
-      const calculadas = reservasLib.calcularReservas(await db.getOrdersParaReservas());
+      // Recorte da fase DE: quatro colunas em vez das ~60; e, desde a fase DS,
+      // só os pedidos que podem reservar. Ver getOrdersParaReservas — as
+      // reservas leem id, code, status e items.
+      if (pedidosDaReserva && pedidosDaReserva.erro) throw pedidosDaReserva.erro;
+      const calculadas = reservasLib.calcularReservas(pedidosDaReserva);
       reservas = Object.fromEntries(calculadas.porChave);
     } catch (erroReservas) {
       // Sem reservas a tela cai no comportamento antigo (saldo físico) em vez
@@ -9688,7 +10064,9 @@ async function tratarRequisicao(req, res) {
     // simplesmente nao tem chave, e a tela le zero.
     let saldosPorDeposito = {};
     try {
-      await sincronizarRazao(data);
+      // O razão já veio na onda lá de cima; a falha dele chega aqui como
+      // `false` e cai no mesmo `catch` de antes.
+      if (!razaoCarregado) throw new Error('razão indisponível');
       for (const m of (data.stockMovements || [])) {
         const deposito = String(m.depositId || '').trim();
         if (!deposito) continue;
@@ -9713,7 +10091,13 @@ async function tratarRequisicao(req, res) {
       companies: data.companies,
       sellers: getSellersDirectory(data),
       deposits: data.deposits,
-      directory: getCadastroDirectory(data),
+      // SÓ id E name (fase DS), como na lista de Vendas (fase CJ). O formulário
+      // usa o diretório para BUSCAR o cliente — id no valor, nome no texto. Os
+      // outros dez campos (documento, telefone, endereço, IE...) só a
+      // IMPRESSÃO lê, e só do cliente ESCOLHIDO: vinham para as 6.492 pessoas
+      // a cada abertura da Nova Venda (1,6 MB cru, 373 KB no fio). Agora a tela
+      // pede os do escolhido em /api/sales/clientes/:id — ver logo abaixo.
+      directory: getCadastroDirectory(data).map((c) => ({ id: c.id, name: c.name })),
       products,
       // O CABEÇALHO DA IMPRESSÃO (30/09/2026). Razão social, CNPJ, endereço,
       // e-mail e telefone de quem emite — é o que o modelo que o usuário quer
@@ -9730,7 +10114,7 @@ async function tratarRequisicao(req, res) {
       //
       // O documento continua dizendo "sem valor fiscal" — ele não é NF-e, e o
       // cabeçalho aqui é contato, não declaração de emitente.
-      emitente: await emitenteParaImpressao(),
+      emitente,
       // Categoria e Tabela de Preços eram texto livre na tela de venda. Digitar
       // à mão gera "Revenda", "revenda" e "Revensa" como se fossem coisas
       // diferentes, e aí nenhum relatório por categoria fecha.
@@ -9744,9 +10128,8 @@ async function tratarRequisicao(req, res) {
       // productCategories continua indo: outras partes da tela de venda a usam.
       // So as ATIVAS: inativar existe para a origem sumir do formulario sem
       // sumir do historico. A lista de manutencao (rota /origins) traz todas.
-      salesOrigins: (await origensVendaDb.listar({ apenasAtivas: true })).map((o) => o.name),
-      salesCategories: (await categoriasVendaDb.listar({ apenasAtivas: true }))
-        .map((c) => ({ id: c.id, name: c.name })),
+      salesOrigins: origensAtivas.map((o) => o.name),
+      salesCategories: categoriasAtivas.map((c) => ({ id: c.id, name: c.name })),
       productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo'),
       priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type })),
       // Abas Pagamentos e Entrega: formas de pagamento e transportadoras vêm do
@@ -9754,9 +10137,29 @@ async function tratarRequisicao(req, res) {
       //
       // Com quem processa o cartão junto (fase BW): a linha de pagamento em
       // cartão mostra a credenciadora e oferece as bandeiras dela.
-      paymentMethods: await formasComCredenciadora(data),
+      paymentMethods: formas,
       carriers: getCarriersDirectory(data)
     });
+  }
+
+  // O CLIENTE ESCOLHIDO NO FORMULÁRIO DE VENDA, com os dados da impressão (fase DS).
+  //
+  // É a entrada do diretório que /api/sales/meta mandava inteiro — a mesma
+  // projeção (indiceDoCadastro), o mesmo objeto, achado do mesmo jeito que a
+  // tela achava (`.find` pelo id: o primeiro, se houvesse dois). Mesma
+  // permissão do formulário. 404 quando o id não está no cadastro: a tela cai
+  // no nome, como já fazia com cliente não achado.
+  const rotaClienteDaVenda = pathname.match(/^\/api\/sales\/clientes\/([^/]+)$/);
+  if (rotaClienteDaVenda && req.method === 'GET') {
+    const data = loadData();
+    const [, user] = await Promise.all([syncCadastroData(data), getCurrentUser(req)]);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const id = decodeURIComponent(rotaClienteDaVenda[1]);
+    const cliente = getCadastroDirectory(data).find((entry) => entry.id === id);
+    if (!cliente) return sendJson(res, { error: 'Cliente não encontrado' }, 404);
+    return sendJson(res, { cliente });
   }
 
   // Tributos de um pedido — leitura, nunca gravação. Recebe o pedido COMO ESTÁ
@@ -9786,6 +10189,55 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/sales/dashboard' && req.method === 'GET') {
     const data = loadData();
+    // OS DOIS MODOS ENXUTOS (fase DS) — o resto da rota, mais abaixo, é a
+    // resposta de sempre, para quem não pede nenhum dos dois (scripts, provas).
+    //
+    //   ?parte=resumo      Painel Vendas: só `overview` e `escopo`.
+    //                      683 KB -> 0,4 KB, e sem serializar nada.
+    //   ?vendedor=<id>     Painel Vendedor: os totais de cada vendedor visível
+    //                      e a lista de pedidos SÓ do escolhido — ou do
+    //                      primeiro da lista, se o pedido não estiver nela
+    //                      (é exatamente o que a tela faria). Vazio vale como
+    //                      "não escolhi ainda".
+    //
+    // Quem decide o que cada um vê continua sendo o escopo do USUÁRIO: o
+    // `vendedor` da URL só escolhe dentro da lista que o escopo já recortou —
+    // um vendedor fora dela cai no primeiro, nunca é atendido.
+    const parte = url.searchParams.get('parte') || '';
+    const querVendedor = url.searchParams.has('vendedor');
+    if (parte === 'resumo' || querVendedor) {
+      // O agregado (dez colunas) basta para os números; o cadastro só é
+      // preciso para a lista de vendedores e o nome do cliente.
+      const [, , , user] = await Promise.all([
+        syncSalesDataParaAgregado(data),
+        querVendedor ? syncCadastroData(data) : null,
+        querVendedor ? syncNfeDataParaVendas(data) : null,
+        getCurrentUser(req)
+      ]);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+      const resumo = resumoDoPainelDeVendas(data, escopo);
+      const escopoDaTela = {
+        tipo: escopo.tipo,
+        rotulo: escopo.rotulo,
+        motivo: escopo.motivo,
+        podeEscolherVendedor: escopo.podeEscolherVendedor,
+        temAcesso: escopo.tipo !== escopoLib.NENHUM
+      };
+      if (!querVendedor) return sendJson(res, { overview: resumo.overview, escopo: escopoDaTela });
+
+      const bySeller = resumo.totaisPorVendedor();
+      const pedido = String(url.searchParams.get('vendedor') || '');
+      const escolhido = bySeller.find((s) => s.sellerId === pedido) || bySeller[0] || null;
+      if (escolhido) {
+        // `orders` SÓ no escolhido: nos outros a chave não vem, em vez de vir
+        // vazia — lista vazia diria "nenhuma venda", e não é isso.
+        escolhido.orders = pedidosDoVendedorNoPainel(await db.getOrdersResumidosDoVendedor(escolhido.sellerId), data);
+      }
+      return sendJson(res, { overview: resumo.overview, bySeller, escopo: escopoDaTela });
+    }
     // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
     // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -9849,20 +10301,34 @@ async function tratarRequisicao(req, res) {
   // ==========================================================================
   if (pathname === '/api/sales/meu-painel' && req.method === 'GET') {
     const data = loadData();
-    // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
-    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-    // Em sequencia, a rota pagava 3x essa latencia por nada.
-    await Promise.all([
-      syncCadastroData(data),
-      syncSalesData(data),
-      syncNfeData(data)
-    ]);
+    // O ESCOPO VEM ANTES DA CARGA (fase DS).
+    //
+    // A rota carregava os 14.942 registros e serializava todos para
+    // `montarPainel` jogar fora os que não são do usuário — 724 ms para quem
+    // não tem vínculo (e recebe zero linhas) e 510 ms para o vendedor de 1.299
+    // pedidos. O escopo pessoal é um vendedor só, e ele sai do USUÁRIO da
+    // sessão: dá para pedir ao banco só os registros dele.
+    //
+    // O recorte do banco é um SUPERCONJUNTO (ver getVendasDoVendedor), e
+    // `montarPainel` continua passando cada linha por `vendaVisivel` — quem
+    // decide o que aparece não mudou. Sem vínculo, nenhum registro é visível
+    // e nenhum é carregado.
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     const escopo = escopoLib.escopoPessoal(user);
+    const vinculo = (escopo.sellerIds || [])[0] || '';
+    // Uma ONDA so de ida ao banco, e nao 3 em fila: os tres sao
+    // independentes. As notas vêm só com o número — é o que a coluna NF-e
+    // mostra (ver syncNfeDataParaVendas).
+    const [, doVendedor] = await Promise.all([
+      vinculo ? syncCadastroData(data) : null,
+      db.getVendasDoVendedor(vinculo),
+      vinculo ? syncNfeDataParaVendas(data) : null
+    ]);
+    data.orders = doVendedor.orders;
+    data.quotes = doVendedor.quotes;
     const registros = [...data.orders, ...data.quotes].map((r) => serializeSalesRecord(r, data));
     return sendJson(res, painelPessoal.montarPainel({
       registros,
@@ -9888,19 +10354,42 @@ async function tratarRequisicao(req, res) {
     const { page, limit } = parsePageParams(url.searchParams, 15);
     const listaSemFiltro = view === 'orders_quotes' && buscaDeVendasSemFiltro(url.searchParams);
 
+    // O HISTÓRICO DE IMPORTAÇÕES SÓ LÊ O HISTÓRICO (fase DS). Esta view caía
+    // na onda de baixo — `select *` dos 14.942 registros, cadastro e notas —
+    // para devolver `importLogs`: 502 ms para uma lista vazia. Mesma permissão,
+    // mesma consulta (getImportLogs, `created_at` decrescente), mesma resposta.
+    if (view === 'import_logs') {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      return sendJson(res, { importLogs: await db.getImportLogs() });
+    }
+
+    // A lista de Pedidos e Orçamentos (as duas formas, com e sem filtro) só
+    // lê o NÚMERO das notas e a contagem das manuais: vai com as notas magras
+    // (syncNfeDataParaVendas). As outras views devolvem as listas inteiras e
+    // continuam com o sync completo.
+    const ehLista = view === 'orders_quotes';
+
     // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
     // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
     // Em sequencia, a rota pagava 3x essa latencia por nada.
-    const [, pagina] = await Promise.all([
+    const [, pagina, , importacoes] = await Promise.all([
       syncCadastroData(data),
-      listaSemFiltro ? syncSalesDataDaPagina(data, { page, limit }) : syncSalesData(data),
-      syncNfeData(data),
-      // A CONTAGEM é pedida só no caminho da página, e só porque lá a lista de
-      // importações não é carregada. No caminho completo `data.importLogs` já
-      // veio com o sync, e uma consulta a mais seria desperdício.
-      listaSemFiltro ? db.contarImportLogs().catch(() => 0) : null
-    ]).then(([a, b, c, d]) => [a, listaSemFiltro ? { ...b, importLogs: d } : null]);
+      // Três cargas, uma por caminho: a página (sem filtro), as colunas que a
+      // busca lê (com filtro — ver syncSalesDataParaBusca) e o `select *` das
+      // outras views, que devolvem as listas.
+      listaSemFiltro ? syncSalesDataDaPagina(data, { page, limit })
+        : (ehLista ? syncSalesDataParaBusca(data) : syncSalesData(data)),
+      ehLista ? syncNfeDataParaVendas(data) : syncNfeData(data),
+      // A CONTAGEM das importações, nos dois caminhos da lista: nenhum dos dois
+      // carrega o histórico. O caminho da página engole o erro (fase DE); o da
+      // busca não, porque antes dele `getImportLogs` falhando derrubava a rota,
+      // e assim continua.
+      listaSemFiltro ? db.contarImportLogs().catch(() => 0) : (ehLista ? db.contarImportLogs() : null)
+    ]);
 
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('sales')) {
@@ -9931,7 +10420,7 @@ async function tratarRequisicao(req, res) {
             orders: pagina.totais.orders,
             quotes: pagina.totais.quotes,
             nfes: (data.nfes || []).length,
-            importLogs: pagina.importLogs
+            importLogs: importacoes
           },
           data,
           url
@@ -9948,15 +10437,36 @@ async function tratarRequisicao(req, res) {
       // Ordenar antes de serializar poria empresa e vendedor em ordem de id, e
       // fatiar antes de ordenar ordenaria só a página — o clássico "ordenei e
       // mudou só um pedaço da lista".
+      //
+      // EM DOIS PASSOS (fase DS). `combined` aqui tem as colunas que filtro e
+      // ordenação leem, e não `select *` — ver syncSalesDataParaBusca. Filtrar
+      // e ordenar acontecem sobre ele, exatamente como antes; só a PÁGINA é
+      // relida inteira, por id, e serializada de novo para ir à tela.
       const serializados = combined.map((record) => serializeSalesRecord(record, data));
+      // De qual tabela veio cada um: o segundo passo relê por tabela, e o id
+      // sozinho não diz (a troca de tipo mantém o id ao mudar de tabela).
+      const tabelaDe = new Map(serializados.map((s, i) => [s, i < data.orders.length ? 'orders' : 'quotes']));
       const filtered = filterSalesRecords(serializados, url.searchParams);
       const ordenados = ordenarSalesRecords(
         filtered,
         url.searchParams.get('sort') || '',
         url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
       );
+      const daPagina = ordenados.slice(start, start + limit);
+      // Ver relerPaginaDeVendas: o que acontece se alguém gravou entre os dois
+      // passos, e por que sem gravação a página é a mesma.
+      const registrosDaPagina = await relerPaginaDeVendas(daPagina, tabelaDe, (ids) => db.getVendasPorIds(ids));
       return sendJson(res, montarRespostaDeVendas({
-        records: ordenados.slice(start, start + limit),
+        // A página relida passa de novo pelo MESMO filtro, agora sobre o
+        // registro completo, como o caminho antigo filtrava numa leitura só.
+        // Quem mudou de status entre os dois passos sai da página em vez de
+        // aparecer fora do filtro pedido (a página fica mais curta e se acerta
+        // na próxima recarga). Sem gravação no meio, é o mesmo dado e passa
+        // inteiro: o filtro não reordena, então a página é a mesma.
+        records: filterSalesRecords(
+          registrosDaPagina.map((record) => serializeSalesRecord(record, data)),
+          url.searchParams
+        ),
         total: filtered.length,
         page,
         limit,
@@ -9964,7 +10474,7 @@ async function tratarRequisicao(req, res) {
           orders: (data.orders || []).length,
           quotes: (data.quotes || []).length,
           nfes: (data.nfes || []).length,
-          importLogs: (data.importLogs || []).length
+          importLogs: importacoes
         },
         data,
         url
@@ -9972,9 +10482,6 @@ async function tratarRequisicao(req, res) {
     }
     if (view === 'nfes') {
       return sendJson(res, { nfes: data.nfes });
-    }
-    if (view === 'import_logs') {
-      return sendJson(res, { importLogs: data.importLogs });
     }
     return sendJson(res, { orders: data.orders, quotes: data.quotes, nfes: data.nfes, importLogs: data.importLogs });
   }
@@ -9986,10 +10493,17 @@ async function tratarRequisicao(req, res) {
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
       // Em sequencia, a rota pagava 3x essa latencia por nada.
+      //
+      // O FINANCEIRO VEM SEM LANÇAMENTO NENHUM (fase DS). Criar um pedido só
+      // ACRESCENTA parcelas (`data.finance.push`): o ramo de criação de
+      // transitionOrderFinanceEffect não lê a lista, e um pedido que ainda não
+      // existe não tem lançamento para ser achado. Eram 27.362 lançamentos e
+      // 25.709 baixas carregados — 1,3 s de CPU no único event loop — a cada
+      // pedido criado. Ver syncFinanceDataDosPedidos.
       await Promise.all([
         syncCadastroData(data),
         syncNfeData(data),
-        syncFinanceData(data)
+        syncFinanceDataDosPedidos(data, [])
       ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
@@ -10132,12 +10646,13 @@ async function tratarRequisicao(req, res) {
       // cancelar. Sem ele a lista chegava vazia: o pedido voltava a nao
       // faturado e as contas a receber dele continuavam de pe, cobrando um
       // faturamento que nao existe mais (fase BC).
-      await Promise.all([
-        syncCadastroData(data),
-        syncSalesData(data),
-        syncNfeData(data),
-        syncFinanceData(data)
-      ]);
+      //
+      // SÓ OS SELECIONADOS, E O FINANCEIRO DELES (fase DS). A onda carregava os
+      // 14.942 registros e o financeiro inteiro para mexer nos até 200 que a
+      // pessoa marcou: 1,7 s de CPU no único event loop. Cada leitura de
+      // `data.orders`/`data.finance` daqui para baixo é por id do selecionado
+      // (ou por `referenceId` dele) — ver syncSalesDataDosIds e
+      // syncFinanceDataDosPedidos. Por isso os ids vêm ANTES da onda.
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -10149,6 +10664,12 @@ async function tratarRequisicao(req, res) {
       // Teto: uma seleção de milhares viraria milhares de idas ao Supabase numa
       // requisição só, e o navegador desistiria antes do fim.
       if (ids.length > 200) return sendJson(res, { error: 'Selecione no máximo 200 registros por vez.' }, 400);
+      await Promise.all([
+        syncCadastroData(data),
+        syncSalesDataDosIds(data, ids),
+        syncNfeData(data),
+        syncFinanceDataDosPedidos(data, ids)
+      ]);
 
       const todos = [...(data.orders || []), ...(data.quotes || [])];
       const selecionados = ids
@@ -10213,7 +10734,10 @@ async function tratarRequisicao(req, res) {
     const anexoId = rotaAnexo[2] ? decodeURIComponent(rotaAnexo[2]) : '';
     try {
       const data = loadData();
-      await syncSalesData(data);
+      // Só o registro dos anexos, e não os 14.942 (fase DS): cada clique em
+      // anexar, abrir ou excluir arquivo pagava ~460 ms de carga para um
+      // `.find`. Ver syncSalesDataDosIds.
+      await syncSalesDataDosIds(data, [registroId]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -10334,10 +10858,11 @@ async function tratarRequisicao(req, res) {
     // saber ANTES de clicar por que o sistema vai recusar — e porque "esta
     // categoria nao e usada por ninguem" e a informacao que decide se ela pode
     // sumir ou se deve so ser inativada.
-    const comUso = [];
-    for (const categoria of categorias) {
-      comUso.push({ ...categoria, pedidos: await categoriasVendaDb.pedidosQueUsam(categoria.name) });
-    }
+    //
+    // Numa consulta só para todas (fase DS), e não uma varredura de `orders`
+    // por categoria — ver pedidosQueUsamCada. Mesmo número, na mesma ordem.
+    const usos = await categoriasVendaDb.pedidosQueUsamCada(categorias.map((categoria) => categoria.name));
+    const comUso = categorias.map((categoria, i) => ({ ...categoria, pedidos: usos[i] }));
     return sendJson(res, { categories: comUso });
   }
 
@@ -10504,11 +11029,14 @@ async function tratarRequisicao(req, res) {
     // Quantos registros usam cada uma — e' o que decide se a origem pode ser
     // excluida ou se deve so ser inativada. Mostrar o numero aqui evita o
     // clique que ja nasce recusado.
-    const comUso = [];
-    for (const origem of origens) {
-      const uso = await origensVendaDb.registrosQueUsam(origem.name);
-      comUso.push({ ...origem, pedidos: uso.pedidos, orcamentos: uso.orcamentos, usos: uso.total });
-    }
+    //
+    // Numa consulta só para todas (fase DS): eram seis varreduras de `orders`
+    // em fila, uma por origem (84 ms -> 15 ms). Ver registrosQueUsamCada.
+    const usosDeCada = await origensVendaDb.registrosQueUsamCada(origens.map((origem) => origem.name));
+    const comUso = origens.map((origem, i) => {
+      const uso = usosDeCada[i];
+      return { ...origem, pedidos: uso.pedidos, orcamentos: uso.orcamentos, usos: uso.total };
+    });
     return sendJson(res, { origins: comUso });
   }
 
@@ -10582,10 +11110,14 @@ async function tratarRequisicao(req, res) {
       // syncNfeData entra na onda porque serializeSalesRecord resolve o NUMERO
       // da nota do pedido em `data.nfe`/`data.nfes` — sem ele, abrir um pedido
       // faturado mostrava o campo NF-e em branco (fase BC).
+      //
+      // FASE DS: o registro pedido, e não os 14.942 (414 ms -> ~10 ms); e as
+      // notas só com o número, que é o que o serializer lê delas.
+      const idPedido = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
       await Promise.all([
         syncCadastroData(data),
-        syncSalesData(data),
-        syncNfeData(data)
+        syncSalesDataDosIds(data, [idPedido]),
+        syncNfeDataParaVendas(data)
       ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('sales')) {
@@ -10607,10 +11139,22 @@ async function tratarRequisicao(req, res) {
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
       // Em sequencia, a rota pagava 3x essa latencia por nada.
+      //
+      // FASE DS: O PEDIDO E O FINANCEIRO DELE, e não a empresa inteira. A onda
+      // trazia os 14.942 registros e os 27.362 lançamentos + 25.709 baixas
+      // (1,4 s de CPU no único event loop, o sistema parado para todo mundo a
+      // cada Salvar) para esta rota mexer em UM pedido. Tudo o que ela lê de
+      // `data.orders`/`data.quotes` é pelo id dele, e tudo o que lê de
+      // `data.finance`/`data.financialPayments` é pelo `referenceId` dele
+      // (transitionOrderFinanceEffect e `lancamentosDoPedido`, logo abaixo).
+      // Estoque e nota consultam o banco por conta própria. As notas continuam
+      // com o sync inteiro: esta rota grava (saveData), e `nfe` vai para o
+      // db.json — ver syncNfeDataParaVendas.
+      const idDaRota = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
       await Promise.all([
         syncCadastroData(data),
-        syncSalesData(data),
-        syncFinanceData(data),
+        syncSalesDataDosIds(data, [idDaRota]),
+        syncFinanceDataDosPedidos(data, [idDaRota]),
         syncNfeData(data)
       ]);
       const user = await getCurrentUser(req);

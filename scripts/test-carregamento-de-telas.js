@@ -143,8 +143,14 @@ check('a tela guarda as listas por um minuto',
   /const SALES_META_VALIDADE_MS = 60000;/.test(app));
 // Pedir para omitir sem ter o que reaproveitar desenharia a Busca Avançada com
 // os selects vazios.
-check('  e só pede meta=0 com o cache NA MÃO',
-  /const metaFresca = salesMetaEmCache\s*\n?\s*&& \(Date\.now\(\) - salesMetaBuscadaEm\) < SALES_META_VALIDADE_MS;\s*\n\s*if \(metaFresca\) params\.set\('meta', '0'\);/.test(app));
+//
+// Fase DS: ou com a Busca Avançada FECHADA — aí os selects não são desenhados,
+// e não há o que sair vazio. O invariante continua o mesmo: nunca pedir para
+// omitir as listas quando a tela vai desenhá-las sem tê-las.
+check('  e só pede meta=0 com o cache NA MÃO (ou com o painel fechado)',
+  /const metaFresca = salesMetaEmCache\s*\n?\s*&& \(Date\.now\(\) - salesMetaBuscadaEm\) < SALES_META_VALIDADE_MS;\s*\n\s*if \(metaFresca \|\| !showFilters\) params\.set\('meta', '0'\);/.test(app));
+check('  e o painel só existe com showFilters',
+  /\$\{showFilters \? `\s*\n\s*<form id="salesFilterForm"/.test(app));
 check('  e guarda o que chegou', /if \(data\.meta\) \{\s*\n\s*salesMetaEmCache = data\.meta;/.test(app));
 // Cadastrou um cliente e foi filtrar por ele: não deveria esperar o minuto.
 check('mexer no cadastro joga as listas fora',

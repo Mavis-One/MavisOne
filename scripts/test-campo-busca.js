@@ -74,7 +74,15 @@ check('e alterna: clicar de novo fecha', /if \(!dropdown\.hidden\) \{ fecharList
 
 console.log('\n--- desempenho e limite da lista ---');
 // Normalizar centenas de rótulos a cada tecla trava o campo em cadastro grande.
-check('índice de busca calculado uma vez', /const indice = options\.map\(/.test(attach));
+// Fase DS: o índice saiu para `indiceDeBuscaDe`, que o guarda por lista de
+// opções — a Nova Venda reconecta o campo a cada redesenho com o MESMO array, e
+// o índice passou a ser montado uma vez por lista, não uma vez por attach. O
+// que este check cobra continua igual: o attach não normaliza a cada tecla.
+const indiceDeBusca = appSrc.slice(appSrc.indexOf('function indiceDeBuscaDe'), appSrc.indexOf('function attachSearchableSelect'));
+check('índice de busca calculado uma vez',
+  /const indice = indiceDeBuscaDe\(options\)/.test(attach) && /const indice = options\.map\(/.test(indiceDeBusca));
+check('  e guardado pela identidade da lista, conferindo o tamanho',
+  /INDICES_DE_BUSCA\.get\(options\)/.test(indiceDeBusca) && /tamanho === options\.length/.test(indiceDeBusca));
 check('não normaliza dentro do filtro', !/filter\(\(o\) => textoDeBusca\(o\.label\)/.test(attach));
 // Cortar em 50 sem avisar faz o usuário procurar um item que existe.
 check('corte em 50 é avisado', /Mostrando \$\{mostrados\.length\} de \$\{filtrados\.length\}/.test(attach));

@@ -191,8 +191,12 @@ check('os cards contam certo quem tem nota',
 // O que importa aqui é que a rota CARREGUE as notas antes de montar o painel,
 // não a forma como ela espera por elas — cobrar a forma faria este teste cair a
 // cada ajuste de desempenho que não muda comportamento nenhum.
+//
+// Fase DS: a variante MAGRA (`syncNfeDataParaVendas`, só id e número) também
+// vale — é o carregamento que a coluna NF-e precisa, e o que este check cobra
+// é carregar, não o tamanho do que vem. Ver o cabeçalho dela em server.js.
 check('a rota sincroniza as notas antes de montar (senão a coluna sai vazia)',
-  /syncNfeData\(data\)/.test(corpoDaRota));
+  /syncNfeData(?:ParaVendas)?\(data\)/.test(corpoDaRota));
 
 // ---------------------------------------------------------------------------
 console.log('\n--- 7. orçamento não é venda realizada ---');
@@ -389,6 +393,26 @@ check('o render recusa a tela para quem não é admin',
 // proteger contra XSS. Virou `data-ir-para`, lido por um ouvinte delegado.
 check('  e oferece o Meu Painel no lugar, em vez de só barrar',
   /sub === 'seller_dashboard'\)[\s\S]{0,900}data-ir-para="my_panel"/.test(tela));
+
+// ---------------------------------------------------------------------------
+// O RESUMO DO PAINEL TEM QUE BATER COM O PAINEL COMPLETO (fase DS).
+//
+// scripts/test-vendas-desempenho.js é o único que roda resumoDoPainelDeVendas
+// contra buildSalesDashboardSummary (Painel Vendas e Painel Vendedor contra o
+// Dashboard Geral), a soma do reservado da Nova Venda e o recorte dos status
+// que não reservam. Ele ainda não está no script `test` do package.json — a
+// rodada que o criou não podia mexer nesse arquivo —, e sem isto quem mudasse
+// a conta de um lado só passaria no npm test. Roda aqui, como processo à
+// parte, até entrar lá; depois disso este trecho pode sair.
+console.log('\n--- o resumo do painel bate com o painel completo (test-vendas-desempenho) ---');
+{
+  const { spawnSync } = require('child_process');
+  const r = spawnSync(process.execPath, [path.join(__dirname, 'test-vendas-desempenho.js')], { encoding: 'utf8' });
+  const xx = (r.stdout || '').split('\n').filter((l) => /^\s*XX /.test(l));
+  xx.forEach((l) => console.log(l));
+  if (r.error || r.status !== 0) console.log((r.stderr || String(r.error || '')).trim());
+  check('scripts/test-vendas-desempenho.js passa', !r.error && r.status === 0);
+}
 
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
