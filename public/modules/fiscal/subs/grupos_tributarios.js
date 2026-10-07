@@ -144,7 +144,12 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     // propósito: é um número informativo, e esperá-lo atrasaria a tela toda.
     (async () => {
       try {
-        const res = await api('/api/stock/products?grupoTributario=sem');
+        // `limit=1`: a tela lê só `total`, que é o da SELEÇÃO e não o da página
+        // (ver a rota). Sem ele, vinham os 5.129 produtos sem grupo,
+        // serializados — 9.167 KB — para contar. A classificação em lote, que
+        // precisa da lista inteira, é a prévia por busca, mais abaixo, e não
+        // pagina.
+        const res = await api('/api/stock/products?grupoTributario=sem&limit=1');
         const el = content.querySelector('#gtSemGrupo');
         if (el) el.textContent = Number(res.total || 0).toLocaleString('pt-BR');
       } catch { /* o cartão fica com o travessão: não vale um erro na tela. */ }

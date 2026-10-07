@@ -9,6 +9,8 @@ window.MavisSubscreenRegistry.stock.new_deposit = window.MavisStock.makeFormScre
   editStateKey: 'stockEditDepositId',
   // needsMeta para a lista de filiais chegar ao campo Empresa.
   needsMeta: true,
+  // ...mas não o catálogo de produtos, que esta tela não lê (ver Stock.loadMeta).
+  semProdutos: true,
   fields: [
     { name: 'name', label: 'Nome', required: true },
     { name: 'code', label: 'Código' },

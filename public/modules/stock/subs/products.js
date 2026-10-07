@@ -5,7 +5,8 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   const { content, api, showToast, state, loadModule, confirmModal } = ctx;
   const S = window.MavisStock;
 
-  const meta = await S.loadMeta(api, showToast);
+  // Sem `produtos`: esta tela não tem seletor de produto (ver Stock.loadMeta).
+  const meta = await S.loadMeta(api, showToast, { produtos: false });
   const cores = S.indiceDeCores(meta);
   // `pendencia` entra aqui e nao precisa de mais nada: fetchProducts monta a
   // query varrendo este objeto, entao um filtro novo chega ao servidor so' por

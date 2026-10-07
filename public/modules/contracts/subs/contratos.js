@@ -7,6 +7,11 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
 (function (C) {
   const R = window.MavisSubscreenRegistry.contracts;
   const base = { module: 'contracts', metaEndpoint: '/api/contracts/meta' };
+  // Só o Novo Contrato lê `meta.directory` (o campo "Cadastro"). As outras
+  // telas leem tipos e modelos, e dispensam o diretório — 6.492 pessoas e
+  // empresas, e a leitura delas no servidor. O padrão (`base`) continua
+  // mandando: tela nova nasce com o campo cheio.
+  const baseSemDiretorio = { ...base, metaEndpoint: '/api/contracts/meta?diretorio=0' };
 
   const TIPO_PARTE = [
     { id: 'cliente', name: 'Cliente' },
@@ -104,7 +109,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
 
   // ---------------------------------------------------------------- Contratos
   R.contratos = C.makeListScreen({
-    ...base,
+    ...baseSemDiretorio,
     title: 'Contratos',
     tableTitle: 'Contratos',
     endpoint: '/api/contracts/contracts',
@@ -194,7 +199,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   // modelo é o texto com as cláusulas. Um tipo pode ter vários modelos ao
   // longo do tempo, e o mesmo modelo pode servir a mais de um tipo.
   R.tipos = C.makeListScreen({
-    ...base,
+    ...baseSemDiretorio,
     title: 'Tipos de Contratos',
     tableTitle: 'Tipos',
     endpoint: '/api/contracts/types',
@@ -217,7 +222,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   });
 
   R.novo_tipo = C.makeFormScreen({
-    ...base,
+    ...baseSemDiretorio,
     title: 'Novo Tipo de Contrato',
     entityLabel: 'tipo',
     endpoint: '/api/contracts/types',
@@ -260,7 +265,8 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
     try {
       const [res, apoio] = await Promise.all([
         api('/api/contracts/contracts'),
-        api('/api/contracts/meta').catch(() => ({ types: [] }))
+        // Só os tipos (prazo de aviso): o diretório fica de fora.
+        api('/api/contracts/meta?diretorio=0').catch(() => ({ types: [] }))
       ]);
       contratos = res.contracts || [];
       meta = apoio;
@@ -339,7 +345,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
 
   // ------------------------------------------------------------------ Modelos
   R.modelos = C.makeListScreen({
-    ...base,
+    ...baseSemDiretorio,
     title: 'Modelos de Contrato',
     tableTitle: 'Modelos',
     endpoint: '/api/contracts/templates',
@@ -356,7 +362,7 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   });
 
   R.novo_modelo = C.makeFormScreen({
-    ...base,
+    ...baseSemDiretorio,
     title: 'Novo Modelo',
     entityLabel: 'modelo',
     endpoint: '/api/contracts/templates',

@@ -6940,11 +6940,20 @@ async function sincronizarRazao(data) {
  * O `try` continua envolvendo SÓ a reserva, e não a onda inteira: falha ao ler
  * pedido deixa as colunas de reserva em branco (null, não zero) e a tela abre;
  * falha ao ler produto ou cadastro é outra história, e essa tem de subir.
+ *
+ * SÓ OS DEPÓSITOS, E NÃO O CADASTRO INTEIRO. Aqui era `syncCadastroData`, que
+ * traz as 6.492 pessoas e os CNPJs junto com os depósitos — e nenhuma rota de
+ * Estoque, nenhum helper delas e o painel leem pessoa ou CNPJ (conferido rota a
+ * rota; o test-sync-obrigatorio acusa a primeira que passar a ler). Quente,
+ * custava 3,5 ms; mas a cada 30 s o cache de pessoas vence (lib/db/cadastros.js)
+ * e a próxima tela de Estoque pagava 165 ms por elas. Era o salto de 251 ms
+ * medido abrindo Contagens. `db.getDeposits()` é a mesma leitura (e o mesmo
+ * cache) que o syncCadastroData fazia para os depósitos.
  */
 async function loadStockContext({ comReservas = false } = {}) {
   const data = loadData();
   const [, , pedidosDaReserva, todos] = await Promise.all([
-    syncCadastroData(data),
+    db.getDeposits().then((depositos) => { data.deposits = depositos; }),
     sincronizarRazao(data),
     comReservas ? db.getOrdersParaReservas().catch(() => null) : null,
     db.getProducts({ incluirEscriturais: true })
@@ -6970,6 +6979,99 @@ async function loadStockContext({ comReservas = false } = {}) {
     products: todos.filter((p) => !p.escritural),
     productsById: new Map(todos.map((p) => [p.id, p]))
   };
+}
+
+/**
+ * O CONTEXTO DE ESTOQUE DE POUCOS PRODUTOS — quem pergunta por um produto (ou
+ * grava em poucos) carrega só eles e o razão deles.
+ *
+ * Quem usa: o Status do Produto e a quebra por cor de um produto (leitura), e
+ * as escritas de Estoque — cadastro de produto, movimentação, transferência e
+ * conferência da carga. Todas abriam com loadStockContext: `select *` dos 5.561
+ * produtos, o razão de TODOS e (até esta fase) as 6.492 pessoas, para mexer em
+ * um. Medido, só a onda de carga: 44 ms -> 1,2 ms com o cadastro quente, 155 ms
+ * -> 1,2 ms quando o cache de pessoas tinha vencido. A gravação inteira de um
+ * produto caiu de 156 para 29 ms; uma movimentação, de 116 para 27 ms. E deixa
+ * de crescer com o razão (+9,4 ms por 1.000 movimentos em cada uma).
+ *
+ * POR QUE O SALDO É O MESMO. As perguntas que essas rotas fazem ao stock-core
+ * (depositBalance, classValueBalance, classBalances, transitBalance,
+ * serializeProduct) filtram o razão por productId, então o razão SÓ destes
+ * produtos dá o mesmo número — e na mesma ordem (ver
+ * listarMovimentosDosProdutos). A guarda que IMPEDE saldo negativo nem lê
+ * memória: é SQL, dentro da transação, depois de travar o produto
+ * (commitStockMovements). Nada disso muda.
+ *
+ * O QUE FICA DIFERENTE, E QUEM CHAMA PRECISA SABER:
+ *
+ *   · `data.stockMovements` e `data.stockTransfers` são o RECORTE destes
+ *     produtos. Não servem para total, contagem nem para perguntar por outro
+ *     produto. A bandeira `__razaoCarregado` vai ligada pelo mesmo motivo de
+ *     sincronizarRazao: um sincronizarRazao chamado depois trocaria o recorte
+ *     pela lista inteira e jogaria fora o que já foi empilhado.
+ *   · `productsById` tem só estes produtos — completos, inclusive os itens só
+ *     fiscais, como o índice do loadStockContext. Produto que não existe fica
+ *     de fora e a rota responde 404 como antes.
+ *   · `products` só vem com `comSkus`, e só com id e sku: é a lista da
+ *     checagem de SKU repetido do cadastro, a MESMA regra sobre as mesmas
+ *     linhas (getProductsResumidos tira os itens só fiscais como getProducts).
+ *   · `reservas`, com `comReservas`, sai como no loadStockContext: falha ao ler
+ *     pedido vira null (coluna em branco), não zero e não erro.
+ */
+async function loadStockContextDosProdutos(idsDeProduto, { comSkus = false, comReservas = false } = {}) {
+  const data = loadData();
+  const [depositos, produtos, movimentos, transferencias, skus, pedidosDaReserva] = await Promise.all([
+    db.getDeposits(),
+    db.getProductsPorIds(idsDeProduto),
+    razaoEstoque.listarMovimentosDosProdutos(idsDeProduto),
+    razaoEstoque.listarTransferenciasDosProdutos(idsDeProduto),
+    comSkus ? db.getProductsResumidos('id, sku') : null,
+    comReservas ? db.getOrdersParaReservas().catch(() => null) : null
+  ]);
+  data.deposits = depositos;
+  data.stockMovements = movimentos;
+  data.stockTransfers = transferencias;
+  if (!Array.isArray(data.__movimentosPendentes)) data.__movimentosPendentes = [];
+  data.__razaoCarregado = true;
+  let reservas = null;
+  if (comReservas && pedidosDaReserva) {
+    try {
+      reservas = reservasLib.calcularReservas(pedidosDaReserva);
+    } catch (erroReservas) {
+      // Mesma regra do loadStockContext: sem reservas, a coluna sai em branco.
+      reservas = null;
+    }
+  }
+  return {
+    data,
+    reservas,
+    products: skus || [],
+    productsById: new Map(produtos.map((p) => [p.id, p]))
+  };
+}
+
+/**
+ * O CONTEXTO DAS LISTAS DE MOVIMENTAÇÕES E TRANSFERÊNCIAS: o razão inteiro (a
+ * lista é dele) e, do produto, só o RÓTULO.
+ *
+ * As duas rotas usam o produto para três coisas: `name` e `sku` na linha
+ * (serializeMovement/serializeTransfer) e na busca por texto. Traziam
+ * `select *` dos 5.561 produtos — ~53 ms — para isso; três colunas custam ~13.
+ *
+ * TODOS os produtos, inclusive os itens só fiscais, como o productsById do
+ * loadStockContext: um movimento antigo que aponte para um deles continua
+ * mostrando o nome, e não "(produto removido)". O objeto de cada produto tem só
+ * id, name e sku de verdade (o resto sai no padrão do mapProductRow) — por isso
+ * não há `products` aqui, e este contexto não serve a quem lê preço ou saldo.
+ */
+async function loadStockContextDeRotulos() {
+  const data = loadData();
+  const [, , todos] = await Promise.all([
+    db.getDeposits().then((depositos) => { data.deposits = depositos; }),
+    sincronizarRazao(data),
+    db.getProductsResumidos('id, name, sku', { incluirEscriturais: true })
+  ]);
+  return { data, productsById: new Map(todos.map((p) => [p.id, p])) };
 }
 
 /**
@@ -8351,7 +8453,9 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, {
           intervalo,
           ...painelModulos.painelEstoque({
-            produtos: products.map((p) => stockCore.serializeProduct(p, data, reservas)),
+            // O razão varrido uma vez, e não 22 por produto — ver
+            // serializarProdutos em lib/stock-core.js. Mesmos objetos.
+            produtos: stockCore.serializarProdutos(products, data, reservas),
             movimentos: data.stockMovements || [],
             depositos: data.deposits || [],
             reservas,
@@ -8479,8 +8583,15 @@ async function tratarRequisicao(req, res) {
           apoio.employeeCategories = nomes(employeeCategories);
         }
         if (modulo === 'pcp') {
+          // O PRODUTO SÓ PARA QUEM O USA, E SÓ id E NOME. Era `select *` dos
+          // 5.561 produtos (440 KB) para um seletor que mostra o nome — e seis
+          // das dez telas de PCP não têm seletor de produto nenhum (setores,
+          // status, qualidade, apontamentos). Elas pedem `?produtos=0`; o padrão
+          // continua sendo mandar, pelo motivo escrito no /api/stock/meta. A
+          // lista sai na mesma ordem de getProducts (ver getProductsResumidos).
+          const querProdutos = url.searchParams.get('produtos') !== '0';
           const [produtos, ordens, setores, statuses, pessoal] = await Promise.all([
-            db.getProducts(),
+            querProdutos ? db.getProductsResumidos('id, name') : [],
             modulosDb.listar('pcp/orders'),
             modulosDb.listar('pcp/sectors'),
             modulosDb.listar('pcp/statuses'),
@@ -8507,9 +8618,21 @@ async function tratarRequisicao(req, res) {
           apoio.types = tipos.map((t) => ({
             id: t.id, name: t.name, natureza: t.natureza, avisoPreviaDias: t.avisoPreviaDias
           }));
-          const dados = loadData();
-          await syncCadastroData(dados);
-          apoio.directory = getCadastroDirectory(dados);
+          // O DIRETÓRIO SÓ PARA QUEM O USA, E SÓ id E NOME.
+          //
+          // Iam os 11 campos de cada uma das 6.492 pessoas e empresas — 1.609
+          // KB — para um campo: o "Cadastro" do Novo Contrato, que vira busca
+          // pelo NOME (campo_de_busca.js) e grava o id. As outras seis telas de
+          // Contratos leem só `types` e `templates`, pedem `?diretorio=0` e não
+          // pagam nem a leitura das pessoas (260 ms com o cache frio, medido
+          // abrindo Contratos). 1.609 -> 430 KB na tela que usa; 0,4 KB nas outras.
+          if (url.searchParams.get('diretorio') !== '0') {
+            const dados = loadData();
+            await syncCadastroData(dados);
+            apoio.directory = getCadastroDirectory(dados).map((c) => ({ id: c.id, name: c.name }));
+          } else {
+            apoio.directory = [];
+          }
         }
         return sendJson(res, apoio);
       } catch (erro) {
@@ -13432,12 +13555,13 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname === '/api/purchases' && req.method === 'GET') {
-    const data = loadData();
-    await syncCadastroData(data);
+    // A PERMISSÃO ANTES DA CARGA, como no Painel (fase DH): quem não tem Compras
+    // recebia o 403 depois de o servidor já ter lido as 6.492 pessoas.
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('purchases')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
+    const data = loadData();
     // O CATÁLOGO SÓ VAI PARA QUEM O USA, E SÓ COM OS CAMPOS QUE A TELA LÊ (fase DG).
     //
     // Esta rota serve as SETE telas de Compras, porque o roteador do módulo a
@@ -13466,13 +13590,22 @@ async function tratarRequisicao(req, res) {
     // seletor de produto VAZIO, e "nenhum produto cadastrado" é do tipo de erro
     // que a pessoa acredita. Assim o pior caso é pagar o que se pagava antes.
     const querFormulario = url.searchParams.get('formulario') !== '0';
+    // UMA ONDA, E SÓ O QUE A RESPOSTA VAI LEVAR.
+    //
+    // Sem formulário, das pessoas não sai nada — só os depósitos, que são a
+    // mesma leitura (e o mesmo cache) que o syncCadastroData faria. Com
+    // formulário, o diretório precisa das pessoas, e o produto vem nas quatro
+    // colunas que saem daqui, na MESMA ordem de getProducts (ver
+    // getProductsResumidos). Medido: 90 -> 45 ms com formulário, 10 -> 3 ms sem.
     const [products, purchases] = await Promise.all([
-      querFormulario ? db.getProducts() : [],
-      db.getPurchases()
+      querFormulario ? db.getProductsResumidos('id, name, sku, cost_price') : [],
+      db.getPurchases(),
+      querFormulario
+        ? syncCadastroData(data)
+        : db.getDeposits().then((depositos) => { data.deposits = depositos; })
     ]);
     // `deposits` veio junto na fase AQ: a ordem de compra diz em QUE depósito a
     // mercadoria entra, e sem a lista o formulário só ofereceria "sem depósito".
-    // syncCadastroData já os carregou logo acima — é dado que já está na mão.
     // Fica sempre: são dezenas de linhas, não milhares.
     return sendJson(res, {
       purchases,
@@ -13652,34 +13785,33 @@ async function tratarRequisicao(req, res) {
     try {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
-      const { data, products } = await loadStockContext();
-      // Catálogo de cores no meta: o movimento guarda só o classValueId, e sem
-      // esta lista cada linha da tabela precisaria de uma consulta para virar
-      // "Preto". São poucas dezenas de valores — cabem no meta que a tela já
-      // carrega uma vez. Falha aqui não pode derrubar o módulo inteiro: sem
-      // catálogo a coluna mostra "-", o resto do Estoque continua de pé.
-      let classes = [];
-      try {
-        const catalogo = await classesDb.listarClasses();
-        const valores = await classesDb.listarValores(null);
-        classes = catalogo.map((c) => ({ ...c, valores: valores.filter((v) => v.classId === c.id) }));
-      } catch (erroClasses) {
-        classes = [];
-      }
-      return sendJson(res, {
-        deposits: data.deposits,
-        // AS FILIAIS, para o cadastro de deposito poder vincular (fase CK).
-        //
-        // A coluna deposits.company_id e a conferencia da rota existem desde a
-        // fase AW, e Vendas ja filtra o deposito pela empresa escolhida — mas
-        // nao havia CAMPO em tela nenhuma para preencher o vinculo. Dava para
-        // gravar so por SQL, e por isso o recurso existia sem existir.
-        companies: (data.companies || []).map((c) => ({ id: c.id, name: c.name })),
-        classes,
-        productCategories: data.productCategories,
-        movementCategories: data.movementCategories,
-        priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type, markupPercent: t.markupPercent })),
-        catalogs: (data.productCatalogs || []).map((c) => ({ id: c.id, name: c.name })),
+      // O META NÃO PASSA MAIS PELO loadStockContext, E O CATÁLOGO É OPCIONAL.
+      //
+      // Esta rota preenche SELECTS. Pelo contexto, ela trazia o razão inteiro
+      // (que nenhum select lê), o cadastro de pessoas e `select *` dos 5.561
+      // produtos para devolver cinco campos de cada; e depois lia classes,
+      // valores e grupos tributários EM FILA. Dos 787 KB da resposta, 782 KB
+      // eram `products` — e 8 das 14 telas que a pedem não leem `products`
+      // (Produtos, Contagens, Conferência da carga, Novo Produto, Novo
+      // Depósito, Nova Categoria, e Cadastros › Produtos e Novo Produto pelo
+      // proxy). Agora: uma onda só, e `?produtos=0` para quem não usa.
+      //
+      // `produtos=0` É A TELA DIZENDO QUE NÃO PRECISA, e o padrão é MANDAR —
+      // mesmo desenho do `formulario=0` de Compras: uma tela nova nasce com o
+      // seletor cheio, e o pior caso é pagar o que se pagava antes, não um
+      // "nenhum produto cadastrado" em que a pessoa acreditaria.
+      const querProdutos = url.searchParams.get('produtos') !== '0';
+      const data = loadData();
+      const [depositos, classes, grupoTributarios, produtos] = await Promise.all([
+        db.getDeposits(),
+        // Catálogo de cores no meta: o movimento guarda só o classValueId, e sem
+        // esta lista cada linha da tabela precisaria de uma consulta para virar
+        // "Preto". São poucas dezenas de valores — cabem no meta que a tela já
+        // carrega uma vez. Falha aqui não pode derrubar o módulo inteiro: sem
+        // catálogo a coluna mostra "-", o resto do Estoque continua de pé.
+        Promise.all([classesDb.listarClasses(), classesDb.listarValores(null)])
+          .then(([catalogo, valores]) => catalogo.map((c) => ({ ...c, valores: valores.filter((v) => v.classId === c.id) })))
+          .catch(() => []),
         // OS GRUPOS TRIBUTÁRIOS ATIVOS, para o cadastro de produto (fase CP).
         //
         // Vêm por AQUI e não por /api/fiscal/grupos-tributarios de propósito: o
@@ -13693,10 +13825,35 @@ async function tratarRequisicao(req, res) {
         // o campo precisa mostrar. `.catch` porque a tabela pode não existir
         // ainda — o cadastro de produto não pode parar por causa de uma
         // migração não rodada.
-        grupoTributarios: await fiscalDb.getGruposTributarios(null, { somenteAtivos: true })
+        fiscalDb.getGruposTributarios(null, { somenteAtivos: true })
           .then((gs) => gs.map((g) => ({ id: g.id, name: g.nome })))
           .catch(() => []),
-        products: products.map((p) => ({ id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice, salePrice: p.salePrice, stockQuantity: p.stockQuantity }))
+        // A MESMA lista e a MESMA ordem do loadStockContext (por nome, sem os
+        // itens só fiscais) — ver getProductsResumidos —, com as colunas que
+        // saem daqui.
+        querProdutos ? db.getProductsResumidos('id, name, sku, cost_price, sale_price') : []
+      ]);
+      return sendJson(res, {
+        deposits: depositos,
+        // AS FILIAIS, para o cadastro de deposito poder vincular (fase CK).
+        //
+        // A coluna deposits.company_id e a conferencia da rota existem desde a
+        // fase AW, e Vendas ja filtra o deposito pela empresa escolhida — mas
+        // nao havia CAMPO em tela nenhuma para preencher o vinculo. Dava para
+        // gravar so por SQL, e por isso o recurso existia sem existir.
+        companies: (data.companies || []).map((c) => ({ id: c.id, name: c.name })),
+        classes,
+        productCategories: data.productCategories,
+        movementCategories: data.movementCategories,
+        priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type, markupPercent: t.markupPercent })),
+        catalogs: (data.productCatalogs || []).map((c) => ({ id: c.id, name: c.name })),
+        grupoTributarios,
+        // `stockQuantity` SAIU do item: nenhuma tela lê o saldo daqui (o saldo
+        // que elas mostram vem de /api/stock/products/:id ou da lista), e ele
+        // era 98 KB da resposta. Os cinco que ficaram são os que os seletores
+        // usam: id, o rótulo nome·SKU e os dois preços (Novo Catálogo e Nova
+        // Tabela de Preços).
+        products: produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice, salePrice: p.salePrice }))
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar dados do estoque', 500);
@@ -13793,8 +13950,12 @@ async function tratarRequisicao(req, res) {
         // loadData() sozinho devolvia `stockMovements: []` e o quadro de cores
         // aparecia VAZIO logo depois de uma entrada. Reproduzido: 10 Brancas
         // no razao, `saldos: {}` na resposta desta rota.
-        const dadosDoSaldo = loadData();
-        await sincronizarRazao(dadosDoSaldo);
+        //
+        // O razão SÓ deste produto, e não o de todos: a quebra filtra por
+        // productId, então o número é o mesmo — e esta rota é chamada a cada
+        // item com cor escolhido na tela de VENDA, onde o razão inteiro custava
+        // ~9 ms por 1.000 movimentos por clique.
+        const { data: dadosDoSaldo } = await loadStockContextDosProdutos([productId]);
         const quebra = stockCore.classBalances(dadosDoSaldo, productId, depositId);
         const saldos = {};
         for (const linha of quebra.valores) saldos[linha.classValueId] = linha.quantity;
@@ -13829,7 +13990,10 @@ async function tratarRequisicao(req, res) {
       // stock-core para esta rota e a do Gestor de Preços não divergirem.
       const pendencia = url.searchParams.get('pendencia') || '';
 
-      let list = products.map((product) => stockCore.serializeProduct(product, data, reservas));
+      // serializarProdutos, e não `products.map(serializeProduct)`: o mesmo
+      // objeto por produto, com o razão varrido uma vez em vez de 22 por
+      // produto. Ver o bloco da função em lib/stock-core.js.
+      let list = stockCore.serializarProdutos(products, data, reservas);
       if (search) {
         // O NCM entra na busca desde a fase CP: a classificação em lote procura
         // por NCM ("todos os 8471..."), que é o critério mais natural de quem
@@ -13920,7 +14084,14 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const id = decodeURIComponent(pathname.replace('/api/stock/products/', ''));
-      const { data, productsById, reservas } = await loadStockContext({ comReservas: true });
+      // SÓ ESTE PRODUTO E O RAZÃO DELE. Pelo loadStockContext, esta rota lia
+      // os 5.561 produtos (`select *`), o razão de todos, as pessoas e os
+      // pedidos para devolver 1,9 KB: 171 ms, a cada produto escolhido em Nova
+      // Movimentação e Nova Transferência e a cada abertura do Status. Tudo
+      // aqui — saldo, histórico, cores da reserva — filtra por este id, então a
+      // resposta é a mesma. As reservas continuam vindo de todos os pedidos que
+      // reservam: são elas que dizem quanto DESTE produto está prometido.
+      const { data, productsById, reservas } = await loadStockContextDosProdutos([id], { comReservas: true });
       const product = productsById.get(id);
       if (!product) return sendJson(res, { error: 'Produto não encontrado' }, 404);
       const movements = (data.stockMovements || [])
@@ -13961,7 +14132,10 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const body = await readBody(req);
-      const { data, products, productsById } = await loadStockContext();
+      // Só o produto gravado, o razão dele e — para a checagem de SKU repetido
+      // logo abaixo — id e SKU do catálogo, em vez de `select *`. Ver
+      // loadStockContextDosProdutos.
+      const { data, products, productsById } = await loadStockContextDosProdutos([body.id], { comSkus: true });
 
       const name = String(body.name || '').trim();
       if (!name) return sendJson(res, { error: 'Informe o nome do produto.' }, 400);
@@ -14078,7 +14252,9 @@ async function tratarRequisicao(req, res) {
     try {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
-      const { data, productsById } = await loadStockContext();
+      // O produto aqui é só rótulo (nome e SKU na linha e na busca): ver
+      // loadStockContextDeRotulos.
+      const { data, productsById } = await loadStockContextDeRotulos();
       const filtered = filterStockMovements(data, url.searchParams, productsById)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       const { page, limit } = parsePageParams(url.searchParams, 20);
@@ -14099,7 +14275,10 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const body = await readBody(req);
-      const { data, productsById } = await loadStockContext();
+      // O produto movimentado e o razão dele bastam: a validação de saldo
+      // (assertMovementIsPossible) filtra por este produto, e a guarda que
+      // vale é a do commitStockMovements, em SQL, dentro da transação.
+      const { data, productsById } = await loadStockContextDosProdutos([body.productId]);
       const type = String(body.type || '').trim().toLowerCase();
       if (!['entrada', 'saida'].includes(type)) {
         return sendJson(res, { error: 'Tipo de movimentação inválido. Use entrada ou saída.' }, 400);
@@ -14173,7 +14352,8 @@ async function tratarRequisicao(req, res) {
     try {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
-      const { data, productsById } = await loadStockContext();
+      // Mesmo caso da lista de movimentações: o produto é só rótulo.
+      const { data, productsById } = await loadStockContextDeRotulos();
       const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
       const productId = url.searchParams.get('productId') || '';
       const depositId = url.searchParams.get('depositId') || '';
@@ -14207,7 +14387,11 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const body = await readBody(req);
-      const { data, productsById } = await loadStockContext();
+      // Os produtos DOS ITENS (no formato de lista ou no antigo, solto) e o
+      // razão deles: cada item é validado contra o saldo do próprio produto.
+      const idsDosItens = (Array.isArray(body.items) && body.items.length ? body.items : [body])
+        .map((item) => (item && typeof item === 'object' ? item.productId : ''));
+      const { data, productsById } = await loadStockContextDosProdutos(idsDosItens);
       const originDepositId = String(body.originDepositId || '').trim();
       const destinationDepositId = String(body.destinationDepositId || '').trim();
       if (!originDepositId || !destinationDepositId) {
@@ -14264,14 +14448,22 @@ async function tratarRequisicao(req, res) {
       // Validar-e-gravar item a item deixaria o quinto item sem saldo depois de
       // os quatro primeiros já terem saído da origem: metade de uma
       // movimentação, com uma mensagem de erro que não diz o que ficou feito.
+      //
+      // AS CLASSES DE TODOS OS ITENS NUMA IDA SÓ. Eram buscadas item a item, em
+      // fila, com quatro consultas cada (duas delas lendo os catálogos
+      // inteiros): 20 itens custavam 24 ms, e a rota aceita 200. A resposta por
+      // produto é a mesma de classesDoProduto (ver classesDosProdutos). Falha
+      // de catálogo continua virando lista vazia — o comportamento de sempre
+      // para produto que não usa classe nenhuma.
+      let classesPorProduto = new Map();
+      try {
+        classesPorProduto = await classesDb.classesDosProdutos(itens.map((item) => item.productId));
+      } catch (erroClasses) {
+        classesPorProduto = new Map();
+      }
       const validados = [];
       for (const item of itens) {
-        let classesDoProduto = [];
-        try {
-          classesDoProduto = await classesDb.classesDoProduto(item.productId);
-        } catch (erroClasses) {
-          classesDoProduto = [];
-        }
+        const classesDoProduto = classesPorProduto.get(item.productId) || [];
         const { quantity } = assertMovementIsPossible(data, productsById, {
           productId: item.productId,
           depositId: originDepositId,
@@ -14404,7 +14596,11 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const body = await readBody(req);
-      const { data, productsById } = await loadStockContext();
+      // Os produtos DA CARGA e o razão deles. As transferências desses produtos
+      // contêm a carga inteira (toda linha dela é de um deles), então `doLote`
+      // abaixo sai igual; e o saldo do trânsito é perguntado por produto.
+      const { data, productsById } = await loadStockContextDosProdutos(
+        await razaoEstoque.produtosDaCarga(body.batchId));
 
       const batchId = String(body.batchId || '').trim();
       if (!batchId) return sendJson(res, { error: 'Informe a carga a conferir.' }, 400);
@@ -15016,14 +15212,43 @@ async function tratarRequisicao(req, res) {
       // trazê-la para cá deixaria a pessoa copiando SKUs de uma tela para a
       // busca da outra, que é a planilha de novo, só dentro do sistema.
       const pendencia = url.searchParams.get('pendencia') || '';
-      let list = products.map((product) => {
-        const serialized = stockCore.serializeProduct(product, data);
-        return { ...serialized, tablePrice: stockCore.priceForProduct(priceTable, product) };
-      });
+      // serializarProdutos: o mesmo objeto por produto, com o razão varrido
+      // uma vez (ver lib/stock-core.js). O filtro de pendência continua sobre o
+      // objeto serializado INTEIRO — o predicado é o mesmo da tela de Produtos.
+      const serializados = stockCore.serializarProdutos(products, data);
+      let list = serializados.map((serialized, i) => (
+        { ...serialized, tablePrice: stockCore.priceForProduct(priceTable, products[i]) }
+      ));
       if (search) list = list.filter((p) => `${p.name} ${p.sku}`.toLowerCase().includes(search));
       if (pendencia) list = list.filter((p) => stockCore.temPendenciaDeCadastro(p, pendencia));
       list.sort((a, b) => a.name.localeCompare(b.name));
-      return sendJson(res, { products: list, priceTables: data.priceTables, priceTableId });
+      // A RESPOSTA LEVA SÓ O QUE A TELA LÊ (front-end:15).
+      //
+      // Era o produto serializado inteiro — ~40 campos, com `balances` de cada
+      // depósito e a quebra por cor: 10 MB por carga, 62% dele só `balances`.
+      // O navegador gastava ~205 ms para ler o JSON e o servidor 51 ms de event
+      // loop para escrevê-lo, a cada troca de tabela, de pendência e a cada
+      // busca. price_manager.js lê de cada produto estes sete (a margem ela
+      // recalcula em marginFor) e, da tabela, id e nome (o seletor), tipo e
+      // markup (currentTable). Cortado DEPOIS de filtrar e ordenar: os filtros
+      // continuam vendo o produto inteiro. 10.073 KB -> 868 KB.
+      //
+      // `priceTables[].items` também saiu: o preço de tabela já chega calculado
+      // em `tablePrice`. O POST desta rota — que importação e tela usam para
+      // GRAVAR — não muda.
+      return sendJson(res, {
+        products: list.map((p) => ({
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          stockQuantity: p.stockQuantity,
+          costPrice: p.costPrice,
+          salePrice: p.salePrice,
+          tablePrice: p.tablePrice
+        })),
+        priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type, markupPercent: t.markupPercent })),
+        priceTableId
+      });
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar gestor de preços', 500);
     }

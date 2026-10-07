@@ -229,6 +229,44 @@ const desperdicio = subs.filter((n) => !usamCatalogo.includes(n) && !listadas.in
 check('  e nenhuma paga o catalogo a toa', desperdicio.length === 0,
   desperdicio.length ? 'pagando sem usar: ' + desperdicio.join(', ') : `${subs.length} telas`);
 
+// PELAS CHAVES, E NAO SO PELOS NOMES DE ARQUIVO (fase de desempenho).
+//
+// Os dois checks acima comparam NOMES DE ARQUIVO com a lista, e o roteador
+// compara a CHAVE da subtela. `purchase_documents.js` registra DUAS chaves
+// (`purchase_quotes`, `purchase_orders`): o nome do arquivo na lista satisfazia
+// o teste, e as duas telas baixavam 1.037 KB de catalogo sem ler `data`. Aqui
+// cada chave registrada e conferida pelo arquivo que a registra.
+const chavesPorArquivo = new Map();
+for (const f of fs.readdirSync(DIR_SUBS).filter((x) => x.endsWith('.js'))) {
+  const fonte = fs.readFileSync(path.join(DIR_SUBS, f), 'utf8');
+  const chaves = [...fonte.matchAll(/MavisSubscreenRegistry\.purchases\.([a-z_]+)\s*=/g)].map((m) => m[1]);
+  chavesPorArquivo.set(f.replace(/\.js$/, ''), { chaves, usa: /data\.products|data\.directory/.test(fonte) });
+}
+const todasAsChaves = [...chavesPorArquivo.values()].flatMap((v) => v.chaves);
+check('  achei as chaves registradas', todasAsChaves.length >= subs.length, todasAsChaves.join(', '));
+const chaveErrada = [];
+const chaveAToa = [];
+for (const [, { chaves, usa }] of chavesPorArquivo) {
+  for (const chave of chaves) {
+    if (usa && listadas.includes(chave)) chaveErrada.push(chave);
+    if (!usa && !listadas.includes(chave)) chaveAToa.push(chave);
+  }
+}
+check('  nenhuma CHAVE listada le o catalogo', chaveErrada.length === 0,
+  chaveErrada.length ? 'RENDERIZARIA VAZIA: ' + chaveErrada.join(', ') : `${todasAsChaves.length} chaves`);
+check('  e nenhuma CHAVE paga o catalogo a toa', chaveAToa.length === 0,
+  chaveAToa.length ? 'pagando sem usar: ' + chaveAToa.join(', ') : `${todasAsChaves.length} chaves`);
+
+// A subtela que pede /api/purchases POR CONTA PROPRIA (recarregar depois de
+// receber ou cancelar) tem de dizer o mesmo que o roteador disse por ela: o
+// historico refazia o pedido sem `formulario=0` e baixava 1 MB a cada recarga.
+const pedemSemRecorte = [...chavesPorArquivo.entries()]
+  .filter(([arquivo, { usa }]) => !usa
+    && /api\((['`])\/api\/purchases\1/.test(fs.readFileSync(path.join(DIR_SUBS, `${arquivo}.js`), 'utf8')))
+  .map(([arquivo]) => arquivo);
+check('  e quem refaz o pedido sozinho manda formulario=0', pedemSemRecorte.length === 0,
+  pedemSemRecorte.length ? 'pedindo o catalogo: ' + pedemSemRecorte.join(', ') : 'nenhuma');
+
 console.log('\n--- 5. Estoque manda a PAGINA, e a ordem tem um dono so (fase DG) ---');
 // A lista de Produtos baixava os 5.475 e fatiava no navegador: 3.713 KB crus
 // (257 KB no fio) para mostrar 100 linhas. Com a pagina vindo do servidor:

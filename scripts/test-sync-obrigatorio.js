@@ -99,9 +99,21 @@ const POPULA = {
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
-  // loadStockContext chama syncCadastroData por dentro (server.js), então quem
-  // o chama já tem pessoas, cnpjs e depósitos além do razão.
-  loadStockContext: ['stockMovements', 'stockTransfers', 'people', 'cnpjs', 'deposits'],
+  // loadStockContext chamava syncCadastroData por dentro, e quem o chamava
+  // ganhava pessoas e CNPJs de brinde. Desde a fase de desempenho ele carrega
+  // SÓ os depósitos (nenhuma rota de Estoque lia pessoa ou CNPJ, e elas
+  // custavam 165 ms a cada 30 s). Tirar 'people' e 'cnpjs' daqui é o que faz
+  // este guarda acusar a primeira rota de Estoque que passar a lê-los sem
+  // sincronizar — em vez de acreditar que o contexto ainda os traz.
+  loadStockContext: ['stockMovements', 'stockTransfers', 'deposits'],
+  // O contexto de POUCOS produtos (Status do Produto, quebra por cor, escritas
+  // de Estoque): depósitos e o razão SÓ desses produtos. Popula as mesmas
+  // chaves que o loadStockContext — com o recorte, e é por isso que quem o usa
+  // não pode somar o razão inteiro (ver o bloco da função em server.js).
+  loadStockContextDosProdutos: ['stockMovements', 'stockTransfers', 'deposits'],
+  // As listas de movimentações e transferências: razão inteiro + depósitos; o
+  // produto vem só como rótulo, fora do `data`.
+  loadStockContextDeRotulos: ['stockMovements', 'stockTransfers', 'deposits'],
   // Fase BD: o razão sozinho, para quem já tem o próprio `data` na mão e não
   // pode trocar por outro (Vendas, Compras, Fiscal, os painéis).
   sincronizarRazao: ['stockMovements', 'stockTransfers'],
@@ -143,6 +155,8 @@ const INFRA = new Set([
   'syncSalesDataResumida',
   'syncPurchasesData', 'syncNfeData',
   'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
+  // Carregadores irmãos do loadStockContext, pelo mesmo motivo.
+  'loadStockContextDosProdutos', 'loadStockContextDeRotulos',
   // Fase DB: sincroniza por dentro, como o loadStockContext.
   'baseDosRelatoriosGerais'
 ]);

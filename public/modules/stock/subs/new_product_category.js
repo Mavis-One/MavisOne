@@ -8,6 +8,8 @@ window.MavisSubscreenRegistry.stock.new_product_category = window.MavisStock.mak
   listSub: 'product_categories',
   editStateKey: 'stockEditProductCategoryId',
   needsMeta: true,
+  // Lê só as categorias: o catálogo de produtos não vem (ver Stock.loadMeta).
+  semProdutos: true,
   fields: [
     { name: 'name', label: 'Nome', required: true },
     { name: 'code', label: 'Código' },

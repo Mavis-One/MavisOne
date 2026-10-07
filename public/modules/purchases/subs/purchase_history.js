@@ -18,7 +18,10 @@ window.MavisSubscreenRegistry.purchases.purchase_history = async function render
   async function load() {
     let result;
     try {
-      result = await api('/api/purchases');
+      // `formulario=0`: a tela lê só `purchases`. Sem ele, cada recarga (e a
+      // que vem depois de receber ou cancelar) baixava o catálogo de produtos e
+      // o diretório — 1 MB — que o roteador do módulo já tinha dispensado.
+      result = await api('/api/purchases?formulario=0');
     } catch (error) {
       content.innerHTML = `<div class="panel"><p class="muted">Erro ao carregar compras: ${escapeHtml(error.message || 'erro desconhecido')}</p></div>`;
       return;
