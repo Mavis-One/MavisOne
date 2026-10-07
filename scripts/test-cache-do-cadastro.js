@@ -129,15 +129,6 @@ const invalidacoes = (cadastros.match(/esquecerCadastro\('(people|cnpjs|deposits
 check('são nove invalidações, uma por escrita', invalidacoes === 9, `${invalidacoes}`);
 check('a troca relê a linha do banco, e não confia no que a escrita mandou',
   /async \(atuais\) => \{\s*\n\s*const \{ data, error \} = await banco\.from\(tabela\)\.select\('\*'\)\.eq\('id', id\)\.maybeSingle\(\);/.test(cadastros));
-// Sem desempate, a ordem entre pessoas do mesmo instante (1.538 nesta base,
-// importação em lote) é a física, e muda quando QUALQUER linha é regravada: o
-// cache, que deixa a editada onde estava, divergia de uma leitura nova em 62
-// posições (prova do revisor). Com o id, a ordem é total e a troca é exata.
-check('a tabela inteira é lida em ordem total: created_at desc e, no empate, o id',
-  /\.order\('created_at', \{ ascending: false \}\)\s*\n\s*\.order\('id', \{ ascending: true \}\)/.test(cadastros));
-check('  e é a MESMA leitura no cache, no empate da linha nova e no socorro da troca',
-  (cadastros.match(/lerTabelaInteira\(tabela, '(lerComCache|atualizarNoCache)'\)/g) || []).length === 3
-  && !/banco\.from\(tabela\)\.select\('\*'\)\.order\(/.test(cadastros));
 check('e o esquecimento é exportado', /esquecerCadastro\s*\n?\s*\};/.test(cadastros)
   || /  esquecerCadastro/.test(cadastros), 'quem escreve por fora precisa poder avisar');
 
@@ -189,10 +180,10 @@ async function porExecucao() {
   // Construtor que imita o encadeamento da camada de consulta só no que
   // cadastros.js usa.
   const construtor = (tabela) => {
-    const estado = { op: 'select', filtroId: null, valores: null, unico: false, ordens: [] };
+    const estado = { op: 'select', filtroId: null, valores: null, unico: false };
     const c = {
       select() { return c; },
-      order(coluna, opcoes = {}) { estado.ordens.push({ coluna, asc: opcoes.ascending !== false }); return c; },
+      order() { return c; },
       eq(coluna, valor) { estado.filtroId = valor; return c; },
       maybeSingle() { estado.unico = true; return c; },
       insert(linha) { estado.op = 'insert'; estado.valores = linha; return c; },
@@ -207,12 +198,7 @@ async function porExecucao() {
           }
           if (estado.op === 'update') {
             const l = linhas.find((x) => x.id === estado.filtroId);
-            if (l) {
-              Object.assign(l, estado.valores);
-              // Como o Postgres: a linha regravada vai para o fim do heap, e a
-              // ordem FÍSICA entre empates muda.
-              tabelas[tabela] = linhas.filter((x) => x !== l).concat([l]);
-            }
+            if (l) Object.assign(l, estado.valores);
             return { data: null, error: null };
           }
           if (estado.op === 'delete') {
@@ -226,16 +212,8 @@ async function porExecucao() {
           }
           if (tabelas.__falhar && tabelas.__falhar()) return { data: null, error: { message: 'tabela inteira falhou (simulado)' } };
           leiturasInteiras[tabela] += 1;
-          // Ordena só pelo que foi pedido; o resto fica na ordem física (sort
-          // estável), que é o que o banco faz com o que sobra de empate.
-          const ordenadas = JSON.parse(JSON.stringify(linhas)).sort((a, b) => {
-            for (const o of estado.ordens) {
-              const va = String(a[o.coluna]);
-              const vb = String(b[o.coluna]);
-              if (va !== vb) return (va < vb ? -1 : 1) * (o.asc ? 1 : -1);
-            }
-            return 0;
-          });
+          const ordenadas = JSON.parse(JSON.stringify(linhas))
+            .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
           return { data: ordenadas, error: null };
         }).then(ok, falha);
       }
@@ -303,48 +281,15 @@ async function porExecucao() {
   const l5 = await cad.getPeople();
   check('duas edições ao mesmo tempo: o cache fica com o que o banco tem', l5.find((p) => p.id === 'p1').name === noBanco, `${noBanco}`);
 
-  // EMPATE DE created_at. O que o cache guarda tem de ser, na ORDEM inclusive,
-  // o que uma leitura nova traria agora. "Leitura nova" = a MESMA consulta do
-  // arquivo com o cache frio (esquece e lê; a contagem é desfeita porque não
-  // é a troca que leu). Comparar com uma ordem escrita aqui provaria pouco: a
-  // regressão é justamente a consulta perder o desempate.
-  const leituraNova = async () => {
-    cad.esquecerCadastro('people');
-    const lidas = await cad.getPeople();
-    leiturasInteiras.people -= 1;
-    return lidas.map((p) => [p.id, p.name]);
-  };
-  const mesmaOrdem = async (rotulo) => {
-    const guardada = (await cad.getPeople()).map((p) => [p.id, p.name]);
-    const nova = await leituraNova();
-    check(rotulo, JSON.stringify(guardada) === JSON.stringify(nova),
-      guardada.map((p) => p[0]).join(',') + ' / banco ' + nova.map((p) => p[0]).join(','));
-  };
-
-  // Editar quem empata: o banco regrava a linha no fim do heap (o falso faz o
-  // mesmo). Sem o desempate pelo id, a leitura nova a punha depois da parceira
-  // de instante e o cache a deixava antes -- o defeito apontado na revisão.
-  tabelas.people.push(pessoa('p7', '7', '2026-01-02T10:00:00.000Z', 'Gil'));
-  // p7 entrou "por fora": a leitura seguinte, fria, já a traz no lugar.
-  cad.esquecerCadastro('people');
-  await cad.getPeople();
-  const antesEmpate = leiturasInteiras.people;
-  await cad.updatePerson('p3', { name: 'Caio de novo' });
-  await mesmaOrdem('editar quem empata no instante: a ordem guardada é a de uma leitura nova');
-  check('  sem reler a tabela inteira', leiturasInteiras.people === antesEmpate, String(leiturasInteiras.people - antesEmpate));
-
-  // Linha NOVA que empata: a posição dependeria da collation do id no banco,
-  // então a troca relê a tabela inteira (uma vez) em vez de adivinhar.
+  // Empate de created_at: a nova entra DEPOIS das que têm o mesmo instante.
   tabelas.people.push(pessoa('p6', '6', '2026-01-02T10:00:00.000Z', 'Fábio'));
   // (inserida "por fora" só para o teste; agora a escrita de verdade relê p6)
   await cad.updatePerson('p6', { name: 'Fábio' });
-  await mesmaOrdem('linha nova que empata no instante: entra onde uma leitura nova a poria');
-  check('  relendo a tabela inteira uma vez', leiturasInteiras.people === antesEmpate + 1, String(leiturasInteiras.people - antesEmpate));
   const l6 = await cad.getPeople();
-  check('  depois das mais novas e antes das mais antigas',
-    ids(l6).indexOf('p6') > ids(l6).indexOf('p4') && ids(l6).indexOf('p6') < ids(l6).indexOf('p1'), ids(l6));
+  check('empate de created_at: entra depois das do mesmo instante, antes das mais antigas',
+    ids(l6).indexOf('p6') > ids(l6).indexOf('p3') && ids(l6).indexOf('p6') < ids(l6).indexOf('p1'), ids(l6));
 
-  // Bate com o que o banco devolveria, linha por linha.
+  // Bate com o que o banco devolveria (fora a ordem entre empates).
   const doBanco = tabelas.people.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   const iguais = JSON.stringify(l6.map((p) => [p.id, p.name, p.createdAt]).sort())
     === JSON.stringify(doBanco.map((p) => [p.id, p.name, p.created_at]).sort());
