@@ -22,13 +22,24 @@ window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
  * subtela nova recebe o catálogo: fica tão lenta quanto era antes, e correta.
  *
  * Conferido subtela por subtela: só `new_purchase_order` lê `data.products` e
- * `data.directory`. As cinco abaixo leem `data.purchases`, e `entrada_nfe`
- * busca produtos pela própria rota (`/api/stock/products`) quando precisa.
+ * `data.directory`. As outras leem `data.purchases` ou nem leem `data`, e
+ * `entrada_nfe` busca produtos pela própria rota (`/api/stock/products`) quando
+ * precisa.
+ *
+ * A LISTA É DE CHAVES, NÃO DE ARQUIVOS. O roteador abaixo compara a CHAVE da
+ * subtela (`efetiva`), e `purchase_documents` é o nome do ARQUIVO que registra
+ * duas chaves: `purchase_quotes` e `purchase_orders`. Com só o nome do arquivo
+ * aqui, as duas pediam o catálogo inteiro — 1.037 KB a cada abertura — sem ler
+ * `data`: elas buscam `/api/purchases/documentos?tipo=`. O nome do arquivo
+ * fica na lista porque não custa nada e tira a dúvida de quem procurar por ele;
+ * quem confere é test-carregamento-de-telas.js, que agora mede pelas chaves.
  */
 const PURCHASES_SEM_CATALOGO = new Set([
   'painel',
   'purchase_history',
   'purchase_documents',
+  'purchase_quotes',
+  'purchase_orders',
   'suppliers',
   'entrada_nfe'
 ]);

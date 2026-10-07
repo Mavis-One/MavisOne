@@ -7,6 +7,11 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
 (function (C) {
   const R = window.MavisSubscreenRegistry.pcp;
   const base = { module: 'pcp', metaEndpoint: '/api/pcp/meta' };
+  // As telas SEM seletor de produto (setores, status, qualidade, apontamentos)
+  // dispensam o catálogo: era `select *` dos 5.561 produtos, 440 KB, para elas
+  // lerem setores, status, ordens e o quadro de pessoal. O padrão (`base`)
+  // continua mandando — tela nova nasce com o seletor cheio.
+  const baseSemProdutos = { ...base, metaEndpoint: '/api/pcp/meta?produtos=0' };
 
   // ETAPAS são fixas: é por elas que o código sabe que a ordem terminou. Os
   // STATUS que a empresa cadastra ("Aguardando matéria-prima", "Em setup",
@@ -112,7 +117,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
 
   // ------------------------------------------------------------------ Setores
   R.setores = C.makeListScreen({
-    ...base,
+    ...baseSemProdutos,
     title: 'Setores PCP',
     tableTitle: 'Setores',
     endpoint: '/api/pcp/sectors',
@@ -133,7 +138,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   });
 
   R.novo_setor = C.makeFormScreen({
-    ...base,
+    ...baseSemProdutos,
     title: 'Novo Setor PCP',
     entityLabel: 'setor',
     endpoint: '/api/pcp/sectors',
@@ -166,7 +171,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
 
   // -------------------------------------------------------------- Status PCP
   R.status_pcp = C.makeInlineRegisterScreen({
-    ...base,
+    ...baseSemProdutos,
     title: 'Status PCP',
     tableTitle: 'Status de produção',
     entityLabel: 'status',
@@ -198,7 +203,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
 
   // ---------------------------------------------------- Controle de qualidade
   R.qualidade = C.makeInlineRegisterScreen({
-    ...base,
+    ...baseSemProdutos,
     title: 'Controle Qualidade',
     tableTitle: 'Inspeções',
     entityLabel: 'inspeção',
@@ -282,7 +287,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
 
   // ------------------------------------------------------------- Apontamentos
   R.apontamentos = C.makeListScreen({
-    ...base,
+    ...baseSemProdutos,
     title: 'Apontamentos',
     tableTitle: 'Apontamentos',
     endpoint: '/api/pcp/entries',
@@ -300,7 +305,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   });
 
   R.novo_apontamento = C.makeFormScreen({
-    ...base,
+    ...baseSemProdutos,
     title: 'Novo Apontamento',
     entityLabel: 'apontamento',
     endpoint: '/api/pcp/entries',

@@ -14,7 +14,8 @@ window.MavisSubscreenRegistry.stock.counts = async function renderStockCounts(ct
   const { content, api, showToast, state, loadModule, confirmModal } = ctx;
   const S = window.MavisStock;
 
-  const meta = await S.loadMeta(api, showToast);
+  // Sem `produtos`: esta tela não tem seletor de produto (ver Stock.loadMeta).
+  const meta = await S.loadMeta(api, showToast, { produtos: false });
   const filters = { status: '', depositId: '' };
 
   const STATUS_SELO = {

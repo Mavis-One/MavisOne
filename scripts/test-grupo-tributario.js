@@ -184,10 +184,23 @@ check('avisa quando não há grupo cadastrado',
 // para quem cadastra produto.
 check('a lista vem do meta do ESTOQUE, não da rota fiscal',
   !/api\('\/api\/fiscal\//.test(produtoTela) && /meta\.grupoTributarios/.test(produtoTela));
+// A GRAFIA MUDOU NA FASE DE DESEMPENHO, O COMPORTAMENTO NÃO: o meta do estoque
+// passou a ler depósitos, classes, grupos e produtos numa onda só
+// (Promise.all), em vez de um `await` por linha dentro da resposta. Estes dois
+// checks prendiam `grupoTributarios: await fiscalDb...` — a forma, não o fato.
+// Agora olham o trecho da rota: os grupos ATIVOS vêm do fiscalDb, com catch, e
+// saem na chave `grupoTributarios`.
+const rotaMetaEstoque = (() => {
+  const inicio = serverSrc.indexOf("pathname === '/api/stock/meta' && req.method === 'GET'");
+  const resto = serverSrc.slice(inicio);
+  const fim = resto.search(/\n {2}(?:\/\/[^\n]*\n {2})*if \(pathname/);
+  return inicio < 0 ? '' : (fim < 0 ? resto : resto.slice(0, fim));
+})();
 check('e o meta do estoque a serve',
-  /grupoTributarios: await fiscalDb\.getGruposTributarios\(null, \{ somenteAtivos: true \}\)/.test(serverSrc));
+  /fiscalDb\.getGruposTributarios\(null, \{ somenteAtivos: true \}\)/.test(rotaMetaEstoque)
+  && /\n\s+grupoTributarios[,\n]/.test(rotaMetaEstoque));
 check('com catch, para migração não rodada não derrubar o cadastro',
-  /grupoTributarios: await fiscalDb[\s\S]{0,260}\.catch\(\(\) => \[\]\)/.test(serverSrc));
+  /fiscalDb\.getGruposTributarios\(null, \{ somenteAtivos: true \}\)[\s\S]{0,160}\.catch\(\(\) => \[\]\)/.test(rotaMetaEstoque));
 
 console.log('\n--- 10. a tela de grupos ---');
 check('está registrada', /window\.MavisSubscreenRegistry\.fiscal\.grupos_tributarios = \{ render: desenhar \}/.test(gruposTela));

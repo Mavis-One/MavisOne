@@ -415,9 +415,19 @@ check('cor zerada não polui a linha', /\.filter\(\(linha\) => linha\.quantity !
 
 console.log('\n--- o nome da cor vem do catálogo, uma vez só ---');
 const sharedSrc = ler('public/modules/stock/shared.js');
-check('o meta do estoque traz o catálogo', /const catalogo = await classesDb\.listarClasses\(\);/.test(serverSrc));
+// Na fase de desempenho o meta passou a ler o catálogo JUNTO com o resto, numa
+// onda só (Promise.all), e não em fila — o check prendia a grafia antiga
+// (`const catalogo = await ...`). O que importa continua o mesmo: o meta traz
+// classes E valores, e a falha do catálogo vira lista vazia.
+const metaEstoque = (() => {
+  const inicio = serverSrc.indexOf("pathname === '/api/stock/meta' && req.method === 'GET'");
+  return inicio < 0 ? '' : serverSrc.slice(inicio, serverSrc.indexOf("pathname.startsWith('/api/stock/classes')", inicio));
+})();
+check('o meta do estoque traz o catálogo',
+  /Promise\.all\(\[classesDb\.listarClasses\(\), classesDb\.listarValores\(null\)\]\)/.test(metaEstoque));
 // Falha do catálogo não pode derrubar o módulo inteiro de Estoque.
-check('falha do catálogo não derruba o meta', /\} catch \(erroClasses\) \{\s*\n\s*classes = \[\];/.test(serverSrc));
+check('falha do catálogo não derruba o meta',
+  /classesDb\.listarValores\(null\)\]\)[\s\S]{0,200}\.catch\(\(\) => \[\]\)/.test(metaEstoque));
 check('o índice é montado uma vez por tela', /Stock\.indiceDeCores = function indiceDeCores\(meta\)/.test(sharedSrc));
 // Sumir com o movimento seria pior: ele existe e alguém precisa rastreá-lo.
 check('cor fora do catálogo mostra o id cru', /const nome = valor\?\.name \|\| classValueId;/.test(sharedSrc));

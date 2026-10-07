@@ -22,7 +22,8 @@ window.MavisSubscreenRegistry.stock.receive_transfer = async function renderRece
   const { content, api, showToast, state, loadModule, confirmModal } = ctx;
   const S = window.MavisStock;
 
-  const meta = await S.loadMeta(api, showToast);
+  // Sem `produtos`: esta tela não tem seletor de produto (ver Stock.loadMeta).
+  const meta = await S.loadMeta(api, showToast, { produtos: false });
   const cores = S.indiceDeCores(meta);
 
   function voltar() {

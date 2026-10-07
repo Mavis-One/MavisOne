@@ -126,9 +126,15 @@ window.MavisStock = window.MavisStock || {};
   };
 
   // Metadados (depósitos, categorias, produtos, tabelas) usados nos selects.
-  Stock.loadMeta = async function loadMeta(api, showToast) {
+  //
+  // `{ produtos: false }` É A TELA DIZENDO QUE NÃO TEM SELETOR DE PRODUTO.
+  // Dos 787 KB do meta, 782 KB são o catálogo, e metade das telas que pedem o
+  // meta não o lê. O padrão é mandar: tela nova recebe o catálogo e funciona;
+  // o pior caso é pagar o que se pagava antes, e não um seletor vazio.
+  // scripts/test-recortes-do-estoque.js confere que tela que dispensa não lê `meta.products`.
+  Stock.loadMeta = async function loadMeta(api, showToast, { produtos = true } = {}) {
     try {
-      return await api('/api/stock/meta');
+      return await api(produtos ? '/api/stock/meta' : '/api/stock/meta?produtos=0');
     } catch (error) {
       if (showToast) showToast('Não foi possível carregar os cadastros de apoio do estoque.', 'warning');
       return { deposits: [], classes: [], productCategories: [], movementCategories: [], priceTables: [], catalogs: [], grupoTributarios: [], products: [] };
@@ -263,7 +269,9 @@ window.MavisStock = window.MavisStock || {};
     const modulo = config.modulo || 'stock';
     return async function renderList(ctx) {
       const { content, api, showToast, state, loadModule, confirmModal } = ctx;
-      const meta = config.needsMeta ? await Stock.loadMeta(api, showToast) : null;
+      // `semProdutos`: a tela usa o meta mas não tem seletor de produto (ver
+      // Stock.loadMeta). Sem a marca, o catálogo vem, como sempre veio.
+      const meta = config.needsMeta ? await Stock.loadMeta(api, showToast, { produtos: !config.semProdutos }) : null;
       let items = [];
       try {
         const res = await api(config.endpoint);
@@ -371,7 +379,9 @@ window.MavisStock = window.MavisStock || {};
     const modulo = config.modulo || 'stock';
     return async function renderForm(ctx) {
       const { content, api, showToast, state, loadModule } = ctx;
-      const meta = config.needsMeta ? await Stock.loadMeta(api, showToast) : null;
+      // `semProdutos`: a tela usa o meta mas não tem seletor de produto (ver
+      // Stock.loadMeta). Sem a marca, o catálogo vem, como sempre veio.
+      const meta = config.needsMeta ? await Stock.loadMeta(api, showToast, { produtos: !config.semProdutos }) : null;
 
       const editId = state[config.editStateKey] || null;
       state[config.editStateKey] = null;
