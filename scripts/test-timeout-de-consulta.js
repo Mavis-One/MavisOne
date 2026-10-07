@@ -142,6 +142,15 @@ const isentos = FONTES.filter((f) => /statement_timeout\s*=\s*0/.test(ler(f)));
 check('nenhum fonte de lib/ ou server.js desliga o teto', isentos.length === 0,
   isentos.length ? isentos.join(', ') : `${FONTES.length} conferidos`);
 
+console.log('\n--- o JIT do Postgres fica desligado nas conexões do sistema ---');
+// Mesma configuração do pool, outro teto que ninguém vê: o JIT compilava os
+// relatórios do catálogo por até 1,5 s para uma consulta de ~100 ms (condensado
+// por produto 904 -> 135 ms; limite de crédito 392 -> 9 ms), e nenhuma consulta
+// do sistema ficou mais rápida com ele. É uma opção de uma linha que parece
+// enfeite — e quem a "limpar" devolve o segundo e meio sem nada quebrar.
+check('o pool manda -c jit=off por padrão',
+  /options: process\.env\.DATABASE_PG_OPTIONS \|\| '-c jit=off'/.test(conexao));
+
 console.log('\n--- a variável está documentada ---');
 const exemplo = ler('.env.example');
 check('DATABASE_STATEMENT_TIMEOUT_MS aparece no .env.example',

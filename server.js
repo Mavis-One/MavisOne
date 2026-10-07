@@ -999,9 +999,78 @@ function deveRegistrar(metodo, permitido) {
 // sistema (um `{ success: true }`, um login) está aí.
 const PISO_PARA_COMPRIMIR = 1400;
 
+// ---------------------------------------------------------------------------
+// RESPOSTA GRANDE QUE NÃO MUDOU NÃO VIAJA DE NOVO (desempenho, 07/10/2026)
+//
+// As telas pedem o mesmo meta a cada abertura, e na maior parte das vezes nada
+// mudou: medido, onze rotas devolvem os MESMOS bytes de uma chamada para a
+// outra — Gestor de Preços 10 MB (326 KB no fio), Pessoas 7,4 MB (695 KB),
+// meta de Vendas 4,2 MB (609 KB), meta do Financeiro 2,8 MB (569 KB)... Tudo
+// isso voltava inteiro pelo link do escritório a cada abertura.
+//
+// Agora o GET 200 grande leva um ETag — o sha1 do JSON — e
+// `Cache-Control: private, no-cache`. O `fetch` do navegador guarda a
+// resposta e, no pedido seguinte, manda `If-None-Match` sozinho; se o corpo
+// que o servidor acabou de montar tem o MESMO sha1, a resposta é um 304 sem
+// corpo, e o navegador entrega ao JS o corpo que já tinha, com status 200.
+// Nenhuma linha do app.js muda.
+//
+// O QUE O 304 POUPA, E O QUE NÃO POUPA: poupa a TRANSFERÊNCIA — os 326-695 KB
+// comprimidos por chamada, que no link do escritório são o tempo que a pessoa
+// espera — e a CPU do gzip (que já rodava fora do event loop, no zlib
+// assíncrono; o 304 não acelera nenhuma outra requisição). NÃO poupa o tempo de
+// montar a resposta no servidor (medido: meta do Financeiro 478 ms cheio contra
+// 484 ms com 304), nem o JSON.parse no navegador: o api() do app.js chama
+// response.json(), e no 304 o navegador entrega o corpo guardado como um 200
+// comum, que é parseado inteiro de novo (os ~205 ms do Gestor de Preços
+// continuam lá). Encurtar esse parse é trabalho do cliente, não deste trecho.
+//
+// NÃO É CACHE DE DADO, E NÃO SERVE DADO VELHO: o servidor continua montando a
+// resposta inteira a cada pedido — consultas, permissão, escopo de vendedor,
+// tudo. Só deixa de MANDAR os bytes quando eles são idênticos aos que o
+// navegador já tem. `no-cache` obriga o navegador a perguntar toda vez (ele
+// nunca usa a cópia sem o servidor confirmar), e `private` proíbe proxy
+// compartilhado de guardar. Trocar de usuário na mesma aba não vaza nada: o 304
+// só sai se o corpo calculado PARA QUEM PEDIU for igual byte a byte ao guardado.
+//
+// ETag FRACO (W/) porque o mesmo validador vale para o corpo cru e o gzipado —
+// o que se compara é o JSON, não a codificação do transporte.
+//
+// O PISO de 16 KB: abaixo disso o sha1 e a ida e volta não compram nada (o
+// corpo cabe em poucos pacotes). O sha1 custa 0,3 a 7 ms nos corpos grandes
+// (no event loop), contra 8 a 83 ms de CPU do gzip que o 304 deixa de gastar.
+//
+// Rotas que mudam a cada chamada (painel, resumo do Financeiro: dependem do
+// relógio) só pagam o sha1 e seguem como antes.
+const PISO_PARA_VALIDAR = 16 * 1024;
+const CACHE_DE_API = 'private, no-cache';
+
+/** O If-None-Match bate com o ETag? Comparação FRACA, lista separada por vírgula. */
+function etagConfere(pedido, etag) {
+  if (!pedido) return false;
+  const nosso = etag.replace(/^W\//, '');
+  return String(pedido).split(',').some((item) => item.trim().replace(/^W\//, '') === nosso);
+}
+
 function sendJson(res, payload, statusCode = 200) {
   const corpo = Buffer.from(JSON.stringify(payload), 'utf8');
   const cabecalhos = { 'Content-Type': 'application/json' };
+
+  // A revalidação vem ANTES do gzip: o 304 não tem corpo, então não há o que
+  // comprimir. Só GET 200 — um erro ou uma escrita nunca é "o mesmo de antes" —,
+  // e só se a rota não decidiu sozinha o próprio Cache-Control.
+  const pedido = res.req;
+  if (statusCode === 200 && pedido && pedido.method === 'GET' && corpo.length >= PISO_PARA_VALIDAR
+    && typeof res.getHeader === 'function' && !res.getHeader('Cache-Control')) {
+    const etag = `W/"${crypto.createHash('sha1').update(corpo).digest('base64url')}"`;
+    cabecalhos.ETag = etag;
+    cabecalhos['Cache-Control'] = CACHE_DE_API;
+    if (etagConfere(pedido.headers['if-none-match'], etag)) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': CACHE_DE_API, Vary: 'Accept-Encoding' });
+      res.end();
+      return;
+    }
+  }
 
   // Quem não pede gzip recebe cru — é o caso dos scripts de teste deste
   // repositório, que falam com a API pelo módulo http do Node (ele não manda
@@ -17928,6 +17997,7 @@ function startServer(port, retriesLeft) {
     for (const endereco of enderecosDaRede()) {
       console.log(`  visivel na rede em http://${endereco}:${port} — qualquer um nesta rede alcanca`);
     }
+    ligarLinhaDeSaude();
   });
 
   server.once('error', (error) => {
@@ -17944,6 +18014,70 @@ function startServer(port, retriesLeft) {
     console.error('Falha ao iniciar servidor:', error.message || error);
     process.exit(1);
   });
+}
+
+// ---------------------------------------------------------------------------
+// A LINHA DE SAÚDE NO LOG (desempenho, 07/10/2026)
+//
+// Queixa de lentidão só se mede no VPS — o banco local tem uma conta e é
+// acessado por localhost —, e nenhuma medição feita aqui diz o que o escritório
+// sente lá. Sem um número de produção não dá para saber se as correções de
+// desempenho resolveram, nem se o PM2 está reiniciando o processo por memória
+// (o teto do ecosystem.config.js): o pico da abertura passa de 500 MB e volta
+// a ~50 MB em dez segundos, sem deixar rastro.
+//
+// Duas medidas do PRÓPRIO processo, e nada mais:
+//   - o atraso do event loop (perf_hooks.monitorEventLoopDelay): quanto uma
+//     requisição qualquer esperou porque outra estava ocupando a CPU — é o
+//     "travou" que as pessoas descrevem;
+//   - o RSS, amostrado a cada 5 s, guardando o MAIOR do minuto: é o número que
+//     o PM2 compara com o teto. Uma amostra por minuto perderia o pico.
+//
+// A linha só sai no minuto RUIM (atraso máximo acima de 200 ms ou RSS acima de
+// 700 MB), e cada linha é um evento que vale olhar. O limiar de memória NÃO é
+// 400 MB porque o pico normal passa disso (medido em 06-07/10/2026, banco com
+// os dados reais): a 1ª abertura de um processo novo chega a 492-524 MB, e três
+// aberturas juntas a 584-638 MB. Com 400 a linha sairia em todo minuto em que
+// alguém abre o sistema, e o pico ruim se perderia no meio do normal. 700 fica
+// acima desse normal e abaixo das rajadas seguidas que já passaram de 870 MB —
+// o caminho até o teto de 1024M do PM2 (ecosystem.config.js), que é o que
+// interessa ver antes de o processo ser reiniciado. O atraso de 200 ms continua:
+// um travamento desses é sentido por quem está usando, aconteça quando acontecer.
+// Vai para logs/pm2-out.log; para ver: grep "\[saude\]" logs/pm2-out.log
+//
+// Não toca rota, resposta nem banco. Os timers são `unref()`: não seguram o
+// processo de pé, nem num teste que carregue este arquivo.
+// ---------------------------------------------------------------------------
+const SAUDE_INTERVALO_MS = 60 * 1000;
+const SAUDE_AMOSTRA_RSS_MS = 5 * 1000;
+const SAUDE_ATRASO_RUIM_MS = 200;
+const SAUDE_RSS_RUIM_MB = 700;
+let saudeLigada = false;
+
+function ligarLinhaDeSaude() {
+  if (saudeLigada) return;
+  saudeLigada = true;
+  const { monitorEventLoopDelay } = require('perf_hooks');
+  const atraso = monitorEventLoopDelay({ resolution: 20 });
+  atraso.enable();
+  const mb = (bytes) => Math.round(bytes / 1048576);
+  let rssMaximo = process.memoryUsage.rss();
+  setInterval(() => {
+    rssMaximo = Math.max(rssMaximo, process.memoryUsage.rss());
+  }, SAUDE_AMOSTRA_RSS_MS).unref();
+  setInterval(() => {
+    const memoria = process.memoryUsage();
+    rssMaximo = Math.max(rssMaximo, memoria.rss);
+    // O histograma é em nanossegundos. Sem nenhuma amostra no minuto (processo
+    // parado de verdade), max é 0 e a linha não sai.
+    const maximoMs = atraso.max / 1e6;
+    if (maximoMs > SAUDE_ATRASO_RUIM_MS || mb(rssMaximo) > SAUDE_RSS_RUIM_MB) {
+      console.log(`[saude] event loop p99 ${Math.round(atraso.percentile(99) / 1e6)} ms, max ${Math.round(maximoMs)} ms; `
+        + `rss max ${mb(rssMaximo)} MB (agora ${mb(memoria.rss)} MB), heap ${mb(memoria.heapUsed)} MB`);
+    }
+    atraso.reset();
+    rssMaximo = memoria.rss;
+  }, SAUDE_INTERVALO_MS).unref();
 }
 
 /**
