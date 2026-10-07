@@ -114,7 +114,8 @@ check('e a decisao vem ANTES da onda de sincronizacao',
 // da pagina `data.orders` tem 15 registros -- sao os 15 que a tela mostra -- e o
 // cartao escreveria "15 pedidos" no lugar de "14.864", sem nada quebrar.
 check('as contagens dos cartoes chegam prontas, nao saem de data',
-  /montarRespostaDeVendas\(\{ records, total, page, limit, contagens, data, url \}\)/.test(serverSrc));
+  // `origens` (fase DT) é a lista do filtro de Origem, não uma contagem.
+  /montarRespostaDeVendas\(\{ records, total, page, limit, contagens, data, url(, origens)? \}\)/.test(serverSrc));
 const corpoDaResposta = serverSrc.slice(
   serverSrc.indexOf('function montarRespostaDeVendas'),
   serverSrc.indexOf('function codigoDoRegistro')

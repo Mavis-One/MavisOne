@@ -427,7 +427,27 @@ const SALES_POR_PAGINA = [15, 30, 50, 100];
 // sem a migração, ou alguém que inativou todas as origens — o campo mostraria um
 // <select> sem nenhuma opção, e uma venda ficaria impossível de registrar por
 // causa de um cadastro de apoio. Com a rede, o pior caso é voltar ao que era.
-const ORIGENS_VENDA_PADRAO = ['Venda Direta', 'Televendas', 'E-commerce', 'Marketplace', 'Representante', 'Balcão'];
+//
+// Desde a fase DT a reserva são as oito que a loja pediu, na ordem dela — as
+// seis antigas foram inativadas no cadastro (o histórico continua com elas).
+const ORIGENS_VENDA_PADRAO = ['LOJA', 'INDICAÇÃO', 'WHATSAPP', 'INSTAGRAM', 'FACEBOOK', 'GOOGLE', 'SITE', 'CLIENTE ANTIGO'];
+
+/**
+ * O NOME DA EMPRESA NOS CAMPOS DE ESCOLHA: o da filial.
+ *
+ * As dez lojas têm a MESMA razão social ("SAL INFINITY PLUS COMERCIO LTDA"), e
+ * a lista do campo Empresa mostrava dez linhas iguais — escolher a loja certa
+ * era adivinhar. O que distingue cada uma é o nome fantasia, que o cadastro já
+ * guarda com a filial: "SAL INFINITY PLUS (MARCOLLA)". Sem nome fantasia, fica
+ * a razão social, como antes.
+ *
+ * Só nos campos de ESCOLHA: a impressão do pedido continua com a razão social
+ * do objeto inteiro, que é o que vale num documento.
+ */
+function rotuloDaEmpresa(empresa) {
+  const fantasia = String((empresa && empresa.tradeName) || '').trim();
+  return fantasia || String((empresa && empresa.name) || '');
+}
 
 /**
  * As opções do campo Origem da Venda (fase AZ).
@@ -2212,6 +2232,15 @@ function renderSearchableSelect({ id, name, options, selectedValue, placeholder,
 // Busca sem acento: quem digita "galpao" tem que achar "Galpão", e quem digita
 // "sao paulo" tem que achar "São Paulo". Sem isto o campo só serve para quem
 // acerta a acentuação de cabeça.
+// CPF (11 dígitos) ou CNPJ (14) com a máscara de sempre, para mostrar ao lado
+// do nome na lista de busca. Outro tamanho volta como veio.
+function formatarDocumentoParaBusca(valor) {
+  const d = String(valor || '').replace(/\D/g, '');
+  if (d.length === 11) return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+  if (d.length === 14) return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  return d;
+}
+
 function textoDeBusca(valor) {
   return String(valor || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 }
@@ -2226,7 +2255,11 @@ function indiceDeBuscaDe(options) {
   if (guardado && guardado.tamanho === options.length) return guardado.indice;
   const indice = options.map((o) => {
     const busca = textoDeBusca(o.label);
-    return { opcao: o, busca, palavras: busca.split(/[^a-z0-9]+/).filter(Boolean) };
+    // `documento`: CPF/CNPJ só com dígitos, para quem procura por ele. Fica
+    // num campo à parte para "123.456" achar "12345678900" sem que a busca por
+    // nome passe a casar com pedaço de número.
+    const documento = String(o.documento || '').replace(/\D/g, '');
+    return { opcao: o, busca, palavras: busca.split(/[^a-z0-9]+/).filter(Boolean), documento };
   });
   INDICES_DE_BUSCA.set(options, { tamanho: options.length, indice });
   return indice;
@@ -2340,8 +2373,14 @@ function attachSearchableSelect({ id, options, onSelect }) {
     //
     // Com poucos itens ninguém nota; com 5.476 é o jeito normal de procurar.
     const partes = term ? term.split(/\s+/).filter(Boolean) : [];
+    // UMA PARTE SÓ DE NÚMERO E PONTUAÇÃO pode ser CPF/CNPJ: "123.456.789-00",
+    // "43.792.899/0001-35" ou os dígitos corridos. Com 3 dígitos ou mais ela
+    // também casa no documento da opção, comparando só os dígitos.
+    const digitosDaParte = (parte) => (/^[\d.\-/]+$/.test(parte) ? parte.replace(/\D/g, '') : '');
+    const casa = (i, parte) => i.busca.includes(parte)
+      || (i.documento && digitosDaParte(parte).length >= 3 && i.documento.includes(digitosDaParte(parte)));
     const filtrados = partes.length
-      ? indice.filter((i) => partes.every((parte) => i.busca.includes(parte)))
+      ? indice.filter((i) => partes.every((parte) => casa(i, parte)))
       : indice;
 
     // QUEM CASA PALAVRA INTEIRA VAI NA FRENTE.
@@ -2373,7 +2412,7 @@ function attachSearchableSelect({ id, options, onSelect }) {
       ? `<div class="searchable-select-empty">Mostrando ${mostrados.length} de ${filtrados.length} — digite mais para refinar.</div>`
       : '';
     dropdown.innerHTML = mostrados.length
-      ? mostrados.map(({ opcao }) => `<div class="searchable-select-option" data-value="${escapeHtml(String(opcao.value))}">${escapeHtml(opcao.label)}</div>`).join('') + aviso
+      ? mostrados.map(({ opcao }) => `<div class="searchable-select-option" data-value="${escapeHtml(String(opcao.value))}">${escapeHtml(opcao.label)}${opcao.detalhe ? ` <span class="searchable-select-detalhe">${escapeHtml(opcao.detalhe)}</span>` : ''}</div>`).join('') + aviso
       : '<div class="searchable-select-empty">Nenhum resultado</div>';
     abrirLista();
   }
@@ -2853,7 +2892,7 @@ async function loadModule(moduleName) {
                       <span>Empresa</span>
                       <select name="companyId">
                         <option value="">Todas</option>
-                        ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.companyId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+                        ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.companyId === c.id ? 'selected' : ''}>${escapeHtml(rotuloDaEmpresa(c))}</option>`).join('')}
                       </select>
                     </label>
                     <label class="cadastro-field">
@@ -3485,7 +3524,15 @@ async function loadModule(moduleName) {
         let opcoesDeClienteGuardadas = null;
         const opcoesDeCliente = () => {
           if (!opcoesDeClienteGuardadas) {
-            opcoesDeClienteGuardadas = meta.directory.map((entry) => ({ value: entry.id, label: entry.name }));
+            // O documento (só dígitos) entra para a busca achar o cliente pelo
+            // CPF/CNPJ — ver indiceDeBuscaDe — e aparece ao lado do nome na
+            // lista, o que também separa os clientes de nome igual.
+            opcoesDeClienteGuardadas = meta.directory.map((entry) => ({
+              value: entry.id,
+              label: entry.name,
+              documento: entry.document || '',
+              detalhe: formatarDocumentoParaBusca(entry.document)
+            }));
           }
           return opcoesDeClienteGuardadas;
         };
@@ -4578,10 +4625,10 @@ async function loadModule(moduleName) {
                 <div class="sales-tab-panel" data-aba="dados" ${abaAtiva === 'dados' ? '' : 'hidden'}>
                 <div class="row sales-row-cliente">
                   <label>Cliente/Fornecedor *
-                    ${renderSearchableSelect({ id: 'salesClientSupplier', name: 'clientSupplierId', options: opcoesDeCliente(), selectedValue: formState.clientSupplierId, placeholder: 'Buscar por nome...', required: true })}
+                    ${renderSearchableSelect({ id: 'salesClientSupplier', name: 'clientSupplierId', options: opcoesDeCliente(), selectedValue: formState.clientSupplierId, placeholder: 'Buscar por nome ou CPF/CNPJ...', required: true })}
                   </label>
                   <label>Empresa
-                    ${renderSearchableSelect({ id: 'salesCompany', name: 'companyId', options: meta.companies.map((c) => ({ value: c.id, label: c.name })), selectedValue: formState.companyId, placeholder: 'Buscar empresa...' })}
+                    ${renderSearchableSelect({ id: 'salesCompany', name: 'companyId', options: meta.companies.map((c) => ({ value: c.id, label: rotuloDaEmpresa(c) })), selectedValue: formState.companyId, placeholder: 'Buscar empresa...' })}
                   </label>
                   <label>Origem da Venda *
                     <select name="saleOrigin">
@@ -5301,7 +5348,7 @@ async function loadModule(moduleName) {
           // há dúvida — ver depositoSugeridoDaLoja.
           attachSearchableSelect({
             id: 'salesCompany',
-            options: meta.companies.map((c) => ({ value: c.id, label: c.name })),
+            options: meta.companies.map((c) => ({ value: c.id, label: rotuloDaEmpresa(c) })),
             onSelect: (valor) => {
               formState.companyId = valor;
               const sugerido = depositoSugeridoDaLoja(meta, valor);

@@ -224,7 +224,10 @@ console.log('--- 6. a busca: cada palavra é um filtro ---');
 const app = semComentarios(ler('public/app.js'));
 check('o termo é quebrado em palavras',
   /const partes = term \? term\.split\(\/\\s\+\/\)\.filter\(Boolean\) : \[\];/.test(app));
-check('  e TODAS têm de casar', /partes\.every\(\(parte\) => i\.busca\.includes\(parte\)\)/.test(app));
+// `casa` é o includes de sempre, mais o documento quando a parte é número
+// (CPF/CNPJ do cliente, 07/10/2026 — ver test-busca-cliente-e-origens.js).
+check('  e TODAS têm de casar', /partes\.every\(\(parte\) => casa\(i, parte\)\)/.test(app)
+  && /const casa = \(i, parte\) => i\.busca\.includes\(parte\)/.test(app));
 // O que não pode voltar: a frase inteira como um pedaço só.
 check('  e não a frase inteira como um pedaço', !/indice\.filter\(\(i\) => i\.busca\.includes\(term\)\)/.test(app));
 check('as palavras de cada rótulo entram no índice, calculado uma vez',

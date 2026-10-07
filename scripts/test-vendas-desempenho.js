@@ -186,8 +186,11 @@ const iniFmt = app.indexOf('const salesFormatDate');
 const fimFmt = app.indexOf("if (sub === 'orders_quotes')", iniFmt);
 check('achei o bloco do rótulo e os formatadores', ini > 0 && fim > ini && iniFmt > 0 && fimFmt > iniFmt);
 // eslint-disable-next-line no-new-func
+// formatarDocumentoParaBusca é global no app.js (a lista de clientes mostra o
+// CPF/CNPJ ao lado do nome — ver test-busca-cliente-e-origens.js).
+const fmtDocumento = app.slice(app.indexOf('function formatarDocumentoParaBusca'), app.indexOf('function textoDeBusca'));
 const fabrica = new Function('meta', 'formState',
-  `${app.slice(iniFmt, fimFmt)}\n${app.slice(ini, fim)}\nreturn { rotuloProduto, opcoesDeProduto, opcoesDeCliente, salesFormatBRL };`);
+  `${fmtDocumento}\n${app.slice(iniFmt, fimFmt)}\n${app.slice(ini, fim)}\nreturn { rotuloProduto, opcoesDeProduto, opcoesDeCliente, salesFormatBRL };`);
 const meta = {
   products: [
     { id: 'p1', name: 'Parafuso', sku: '10087', salePrice: 1234.5, stockQuantity: 10 },

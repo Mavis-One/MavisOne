@@ -3329,7 +3329,14 @@ function buscaDeVendasSemFiltro(searchParams) {
  * exatamente a mesma forma. Escrito duas vezes, o dia em que um campo mudasse
  * num lado e não no outro daria uma tela que funciona até alguém filtrar.
  */
-function montarRespostaDeVendas({ records, total, page, limit, contagens, data, url }) {
+// As origens para o filtro da lista de vendas: todas, ativas e inativas, só
+// quando a resposta leva o `meta` (é uma consulta a uma tabela de dez linhas).
+async function origensDoFiltroDeVendas(url) {
+  if (url.searchParams.get('meta') === '0') return undefined;
+  return (await origensVendaDb.listar()).map((o) => o.name);
+}
+
+function montarRespostaDeVendas({ records, total, page, limit, contagens, data, url, origens }) {
   // `meta=0`: QUEM JÁ TEM AS LISTAS DO FILTRO NÃO AS RECEBE DE NOVO (fase DE).
   //
   // O `meta` só alimenta os selects da Busca Avançada — cliente, empresa,
@@ -3407,7 +3414,13 @@ function montarRespostaDeVendas({ records, total, page, limit, contagens, data, 
       // "revenda" e "Revensa" como se fossem coisas diferentes, e aí
       // nenhum filtro por categoria fecha.
       carriers: getCarriersDirectory(data),
-      productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo')
+      productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo'),
+      // TODAS as origens do cadastro, as inativas inclusive (fase DT). Isto é o
+      // filtro da Busca Avançada, não o formulário: as antigas (Venda Direta,
+      // dos 14.860 pedidos do Viper) saíram do formulário, mas o histórico
+      // continua tendo de ser filtrável por elas. Sem esta lista o filtro caía
+      // na reserva fixa do app.js, que não sabe nada do cadastro.
+      salesOrigins: origens || []
     }
   };
 }
@@ -10600,7 +10613,15 @@ async function tratarRequisicao(req, res) {
       // IMPRESSÃO lê, e só do cliente ESCOLHIDO: vinham para as 6.492 pessoas
       // a cada abertura da Nova Venda (1,6 MB cru, 373 KB no fio). Agora a tela
       // pede os do escolhido em /api/sales/clientes/:id — ver logo abaixo.
-      directory: getCadastroDirectory(data).map((c) => ({ id: c.id, name: c.name })),
+      //
+      // O DOCUMENTO VOLTOU, SÓ OS DÍGITOS (07/10/2026): a loja pediu buscar o
+      // cliente pelo CPF/CNPJ no mesmo campo. Só os dígitos, e só quem tem —
+      // a máscara é montada na tela, e são ~14 bytes por pessoa em vez dos dez
+      // campos de antes.
+      directory: getCadastroDirectory(data).map((c) => {
+        const documento = String(c.document || '').replace(/\D/g, '');
+        return documento ? { id: c.id, name: c.name, document: documento } : { id: c.id, name: c.name };
+      }),
       products,
       // O CABEÇALHO DA IMPRESSÃO (30/09/2026). Razão social, CNPJ, endereço,
       // e-mail e telefone de quem emite — é o que o modelo que o usuário quer
@@ -10915,6 +10936,7 @@ async function tratarRequisicao(req, res) {
       // INERTES e não pelos filtros.
     if (listaSemFiltro) {
         return sendJson(res, montarRespostaDeVendas({
+          origens: await origensDoFiltroDeVendas(url),
           records: pagina.registros.map((r) => serializeSalesRecord(r, data)),
           total: pagina.totais.orders + pagina.totais.quotes,
           page,
@@ -10960,6 +10982,7 @@ async function tratarRequisicao(req, res) {
       // passos, e por que sem gravação a página é a mesma.
       const registrosDaPagina = await relerPaginaDeVendas(daPagina, tabelaDe, (ids) => db.getVendasPorIds(ids));
       return sendJson(res, montarRespostaDeVendas({
+        origens: await origensDoFiltroDeVendas(url),
         // A página relida passa de novo pelo MESMO filtro, agora sobre o
         // registro completo, como o caminho antigo filtrava numa leitura só.
         // Quem mudou de status entre os dois passos sai da página em vez de

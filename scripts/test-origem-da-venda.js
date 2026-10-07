@@ -60,9 +60,11 @@ console.log('\n--- 2. a rede de segurança ---');
 // Um <select> sem opcao nenhuma tornaria a venda impossivel de registrar por
 // causa de um cadastro de apoio. O pior caso e' voltar ao que era.
 const semCadastro = opcoesDeOrigemDeVenda({}, '').map((o) => o.value);
-check('cadastro ausente cai nas seis antigas', semCadastro.length === 6, semCadastro.join(', '));
-check('cadastro vazio também', opcoesDeOrigemDeVenda({ salesOrigins: [] }, '').length === 6);
-check('  e "Venda Direta" está entre elas', semCadastro.includes('Venda Direta'));
+// Desde a fase DT a reserva são as oito que a loja pediu (as seis antigas
+// foram inativadas no cadastro, e o histórico continua com elas).
+check('cadastro ausente cai nas oito da loja', semCadastro.length === 8, semCadastro.join(', '));
+check('cadastro vazio também', opcoesDeOrigemDeVenda({ salesOrigins: [] }, '').length === 8);
+check('  e LOJA é a primeira (a que o pedido novo traz marcada)', semCadastro[0] === 'LOJA');
 
 console.log('\n--- 3. o que está gravado não some ---');
 const comInativa = opcoesDeOrigemDeVenda(meta, 'Feira de Negócios');
