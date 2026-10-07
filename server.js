@@ -12596,6 +12596,14 @@ async function tratarRequisicao(req, res) {
       // Só para este cadastro: carregar em todos seria ida ao banco por nada.
       if (cadastroCollectionMatch[1] === 'payment-methods') {
         data.cardAcquirers = await adquirentesDb.listar();
+        // E AS CONTAS BANCARIAS, PELO MESMO MOTIVO. O `build` confere o
+        // bankAccountId contra `data.bankAccounts`, e essa colecao esta em
+        // NAO_PERSISTIR: sem carregar aqui ela chegava SEMPRE vazia, e toda
+        // forma de pagamento com conta era recusada com "Conta bancaria nao
+        // encontrada." — a tela oferecia as contas no select e nenhuma podia
+        // ser salva. De carona o `serialize` volta a dar nome a coluna "Conta
+        // bancaria" da lista, que saia sempre "-".
+        await syncContasBancarias(data);
       }
       const list = data[config.key];
       const helpers = { sanitizeDigits, isValidCnpj, isValidCpf, isValidDocument };
