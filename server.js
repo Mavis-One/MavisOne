@@ -17480,6 +17480,7 @@ function startServer(port, retriesLeft) {
     for (const endereco of enderecosDaRede()) {
       console.log(`  visivel na rede em http://${endereco}:${port} — qualquer um nesta rede alcanca`);
     }
+    ligarLinhaDeSaude();
   });
 
   server.once('error', (error) => {
@@ -17496,6 +17497,62 @@ function startServer(port, retriesLeft) {
     console.error('Falha ao iniciar servidor:', error.message || error);
     process.exit(1);
   });
+}
+
+// ---------------------------------------------------------------------------
+// A LINHA DE SAÚDE NO LOG (desempenho, 07/10/2026)
+//
+// Queixa de lentidão só se mede no VPS — o banco local tem uma conta e é
+// acessado por localhost —, e nenhuma medição feita aqui diz o que o escritório
+// sente lá. Sem um número de produção não dá para saber se as correções de
+// desempenho resolveram, nem se o PM2 está reiniciando o processo por memória
+// (o teto do ecosystem.config.js): o pico da abertura passa de 500 MB e volta
+// a ~50 MB em dez segundos, sem deixar rastro.
+//
+// Duas medidas do PRÓPRIO processo, e nada mais:
+//   - o atraso do event loop (perf_hooks.monitorEventLoopDelay): quanto uma
+//     requisição qualquer esperou porque outra estava ocupando a CPU — é o
+//     "travou" que as pessoas descrevem;
+//   - o RSS, amostrado a cada 5 s, guardando o MAIOR do minuto: é o número que
+//     o PM2 compara com o teto. Uma amostra por minuto perderia o pico.
+//
+// A linha só sai no minuto RUIM (atraso máximo acima de 200 ms ou RSS acima de
+// 400 MB): o log não enche num dia normal, e cada linha é um evento que vale
+// olhar. Vai para logs/pm2-out.log; para ver: grep "\[saude\]" logs/pm2-out.log
+//
+// Não toca rota, resposta nem banco. Os timers são `unref()`: não seguram o
+// processo de pé, nem num teste que carregue este arquivo.
+// ---------------------------------------------------------------------------
+const SAUDE_INTERVALO_MS = 60 * 1000;
+const SAUDE_AMOSTRA_RSS_MS = 5 * 1000;
+const SAUDE_ATRASO_RUIM_MS = 200;
+const SAUDE_RSS_RUIM_MB = 400;
+let saudeLigada = false;
+
+function ligarLinhaDeSaude() {
+  if (saudeLigada) return;
+  saudeLigada = true;
+  const { monitorEventLoopDelay } = require('perf_hooks');
+  const atraso = monitorEventLoopDelay({ resolution: 20 });
+  atraso.enable();
+  const mb = (bytes) => Math.round(bytes / 1048576);
+  let rssMaximo = process.memoryUsage.rss();
+  setInterval(() => {
+    rssMaximo = Math.max(rssMaximo, process.memoryUsage.rss());
+  }, SAUDE_AMOSTRA_RSS_MS).unref();
+  setInterval(() => {
+    const memoria = process.memoryUsage();
+    rssMaximo = Math.max(rssMaximo, memoria.rss);
+    // O histograma é em nanossegundos. Sem nenhuma amostra no minuto (processo
+    // parado de verdade), max é 0 e a linha não sai.
+    const maximoMs = atraso.max / 1e6;
+    if (maximoMs > SAUDE_ATRASO_RUIM_MS || mb(rssMaximo) > SAUDE_RSS_RUIM_MB) {
+      console.log(`[saude] event loop p99 ${Math.round(atraso.percentile(99) / 1e6)} ms, max ${Math.round(maximoMs)} ms; `
+        + `rss max ${mb(rssMaximo)} MB (agora ${mb(memoria.rss)} MB), heap ${mb(memoria.heapUsed)} MB`);
+    }
+    atraso.reset();
+    rssMaximo = memoria.rss;
+  }, SAUDE_INTERVALO_MS).unref();
 }
 
 /**
