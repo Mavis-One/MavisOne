@@ -2,6 +2,10 @@ window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastros || {};
 
 window.MavisSubscreenRegistry.cadastros.novo_contato = window.MavisCadastros.makeFormScreen({
+  // O que esta tela lê da meta de Cadastros, e só isso: ela pede só estas
+  // partes. Leitura nova da meta tem de entrar aqui — sem isso o select
+  // fica vazio (scripts/test-meta-das-telas-de-cadastro.js cobra).
+  metaPartes: ['directory'],
   title: 'Novo Contato',
   entityLabel: 'contato',
   endpoint: '/api/cadastros/contacts',

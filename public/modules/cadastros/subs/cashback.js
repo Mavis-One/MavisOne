@@ -4,6 +4,10 @@ window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastro
 // O retorno estimado vem pronto do servidor, que cruza a regra com o preço de
 // venda atual do produto (que mora no Supabase).
 window.MavisSubscreenRegistry.cadastros.cashback = window.MavisCadastros.makeListScreen({
+  // Esta tela não lê nada da meta de Cadastros, então não a pede (era 1,4 MB
+  // por abertura). Se passar a ler, declare a parte aqui —
+  // scripts/test-meta-das-telas-de-cadastro.js cobra.
+  metaPartes: [],
   title: 'CashBack por Produto',
   tableTitle: 'Regras de cashback',
   endpoint: '/api/cadastros/product-cashbacks',

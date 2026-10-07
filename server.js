@@ -2031,6 +2031,40 @@ async function syncFinanceData(data) {
   data.financialPayments = entries.length ? await db.getAllFinancialPayments() : [];
 }
 
+/**
+ * SO AS CONTAS BANCARIAS, sem o resto do Financeiro.
+ *
+ * syncFinanceData carrega as cinco colecoes juntas porque quem le LANCAMENTO
+ * precisa das outras quatro para resolver categoria, centro de custo e conta de
+ * cada linha. Quem so quer a lista de contas (o select da forma de pagamento,
+ * a meta de Cadastros) pagava os 27.362 lancamentos e as 25.709 baixas para
+ * jogar tudo fora. Medido na meta de Cadastros:
+ *
+ *     syncFinanceData inteiro ....... 528 ms
+ *     getBankAccounts sozinho ....... 2,4 ms   <- a unica parte que ela usa
+ *
+ * A MESMA funcao de lib/db que syncFinanceData chama: as contas saem iguais,
+ * na mesma ordem, com os mesmos campos. Registrada em POPULA e INFRA de
+ * scripts/test-sync-obrigatorio.js, como os outros syncs.
+ */
+async function syncContasBancarias(data) {
+  data.bankAccounts = await db.getBankAccounts();
+}
+
+/**
+ * As partes que /api/cadastros/meta sabe montar — as chaves da meta inteira, na
+ * ordem em que saem nela.
+ *
+ * UMA LISTA SÓ: a rota recusa (400) qualquer nome fora dela, e
+ * scripts/test-meta-das-telas-de-cadastro.js confere que toda parte que uma
+ * tela declara em `metaPartes` (public/modules/cadastros/shared.js) existe
+ * aqui. Tela pedindo parte que o servidor não conhece é select vazio sem erro.
+ */
+const PARTES_DA_META_DE_CADASTROS = Object.freeze([
+  'directory', 'products', 'deposits', 'bankAccounts', 'estabelecimentos', 'paymentMethods',
+  'cardAcquirers', 'saleStatuses', 'companies', 'users', 'notasFiscais'
+]);
+
 function normalizeSalesItems(rawItems) {
   if (!Array.isArray(rawItems)) return [];
   return rawItems
@@ -12374,42 +12408,100 @@ async function tratarRequisicao(req, res) {
 
   // Metadados dos cadastros: diretório de pessoas/empresas, produtos, contas,
   // usuários — usados pelos selects das telas do módulo.
+  //
+  // META POR PARTES (?partes=directory,users). Sem o parâmetro, a resposta é a
+  // de sempre, inteira. Com ele, sai SÓ o pedido — e só o pedido é montado:
+  // a tela de Agenda lia `users` (0,1 KB) e recebia 1,4 MB (372 KB gzip) com
+  // as 6.492 pessoas e os 5.561 produtos, montados a cada abertura.
+  //
+  // CADA PARTE TEM O MESMO NOME E O MESMO CONTEÚDO DA CHAVE DA META INTEIRA,
+  // montada pelo mesmo código abaixo: pedir `directory` devolve exatamente o
+  // `directory` da meta inteira. É isso que deixa provar a mudança por sha256,
+  // parte a parte, e é por isso que não há "versão enxuta" com o mesmo nome.
+  //
+  // A SEMÂNTICA DE ERRO DE CADA PARTE É A DE ANTES: diretório, depósitos,
+  // contas, NF-e e credenciadoras derrubam a requisição (500, e a tela avisa);
+  // só produtos, estabelecimentos e usuários degradam para []. Não pôr um
+  // catch em cada parte: um select vazio por erro, num formulário de EDIÇÃO,
+  // grava '' por cima do vínculo salvo (lib/cadastros-core.js: o `??` de
+  // `text(body.x ?? current.x)` não troca '' pelo valor de antes).
+  //
+  // Parte desconhecida ou pedido vazio: 400, nunca ignorado em silêncio — uma
+  // tela que pedisse `diretorio` em vez de `directory` receberia [] e não
+  // saberia por quê.
   if (pathname === '/api/cadastros/meta' && req.method === 'GET') {
     try {
-      const data = loadData();
-      await syncCadastroData(data);
-      // syncNfeData tambem: o cadastro de equipamento escolhe a NF-e que vendeu
-      // a maquina, e e' dela que sai a data de inicio da garantia (fase BB).
-      await Promise.all([syncFinanceData(data), syncNfeData(data)]);
+      // A PERMISSAO ANTES DA CARGA. O portao central ja barrou quem nao tem
+      // sessao; esta e' a defesa em profundidade, e nao ha por que pagar a
+      // leitura do cadastro inteiro para so depois dizer "sem permissao". O
+      // usuario e' memorizado por requisicao, entao perguntar antes nao custa
+      // uma ida a mais ao banco.
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
-      let products = [];
-      try {
-        products = (await db.getProducts()).map((p) => ({ id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice }));
-      } catch (error) {
-        products = [];
+      const pedidoDePartes = url.searchParams.get('partes');
+      let partes = null; // null = a meta inteira, como sempre foi
+      if (pedidoDePartes !== null) {
+        const nomes = pedidoDePartes.split(',').map((p) => p.trim()).filter(Boolean);
+        const desconhecidas = nomes.filter((p) => !PARTES_DA_META_DE_CADASTROS.includes(p));
+        if (!nomes.length || desconhecidas.length) {
+          const motivo = nomes.length ? `Parte desconhecida da meta: ${desconhecidas.join(', ')}.` : 'Nenhuma parte pedida.';
+          return sendJson(res, { error: `${motivo} As partes são: ${PARTES_DA_META_DE_CADASTROS.join(', ')}.` }, 400);
+        }
+        partes = new Set(nomes);
       }
-      // Fase CD: o formulario da conta bancaria pergunta de qual estabelecimento
-      // ela e'. `.catch(() => [])` porque Cadastros nao depende do Fiscal: sem
-      // estabelecimento nenhum cadastrado, o campo some e o resto da tela
-      // continua funcionando.
-      const estabelecimentosCad = await fiscalDb.getEstabelecimentos().catch(() => []);
-      return sendJson(res, {
-        directory: cadastrosCore.directory(data),
-        products,
-        deposits: data.deposits,
-        bankAccounts: data.bankAccounts,
-        estabelecimentos: estabelecimentosCad
+      const quer = (parte) => partes === null || partes.has(parte);
+
+      const data = loadData();
+      // Pessoas, CNPJs e depósitos vêm juntos (uma chamada só, do cache de
+      // 30 s): quem pede diretório e depósitos não paga duas vezes.
+      if (quer('directory') || quer('deposits')) await syncCadastroData(data);
+      // syncNfeData tambem: o cadastro de equipamento escolhe a NF-e que vendeu
+      // a maquina, e e' dela que sai a data de inicio da garantia (fase BB).
+      //
+      // AS CONTAS, E NAO O FINANCEIRO INTEIRO. Era syncFinanceData, e da
+      // resposta so `bankAccounts` saia dele: os 27.362 lancamentos e as 25.709
+      // baixas eram lidos e jogados fora a cada abertura de tela de Cadastros
+      // (635 ms -> 49 ms medidos, JSON identico byte a byte). Ver
+      // syncContasBancarias.
+      await Promise.all([
+        quer('bankAccounts') ? syncContasBancarias(data) : null,
+        quer('notasFiscais') ? syncNfeData(data) : null
+      ]);
+
+      // As chaves entram NA ORDEM de sempre: a meta inteira continua saindo
+      // byte a byte igual a de antes desta mudanca.
+      const resposta = {};
+      if (quer('directory')) resposta.directory = cadastrosCore.directory(data);
+      if (quer('products')) {
+        let products = [];
+        try {
+          products = (await db.getProducts()).map((p) => ({ id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice }));
+        } catch (error) {
+          products = [];
+        }
+        resposta.products = products;
+      }
+      if (quer('deposits')) resposta.deposits = data.deposits;
+      if (quer('bankAccounts')) resposta.bankAccounts = data.bankAccounts;
+      if (quer('estabelecimentos')) {
+        // Fase CD: o formulario da conta bancaria pergunta de qual estabelecimento
+        // ela e'. `.catch(() => [])` porque Cadastros nao depende do Fiscal: sem
+        // estabelecimento nenhum cadastrado, o campo some e o resto da tela
+        // continua funcionando.
+        const estabelecimentosCad = await fiscalDb.getEstabelecimentos().catch(() => []);
+        resposta.estabelecimentos = estabelecimentosCad
           .filter((e) => e.ativo !== false)
-          .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia })),
-        paymentMethods: data.paymentMethods,
-        // As credenciadoras alimentam o select da forma de pagamento (fase BV).
-        // Só as ATIVAS: a inativa some do formulário e continua no histórico.
-        cardAcquirers: await adquirentesDb.listar({ apenasAtivas: true }),
-        saleStatuses: data.saleStatuses,
-        companies: data.companies,
+          .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia }));
+      }
+      if (quer('paymentMethods')) resposta.paymentMethods = data.paymentMethods;
+      // As credenciadoras alimentam o select da forma de pagamento (fase BV).
+      // Só as ATIVAS: a inativa some do formulário e continua no histórico.
+      if (quer('cardAcquirers')) resposta.cardAcquirers = await adquirentesDb.listar({ apenasAtivas: true });
+      if (quer('saleStatuses')) resposta.saleStatuses = data.saleStatuses;
+      if (quer('companies')) resposta.companies = data.companies;
+      if (quer('users')) {
         // OS USUARIOS VEM DO BANCO, e nao de `data.users` (fase BC).
         //
         // `normalizeData` APAGA data.users em toda carga, de proposito: era
@@ -12420,20 +12512,21 @@ async function tratarRequisicao(req, res) {
         //
         // So id e nome saem daqui: e' um select, e o resto do cadastro de
         // usuario (papel, permissoes, hash de senha) nao tem por que trafegar.
-        users: (await db.getUsers().catch(() => []))
+        resposta.users = (await db.getUsers().catch(() => []))
           .filter((u) => u.active !== false)
-          .map((u) => ({ id: u.id, name: u.name })),
-        // Fase BB: as notas que o cadastro de equipamento pode escolher.
-        //
-        // SO AS QUE VALEM COMO DOCUMENTO. Nota cancelada, denegada ou que
-        // terminou em erro nao vendeu nada — contar garantia a partir dela seria
-        // contar a partir de uma venda que nao existiu.
-        //
-        // O rotulo carrega numero, data e destinatario porque e' assim que
-        // alguem acha a nota certa numa lista: pelo cliente e pelo dia, nao pelo
-        // uuid.
-        notasFiscais: notasParaEquipamento(data)
-      });
+          .map((u) => ({ id: u.id, name: u.name }));
+      }
+      // Fase BB: as notas que o cadastro de equipamento pode escolher.
+      //
+      // SO AS QUE VALEM COMO DOCUMENTO. Nota cancelada, denegada ou que
+      // terminou em erro nao vendeu nada — contar garantia a partir dela seria
+      // contar a partir de uma venda que nao existiu.
+      //
+      // O rotulo carrega numero, data e destinatario porque e' assim que
+      // alguem acha a nota certa numa lista: pelo cliente e pelo dia, nao pelo
+      // uuid.
+      if (quer('notasFiscais')) resposta.notasFiscais = notasParaEquipamento(data);
+      return sendJson(res, resposta);
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar dados dos cadastros', 500);
     }

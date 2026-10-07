@@ -340,6 +340,9 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
   // ------------------------------------------------------------------ Modelos
   R.modelos = C.makeListScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Modelos de Contrato',
     tableTitle: 'Modelos',
     endpoint: '/api/contracts/templates',
@@ -357,6 +360,9 @@ window.MavisSubscreenRegistry.contracts = window.MavisSubscreenRegistry.contract
 
   R.novo_modelo = C.makeFormScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Novo Modelo',
     entityLabel: 'modelo',
     endpoint: '/api/contracts/templates',

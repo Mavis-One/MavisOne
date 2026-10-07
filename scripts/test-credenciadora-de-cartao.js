@@ -102,7 +102,12 @@ check('  e valida contra a lista carregada pela rota',
 check('  degradando quando a lista não veio', /&& !data\.cardAcquirers\.some/.test(core));
 check('a rota genérica carrega a lista para este cadastro',
   /if \(cadastroCollectionMatch\[1\] === 'payment-methods'\) \{\s*\n\s*data\.cardAcquirers = await adquirentesDb\.listar\(\);/.test(src));
-check('e o meta alimenta o select', /cardAcquirers: await adquirentesDb\.listar\(\{ apenasAtivas: true \}\)/.test(src));
+// A meta de Cadastros passou a montar por partes (?partes=, rodada de
+// desempenho) e a chave entra por atribuição, `resposta.cardAcquirers = ...`,
+// em vez de dentro do objeto literal. O que importa continua exigido: a meta
+// alimenta o select, e só com as ATIVAS.
+check('e o meta alimenta o select',
+  /(?:cardAcquirers: |resposta\.cardAcquirers = )await adquirentesDb\.listar\(\{ apenasAtivas: true \}\)/.test(src));
 
 console.log('--- 5. as telas ---');
 const html = ler('public/index.html');

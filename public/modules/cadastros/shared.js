@@ -158,20 +158,68 @@ window.MavisCadastros = window.MavisCadastros || {};
     `).join('');
   };
 
-  const META_VAZIA = { directory: [], products: [], deposits: [], bankAccounts: [], paymentMethods: [], saleStatuses: [], companies: [], users: [] };
+  // Todas as chaves da meta de Cadastros, vazias. Volta no erro e na tela que
+  // não pede meta nenhuma, e é a base em que a resposta é mesclada: quem pediu
+  // só `users` continua achando `meta.directory` como [] (e não undefined), o
+  // que mantém um `.map` direto longe de um TypeError.
+  const META_VAZIA = {
+    directory: [], products: [], deposits: [], bankAccounts: [], estabelecimentos: [], paymentMethods: [],
+    cardAcquirers: [], saleStatuses: [], companies: [], users: [], notasFiscais: []
+  };
 
-  // `endpoint` null pula a busca: as telas dos módulos novos (Frota, RH, PCP,
-  // Contratos) não precisam dos dados de apoio de Cadastros, e pedi-los faria
-  // quem tem acesso só àquele módulo tomar um aviso de erro na cara — a rota
-  // /api/cadastros/meta exige permissão de Cadastros.
-  C.loadMeta = async function loadMeta(api, showToast, endpoint = '/api/cadastros/meta') {
+  const AVISO_DA_META = 'Não foi possível carregar os dados de apoio dos cadastros.';
+
+  // `endpoint` null pula a busca. Serve a duas coisas:
+  //   - as telas que NÃO LEEM NADA da meta (Contatos, Empresas, Status de
+  //     Venda...; Veículos, Expedientes, Modelos...): sem isto cada abertura
+  //     baixava 1,4 MB (372 KB gzip) e esperava ~700 ms por dados que a tela
+  //     jogava fora. scripts/test-meta-das-telas-de-cadastro.js desenha cada
+  //     uma delas e confere que nenhuma lê a meta;
+  //   - e, de origem, quem tem acesso só a um módulo não toma aviso de erro de
+  //     uma meta que exige permissão de Cadastros.
+  //
+  // `partes`, quando veio, é o que a tela pediu à meta por partes: faltando
+  // alguma na resposta, o aviso aparece — a mesma falha que o caminho de erro
+  // mostra, em vez de um select vazio em silêncio.
+  C.loadMeta = async function loadMeta(api, showToast, endpoint = '/api/cadastros/meta', partes = null) {
     if (!endpoint) return { ...META_VAZIA };
     try {
-      return await api(endpoint);
+      const resposta = await api(endpoint);
+      if (Array.isArray(partes) && partes.some((parte) => !Array.isArray(resposta && resposta[parte]))) {
+        if (showToast) showToast(AVISO_DA_META, 'warning');
+      }
+      return { ...META_VAZIA, ...resposta };
     } catch (error) {
-      if (showToast) showToast('Não foi possível carregar os dados de apoio dos cadastros.', 'warning');
+      if (showToast) showToast(AVISO_DA_META, 'warning');
       return { ...META_VAZIA };
     }
+  };
+
+  // DE ONDE A TELA TIRA A META — uma regra só para as três fábricas.
+  //
+  //   metaEndpoint definido (inclusive null) → ele vale, e metaPartes é
+  //     ignorado. É a meta de OUTRO módulo (RH, PCP, Frota, Contratos), ou
+  //     nenhuma; `metaPartes` só faz sentido para a de Cadastros.
+  //   metaPartes: [...] → /api/cadastros/meta?partes=... — só o que a tela lê.
+  //     A lista tem de cobrir TUDO o que a tela lê da meta: parte esquecida é
+  //     select vazio, e num formulário de edição o salvar grava '' por cima do
+  //     vínculo. scripts/test-meta-das-telas-de-cadastro.js executa cada tela e
+  //     cobra isso.
+  //   metaPartes: [] → nenhuma busca (como metaEndpoint: null).
+  //   nada declarado → a meta de Cadastros inteira, como sempre foi.
+  C.enderecoDaMeta = function enderecoDaMeta(config) {
+    if (config.metaEndpoint !== undefined) return config.metaEndpoint;
+    if (Array.isArray(config.metaPartes)) {
+      return config.metaPartes.length
+        ? `/api/cadastros/meta?partes=${config.metaPartes.map(encodeURIComponent).join(',')}`
+        : null;
+    }
+    return '/api/cadastros/meta';
+  };
+
+  C.carregarMetaDaTela = function carregarMetaDaTela(config, api, showToast) {
+    const porPartes = config.metaEndpoint === undefined && Array.isArray(config.metaPartes);
+    return C.loadMeta(api, showToast, C.enderecoDaMeta(config), porPartes ? config.metaPartes : null);
   };
 
   function normalizeText(value) {
@@ -189,7 +237,8 @@ window.MavisCadastros = window.MavisCadastros || {};
   // config: { title, endpoint, listKey, newSub, newLabel, editStateKey,
   //           columns: [{label, render(item, meta, todosOsItens)}],
   //           filters: [{name, label, type, options}], searchFields,
-  //           rowActions: [{icon, title, tone, run(item, ctx)}] }
+  //           rowActions: [{icon, title, tone, run(item, ctx)}],
+  //           metaPartes | metaEndpoint (de onde vem a meta: ver enderecoDaMeta) }
   C.makeListScreen = function makeListScreen(config) {
     return async function renderList(ctx) {
       const { content, api, showToast, state, loadModule, confirmModal } = ctx;
@@ -197,7 +246,6 @@ window.MavisCadastros = window.MavisCadastros || {};
       // Contratos usam as mesmas. Sem isto, salvar um veículo devolvia o
       // usuário para a tela de Cadastros.
       const modulo = config.module || 'cadastros';
-      const meta = await C.loadMeta(api, showToast, config.metaEndpoint === undefined ? '/api/cadastros/meta' : config.metaEndpoint);
 
       state.cadastroDraft = state.cadastroDraft || {};
       const filterKey = `${config.listKey}Filters`;
@@ -205,13 +253,19 @@ window.MavisCadastros = window.MavisCadastros || {};
       const filters = { show: Boolean(saved.show), query: saved.query || '' };
       (config.filters || []).forEach((def) => { filters[def.name] = saved[def.name] || ''; });
 
+      // A META E A LISTA SAEM JUNTAS. Uma não depende da outra, e esperar a
+      // meta para só então pedir a lista somava as duas idas ao servidor em
+      // toda abertura das ~54 telas destas fábricas (Cadastros, RH, PCP, Frota,
+      // Contratos). Cada uma continua tratando o próprio erro: a meta nunca
+      // rejeita (cai na meta vazia com aviso) e a lista mantém o seu toast. A
+      // tela só desenha depois das duas, como antes.
       let items = [];
-      try {
-        const res = await api(config.endpoint);
-        items = res[config.listKey] || [];
-      } catch (error) {
-        showToast(error.message || 'Erro ao carregar a lista.', 'error');
-      }
+      const [meta] = await Promise.all([
+        C.carregarMetaDaTela(config, api, showToast),
+        api(config.endpoint)
+          .then((res) => { items = res[config.listKey] || []; })
+          .catch((error) => { showToast(error.message || 'Erro ao carregar a lista.', 'error'); })
+      ]);
 
       function visibleItems() {
         return items.filter((item) => {
@@ -397,7 +451,11 @@ window.MavisCadastros = window.MavisCadastros || {};
   C.makeInlineRegisterScreen = function makeInlineRegisterScreen(config) {
     return async function renderInlineRegister(ctx) {
       const { content, api, showToast, confirmModal } = ctx;
-      const meta = await C.loadMeta(api, showToast, config.metaEndpoint === undefined ? '/api/cadastros/meta' : config.metaEndpoint);
+      // A meta sai JÁ, e a lista sai lá embaixo (carregar), sem esperar por
+      // ela; as duas são aguardadas juntas antes do primeiro desenho. Mesmo
+      // motivo da fábrica de lista acima.
+      const metaPedida = C.carregarMetaDaTela(config, api, showToast);
+      let meta = null;
       const campos = config.fields || [];
       const definicoesFiltro = config.filters || [];
       const filtros = {};
@@ -619,7 +677,7 @@ window.MavisCadastros = window.MavisCadastros || {};
         });
       }
 
-      await carregar();
+      [meta] = await Promise.all([metaPedida, carregar()]);
       render();
     };
   };
@@ -634,20 +692,21 @@ window.MavisCadastros = window.MavisCadastros || {};
     return async function renderForm(ctx) {
       const { content, api, showToast, state, loadModule } = ctx;
       const modulo = config.module || 'cadastros';
-      const meta = await C.loadMeta(api, showToast, config.metaEndpoint === undefined ? '/api/cadastros/meta' : config.metaEndpoint);
 
       const editId = state[config.editStateKey] || null;
       state[config.editStateKey] = null;
 
+      // A META E O REGISTRO EM EDIÇÃO SAEM JUNTOS — mesmo motivo da fábrica de
+      // lista. Cada um com o próprio tratamento de erro de antes.
       let current = null;
-      if (editId) {
-        try {
-          const res = await api(`${config.endpoint}/${editId}`);
-          current = res[config.itemKey];
-        } catch (error) {
-          showToast('Não foi possível carregar o registro para edição.', 'error');
-        }
-      }
+      const [meta] = await Promise.all([
+        C.carregarMetaDaTela(config, api, showToast),
+        editId
+          ? api(`${config.endpoint}/${editId}`)
+            .then((res) => { current = res[config.itemKey]; })
+            .catch(() => { showToast('Não foi possível carregar o registro para edição.', 'error'); })
+          : null
+      ]);
 
       const allFields = [
         ...(config.sections || []).flatMap((s) => s.fields),

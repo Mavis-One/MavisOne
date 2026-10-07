@@ -8,6 +8,10 @@ const TASK_PRIORITY_META = {
 };
 
 window.MavisSubscreenRegistry.cadastros.agenda = window.MavisCadastros.makeListScreen({
+  // O que esta tela lê da meta de Cadastros, e só isso: ela pede só estas
+  // partes. Leitura nova da meta tem de entrar aqui — sem isso o select
+  // fica vazio (scripts/test-meta-das-telas-de-cadastro.js cobra).
+  metaPartes: ['users'],
   title: 'Agenda de Tarefas',
   tableTitle: 'Tarefas',
   endpoint: '/api/cadastros/tasks',

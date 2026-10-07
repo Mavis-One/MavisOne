@@ -14,6 +14,10 @@ const CREDENCIADORA_CAIXAS_DE_BANDEIRA = window.MavisBandeiraCartao.CATALOGO
   .map(({ codigo, nome }) => ({ name: `bandeira${codigo}`, label: nome, type: 'checkbox' }));
 
 window.MavisSubscreenRegistry.cadastros.nova_credenciadora = window.MavisCadastros.makeFormScreen({
+  // Esta tela não lê nada da meta de Cadastros, então não a pede (era 1,4 MB
+  // por abertura). Se passar a ler, declare a parte aqui —
+  // scripts/test-meta-das-telas-de-cadastro.js cobra.
+  metaPartes: [],
   title: 'Nova Credenciadora de Cartão',
   entityLabel: 'credenciadora',
   endpoint: '/api/cadastros/card-acquirers',

@@ -7,6 +7,10 @@ const APPOINTMENT_TYPE_LABELS = {
 };
 
 window.MavisSubscreenRegistry.cadastros.agendamentos = window.MavisCadastros.makeListScreen({
+  // O que esta tela lê da meta de Cadastros, e só isso: ela pede só estas
+  // partes. Leitura nova da meta tem de entrar aqui — sem isso o select
+  // fica vazio (scripts/test-meta-das-telas-de-cadastro.js cobra).
+  metaPartes: ['users'],
   title: 'Agendamentos',
   tableTitle: 'Agendamentos',
   endpoint: '/api/cadastros/appointments',

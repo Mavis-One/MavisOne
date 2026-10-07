@@ -66,6 +66,9 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
   // ----------------------------------------------------------------- Veículos
   R.veiculos = C.makeListScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Veículos',
     tableTitle: 'Veículos',
     endpoint: '/api/fleet/vehicles',
@@ -88,6 +91,9 @@ window.MavisSubscreenRegistry.fleet = window.MavisSubscreenRegistry.fleet || {};
 
   R.novo_veiculo = C.makeFormScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Novo Veículo',
     entityLabel: 'veículo',
     endpoint: '/api/fleet/vehicles',

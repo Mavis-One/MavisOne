@@ -99,6 +99,10 @@ const POPULA = {
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
+  // Só as contas, sem lançamentos e baixas: para quem quer a lista de contas e
+  // nada mais (a meta de Cadastros, o formulário da forma de pagamento). Ver o
+  // comentário dela no server.js.
+  syncContasBancarias: ['bankAccounts'],
   // loadStockContext chama syncCadastroData por dentro (server.js), então quem
   // o chama já tem pessoas, cnpjs e depósitos além do razão.
   loadStockContext: ['stockMovements', 'stockTransfers', 'people', 'cnpjs', 'deposits'],
@@ -142,7 +146,7 @@ const INFRA = new Set([
   'syncCadastroData', 'syncSalesData', 'syncSalesDataParaAgregado',
   'syncSalesDataResumida',
   'syncPurchasesData', 'syncNfeData',
-  'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
+  'syncFinanceData', 'syncContasBancarias', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
   // Fase DB: sincroniza por dentro, como o loadStockContext.
   'baseDosRelatoriosGerais'
 ]);
