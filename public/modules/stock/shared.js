@@ -131,7 +131,7 @@ window.MavisStock = window.MavisStock || {};
   // Dos 787 KB do meta, 782 KB são o catálogo, e metade das telas que pedem o
   // meta não o lê. O padrão é mandar: tela nova recebe o catálogo e funciona;
   // o pior caso é pagar o que se pagava antes, e não um seletor vazio.
-  // test-meta-do-estoque.js confere que tela que dispensa não lê `meta.products`.
+  // scripts/test-recortes-do-estoque.js confere que tela que dispensa não lê `meta.products`.
   Stock.loadMeta = async function loadMeta(api, showToast, { produtos = true } = {}) {
     try {
       return await api(produtos ? '/api/stock/meta' : '/api/stock/meta?produtos=0');

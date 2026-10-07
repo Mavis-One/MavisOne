@@ -14091,6 +14091,11 @@ async function tratarRequisicao(req, res) {
       // aqui — saldo, histórico, cores da reserva — filtra por este id, então a
       // resposta é a mesma. As reservas continuam vindo de todos os pedidos que
       // reservam: são elas que dizem quanto DESTE produto está prometido.
+      // E SÃO ELAS O QUE AINDA PESA: getOrdersParaReservas lê os 14,8 mil
+      // pedidos (~90–110 ms), contra ~5–13 ms do produto, depósitos e razão
+      // dele. Medido contra o código antigo: 128–165 ms -> 88–101 ms, não os
+      // ~15 ms do diagnóstico. O resto do ganho depende de recortar as reservas
+      // por produto em getOrdersParaReservas (lib/db/vendas-compras.js).
       const { data, productsById, reservas } = await loadStockContextDosProdutos([id], { comReservas: true });
       const product = productsById.get(id);
       if (!product) return sendJson(res, { error: 'Produto não encontrado' }, 404);

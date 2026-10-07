@@ -191,5 +191,23 @@ const lista = pedacoDaRota("pathname === '/api/stock/products' && req.method ===
 check('  que a rota calcula ANTES de fatiar a página',
   /products: ordenada\.slice\(inicio, inicio \+ limit\),[\s\S]{0,200}total: ordenada\.length,/.test(lista));
 
+// ---------------------------------------------------------------------------
+console.log('\n--- 5. Os comentários apontam para coisas que existem ---');
+// Os blocos de comentário deste recorte prometem garantias "em tal teste" e
+// "em tal função". Quem vai atrás precisa achar: nome que não existe é uma
+// garantia que ninguém confere (a revisão achou dois assim). server.js fica de
+// fora da varredura: é de todos os blocos, e um nome velho lá não é deste.
+for (const rel of ['public/modules/stock/shared.js', 'lib/db/estoque-razao.js']) {
+  const fonte = ler(rel);
+  const citados = new Set([...fonte.matchAll(/\b(test-[a-z0-9-]+\.js)\b/g)].map((m) => m[1]));
+  for (const citado of citados) {
+    check(`${rel} cita ${citado}, que existe`, fs.existsSync(path.join(RAIZ, 'scripts', citado)));
+  }
+}
+for (const nome of new Set(ler('lib/db/estoque-razao.js').match(/\bloadStockContext\w*/g) || [])) {
+  check(`estoque-razao.js cita ${nome}, que existe em server.js`,
+    new RegExp(`async function ${nome}\\(`).test(servidor));
+}
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);
