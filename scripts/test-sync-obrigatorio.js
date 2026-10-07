@@ -96,6 +96,17 @@ const POPULA = {
   // getOrdersResumidos: é para quem soma, conta E lista pedido de forma
   // compacta. Popula as mesmas duas coleções.
   syncSalesDataResumida: ['orders', 'quotes'],
+  // Fase DS: os recortes das rotas de Vendas. Populam as MESMAS coleções, com
+  // menos linhas (os ids pedidos) ou menos colunas (as que a busca lê) — o
+  // cabeçalho de cada um em server.js diz o que fica de fora e quem não pode
+  // usá-los. Para este guarda o que importa é que a coleção deixe de chegar
+  // vazia, e deixa.
+  syncSalesDataDosIds: ['orders', 'quotes'],
+  syncSalesDataParaBusca: ['orders', 'quotes'],
+  syncFinanceDataDosPedidos: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
+  // As notas só com o número: popula as duas chaves, com `{ id, numero }` e
+  // `{ id, number }` — os campos que o serializer lê delas.
+  syncNfeDataParaVendas: ['nfes', 'nfe'],
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
@@ -141,6 +152,8 @@ const INFRA = new Set([
   'loadData', 'saveData', 'normalizeData', 'ensureCadastroCollections',
   'syncCadastroData', 'syncSalesData', 'syncSalesDataParaAgregado',
   'syncSalesDataResumida',
+  // Fase DS — ver os comentários em POPULA.
+  'syncSalesDataDosIds', 'syncSalesDataParaBusca', 'syncFinanceDataDosPedidos', 'syncNfeDataParaVendas',
   'syncPurchasesData', 'syncNfeData',
   'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
   // Fase DB: sincroniza por dentro, como o loadStockContext.

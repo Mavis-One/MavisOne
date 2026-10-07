@@ -191,8 +191,12 @@ check('os cards contam certo quem tem nota',
 // O que importa aqui é que a rota CARREGUE as notas antes de montar o painel,
 // não a forma como ela espera por elas — cobrar a forma faria este teste cair a
 // cada ajuste de desempenho que não muda comportamento nenhum.
+//
+// Fase DS: a variante MAGRA (`syncNfeDataParaVendas`, só id e número) também
+// vale — é o carregamento que a coluna NF-e precisa, e o que este check cobra
+// é carregar, não o tamanho do que vem. Ver o cabeçalho dela em server.js.
 check('a rota sincroniza as notas antes de montar (senão a coluna sai vazia)',
-  /syncNfeData\(data\)/.test(corpoDaRota));
+  /syncNfeData(?:ParaVendas)?\(data\)/.test(corpoDaRota));
 
 // ---------------------------------------------------------------------------
 console.log('\n--- 7. orçamento não é venda realizada ---');

@@ -122,8 +122,17 @@ check('sem estabelecimento devolve null, e não um objeto vazio',
 check('  com vários, escolhe a MATRIZ e diz quantos são',
   /MATRIZ/.test(emitenteFn) && /unidades: ativos\.length/.test(emitenteFn));
 check('banco sem a fase fiscal ainda imprime', /catch \(erro\) \{\s*\n\s*return null;/.test(emitenteFn));
+// Fase DS: o emitente passou a vir na ONDA da rota (Promise.all) e entra na
+// resposta pelo nome; o que se cobra é que a rota o busque e o entregue.
+const rotaMetaVenda = servidor.slice(servidor.indexOf("pathname === '/api/sales/meta'"), servidor.indexOf('// Tributos de um pedido'));
 check('a rota do formulário entrega o emitente',
-  /emitente: await emitenteParaImpressao\(\),/.test(servidor));
+  /emitenteParaImpressao\(\),/.test(rotaMetaVenda) && /^\s*emitente,$/m.test(rotaMetaVenda));
+// E o cliente da impressão chega pelo id, com o mesmo diretório (fase DS).
+check('o cliente da impressão vem de /api/sales/clientes/:id',
+  /\/\^\\\/api\\\/sales\\\/clientes\\\/\(\[\^\/\]\+\)\$\//.test(rotaMetaVenda)
+  && /getCadastroDirectory\(data\)\.find\(\(entry\) => entry\.id === id\)/.test(rotaMetaVenda));
+check('  e a impressão espera por ele, com o nome como reserva',
+  /const cliente = \(await dadosDoCliente\(clienteId\)\)\s*\n\s*\|\| meta\.directory\.find\(\(e\) => e\.id === clienteId\);/.test(tela));
 
 check('o cabeçalho sem dados diz onde cadastrar',
   /Cabeçalho sem dados da empresa/.test(template)

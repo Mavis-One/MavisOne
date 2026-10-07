@@ -165,7 +165,13 @@ check('a emissão usa a versão resolvida',
 const preparar = src.slice(src.indexOf('async function prepararNfeParaTransmitir'), src.indexOf('async function emitirNfeFiscal'));
 check('a conferência do cartão roda ANTES do rascunho',
   /conferirCartoesDaNota\(payload\)/.test(preparar) && !preparar.includes('createNfeRascunho'));
-check('o meta de vendas leva a credenciadora junto', /paymentMethods: await formasComCredenciadora\(data\),/.test(src));
+// Fase DS: a rota passou a buscar as formas na ONDA (Promise.all) com o resto
+// e a entregá-las pelo nome; o que se cobra continua sendo que as formas do
+// meta saiam de formasComCredenciadora.
+const metaDeVendas = src.slice(src.indexOf("pathname === '/api/sales/meta'"), src.indexOf('// Tributos de um pedido'));
+check('o meta de vendas leva a credenciadora junto',
+  /paymentMethods: await formasComCredenciadora\(data\),/.test(metaDeVendas)
+  || (/formasComCredenciadora\(data\)\s*\n\s*\]\);/.test(metaDeVendas) && /paymentMethods: formas,/.test(metaDeVendas)));
 // O CNPJ NÃO vai para o navegador — só nome e bandeiras.
 const helper = (/async function formasComCredenciadora\(data\) \{[\s\S]*?\n\}/.exec(src) || [''])[0];
 check('  mas sem o CNPJ', helper.includes('cardAcquirerName') && helper.includes('cardAcquirerBrands') && !helper.includes('cnpj'));

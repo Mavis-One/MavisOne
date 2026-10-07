@@ -93,9 +93,16 @@ const semTags = (h) => String(h).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').t
   check('os produtos trazem NCM e unidade comercial',
     !!umProduto && 'ncm' in umProduto && 'unidadeComercial' in umProduto,
     umProduto ? `${umProduto.ncm} / ${umProduto.unidadeComercial}` : 'sem produto');
-  const umCliente = (meta.directory || [])[0];
-  check('o diretório traz telefone (o modelo pede)', !!umCliente && 'phone' in umCliente,
-    umCliente ? Object.keys(umCliente).join(', ') : 'vazio');
+  // Fase DS: o diretório da meta vem só com id e nome (é o que a BUSCA usa); o
+  // telefone e o endereço do cliente ESCOLHIDO saem de /api/sales/clientes/:id,
+  // que a tela pede ao escolher o cliente e a impressão espera.
+  const doDiretorio = (meta.directory || [])[0];
+  const respostaCliente = doDiretorio
+    ? await req('GET', `/api/sales/clientes/${encodeURIComponent(doDiretorio.id)}`, null, token)
+    : { status: 0, body: '{}' };
+  const umCliente = respostaCliente.status === 200 ? JSON.parse(respostaCliente.body).cliente : null;
+  check('o cliente escolhido traz telefone (o modelo pede)', !!umCliente && 'phone' in umCliente,
+    umCliente ? Object.keys(umCliente).join(', ') : `HTTP ${respostaCliente.status}`);
 
   // ---------------------------------------------------------------------------
   const produto = umProduto || { id: 'p1', ncm: '40132000', unidadeComercial: 'UN' };
