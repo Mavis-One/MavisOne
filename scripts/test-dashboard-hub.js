@@ -149,6 +149,16 @@ check('a seção de favoritos é uma função própria', /function dashboardSeca
   // refazer a tela, e um conjunto guardado desde a abertura desfaria o anterior.
   check('  e lê os favoritos atuais, não os da abertura', /const pinnedSet = getDashboardPinSet\(\);/.test(corpo));
 }
+// E a abertura lê os favoritos DEPOIS das rotas: fixar durante uma abertura em
+// andamento termina antes dela, e um conjunto lido no começo apagaria da tela o
+// favorito recém-gravado. O comportamento está em test-painel-inicio, seção 5.
+{
+  const corpo = src.slice(src.indexOf('async function renderDashboard('), src.indexOf('content.innerHTML = `', src.indexOf('async function renderDashboard(')));
+  const leitura = corpo.indexOf('const pinnedSet = getDashboardPinSet();');
+  check('  a abertura lê os favoritos depois de esperar as rotas', leitura > 0
+    && leitura > corpo.indexOf('await Promise.all(') && corpo.indexOf('await Promise.all(') > 0
+    && corpo.indexOf('getDashboardPinSet()') === leitura + 'const pinnedSet = '.length);
+}
 check('o sino lê a mesma rota', /api\('\/api\/dashboard\/atencao'\)/.test(appSrc));
 // Mesmas classes de severidade, então a cor significa o mesmo nos dois.
 check('mesma escala de cor', /notif-sev-\$\{escapeHtml\(item\.severidade\)\}/.test(src) && /notif-sev-\$\{escapeHtml\(item\.severidade\)\}/.test(appSrc));

@@ -290,11 +290,14 @@ function secao4() {
   vm.createContext(contexto);
   vm.runInContext(fonte, contexto, { filename: 'dashboard/index.js' });
   let falharProxima = false;
+  // Uma promessa que segura a resposta do gráfico: deixa uma abertura em voo.
+  let segurarGrafico = null;
   const estadoTela = { user: { id: 'u1', name: 'Ana', allowedModules: ['sales', 'finance'], dashboardPins: [] }, activeModule: 'dashboard' };
   const ctx = {
     content, state: estadoTela, showToast() {}, escapeHtml: (s) => String(s),
     api: async (url) => {
       chamadas.push(url.replace(/\?.*/, ''));
+      if (segurarGrafico && url.startsWith('/api/dashboard/charts')) await segurarGrafico;
       if (falharProxima) { falharProxima = false; throw new Error('rede'); }
       if (url.startsWith('/api/dashboard/charts')) return { salesChartSeries: [], financeChartSeries: [], filiais: [{ nome: 'Araquari' }], filial: '', permissions: { sales: true, finance: true } };
       return { kpis: [{ id: 'faturamento', modulo: 'sales', titulo: 'F', valor: 1 }, { id: 'a-receber', modulo: 'finance', titulo: 'R', valor: 1 }] };
@@ -340,6 +343,24 @@ function secao4() {
     chamadas.length = 0;
     await vm.runInContext('alternarFavoritoDoDashboard', contexto)(ctx, 'sales', 'Vendas');
     check('  e desfixar em seguida lê o conjunto atual', JSON.stringify(estadoTela.user.dashboardPins) === '[]');
+
+    // Fixar DURANTE uma abertura em andamento (trocar o período e clicar na
+    // estrela do DOM antigo): a gravação termina antes, a abertura desenha por
+    // último — e tem de desenhar o favorito que acabou de ser gravado.
+    let soltarGrafico;
+    segurarGrafico = new Promise((r) => { soltarGrafico = r; });
+    content.innerHTML = '';
+    estadoTela.dashboardChartGranularity = 'month';
+    const abertura = render(ctx);
+    await new Promise((ok) => setImmediate(ok));
+    await vm.runInContext('alternarFavoritoDoDashboard', contexto)(ctx, 'sales', 'Vendas');
+    check('fixar durante uma abertura em voo grava o favorito', JSON.stringify(estadoTela.user.dashboardPins) === '["sales"]');
+    segurarGrafico = null;
+    soltarGrafico();
+    await abertura;
+    check('  e a abertura, que termina depois, desenha a seção com ele',
+      /data-dashboard-favoritos/.test(content.innerHTML) && !/Sem favoritos/.test(content.innerHTML)
+      && /data-pin-key="sales"/.test(content.innerHTML), content.innerHTML.includes('Sem favoritos') ? 'desenhou "Sem favoritos"' : '');
 
     console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
     process.exit(falhas ? 1 : 0);

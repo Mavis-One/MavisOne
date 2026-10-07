@@ -353,7 +353,6 @@ function dashboardCartaoKpi(kpi, escapeHtml) {
 // DASHBOARD_REUSO_MS.
 window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx, opcoes = {}) {
   const { content, state, showToast, api, escapeHtml } = ctx;
-  const pinnedSet = getDashboardPinSet();
 
   const granularity = state.dashboardChartGranularity || 'month';
 
@@ -597,6 +596,13 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx, opcoe
       // que o carregamento falhou.
       : '<p class="dashboard-atencao-vazio">Nada pendente. Contas em dia, notas autorizadas e estoque acima do mínimo.</p>'}
     </section>`;
+
+  // Os favoritos são lidos AQUI, depois das rotas, e não no começo: fixar uma
+  // estrela só grava e troca a seção (alternarFavoritoDoDashboard). Se a
+  // pessoa fixar enquanto esta abertura espera as rotas, a gravação termina
+  // antes e esta abertura desenha por último — com um conjunto lido antes do
+  // clique, ela apagaria da tela o favorito que acabou de ser gravado.
+  const pinnedSet = getDashboardPinSet();
 
   content.innerHTML = `
     <div class="dashboard-shell">
