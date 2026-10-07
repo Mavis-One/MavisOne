@@ -3428,9 +3428,17 @@ async function loadModule(moduleName) {
           if (!clientesDetalhados.has(chave)) {
             clientesDetalhados.set(chave, api(`/api/sales/clientes/${encodeURIComponent(chave)}`)
               .then((resposta) => resposta.cliente || null)
-              .catch(() => {
-                // Não guarda a falha: a próxima impressão tenta de novo.
-                clientesDetalhados.delete(chave);
+              .catch((erro) => {
+                // QUEM O SERVIDOR RESPONDEU FICA GUARDADO, MESMO SEM CLIENTE.
+                // dadosDoCliente roda a cada redesenho do formulário (item,
+                // quantidade, aba); um pedido cujo cliente saiu do cadastro
+                // responde 404, e descartar isso repetiria o GET a cada clique.
+                // Cliente inexistente não passa a existir com a tela aberta — a
+                // impressão sai com o nome, como já saía. Só a falha de REDE
+                // (o fetch rejeita com TypeError, antes de haver resposta) é
+                // descartada, para a próxima chamada tentar de novo. Reabrir o
+                // formulário começa um Map novo.
+                if (erro instanceof TypeError) clientesDetalhados.delete(chave);
                 return null;
               }));
           }
@@ -3821,6 +3829,10 @@ async function loadModule(moduleName) {
           // escolher o cliente); sem eles, sai com o nome da busca.
           const cliente = (await dadosDoCliente(clienteId))
             || meta.directory.find((e) => e.id === clienteId);
+          // A pessoa pode ter fechado a janela enquanto o cliente chegava:
+          // escrever nela daria erro sem dono (rejeição não tratada) e não
+          // haveria papel para imprimir.
+          if (win.closed) return;
 
           // -------------------------------------------------------------------
           // O MODELO DO PAPEL (30/09/2026)

@@ -203,6 +203,7 @@ for (const rel of ARQUIVOS) {
     });
     (RESOLVE_SOZINHO[a.nome] || []).forEach((c) => proprios.add(c));
     FUNCOES.set(a.nome, {
+      corpo,
       proprios,
       leituras: VIGIADAS.filter((c) => CONSOME(c).test(corpo) && !proprios.has(c)),
       chamadas: [...new Set([
@@ -297,6 +298,120 @@ const usadas = new Set(conhecidos.map((a) => `${a.rota}|${a.col}`));
 const obsoletas = Object.keys(PENDENTES).filter((k) => !usadas.has(k));
 check('a linha de base não tem entrada obsoleta', obsoletas.length === 0,
   obsoletas.length ? `já corrigido(s), remova de PENDENTES: ${obsoletas.join(' ; ')}` : `${usadas.size} em uso`);
+
+// ---------------------------------------------------------------------------
+// RECORTE DE LINHAS NÃO SE CONTA NEM SE SOMA (fase DS).
+// ---------------------------------------------------------------------------
+// POPULA trata syncSalesDataDosIds e syncFinanceDataDosPedidos como quem
+// preenche orders/quotes/finance — e preenchem, mas só com os registros
+// PEDIDOS (o pedido aberto, os 200 do lote, os lançamentos do pedido). Para a
+// regra de cima isso basta: a coleção deixou de chegar vazia. Para quem CONTA
+// ou SOMA, não: `data.orders.length` depois de syncSalesDataDosIds(data, [id])
+// é 1, e um painel montado em cima disso mostra um pedido só, com HTTP 200.
+//
+// Por isso esta segunda regra: rota que carrega um recorte de LINHAS (e não o
+// sync inteiro da mesma coleção) não pode, nem no corpo nem nas funções que
+// alcança, ler `.length`/`.reduce` dessas coleções, nem chamar um agregador.
+//
+// syncSalesDataParaBusca e syncNfeDataParaVendas ficam FORA de propósito: são
+// recortes de COLUNAS — trazem TODAS as linhas —, e a lista conta e filtra em
+// cima deles legitimamente (total, contagem de pedidos e de notas).
+const RECORTE_DE_LINHAS = {
+  syncSalesDataDosIds: ['orders', 'quotes'],
+  syncFinanceDataDosPedidos: ['finance', 'financialPayments']
+};
+const AGREGADORES = [
+  'buildSalesDashboardSummary', 'resumoDoPainelDeVendas', 'pedidosDoVendedorNoPainel',
+  'filterSalesRecords', 'ordenarSalesRecords', 'buildFinanceDashboardSummary'
+];
+const semComentario = (txt) => txt.split('\n')
+  .filter((l) => !/^\s*(?:\/\/|\/\*|\*)/.test(l))
+  .map((l) => l.replace(/\s\/\/.*$/, ''))
+  .join('\n');
+const CONTA = (c) => new RegExp(
+  `(?:data|dados)\\.${c}\\s*\\.(?:length|reduce)\\b`
+  + `|\\((?:data|dados)\\.${c}\\s*\\|\\|\\s*\\[\\]\\)\\s*\\.(?:length|reduce)\\b`
+);
+// As chamadas aqui saem do corpo SEM comentário. O corpo de cada função vai até
+// a abertura da próxima, e por isso carrega o cabeçalho dela — que costuma
+// citar outra função pelo nome (o de buildSalesDashboardSummary cita a si
+// mesma, e caía dentro de duplicarSalesRecord). Para a regra de cima isso só
+// alarga a busca; aqui acusaria uma rota inocente.
+const chamadasSemComentario = new Map();
+function chamadasDe(nome) {
+  if (!chamadasSemComentario.has(nome)) {
+    const corpo = semComentario(FUNCOES.get(nome).corpo);
+    chamadasSemComentario.set(nome, [...new Set([...corpo.matchAll(/(?:^|[^\w$])([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]))]);
+  }
+  return chamadasSemComentario.get(nome);
+}
+function alcancaveis(chamadasIniciais) {
+  const vistos = new Set();
+  const fila = [...chamadasIniciais];
+  while (fila.length) {
+    const nome = fila.pop();
+    if (vistos.has(nome) || INFRA.has(nome) || AMBIGUOS.has(nome) || !FUNCOES.has(nome)) continue;
+    vistos.add(nome);
+    fila.push(...chamadasDe(nome));
+  }
+  return vistos;
+}
+function violacoesDeRecorte(corpoDaRota) {
+  const corpo = semComentario(corpoDaRota);
+  const recortadas = new Set();
+  Object.entries(RECORTE_DE_LINHAS).forEach(([fn, cols]) => {
+    if (corpo.includes(`${fn}(`)) cols.forEach((c) => recortadas.add(c));
+  });
+  // Quem TAMBÉM chama o sync inteiro da coleção tem as linhas todas.
+  for (const c of [...recortadas]) {
+    const inteiros = (SYNC_DE[c] || []).filter((fn) => !RECORTE_DE_LINHAS[fn]);
+    if (inteiros.some((fn) => corpo.includes(`${fn}(`))) recortadas.delete(c);
+  }
+  if (!recortadas.size) return [];
+  const chamadas = [...new Set([...corpo.matchAll(/(?:^|[^\w$])([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]))];
+  const alcance = alcancaveis(chamadas);
+  const saida = [];
+  for (const c of recortadas) {
+    if (CONTA(c).test(corpo)) saida.push(`conta ${c} na própria rota`);
+    for (const fn of alcance) {
+      if (CONTA(c).test(semComentario(FUNCOES.get(fn).corpo))) saida.push(`conta ${c} via ${fn}`);
+    }
+  }
+  AGREGADORES.filter((fn) => chamadas.includes(fn) || alcance.has(fn))
+    .forEach((fn) => saida.push(`agrega via ${fn}`));
+  return saida;
+}
+
+console.log('\n--- recorte de linhas não é contado nem somado ---');
+// O detector precisa acusar o caso que existe para pegar — senão um regex
+// quebrado passaria em silêncio.
+check('acusa contagem depois do recorte',
+  violacoesDeRecorte('  await syncSalesDataDosIds(data, [id]);\n  return sendJson(res, { n: data.orders.length });').length > 0);
+check('acusa contagem com `|| []` depois do recorte do financeiro',
+  violacoesDeRecorte('  await syncFinanceDataDosPedidos(data, [id]);\n  const n = (data.finance || []).length;').length > 0);
+check('acusa painel montado sobre o recorte',
+  violacoesDeRecorte('  await syncSalesDataDosIds(data, ids);\n  return sendJson(res, buildSalesDashboardSummary(data, escopo));').length > 0);
+check('acusa lista filtrada sobre o recorte',
+  violacoesDeRecorte('  await syncSalesDataDosIds(data, ids);\n  const f = filterSalesRecords(data.orders, q);').length > 0);
+check('não acusa quem também carrega a coleção inteira',
+  violacoesDeRecorte('  await syncSalesDataDosIds(data, [id]);\n  await syncSalesData(data);\n  const n = data.orders.length;').length === 0);
+check('não acusa quem só acha o registro pelo id',
+  violacoesDeRecorte('  await syncSalesDataDosIds(data, [id]);\n  const r = [...data.orders, ...data.quotes].find((x) => x.id === id);').length === 0);
+
+let rotasComRecorte = 0;
+const violacoes = [];
+for (let n = 0; n < inicios.length; n += 1) {
+  const de = inicios[n];
+  const ate = n + 1 < inicios.length ? inicios[n + 1] : linhas.length;
+  const corpo = linhas.slice(de, ate).join('\n');
+  if (!Object.keys(RECORTE_DE_LINHAS).some((fn) => semComentario(corpo).includes(`${fn}(`))) continue;
+  rotasComRecorte += 1;
+  violacoesDeRecorte(corpo).forEach((v) => violacoes.push(`server.js:${de + 1} ${rotulo(de)}: ${v}`));
+}
+violacoes.forEach((v) => console.log(`  RECORTE ${v}`));
+check('achei as rotas que usam recorte de linhas', rotasComRecorte >= 4, `${rotasComRecorte}`);
+check('nenhuma delas conta ou soma o recorte', violacoes.length === 0,
+  violacoes.length ? `${violacoes.length} violação(ões)` : `${rotasComRecorte} rota(s) conferida(s)`);
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

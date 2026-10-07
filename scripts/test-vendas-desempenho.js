@@ -275,5 +275,45 @@ check('faturar/cancelar: produtos numa ida, não um por item',
 check('  e o produto apagado continua no Map (null), como antes',
   /produtos\.set\(id, achados\.get\(id\) \|\| null\)/.test(estoque));
 
-console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
-process.exit(falhas ? 1 : 0);
+// ---------------------------------------------------------------------------
+// 6. A página relida não muda sem gravação, e não mente com gravação no meio.
+// relerPaginaDeVendas roda DE VERDADE (recortada do server.js) com um banco
+// falso que conta as consultas.
+(async () => {
+  console.log('\n--- 6. a releitura da página da lista com filtro ---');
+  const relerPaginaDeVendas = new Function(`${recortar('relerPaginaDeVendas')}\nreturn relerPaginaDeVendas;`)();
+  const banco = (orders, quotes) => {
+    const b = { consultas: 0 };
+    b.buscar = async (ids) => {
+      b.consultas += 1;
+      return {
+        orders: orders.filter((r) => ids.orders.includes(r.id)),
+        quotes: quotes.filter((r) => ids.quotes.includes(r.id))
+      };
+    };
+    return b;
+  };
+  // A página como sai do primeiro passo: objetos do recorte, numa ordem que não
+  // é a do banco, e de qual tabela cada um veio.
+  const pagina = [{ id: 'q1' }, { id: 'o2' }, { id: 'o1' }];
+  const tabelaDe = new Map([[pagina[0], 'quotes'], [pagina[1], 'orders'], [pagina[2], 'orders']]);
+
+  const quieto = banco([{ id: 'o1', v: 'o1' }, { id: 'o2', v: 'o2' }], [{ id: 'q1', v: 'q1' }]);
+  const r1 = await relerPaginaDeVendas(pagina, tabelaDe, quieto.buscar);
+  check('sem gravação: os completos, na ordem da página', r1.map((r) => r.v).join(',') === 'q1,o2,o1', r1.map((r) => r.v).join(','));
+  check('  numa consulta só', quieto.consultas === 1, `${quieto.consultas}`);
+
+  // q1 virou pedido (mesmo id, outra tabela) e o2 foi apagado entre os passos.
+  const gravou = banco([{ id: 'o1', v: 'o1' }, { id: 'q1', v: 'q1-agora-pedido' }], []);
+  const r2 = await relerPaginaDeVendas(pagina, tabelaDe, gravou.buscar);
+  check('orçamento convertido em pedido é achado na outra tabela', r2[0] && r2[0].v === 'q1-agora-pedido', r2.map((r) => r.v).join(','));
+  check('  o apagado não volta, e a ordem se mantém', r2.map((r) => r.v).join(',') === 'q1-agora-pedido,o1');
+  check('  e a segunda consulta só aconteceu porque faltou alguém', gravou.consultas === 2, `${gravou.consultas}`);
+
+  const lista = corpoDe("if (pathname === '/api/sales/records' && req.method === 'GET')");
+  check('a página relida passa de novo pelo filtro da busca',
+    /records: filterSalesRecords\(\s*registrosDaPagina\.map\(\(record\) => serializeSalesRecord\(record, data\)\),\s*url\.searchParams\s*\)/.test(lista));
+
+  console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
+  process.exit(falhas ? 1 : 0);
+})();

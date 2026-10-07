@@ -2034,6 +2034,50 @@ async function syncNfeDataParaVendas(data) {
   data.nfe = fiscais;
 }
 
+/**
+ * A PÁGINA DA LISTA DE VENDAS, RELIDA INTEIRA POR ID (fase DS).
+ *
+ * A lista com filtro decide QUAIS registros vão para a página sobre o recorte
+ * de colunas (syncSalesDataParaBusca) e relê só esses, completos. Recebe a
+ * página na ordem final, de qual tabela veio cada um (`tabelaDe`, um Map pelo
+ * próprio objeto: o id sozinho não diz, a troca de tipo o mantém) e a função
+ * que busca por ids ({ orders: [...], quotes: [...] } -> { orders, quotes }).
+ * Devolve os registros completos NA ORDEM da página.
+ *
+ * ENTRE OS DOIS PASSOS OUTRA REQUISIÇÃO PODE TER GRAVADO:
+ *
+ *   - registro apagado não volta — a mesma regra de syncSalesDataDaPagina;
+ *   - registro que trocou de tabela (orçamento convertido em pedido: o PUT cria
+ *     em orders e apaga de quotes, com o mesmo id) é procurado na OUTRA tabela.
+ *     Essa segunda consulta só acontece quando falta alguém.
+ *
+ * Quem mudou de status no meio-tempo é tratado por quem chama, que passa a
+ * página relida de novo pelo filtro. Sem gravação concorrente, todo id volta
+ * da própria tabela numa consulta só, e a página é a mesma de antes.
+ */
+async function relerPaginaDeVendas(daPagina, tabelaDe, buscar) {
+  const cheios = await buscar({
+    orders: daPagina.filter((r) => tabelaDe.get(r) === 'orders').map((r) => r.id),
+    quotes: daPagina.filter((r) => tabelaDe.get(r) === 'quotes').map((r) => r.id)
+  });
+  const pedidoPorId = new Map(cheios.orders.map((r) => [r.id, r]));
+  const orcamentoPorId = new Map(cheios.quotes.map((r) => [r.id, r]));
+  const daTabela = (r) => (tabelaDe.get(r) === 'orders' ? pedidoPorId : orcamentoPorId);
+  const daOutraTabela = (r) => (tabelaDe.get(r) === 'orders' ? orcamentoPorId : pedidoPorId);
+  const faltando = daPagina.filter((r) => !daTabela(r).has(r.id));
+  if (faltando.length) {
+    const mudaram = await buscar({
+      orders: faltando.filter((r) => tabelaDe.get(r) === 'quotes').map((r) => r.id),
+      quotes: faltando.filter((r) => tabelaDe.get(r) === 'orders').map((r) => r.id)
+    });
+    mudaram.orders.forEach((r) => { if (!pedidoPorId.has(r.id)) pedidoPorId.set(r.id, r); });
+    mudaram.quotes.forEach((r) => { if (!orcamentoPorId.has(r.id)) orcamentoPorId.set(r.id, r); });
+  }
+  return daPagina
+    .map((r) => daTabela(r).get(r.id) || daOutraTabela(r).get(r.id))
+    .filter(Boolean);
+}
+
 
 // Mesmo papel de syncCadastroData/syncSalesData: popula data.purchases com o
 // conteúdo atual do Supabase logo após loadData(), pra resolveFinanceCounterparty
@@ -3777,7 +3821,8 @@ function buildSalesDashboardSummary(data, escopo) {
  * o mesmo `vendaVisivel`, e as somas percorrem os registros na ordem em que o
  * carregamento os entrega — código decrescente, como em getOrdersResumidos —
  * para o arredondamento de dinheiro ser o mesmo, centavo por centavo.
- * scripts/test-painel-vendas-resumo.js confere contra buildSalesDashboardSummary.
+ * scripts/test-vendas-desempenho.js confere contra buildSalesDashboardSummary
+ * (e roda dentro de test-meu-painel.js, que está no npm test).
  *
  * O ESCOPO É OBRIGATÓRIO, pelo mesmo motivo escrito em buildSalesDashboardSummary.
  *
@@ -10055,19 +10100,20 @@ async function tratarRequisicao(req, res) {
         url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
       );
       const daPagina = ordenados.slice(start, start + limit);
-      const cheios = await db.getVendasPorIds({
-        orders: daPagina.filter((r) => tabelaDe.get(r) === 'orders').map((r) => r.id),
-        quotes: daPagina.filter((r) => tabelaDe.get(r) === 'quotes').map((r) => r.id)
-      });
-      const pedidoPorId = new Map(cheios.orders.map((r) => [r.id, r]));
-      const orcamentoPorId = new Map(cheios.quotes.map((r) => [r.id, r]));
-      // Na ORDEM da página. Registro apagado entre os dois passos simplesmente
-      // não volta — a mesma regra de syncSalesDataDaPagina.
-      const registrosDaPagina = daPagina
-        .map((r) => (tabelaDe.get(r) === 'orders' ? pedidoPorId : orcamentoPorId).get(r.id))
-        .filter(Boolean);
+      // Ver relerPaginaDeVendas: o que acontece se alguém gravou entre os dois
+      // passos, e por que sem gravação a página é a mesma.
+      const registrosDaPagina = await relerPaginaDeVendas(daPagina, tabelaDe, (ids) => db.getVendasPorIds(ids));
       return sendJson(res, montarRespostaDeVendas({
-        records: registrosDaPagina.map((record) => serializeSalesRecord(record, data)),
+        // A página relida passa de novo pelo MESMO filtro, agora sobre o
+        // registro completo, como o caminho antigo filtrava numa leitura só.
+        // Quem mudou de status entre os dois passos sai da página em vez de
+        // aparecer fora do filtro pedido (a página fica mais curta e se acerta
+        // na próxima recarga). Sem gravação no meio, é o mesmo dado e passa
+        // inteiro: o filtro não reordena, então a página é a mesma.
+        records: filterSalesRecords(
+          registrosDaPagina.map((record) => serializeSalesRecord(record, data)),
+          url.searchParams
+        ),
         total: filtered.length,
         page,
         limit,

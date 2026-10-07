@@ -207,5 +207,46 @@ check('nenhum campo do emitente entra cru no documento', emitenteCru.length === 
 check('  e a unidade, que é número, é a única exceção',
   /\$\{emitente\.unidades\}/.test(soHtml) || /há \$\{emitente\.unidades\}/.test(soHtml));
 
-console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
-process.exit(falhas ? 1 : 0);
+// ---------------------------------------------------------------------------
+// O CLIENTE DA IMPRESSÃO NÃO É PEDIDO DE NOVO A CADA REDESENHO (fase DS).
+//
+// dadosDoCliente roda em todo attach do formulário. Roda aqui DE VERDADE —
+// recortada do app.js — com um `api` falso que conta as chamadas: o 404 de um
+// cliente que saiu do cadastro fica guardado (null); só a falha de rede, que
+// o fetch rejeita com TypeError, é descartada para nova tentativa.
+(async () => {
+  const ini = tela.indexOf('const clientesDetalhados = new Map();');
+  const fimBloco = tela.indexOf('return clientesDetalhados.get(chave);', ini);
+  check('achei dadosDoCliente no app.js', ini >= 0 && fimBloco > ini);
+  const bloco = tela.slice(ini, tela.indexOf('};', fimBloco) + 2);
+  const montar = (api) => new Function('api', `${bloco}\nreturn dadosDoCliente;`)(api);
+
+  let chamadas = 0;
+  const naoAchou = montar(() => { chamadas += 1; return Promise.reject(new Error('Cliente não encontrado')); });
+  check('cliente que o servidor não achou dá null', (await naoAchou('x')) === null);
+  await naoAchou('x');
+  await naoAchou('x');
+  check('  e não é pedido de novo nos redesenhos seguintes', chamadas === 1, `${chamadas} GET(s)`);
+
+  chamadas = 0;
+  const semRede = montar(() => { chamadas += 1; return Promise.reject(new TypeError('Failed to fetch')); });
+  check('falha de rede dá null', (await semRede('y')) === null);
+  await semRede('y');
+  check('  e a próxima chamada tenta de novo', chamadas === 2, `${chamadas} GET(s)`);
+
+  chamadas = 0;
+  const achou = montar(() => { chamadas += 1; return Promise.resolve({ cliente: { id: 'z', phone: '1' } }); });
+  const z = await achou('z');
+  await achou('z');
+  check('cliente achado é guardado e pedido uma vez só', Boolean(z) && z.phone === '1' && chamadas === 1, `${chamadas} GET(s)`);
+  check('sem cliente escolhido não vai ao servidor', (await achou('')) === null && chamadas === 1);
+
+  // A impressão espera o cliente com a janela já aberta; se ela foi fechada
+  // nesse meio-tempo, escrever nela seria uma rejeição sem dono.
+  const impressao = tela.slice(tela.indexOf('const salesRecordPrint = async'));
+  check('a impressão confere se a janela foi fechada depois de esperar o cliente',
+    /const cliente = \(await dadosDoCliente\(clienteId\)\)\s*\n\s*\|\| meta\.directory\.find\(\(e\) => e\.id === clienteId\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(win\.closed\) return;/.test(impressao));
+
+  console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
+  process.exit(falhas ? 1 : 0);
+})();

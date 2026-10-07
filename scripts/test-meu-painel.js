@@ -394,6 +394,26 @@ check('o render recusa a tela para quem não é admin',
 check('  e oferece o Meu Painel no lugar, em vez de só barrar',
   /sub === 'seller_dashboard'\)[\s\S]{0,900}data-ir-para="my_panel"/.test(tela));
 
+// ---------------------------------------------------------------------------
+// O RESUMO DO PAINEL TEM QUE BATER COM O PAINEL COMPLETO (fase DS).
+//
+// scripts/test-vendas-desempenho.js é o único que roda resumoDoPainelDeVendas
+// contra buildSalesDashboardSummary (Painel Vendas e Painel Vendedor contra o
+// Dashboard Geral), a soma do reservado da Nova Venda e o recorte dos status
+// que não reservam. Ele ainda não está no script `test` do package.json — a
+// rodada que o criou não podia mexer nesse arquivo —, e sem isto quem mudasse
+// a conta de um lado só passaria no npm test. Roda aqui, como processo à
+// parte, até entrar lá; depois disso este trecho pode sair.
+console.log('\n--- o resumo do painel bate com o painel completo (test-vendas-desempenho) ---');
+{
+  const { spawnSync } = require('child_process');
+  const r = spawnSync(process.execPath, [path.join(__dirname, 'test-vendas-desempenho.js')], { encoding: 'utf8' });
+  const xx = (r.stdout || '').split('\n').filter((l) => /^\s*XX /.test(l));
+  xx.forEach((l) => console.log(l));
+  if (r.error || r.status !== 0) console.log((r.stderr || String(r.error || '')).trim());
+  check('scripts/test-vendas-desempenho.js passa', !r.error && r.status === 0);
+}
+
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
