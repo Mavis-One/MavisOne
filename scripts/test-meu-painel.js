@@ -323,8 +323,18 @@ check('a tela só desenha o seletor para quem pode escolher vendedor',
 // duas metades: a variável vem de escopoDeVendas(user), e o resumo a recebe.
 check('o Dashboard Geral passa escopo no cartão de vendas',
   /const escopoVendas = escopoLib\.escopoDeVendas\(user[^\n]*\n\s*const salesSummary = canSales\s*\n\s*\? buildSalesDashboardSummary\(data, escopoVendas\)/.test(servidor));
-check('o Relatório passa escopo no bloco de vendedores',
-  /const vendas = buildSalesDashboardSummary\(data, escopoVendas\)/.test(servidor));
+// O RELATÓRIO NÃO TEM MAIS BLOCO DE VENDEDORES (06/10/2026). O
+// /api/reports/overview calculava vendas, vendedores e a série de vendas —
+// escopados, conferido aqui — e nenhuma tela os lia; saíram junto com a leitura
+// de pedidos que custavam. A garantia continua, mais forte: número de venda
+// que não é calculado não vaza. Se voltar a ser, tem de voltar com o escopo.
+{
+  const inicio = servidor.indexOf("pathname === '/api/reports/overview'");
+  const overview = servidor.slice(inicio, servidor.indexOf('\n  }\n', inicio));
+  check('o Relatório (overview) não calcula vendas — ou, se calcular, com escopo',
+    inicio > 0 && (!/buildSalesDashboardSummary|buildSalesChartSeries/.test(overview)
+      || /buildSalesDashboardSummary\(data, escopoVendas\)/.test(overview)));
+}
 
 
 // ---------------------------------------------------------------------------

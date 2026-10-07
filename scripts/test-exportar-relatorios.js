@@ -10,8 +10,9 @@
  *
  * O QUE ESTE TESTE PROTEGE, E POR QUE CADA COISA
  * ---------------------------------------------
- * 1. A TELA E O ARQUIVO SAEM DA MESMA CONTA. Os dois caminhos passam por
- *    `baseDosRelatoriosGerais`. Montar cada um por conta própria é o jeito
+ * 1. A TELA E O ARQUIVO SAEM DA MESMA CONTA. Os dois caminhos de cada
+ *    relatório passam pela mesma base (`baseFinanceiraDosRelatorios`,
+ *    `baseDeEstoqueDosRelatorios`). Montar cada um por conta própria é o jeito
  *    conhecido de a exportação passar a discordar do que estava na tela — e
  *    discordar em silêncio, porque ninguém compara uma planilha com um gráfico.
  *
@@ -94,37 +95,54 @@ check('produto sem custo entra com zero, e não é omitido',
 check('lista vazia devolve só o cabeçalho', relCsv.estoque([]).split('\r\n').filter(Boolean).length === 1);
 
 console.log('\n--- 3. uma conta só para a tela e para o arquivo ---');
+// UMA BASE POR RELATÓRIO (06/10/2026). Era uma base só para os dois, que lia o
+// sistema inteiro (cinco syncs: NF-e, compras, cadastro, vendas e o
+// financeiro com todas as baixas) a cada abertura de qualquer um deles — 1,1 s.
+// A invariante que este bloco protege continua a mesma, só que por relatório:
+// a tela e o arquivo de cada um saem da MESMA função.
 const servidor = semComentarios(ler('server.js'));
-check('baseDosRelatoriosGerais existe', /async function baseDosRelatoriosGerais\(req, params\)/.test(servidor));
-// A PERMISSÃO ANTES DOS SYNCS.
-const base = servidor.slice(servidor.indexOf('async function baseDosRelatoriosGerais'));
-const corpoBase = base.slice(0, base.indexOf('\n  async function montarRelatorioDeVendas'));
-check('  confere a permissão ANTES de sincronizar',
-  corpoBase.indexOf('podeVerRelatorios') < corpoBase.indexOf('syncNfeData'),
-  'trabalho feito para quem vai levar 403');
-check('  e os cinco syncs saem numa onda so',
-  /await Promise\.all\(\[\s*\n\s*syncNfeData\(data\),\s*\n\s*syncPurchasesData\(data\),\s*\n\s*syncCadastroData\(data\),\s*\n\s*syncSalesDataResumida\(data\),\s*\n\s*syncFinanceData\(data\)\s*\n\s*\]\);/.test(corpoBase));
-// E O DE VENDAS E O RESUMIDO, e nao `select *` (fase DE). As tres rotas que
-// usam esta base -- o Relatorio Geral e as duas exportacoes -- somam, contam e
-// fazem serie; nenhuma mostra pedido. Medido: 321 ms contra 96 ms, e como os
-// cinco correm juntos, o de vendas ERA o tempo da rota inteira.
-check('  e o de vendas e o recorte resumido', !/syncSalesData\(data\)/.test(corpoBase),
-  /syncSalesData\(data\)/.test(corpoBase) ? 'voltou a ser select *' : 'syncSalesDataResumida');
-check('  devolve a série do financeiro pronta',
-  /serieFinanceiro: buildFinanceChartSeries\(lancamentos, granularity\)/.test(corpoBase));
-check('  e os produtos com o valor parado', /produtosComSaldo/.test(corpoBase));
-
-check('a tela usa a base', /const base = await baseDosRelatoriosGerais\(req, url\.searchParams\);/.test(servidor));
-// DUAS chamadas: a do overview e a das exportações.
-check('  e as exportações também',
-  (servidor.match(/await baseDosRelatoriosGerais\(req, url\.searchParams\)/g) || []).length === 2);
+check('a base da Síntese Financeira existe', /async function baseFinanceiraDosRelatorios\(params\)/.test(servidor));
+check('a base do Valor em Estoque existe', /async function baseDeEstoqueDosRelatorios\(\)/.test(servidor));
+const trecho = (inicio, fim) => {
+  const de = servidor.slice(servidor.indexOf(inicio));
+  return de.slice(0, de.indexOf(fim));
+};
+const corpoFin = trecho('async function baseFinanceiraDosRelatorios', '\n  }\n');
+const corpoEst = trecho('async function baseDeEstoqueDosRelatorios', '\n  }\n');
+check('  a da Síntese devolve a série do financeiro pronta',
+  /serieFinanceiro: buildFinanceChartSeries\(lancamentos, granularity\)/.test(corpoFin));
+check('  e a do Estoque, os produtos com o valor parado', /produtosComSaldo/.test(corpoEst));
+// SÓ O QUE CADA UMA LÊ. O `select *` dos lançamentos com as baixas era 690 ms
+// por abertura; as colunas que a conta lê, 85 ms.
+check('  nenhuma das duas volta ao sync do sistema inteiro',
+  !/sync(?:Financ|Nfe|Purchases|Cadastro|Sales)\w*\(/.test(corpoFin + corpoEst),
+  'leitura enxuta de lib/relatorios-cargas.js');
+check('  nem lê coleção do db.json', !/loadData\(\)|data\.finance/.test(corpoFin + corpoEst));
+// A PERMISSÃO ANTES DE LER: trabalho feito para quem vai levar 403.
+const porta = trecho('async function portaDosRelatoriosGerais', '\n  }\n');
+check('a porta confere a permissão', /podeVerRelatorios\(user, await ehAdmin\(user\)\)/.test(porta));
+const overview = trecho("if (pathname === '/api/reports/overview'", '\n  }\n');
+check('  e o overview passa por ela ANTES de ler',
+  overview.indexOf('portaDosRelatoriosGerais(req)') > -1
+  && overview.indexOf('portaDosRelatoriosGerais(req)') < overview.indexOf('baseFinanceiraDosRelatorios('));
+const exportacao = trecho('const exportacaoGeral = ', '\n  }\n');
+check('  e a exportação também',
+  exportacao.indexOf('portaDosRelatoriosGerais(req)') > -1
+  && exportacao.indexOf('portaDosRelatoriosGerais(req)') < exportacao.indexOf('baseFinanceiraDosRelatorios('));
+// DUAS chamadas de cada base: a do overview e a da exportação.
+check('a tela e o arquivo da Síntese saem da mesma base',
+  (servidor.match(/baseFinanceiraDosRelatorios\(url\.searchParams\)/g) || []).length === 2);
+check('a tela e o arquivo do Estoque saem da mesma base',
+  (servidor.match(/await baseDeEstoqueDosRelatorios\(\)/g) || []).length === 1
+  && /parte === 'financeiro' \? null : baseDeEstoqueDosRelatorios\(\)/.test(overview));
 // A rota de overview não pode ter voltado a montar a série por conta própria.
-check('o overview não recalcula a série',
-  // `escopoVendas` entrou na fase DC: buildSalesChartSeries passou a EXIGIR
-  // escopo (lança sem ele), e a série de Relatórios mostrava a empresa inteira
-  // para um vendedor restrito.
-  /serieVendas: buildSalesChartSeries\(data, granularity, escopoVendas\),\s*\n\s*serieFinanceiro,/.test(servidor),
+check('o overview não recalcula a série', /resposta\.serieFinanceiro = financeira\.serieFinanceiro;/.test(overview),
   'ele repassa a que veio da base');
+// `vendas`, `vendedores` e `serieVendas` saíram: nenhuma tela os lia, e eram
+// os números que precisavam do escopo de vendedor. Se voltarem, voltam com a
+// leitura de pedidos e com o risco de vazar faturamento de colega.
+check('  e não calcula vendas que nenhuma tela lê',
+  !/buildSalesDashboardSummary|buildSalesChartSeries|serieVendas/.test(overview));
 
 console.log('\n--- 4. as duas rotas ---');
 check('uma rota só, para os dois relatórios',
@@ -136,7 +154,9 @@ check('  o Estoque leva a lista INTEIRA',
 check('  sem o filtro de valor > 0 que a tela usa',
   !/produtosComSaldo\.filter\(\(p\) => p\.valor > 0\)/.test(servidor),
   'produto sem custo e justamente o que se procura numa planilha de estoque');
-check('  e o nome do arquivo diz qual é', /filename="relatorio-de-\$\{qual\}-\$\{hoje\}\.csv"/.test(servidor));
+// O `filename="..."` passou a ser montado por enviarCsv (o CSV sai comprimido,
+// como o JSON); o que a rota decide é o NOME, e é ele que importa aqui.
+check('  e o nome do arquivo diz qual é', /enviarCsv\(res, conteudo, `relatorio-de-\$\{qual\}-\$\{hoje\}\.csv`\)/.test(servidor));
 
 console.log('\n--- 5. a tela ---');
 const tela = ler('public/modules/reports/subs/relatorios.js');

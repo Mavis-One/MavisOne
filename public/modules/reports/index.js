@@ -60,20 +60,70 @@ window.MavisModuleRegistry.reports = async function renderReports(ctx) {
       if (chave === 'visao') return;
       if (valor !== '' && valor !== null && valor !== undefined) query.set(chave, valor);
     });
+    const consulta = query.toString();
+
+    // TROCAR DE VISÃO (Tabela / Por vendedor) NÃO VAI AO SERVIDOR. `visao` nem
+    // entra na consulta: o servidor recalculava exatamente a mesma resposta
+    // (~600 ms) para a tela mudar de layout. A troca marca
+    // `reportsVendasSoRedesenhar`, e aqui a resposta que JÁ ESTÁ NA TELA é
+    // redesenhada — só ela, e só se a consulta for a mesma. Qualquer outro
+    // caminho (Aplicar, Atualizar, página, ordem, voltar de outra tela) vai ao
+    // servidor como sempre: nada aqui serve dado que a pessoa não estava vendo.
+    //
+    // E SÓ SE A FOTO FOR RECENTE (FOTO_DA_TELA_VALE_MS). A resposta na tela tem
+    // a idade de quando foi pedida: quem abriu a Tabela às 9h e clica em "Por
+    // vendedor" às 11h veria o ranking das 9h, sem os pedidos faturados no
+    // meio — e antes desta mudança o clique trazia o dado do momento. Passado
+    // o prazo, a troca vai ao servidor como antes (e, com o opcoesHash abaixo,
+    // a ida já é barata). Dentro do prazo, é o mesmo dado de segundos atrás.
+    // Fica aqui dentro, e não no topo do arquivo: este é um script clássico, e
+    // um `const` de topo entraria no escopo global compartilhado com os outros.
+    const FOTO_DA_TELA_VALE_MS = 60 * 1000;
+    const soRedesenhar = state.reportsVendasSoRedesenhar;
+    state.reportsVendasSoRedesenhar = false;
+    const naTela = state.reportsVendasNaTela;
+    if (soRedesenhar && naTela && naTela.consulta === consulta
+      && Date.now() - naTela.pedidaEm < FOTO_DA_TELA_VALE_MS) {
+      await desenhar({ ...ctx, relatorioVendas: naTela.relatorioVendas, granularidade });
+      telas.comVolta(ctx, grupo);
+      return;
+    }
+
+    // AS LISTAS DOS FILTROS SÓ VÊM QUANDO MUDAM. A tela manda o `opcoesHash`
+    // das listas que guardou; se o servidor calcular as mesmas, a resposta vem
+    // sem `opcoes` (421 de 590 KB) e a tela usa as guardadas. Ver a rota
+    // /api/reports/vendas em server.js.
+    const guardadas = state.reportsVendasOpcoes;
+    const comHash = new URLSearchParams(consulta);
+    if (guardadas && guardadas.hash) comHash.set('opcoesHash', guardadas.hash);
     let relatorioVendas;
     try {
-      relatorioVendas = await api(`/api/reports/vendas?${query.toString()}`);
+      relatorioVendas = await api(`/api/reports/vendas?${comHash.toString()}`);
+      if (!relatorioVendas.opcoes) {
+        if (guardadas && guardadas.hash === relatorioVendas.opcoesHash) {
+          relatorioVendas = { ...relatorioVendas, opcoes: guardadas.opcoes };
+        } else {
+          // Não deveria acontecer (o servidor só omite quando o hash bate),
+          // mas, se acontecer, a resposta vem inteira de novo em vez de a
+          // tela desenhar filtros sem lista.
+          relatorioVendas = await api(`/api/reports/vendas?${consulta}`);
+        }
+      }
     } catch (error) {
       return falhar(error);
     }
+    state.reportsVendasOpcoes = { hash: relatorioVendas.opcoesHash, opcoes: relatorioVendas.opcoes };
+    state.reportsVendasNaTela = { consulta, relatorioVendas, pedidaEm: Date.now() };
     await desenhar({ ...ctx, relatorioVendas, granularidade });
     telas.comVolta(ctx, grupo);
     return;
   }
 
+  // `parte` pede só o bloco desta tela: a Síntese não lê produto e o Valor em
+  // Estoque não lê lançamento (ver /api/reports/overview em server.js).
   let dados;
   try {
-    dados = await api(`/api/reports/overview?granularity=${encodeURIComponent(granularidade)}`);
+    dados = await api(`/api/reports/overview?granularity=${encodeURIComponent(granularidade)}&parte=${encodeURIComponent(aberto.especial)}`);
   } catch (error) {
     return falhar(error);
   }

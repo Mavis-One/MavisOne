@@ -164,7 +164,25 @@ check('  nem a sua própria vírgula decimal',
 // fase DB deu exportação ao Financeiro e ao Estoque — fez o que tinha de fazer
 // (avisar que nasceu outra) e pela razão errada (contar rotas não é a regra). A
 // regra é: cada uma passa por um montador, e o montador passa por lib/csv.js.
-const servidor = semComentarios(ler('server.js'));
+const servidorInteiro = semComentarios(ler('server.js'));
+// O `text/csv` DOS RELATÓRIOS MORA EM enviarCsv (06/10/2026): os exports
+// passaram a mandar o arquivo comprimido, por uma função só, e o cabeçalho
+// saiu de cada rota. Então a "rota de CSV" é cada CHAMADA de enviarCsv — e o
+// corpo da função em si sai da busca, para o `text/csv` dela não contar como
+// uma rota sem montador. Rota que escreva `text/csv` por conta própria
+// continua sendo achada pela busca de sempre.
+//
+// TODA CHAMADA CONTA, com ou sem `return` antes (07/10/2026). A primeira
+// versão só contava `return enviarCsv(res, `, e uma rota escrita como
+// `enviarCsv(res, linhas.join(';'), 'x.csv'); return;` escapava da conferência
+// do montador abaixo — exatamente o buraco que ela vigia. E a troca vale para
+// o arquivo INTEIRO: antes ela só pegava o trecho depois da definição (o
+// `.replace` estava preso à segunda metade), e uma chamada escrita mais acima
+// no server.js também escapava.
+const inicioEnviar = servidorInteiro.indexOf('function enviarCsv(');
+const servidor = (inicioEnviar < 0 ? servidorInteiro
+  : servidorInteiro.slice(0, inicioEnviar) + servidorInteiro.slice(servidorInteiro.indexOf('\n  }\n', inicioEnviar)))
+  .replace(/\benviarCsv\(res,/g, "'text/csv'; enviarCsv(res,");
 const rotasCsv = (servidor.match(/text\/csv/g) || []).length;
 // O catálogo de relatórios (lib/relatorios) monta TODOS os seus arquivos por
 // um só montador, motorDeRelatorios.paraCsv — conferido no fim deste teste.
