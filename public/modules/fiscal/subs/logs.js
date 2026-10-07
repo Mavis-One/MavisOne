@@ -34,33 +34,29 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     return registros.filter((r) => r.status === filtro);
   }
 
-  // AS NOTAS DESTA VISITA À TELA, por estabelecimento. Trocar o filtro só
-  // redesenha: o filtro é aplicado aqui (aplicarFiltro), e a lista que a rota
-  // devolve é sempre a mesma — antes, cada clique baixava de novo TODAS as
-  // notas do estabelecimento, com o JSON enviado e o recebido de cada uma.
-  // Entrar na tela, ou trocar o estabelecimento, carrega de novo.
-  let carregado = null;
-
-  async function desenhar(ctx, { reusar = false } = {}) {
+  // CADA TROCA DE FILTRO BUSCA A LISTA DE NOVO, e é de propósito. O status da
+  // nota muda sozinho, pelo webhook da Focus (PROCESSANDO -> AUTORIZADO ou
+  // ERRO), e esta é a tela de acompanhar a transmissão: quem clica em "Com
+  // problema" para ver se a nota caiu tem de ver o status de agora, não o de
+  // quando entrou. Guardar a lista da visita já foi tentado e servia status
+  // velho. O que pesava no navegador era outra coisa — o JSON enviado e o
+  // recebido de TODAS as notas, montados a cada desenho —, e esse só é montado
+  // no clique em Detalhes (ver abaixo).
+  async function desenhar(ctx) {
     const { api, content, escapeHtml, state } = ctx;
     const redesenhar = () => desenhar(ctx);
 
-    if (!reusar || !carregado) {
-      const { lista, escolhido, erro } = await F.carregarEstabelecimentos(ctx);
-      let registros = [];
-      let erroConsulta = null;
-      if (lista.length) {
-        try {
-          const res = await api(`/api/fiscal/nfe?estabelecimentoId=${encodeURIComponent(escolhido)}`);
-          registros = res.records || [];
-        } catch (e) {
-          erroConsulta = e.message || 'Não foi possível carregar os logs.';
-        }
-      }
-      carregado = { lista, escolhido, erro, registros, erroConsulta };
-    }
-    const { lista, escolhido, erro, registros, erroConsulta } = carregado;
+    const { lista, escolhido, erro } = await F.carregarEstabelecimentos(ctx);
     if (!lista.length) { content.innerHTML = F.semEstabelecimento(escapeHtml, 'Logs NF-e', erro); return; }
+
+    let registros = [];
+    let erroConsulta = null;
+    try {
+      const res = await api(`/api/fiscal/nfe?estabelecimentoId=${encodeURIComponent(escolhido)}`);
+      registros = res.records || [];
+    } catch (e) {
+      erroConsulta = e.message || 'Não foi possível carregar os logs.';
+    }
 
     const filtro = state.fiscalLogFiltro || 'problemas';
     const visiveis = aplicarFiltro(registros, filtro);
@@ -72,7 +68,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           <div>
             <h3>Logs NF-e</h3>
           </div>
-          <button type="button" class="secondary" id="fiscalLogAtualizar">Atualizar</button>
           ${F.seletorEstabelecimento(escapeHtml, lista, escolhido)}
         </div>
 
@@ -131,9 +126,6 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       </div>`;
 
     F.ligarSeletor(ctx, redesenhar);
-    // O filtro não recarrega mais (era a única forma de "atualizar" a lista):
-    // recarregar virou este botão, explícito.
-    content.querySelector('#fiscalLogAtualizar')?.addEventListener('click', redesenhar);
     // Antes de ligarDetalhes: o JSON entra no primeiro clique, e o toggle
     // (registrado depois) o mostra.
     content.querySelectorAll('[data-detalhe^="log"]').forEach((botao) => {
@@ -150,7 +142,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     content.querySelectorAll('[data-log-filtro]').forEach((botao) => {
       botao.addEventListener('click', () => {
         state.fiscalLogFiltro = botao.dataset.logFiltro;
-        desenhar(ctx, { reusar: true });
+        redesenhar();
       });
     });
   }

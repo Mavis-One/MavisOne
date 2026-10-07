@@ -17,7 +17,11 @@
  *   6. o SPED só pula a releitura quando a resposta é "já estava" — tudo o que
  *      grava relê na hora;
  *   7. as telas: a Análise Fiscal corta no mesmo número que a tela desenha, e
- *      Pré-check, Análise e Logs não refazem a consulta à toa.
+ *      Pré-check e Análise não refazem a consulta à toa — mas os Logs NF-e
+ *      buscam de novo a cada filtro, porque o status muda pelo webhook e uma
+ *      lista guardada serviria status velho (achado da revisão);
+ *   9. as notas de um pedido saem na mesma ordem estável pelos dois caminhos
+ *      (emissão e pré-check), para a mensagem citar a mesma nota.
  *
  * A igualdade das respostas contra o código de antes, com o banco real, foi
  * provada à parte (dia, mês, nove meses, entradas tortas, estabelecimento
@@ -330,20 +334,87 @@ function funcaoDoServer(assinatura) {
   check('o servidor corta no MESMO número que a tela desenha', limiteTela > 0 && corte === limiteTela, `${corte} x ${limiteTela}`);
   check('  e "e mais N" conta pela quantidade total', /a\.quantidade > LIMITE_NA_TELA \? `<p class="muted">e mais \$\{num\(a\.quantidade - LIMITE_NA_TELA\)\}/.test(analiseTela));
   check('abrir um alerta não refaz a análise', /desenhar\(ctx, \{ reusar: true \}\);/.test(analiseTela));
+  // A análise guardada é a mesma que os números da tela contam; quem corrigiu
+  // um cadastro em outra aba precisa de um jeito de ver o resultado novo sem
+  // sair e entrar.
+  check('  e há "Analisar de novo", que analisa sem reusar', /id="analiseFiscalDeNovo"/.test(analiseTela)
+    && /#analiseFiscalDeNovo'\)\?\.addEventListener\('click', \(\) => desenhar\(ctx\)\)/.test(analiseTela));
 
   const preCheckTela = ler('public/modules/fiscal/subs/pre_check.js');
   check('pré-check: a data digitada espera a digitação parar', /setTimeout\([\s\S]{0,80}ESPERA_DA_DIGITACAO_MS\)/.test(preCheckTela));
-  check('  só a última conferência desenha', /if \(minhaVez !== vez\) return;[\s\S]*\{ signal: controle\.signal \}\);[\s\S]*if \(minhaVez !== vez\) return;/.test(preCheckTela));
+  check('  só a última conferência desenha', /if \(minhaVez !== vez(?: \|\| !aindaNaTela\(state\))?\) return;[\s\S]*\{ signal: controle\.signal \}\);[\s\S]*if \(minhaVez !== vez\) return;/.test(preCheckTela));
+  // A resposta que chega depois de a pessoa ter ido para outra tela não pode
+  // desenhar por cima dela (achado da revisão: `vez` não basta, porque ninguém
+  // chamou desenhar de novo). A guarda é executada de verdade aqui.
+  {
+    const corpo = (/function aindaNaTela\(state\) \{([\s\S]*?)\n  \}/.exec(preCheckTela) || [])[1];
+    const aindaNaTela = corpo ? new Function('state', corpo) : () => true;
+    check('  e só desenha se a pessoa ainda está no pré-check',
+      aindaNaTela({ activeModule: 'fiscal', activeSub: 'pre_check' }) === true
+      && aindaNaTela({ activeModule: 'fiscal', activeSub: 'painel' }) === false
+      && aindaNaTela({ activeModule: 'sales', activeSub: 'pre_check' }) === false);
+    const depoisDaConsulta = preCheckTela.slice(preCheckTela.indexOf('{ signal: controle.signal }'));
+    check('    conferido depois da consulta e antes de desenhar',
+      /if \(!aindaNaTela\(state\)\) return;/.test(depoisDaConsulta.slice(0, depoisDaConsulta.indexOf('content.innerHTML'))));
+  }
 
   const logsTela = ler('public/modules/fiscal/subs/logs.js');
-  check('logs: o filtro redesenha sem recarregar', /state\.fiscalLogFiltro = botao\.dataset\.logFiltro;\s*desenhar\(ctx, \{ reusar: true \}\);/.test(logsTela));
-  check('  e há um botão para recarregar', /id="fiscalLogAtualizar"/.test(logsTela));
+  // O FILTRO BUSCA DE NOVO. Uma versão desta rodada guardava a lista da visita
+  // e só redesenhava; a revisão pegou que o status muda pelo webhook
+  // (PROCESSANDO -> AUTORIZADO/ERRO) e o clique em "Com problema" mostrava o
+  // status de quando a pessoa entrou. Este check prende o comportamento de antes.
+  check('logs: o filtro busca a lista de novo (status muda pelo webhook)',
+    /state\.fiscalLogFiltro = botao\.dataset\.logFiltro;\s*redesenhar\(\);/.test(logsTela) && !/reusar/.test(logsTela));
   check('  o JSON da nota só é montado no clique em Detalhes', !/\$\{F\.blocoJson\(escapeHtml, 'Enviado à SEFAZ', r\.payloadEnviado\)\}/.test(logsTela)
     && /F\.blocoJson\(escapeHtml, 'Enviado à SEFAZ', visiveis\[i\]\.payloadEnviado\)/.test(logsTela));
 
   console.log('\n--- 8. notas contra o CNPJ ---');
   const rotaDfe = src.slice(src.indexOf("if (pathname === '/api/fiscal/dfe' && req.method === 'GET')"));
   check('os ponteiros de NSU são lidos em paralelo', /await Promise\.all\(cnpjsDosEstabelecimentos\.map/.test(rotaDfe.slice(0, 2500)));
+
+  console.log('\n--- 9. a ordem das notas de um pedido ---');
+  {
+    // Sem banco: troca banco.from por um gravador e confere o que cada função
+    // pede. A ordenação em si é do Postgres; o que se prende aqui é que os dois
+    // caminhos (emissão e pré-check) pedem a MESMA ordem estável, e que o Map
+    // não a embaralha — senão a mensagem "já tem a NF-e N" podia citar outra
+    // nota num pedido com duas vivas.
+    const { banco } = require('../lib/db/client');
+    const fiscalDbOrdem = require('../lib/db/fiscal');
+    const original = banco.from;
+    const pedidas = [];
+    const linhas = [
+      { id: 'b', order_id: 'P1', status: 'AUTORIZADO', numero: 120 },
+      { id: 'x', order_id: 'P2', status: 'ERRO', numero: 5 },
+      { id: 'a', order_id: 'P1', status: 'AUTORIZADO', numero: 121 }
+    ];
+    banco.from = (tabela) => {
+      const q = { tabela, ordens: [], filtros: [] };
+      pedidas.push(q);
+      const b = {
+        select() { return b; },
+        eq(c) { q.filtros.push(['eq', c]); return b; },
+        in(c) { q.filtros.push(['in', c]); return b; },
+        order(c, o) { q.ordens.push([c, !(o && o.ascending === false)]); return b; },
+        then(ok, erro) {
+          const dados = q.filtros[0][0] === 'eq' ? linhas.filter((l) => l.order_id === 'P1') : linhas;
+          return Promise.resolve({ data: dados, error: null }).then(ok, erro);
+        }
+      };
+      return b;
+    };
+    try {
+      const uma = await fiscalDbOrdem.getNfesPorPedido('P1');
+      const varias = await fiscalDbOrdem.getNfesPorPedidos(['P1', 'P2']);
+      const esperado = [['criado_em', true], ['id', true]];
+      check('emissão: criado_em e depois id, crescentes', igual(pedidas[0].ordens, esperado), JSON.stringify(pedidas[0].ordens));
+      check('  pré-check: a MESMA ordem', igual(pedidas[1].ordens, pedidas[0].ordens), JSON.stringify(pedidas[1].ordens));
+      check('  o Map guarda a ordem em que as linhas vieram',
+        igual(varias.get('P1').map((n) => n.numero), [120, 121]) && igual(uma.map((n) => n.numero), varias.get('P1').map((n) => n.numero)));
+    } finally {
+      banco.from = original;
+    }
+  }
 
   console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
   process.exit(falhas ? 1 : 0);

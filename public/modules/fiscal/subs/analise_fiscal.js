@@ -15,8 +15,10 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
   let aberto = null;
   // A ANÁLISE DESTA VISITA À TELA. Abrir e fechar um alerta só redesenha:
   // antes, cada clique refazia a análise inteira no servidor e baixava de novo
-  // os 676 KB. Entrar na tela (o registro chama desenhar sem `reusar`) analisa
-  // de novo — é aí que um cadastro corrigido em outra aba aparece.
+  // os 676 KB. Abrir um alerta mostra a mesma análise que os números da tela já
+  // contam, então não é dado mais velho do que o que está à vista. Para ver um
+  // cadastro corrigido em outra aba há o botão "Analisar de novo", e entrar na
+  // tela (o registro chama desenhar sem `reusar`) também analisa de novo.
   let analise = null;
 
   const num = (n) => Number(n || 0).toLocaleString('pt-BR');
@@ -70,7 +72,12 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
     content.innerHTML = `
       <div class="panel">
-        <h3>Análise Fiscal</h3>
+        <div class="cadastro-page-head">
+          <div>
+            <h3>Análise Fiscal</h3>
+          </div>
+          <button type="button" class="secondary" id="analiseFiscalDeNovo">Analisar de novo</button>
+        </div>
         <div class="cards">
           <div class="card"><h3>Produtos</h3><p>${num(r.analisados)}</p></div>
           <div class="card"><h3>Com alerta</h3><p${r.comAlerta ? ' class="acervo-alerta"' : ''}>${num(r.comAlerta)}</p></div>
@@ -86,6 +93,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           </div>` : '<p class="sales-totals-nota">Nenhum alerta no cadastro.</p>'}
       </div>`;
 
+    content.querySelector('#analiseFiscalDeNovo')?.addEventListener('click', () => desenhar(ctx));
     content.querySelectorAll('[data-alerta]').forEach((tr) => tr.addEventListener('click', () => {
       aberto = aberto === tr.dataset.alerta ? null : tr.dataset.alerta;
       desenhar(ctx, { reusar: true });

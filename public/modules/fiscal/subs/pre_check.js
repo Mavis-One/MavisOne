@@ -46,6 +46,15 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
   let adiada = null;
   let emCurso = null;
 
+  // A PESSOA AINDA ESTÁ NESTA TELA? Uma conferência longa (meses) pode voltar
+  // depois de ela ter ido para o Painel ou para outro módulo; sem esta
+  // pergunta, a resposta desenharia o pré-check por cima da tela seguinte.
+  // `vez` não basta: ninguém chamou desenhar de novo, então a vez continua
+  // sendo dela.
+  function aindaNaTela(state) {
+    return state.activeModule === 'fiscal' && state.activeSub === 'pre_check';
+  }
+
   async function desenhar(ctx) {
     const { api, content, escapeHtml, state } = ctx;
     const redesenhar = () => desenhar(ctx);
@@ -53,7 +62,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     const minhaVez = ++vez;
 
     const { lista, escolhido, erro } = await F.carregarEstabelecimentos(ctx);
-    if (minhaVez !== vez) return;
+    if (minhaVez !== vez || !aindaNaTela(state)) return;
     if (!lista.length) { content.innerHTML = F.semEstabelecimento(escapeHtml, 'Pré-check fiscal', erro); return; }
 
     const de = state.fiscalPreCheckDe || hoje();
@@ -73,6 +82,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     // Outra conferência começou enquanto esta esperava: a tela é dela.
     if (minhaVez !== vez) return;
     emCurso = null;
+    if (!aindaNaTela(state)) return;
 
     const pedidos = (resultado && resultado.pedidos) || [];
     const comProblema = pedidos.filter((p) => !p.ok);
