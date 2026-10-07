@@ -211,7 +211,9 @@ const apiFalsa = async (rota) => {
   check('o atalho só busca sozinho com o nome vazio', /devePreencherSozinho: \(\) => !String\(overlay\.querySelector\('\[name="name"\]'\)\?\.value \|\| ''\)\.trim\(\)/.test(atalhosSrc));
   // Sobrescrever o que a pessoa digitou é pior do que não preencher: o
   // cadastro da Receita costuma estar desatualizado.
-  check('só preenche campo vazio', /if \(campo && !String\(campo\.value \|\| ''\)\.trim\(\) && valor\) campo\.value = valor/.test(atalhosSrc));
+  // Desde 07/10/2026 o atalho preenche por preencherSeVazio (que também
+  // dispara a máscara e serve à consulta de CEP).
+  check('só preenche campo vazio', /if \(!campo \|\| !valor \|\| String\(campo\.value \|\| ''\)\.trim\(\)\) return;/.test(atalhosSrc));
   // UF é <select>: atribuir uma sigla fora da lista deixaria o campo em branco.
   check('UF só muda se a sigla existir no select', /\[\.\.\.uf\.options\]\.some\(\(o\) => o\.value === dados\.uf\)/.test(atalhosSrc));
   check('duas consultas simultâneas não se atropelam', /if \(consultando\) return;/.test(src));
@@ -285,9 +287,23 @@ const apiFalsa = async (rota) => {
     if (campos.length) check(`${arquivo.split('/').pop()}: ${campos.length} campos existem`, ausentes.length === 0, ausentes.join(', ') || 'ok');
   });
   // No atalho os campos vêm de CAMPOS_PESSOA, declarados como objeto.
-  const atalhoCampos = ['name', 'email', 'phone', 'zipCode', 'address', 'number', 'complement', 'neighborhood', 'city', 'state'];
+  // Os nomes do CADASTRO (street, streetNumber, addressComplement) desde
+  // 07/10/2026: com address/number/complement o número ia para uma chave que
+  // ninguém lia. O CEP preenche, e o IBGE vai oculto.
+  const atalhoCampos = ['name', 'email', 'phone', 'zipCode', 'street', 'streetNumber', 'addressComplement', 'neighborhood', 'city', 'state', 'ibgeCityCode'];
   const ausentesAtalho = atalhoCampos.filter((c) => !new RegExp(`name: '${c}'`).test(atalhosSrc));
   check(`atalhos.js: ${atalhoCampos.length} campos existem`, ausentesAtalho.length === 0, ausentesAtalho.join(', ') || 'ok');
+  // O cliente rápido (07/10/2026): endereço e telefone obrigatórios, UF sem
+  // "AC" marcado de saída, I.E. só para CNPJ e o CEP preenchendo o endereço.
+  ['zipCode', 'street', 'streetNumber', 'neighborhood', 'city'].forEach((c) => {
+    check(`  ${c} é obrigatório no atalho`, new RegExp(`name: '${c}', label: '[^']+', required: true`).test(atalhosSrc));
+  });
+  check('  a UF começa vazia', /name: 'state', label: 'UF', type: 'select', opcoes: UFS, vazio: 'UF', required: true/.test(atalhosSrc));
+  check('  o cliente exige telefone', /if \(campo\.name === 'phone'\) return \[\{ \.\.\.campo, required: true \}\];/.test(atalhosSrc));
+  check('  a I.E. só abre com CNPJ', /const ehCnpj = soDigitos\(doc\.value\)\.length === 14;\s*\n\s*ie\.disabled = !ehCnpj;/.test(atalhosSrc));
+  check('  e com CPF vai vazia, sem ser cobrada', /if \(campo\.soCnpj && soDigitos\(dados\.get\('document'\)\)\.length !== 14\) \{\s*\n\s*payload\[campo\.name\] = '';/.test(atalhosSrc));
+  check('  o CEP consulta /api/cep e preenche o endereço', /await api\(`\/api\/cep\/\$\{digitos\}`\)/.test(atalhosSrc) && /preencher\('street', e\.street\)/.test(atalhosSrc));
+  check('  o CNPJ preenche o código IBGE', /preencher\('ibgeCityCode', dados\.codigoMunicipioIbge\)/.test(atalhosSrc));
 
   console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
   process.exit(falhas ? 1 : 0);

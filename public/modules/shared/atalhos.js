@@ -43,13 +43,27 @@ window.MavisAtalhos = (function () {
     { name: 'name', label: 'Nome', required: true, linha: 1 },
     { name: 'email', label: 'E-mail', type: 'email', linha: 2 },
     { name: 'phone', label: 'Telefone', linha: 2, mascara: 'telefone' },
-    { name: 'zipCode', label: 'CEP', linha: 3, mascara: 'cep' },
-    { name: 'address', label: 'Logradouro', linha: 3 },
-    { name: 'number', label: 'Número', linha: 3 },
-    { name: 'complement', label: 'Complemento', linha: 4 },
-    { name: 'neighborhood', label: 'Bairro', linha: 4 },
-    { name: 'city', label: 'Cidade', linha: 4 },
-    { name: 'state', label: 'UF', type: 'select', opcoes: UFS, linha: 4 }
+    // O ENDEREÇO COM OS NOMES DO CADASTRO (07/10/2026). A janela mandava
+    // `address`, `number` e `complement`, e o cadastro de pessoas, o pedido e a
+    // NF-e leem `street`, `streetNumber` e `addressComplement` (é o que as 6.492
+    // pessoas da base têm). O número digitado aqui ia para uma chave que
+    // ninguém lia: o cliente nascia sem número, e a nota dele travava depois.
+    //
+    // Obrigatório porque a nota não sai sem endereço — o servidor já recusava
+    // sem logradouro, cidade, UF e CEP; número e bairro a NF-e também exige.
+    // O CEP preenche o resto (ver ligarConsultaCep).
+    { name: 'zipCode', label: 'CEP', required: true, linha: 3, mascara: 'cep' },
+    { name: 'street', label: 'Logradouro', required: true, linha: 3 },
+    { name: 'streetNumber', label: 'Número', required: true, linha: 3 },
+    { name: 'addressComplement', label: 'Complemento', linha: 4 },
+    { name: 'neighborhood', label: 'Bairro', required: true, linha: 4 },
+    { name: 'city', label: 'Cidade', required: true, linha: 4 },
+    // Começa vazio: com "AC" marcado de saída, quem não reparava gravava o
+    // cliente no Acre.
+    { name: 'state', label: 'UF', type: 'select', opcoes: UFS, vazio: 'UF', required: true, linha: 4 },
+    // O código IBGE da cidade vem do CEP ou do CNPJ e é o que a NF-e usa para o
+    // município; ninguém o digita.
+    { name: 'ibgeCityCode', type: 'hidden', linha: 4 }
   ];
 
   // O CLIENTE PEDE A INSCRIÇÃO ESTADUAL, E PEDE OBRIGATÓRIA.
@@ -63,11 +77,22 @@ window.MavisAtalhos = (function () {
   //
   // Só o cliente: o fornecedor criado à mão continua como estava, e o que
   // entra por XML já traz a IE do emitente.
+  //
+  // SÓ PARA CNPJ (07/10/2026). Pessoa física não tem I.E.: o campo fica travado
+  // até o documento ser um CNPJ, e com CPF vai vazio — que, pela regra de
+  // shared/inscricao_estadual.js, é "não contribuinte", o indicador 9 que a
+  // nota de pessoa física leva. `soCnpj` é o que a janela usa para isso.
   const CAMPO_IE = {
-    name: 'stateRegistration', label: 'Inscrição Estadual (I.E.)', required: true, linha: 1,
-    ie: true, placeholder: 'Números ou ISENTO', hint: 'ISENTO quando o cliente não é contribuinte de ICMS'
+    name: 'stateRegistration', label: 'Inscrição Estadual (I.E.)', required: true, soCnpj: true, linha: 1,
+    ie: true, placeholder: 'Números ou ISENTO', hint: 'Só para CNPJ. ISENTO quando a empresa não é contribuinte de ICMS'
   };
-  const CAMPOS_CLIENTE = CAMPOS_PESSOA.flatMap((campo) => (campo.name === 'name' ? [campo, CAMPO_IE] : [campo]));
+  // O cliente também exige telefone (pedido da loja em 07/10/2026): é por ele
+  // que se fala com quem comprou.
+  const CAMPOS_CLIENTE = CAMPOS_PESSOA.flatMap((campo) => {
+    if (campo.name === 'name') return [campo, CAMPO_IE];
+    if (campo.name === 'phone') return [{ ...campo, required: true }];
+    return [campo];
+  });
 
   const ATALHOS_CRIAR = [
     {
@@ -145,8 +170,12 @@ window.MavisAtalhos = (function () {
     const obrigatorio = campo.required ? 'required' : '';
     const dica = campo.hint ? ` title="${escapeHtml(campo.hint)}"` : '';
     let controle;
+    if (campo.type === 'hidden') {
+      return `<input type="hidden" name="${campo.name}" value="${escapeHtml(valor)}" />`;
+    }
     if (campo.type === 'select') {
-      controle = `<select name="${campo.name}" ${obrigatorio}>${campo.opcoes.map((o) => {
+      const opcaoVazia = campo.vazio ? `<option value="">${escapeHtml(campo.vazio)}</option>` : '';
+      controle = `<select name="${campo.name}" ${obrigatorio}>${opcaoVazia}${campo.opcoes.map((o) => {
         const rotulo = campo.rotulos ? (campo.rotulos[o] ?? o) : o;
         return `<option value="${escapeHtml(o)}" ${String(valor) === String(o) ? 'selected' : ''}>${escapeHtml(rotulo)}</option>`;
       }).join('')}</select>`;
@@ -166,6 +195,68 @@ window.MavisAtalhos = (function () {
         <span>${escapeHtml(campo.label)}${campo.required ? ' *' : ''}</span>
         ${controle}
       </label>`;
+  }
+
+  // Preenche só o que está vazio: o que a pessoa digitou vale mais do que o
+  // cadastro da Receita ou dos Correios. Dispara `input` para a máscara do campo
+  // (telefone, CEP) formatar o que chegou cru da consulta.
+  function preencherSeVazio(raiz) {
+    return (nome, valor) => {
+      const campo = raiz.querySelector(`[name="${nome}"]`);
+      if (!campo || !valor || String(campo.value || '').trim()) return;
+      if (campo.tagName === 'SELECT' && ![...campo.options].some((o) => o.value === valor)) return;
+      campo.value = valor;
+      campo.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+  }
+
+  // CEP -> endereço (07/10/2026). A janela pedia o CEP e não fazia nada com ele;
+  // o cadastro completo já consultava. Com 8 dígitos, ao completar a digitação
+  // ou ao sair do campo, busca pela mesma rota /api/cep e preenche logradouro,
+  // bairro, cidade, UF e o código IBGE. O número fica com a pessoa: o CEP não o
+  // tem.
+  function ligarConsultaCep(raiz, api, showToast) {
+    const cep = raiz.querySelector('[name="zipCode"]');
+    if (!cep) return;
+    let ultimo = '';
+    const consultar = async () => {
+      const digitos = soDigitos(cep.value);
+      if (digitos.length !== 8 || digitos === ultimo) return;
+      ultimo = digitos;
+      try {
+        const resposta = await api(`/api/cep/${digitos}`);
+        const e = resposta.address || {};
+        const preencher = preencherSeVazio(raiz);
+        preencher('street', e.street);
+        preencher('neighborhood', e.neighborhood);
+        preencher('city', e.city);
+        preencher('state', e.state);
+        preencher('ibgeCityCode', e.ibgeCityCode);
+        raiz.querySelector('[name="streetNumber"]')?.focus();
+      } catch (erro) {
+        ultimo = '';
+        showToast?.(erro.message || 'Não foi possível consultar o CEP.', 'warning');
+      }
+    };
+    cep.addEventListener('blur', consultar);
+    cep.addEventListener('input', () => { if (soDigitos(cep.value).length === 8) consultar(); });
+  }
+
+  // A I.E. só abre quando o documento é um CNPJ (14 dígitos); com CPF fica
+  // travada e vazia. Ver CAMPO_IE.
+  function ligarIeSoParaCnpj(raiz) {
+    const doc = raiz.querySelector('[name="document"]');
+    const ie = raiz.querySelector('[name="stateRegistration"]');
+    if (!doc || !ie) return;
+    const atualizar = () => {
+      const ehCnpj = soDigitos(doc.value).length === 14;
+      ie.disabled = !ehCnpj;
+      ie.required = ehCnpj;
+      if (!ehCnpj) ie.value = '';
+      ie.placeholder = ehCnpj ? 'Números ou ISENTO' : 'Só para CNPJ';
+    };
+    doc.addEventListener('input', atualizar);
+    atualizar();
   }
 
   function fechar() {
@@ -228,12 +319,7 @@ window.MavisAtalhos = (function () {
     // atalho — sem isso, cadastrar uma empresa aqui é digitar tudo à mão.
     const campoDoc = overlay.querySelector('[data-documento]');
     if (campoDoc && atalho.consultaCnpj) {
-      const preencher = (nome, valor) => {
-        const campo = overlay.querySelector(`[name="${nome}"]`);
-        // Só preenche o que está vazio: o que a pessoa digitou vale mais do
-        // que o cadastro da Receita, que costuma estar desatualizado.
-        if (campo && !String(campo.value || '').trim() && valor) campo.value = valor;
-      };
+      const preencher = preencherSeVazio(overlay);
       window.MavisDocumento.ligarConsultaCnpj(campoDoc, {
         api,
         showToast,
@@ -245,17 +331,21 @@ window.MavisAtalhos = (function () {
           preencher('email', dados.email);
           preencher('phone', dados.telefone);
           preencher('zipCode', dados.cep);
-          preencher('address', dados.logradouro);
-          preencher('number', dados.numero);
-          preencher('complement', dados.complemento);
+          preencher('street', dados.logradouro);
+          preencher('streetNumber', dados.numero);
+          preencher('addressComplement', dados.complemento);
           preencher('neighborhood', dados.bairro);
           preencher('city', dados.municipio);
+          preencher('ibgeCityCode', dados.codigoMunicipioIbge);
           const uf = overlay.querySelector('[name="state"]');
           // O UF é um <select>: só troca se a sigla existir na lista.
           if (uf && dados.uf && [...uf.options].some((o) => o.value === dados.uf)) uf.value = dados.uf;
         }
       });
     }
+
+    ligarConsultaCep(overlay, api, showToast);
+    ligarIeSoParaCnpj(overlay);
 
     overlay.querySelector('input, select')?.focus();
 
@@ -281,6 +371,11 @@ window.MavisAtalhos = (function () {
       for (const campo of atalho.campos) {
         let valor = dados.get(campo.name) ?? '';
         if (campo.name === 'document') valor = soDigitos(valor);
+        // I.E. de CPF não existe: vai vazia e não é cobrada (ver CAMPO_IE).
+        if (campo.soCnpj && soDigitos(dados.get('document')).length !== 14) {
+          payload[campo.name] = '';
+          continue;
+        }
         if (campo.required && !String(valor).trim()) return recusar(campo, `Informe ${campo.label}.`);
         if (campo.ie) {
           // Regra de shared/inscricao_estadual.js — a mesma que o servidor usa
