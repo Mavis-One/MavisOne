@@ -101,7 +101,12 @@ check('items existe', Array.isArray(linha.items));
 console.log('\n--- a rota mostra as duas origens ---');
 const rota = serverSrc.slice(serverSrc.indexOf("pathname === '/api/finance/nfe' && req.method === 'GET'"));
 const corpoRota = rota.slice(0, rota.indexOf("pathname === '/api/finance/nfe' && req.method === 'POST'"));
-check('busca as notas fiscais', /fiscalDb\.getNfeRecords\(\)/.test(corpoRota));
+// Fase DS: a lista lê a tabela fiscal UMA vez e sem os jsonb
+// (getNfeRecordsParaLista); antes eram duas leituras de `select *`, uma delas
+// dentro de syncNfeData e jogada fora. A intenção do check é a mesma: as notas
+// fiscais entram na lista.
+check('busca as notas fiscais', /fiscalDb\.getNfeRecordsParaLista\(\)/.test(corpoRota));
+check('e não lê a tabela fiscal duas vezes', !/syncNfeData\(/.test(corpoRota));
 check('converte para o formato da lista', /\.map\(fiscalNfeParaLista\)/.test(corpoRota));
 check('mantém as manuais', /data\.nfes \|\| \[\]/.test(corpoRota));
 check('marca a origem das manuais', /origem: 'financeiro'/.test(corpoRota));

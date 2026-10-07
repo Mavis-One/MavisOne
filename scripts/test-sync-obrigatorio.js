@@ -99,6 +99,19 @@ const POPULA = {
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
+  // Fase DS: os recortes do Financeiro (server.js, "O FINANCEIRO CARREGA O QUE
+  // A ROTA USA"). Cada um popula as MESMAS chaves que syncFinanceData, com menos
+  // registros. Este guarda vê que a chave deixou de chegar vazia — não vê se o
+  // recorte basta para a rota; isso está escrito ao lado de cada troca.
+  syncFinanceCadastroData: ['financialCategories', 'costCenters', 'bankAccounts'],
+  syncLancamentosPorId: ['finance', 'financialPayments'],
+  syncLancamentosEmAberto: ['finance', 'financialPayments'],
+  syncLancamentosDasNotas: ['finance', 'financialPayments'],
+  // Só `finance`, e incompleto (dez campos): é o resumo do dashboard, que não
+  // lê baixa nenhuma.
+  syncLancamentosParaResumo: ['finance'],
+  // Só as manuais. A lista de NF-e lê a fiscal por conta própria.
+  syncNfesManuais: ['nfes'],
   // loadStockContext chama syncCadastroData por dentro (server.js), então quem
   // o chama já tem pessoas, cnpjs e depósitos além do razão.
   loadStockContext: ['stockMovements', 'stockTransfers', 'people', 'cnpjs', 'deposits'],
@@ -143,6 +156,9 @@ const INFRA = new Set([
   'syncSalesDataResumida',
   'syncPurchasesData', 'syncNfeData',
   'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
+  // Fase DS: os recortes do Financeiro, mesmos motivos de syncFinanceData.
+  'syncFinanceCadastroData', 'syncLancamentosPorId', 'syncLancamentosEmAberto',
+  'syncLancamentosDasNotas', 'syncLancamentosParaResumo', 'syncNfesManuais',
   // Fase DB: sincroniza por dentro, como o loadStockContext.
   'baseDosRelatoriosGerais'
 ]);
