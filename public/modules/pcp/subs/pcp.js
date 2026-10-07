@@ -172,6 +172,9 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   // -------------------------------------------------------------- Status PCP
   R.status_pcp = C.makeInlineRegisterScreen({
     ...baseSemProdutos,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Status PCP',
     tableTitle: 'Status de produção',
     entityLabel: 'status',

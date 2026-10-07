@@ -13,6 +13,10 @@ function maskCnpjValue(value) {
 }
 
 window.MavisSubscreenRegistry.cadastros.empresas = window.MavisCadastros.makeListScreen({
+  // Esta tela não lê nada da meta de Cadastros, então não a pede (era 1,4 MB
+  // por abertura). Se passar a ler, declare a parte aqui —
+  // scripts/test-meta-das-telas-de-cadastro.js cobra.
+  metaPartes: [],
   title: 'Empresas',
   tableTitle: 'Empresas cadastradas',
   endpoint: '/api/cadastros/companies',

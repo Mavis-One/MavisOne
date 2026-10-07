@@ -47,6 +47,10 @@ const inscricaoEstadual = require('./public/modules/shared/inscricao_estadual');
 // Fase CW: a regra de duplicidade de cadastro, num lugar só. Estava escrita
 // duas vezes — aqui e no public/app.js — com as duas cópias idênticas.
 const duplicidade = require('./public/modules/shared/duplicidade_cadastro');
+// Rodada de desempenho: filtro, ordem e página da lista de Cadastros › Pessoas,
+// num lugar só. A tela fazia isso no navegador depois de baixar as 6.492
+// pessoas a cada clique; agora a página sai daqui, pelas MESMAS regras.
+const listaDeCadastros = require('./public/modules/shared/lista_de_cadastros');
 // Painel "Atenção" do hub: junta o que já está errado e espalhado por seis
 // telas — conta vencida, NF-e rejeitada, pedido faturado sem nota, estoque
 // abaixo do mínimo.
@@ -1557,10 +1561,9 @@ async function formasComCredenciadora(data) {
 async function contrapartidaEmUso(id) {
   const dados = loadData();
   const [comFinanceiro, comEquipamento, documentos] = await Promise.all([
-    (async () => {
-      await syncFinanceData(dados);
-      return (dados.finance || []).some((entry) => entry.clientSupplierId === id);
-    })(),
+    // "Tem lancamento?" respondido no banco (exists, ~15 ms), e nao mais
+    // carregando o Financeiro inteiro (~530 ms). Ver a funcao.
+    lancamentoDaContrapartida(id),
     equipamentosDb.contarPor('pessoa', id).catch(() => 0),
     // FASE BO: as quatro referencias que ficaram de fora da fase BB. Nenhuma
     // delas tem chave estrangeira (sao colunas text apontando para pessoas OU
@@ -1577,6 +1580,46 @@ async function contrapartidaEmUso(id) {
       + 'Marque como inativo em vez de excluir: assim ele some dos formulários e o histórico continua explicável.';
   }
   return cadastrosCore.counterpartyInUse(dados, id);
+}
+
+/**
+ * Existe lançamento financeiro desta contrapartida? (sim ou não)
+ *
+ * Era syncFinanceData seguido de um `some` sobre os 27.362 lançamentos em
+ * memória (~530 ms e ~37 MB no processo único) para uma pergunta de sim ou
+ * não; o exists responde a mesma pergunta na fonte de verdade, em ~15 ms no
+ * pior caso, sem índice novo. Casa as mesmas linhas: `clientSupplierId` é
+ * `client_supplier_id || ''`, e o id que chega da rota nunca é vazio, então o
+ * `=` do banco casa exatamente as mesmas linhas.
+ */
+async function lancamentoDaContrapartida(id) {
+  const { rows } = await consultarBanco(
+    'select exists(select 1 from financial_entries where client_supplier_id = $1) as existe',
+    [String(id || '')]
+  );
+  return Boolean(rows[0] && rows[0].existe);
+}
+
+/**
+ * O que prende uma conta bancária: lançamento, baixa ou transação importada.
+ *
+ * Três `exists` numa consulta só, no lugar de carregar o Financeiro inteiro
+ * para perguntar "tem algum?". De carona corrige a guarda das transações
+ * importadas: `data.bankTransactions` nunca era sincronizado (não está em
+ * syncFinanceData), então ela nunca disparava — quem segurava a exclusão era a
+ * chave estrangeira, com um erro genérico no lugar da explicação.
+ */
+async function usosDaContaBancaria(id) {
+  const { rows } = await consultarBanco(
+    `select
+       exists(select 1 from financial_entries
+               where bank_account_id = $1 or target_bank_account_id = $1) as lancamentos,
+       exists(select 1 from financial_payments where bank_account_id = $1) as baixas,
+       exists(select 1 from bank_transactions where bank_account_id = $1) as transacoes`,
+    [String(id || '')]
+  );
+  const linha = rows[0] || {};
+  return { lancamentos: Boolean(linha.lancamentos), baixas: Boolean(linha.baixas), transacoes: Boolean(linha.transacoes) };
 }
 
 /**
@@ -2308,6 +2351,55 @@ async function syncFinanceData(data) {
   // consulta por lançamento seria uma viagem de rede por linha da lista.
   data.financialPayments = entries.length ? await db.getAllFinancialPayments() : [];
 }
+
+/**
+ * SO AS CONTAS BANCARIAS, sem o resto do Financeiro.
+ *
+ * syncFinanceData carrega as cinco colecoes juntas porque quem le LANCAMENTO
+ * precisa das outras quatro para resolver categoria, centro de custo e conta de
+ * cada linha. Quem so quer a lista de contas (o select da forma de pagamento,
+ * a meta de Cadastros) pagava os 27.362 lancamentos e as 25.709 baixas para
+ * jogar tudo fora. Medido na meta de Cadastros:
+ *
+ *     syncFinanceData inteiro ....... 528 ms
+ *     getBankAccounts sozinho ....... 2,4 ms   <- a unica parte que ela usa
+ *
+ * A MESMA funcao de lib/db que syncFinanceData chama: as contas saem iguais,
+ * na mesma ordem, com os mesmos campos. Registrada em POPULA e INFRA de
+ * scripts/test-sync-obrigatorio.js, como os outros syncs.
+ */
+async function syncContasBancarias(data) {
+  data.bankAccounts = await db.getBankAccounts();
+}
+
+/**
+ * As partes que /api/cadastros/meta sabe montar — as chaves da meta inteira, na
+ * ordem em que saem nela.
+ *
+ * UMA LISTA SÓ: a rota recusa (400) qualquer nome fora dela, e
+ * scripts/test-meta-das-telas-de-cadastro.js confere que toda parte que uma
+ * tela declara em `metaPartes` (public/modules/cadastros/shared.js) existe
+ * aqui. Tela pedindo parte que o servidor não conhece é select vazio sem erro.
+ */
+const PARTES_DA_META_DE_CADASTROS = Object.freeze([
+  'directory', 'products', 'deposits', 'bankAccounts', 'estabelecimentos', 'paymentMethods',
+  'cardAcquirers', 'saleStatuses', 'companies', 'users', 'notasFiscais'
+]);
+
+// O texto de busca já normalizado de cada linha da lista de Cadastros › Pessoas
+// (ver `memo` em public/modules/shared/lista_de_cadastros.js). Guardado PELA
+// PRÓPRIA LINHA: a chave é o conteúdo dos campos, então linha editada é
+// normalizada de novo, e nada velho sai daqui. Sem ele a busca prenderia o
+// event loop ~70 ms normalizando 12 campos de 6.492 linhas a cada página.
+const memoDaBuscaDeCadastros = new Map();
+
+/** O JSON dos filtros da lista de Pessoas, ou null se não for um objeto. */
+function filtrosDaListaDeCadastros(texto) {
+  let valor = null;
+  try { valor = JSON.parse(texto); } catch (erro) { valor = null; }
+  return valor && typeof valor === 'object' && !Array.isArray(valor) ? valor : null;
+}
+
 
 function normalizeSalesItems(rawItems) {
   if (!Array.isArray(rawItems)) return [];
@@ -11900,6 +11992,103 @@ async function tratarRequisicao(req, res) {
     return sendJson(res, { cnpjs: await db.getCnpjs() });
   }
 
+  // A LISTA DE CADASTROS › PESSOAS, UMA PÁGINA POR VEZ (rodada de desempenho).
+  //
+  // A tela baixava as rotas acima inteiras — 7.425 KB cru, 695 KB gzip — e
+  // filtrava, ordenava e cortava no navegador, DE NOVO a cada clique (virar
+  // página, ordenar, Buscar, abrir os filtros). Agora pede só a página: ~32 KB
+  // cru, ~6 KB gzip. Filtro, ordem e corte são os MESMOS, do mesmo arquivo que
+  // a tela usava (public/modules/shared/lista_de_cadastros.js), sobre o mesmo
+  // cache de pessoas e CNPJs que /pessoas e /cnpjs devolvem.
+  //
+  // `filtros` é o JSON do estado da tela; o que faltar ganha o padrão de
+  // sempre. `inicio`/`fim` são os limites de data já convertidos em instante
+  // NO NAVEGADOR — "a partir de 05/10" é 05/10 no fuso de quem digitou, e este
+  // servidor não está nele. Sem eles (quem chama a API direto), os limites são
+  // calculados aqui, no fuso do servidor.
+  //
+  // As rotas /pessoas e /cnpjs continuam: são o contrato de quem as usa por
+  // fora (scripts/smoke-api.js), e a tela deixou de ser uma delas.
+  if (pathname === '/api/cadastros/lista' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const brutos = url.searchParams.get('filtros');
+      const guardados = brutos ? filtrosDaListaDeCadastros(brutos) : {};
+      if (!guardados) return sendJson(res, { error: 'Filtros inválidos.' }, 400);
+      const filtros = listaDeCadastros.normalizarFiltros(guardados);
+      const limites = (url.searchParams.has('inicio') || url.searchParams.has('fim'))
+        ? { inicio: url.searchParams.get('inicio') || '', fim: url.searchParams.get('fim') || '' }
+        : listaDeCadastros.limitesDeData(filtros.dateStart, filtros.dateEnd);
+      const [people, cnpjs] = await Promise.all([db.getPeople(), db.getCnpjs()]);
+      const pagina = listaDeCadastros.montarPagina(people, cnpjs, filtros, limites, memoDaBuscaDeCadastros);
+      return sendJson(res, {
+        linhas: pagina.visiveis,
+        total: pagina.totalRegistros,
+        pagina: pagina.paginaAtual,
+        totalPaginas: pagina.totalPaginas,
+        primeiro: pagina.primeiroDaPagina
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao listar os cadastros', 500);
+    }
+  }
+
+  // UM CADASTRO INTEIRO, para abrir a edição (rodada de desempenho).
+  //
+  // A lista agora traz só os campos que ela desenha. Abrir o formulário com a
+  // linha da lista e salvar gravaria vazio por cima de endereço, contatos e
+  // dados bancários — o formulário manda TODOS os campos. Por isso a tela busca
+  // o registro completo aqui antes de abrir, e não abre se não conseguir.
+  if ((pathname.startsWith('/api/cadastros/pessoas/') || pathname.startsWith('/api/cadastros/cnpjs/')) && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const ehCnpj = pathname.startsWith('/api/cadastros/cnpjs/');
+      const id = decodeURIComponent(pathname.replace(ehCnpj ? '/api/cadastros/cnpjs/' : '/api/cadastros/pessoas/', ''));
+      const registro = ehCnpj ? await db.getCnpjById(id) : await db.getPersonById(id);
+      if (!registro) return sendJson(res, { error: 'Cadastro não encontrado.' }, 404);
+      return sendJson(res, ehCnpj ? { cnpj: registro } : { person: registro });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao abrir o cadastro', 500);
+    }
+  }
+
+  // A PERGUNTA DE DUPLICIDADE ANTES DE SALVAR (rodada de desempenho).
+  //
+  // A tela conferia contra as 6.492 pessoas que tinha baixado. Sem baixá-las,
+  // pergunta aqui — mesma regra (duplicidade_cadastro.js, a que o POST/PUT
+  // também usa), mesma lista ([...pessoas, ...CNPJs], do mesmo cache). Devolve
+  // o bloqueio (documento repetido: recusa) e o texto do aviso (nome ou
+  // endereço repetido: pergunta). GET, e não POST: só lê, e um método de
+  // escrita faria a tela jogar fora os caches de leitura dela à toa.
+  if (pathname === '/api/cadastros/duplicidade' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('cadastros')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const registro = {};
+      // Só os campos que a regra lê, pela lista que mora junto dela.
+      duplicidade.CAMPOS_LIDOS.forEach((campo) => {
+        if (url.searchParams.has(campo)) registro[campo] = url.searchParams.get(campo);
+      });
+      const excluirId = url.searchParams.get('excluirId') || undefined;
+      const [people, cnpjs] = await Promise.all([db.getPeople(), db.getCnpjs()]);
+      const dados = { people, cnpjs };
+      return sendJson(res, {
+        bloqueio: findDuplicateRegistration(dados, registro, excluirId),
+        aviso: duplicidade.textoDoAviso(avisosDeDuplicidade(dados, registro, excluirId))
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao conferir a duplicidade', 500);
+    }
+  }
+
   if (pathname.startsWith('/api/cnpj/') && req.method === 'GET') {
     try {
       const data = loadData();
@@ -13747,42 +13936,100 @@ async function tratarRequisicao(req, res) {
 
   // Metadados dos cadastros: diretório de pessoas/empresas, produtos, contas,
   // usuários — usados pelos selects das telas do módulo.
+  //
+  // META POR PARTES (?partes=directory,users). Sem o parâmetro, a resposta é a
+  // de sempre, inteira. Com ele, sai SÓ o pedido — e só o pedido é montado:
+  // a tela de Agenda lia `users` (0,1 KB) e recebia 1,4 MB (372 KB gzip) com
+  // as 6.492 pessoas e os 5.561 produtos, montados a cada abertura.
+  //
+  // CADA PARTE TEM O MESMO NOME E O MESMO CONTEÚDO DA CHAVE DA META INTEIRA,
+  // montada pelo mesmo código abaixo: pedir `directory` devolve exatamente o
+  // `directory` da meta inteira. É isso que deixa provar a mudança por sha256,
+  // parte a parte, e é por isso que não há "versão enxuta" com o mesmo nome.
+  //
+  // A SEMÂNTICA DE ERRO DE CADA PARTE É A DE ANTES: diretório, depósitos,
+  // contas, NF-e e credenciadoras derrubam a requisição (500, e a tela avisa);
+  // só produtos, estabelecimentos e usuários degradam para []. Não pôr um
+  // catch em cada parte: um select vazio por erro, num formulário de EDIÇÃO,
+  // grava '' por cima do vínculo salvo (lib/cadastros-core.js: o `??` de
+  // `text(body.x ?? current.x)` não troca '' pelo valor de antes).
+  //
+  // Parte desconhecida ou pedido vazio: 400, nunca ignorado em silêncio — uma
+  // tela que pedisse `diretorio` em vez de `directory` receberia [] e não
+  // saberia por quê.
   if (pathname === '/api/cadastros/meta' && req.method === 'GET') {
     try {
-      const data = loadData();
-      await syncCadastroData(data);
-      // syncNfeData tambem: o cadastro de equipamento escolhe a NF-e que vendeu
-      // a maquina, e e' dela que sai a data de inicio da garantia (fase BB).
-      await Promise.all([syncFinanceData(data), syncNfeData(data)]);
+      // A PERMISSAO ANTES DA CARGA. O portao central ja barrou quem nao tem
+      // sessao; esta e' a defesa em profundidade, e nao ha por que pagar a
+      // leitura do cadastro inteiro para so depois dizer "sem permissao". O
+      // usuario e' memorizado por requisicao, entao perguntar antes nao custa
+      // uma ida a mais ao banco.
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
-      let products = [];
-      try {
-        products = (await db.getProducts()).map((p) => ({ id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice }));
-      } catch (error) {
-        products = [];
+      const pedidoDePartes = url.searchParams.get('partes');
+      let partes = null; // null = a meta inteira, como sempre foi
+      if (pedidoDePartes !== null) {
+        const nomes = pedidoDePartes.split(',').map((p) => p.trim()).filter(Boolean);
+        const desconhecidas = nomes.filter((p) => !PARTES_DA_META_DE_CADASTROS.includes(p));
+        if (!nomes.length || desconhecidas.length) {
+          const motivo = nomes.length ? `Parte desconhecida da meta: ${desconhecidas.join(', ')}.` : 'Nenhuma parte pedida.';
+          return sendJson(res, { error: `${motivo} As partes são: ${PARTES_DA_META_DE_CADASTROS.join(', ')}.` }, 400);
+        }
+        partes = new Set(nomes);
       }
-      // Fase CD: o formulario da conta bancaria pergunta de qual estabelecimento
-      // ela e'. `.catch(() => [])` porque Cadastros nao depende do Fiscal: sem
-      // estabelecimento nenhum cadastrado, o campo some e o resto da tela
-      // continua funcionando.
-      const estabelecimentosCad = await fiscalDb.getEstabelecimentos().catch(() => []);
-      return sendJson(res, {
-        directory: cadastrosCore.directory(data),
-        products,
-        deposits: data.deposits,
-        bankAccounts: data.bankAccounts,
-        estabelecimentos: estabelecimentosCad
+      const quer = (parte) => partes === null || partes.has(parte);
+
+      const data = loadData();
+      // Pessoas, CNPJs e depósitos vêm juntos (uma chamada só, do cache de
+      // 30 s): quem pede diretório e depósitos não paga duas vezes.
+      if (quer('directory') || quer('deposits')) await syncCadastroData(data);
+      // syncNfeData tambem: o cadastro de equipamento escolhe a NF-e que vendeu
+      // a maquina, e e' dela que sai a data de inicio da garantia (fase BB).
+      //
+      // AS CONTAS, E NAO O FINANCEIRO INTEIRO. Era syncFinanceData, e da
+      // resposta so `bankAccounts` saia dele: os 27.362 lancamentos e as 25.709
+      // baixas eram lidos e jogados fora a cada abertura de tela de Cadastros
+      // (635 ms -> 49 ms medidos, JSON identico byte a byte). Ver
+      // syncContasBancarias.
+      await Promise.all([
+        quer('bankAccounts') ? syncContasBancarias(data) : null,
+        quer('notasFiscais') ? syncNfeData(data) : null
+      ]);
+
+      // As chaves entram NA ORDEM de sempre: a meta inteira continua saindo
+      // byte a byte igual a de antes desta mudanca.
+      const resposta = {};
+      if (quer('directory')) resposta.directory = cadastrosCore.directory(data);
+      if (quer('products')) {
+        let products = [];
+        try {
+          products = (await db.getProducts()).map((p) => ({ id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice }));
+        } catch (error) {
+          products = [];
+        }
+        resposta.products = products;
+      }
+      if (quer('deposits')) resposta.deposits = data.deposits;
+      if (quer('bankAccounts')) resposta.bankAccounts = data.bankAccounts;
+      if (quer('estabelecimentos')) {
+        // Fase CD: o formulario da conta bancaria pergunta de qual estabelecimento
+        // ela e'. `.catch(() => [])` porque Cadastros nao depende do Fiscal: sem
+        // estabelecimento nenhum cadastrado, o campo some e o resto da tela
+        // continua funcionando.
+        const estabelecimentosCad = await fiscalDb.getEstabelecimentos().catch(() => []);
+        resposta.estabelecimentos = estabelecimentosCad
           .filter((e) => e.ativo !== false)
-          .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia })),
-        paymentMethods: data.paymentMethods,
-        // As credenciadoras alimentam o select da forma de pagamento (fase BV).
-        // Só as ATIVAS: a inativa some do formulário e continua no histórico.
-        cardAcquirers: await adquirentesDb.listar({ apenasAtivas: true }),
-        saleStatuses: data.saleStatuses,
-        companies: data.companies,
+          .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia }));
+      }
+      if (quer('paymentMethods')) resposta.paymentMethods = data.paymentMethods;
+      // As credenciadoras alimentam o select da forma de pagamento (fase BV).
+      // Só as ATIVAS: a inativa some do formulário e continua no histórico.
+      if (quer('cardAcquirers')) resposta.cardAcquirers = await adquirentesDb.listar({ apenasAtivas: true });
+      if (quer('saleStatuses')) resposta.saleStatuses = data.saleStatuses;
+      if (quer('companies')) resposta.companies = data.companies;
+      if (quer('users')) {
         // OS USUARIOS VEM DO BANCO, e nao de `data.users` (fase BC).
         //
         // `normalizeData` APAGA data.users em toda carga, de proposito: era
@@ -13793,20 +14040,21 @@ async function tratarRequisicao(req, res) {
         //
         // So id e nome saem daqui: e' um select, e o resto do cadastro de
         // usuario (papel, permissoes, hash de senha) nao tem por que trafegar.
-        users: (await db.getUsers().catch(() => []))
+        resposta.users = (await db.getUsers().catch(() => []))
           .filter((u) => u.active !== false)
-          .map((u) => ({ id: u.id, name: u.name })),
-        // Fase BB: as notas que o cadastro de equipamento pode escolher.
-        //
-        // SO AS QUE VALEM COMO DOCUMENTO. Nota cancelada, denegada ou que
-        // terminou em erro nao vendeu nada — contar garantia a partir dela seria
-        // contar a partir de uma venda que nao existiu.
-        //
-        // O rotulo carrega numero, data e destinatario porque e' assim que
-        // alguem acha a nota certa numa lista: pelo cliente e pelo dia, nao pelo
-        // uuid.
-        notasFiscais: notasParaEquipamento(data)
-      });
+          .map((u) => ({ id: u.id, name: u.name }));
+      }
+      // Fase BB: as notas que o cadastro de equipamento pode escolher.
+      //
+      // SO AS QUE VALEM COMO DOCUMENTO. Nota cancelada, denegada ou que
+      // terminou em erro nao vendeu nada — contar garantia a partir dela seria
+      // contar a partir de uma venda que nao existiu.
+      //
+      // O rotulo carrega numero, data e destinatario porque e' assim que
+      // alguem acha a nota certa numa lista: pelo cliente e pelo dia, nao pelo
+      // uuid.
+      if (quer('notasFiscais')) resposta.notasFiscais = notasParaEquipamento(data);
+      return sendJson(res, resposta);
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar dados dos cadastros', 500);
     }
@@ -13821,15 +14069,22 @@ async function tratarRequisicao(req, res) {
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
+      const regras = data.productCashbacks || [];
       let productsById = new Map();
-      try {
-        // Índice de RESOLUÇÃO: completo, inclusive escriturais. Quem lê um
-        // registro antigo precisa achar o produto, mesmo o que não é mercadoria.
-        productsById = new Map((await db.getProducts({ incluirEscriturais: true })).map((p) => [p.id, p]));
-      } catch (error) {
-        productsById = new Map();
+      // SEM REGRA, SEM CATALOGO. O indice abaixo le os 5.561 produtos
+      // (`select *`, ~55 ms) so para dar nome a cada regra — e com zero regras
+      // nao ha nome nenhum a dar: a resposta e' `[]` de qualquer jeito. Com
+      // regra, o caminho e' o de sempre.
+      if (regras.length) {
+        try {
+          // Índice de RESOLUÇÃO: completo, inclusive escriturais. Quem lê um
+          // registro antigo precisa achar o produto, mesmo o que não é mercadoria.
+          productsById = new Map((await db.getProducts({ incluirEscriturais: true })).map((p) => [p.id, p]));
+        } catch (error) {
+          productsById = new Map();
+        }
       }
-      const cashbacks = (data.productCashbacks || [])
+      const cashbacks = regras
         .map((item) => {
           const product = productsById.get(item.productId);
           return {
@@ -13876,6 +14131,14 @@ async function tratarRequisicao(req, res) {
       // Só para este cadastro: carregar em todos seria ida ao banco por nada.
       if (cadastroCollectionMatch[1] === 'payment-methods') {
         data.cardAcquirers = await adquirentesDb.listar();
+        // E AS CONTAS BANCARIAS, PELO MESMO MOTIVO. O `build` confere o
+        // bankAccountId contra `data.bankAccounts`, e essa colecao esta em
+        // NAO_PERSISTIR: sem carregar aqui ela chegava SEMPRE vazia, e toda
+        // forma de pagamento com conta era recusada com "Conta bancaria nao
+        // encontrada." — a tela oferecia as contas no select e nenhuma podia
+        // ser salva. De carona o `serialize` volta a dar nome a coluna "Conta
+        // bancaria" da lista, que saia sempre "-".
+        await syncContasBancarias(data);
       }
       const list = data[config.key];
       const helpers = { sanitizeDigits, isValidCnpj, isValidCpf, isValidDocument };
@@ -14111,8 +14374,20 @@ async function tratarRequisicao(req, res) {
         // Conta usada em lancamento, baixa ou extrato nao pode sumir sem
         // quebrar o Financeiro. A conferencia le o BANCO — a mesma regra do
         // cadastros-core, sobre a fonte certa.
+        //
+        // O BANCO RESPONDE "TEM ALGUM?", A REGRA CONTINUA NO cadastros-core.
+        // Era syncFinanceData (~530 ms, o Financeiro inteiro em memoria) para
+        // tres perguntas de sim ou nao. Agora tres `exists` respondem, e cada
+        // colecao que a regra consulta recebe UMA linha de amostra quando ha
+        // uso — basta para o `.some` dela casar. Ordem das perguntas e texto
+        // das mensagens ficam num lugar so, la. As formas de pagamento
+        // continuam vindo do db.json, como sempre.
         const dados = loadData();
-        await syncFinanceData(dados);
+        const usos = await usosDaContaBancaria(id);
+        const amostra = (ha) => (ha ? [{ bankAccountId: id }] : []);
+        dados.finance = amostra(usos.lancamentos);
+        dados.financialPayments = amostra(usos.baixas);
+        dados.bankTransactions = amostra(usos.transacoes);
         const bloqueio = cadastrosCore.CADASTRO_COLLECTIONS['bank-accounts'].inUse(id, dados);
         if (bloqueio) return sendJson(res, { error: bloqueio }, 409);
 

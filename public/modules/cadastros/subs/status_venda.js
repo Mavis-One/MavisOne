@@ -7,6 +7,10 @@ const SALE_STATUS_KIND_LABELS = {
 };
 
 window.MavisSubscreenRegistry.cadastros.status_venda = window.MavisCadastros.makeListScreen({
+  // Esta tela não lê nada da meta de Cadastros, então não a pede (era 1,4 MB
+  // por abertura). Se passar a ler, declare a parte aqui —
+  // scripts/test-meta-das-telas-de-cadastro.js cobra.
+  metaPartes: [],
   title: 'Status de Venda',
   tableTitle: 'Status cadastrados',
   endpoint: '/api/cadastros/sale-statuses',

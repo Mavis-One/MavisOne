@@ -122,6 +122,10 @@ const POPULA = {
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
+  // Só as contas, sem lançamentos e baixas: para quem quer a lista de contas e
+  // nada mais (a meta de Cadastros, o formulário da forma de pagamento). Ver o
+  // comentário dela no server.js.
+  syncContasBancarias: ['bankAccounts'],
   // Fase DS: os recortes do Financeiro (server.js, "O FINANCEIRO CARREGA O QUE
   // A ROTA USA"). Cada um popula as MESMAS chaves que syncFinanceData, com menos
   // registros. Este guarda vê que a chave deixou de chegar vazia — não vê se o
@@ -179,7 +183,7 @@ const INFRA = new Set([
   // Fase DS — ver os comentários em POPULA.
   'syncSalesDataDosIds', 'syncSalesDataParaBusca', 'syncFinanceDataDosPedidos', 'syncNfeDataParaVendas',
   'syncPurchasesData', 'syncNfeData',
-  'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
+  'syncFinanceData', 'syncContasBancarias', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
   // Fase DS: os recortes do Financeiro, mesmos motivos de syncFinanceData.
   'syncFinanceCadastroData', 'syncLancamentosPorId', 'syncLancamentosEmAberto',
   'syncLancamentosDasNotas', 'syncLancamentosParaResumo', 'syncNfesManuais',

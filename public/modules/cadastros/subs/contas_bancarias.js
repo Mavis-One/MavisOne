@@ -9,6 +9,10 @@ const BANK_ACCOUNT_TYPE_LABELS = {
 // Mesma coleção que o Financeiro usa nos lançamentos — por isso a exclusão é
 // bloqueada quando há movimento vinculado.
 window.MavisSubscreenRegistry.cadastros.contas_bancarias = window.MavisCadastros.makeListScreen({
+  // O que esta tela lê da meta de Cadastros, e só isso: ela pede só estas
+  // partes. Leitura nova da meta tem de entrar aqui — sem isso o select
+  // fica vazio (scripts/test-meta-das-telas-de-cadastro.js cobra).
+  metaPartes: ['estabelecimentos'],
   title: 'Contas Bancárias',
   tableTitle: 'Contas cadastradas',
   endpoint: '/api/cadastros/bank-accounts',

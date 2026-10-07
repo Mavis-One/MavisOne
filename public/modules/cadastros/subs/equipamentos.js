@@ -2,6 +2,10 @@ window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.cadastros = window.MavisSubscreenRegistry.cadastros || {};
 
 window.MavisSubscreenRegistry.cadastros.equipamentos = window.MavisCadastros.makeListScreen({
+  // Esta tela não lê nada da meta de Cadastros, então não a pede (era 1,4 MB
+  // por abertura). Se passar a ler, declare a parte aqui —
+  // scripts/test-meta-das-telas-de-cadastro.js cobra.
+  metaPartes: [],
   title: 'Equipamentos',
   tableTitle: 'Equipamentos cadastrados',
   endpoint: '/api/cadastros/equipments',

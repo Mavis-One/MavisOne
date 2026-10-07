@@ -8,6 +8,10 @@ const PAYMENT_TYPE_LABELS = {
 };
 
 window.MavisSubscreenRegistry.cadastros.formas_pagamento = window.MavisCadastros.makeListScreen({
+  // Esta tela não lê nada da meta de Cadastros, então não a pede (era 1,4 MB
+  // por abertura). Se passar a ler, declare a parte aqui —
+  // scripts/test-meta-das-telas-de-cadastro.js cobra.
+  metaPartes: [],
   title: 'Formas de Pagamento',
   tableTitle: 'Formas de pagamento cadastradas',
   endpoint: '/api/cadastros/payment-methods',

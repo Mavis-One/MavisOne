@@ -152,6 +152,9 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   // --------------------------------------------------------------- Expedientes
   R.expedientes = C.makeListScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Expedientes',
     tableTitle: 'Expedientes',
     endpoint: '/api/hr/work-schedules',
@@ -174,6 +177,9 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
 
   R.novo_expediente = C.makeFormScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Novo Expediente',
     entityLabel: 'expediente',
     endpoint: '/api/hr/work-schedules',
@@ -217,6 +223,9 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   // ---------------------------------------------------- Tipos de colaborador
   R.tipos_colaborador = C.makeInlineRegisterScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Tipo Colaboradores',
     tableTitle: 'Tipos de colaborador',
     entityLabel: 'tipo',
@@ -242,6 +251,9 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   // ------------------------------------------------ Categorias de colaborador
   R.categorias_colaborador = C.makeInlineRegisterScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Categoria Colaboradores',
     tableTitle: 'Categorias de colaborador',
     entityLabel: 'categoria',
@@ -269,6 +281,9 @@ window.MavisSubscreenRegistry.hr = window.MavisSubscreenRegistry.hr || {};
   // uma migração de dados para trocar uma palavra que só aparece na tela.
   R.profissoes = C.makeInlineRegisterScreen({
     ...base,
+    // Esta tela não lê nada da meta do módulo: não a pede (scripts/
+    // test-meta-das-telas-de-cadastro.js cobra). Se passar a ler, tire a linha.
+    metaEndpoint: null,
     title: 'Profissões',
     tableTitle: 'Profissões',
     entityLabel: 'profissão',

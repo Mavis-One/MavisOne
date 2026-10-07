@@ -2468,27 +2468,29 @@ function getMissingRequiredRegistrationFields(record) {
 }
 
 /**
- * O QUE RECUSA: so o documento. Casca sobre window.MavisDuplicidade, que o
- * servidor tambem usa -- a mesma resposta nas duas pontas, por construcao.
- */
-function findDuplicateRegistrationClient(existingRecords, record, excludeId) {
-  return duplicidadeCadastro().bloqueio(existingRecords, record, excludeId);
-}
-
-/**
- * O QUE MERECE PERGUNTA: nome e endereco repetidos.
+ * A PERGUNTA DE DUPLICIDADE, ANTES DE SALVAR — feita ao servidor.
  *
- * Recusavam o cadastro, e travavam 824 registros legitimos desta base (87 por
+ * O QUE RECUSA: so o documento (`bloqueio`). O QUE MERECE PERGUNTA: nome e
+ * endereco repetidos (`aviso`, o texto do confirm, ou ''). Nome e endereco
+ * recusavam o cadastro e travavam 824 registros legitimos desta base (87 por
  * nome, 737 por endereco) -- inclusive a EDICAO deles, porque a conferencia
- * ignora so o proprio id: abrir um homonimo para corrigir o telefone achava o
- * outro e recusava.
+ * ignora so o proprio id.
  *
- * Devolve o texto da pergunta, ou '' quando nao ha coincidencia.
+ * Era conferido AQUI, contra as 6.492 pessoas que a tela baixava a cada
+ * clique (7,4 MB). A tela deixou de baixá-las (a lista vem paginada do
+ * servidor), entao pergunta a /api/cadastros/duplicidade: a MESMA regra
+ * (window.MavisDuplicidade, que o servidor carrega por require) sobre a MESMA
+ * lista ([...pessoas, ...CNPJs], do cache que /pessoas e /cnpjs devolviam).
+ * Vao so os campos que a regra le (CAMPOS_LIDOS, que mora junto dela).
  */
-function avisoDeDuplicidadeCliente(existingRecords, record, excludeId) {
-  return duplicidadeCadastro().textoDoAviso(
-    duplicidadeCadastro().avisos(existingRecords, record, excludeId)
-  );
+async function perguntarDuplicidadeDeCadastro(record, excludeId) {
+  const consulta = new URLSearchParams();
+  duplicidadeCadastro().CAMPOS_LIDOS.forEach((campo) => {
+    if (record[campo] !== undefined && record[campo] !== null) consulta.set(campo, String(record[campo]));
+  });
+  if (excludeId) consulta.set('excluirId', excludeId);
+  const resposta = await api(`/api/cadastros/duplicidade?${consulta.toString()}`);
+  return { bloqueio: resposta.bloqueio || null, aviso: resposta.aviso || '' };
 }
 
 const getDocumentType = (documentValue) => window.MavisDocumento.tipoDe(documentValue);
@@ -6280,64 +6282,43 @@ async function loadModule(moduleName) {
     // Depósitos>Edição/deposits_edit — ver funções renderXxx mais abaixo)
     // ========================================================================
     if (moduleName === 'cadastros') {
-      const [peopleResponse, cnpjsResponse, depositsResponse] = await Promise.all([
-        api('/api/cadastros/pessoas'),
-        api('/api/cadastros/cnpjs'),
-        api('/api/cadastros/deposits')
-      ]);
       const rawSub = state.activeSub || 'list';
       const sub = ['edit', 'register', 'list', 'deposits', 'deposits_register', 'deposits_edit'].includes(rawSub)
         ? rawSub
         : 'list';
-      const people = Array.isArray(peopleResponse.people) ? peopleResponse.people : [];
-      const cnpjs = Array.isArray(cnpjsResponse.cnpjs) ? cnpjsResponse.cnpjs : [];
-      const deposits = Array.isArray(depositsResponse.deposits) ? depositsResponse.deposits : [];
       const peopleDraft = state.cadastroDraft.people || {};
       const cnpjDraft = state.cadastroDraft.cnpjs || {};
       const depositDraft = state.cadastroDraft.depositForm || {};
-      const listFilters = {
-        show: Boolean(state.cadastroDraft.listFilters?.show),
-        type: state.cadastroDraft.listFilters?.type || 'all',
-        status: state.cadastroDraft.listFilters?.status || 'all',
-        query: state.cadastroDraft.listFilters?.query || '',
-        nameFantasy: state.cadastroDraft.listFilters?.nameFantasy || '',
-        corporateName: state.cadastroDraft.listFilters?.corporateName || '',
-        uniqueCode: state.cadastroDraft.listFilters?.uniqueCode || '',
-        email: state.cadastroDraft.listFilters?.email || '',
-        categoryRole: state.cadastroDraft.listFilters?.categoryRole || 'all',
-        document: state.cadastroDraft.listFilters?.document || '',
-        city: state.cadastroDraft.listFilters?.city || '',
-        zipCode: state.cadastroDraft.listFilters?.zipCode || '',
-        uf: state.cadastroDraft.listFilters?.uf || '',
-        group: state.cadastroDraft.listFilters?.group || '',
-        defaultCarrier: state.cadastroDraft.listFilters?.defaultCarrier || '',
-        showClients: state.cadastroDraft.listFilters?.showClients ?? true,
-        showSuppliers: state.cadastroDraft.listFilters?.showSuppliers ?? true,
-        showTechnicians: state.cadastroDraft.listFilters?.showTechnicians ?? true,
-        showCollaborators: state.cadastroDraft.listFilters?.showCollaborators ?? true,
-        showTransporters: state.cadastroDraft.listFilters?.showTransporters ?? true,
-        showSellers: state.cadastroDraft.listFilters?.showSellers ?? true,
-        showLeaders: state.cadastroDraft.listFilters?.showLeaders ?? true,
-        showManagers: state.cadastroDraft.listFilters?.showManagers ?? true,
-        showRepresented: state.cadastroDraft.listFilters?.showRepresented ?? true,
-        showCredenciadoras: state.cadastroDraft.listFilters?.showCredenciadoras ?? true,
-        showManufacturers: state.cadastroDraft.listFilters?.showManufacturers ?? true,
-        onlyInactive: state.cadastroDraft.listFilters?.onlyInactive ?? false,
-        dateStart: state.cadastroDraft.listFilters?.dateStart || '',
-        dateEnd: state.cadastroDraft.listFilters?.dateEnd || '',
-        // Em qual página da lista a pessoa está. Mora junto dos filtros de
-        // propósito: os dois descrevem o mesmo recorte, e trocar um sem cuidar
-        // do outro é o que produz "página 40 de 2".
-        pagina: Number(state.cadastroDraft.listFilters?.pagina) || 1,
-        // Por qual coluna, e para que lado. Mesma casa dos filtros e da página,
-        // pelo mesmo motivo: os três descrevem juntos o que está na tela.
-        //
-        // `createdAt` descendente é o padrão porque era o comportamento de
-        // sempre — quem nunca clicar em cabeçalho nenhum vê a lista exatamente
-        // como via antes: o cadastro mais novo em cima.
-        ordemCampo: state.cadastroDraft.listFilters?.ordemCampo || 'createdAt',
-        ordemDirecao: state.cadastroDraft.listFilters?.ordemDirecao === 'asc' ? 'asc' : 'desc'
-      };
+      // Os filtros, a página e a ordem da lista. As regras (e os padrões de
+      // sempre: Cadastrado em ▼, página 1, todos os papéis exibidos) moram em
+      // public/modules/shared/lista_de_cadastros.js, o mesmo arquivo que monta
+      // a página no servidor.
+      const Lista = window.MavisListaDeCadastros;
+      const listFilters = Lista.normalizarFiltros(state.cadastroDraft.listFilters);
+
+      // CADA SUB-TELA BUSCA SÓ O QUE USA (rodada de desempenho).
+      //
+      // Eram as três listas inteiras para QUALQUER sub-tela — inclusive os
+      // formulários de depósito, que não leem nenhuma — e de novo a cada clique:
+      // 7.425 KB cru (695 KB gzip) de pessoas por render, 31 pontos desta tela
+      // redesenham. Agora:
+      //   - Cadastros (list): só a PÁGINA, montada no servidor (~6 KB gzip);
+      //   - Cadastro/Edição: nada — a duplicidade é perguntada ao servidor na
+      //     hora de salvar (/api/cadastros/duplicidade), e a edição abre com o
+      //     registro completo buscado pelo id;
+      //   - Depósitos: só os depósitos (3 KB);
+      //   - formulário de depósito: nada (o rascunho vem do estado).
+      let paginaDaLista = { linhas: [], total: 0, pagina: 1, totalPaginas: 1, primeiro: 0 };
+      let deposits = [];
+      if (sub === 'list') {
+        const limites = Lista.limitesDeData(listFilters.dateStart, listFilters.dateEnd);
+        const consulta = new URLSearchParams({ filtros: JSON.stringify(listFilters), inicio: limites.inicio, fim: limites.fim });
+        paginaDaLista = await api(`/api/cadastros/lista?${consulta.toString()}`);
+      } else if (sub === 'deposits') {
+        const depositsResponse = await api('/api/cadastros/deposits');
+        deposits = Array.isArray(depositsResponse.deposits) ? depositsResponse.deposits : [];
+      }
+      const visiveisDaLista = () => (Array.isArray(paginaDaLista.linhas) ? paginaDaLista.linhas : []);
       const depositsFilters = {
         show: Boolean(state.cadastroDraft.depositsFilters?.show),
         query: state.cadastroDraft.depositsFilters?.query || '',
@@ -6896,218 +6877,26 @@ async function loadModule(moduleName) {
 
       // Sub-aba: Cadastros (lista unificada — padrão da aba)
       const renderUnifiedList = () => {
-        const normalize = (value) => String(value || '')
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .toLocaleLowerCase('pt-BR')
-          .trim();
-        const query = normalize(listFilters.query).trim();
-        const includesText = (fieldValue, filterValue) => normalize(fieldValue).includes(normalize(filterValue).trim());
-        const roleVisibleMap = [
-          { role: 'Cliente', enabled: listFilters.showClients },
-          { role: 'Fornecedor', enabled: listFilters.showSuppliers },
-          { role: 'Técnico', enabled: listFilters.showTechnicians },
-          { role: 'Colaborador', enabled: listFilters.showCollaborators },
-          { role: 'Transportadora', enabled: listFilters.showTransporters },
-          { role: 'Vendedor', enabled: listFilters.showSellers },
-          { role: 'Líder', enabled: listFilters.showLeaders },
-          { role: 'Gerente', enabled: listFilters.showManagers },
-          { role: 'Representada', enabled: listFilters.showRepresented },
-          { role: 'Credenciadora', enabled: listFilters.showCredenciadoras },
-          { role: 'Fabricante', enabled: listFilters.showManufacturers }
-        ];
-
-        const merged = [
-          ...people.map((person) => ({
-            kind: 'people',
-            id: person.id,
-            code: person.code || '',
-            cadastroTipo: person.type === 'pessoa-juridica' ? 'Pessoa jurídica' : 'Pessoa física',
-            name: person.name || '',
-            tradeName: person.tradeName || '',
-            document: person.document || '',
-            registrationStatus: person.registrationStatus || '',
-            email: person.email || '',
-            phone: person.phone || '',
-            status: person.status || 'ativo',
-            city: person.city || '',
-            zipCode: person.zipCode || '',
-            state: person.state || '',
-            group: person.group || '',
-            defaultCarrier: person.defaultCarrier || '',
-            roles: Array.isArray(person.roles) ? person.roles : [],
-            createdAt: person.createdAt || ''
-          })),
-          ...cnpjs.map((company) => ({
-            kind: 'cnpj',
-            id: company.id,
-            code: company.code || '',
-            cadastroTipo: 'CNPJ',
-            name: company.name || '',
-            tradeName: company.tradeName || '',
-            document: company.document || '',
-            registrationStatus: company.registrationStatus || '',
-            email: company.email || '',
-            phone: company.phone || '',
-            status: company.status || 'ativo',
-            city: company.city || '',
-            zipCode: company.zipCode || '',
-            state: company.state || '',
-            group: company.group || '',
-            defaultCarrier: company.defaultCarrier || '',
-            roles: Array.isArray(company.roles) ? company.roles : [],
-            createdAt: company.createdAt || ''
-          }))
-        ]
-          .filter((row) => {
-            const normalizedRoles = (Array.isArray(row.roles) ? row.roles : []).map(normalize).filter(Boolean);
-            const hasLegacyWildcardRole = normalizedRoles.includes('on');
-            const hasRole = (roleName) => hasLegacyWildcardRole || normalizedRoles.includes(normalize(roleName));
-
-            if (listFilters.type === 'people' && row.kind !== 'people') return false;
-            if (listFilters.type === 'cnpj' && row.kind !== 'cnpj') return false;
-            if (listFilters.status !== 'all' && normalize(row.status) !== normalize(listFilters.status)) return false;
-            if (listFilters.onlyInactive && normalize(row.status) !== 'inativo') return false;
-
-            if (listFilters.nameFantasy && !includesText(`${row.name} ${row.tradeName}`, listFilters.nameFantasy)) return false;
-            if (listFilters.corporateName && !includesText(row.name, listFilters.corporateName)) return false;
-            if (listFilters.uniqueCode && !includesText(row.code, listFilters.uniqueCode)) return false;
-            if (listFilters.email && !includesText(row.email, listFilters.email)) return false;
-            if (listFilters.document && !includesText(sanitizeDigits(row.document), sanitizeDigits(listFilters.document))) return false;
-            if (listFilters.city && !includesText(row.city, listFilters.city)) return false;
-            if (listFilters.zipCode && !includesText(sanitizeDigits(row.zipCode), sanitizeDigits(listFilters.zipCode))) return false;
-            if (listFilters.uf && !includesText(row.state, listFilters.uf)) return false;
-            if (listFilters.group && !includesText(row.group, listFilters.group)) return false;
-            if (listFilters.defaultCarrier && !includesText(row.defaultCarrier, listFilters.defaultCarrier)) return false;
-
-            if (listFilters.categoryRole !== 'all') {
-              if (!hasRole(listFilters.categoryRole)) return false;
-            }
-
-            if (listFilters.dateStart) {
-              const created = new Date(row.createdAt || '');
-              const start = new Date(`${listFilters.dateStart}T00:00:00`);
-              if (!Number.isNaN(created.getTime()) && created < start) return false;
-            }
-            if (listFilters.dateEnd) {
-              const created = new Date(row.createdAt || '');
-              const end = new Date(`${listFilters.dateEnd}T23:59:59`);
-              if (!Number.isNaN(created.getTime()) && created > end) return false;
-            }
-
-            const hiddenRoles = roleVisibleMap.filter((entry) => !entry.enabled).map((entry) => entry.role);
-            if (hiddenRoles.length && !hasLegacyWildcardRole && hiddenRoles.some((hidden) => hasRole(hidden))) {
-              return false;
-            }
-
-            if (!query) return true;
-            return [
-              row.code,
-              row.name,
-              row.tradeName,
-              row.document,
-              row.email,
-              row.phone,
-              row.cadastroTipo,
-              row.registrationStatus,
-              row.city,
-              row.state,
-              row.group,
-              row.id
-            ].some((field) => normalize(field).includes(query));
-          });
-
         // ---------------------------------------------------------------
-        // A ORDEM VALE SOBRE A LISTA INTEIRA, e não sobre a página visível.
+        // A PÁGINA VEM PRONTA DO SERVIDOR (rodada de desempenho).
         //
-        // É o ponto que decide se a ordenação serve para alguma coisa. Ordenar
-        // só as 100 linhas da tela reembaralharia cada página por conta
-        // própria: a página 2 começaria de novo no "A", e o maior valor da
-        // lista poderia estar em qualquer página. A pessoa clicaria em "Código"
-        // esperando achar o maior e encontraria o maior DAQUELE PEDAÇO.
+        // O filtro, a ordem (sobre a lista INTEIRA, antes do corte) e o corte
+        // em páginas de 100 moravam aqui, e rodavam sobre as 6.492 pessoas
+        // baixadas a cada clique. Foram para
+        // public/modules/shared/lista_de_cadastros.js — sem mudar regra — e
+        // rodam no servidor (/api/cadastros/lista), que manda só a página.
         //
-        // Por isso o `sort` vem aqui — depois do filtro, antes do corte em
-        // páginas. Custa ordenar 6.492 itens a cada render (medido: 3 ms), e é
-        // esse o preço de a ordem significar o que ela diz.
+        // Virar página, ordenar, Buscar e Limpar continuam passando pelo mesmo
+        // caminho (renderApp + loadModule): cada clique pede UMA página, ~6 KB
+        // no fio, no lugar de 695 KB.
         // ---------------------------------------------------------------
-
-        // Cada coluna é comparada pelo que ela É, e não como texto solto:
-        //   número  — 'código' é texto no banco, mas 100 vem depois de 99;
-        //   data    — createdAt é ISO, então texto já ordena certo;
-        //   texto   — comparação pt-BR, sem diferenciar acento nem maiúscula,
-        //             para que "Álvaro" fique junto de "Alvaro" e não no fim.
-        const COLUNAS_ORDENAVEIS = {
-          code: { rotulo: 'Código', tipo: 'numero' },
-          cadastroTipo: { rotulo: 'Tipo', tipo: 'texto' },
-          name: { rotulo: 'Nome / Razão social', tipo: 'texto' },
-          tradeName: { rotulo: 'Fantasia', tipo: 'texto' },
-          document: { rotulo: 'Documento', tipo: 'numero' },
-          email: { rotulo: 'E-mail', tipo: 'texto' },
-          phone: { rotulo: 'Telefone', tipo: 'numero' },
-          status: { rotulo: 'Status', tipo: 'texto' },
-          createdAt: { rotulo: 'Cadastrado em', tipo: 'data' }
-        };
-        const campoDaOrdem = COLUNAS_ORDENAVEIS[listFilters.ordemCampo] ? listFilters.ordemCampo : 'createdAt';
-        const direcaoDaOrdem = listFilters.ordemDirecao === 'asc' ? 'asc' : 'desc';
-        const comparadorDePtBr = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
-
-        merged.sort((a, b) => {
-          const tipo = COLUNAS_ORDENAVEIS[campoDaOrdem].tipo;
-          const va = a[campoDaOrdem];
-          const vb = b[campoDaOrdem];
-          const vazioA = va === null || va === undefined || String(va).trim() === '';
-          const vazioB = vb === null || vb === undefined || String(vb).trim() === '';
-          // VAZIO VAI SEMPRE PARA O FIM, nos dois sentidos. Inverter junto com a
-          // direção encheria o topo de traços ao pedir "maior primeiro" — e
-          // quem ordena por e-mail quer ver os e-mails, não quem não tem.
-          if (vazioA && vazioB) return 0;
-          if (vazioA) return 1;
-          if (vazioB) return -1;
-
-          let resultado;
-          if (tipo === 'numero') {
-            // 'código' e 'documento' são texto no banco; comparados como texto,
-            // o 100 cairia entre o 10 e o 11. Só os dígitos importam.
-            const na = Number(String(va).replace(/\D/g, '')) || 0;
-            const nb = Number(String(vb).replace(/\D/g, '')) || 0;
-            resultado = na - nb;
-          } else if (tipo === 'data') {
-            resultado = String(va).localeCompare(String(vb));
-          } else {
-            resultado = comparadorDePtBr.compare(String(va), String(vb));
-          }
-          // Empate resolvido pelo código: sem isso, duas pessoas com o mesmo
-          // nome trocariam de lugar entre um render e outro, e a lista pareceria
-          // se mexer sozinha.
-          if (resultado === 0) resultado = (Number(a.code) || 0) - (Number(b.code) || 0);
-          return direcaoDaOrdem === 'asc' ? resultado : -resultado;
-        });
-
-        // ---------------------------------------------------------------
-        // A LISTA SAI EM PÁGINAS DE 100 (importação do ViperERP, 6.492 pessoas).
-        //
-        // Antes a tela desenhava TODAS as linhas de uma vez. Medido no Chrome
-        // com os 6.492 cadastros: 129.959 nós no DOM e 589 ms só para desenhar,
-        // sem contar a busca. Funcionava — e ia piorando a cada cadastro novo,
-        // sem nunca dar erro.
-        //
-        // O corte é DEPOIS do filtro e da ordenação: a página 1 tem de ser a
-        // primeira centena do que a pessoa pediu, e não a primeira centena do
-        // banco filtrada em seguida.
-        //
-        // Virar página passa pelo mesmo caminho de qualquer filtro
-        // (renderApp + loadModule), e isso custa uma ida ao servidor. Medido:
-        // as três rotas em paralelo respondem em 156 ms, e desenhar 100 linhas
-        // é uma fração do que eram 6.492. O que doía era o DOM, não a rede.
-        // ---------------------------------------------------------------
-        const POR_PAGINA = 100;
-        const totalRegistros = merged.length;
-        const totalPaginas = Math.max(1, Math.ceil(totalRegistros / POR_PAGINA));
-        // Preso entre 1 e o total: um filtro que reduz a lista enquanto a pessoa
-        // está na página 40 não pode deixá-la olhando para o vazio.
-        const paginaAtual = Math.min(Math.max(1, listFilters.pagina), totalPaginas);
-        const primeiroDaPagina = (paginaAtual - 1) * POR_PAGINA;
-        const visiveis = merged.slice(primeiroDaPagina, primeiroDaPagina + POR_PAGINA);
+        const { COLUNAS_ORDENAVEIS } = Lista;
+        const { campoDaOrdem, direcaoDaOrdem } = Lista.ordemDosFiltros(listFilters);
+        const visiveis = visiveisDaLista();
+        const totalRegistros = Number(paginaDaLista.total) || 0;
+        const totalPaginas = Number(paginaDaLista.totalPaginas) || 1;
+        const paginaAtual = Number(paginaDaLista.pagina) || 1;
+        const primeiroDaPagina = Number(paginaDaLista.primeiro) || 0;
 
         // A barra aparece em CIMA e EMBAIXO da tabela. Com 100 linhas, só
         // embaixo obrigaria a rolar a página inteira para virar a página.
@@ -7590,20 +7379,39 @@ async function loadModule(moduleName) {
         loadModule('cadastros');
       });
 
-      const openCadastroRowForEdit = (kind, id) => {
-        if (!id) return;
+      // A EDIÇÃO ABRE COM O REGISTRO INTEIRO, buscado pelo id.
+      //
+      // A linha da lista agora traz só o que a tabela desenha (a página vem do
+      // servidor). Abrir o formulário com ela e salvar gravaria vazio por cima
+      // de endereço, contatos e dados bancários, porque o formulário manda
+      // TODOS os campos. Então busca o cadastro completo — o mesmo objeto que a
+      // lista inteira trazia — e, se não conseguir, NÃO abre.
+      let abrindoEdicao = false;
+      const openCadastroRowForEdit = async (kind, id) => {
+        if (!id || abrindoEdicao) return;
+        abrindoEdicao = true;
+        let registro = null;
+        try {
+          const resposta = await api(kind === 'cnpj'
+            ? `/api/cadastros/cnpjs/${encodeURIComponent(id)}`
+            : `/api/cadastros/pessoas/${encodeURIComponent(id)}`);
+          registro = kind === 'cnpj' ? resposta.cnpj : resposta.person;
+        } catch (error) {
+          showToast(error.message || 'Não foi possível abrir o cadastro.', 'error');
+        } finally {
+          abrindoEdicao = false;
+        }
+        if (!registro) return;
 
         if (kind === 'cnpj') {
-          const company = cnpjs.find((entry) => entry.id === id);
-          if (!company) return;
+          const company = registro;
           state.cadastroDraft = {
             ...state.cadastroDraft,
             activeType: 'people',
             people: { ...company, kind: 'cnpj', type: 'pessoa-juridica', error: '', documentMessage: '' }
           };
         } else {
-          const person = people.find((entry) => entry.id === id);
-          if (!person) return;
+          const person = registro;
           state.cadastroDraft = { ...state.cadastroDraft, activeType: 'people', people: { ...person, kind: 'people', error: '', documentMessage: '' } };
         }
 
@@ -7632,8 +7440,9 @@ async function loadModule(moduleName) {
           if (!id) return;
 
           const isCnpj = kind === 'cnpj';
-          const collection = isCnpj ? cnpjs : people;
-          const item = collection.find((entry) => entry.id === id);
+          // O nome para a pergunta sai da linha da página que está na tela —
+          // é dela que o botão foi clicado.
+          const item = visiveisDaLista().find((entry) => entry.kind === (isCnpj ? 'cnpj' : 'people') && entry.id === id);
           const label = item?.name || 'registro';
           const confirmed = await confirmModal(`Excluir ${isCnpj ? 'CNPJ' : 'pessoa'} "${label}"?`);
           if (!confirmed) return;
@@ -7956,7 +7765,17 @@ async function loadModule(moduleName) {
           return;
         }
 
-        const duplicateMessage = findDuplicateRegistrationClient([...people, ...cnpjs], payload, payload.id);
+        // A conferência de duplicidade é perguntada ao servidor (ver
+        // perguntarDuplicidadeDeCadastro). Sem resposta, não salva: a mesma
+        // falha de rede derrubaria o salvamento logo em seguida.
+        let duplicidadeDoCadastro;
+        try {
+          duplicidadeDoCadastro = await perguntarDuplicidadeDeCadastro(payload, payload.id);
+        } catch (error) {
+          markFormError({ ...payload }, 'people', error.message || 'Não foi possível conferir a duplicidade do cadastro.');
+          return;
+        }
+        const duplicateMessage = duplicidadeDoCadastro.bloqueio;
         if (duplicateMessage) {
           markFormError({ ...payload }, 'people', duplicateMessage);
           return;
@@ -7968,7 +7787,7 @@ async function loadModule(moduleName) {
         // esta cadastrando pode responder: ele e quem sabe se e a mesma pessoa
         // ou o filho que mora no mesmo endereco. Aviso depois do salvamento
         // seria informacao sem acao.
-        const avisoDup = avisoDeDuplicidadeCliente([...people, ...cnpjs], payload, payload.id);
+        const avisoDup = duplicidadeDoCadastro.aviso;
         if (avisoDup && !(await confirmModal(avisoDup))) return;
 
         state.cadastroDraft = { ...state.cadastroDraft, people: payload };
@@ -8170,7 +7989,17 @@ async function loadModule(moduleName) {
           return;
         }
 
-        const duplicateMessage = findDuplicateRegistrationClient([...people, ...cnpjs], payload, payload.id);
+        // A conferência de duplicidade é perguntada ao servidor (ver
+        // perguntarDuplicidadeDeCadastro). Sem resposta, não salva: a mesma
+        // falha de rede derrubaria o salvamento logo em seguida.
+        let duplicidadeDoCadastro;
+        try {
+          duplicidadeDoCadastro = await perguntarDuplicidadeDeCadastro(payload, payload.id);
+        } catch (error) {
+          markFormError({ ...payload }, 'cnpjs', error.message || 'Não foi possível conferir a duplicidade do cadastro.');
+          return;
+        }
+        const duplicateMessage = duplicidadeDoCadastro.bloqueio;
         if (duplicateMessage) {
           markFormError({ ...payload }, 'cnpjs', duplicateMessage);
           return;
@@ -8182,7 +8011,7 @@ async function loadModule(moduleName) {
         // esta cadastrando pode responder: ele e quem sabe se e a mesma pessoa
         // ou o filho que mora no mesmo endereco. Aviso depois do salvamento
         // seria informacao sem acao.
-        const avisoDup = avisoDeDuplicidadeCliente([...people, ...cnpjs], payload, payload.id);
+        const avisoDup = duplicidadeDoCadastro.aviso;
         if (avisoDup && !(await confirmModal(avisoDup))) return;
 
         state.cadastroDraft = { ...state.cadastroDraft, cnpjs: payload };
