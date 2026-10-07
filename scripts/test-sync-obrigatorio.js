@@ -96,6 +96,10 @@ const POPULA = {
   // getOrdersResumidos: é para quem soma, conta E lista pedido de forma
   // compacta. Popula as mesmas duas coleções.
   syncSalesDataResumida: ['orders', 'quotes'],
+  // O pré-check fiscal: só os pedidos de um período. Popula `orders` e mais
+  // nada — orçamento e histórico de importação ficam de fora, e é isso que a
+  // ausência deles aqui declara.
+  syncSalesDataDoPeriodo: ['orders'],
   syncPurchasesData: ['purchases'],
   syncNfeData: ['nfes', 'nfe'],
   syncFinanceData: ['finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'],
@@ -140,7 +144,7 @@ const RESOLVE_SOZINHO = {
 const INFRA = new Set([
   'loadData', 'saveData', 'normalizeData', 'ensureCadastroCollections',
   'syncCadastroData', 'syncSalesData', 'syncSalesDataParaAgregado',
-  'syncSalesDataResumida',
+  'syncSalesDataResumida', 'syncSalesDataDoPeriodo',
   'syncPurchasesData', 'syncNfeData',
   'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
   // Fase DB: sincroniza por dentro, como o loadStockContext.

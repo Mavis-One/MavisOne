@@ -34,21 +34,33 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     return registros.filter((r) => r.status === filtro);
   }
 
-  async function desenhar(ctx) {
+  // AS NOTAS DESTA VISITA À TELA, por estabelecimento. Trocar o filtro só
+  // redesenha: o filtro é aplicado aqui (aplicarFiltro), e a lista que a rota
+  // devolve é sempre a mesma — antes, cada clique baixava de novo TODAS as
+  // notas do estabelecimento, com o JSON enviado e o recebido de cada uma.
+  // Entrar na tela, ou trocar o estabelecimento, carrega de novo.
+  let carregado = null;
+
+  async function desenhar(ctx, { reusar = false } = {}) {
     const { api, content, escapeHtml, state } = ctx;
     const redesenhar = () => desenhar(ctx);
 
-    const { lista, escolhido, erro } = await F.carregarEstabelecimentos(ctx);
-    if (!lista.length) { content.innerHTML = F.semEstabelecimento(escapeHtml, 'Logs NF-e', erro); return; }
-
-    let registros = [];
-    let erroConsulta = null;
-    try {
-      const res = await api(`/api/fiscal/nfe?estabelecimentoId=${encodeURIComponent(escolhido)}`);
-      registros = res.records || [];
-    } catch (e) {
-      erroConsulta = e.message || 'Não foi possível carregar os logs.';
+    if (!reusar || !carregado) {
+      const { lista, escolhido, erro } = await F.carregarEstabelecimentos(ctx);
+      let registros = [];
+      let erroConsulta = null;
+      if (lista.length) {
+        try {
+          const res = await api(`/api/fiscal/nfe?estabelecimentoId=${encodeURIComponent(escolhido)}`);
+          registros = res.records || [];
+        } catch (e) {
+          erroConsulta = e.message || 'Não foi possível carregar os logs.';
+        }
+      }
+      carregado = { lista, escolhido, erro, registros, erroConsulta };
     }
+    const { lista, escolhido, erro, registros, erroConsulta } = carregado;
+    if (!lista.length) { content.innerHTML = F.semEstabelecimento(escapeHtml, 'Logs NF-e', erro); return; }
 
     const filtro = state.fiscalLogFiltro || 'problemas';
     const visiveis = aplicarFiltro(registros, filtro);
@@ -60,6 +72,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           <div>
             <h3>Logs NF-e</h3>
           </div>
+          <button type="button" class="secondary" id="fiscalLogAtualizar">Atualizar</button>
           ${F.seletorEstabelecimento(escapeHtml, lista, escolhido)}
         </div>
 
@@ -106,8 +119,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                       Chave: <code>${escapeHtml(r.chaveAcesso || '—')}</code> ·
                       Protocolo: <code>${escapeHtml(r.protocolo || '—')}</code>
                     </p>
-                    ${F.blocoJson(escapeHtml, 'Enviado à SEFAZ', r.payloadEnviado)}
-                    ${F.blocoJson(escapeHtml, 'Resposta recebida', r.respostaFocus)}
+                    <div data-json-de="${i}"></div>
                   </div>
                 </td>
               </tr>
@@ -119,11 +131,26 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       </div>`;
 
     F.ligarSeletor(ctx, redesenhar);
+    // O filtro não recarrega mais (era a única forma de "atualizar" a lista):
+    // recarregar virou este botão, explícito.
+    content.querySelector('#fiscalLogAtualizar')?.addEventListener('click', redesenhar);
+    // Antes de ligarDetalhes: o JSON entra no primeiro clique, e o toggle
+    // (registrado depois) o mostra.
+    content.querySelectorAll('[data-detalhe^="log"]').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        const i = Number(botao.dataset.detalhe.slice(3));
+        const alvo = content.querySelector(`[data-json-de="${i}"]`);
+        if (!alvo || alvo.dataset.montado) return;
+        alvo.innerHTML = F.blocoJson(escapeHtml, 'Enviado à SEFAZ', visiveis[i].payloadEnviado)
+          + F.blocoJson(escapeHtml, 'Resposta recebida', visiveis[i].respostaFocus);
+        alvo.dataset.montado = '1';
+      });
+    });
     F.ligarDetalhes(ctx);
     content.querySelectorAll('[data-log-filtro]').forEach((botao) => {
       botao.addEventListener('click', () => {
         state.fiscalLogFiltro = botao.dataset.logFiltro;
-        redesenhar();
+        desenhar(ctx, { reusar: true });
       });
     });
   }

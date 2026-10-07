@@ -56,7 +56,9 @@ check('a validação virou função própria', /async function prepararNfeParaTr
 // Se a emissão voltar a validar por conta própria, o pré-check passa a conferir
 // outra coisa — e é exatamente isso que este teste existe para impedir.
 check('a emissão a chama', /\} = await prepararNfeParaTransmitir\(body, \{ modelo: opcoes\.modelo \}\);/.test(src));
-check('o pré-check chama a MESMA', /await prepararNfeParaTransmitir\(corpo\);/.test(src));
+// `{ leituras }` só troca DE ONDE as leituras vêm (uma vez por requisição),
+// nunca O QUE se confere: a função é a mesma da emissão.
+check('o pré-check chama a MESMA', /await prepararNfeParaTransmitir\(corpo(, \{ leituras \})?\);/.test(src));
 
 // A prova de que ela não grava: tudo o que escreve ficou do outro lado do corte.
 const preparar = src.slice(src.indexOf('async function prepararNfeParaTransmitir'), src.indexOf('async function emitirNfeFiscal'));

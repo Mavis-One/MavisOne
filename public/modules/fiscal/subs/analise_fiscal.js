@@ -13,18 +13,26 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
   };
   const LIMITE_NA_TELA = 300;
   let aberto = null;
+  // A ANÁLISE DESTA VISITA À TELA. Abrir e fechar um alerta só redesenha:
+  // antes, cada clique refazia a análise inteira no servidor e baixava de novo
+  // os 676 KB. Entrar na tela (o registro chama desenhar sem `reusar`) analisa
+  // de novo — é aí que um cadastro corrigido em outra aba aparece.
+  let analise = null;
 
   const num = (n) => Number(n || 0).toLocaleString('pt-BR');
 
-  async function desenhar(ctx) {
+  async function desenhar(ctx, { reusar = false } = {}) {
     const { api, content, escapeHtml } = ctx;
-    content.innerHTML = '<div class="panel"><h3>Análise Fiscal</h3><p class="muted">Analisando o cadastro...</p></div>';
-    let r;
-    try {
-      r = await api('/api/fiscal/analise-fiscal');
-    } catch (e) {
-      content.innerHTML = `<div class="panel"><h3>Análise Fiscal</h3><p class="form-error">${escapeHtml(e.message || 'Não foi possível analisar o cadastro.')}</p></div>`;
-      return;
+    let r = reusar ? analise : null;
+    if (!r) {
+      content.innerHTML = '<div class="panel"><h3>Análise Fiscal</h3><p class="muted">Analisando o cadastro...</p></div>';
+      try {
+        r = await api('/api/fiscal/analise-fiscal');
+      } catch (e) {
+        content.innerHTML = `<div class="panel"><h3>Análise Fiscal</h3><p class="form-error">${escapeHtml(e.message || 'Não foi possível analisar o cadastro.')}</p></div>`;
+        return;
+      }
+      analise = r;
     }
     if (r.semTabelas) {
       content.innerHTML = `<div class="panel"><h3>Análise Fiscal</h3>
@@ -50,7 +58,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                 </tr>`).join('')}</tbody>
             </table>
           </div>
-          ${a.produtos.length > LIMITE_NA_TELA ? `<p class="muted">e mais ${num(a.produtos.length - LIMITE_NA_TELA)}</p>` : ''}
+          ${a.quantidade > LIMITE_NA_TELA ? `<p class="muted">e mais ${num(a.quantidade - LIMITE_NA_TELA)}</p>` : ''}
         </td></tr>` : '';
       return `
         <tr data-alerta="${escapeHtml(a.codigo)}" style="cursor: pointer;">
@@ -80,7 +88,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
     content.querySelectorAll('[data-alerta]').forEach((tr) => tr.addEventListener('click', () => {
       aberto = aberto === tr.dataset.alerta ? null : tr.dataset.alerta;
-      desenhar(ctx);
+      desenhar(ctx, { reusar: true });
     }));
   }
 
