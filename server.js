@@ -232,7 +232,13 @@ const NAO_PERSISTIR = new Set([
   'people', 'cnpjs', 'deposits',                                          // syncCadastroData
   'orders', 'quotes', 'importLogs',                                       // syncSalesData
   'purchases',                                                            // syncPurchasesData
-  'nfes',                                                                 // syncNfeData
+  // 'nfe' (a fiscal, a que vai à SEFAZ) entrou na fase DS: syncNfeData popula
+  // as duas desde a fase AX, e só 'nfes' estava aqui. Toda rota que sincronizava
+  // a NF-e e gravava (salvar pedido, faturar, NF-e manual) copiava a tabela
+  // inteira — com payload_enviado e resposta_focus de cada nota — para este
+  // arquivo, que TODA requisição relê: ~3,4 MB por mês de notas, ~0,3 s por
+  // requisição com um ano delas. A fonte da nota é a tabela `nfe` do banco.
+  'nfes', 'nfe',                                                          // syncNfeData
   'finance', 'financialPayments', 'financialCategories',                  // syncFinanceData
   'costCenters', 'bankAccounts',                                          // syncFinanceData
   'stockMovements', 'stockTransfers',                                     // fase AP: razao no Postgres
