@@ -261,9 +261,49 @@ const recortar = (fonte, nome) => {
     'aVencer: sumFinanceAmount(despesaEntries.filter(isUpcoming))', 'pagas: sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized))',
     'total: sumFinanceAmount(receitaEntries.filter(pendingOrPartial))', 'vencidas: sumFinanceAmount(receitaEntries.filter(isOverdue))',
     'aReceber: sumFinanceAmount(receitaEntries.filter(isUpcoming))', 'recebidas: sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized))'];
-  const naRegraDoPainel = !painel || regra.every((trecho) => normalizar(painel).includes(normalizar(trecho)));
+  // O PAINEL TEM DE SER ACHADO. A primeira versão deste check passava quando
+  // `buildFinanceDashboardSummary` sumia do server.js (`!painel || ...`): se
+  // alguém a movesse para lib/ e mudasse a regra lá, a Síntese passaria a
+  // divergir do painel em silêncio. Sumiu, falha — e quem mover a função
+  // aponta este teste para o lugar novo.
+  check('  o painel do Financeiro foi achado no server.js', painel.length > 0, painel.length > 0 ? '' :
+    'o painel saiu do server.js: conferir contasDoFinanceiro e apontar este teste para o lugar novo');
+  const naRegraDoPainel = painel.length > 0 && regra.every((trecho) => normalizar(painel).includes(normalizar(trecho)));
   check('  a regra é a das linhas de contas do painel do Financeiro', regra.every((trecho) => normalizar(contasSrc).includes(normalizar(trecho)))
     && naRegraDoPainel, naRegraDoPainel ? '' : 'o painel mudou a regra: conferir contasDoFinanceiro');
+  // E NÃO SÓ O TEXTO: os NÚMEROS. O painel roda de verdade sobre os mesmos
+  // casos de borda e as contas têm de sair iguais às de contasDoFinanceiro.
+  // Tudo o que o painel usa além da regra (período, série, contraparte, rótulo
+  // de status) não entra nas contas — por isso qualquer nome que o teste não
+  // fornece vira um esboço que devolve `{}`, pelo `with` com Proxy. Assim uma
+  // dependência nova do painel (o bloco Financeiro mexe nele) não quebra este
+  // teste à toa; mudar a regra das contas, sim.
+  const painelRodando = (() => {
+    if (!painel) return null;
+    const fornecidos = { getTodayLocal: () => new Date(2026, 9, 6) };
+    const esboco = () => ({});
+    const escopo = new Proxy(fornecidos, {
+      has: (alvo, nome) => typeof nome === 'string' && (nome in alvo || !(nome in globalThis)),
+      get: (alvo, nome) => (typeof nome === 'symbol' ? undefined : (nome in alvo ? alvo[nome] : esboco))
+    });
+    const fonte = ['pad2', 'toDateStr'].map((nome) => recortar(servidor, nome)).join('\n');
+    try {
+      // eslint-disable-next-line no-new-func
+      return new Function('escopo', `with (escopo) { return (function () {\n${ajudantes}\n${fonte}\n${painel}\nreturn buildFinanceDashboardSummary;\n})(); }`)(escopo);
+    } catch (erro) {
+      return null;
+    }
+  })();
+  let doPainel = null;
+  try {
+    doPainel = painelRodando && painelRodando({ finance: casos }, new URLSearchParams());
+  } catch (erro) {
+    doPainel = { erro: erro.message };
+  }
+  check('  e o painel, rodando sobre os mesmos casos, dá as mesmas contas',
+    !!doPainel && JSON.stringify({ contasAPagar: doPainel.contasAPagar, contasAReceber: doPainel.contasAReceber }) === JSON.stringify(contas),
+    doPainel ? JSON.stringify({ erro: doPainel.erro, contasAPagar: doPainel.contasAPagar, contasAReceber: doPainel.contasAReceber })
+      : 'o painel não rodou fora do servidor');
   check('a Síntese e o Estoque leem pelas cargas enxutas',
     /cargasDosRelatorios\.lancamentosDaSintese\(\)/.test(servidorSemComent) && /cargasDosRelatorios\.produtosDoValorEmEstoque\(\)/.test(servidorSemComent));
   check('  e a função que lia o sistema inteiro não voltou', !/baseDosRelatoriosGerais\(/.test(servidorSemComent));
@@ -287,8 +327,11 @@ const recortar = (fonte, nome) => {
   // só) passam por ela.
   const rotasDeRelatorio = servidorSemComent.slice(servidorSemComent.indexOf("pathname === '/api/reports/catalogo'"),
     servidorSemComent.indexOf("pathname.match(/^\\/api\\/metas"));
-  check('  os exports de relatório passam por ela', (rotasDeRelatorio.match(/return enviarCsv\(res, /g) || []).length === 4
-    && /return enviarCsv\(res, conteudo/.test(rotasDeRelatorio), `${(rotasDeRelatorio.match(/enviarCsv\(res, /g) || []).length} chamadas`);
+  // Conta TODA chamada, com ou sem `return` antes: exigir o `return` deixava
+  // de fora uma chamada escrita como `enviarCsv(res, ...); return;`.
+  const chamadasDeEnviar = (rotasDeRelatorio.match(/\benviarCsv\(res,/g) || []).length;
+  check('  os exports de relatório passam por ela', chamadasDeEnviar === 4
+    && /return enviarCsv\(res, conteudo/.test(rotasDeRelatorio), `${chamadasDeEnviar} chamadas`);
   check('  e nenhum escreve text/csv por conta própria', !/text\/csv/.test(rotasDeRelatorio));
 
   // -------------------------------------------------------------------------

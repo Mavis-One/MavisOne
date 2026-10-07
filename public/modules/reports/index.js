@@ -69,10 +69,21 @@ window.MavisModuleRegistry.reports = async function renderReports(ctx) {
     // redesenhada — só ela, e só se a consulta for a mesma. Qualquer outro
     // caminho (Aplicar, Atualizar, página, ordem, voltar de outra tela) vai ao
     // servidor como sempre: nada aqui serve dado que a pessoa não estava vendo.
+    //
+    // E SÓ SE A FOTO FOR RECENTE (FOTO_DA_TELA_VALE_MS). A resposta na tela tem
+    // a idade de quando foi pedida: quem abriu a Tabela às 9h e clica em "Por
+    // vendedor" às 11h veria o ranking das 9h, sem os pedidos faturados no
+    // meio — e antes desta mudança o clique trazia o dado do momento. Passado
+    // o prazo, a troca vai ao servidor como antes (e, com o opcoesHash abaixo,
+    // a ida já é barata). Dentro do prazo, é o mesmo dado de segundos atrás.
+    // Fica aqui dentro, e não no topo do arquivo: este é um script clássico, e
+    // um `const` de topo entraria no escopo global compartilhado com os outros.
+    const FOTO_DA_TELA_VALE_MS = 60 * 1000;
     const soRedesenhar = state.reportsVendasSoRedesenhar;
     state.reportsVendasSoRedesenhar = false;
     const naTela = state.reportsVendasNaTela;
-    if (soRedesenhar && naTela && naTela.consulta === consulta) {
+    if (soRedesenhar && naTela && naTela.consulta === consulta
+      && Date.now() - naTela.pedidaEm < FOTO_DA_TELA_VALE_MS) {
       await desenhar({ ...ctx, relatorioVendas: naTela.relatorioVendas, granularidade });
       telas.comVolta(ctx, grupo);
       return;
@@ -102,7 +113,7 @@ window.MavisModuleRegistry.reports = async function renderReports(ctx) {
       return falhar(error);
     }
     state.reportsVendasOpcoes = { hash: relatorioVendas.opcoesHash, opcoes: relatorioVendas.opcoes };
-    state.reportsVendasNaTela = { consulta, relatorioVendas };
+    state.reportsVendasNaTela = { consulta, relatorioVendas, pedidaEm: Date.now() };
     await desenhar({ ...ctx, relatorioVendas, granularidade });
     telas.comVolta(ctx, grupo);
     return;

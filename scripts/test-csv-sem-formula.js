@@ -171,10 +171,18 @@ const servidorInteiro = semComentarios(ler('server.js'));
 // corpo da função em si sai da busca, para o `text/csv` dela não contar como
 // uma rota sem montador. Rota que escreva `text/csv` por conta própria
 // continua sendo achada pela busca de sempre.
+//
+// TODA CHAMADA CONTA, com ou sem `return` antes (07/10/2026). A primeira
+// versão só contava `return enviarCsv(res, `, e uma rota escrita como
+// `enviarCsv(res, linhas.join(';'), 'x.csv'); return;` escapava da conferência
+// do montador abaixo — exatamente o buraco que ela vigia. E a troca vale para
+// o arquivo INTEIRO: antes ela só pegava o trecho depois da definição (o
+// `.replace` estava preso à segunda metade), e uma chamada escrita mais acima
+// no server.js também escapava.
 const inicioEnviar = servidorInteiro.indexOf('function enviarCsv(');
-const servidor = inicioEnviar < 0 ? servidorInteiro
-  : servidorInteiro.slice(0, inicioEnviar) + servidorInteiro.slice(servidorInteiro.indexOf('\n  }\n', inicioEnviar))
-    .replace(/return enviarCsv\(res, /g, "'text/csv'; return enviarCsv(res, ");
+const servidor = (inicioEnviar < 0 ? servidorInteiro
+  : servidorInteiro.slice(0, inicioEnviar) + servidorInteiro.slice(servidorInteiro.indexOf('\n  }\n', inicioEnviar)))
+  .replace(/\benviarCsv\(res,/g, "'text/csv'; enviarCsv(res,");
 const rotasCsv = (servidor.match(/text\/csv/g) || []).length;
 // O catálogo de relatórios (lib/relatorios) monta TODOS os seus arquivos por
 // um só montador, motorDeRelatorios.paraCsv — conferido no fim deste teste.

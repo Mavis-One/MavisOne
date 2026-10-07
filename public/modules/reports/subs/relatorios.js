@@ -685,7 +685,8 @@ function relLigarCliques(ctx) {
     botao.addEventListener('click', () => {
       f.visao = botao.dataset.relVisao;
       // Só redesenha: a visão não muda a consulta, e a resposta que está na
-      // tela é a mesma que o servidor devolveria (ver ../index.js).
+      // tela é a mesma que o servidor devolveria — se for recente; mais velha
+      // que o prazo, o index.js vai ao servidor (ver ../index.js).
       state.reportsVendasSoRedesenhar = true;
       loadModule('reports');
     });
