@@ -146,6 +146,12 @@ check('  e usa os limites de data que vieram do navegador quando vieram',
     && Lista.filtrar(Lista.projetar(antes, []), filtros, {}).map((r) => r.id).join(',') === 'p2');
   const depois = [{ id: 'p1', code: '1', name: 'Ana Beatriz' }, { id: 'p2', code: '2', name: 'Bia' }];
   check('  e linha editada é normalizada de novo (nada velho sai do guardado)', busca(depois) === 'p1', busca(depois));
+  // O memo mora no processo do servidor e é chaveado pelo id: sem poda, o
+  // cadastro excluído ficaria nele até o PM2 reiniciar (achado da revisão).
+  const semP2 = [{ id: 'p1', code: '1', name: 'Ana Beatriz' }, { id: 'p3', code: '3', name: 'Caio' }];
+  const achou = busca(semP2);
+  check('  e cadastro excluído sai do guardado na busca seguinte',
+    achou === 'p1' && !memo.has('p2') && memo.size <= semP2.length, `${achou} · ${[...memo.keys()].join(',')}`);
 }
 
 console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);

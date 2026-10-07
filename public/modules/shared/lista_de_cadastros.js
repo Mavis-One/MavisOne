@@ -230,7 +230,7 @@
       return normalizados;
     };
 
-    return merged.filter((row) => {
+    const passaram = merged.filter((row) => {
       const normalizedRoles = (Array.isArray(row.roles) ? row.roles : []).map(normalize).filter(Boolean);
       const hasLegacyWildcardRole = normalizedRoles.includes('on');
       const hasRole = (roleName) => hasLegacyWildcardRole || normalizedRoles.includes(normalize(roleName));
@@ -272,6 +272,19 @@
       if (!query) return true;
       return textoDeBusca(row).some((field) => field.includes(query));
     });
+
+    // O memo vive no processo do servidor (um só, PM2) e é chaveado pelo id:
+    // cadastro excluído deixaria a entrada lá até o processo reiniciar. Mais
+    // entradas que linhas só acontece depois de exclusão, e aí os ids que não
+    // estão mais na lista saem — uma passada, só quando sobra, e depois da
+    // busca, que é quem acrescenta. Tirar entrada nunca muda o resultado: a
+    // linha seria normalizada de novo.
+    if (memo && memo.size > merged.length) {
+      const vivos = new Set(merged.map((row) => row.id));
+      for (const id of memo.keys()) if (!vivos.has(id)) memo.delete(id);
+    }
+
+    return passaram;
   }
 
   /** A coluna e a direção da ordem, com o padrão de sempre. */
