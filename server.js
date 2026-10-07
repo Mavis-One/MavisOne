@@ -993,9 +993,69 @@ function deveRegistrar(metodo, permitido) {
 // sistema (um `{ success: true }`, um login) está aí.
 const PISO_PARA_COMPRIMIR = 1400;
 
+// ---------------------------------------------------------------------------
+// RESPOSTA GRANDE QUE NÃO MUDOU NÃO VIAJA DE NOVO (desempenho, 07/10/2026)
+//
+// As telas pedem o mesmo meta a cada abertura, e na maior parte das vezes nada
+// mudou: medido, onze rotas devolvem os MESMOS bytes de uma chamada para a
+// outra — Gestor de Preços 10 MB (326 KB no fio), Pessoas 7,4 MB (695 KB),
+// meta de Vendas 4,2 MB (609 KB), meta do Financeiro 2,8 MB (569 KB)... Tudo
+// isso voltava inteiro pelo link do escritório, era comprimido de novo no
+// servidor e parseado de novo no navegador (205 ms só no Gestor de Preços).
+//
+// Agora o GET 200 grande leva um ETag — o sha1 do JSON — e
+// `Cache-Control: private, no-cache`. O `fetch` do navegador guarda a
+// resposta e, no pedido seguinte, manda `If-None-Match` sozinho; se o corpo
+// que o servidor acabou de montar tem o MESMO sha1, a resposta é um 304 sem
+// corpo, e o navegador entrega ao JS o corpo que já tinha, com status 200.
+// Nenhuma linha do app.js muda.
+//
+// NÃO É CACHE DE DADO, E NÃO SERVE DADO VELHO: o servidor continua montando a
+// resposta inteira a cada pedido — consultas, permissão, escopo de vendedor,
+// tudo. Só deixa de MANDAR os bytes quando eles são idênticos aos que o
+// navegador já tem. `no-cache` obriga o navegador a perguntar toda vez (ele
+// nunca usa a cópia sem o servidor confirmar), e `private` proíbe proxy
+// compartilhado de guardar. Trocar de usuário na mesma aba não vaza nada: o 304
+// só sai se o corpo calculado PARA QUEM PEDIU for igual byte a byte ao guardado.
+//
+// ETag FRACO (W/) porque o mesmo validador vale para o corpo cru e o gzipado —
+// o que se compara é o JSON, não a codificação do transporte.
+//
+// O PISO de 16 KB: abaixo disso o sha1 e a ida e volta não compram nada (o
+// corpo cabe em poucos pacotes). O sha1 custa 0,3 a 7 ms nos corpos grandes,
+// contra 8 a 83 ms do gzip que o 304 economiza.
+//
+// Rotas que mudam a cada chamada (painel, resumo do Financeiro: dependem do
+// relógio) só pagam o sha1 e seguem como antes.
+const PISO_PARA_VALIDAR = 16 * 1024;
+const CACHE_DE_API = 'private, no-cache';
+
+/** O If-None-Match bate com o ETag? Comparação FRACA, lista separada por vírgula. */
+function etagConfere(pedido, etag) {
+  if (!pedido) return false;
+  const nosso = etag.replace(/^W\//, '');
+  return String(pedido).split(',').some((item) => item.trim().replace(/^W\//, '') === nosso);
+}
+
 function sendJson(res, payload, statusCode = 200) {
   const corpo = Buffer.from(JSON.stringify(payload), 'utf8');
   const cabecalhos = { 'Content-Type': 'application/json' };
+
+  // A revalidação vem ANTES do gzip: o 304 não tem corpo, então não há o que
+  // comprimir. Só GET 200 — um erro ou uma escrita nunca é "o mesmo de antes" —,
+  // e só se a rota não decidiu sozinha o próprio Cache-Control.
+  const pedido = res.req;
+  if (statusCode === 200 && pedido && pedido.method === 'GET' && corpo.length >= PISO_PARA_VALIDAR
+    && typeof res.getHeader === 'function' && !res.getHeader('Cache-Control')) {
+    const etag = `W/"${crypto.createHash('sha1').update(corpo).digest('base64url')}"`;
+    cabecalhos.ETag = etag;
+    cabecalhos['Cache-Control'] = CACHE_DE_API;
+    if (etagConfere(pedido.headers['if-none-match'], etag)) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': CACHE_DE_API, Vary: 'Accept-Encoding' });
+      res.end();
+      return;
+    }
+  }
 
   // Quem não pede gzip recebe cru — é o caso dos scripts de teste deste
   // repositório, que falam com a API pelo módulo http do Node (ele não manda
