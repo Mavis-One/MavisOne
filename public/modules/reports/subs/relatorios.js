@@ -684,6 +684,9 @@ function relLigarCliques(ctx) {
   content.querySelectorAll('[data-rel-visao]').forEach((botao) => {
     botao.addEventListener('click', () => {
       f.visao = botao.dataset.relVisao;
+      // Só redesenha: a visão não muda a consulta, e a resposta que está na
+      // tela é a mesma que o servidor devolveria (ver ../index.js).
+      state.reportsVendasSoRedesenhar = true;
       loadModule('reports');
     });
   });

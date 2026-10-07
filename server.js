@@ -91,6 +91,9 @@ const relatoriosVendas = require('./lib/relatorios-vendas');
 // Fase DB: as colunas do CSV do Financeiro e do Estoque, que nao tinham
 // exportacao nenhuma. Puro, como o de vendas.
 const relatoriosCsv = require('./lib/relatorios-csv');
+// As leituras enxutas das telas especiais de Relatórios (Síntese, Valor em
+// Estoque, Pedidos/Vendas por Vendedor): só as colunas que cada conta lê.
+const cargasDosRelatorios = require('./lib/relatorios-cargas');
 // O catálogo de relatórios por grupo (Financeiro, Vendas, Estoque...): uma
 // definição por relatório e um motor só para filtrar, somar e exportar.
 const catalogoDeRelatorios = require('./lib/relatorios');
@@ -8720,49 +8723,89 @@ async function tratarRequisicao(req, res) {
    * receitas e despesas e o estoque — a posição financeira da empresa. É o
    * mesmo defeito que a fase BR fechou em Frota, RH, PCP e Contratos, e estes
    * endpoints não têm escopo nenhum por trás (o /reports/vendas tem).
+   *
+   * UMA BASE POR TELA, E NÃO UMA PARA AS DUAS (06/10/2026). A base única lia o
+   * sistema inteiro a cada abertura — os 27.362 lançamentos com `select *`,
+   * as 25.709 baixas, pedidos, NF-e, compras, cadastro e produtos — e a rota
+   * ainda calculava vendas, vendedores e a série de vendas, que NENHUMA tela
+   * lia (grep em public/: só a Síntese e o Valor em Estoque abrem este
+   * endpoint, e leem as contas, a série financeira e o bloco de estoque).
+   * Medido: 1.127 ms por abertura, com uma requisição de outra pessoa esperando
+   * 417 ms atrás dela. Agora cada tela lê o que usa:
+   *
+   *   Síntese Financeira ... 5 colunas dos lançamentos  (~150 ms)
+   *   Valor em Estoque ..... 6 colunas dos produtos     (~35 ms)
+   *
+   * A TELA E O ARQUIVO CONTINUAM SAINDO DA MESMA FUNÇÃO — a invariante acima
+   * não mudou, só ficou uma por relatório: `baseFinanceiraDosRelatorios` serve
+   * a Síntese e /financeiro/export; `baseDeEstoqueDosRelatorios`, o Valor em
+   * Estoque e /estoque/export.
+   *
+   * E SEM `data`: nenhuma das duas lê coleção do db.json nem passa pelos
+   * sync*Data — a leitura é a de lib/relatorios-cargas.js, que diz campo por
+   * campo quem lê o quê.
    */
-  async function baseDosRelatoriosGerais(req, params) {
+  async function portaDosRelatoriosGerais(req) {
     const user = await getCurrentUser(req);
     if (!user) return { erro: 'Não autenticado', status: 401 };
     if (!podeVerRelatorios(user, await ehAdmin(user))) return { erro: 'Sem permissão', status: 403 };
+    return { user };
+  }
 
-    const data = loadData();
-    // Uma ONDA so de ida ao banco, e nao 5 em fila. Cada consulta ao Supabase
-    // custa ~300ms de rede (medido), e estes syncs sao independentes: cada um
-    // escreve em chaves diferentes de `data` e nenhum le o do outro.
-    //
-    // O RECORTE RESUMIDO, E NAO `select *` (fase DE). Este helper serve tres
-    // rotas — o Relatorio Geral e as duas exportacoes — e NENHUMA delas mostra
-    // pedido: saem dali soma por vendedor, serie por periodo e contagem.
-    // `buildSalesDashboardSummary` e `buildSalesChartSeries` leem `amount`,
-    // `status`, `date`, `sellerId` e o nome do cliente; e' exatamente o recorte
-    // de `getOrdersResumidos`. Medido neste banco:
-    //
-    //   syncSalesData (select *) ..... 321 ms   <- era o tempo da rota inteira,
-    //   syncSalesDataResumida ......... 96 ms      porque os cinco correm juntos
-    //                                             e este era o mais lento
-    //
-    // As duas exportacoes pagam os 96 ms sem usar pedido nenhum (elas leem so
-    // `serieFinanceiro` e `produtosComSaldo`). Deixei assim de proposito: pular
-    // vendas para elas faria `data.orders` chegar VAZIO a quem passasse por
-    // aqui depois, e colecão vazia por decisao de outra rota e' o tipo de
-    // engano que nao levanta erro — e' o que scripts/test-sync-obrigatorio.js
-    // existe para pegar.
-    //
-    // `importLogs` DEIXOU DE VIR (o recorte resumido nao o traz), e por isso ele
-    // saiu tambem da lista de POPULA daquele guarda. Nenhuma das tres rotas o
-    // le; se alguma passar a ler, o guarda reclama em vez de a tela mostrar zero.
-    await Promise.all([
-      syncNfeData(data),
-      syncPurchasesData(data),
-      syncCadastroData(data),
-      syncSalesDataResumida(data),
-      syncFinanceData(data)
-    ]);
-    const products = await db.getProducts();
+  /**
+   * CONTAS A PAGAR E A RECEBER — a MESMA conta das linhas `contasAPagar` e
+   * `contasAReceber` de `buildFinanceDashboardSummary` — o painel do Financeiro —,
+   * com os mesmos predicados (classifyFinanceEntry, isFinanceEntryRealized,
+   * financeEntryDueDate, sumFinanceAmount) e o mesmo "hoje".
+   *
+   * Por que não chamar aquela: ela monta também as listas de vencimento com o
+   * nome de cada contraparte, os últimos lançamentos (ordenando os 27 mil),
+   * estatísticas de NF-e e de conciliação — 104 ms por chamada, e esta tela
+   * usa oito números. A igualdade com o painel foi conferida nos dados reais
+   * (o relatório de antes saía de buildFinanceDashboardSummary) e
+   * scripts/test-relatorios-desempenho.js fixa a regra em casos de borda.
+   */
+  function contasDoFinanceiro(lancamentos, hoje) {
+    const entries = lancamentos.filter((entry) => !isFinanceEntryCancelled(entry));
+    const receitaEntries = entries.filter((entry) => classifyFinanceEntry(entry) === 'receita');
+    const despesaEntries = entries.filter((entry) => classifyFinanceEntry(entry) === 'despesa');
+    const pendingOrPartial = (entry) => {
+      const s = String(entry.status || '').toLowerCase();
+      return s === 'pending' || s === 'parcial';
+    };
+    const isOverdue = (entry) => pendingOrPartial(entry) && financeEntryDueDate(entry) < hoje;
+    const isUpcoming = (entry) => pendingOrPartial(entry) && financeEntryDueDate(entry) >= hoje;
+    return {
+      contasAPagar: {
+        total: sumFinanceAmount(despesaEntries.filter(pendingOrPartial)),
+        vencidas: sumFinanceAmount(despesaEntries.filter(isOverdue)),
+        aVencer: sumFinanceAmount(despesaEntries.filter(isUpcoming)),
+        pagas: sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized))
+      },
+      contasAReceber: {
+        total: sumFinanceAmount(receitaEntries.filter(pendingOrPartial)),
+        vencidas: sumFinanceAmount(receitaEntries.filter(isOverdue)),
+        aReceber: sumFinanceAmount(receitaEntries.filter(isUpcoming)),
+        recebidas: sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized))
+      }
+    };
+  }
+
+  /** A Síntese Financeira: a série do período e as contas. Tela e arquivo. */
+  async function baseFinanceiraDosRelatorios(params) {
     const granularity = params.get('granularity') || 'month';
-    const lancamentos = (data.finance || []).filter((entry) => !isFinanceEntryCancelled(entry));
+    const lancamentos = (await cargasDosRelatorios.lancamentosDaSintese())
+      .filter((entry) => !isFinanceEntryCancelled(entry));
+    return {
+      granularity,
+      serieFinanceiro: buildFinanceChartSeries(lancamentos, granularity),
+      contas: contasDoFinanceiro(lancamentos, toDateStr(getTodayLocal()))
+    };
+  }
 
+  /** O Valor em Estoque: cada produto com o valor parado nele. Tela e arquivo. */
+  async function baseDeEstoqueDosRelatorios() {
+    const products = await cargasDosRelatorios.produtosDoValorEmEstoque();
     const produtosComSaldo = products.map((produto) => {
       const quantidade = Number(produto.stockQuantity || 0);
       const custo = Number(produto.costPrice || 0);
@@ -8775,27 +8818,67 @@ async function tratarRequisicao(req, res) {
         valor: Math.round(quantidade * custo * 100) / 100
       };
     });
+    return { produtosComSaldo };
+  }
 
-    return {
-      user,
-      data,
-      granularity,
-      lancamentos,
-      produtosComSaldo,
-      serieFinanceiro: buildFinanceChartSeries(lancamentos, granularity)
+  /**
+   * O CSV DOS RELATÓRIOS SAI COMPRIMIDO, como o JSON (ver sendJson).
+   *
+   * Os cinco exports escreviam o arquivo cru: o Extrato Bancário de um período
+   * largo eram 5.980 KB atravessando a rede, que em gzip são 942 KB; o
+   * Relatório de Vendas, 2.323 KB contra 314 KB. O arquivo que a pessoa salva
+   * é o MESMO, byte a byte: o `fetch` da tela (catalogo.js, relatorios.js)
+   * descomprime sozinho antes do `blob()`, e quem não pede gzip — os scripts
+   * de teste, que usam o http do Node — recebe cru.
+   *
+   * As mesmas guardas do sendJson, pelos mesmos motivos escritos lá: gzip
+   * ASSÍNCRONO (o servidor é um processo só; 6 MB em gzipSync seriam ~90 ms de
+   * todas as outras requisições paradas), piso de um pacote, `Vary`, e nada de
+   * escrever em resposta que o cliente já fechou — escrever nela lança dentro
+   * do callback do zlib, fora de qualquer try/catch, e isso derruba o processo.
+   *
+   * Uma função irmã, e não um parâmetro no sendJson: lá o corpo é JSON e o
+   * tipo é fixo, e test-resposta-comprimida.js lê o corpo dele.
+   */
+  function enviarCsv(res, conteudo, nomeDoArquivo) {
+    const corpo = Buffer.from(conteudo, 'utf8');
+    const cabecalhos = {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${nomeDoArquivo}"`
     };
+    const aceita = String((res.req && res.req.headers['accept-encoding']) || '');
+    if (corpo.length < PISO_PARA_COMPRIMIR || !/\bgzip\b/.test(aceita)) {
+      res.writeHead(200, { ...cabecalhos, 'Content-Length': corpo.length });
+      res.end(corpo);
+      return;
+    }
+    zlib.gzip(corpo, (erro, comprimido) => {
+      if (res.destroyed || res.writableEnded) return;
+      try {
+        if (erro) {
+          // Falhar em comprimir não é motivo para não entregar o arquivo.
+          res.writeHead(200, { ...cabecalhos, 'Content-Length': corpo.length });
+          res.end(corpo);
+          return;
+        }
+        res.writeHead(200, {
+          ...cabecalhos,
+          'Content-Encoding': 'gzip',
+          Vary: 'Accept-Encoding',
+          'Content-Length': comprimido.length
+        });
+        res.end(comprimido);
+      } catch (erroEscrita) {
+        console.error('[relatorios] falhou ao escrever o CSV comprimido:', erroEscrita.message);
+      }
+    });
   }
 
   async function montarRelatorioDeVendas(req, params) {
-    const data = loadData();
-    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
-    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-    // Em sequencia, a rota pagava 2x essa latencia por nada.
-    await Promise.all([
-      syncCadastroData(data),
-      syncSalesData(data)
-    ]);
+    // A PERMISSÃO ANTES DA LEITURA (06/10/2026). A rota lia os pedidos e o
+    // cadastro inteiros e só depois perguntava quem estava pedindo: trabalho
+    // feito para quem ia levar 401/403. É a mesma ordem que a base dos
+    // relatórios gerais já seguia.
     const user = await getCurrentUser(req);
     if (!user) return { erro: 'Não autenticado', status: 401 };
 
@@ -8807,7 +8890,24 @@ async function tratarRequisicao(req, res) {
     }
     const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: ehAdministrador });
 
-    const registros = [...data.orders, ...data.quotes].map((r) => serializeSalesRecord(r, data));
+    const data = loadData();
+    // Uma ONDA so de ida ao banco, e nao 2 em fila: o cadastro (nome do
+    // cliente e do vendedor de cada linha) e as vendas sao independentes.
+    //
+    // AS VENDAS VÊM NO RECORTE DO RELATÓRIO, e não `select *` (06/10/2026).
+    // O relatório lê do pedido 13 campos e do item 7 (ver
+    // lib/relatorios-cargas.js, vendasDoRelatorio); as outras ~46 colunas
+    // (pagamento, entrega, anexos, e-mails, comissões...) eram lidas,
+    // serializadas e jogadas fora, junto com `import_logs`. Medido: 357 ms ->
+    // 169 ms só na leitura, a cada clique de página, ordem ou filtro.
+    // `serializeSalesRecord` continua sendo quem monta o registro — o mesmo
+    // nome de cliente e de vendedor das outras telas de venda.
+    const [, vendas] = await Promise.all([
+      syncCadastroData(data),
+      cargasDosRelatorios.vendasDoRelatorio()
+    ]);
+
+    const registros = [...vendas.orders, ...vendas.quotes].map((r) => serializeSalesRecord(r, data));
     const filtros = {
       dataDe: params.get('dataDe') || '',
       dataAte: params.get('dataAte') || '',
@@ -8875,8 +8975,16 @@ async function tratarRequisicao(req, res) {
         escopo.podeEscolherVendedor
           ? consultarBanco(`select id, name from people where extra->'roles' @> '["Vendedor"]'::jsonb order by name`)
           : Promise.resolve({ rows: [] }),
+        // As filiais saem das CATEGORIAS distintas (22 neste banco), e não de
+        // cada um dos 14.864 pedidos: o `regexp_replace` rodava uma vez por
+        // pedido para chegar aos mesmos 12 nomes. 40 -> 15 ms, mesma lista.
+        // O `order by` decide qual grafia fica quando duas viram a mesma
+        // chave abaixo ("Timbo" antes de "Timbó"); sem ele, a escolha era a
+        // ordem do `distinct`, que nenhum plano promete.
         consultarBanco(`select distinct btrim(regexp_replace(category, '^.*/', '')) as nome
-                          from orders where position('/' in coalesce(category, '')) > 0`),
+                          from (select distinct category from orders) c
+                         where position('/' in coalesce(category, '')) > 0
+                         order by 1`),
         consultarBanco(`select id::text as id, coalesce(nullif(btrim(nome_fantasia), ''), razao_social) as name
                           from estabelecimento where coalesce(ativo, true) order by 2`)
       ]);
@@ -8912,11 +9020,7 @@ async function tratarRequisicao(req, res) {
           // Montado ANTES do cabeçalho: se a montagem falhar, a resposta ainda
           // pode ser um erro, e não um 200 pela metade.
           const arquivo = motorDeRelatorios.paraCsv(resultado);
-          res.writeHead(200, {
-            'Content-Type': 'text/csv; charset=utf-8',
-            'Content-Disposition': `attachment; filename="${motorDeRelatorios.nomeDoArquivo(resultado)}"`
-          });
-          return res.end(arquivo);
+          return enviarCsv(res, arquivo, motorDeRelatorios.nomeDoArquivo(resultado));
         }
         // A TELA MOSTRA ATÉ 2.000 LINHAS; o arquivo leva todas. Os totais são
         // sempre do resultado inteiro, e a tela diz quantas ficaram de fora.
@@ -9003,11 +9107,7 @@ async function tratarRequisicao(req, res) {
           await relatoriosPersonalizadosDb.marcarExecucao(rel.id);
           if (casa[3]) {
             const arquivo = motorDeRelatorios.paraCsv(resultado);
-            res.writeHead(200, {
-              'Content-Type': 'text/csv; charset=utf-8',
-              'Content-Disposition': `attachment; filename="${motorDeRelatorios.nomeDoArquivo(resultado)}"`
-            });
-            return res.end(arquivo);
+            return enviarCsv(res, arquivo, motorDeRelatorios.nomeDoArquivo(resultado));
           }
           const LIMITE = 2000;
           return sendJson(res, { ...resultado, linhas: resultado.linhas.slice(0, LIMITE), totalLinhas: resultado.linhas.length });
@@ -9035,7 +9135,26 @@ async function tratarRequisicao(req, res) {
     try {
       const { erro, status, relatorio } = await montarRelatorioDeVendas(req, url.searchParams);
       if (erro) return sendJson(res, { error: erro }, status);
-      return sendJson(res, relatorio);
+      // AS LISTAS DOS FILTROS SÓ VÃO QUANDO MUDARAM (06/10/2026).
+      //
+      // `opcoes` (clientes, produtos, vendedores, situações) sai de TODAS as
+      // vendas que o escopo deixa ver, e não do recorte filtrado — então é a
+      // mesma a cada clique de página, ordem ou filtro, e era 71% da resposta:
+      // 421 de 590 KB, 5.240 clientes e 1.099 produtos reenviados a cada clique.
+      //
+      // A tela guarda as listas e manda de volta o `opcoesHash` que recebeu.
+      // Se o hash das listas de AGORA, calculadas nesta mesma requisição, for o
+      // mesmo, a resposta vai sem elas e a tela usa as que tem. Não é cache: as
+      // listas são recalculadas toda vez; o que deixa de ir é a cópia idêntica.
+      // Cliente novo, produto novo ou outro usuário na mesma aba mudam o hash,
+      // e a lista nova vai inteira. Sem `opcoesHash` na requisição, a resposta
+      // é a de sempre.
+      const opcoesHash = crypto.createHash('sha1').update(JSON.stringify(relatorio.opcoes)).digest('hex');
+      if (url.searchParams.get('opcoesHash') === opcoesHash) {
+        const { opcoes, ...semOpcoes } = relatorio;
+        return sendJson(res, { ...semOpcoes, opcoesHash });
+      }
+      return sendJson(res, { ...relatorio, opcoesHash });
     } catch (error) {
       return sendErro(res, error, 'Erro ao montar o relatório de vendas', 400);
     }
@@ -9059,11 +9178,7 @@ async function tratarRequisicao(req, res) {
       );
       const csv = relatoriosVendas.montarCsv(linhas);
       const hoje = new Date().toISOString().slice(0, 10);
-      res.writeHead(200, {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="relatorio-de-vendas-${hoje}.csv"`
-      });
-      return res.end(csv);
+      return enviarCsv(res, csv, `relatorio-de-vendas-${hoje}.csv`);
     } catch (error) {
       return sendErro(res, error, 'Erro ao exportar', 400);
     }
@@ -9076,9 +9191,12 @@ async function tratarRequisicao(req, res) {
   // mora na barra de filtros do relatório de VENDAS, e só Vendas e Por Vendedor
   // a chamam.
   //
-  // As duas rotas saem da MESMA `baseDosRelatoriosGerais` que alimenta a tela —
-  // é o que impede o arquivo de discordar do que a pessoa acabou de ver, em
-  // silêncio, porque ninguém compara uma planilha com um gráfico.
+  // Cada arquivo sai da MESMA base que alimenta a tela dele
+  // (`baseFinanceiraDosRelatorios` / `baseDeEstoqueDosRelatorios`) — é o que
+  // impede o arquivo de discordar do que a pessoa acabou de ver, em silêncio,
+  // porque ninguém compara uma planilha com um gráfico. E cada um lê só o que
+  // usa: o do Estoque não lê mais lançamento nenhum, e o do Financeiro não lê
+  // produto (eram 975 e 967 ms, os dois pagando a leitura do outro).
   //
   // O CSV é montado por lib/relatorios-csv.js, que passa por lib/csv.js: sem
   // isso, cada rota nova reabriria o buraco de injeção de fórmula que a fase DA
@@ -9088,13 +9206,15 @@ async function tratarRequisicao(req, res) {
   if (exportacaoGeral && req.method === 'GET') {
     try {
       const qual = exportacaoGeral[1];
-      const base = await baseDosRelatoriosGerais(req, url.searchParams);
-      if (base.erro) return sendJson(res, { error: base.erro }, base.status);
+      const porta = await portaDosRelatoriosGerais(req);
+      if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
 
       let conteudo;
       if (qual === 'financeiro') {
+        const base = await baseFinanceiraDosRelatorios(url.searchParams);
         conteudo = relatoriosCsv.financeiro(base.serieFinanceiro);
       } else {
+        const base = await baseDeEstoqueDosRelatorios();
         // A LISTA INTEIRA, e não os 15 da tela. A tela responde "o que mais
         // prende dinheiro?", e quinze linhas bastam para isso; ninguém abre uma
         // planilha para reler o que já estava na tela. Ordenada pelo mesmo
@@ -9109,11 +9229,7 @@ async function tratarRequisicao(req, res) {
       }
 
       const hoje = new Date().toISOString().slice(0, 10);
-      res.writeHead(200, {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="relatorio-de-${qual}-${hoje}.csv"`
-      });
-      return res.end(conteudo);
+      return enviarCsv(res, conteudo, `relatorio-de-${qual}-${hoje}.csv`);
     } catch (error) {
       return sendErro(res, error, 'Erro ao exportar', 400);
     }
@@ -9252,46 +9368,49 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname === '/api/reports/overview' && req.method === 'GET') {
-    // A base vem de `baseDosRelatoriosGerais`, definida perto do fim deste
-    // arquivo junto das rotas de exportação que a compartilham.
-    const base = await baseDosRelatoriosGerais(req, url.searchParams);
-    if (base.erro) return sendJson(res, { error: base.erro }, base.status);
-    const { user, data, granularity, produtosComSaldo: comSaldo, serieFinanceiro } = base;
+    // As bases (`baseFinanceiraDosRelatorios`, `baseDeEstoqueDosRelatorios`)
+    // estão junto das rotas de Relatórios, com as exportações que as
+    // compartilham.
+    const porta = await portaDosRelatoriosGerais(req);
+    if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
 
-    // Mesmo recorte do Painel Vendedor, e pelo mesmo motivo: o bloco
-    // "vendedores" deste relatório mostra o total de cada pessoa da equipe.
-    // Sem escopo, um vendedor comum com acesso a Relatórios lia o faturamento
-    // do colega — sem a lista de pedidos, mas com o número, que é o que
-    // interessa a quem está comparando comissão.
-    const escopoVendas = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
-    const vendas = buildSalesDashboardSummary(data, escopoVendas);
-    const financeiro = buildFinanceDashboardSummary(data, url.searchParams);
+    // `parte` DIZ QUAL TELA ESTÁ ABRINDO (06/10/2026): `financeiro` é a
+    // Síntese Financeira, `estoque` é o Valor em Estoque (public/modules/
+    // reports/index.js manda a entrada `especial` do catálogo). Cada uma lê só
+    // o seu bloco. Sem `parte` — uma aba aberta antes da atualização — vêm os
+    // dois blocos, que é tudo o que as telas de antes também liam.
+    //
+    // `vendas`, `vendedores` e `serieVendas` SAÍRAM da resposta: nenhuma tela
+    // os lia (grep em public/), e calculá-los custava ler pedidos, cadastro,
+    // NF-e e compras a cada abertura. Saíram também, com eles, os números de
+    // vendas que esta rota precisava recortar pelo escopo do vendedor — o
+    // jeito mais seguro de não vazar um número é não calculá-lo.
+    const parte = url.searchParams.get('parte') || '';
+    const granularity = url.searchParams.get('granularity') || 'month';
+    const [financeira, estoque] = await Promise.all([
+      parte === 'estoque' ? null : baseFinanceiraDosRelatorios(url.searchParams),
+      parte === 'financeiro' ? null : baseDeEstoqueDosRelatorios()
+    ]);
 
-    return sendJson(res, {
-      granularity,
-      vendas: vendas.overview,
-      // O relatório mostra o total de cada vendedor; a lista de pedidos de cada
-      // um fica no Painel Vendedor, e mandá-la aqui inflaria a resposta à toa.
-      vendedores: vendas.bySeller.map(({ sellerId, sellerName, totalPedidos, valorTotal, ticketMedio }) => ({
-        sellerId, sellerName, totalPedidos, valorTotal, ticketMedio
-      })),
-      // O MESMO escopo do bloco `vendedores` logo acima (fase DC): a serie
-      // saia sem ele, e o relatorio mostrava o fluxo da empresa a quem so' ve
-      // as proprias vendas.
-      serieVendas: buildSalesChartSeries(data, granularity, escopoVendas),
-      serieFinanceiro,
-      financeiro: {
-        contasAPagar: financeiro.contasAPagar,
-        contasAReceber: financeiro.contasAReceber
-      },
-      estoque: {
+    const resposta = { granularity };
+    if (financeira) {
+      resposta.serieFinanceiro = financeira.serieFinanceiro;
+      resposta.financeiro = {
+        contasAPagar: financeira.contas.contasAPagar,
+        contasAReceber: financeira.contas.contasAReceber
+      };
+    }
+    if (estoque) {
+      const comSaldo = estoque.produtosComSaldo;
+      resposta.estoque = {
         totalProdutos: comSaldo.length,
         semSaldo: comSaldo.filter((p) => p.quantidade <= 0).length,
         valorTotal: Math.round(comSaldo.reduce((soma, p) => soma + p.valor, 0) * 100) / 100,
         // Os que mais prendem dinheiro: é a pergunta que o relatório responde.
         maiores: comSaldo.filter((p) => p.valor > 0).sort((a, b) => b.valor - a.valor).slice(0, 15)
-      }
-    });
+      };
+    }
+    return sendJson(res, resposta);
   }
 
   if (pathname === '/api/sales/meta' && req.method === 'GET') {

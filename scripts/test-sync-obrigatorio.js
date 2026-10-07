@@ -104,26 +104,13 @@ const POPULA = {
   loadStockContext: ['stockMovements', 'stockTransfers', 'people', 'cnpjs', 'deposits'],
   // Fase BD: o razão sozinho, para quem já tem o próprio `data` na mão e não
   // pode trocar por outro (Vendas, Compras, Fiscal, os painéis).
-  sincronizarRazao: ['stockMovements', 'stockTransfers'],
-  // FASE DB: a base dos relatórios Financeiro e Estoque. Ela chama os CINCO
-  // syncs de uma vez (cadastro, vendas, compras, NF-e e financeiro), confere a
-  // permissão antes deles e devolve `data` pronto.
-  //
-  // Entrou aqui porque a rota /api/reports/overview passou a obtê-la por este
-  // helper em vez de sincronizar no próprio corpo, e este guarda leu isso como
-  // sete leituras sem sync — corretamente, pelo que ele vê. A união abaixo é
-  // exatamente o que os cinco syncs populam; nada foi acrescentado para o teste
-  // passar.
-  baseDosRelatoriosGerais: [
-    'people', 'cnpjs', 'deposits',
-    // Fase DE: o recorte resumido (`syncSalesDataResumida`), e nao `select *`.
-    // `importLogs` saiu junto porque aquele recorte nao o traz — e nenhuma das
-    // tres rotas que usam este helper o le.
-    'orders', 'quotes',
-    'purchases',
-    'nfes', 'nfe',
-    'finance', 'financialPayments', 'financialCategories', 'costCenters', 'bankAccounts'
-  ]
+  sincronizarRazao: ['stockMovements', 'stockTransfers']
+  // `baseDosRelatoriosGerais` (fase DB) saiu daqui em 06/10/2026 junto com a
+  // função: a Síntese Financeira e o Valor em Estoque passaram a ler só as
+  // colunas que usam (lib/relatorios-cargas.js), sem `data` nenhum — não há
+  // coleção do db.json para este guarda vigiar nelas. Deixar a entrada seria
+  // declarar que um nome inexistente "popula" treze coleções, e o primeiro a
+  // reaproveitar o nome ganharia um passe livre.
 };
 const SYNC_DE = {};
 Object.entries(POPULA).forEach(([fn, cols]) => cols.forEach((c) => { (SYNC_DE[c] = SYNC_DE[c] || []).push(fn); }));
@@ -142,9 +129,7 @@ const INFRA = new Set([
   'syncCadastroData', 'syncSalesData', 'syncSalesDataParaAgregado',
   'syncSalesDataResumida',
   'syncPurchasesData', 'syncNfeData',
-  'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao',
-  // Fase DB: sincroniza por dentro, como o loadStockContext.
-  'baseDosRelatoriosGerais'
+  'syncFinanceData', 'loadStockContext', 'ensureStockCollections', 'sincronizarRazao'
 ]);
 
 const ARQUIVOS = [
