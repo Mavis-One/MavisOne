@@ -34,6 +34,14 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     return registros.filter((r) => r.status === filtro);
   }
 
+  // CADA TROCA DE FILTRO BUSCA A LISTA DE NOVO, e é de propósito. O status da
+  // nota muda sozinho, pelo webhook da Focus (PROCESSANDO -> AUTORIZADO ou
+  // ERRO), e esta é a tela de acompanhar a transmissão: quem clica em "Com
+  // problema" para ver se a nota caiu tem de ver o status de agora, não o de
+  // quando entrou. Guardar a lista da visita já foi tentado e servia status
+  // velho. O que pesava no navegador era outra coisa — o JSON enviado e o
+  // recebido de TODAS as notas, montados a cada desenho —, e esse só é montado
+  // no clique em Detalhes (ver abaixo).
   async function desenhar(ctx) {
     const { api, content, escapeHtml, state } = ctx;
     const redesenhar = () => desenhar(ctx);
@@ -106,8 +114,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
                       Chave: <code>${escapeHtml(r.chaveAcesso || '—')}</code> ·
                       Protocolo: <code>${escapeHtml(r.protocolo || '—')}</code>
                     </p>
-                    ${F.blocoJson(escapeHtml, 'Enviado à SEFAZ', r.payloadEnviado)}
-                    ${F.blocoJson(escapeHtml, 'Resposta recebida', r.respostaFocus)}
+                    <div data-json-de="${i}"></div>
                   </div>
                 </td>
               </tr>
@@ -119,6 +126,18 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       </div>`;
 
     F.ligarSeletor(ctx, redesenhar);
+    // Antes de ligarDetalhes: o JSON entra no primeiro clique, e o toggle
+    // (registrado depois) o mostra.
+    content.querySelectorAll('[data-detalhe^="log"]').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        const i = Number(botao.dataset.detalhe.slice(3));
+        const alvo = content.querySelector(`[data-json-de="${i}"]`);
+        if (!alvo || alvo.dataset.montado) return;
+        alvo.innerHTML = F.blocoJson(escapeHtml, 'Enviado à SEFAZ', visiveis[i].payloadEnviado)
+          + F.blocoJson(escapeHtml, 'Resposta recebida', visiveis[i].respostaFocus);
+        alvo.dataset.montado = '1';
+      });
+    });
     F.ligarDetalhes(ctx);
     content.querySelectorAll('[data-log-filtro]').forEach((botao) => {
       botao.addEventListener('click', () => {

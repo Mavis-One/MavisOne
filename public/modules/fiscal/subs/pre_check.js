@@ -32,11 +32,37 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     return `${d}/${m}/${a}`;
   }
 
+  // UMA CONFERÊNCIA POR VEZ, E SÓ A ÚLTIMA DESENHA.
+  //
+  // O Chrome dispara `change` num <input type="date"> A CADA TECLA que forma
+  // uma data válida: digitar o ano 2026 passa por 0002, 0020 e 0202 (oito teclas,
+  // oito `change`). Cada um refazia o pré-check — e "De 0202-01-08" com o
+  // "Até" já preenchido é o histórico inteiro, 13.698 pedidos. As respostas
+  // voltavam fora de ordem, e a última a desenhar podia ser a de uma data que
+  // ninguém quis. Agora a tela espera a digitação parar e descarta a resposta
+  // que chegar depois de outra conferência ter começado.
+  const ESPERA_DA_DIGITACAO_MS = 500;
+  let vez = 0;
+  let adiada = null;
+  let emCurso = null;
+
+  // A PESSOA AINDA ESTÁ NESTA TELA? Uma conferência longa (meses) pode voltar
+  // depois de ela ter ido para o Painel ou para outro módulo; sem esta
+  // pergunta, a resposta desenharia o pré-check por cima da tela seguinte.
+  // `vez` não basta: ninguém chamou desenhar de novo, então a vez continua
+  // sendo dela.
+  function aindaNaTela(state) {
+    return state.activeModule === 'fiscal' && state.activeSub === 'pre_check';
+  }
+
   async function desenhar(ctx) {
     const { api, content, escapeHtml, state } = ctx;
     const redesenhar = () => desenhar(ctx);
+    clearTimeout(adiada);
+    const minhaVez = ++vez;
 
     const { lista, escolhido, erro } = await F.carregarEstabelecimentos(ctx);
+    if (minhaVez !== vez || !aindaNaTela(state)) return;
     if (!lista.length) { content.innerHTML = F.semEstabelecimento(escapeHtml, 'Pré-check fiscal', erro); return; }
 
     const de = state.fiscalPreCheckDe || hoje();
@@ -44,12 +70,19 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
     let resultado = null;
     let erroConsulta = null;
+    if (emCurso) emCurso.abort();
+    const controle = new AbortController();
+    emCurso = controle;
     try {
       resultado = await api(`/api/fiscal/pre-check?estabelecimentoId=${encodeURIComponent(escolhido)}`
-        + `&de=${encodeURIComponent(de)}&ate=${encodeURIComponent(ate)}`);
+        + `&de=${encodeURIComponent(de)}&ate=${encodeURIComponent(ate)}`, { signal: controle.signal });
     } catch (e) {
       erroConsulta = e.message || 'Não foi possível rodar o pré-check.';
     }
+    // Outra conferência começou enquanto esta esperava: a tela é dela.
+    if (minhaVez !== vez) return;
+    emCurso = null;
+    if (!aindaNaTela(state)) return;
 
     const pedidos = (resultado && resultado.pedidos) || [];
     const comProblema = pedidos.filter((p) => !p.ok);
@@ -142,7 +175,13 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
         if (chave === 'fiscalPreCheckDe' && (state.fiscalPreCheckAte || '') < evento.target.value) {
           state.fiscalPreCheckAte = evento.target.value;
         }
-        redesenhar();
+        // Espera a digitação parar: ver ESPERA_DA_DIGITACAO_MS. Se nesse meio
+        // tempo a pessoa saiu da tela, o campo não existe mais e nada se
+        // desenha — senão o pré-check cairia em cima da tela seguinte.
+        clearTimeout(adiada);
+        adiada = setTimeout(() => {
+          if (document.getElementById(campo)) redesenhar();
+        }, ESPERA_DA_DIGITACAO_MS);
       });
     };
     aplicar('preCheckDe', 'fiscalPreCheckDe');

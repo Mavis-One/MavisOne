@@ -1434,11 +1434,19 @@ function formasQueUsamAdquirente(id) {
  * chama a API direto, sem passar pela tela, continua funcionando.
  */
 async function pagamentosComCredenciadora(pagamentos) {
+  return credenciadoraNasLinhas(pagamentos, {
+    formas: async () => loadData().paymentMethods || [],
+    adquirentes: () => adquirentesDb.listar()
+  });
+}
+
+// O mesmo, com as duas fontes de fora: o pré-check confere centenas de
+// pedidos e lê formas e credenciadoras UMA vez (ver leiturasDaConferencia).
+async function credenciadoraNasLinhas(pagamentos, fontes) {
   const linhas = Array.isArray(pagamentos) ? pagamentos : null;
   if (!linhas || !linhas.some((p) => p && p.methodId)) return linhas;
-  const dados = loadData();
-  const formasPorId = new Map((dados.paymentMethods || []).map((f) => [f.id, f]));
-  const adquirentesPorId = new Map((await adquirentesDb.listar()).map((a) => [a.id, a]));
+  const formasPorId = new Map((await fontes.formas()).map((f) => [f.id, f]));
+  const adquirentesPorId = new Map((await fontes.adquirentes()).map((a) => [a.id, a]));
   return linhas.map((p) => {
     if (!p || !p.methodId) return p;
     const forma = formasPorId.get(String(p.methodId));
@@ -1879,6 +1887,35 @@ async function syncSalesData(data) {
   data.orders = orders;
   data.quotes = quotes;
   data.importLogs = importLogs;
+}
+
+/**
+ * SÓ OS PEDIDOS DE UM PERÍODO — para o pré-check fiscal.
+ *
+ * O pré-check filtrava a data em JavaScript DEPOIS de syncSalesData trazer
+ * `select *` dos 14.864 pedidos, os orçamentos e o histórico de importação
+ * (que ele não lê): 338 ms de carga para um dia sem pedido nenhum, medido em
+ * 06/10/2026, e o event loop parado 325 ms no parse.
+ *
+ * `data.orders` FICA SÓ COM O PERÍODO; `quotes` e `importLogs` não são
+ * tocados. Quem chama isto não pode ler pedido fora da janela nem orçamento.
+ */
+async function syncSalesDataDoPeriodo(data, { de, ate }) {
+  data.orders = await db.getOrdersDoPeriodo({ de, ate });
+}
+
+/**
+ * 'aaaa-mm-dd' que é um dia do calendário — e que o Postgres aceita.
+ *
+ * O ida-e-volta pelo Date é o que recusa 2026-02-30: Date.parse o aceita (vira
+ * 2 de março) e o Postgres não ("date/time field value out of range"). E o ano
+ * 0000 não existe para o Postgres.
+ */
+function ehDiaIso(texto) {
+  const valor = String(texto || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valor) || valor < '0001-01-01') return false;
+  const dia = new Date(`${valor}T00:00:00Z`);
+  return !Number.isNaN(dia.getTime()) && dia.toISOString().slice(0, 10) === valor;
 }
 
 /**
@@ -5481,6 +5518,89 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
   };
 }
 
+const LEITURAS_DIRETAS = { fiscalDb, db, pagamentosComCredenciadora };
+
+/**
+ * AS LEITURAS DA CONFERÊNCIA, UMA VEZ POR REQUISIÇÃO (pré-check fiscal).
+ *
+ * prepararNfeParaTransmitir lê o banco a cada nota: estabelecimento, empresa,
+ * as notas do pedido, cada produto e as regras de cada item. Numa emissão são
+ * meia dúzia de leituras; no pré-check de um mês eram 3.479 consultas em fila
+ * (779 pedidos) — 3,5 s, quase tudo esperando o banco.
+ *
+ * Aqui as MESMAS funções, com memória de UMA requisição: o estabelecimento e a
+ * empresa são lidos uma vez; as regras, uma vez por (empresa, operação, data);
+ * produtos e notas dos pedidos, numa consulta cada (precarregar). A ESCOLHA da
+ * regra continua rodando item a item, em resolverRegraFiscal — só a leitura é
+ * compartilhada. Nada aqui sobrevive à requisição: é um objeto novo por chamada
+ * da rota, e não há cache entre pedidos de pessoas diferentes nem entre
+ * cliques.
+ *
+ * Cada leitura devolve uma CÓPIA rasa, como a função original devolvia um
+ * objeto novo: uma nota não enxerga o que outra tivesse atribuído.
+ */
+function leiturasDaConferencia() {
+  const guardadas = new Map();
+  // `esquecerSe` é para a leitura que NÃO lança quando falha. As regras vêm do
+  // cliente do banco como { data, error }; guardar o erro faria uma falha
+  // passageira aparecer em TODOS os pedidos seguintes, onde sem esta memória
+  // cada item leria de novo.
+  const umaVez = (chave, ler, { esquecerSe = () => false } = {}) => {
+    if (!guardadas.has(chave)) {
+      const promessa = Promise.resolve().then(ler);
+      // Falhou, esquece: a próxima nota tenta de novo e, se falhar, o erro sai
+      // na linha DELA — como sairia sem esta memória.
+      const esquecer = () => { if (guardadas.get(chave) === promessa) guardadas.delete(chave); };
+      promessa.then((valor) => { if (esquecerSe(valor)) esquecer(); }, esquecer);
+      guardadas.set(chave, promessa);
+    }
+    return guardadas.get(chave);
+  };
+  const copia = (v) => (v === null || v === undefined ? v : Array.isArray(v) ? v.map((x) => ({ ...x })) : { ...v });
+  let produtos = new Map();
+  let notasPorPedido = new Map();
+  return {
+    fiscalDb: {
+      ...fiscalDb,
+      getEstabelecimentoById: async (id) => copia(await umaVez(`estab:${id}`, () => fiscalDb.getEstabelecimentoById(id))),
+      getEmpresaById: async (id) => copia(await umaVez(`empresa:${id}`, () => fiscalDb.getEmpresaById(id))),
+      getNfesPorPedido: async (orderId) => {
+        const id = String(orderId || '').trim();
+        return notasPorPedido.has(id) ? copia(notasPorPedido.get(id)) : fiscalDb.getNfesPorPedido(orderId);
+      },
+      resolverRegraFiscal: (params) => fiscalDb.resolverRegraFiscal(params, {
+        lerRegras: (chave) => umaVez(`regras:${chave.empresaId}|${chave.tipoOperacao}|${chave.referencia}`,
+          () => fiscalDb.lerRegrasCandidatas(chave),
+          { esquecerSe: (resposta) => Boolean(resposta && resposta.error) })
+      })
+    },
+    db: {
+      ...db,
+      getProductById: async (id) => (produtos.has(id)
+        ? copia(produtos.get(id))
+        : copia(await umaVez(`produto:${id}`, () => db.getProductById(id))))
+    },
+    pagamentosComCredenciadora: (pagamentos) => credenciadoraNasLinhas(pagamentos, {
+      formas: () => umaVez('formas', async () => loadData().paymentMethods || []),
+      adquirentes: () => umaVez('adquirentes', () => adquirentesDb.listar())
+    }),
+    // Produtos e notas de TODOS os pedidos numa consulta cada. Se falhar, os
+    // mapas ficam vazios e cada pedido volta a ler sozinho — o erro, se houver,
+    // aparece na linha do pedido, como hoje, e não como um 500 da lista.
+    async precarregar({ produtoIds = [], pedidoIds = [] } = {}) {
+      try {
+        [produtos, notasPorPedido] = await Promise.all([
+          db.getProductsEmMapaPorIds(produtoIds),
+          fiscalDb.getNfesPorPedidos(pedidoIds)
+        ]);
+      } catch (erro) {
+        produtos = new Map();
+        notasPorPedido = new Map();
+      }
+    }
+  };
+}
+
 /**
  * TUDO O QUE PRECISA ESTAR CERTO ANTES DE TRANSMITIR — e nada que grave nada.
  *
@@ -5508,6 +5628,11 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
 // opcional e não pode ser contribuinte, a operação é sempre interna e de
 // venda, e a nota de balcão não leva frete.
 async function prepararNfeParaTransmitir(body, opcoes = {}) {
+  // AS LEITURAS VÊM DE FORA SÓ NO PRÉ-CHECK (leiturasDaConferencia). Os três
+  // nomes abaixo SOMBREIAM os do módulo de propósito: o corpo desta função
+  // continua escrito com fiscalDb/db/pagamentosComCredenciadora, igual para a
+  // emissão — que não passa `leituras` e lê direto, como sempre leu.
+  const { fiscalDb, db, pagamentosComCredenciadora } = opcoes.leituras || LEITURAS_DIRETAS;
   const nfce = Number(opcoes.modelo) === 65;
   const estabelecimento = await fiscalDb.getEstabelecimentoById(body.estabelecimentoId);
   if (!estabelecimento) {
@@ -11060,14 +11185,21 @@ async function tratarRequisicao(req, res) {
         // O ponteiro de NSU de cada empresa vai junto: e ele que a tela mostra para
         // dizer ate onde ja sincronizou, e sem isso "a partir do ultimo NSU" seria
         // um botao que nao diz de onde parte.
+        //
+        // As leituras saem EM PARALELO (eram uma por vez: dez idas ao banco em
+        // fila, ~10 ms de uma rota de 14). O objeto é montado DEPOIS, no laço
+        // e na ordem da lista — as mesmas chaves, na mesma ordem de inserção, e
+        // com CNPJ repetido vence o último, como antes.
+        //
+        // O CNPJ é o do ESTABELECIMENTO (`empresa` nunca existiu aqui: ler dela
+        // era ReferenceError na ABERTURA da tela, e a lista de notas contra o
+        // CNPJ não carregava para ninguém).
+        const cnpjsDosEstabelecimentos = estabelecimentos.map((estabelecimento) => String(estabelecimento.cnpj || '').replace(/\D/g, ''));
+        const nsus = await Promise.all(cnpjsDosEstabelecimentos.map((documento) => (documento ? dfeDb.obterNsu(documento) : null)));
         const ponteiros = {};
-        for (const estabelecimento of estabelecimentos) {
-          // `estabelecimento`, a variável do laço — `empresa` nunca existiu aqui.
-          // Era ReferenceError na ABERTURA da tela, não só na busca: a lista de
-          // notas contra o CNPJ não carregava para ninguém.
-          const documento = String(estabelecimento.cnpj || '').replace(/\D/g, '');
-          if (documento) ponteiros[documento] = await dfeDb.obterNsu(documento);
-        }
+        cnpjsDosEstabelecimentos.forEach((documento, i) => {
+          if (documento) ponteiros[documento] = nsus[i];
+        });
         return sendJson(res, {
           documentos,
           // A tela chama de "empresa", que e como o usuario pensa. Aqui sao
@@ -11796,7 +11928,14 @@ async function tratarRequisicao(req, res) {
       }
 
       if (pathname === '/api/fiscal/analise-fiscal' && req.method === 'GET') {
-        return sendJson(res, await analiseFiscalDb.analisar());
+        // CADA ALERTA LEVA NO MÁXIMO O QUE A TELA DESENHA (LIMITE_NA_TELA em
+        // fiscal/subs/analise_fiscal.js). `quantidade` continua sendo a TOTAL
+        // — é ela que a tela usa para o "e mais N". 676 KB -> 280 KB.
+        const analise = await analiseFiscalDb.analisar();
+        return sendJson(res, {
+          ...analise,
+          alertas: (analise.alertas || []).map((a) => ({ ...a, produtos: a.produtos.slice(0, 300) }))
+        });
       }
 
       if (pathname === '/api/fiscal/sped/conferir' && req.method === 'POST') {
@@ -11819,7 +11958,15 @@ async function tratarRequisicao(req, res) {
         const ate = url.searchParams.get('ate') || de;
 
         const dados = loadData();
-        await Promise.all([syncSalesData(dados), syncCadastroData(dados)]);
+        // SÓ OS PEDIDOS DO PERÍODO quando ele é um par de dias de verdade (ver
+        // syncSalesDataDoPeriodo). Qualquer outra coisa ("2026-9-8", dia que não
+        // existe) segue o caminho antigo: lá a janela é comparação de TEXTO, e é
+        // ela que define o resultado para entrada torta — o SQL compararia datas.
+        if (ehDiaIso(de) && ehDiaIso(ate)) {
+          await syncSalesDataDoPeriodo(dados, { de, ate });
+        } else {
+          await syncSalesData(dados);
+        }
 
         // OS QUE AINDA VAO VIRAR NOTA. Quem ja' faturou, ja' cancelou ou e'
         // orcamento nao entra: conferir o que nao vai ser transmitido enche a
@@ -11831,10 +11978,44 @@ async function tratarRequisicao(req, res) {
             return dia >= de && dia <= ate;
           })
           .filter((p) => salesStatus.podeTransicionar(p.status, 'pedido-faturado'))
-          .sort((a, b) => Number(a.code || 0) - Number(b.code || 0));
+          // O EMPATE DE `code` SE DESFAZ PELO ID. Há pedidos sem código (todos
+          // valem 0 aqui) e códigos repetidos; o sort é estável, então antes o
+          // empate ficava na ordem em que o Postgres devolvia as linhas — que
+          // não é garantida e mudava de um plano para o outro (a lista do
+          // período e a lista inteira davam ordens diferentes). Pelo id, a
+          // mesma consulta devolve sempre a mesma ordem.
+          .sort((a, b) => (Number(a.code || 0) - Number(b.code || 0))
+            || (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
+
+        // O CADASTRO SÓ QUANDO HÁ PEDIDO, E SÓ DE QUEM ESTÁ NA LISTA.
+        //
+        // O nome do cliente (directoryName) e o destinatário da nota
+        // (montarNfeDoPedido) procuram o id em people + cnpjs, pedido a pedido.
+        // Com as 6.492 pessoas eram 6.492 objetos montados POR PEDIDO. O recorte
+        // guarda TODAS as entradas de cada id citado, na ordem de antes — a
+        // primeira que casa é a mesma.
+        if (candidatos.length) {
+          await syncCadastroData(dados);
+          const citados = new Set(candidatos.map((p) => p.clientSupplierId).filter(Boolean));
+          dados.people = (dados.people || []).filter((p) => citados.has(p.id));
+          dados.cnpjs = (dados.cnpjs || []).filter((c) => citados.has(c.id));
+        }
+        // Ver leiturasDaConferencia: as mesmas leituras, uma vez por requisição.
+        const leituras = leiturasDaConferencia();
+        await leituras.precarregar({
+          produtoIds: candidatos.flatMap((p) => (Array.isArray(p.items) ? p.items : []).map((i) => i.productId)),
+          pedidoIds: candidatos.map((p) => p.id)
+        });
 
         const resultados = [];
+        let conferidos = 0;
         for (const pedido of candidatos) {
+          // CEDE A VEZ A CADA 25. Com as leituras em lote o laço quase não
+          // espera o banco — virou CPU, e um período longo seguraria todas as
+          // outras requisições do servidor até acabar (1,6 s num teste de nove
+          // meses). setImmediate deixa quem chegou passar e volta.
+          conferidos += 1;
+          if (conferidos % 25 === 0) await new Promise((resolve) => setImmediate(resolve));
           const linha = {
             id: pedido.id,
             code: pedido.code,
@@ -11855,7 +12036,7 @@ async function tratarRequisicao(req, res) {
           };
           try {
             const corpo = montarNfeDoPedido(pedido, estabelecimentoId, dados);
-            await prepararNfeParaTransmitir(corpo);
+            await prepararNfeParaTransmitir(corpo, { leituras });
             resultados.push({ ...linha, ok: true, problema: '' });
           } catch (erro) {
             // A MENSAGEM DA EMISSAO, INTEIRA. Resumir aqui produziria um texto
