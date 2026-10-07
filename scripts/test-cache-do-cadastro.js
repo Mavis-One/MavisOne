@@ -101,16 +101,34 @@ check('  e falha NÃO fica guardada',
 console.log('\n--- TODA escrita invalida (é isto que faz o cache ser correto) ---');
 // Cadastrou um cliente e ele não aparece na lista: é o defeito que este cache
 // pode causar, e a única defesa é nenhuma escrita escapar.
-const ESCRITAS = ['createPerson', 'updatePerson', 'deletePerson',
-  'createCnpj', 'updateCnpj', 'deleteCnpj',
-  'createDeposit', 'updateDeposit', 'deleteDeposit'];
-for (const fn of ESCRITAS) {
+//
+// "Invalidar" tem dois jeitos desde a rodada de desempenho (out/2026):
+//   - pessoa e CNPJ TROCAM A LINHA no que foi guardado, relida do banco
+//     (atualizarNoCache). Esquecer a tabela inteira por causa de uma linha
+//     fazia a próxima leitura de qualquer rota refazer o `select *` das 6.492
+//     pessoas (111 ms frio, 365 ms medidos sob carga);
+//   - depósito continua ESQUECENDO (dez linhas, reler não custa nada).
+// Este check exigia `esquecerCadastro` nas nove; passou a exigir uma das duas,
+// com a TABELA CERTA — a pessoa que atualiza o cache dos CNPJs é o mesmo
+// defeito de não atualizar nada. O comportamento da troca é conferido por
+// execução na seção mais abaixo.
+const ESCRITAS = {
+  createPerson: 'people', updatePerson: 'people', deletePerson: 'people',
+  createCnpj: 'cnpjs', updateCnpj: 'cnpjs', deleteCnpj: 'cnpjs',
+  createDeposit: 'deposits', updateDeposit: 'deposits', deleteDeposit: 'deposits'
+};
+for (const [fn, tabela] of Object.entries(ESCRITAS)) {
   const ini = cadastros.indexOf(`async function ${fn}(`);
   const corpo = ini > -1 ? cadastros.slice(ini, cadastros.indexOf('\n}', ini)) : '';
-  check(`  ${fn.padEnd(14)} esquece o cache`, /esquecerCadastro\('(people|cnpjs|deposits)'\)/.test(corpo));
+  const troca = new RegExp(`atualizarNoCache\\('${tabela}', id\\)`).test(corpo);
+  const esquece = new RegExp(`esquecerCadastro\\('${tabela}'\\)`).test(corpo);
+  check(`  ${fn.padEnd(14)} ${tabela === 'deposits' ? 'esquece' : 'troca a linha no'} cache de ${tabela}`,
+    tabela === 'deposits' ? esquece : troca);
 }
-const invalidacoes = (cadastros.match(/esquecerCadastro\('(people|cnpjs|deposits)'\)/g) || []).length;
+const invalidacoes = (cadastros.match(/esquecerCadastro\('(people|cnpjs|deposits)'\)|atualizarNoCache\('(people|cnpjs)', id\)/g) || []).length;
 check('são nove invalidações, uma por escrita', invalidacoes === 9, `${invalidacoes}`);
+check('a troca relê a linha do banco, e não confia no que a escrita mandou',
+  /async \(atuais\) => \{\s*\n\s*const \{ data, error \} = await banco\.from\(tabela\)\.select\('\*'\)\.eq\('id', id\)\.maybeSingle\(\);/.test(cadastros));
 check('e o esquecimento é exportado', /esquecerCadastro\s*\n?\s*\};/.test(cadastros)
   || /  esquecerCadastro/.test(cadastros), 'quem escreve por fora precisa poder avisar');
 
@@ -148,5 +166,172 @@ check('  e diz que o cache do cadastro depende disso',
   /cache do cadastro/.test(eco),
   'em cluster, a escrita de um trabalhador não avisaria os outros');
 
-console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);
-process.exit(falhas === 0 ? 0 : 1);
+// ---------------------------------------------------------------------------
+// A TROCA DA LINHA, POR EXECUÇÃO (rodada de desempenho, out/2026).
+//
+// lib/db/cadastros.js roda de verdade contra um banco de mentira em memória,
+// que conta quantas vezes a tabela inteira foi lida. Sem banco no ar.
+// ---------------------------------------------------------------------------
+async function porExecucao() {
+  console.log('\n--- a escrita troca a linha no cache, sem reler a tabela ---');
+  const tabelas = { people: [], cnpjs: [], deposits: [] };
+  const leiturasInteiras = { people: 0, cnpjs: 0, deposits: 0 };
+  let falharProximaReleitura = false;
+  // Construtor que imita o encadeamento da camada de consulta só no que
+  // cadastros.js usa.
+  const construtor = (tabela) => {
+    const estado = { op: 'select', filtroId: null, valores: null, unico: false };
+    const c = {
+      select() { return c; },
+      order() { return c; },
+      eq(coluna, valor) { estado.filtroId = valor; return c; },
+      maybeSingle() { estado.unico = true; return c; },
+      insert(linha) { estado.op = 'insert'; estado.valores = linha; return c; },
+      update(valores) { estado.op = 'update'; estado.valores = valores; return c; },
+      delete() { estado.op = 'delete'; return c; },
+      then(ok, falha) {
+        return new Promise((resolve) => setImmediate(resolve)).then(() => {
+          const linhas = tabelas[tabela];
+          if (estado.op === 'insert') {
+            linhas.push({ created_at: new Date().toISOString(), ...estado.valores });
+            return { data: null, error: null };
+          }
+          if (estado.op === 'update') {
+            const l = linhas.find((x) => x.id === estado.filtroId);
+            if (l) Object.assign(l, estado.valores);
+            return { data: null, error: null };
+          }
+          if (estado.op === 'delete') {
+            tabelas[tabela] = linhas.filter((x) => x.id !== estado.filtroId);
+            return { data: null, error: null };
+          }
+          if (estado.unico) {
+            if (falharProximaReleitura) { falharProximaReleitura = false; return { data: null, error: { message: 'falha simulada' } }; }
+            const l = linhas.find((x) => x.id === estado.filtroId);
+            return { data: l ? JSON.parse(JSON.stringify(l)) : null, error: null };
+          }
+          if (tabelas.__falhar && tabelas.__falhar()) return { data: null, error: { message: 'tabela inteira falhou (simulado)' } };
+          leiturasInteiras[tabela] += 1;
+          const ordenadas = JSON.parse(JSON.stringify(linhas))
+            .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+          return { data: ordenadas, error: null };
+        }).then(ok, falha);
+      }
+    };
+    return c;
+  };
+  const falso = {
+    from: (tabela) => construtor(tabela),
+    rpc: async () => ({ data: 'X', error: null })
+  };
+  const clienteAbs = require.resolve('../lib/db/client');
+  require.cache[clienteAbs] = {
+    id: clienteAbs, filename: clienteAbs, loaded: true, children: [], paths: [],
+    exports: { banco: falso, createId: (p) => `${p}-${Math.random().toString(16).slice(2)}`, assertNoError: (e, ctx) => { if (e) throw new Error(`${ctx}: ${e.message}`); } }
+  };
+  const cadAbs = require.resolve('../lib/db/cadastros');
+  delete require.cache[cadAbs];
+  const cad = require(cadAbs);
+
+  const pessoa = (id, code, criada, nome) => ({
+    id, code, type: 'pessoa-fisica', name: nome, trade_name: '', document: '', email: '', phone: '', status: 'ativo',
+    city: '', state: '', zip_code: '', extra: { roles: ['Cliente'] }, created_at: criada
+  });
+  tabelas.people = [
+    pessoa('p1', '1', '2026-01-01T10:00:00.000Z', 'Ana'),
+    pessoa('p2', '2', '2026-01-02T10:00:00.000Z', 'Bia'),
+    pessoa('p3', '3', '2026-01-02T10:00:00.000Z', 'Caio'),
+    pessoa('p4', '4', '2026-01-03T10:00:00.000Z', 'Duda')
+  ];
+  const ids = (lista) => lista.map((p) => p.id).join(',');
+
+  const l1 = await cad.getPeople();
+  check('1ª leitura vai ao banco', leiturasInteiras.people === 1, ids(l1));
+  await cad.getPeople();
+  check('2ª leitura vem do cache', leiturasInteiras.people === 1);
+
+  const nova = await cad.createPerson({ id: 'p5', code: '5', name: 'Eva', type: 'pessoa-fisica', document: '1' });
+  const l2 = await cad.getPeople();
+  check('cadastrar: a lista seguinte já tem a pessoa nova', l2.some((p) => p.id === 'p5' && p.name === 'Eva'), ids(l2));
+  check('  sem reler a tabela inteira', leiturasInteiras.people === 1, String(leiturasInteiras.people));
+  check('  na posição de created_at desc (a mais nova primeiro)', l2[0].id === 'p5', ids(l2));
+  check('  e o que a escrita devolve é a pessoa gravada', nova && nova.id === 'p5' && nova.name === 'Eva');
+  check('  as chaves do extra continuam no primeiro nível, como a leitura faz',
+    Array.isArray(l2.find((p) => p.id === 'p4').roles));
+  check('  a lista anterior não mudou (o guardado nunca é mutado)', l1.length === 4 && !l1.some((p) => p.id === 'p5'));
+
+  await cad.updatePerson('p3', { name: 'Caio Editado' });
+  const l3 = await cad.getPeople();
+  check('editar: troca no mesmo lugar', ids(l3) === ids(l2) && l3.find((p) => p.id === 'p3').name === 'Caio Editado', ids(l3));
+  check('  sem reler a tabela inteira', leiturasInteiras.people === 1);
+
+  await cad.deletePerson('p2');
+  const l4 = await cad.getPeople();
+  check('excluir: sai da lista', !l4.some((p) => p.id === 'p2') && l4.length === l3.length - 1, ids(l4));
+  check('  sem reler a tabela inteira', leiturasInteiras.people === 1);
+
+  // Duas edições simultâneas na mesma pessoa: a troca relê o banco DEPOIS da
+  // anterior, então o que fica é a última gravação — nunca uma versão anterior
+  // por cima da mais nova.
+  await Promise.all([
+    cad.updatePerson('p1', { name: 'Ana v1' }),
+    cad.updatePerson('p1', { name: 'Ana v2' })
+  ]);
+  const noBanco = tabelas.people.find((p) => p.id === 'p1').name;
+  const l5 = await cad.getPeople();
+  check('duas edições ao mesmo tempo: o cache fica com o que o banco tem', l5.find((p) => p.id === 'p1').name === noBanco, `${noBanco}`);
+
+  // Empate de created_at: a nova entra DEPOIS das que têm o mesmo instante.
+  tabelas.people.push(pessoa('p6', '6', '2026-01-02T10:00:00.000Z', 'Fábio'));
+  // (inserida "por fora" só para o teste; agora a escrita de verdade relê p6)
+  await cad.updatePerson('p6', { name: 'Fábio' });
+  const l6 = await cad.getPeople();
+  check('empate de created_at: entra depois das do mesmo instante, antes das mais antigas',
+    ids(l6).indexOf('p6') > ids(l6).indexOf('p3') && ids(l6).indexOf('p6') < ids(l6).indexOf('p1'), ids(l6));
+
+  // Bate com o que o banco devolveria (fora a ordem entre empates).
+  const doBanco = tabelas.people.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const iguais = JSON.stringify(l6.map((p) => [p.id, p.name, p.createdAt]).sort())
+    === JSON.stringify(doBanco.map((p) => [p.id, p.name, p.created_at]).sort());
+  check('o conteúdo guardado é o do banco, linha por linha', iguais);
+
+  // Falhou a releitura da linha: quem espera a lista não recebe o erro de
+  // uma troca — recebe a tabela relida inteira, que é o que o esquecimento de
+  // antes faria. Pela exclusão, que só relê dentro da troca (a edição relê a
+  // pessoa por conta própria também, e a falha simulada cairia nessa outra).
+  falharProximaReleitura = true;
+  const antes = leiturasInteiras.people;
+  await cad.deletePerson('p4');
+  const l8 = await cad.getPeople();
+  check('releitura da linha que falha: a lista vem da tabela relida, sem erro',
+    leiturasInteiras.people === antes + 1 && !l8.some((p) => p.id === 'p4') && l8.length === tabelas.people.length,
+    `${leiturasInteiras.people - antes} leitura(s) inteira(s)`);
+
+  // E se até a tabela inteira falhar, nada de errado fica guardado: a
+  // leitura seguinte tenta o banco de novo.
+  let falharTudo = 1;
+  tabelas.__falhar = () => (falharTudo-- > 0);
+  falharProximaReleitura = true;
+  await cad.deletePerson('p5');
+  const erro = await cad.getPeople().then(() => null, (e) => e);
+  check('releitura e tabela falhando: o erro chega a quem pediu', Boolean(erro), erro ? erro.message : 'sem erro');
+  delete tabelas.__falhar;
+  const antes2 = leiturasInteiras.people;
+  const l9 = await cad.getPeople();
+  check('  e não fica guardado: a seguinte vai ao banco e traz o certo',
+    leiturasInteiras.people === antes2 + 1 && !l9.some((p) => p.id === 'p5'), `${leiturasInteiras.people - antes2}`);
+
+  // Sem nada guardado, a escrita não inventa entrada: a leitura vai ao banco.
+  cad.esquecerCadastro('cnpjs');
+  await cad.createCnpj({ id: 'c1', code: '9', name: 'Empresa', document: '1' });
+  const c1 = await cad.getCnpjs();
+  check('sem cache guardado, a escrita não cria um: a leitura vai ao banco', leiturasInteiras.cnpjs === 1 && c1.length === 1);
+}
+
+porExecucao().then(() => {
+  console.log(falhas === 0 ? '\n===== TODOS OS CHECKS PASSARAM =====' : `\n===== ${falhas} FALHA(S) =====`);
+  process.exit(falhas === 0 ? 0 : 1);
+}).catch((erro) => {
+  console.error('O teste quebrou:', erro);
+  process.exit(1);
+});
