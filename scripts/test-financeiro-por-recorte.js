@@ -20,6 +20,8 @@
  *   6. as telas: o dashboard tem UMA cadeia de atualização (roda o arquivo de
  *      verdade com relógio falso), a emissão de NF-e não desenha os <select>
  *      gigantes, Lançamentos não refaz a lista para abrir a busca avançada.
+ *   7. o byte NUL de uma URL ou corpo mal formado não chega ao Postgres (que o
+ *      recusaria com 500): ids com NUL saem da leitura, filtros são reescritos.
  *
  * A equivalência com o banco de verdade (lista de lançamentos, conciliação,
  * resumo) está em scripts/test-lista-de-lancamentos.js.
@@ -278,6 +280,36 @@ function simularDashboard({ cliques, latenciaMs, minutos = 10 }) {
 }
 
 (async () => {
+  // O byte NUL não pode chegar ao Postgres: ele recusa o parâmetro e a rota
+  // responderia 500 onde antes respondia 404 (lançamento não achado) ou 200
+  // (lista filtrada em JS). Nada aqui toca o banco: as leituras por id saem
+  // vazias antes da consulta, e o filtro só é montado.
+  console.log('\n--- 7. o byte NUL não vai ao banco ---');
+  {
+    const fin = require('../lib/db/financeiro');
+    const vazios = await Promise.all([
+      fin.getFinancialEntriesByIds(['a\u0000b']),
+      fin.getFinancialPaymentsByEntries(['\u0000']),
+      fin.getFinancialEntriesByNfe(['x\u0000'])
+    ]);
+    check('id com NUL é descartado antes da consulta', vazios.every((l) => Array.isArray(l) && l.length === 0));
+    const filtro = fin.montarFiltroDaLista(new URLSearchParams({
+      clientSupplierId: 'a\u0000b', category: '\u0000', dateFrom: '2026-03-01\u0000', dateTo: '\u0000x',
+      dueFrom: 'abc\u0000', dueTo: '2026-10\u0000', amountMin: '1\u0000'
+    }));
+    check('nenhum parâmetro do filtro leva NUL', filtro.valores.every((v) => !String(v).includes('\u0000')),
+      JSON.stringify(filtro.valores));
+    // A tradução, termo a termo (a equivalência com a lista inteira está em
+    // test-lista-de-lancamentos.js, com o banco): igualdade vira `false`;
+    // `>= t` vira `> antes-do-NUL`; `<= t` vira `<= antes-do-NUL`.
+    const esperado = ' where false and false'
+      + ' and (date::text collate "C") > $1 and (date::text collate "C") <= $2'
+      + ' and (coalesce(due_date, date)::text collate "C") > $3 and (coalesce(due_date, date)::text collate "C") <= $4'
+      + ' and false';
+    check('a tradução com NUL é a esperada', filtro.onde === esperado
+      && JSON.stringify(filtro.valores) === JSON.stringify(['2026-03-01', '', 'abc', '2026-10']), filtro.onde);
+  }
+
   try {
     const parado = await simularDashboard({ cliques: [], latenciaMs: 300 });
     const cliques = [{ em: 5300, tipo: 'period', valor: 'week' }, { em: 9710, tipo: 'period', valor: 'month' }, { em: 13420, tipo: 'granularity', valor: 'year' }];

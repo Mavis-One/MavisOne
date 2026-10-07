@@ -301,5 +301,105 @@ const obsoletas = Object.keys(PENDENTES).filter((k) => !usadas.has(k));
 check('a linha de base não tem entrada obsoleta', obsoletas.length === 0,
   obsoletas.length ? `já corrigido(s), remova de PENDENTES: ${obsoletas.join(' ; ')}` : `${usadas.size} em uso`);
 
+// ---------------------------------------------------------------------------
+// OS CARREGADORES PARCIAIS SÓ ONDE ALGUÉM CONFERIU QUE BASTAM (fase DS).
+// ---------------------------------------------------------------------------
+// Para o guarda acima, os recortes do Financeiro "populam" `finance` e
+// `financialPayments` — e populam, mas com MENOS: só alguns lançamentos, ou
+// todos com dez campos. Uma rota nova que chamasse syncLancamentosParaResumo e
+// depois serializasse `data.finance` como lista inteira passaria acima com 0
+// leituras sem sync, e responderia conta, categoria e baixas vazias.
+//
+// Então cada carregador parcial tem a sua lista fechada de rotas, cada uma
+// revisada contra o que a rota lê (o porquê está escrito ao lado da chamada, em
+// server.js). Rota nova que use um deles quebra aqui até alguém conferir e
+// acrescentá-la — e entrada que ficou sem uso também quebra, como em PENDENTES.
+const PARCIAIS = {
+  // Um lançamento (ou os da página) e as baixas DELE: abrir, editar, baixar,
+  // estornar, cancelar, conciliar; a página da lista e a do extrato.
+  syncLancamentosPorId: [
+    '/api/finance/entries GET',
+    '/api/finance/entries POST',
+    '/api/finance/entries/* GET',
+    '/api/finance/entries/* PUT',
+    '/api/finance/entries/:id/payments POST',
+    '/api/finance/entries/:id/estorno POST',
+    '/api/finance/entries/:id/cancelar POST',
+    '/api/finance/bank-transactions GET',
+    '/api/finance/bank-transactions POST',
+    '/api/finance/bank-transactions/:id/conciliar POST',
+    '/api/finance/bank-transactions/:id/desconciliar POST'
+  ],
+  // Só pendentes e parciais: o universo de findBankTransactionMatches.
+  syncLancamentosEmAberto: ['/api/finance/bank-transactions/:id/matches GET'],
+  // As parcelas de algumas NF-e manuais, sem baixa nenhuma.
+  syncLancamentosDasNotas: [
+    '/api/finance/nfe GET',
+    '/api/finance/nfe POST',
+    '/api/finance/nfe/* GET',
+    '/api/finance/nfe/:id/cancelar POST'
+  ],
+  // Todos os lançamentos com DEZ campos: só buildFinanceDashboardSummary.
+  syncLancamentosParaResumo: ['/api/finance/summary GET']
+};
+
+// As rotas aqui são cortadas de novo, com um começo a mais que o guarda de
+// cima não reconhece: `if (/^\/api\/...$/.test(pathname)` — é como estão
+// escritas baixa, estorno, cancelamento e conciliação. Com o corte de cima elas
+// se fundiriam à rota anterior e a lista ficaria com o nome errado.
+const inicioDeRota = (l) => /^ {2}(?:const \w+Match = pathname\.match|if \(.*\bpathname\b)/.test(l);
+const ehComentario = (l) => /^\s*\/\//.test(l);
+function rotaNormalizada(linha) {
+  const metodo = /req\.method === '(GET|POST|PUT|DELETE|PATCH)'/.exec(linha);
+  let caminho = (/pathname === '(\/api\/[^']*)'/.exec(linha) || [])[1];
+  if (!caminho) {
+    const prefixo = /pathname\.startsWith\('(\/api\/[^']*)'\)/.exec(linha);
+    if (prefixo) caminho = `${prefixo[1]}*`;
+  }
+  if (!caminho) {
+    const rx = /\/\^(\\\/api.*?)\$\//.exec(linha);
+    if (rx) caminho = rx[1].split('[^/]+').join(':id').split('\\/').join('/');
+  }
+  return `${caminho || linha.trim().slice(0, 60)} ${metodo ? metodo[1] : ''}`.trim();
+}
+
+const usosParciais = new Map(Object.keys(PARCIAIS).map((fn) => [fn, new Set()]));
+const iniciosDeRota = [];
+linhas.forEach((l, i) => { if (inicioDeRota(l)) iniciosDeRota.push(i); });
+iniciosDeRota.forEach((de, n) => {
+  const ate = n + 1 < iniciosDeRota.length ? iniciosDeRota[n + 1] : linhas.length;
+  // Sem as linhas de comentário: citar o carregador na explicação não é usá-lo.
+  const corpo = linhas.slice(de, ate).filter((l) => !ehComentario(l)).join('\n');
+  Object.keys(PARCIAIS).forEach((fn) => {
+    if (corpo.includes(`${fn}(`)) usosParciais.get(fn).add(rotaNormalizada(linhas[de]));
+  });
+});
+// Fora das rotas: um helper que chame um carregador parcial esconderia a rota
+// de cima. Hoje nenhum chama; o dia em que um chamar, ele entra aqui revisado.
+// (O despachante, que contém as rotas, não conta: as rotas já foram vistas.)
+const helpersComParcial = [...FUNCOES.keys()]
+  .filter((nome) => !Object.prototype.hasOwnProperty.call(PARCIAIS, nome))
+  .filter((nome) => {
+    const ini = linhas.findIndex((l) => l.startsWith(`function ${nome}(`) || l.startsWith(`async function ${nome}(`));
+    if (ini < 0) return false;
+    const fim = linhas.findIndex((l, i) => i > ini && l.startsWith('}'));
+    const corpo = linhas.slice(ini, fim < 0 ? linhas.length : fim);
+    if (corpo.some(inicioDeRota)) return false;
+    const texto = corpo.filter((l) => !ehComentario(l)).join('\n');
+    return Object.keys(PARCIAIS).some((fn) => texto.includes(`${fn}(`));
+  });
+check('nenhuma função fora das rotas chama carregador parcial', helpersComParcial.length === 0,
+  helpersComParcial.length ? helpersComParcial.join(', ') : '0');
+
+Object.entries(PARCIAIS).forEach(([fn, permitidas]) => {
+  const usadas = usosParciais.get(fn);
+  const novas = [...usadas].filter((r) => !permitidas.includes(r));
+  const semUso = permitidas.filter((r) => !usadas.has(r));
+  check(`${fn}: só nas rotas conferidas`, novas.length === 0,
+    novas.length ? `rota(s) nova(s), confira se o recorte basta e acrescente: ${novas.join(' ; ')}` : `${usadas.size} rota(s)`);
+  check(`${fn}: a lista não tem rota obsoleta`, semUso.length === 0,
+    semUso.length ? `remova: ${semUso.join(' ; ')}` : 'ok');
+});
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

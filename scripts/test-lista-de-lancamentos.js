@@ -98,7 +98,9 @@ const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corp
        (select category_id from financial_entries where category_id is not null group by 1 order by count(*) desc limit 1) cat,
        (select bank_account_id from financial_entries where bank_account_id is not null group by 1 order by count(*) desc limit 1) conta,
        (select client_supplier_id from financial_entries where coalesce(client_supplier_id,'') <> '' group by 1 order by count(*) desc limit 1) cli,
-       (select description from financial_entries order by date desc, id desc limit 1) descr`)).rows[0];
+       (select description from financial_entries order by date desc, id desc limit 1) descr,
+       (select date::text from financial_entries group by 1 order by count(*) desc, 1 limit 1) dia,
+       (select due_date::text from financial_entries group by 1 order by count(*) desc, 1 limit 1) venc`)).rows[0];
     const hoje = S.toDateStr(S.getTodayLocal());
     const pessoa = people.find((p) => p.id === amostra.cli);
     const casos = [
@@ -118,7 +120,17 @@ const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corp
       { search: 'ção' }, { search: 'JOÃO' }, { search: (pessoa && pessoa.name ? pessoa.name.slice(0, 6) : 'maria') },
       { search: String(amostra.descr || '').slice(0, 8) }, { search: 'a', type: 'despesa', status: 'pago' },
       { search: 'zzzzzzzzzz' },
-      { search: 'a', category: amostra.cat || 'x', dateFrom: '2026-01-01', amountMin: '100' }
+      { search: 'a', category: amostra.cat || 'x', dateFrom: '2026-01-01', amountMin: '100' },
+      // O byte NUL (só numa URL forjada): o Postgres recusa o parâmetro, então
+      // montarFiltroDaLista o reescreve. Os casos com data real conferem a
+      // borda — `dateFrom=<dia>\u0000` EXCLUI o próprio dia no JS, e
+      // `dateTo=<dia>\u0000` o inclui. <dia> é a data com mais lançamentos.
+      { dateFrom: `${amostra.dia}\u0000` }, { dateTo: `${amostra.dia}\u0000` },
+      { dueFrom: `${amostra.venc}\u0000` }, { dueTo: `${amostra.venc}\u0000` },
+      { clientSupplierId: `${amostra.cli || 'x'}\u0000` }, { category: '\u0000' },
+      { dateFrom: '2026-03-01\u0000' }, { dateTo: '2026-03-01\u0000x' }, { dateFrom: '\u0000' }, { dateTo: '\u0000' },
+      { dueFrom: `${hoje}\u0000`, dueTo: '2026-12\u0000' }, { dateFrom: '2026-0\u00003' }, { amountMin: '1\u0000' },
+      { search: 'a\u0000' }
     ];
     let iguais = 0;
     for (const caso of casos) {
@@ -195,6 +207,13 @@ const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corp
       return JSON.stringify(x) === JSON.stringify(e) && JSON.stringify(b1) === JSON.stringify(b2);
     });
     check('lançamento e baixas por id = os da leitura inteira', ok4, `${comBaixa.length} lançamentos`);
+    // Um id com NUL (de URL ou corpo forjado) não pode derrubar a leitura com
+    // 500: some da lista, e os outros ids continuam vindo.
+    const comNul = await db.getFinancialEntriesByIds([`${comBaixa[0].id}\u0000`, comBaixa[0].id]);
+    const baixasComNul = await db.getFinancialPaymentsByEntries(['\u0000', comBaixa[0].id]);
+    const notasComNul = await db.getFinancialEntriesByNfe(['a\u0000b']);
+    check('id com NUL é ignorado, sem erro do banco', comNul.length === 1 && comNul[0].id === comBaixa[0].id
+      && baixasComNul.length === baixas.filter((b) => b.entryId === comBaixa[0].id).length && notasComNul.length === 0);
   } finally {
     await fecharPool();
   }
