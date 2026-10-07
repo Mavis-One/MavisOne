@@ -30,12 +30,6 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
   const { content, api, showToast, state, loadModule, escapeHtml, confirmModal } = ctx;
 
   let meta = { bankAccounts: [] };
-  try {
-    meta = await api('/api/finance/meta');
-  } catch (error) {
-    showToast('Não foi possível carregar as contas bancárias.', 'warning');
-  }
-
   const filters = { bankAccountId: '', status: '', type: '', search: '', dateFrom: '', dateTo: '' };
   let page = 1;
   const limit = 15;
@@ -50,14 +44,37 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     return params.toString();
   }
 
-  async function load() {
+  // META E PRIMEIRA PÁGINA SAEM JUNTOS, e o meta só com as contas (fase DS).
+  //
+  // Esta tela lê do meta UMA coisa: as contas bancárias. Recebia 2.818 KB
+  // (diretório de pessoas e produtos) e só depois pedia o extrato. Agora pede
+  // `produtos=0&diretorio=0` (29 KB) e o extrato ao mesmo tempo; sem conta
+  // cadastrada, a resposta do extrato é ignorada e a tela mostra o aviso de
+  // sempre.
+  const [respostaMeta, primeiraPagina] = await Promise.allSettled([
+    api('/api/finance/meta?produtos=0&diretorio=0'),
+    api(`/api/finance/bank-transactions?${buildQuery()}`)
+  ]);
+  if (respostaMeta.status === 'fulfilled') {
+    meta = respostaMeta.value;
+  } else {
+    showToast('Não foi possível carregar as contas bancárias.', 'warning');
+  }
+
+  // `preCarregada` é a primeira página, que já veio junto com o meta.
+  async function load(preCarregada) {
     if (!meta.bankAccounts.length) {
       renderNoAccounts();
       return;
     }
     let result;
     try {
-      result = await api(`/api/finance/bank-transactions?${buildQuery()}`);
+      if (preCarregada) {
+        if (preCarregada.status === 'rejected') throw preCarregada.reason;
+        result = preCarregada.value;
+      } else {
+        result = await api(`/api/finance/bank-transactions?${buildQuery()}`);
+      }
     } catch (error) {
       content.innerHTML = `<div class="panel"><p class="muted">Erro ao carregar extrato: ${escapeHtml(error.message || 'erro desconhecido')}</p></div>`;
       return;
@@ -188,7 +205,8 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
   function attachViewHandlers(result) {
     const totalPages = Math.max(1, Math.ceil(result.total / limit));
 
-    document.getElementById('extratoRefreshBtn')?.addEventListener('click', load);
+    // Arrow, e não `load` direto: o evento de clique entraria como `preCarregada`.
+    document.getElementById('extratoRefreshBtn')?.addEventListener('click', () => load());
     document.getElementById('extratoNewBtn')?.addEventListener('click', openNewTransactionModal);
     document.getElementById('extratoImportBtn')?.addEventListener('click', openImportModal);
 
@@ -471,5 +489,5 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     });
   }
 
-  await load();
+  await load(primeiraPagina);
 };

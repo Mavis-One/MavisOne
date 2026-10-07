@@ -232,7 +232,13 @@ const NAO_PERSISTIR = new Set([
   'people', 'cnpjs', 'deposits',                                          // syncCadastroData
   'orders', 'quotes', 'importLogs',                                       // syncSalesData
   'purchases',                                                            // syncPurchasesData
-  'nfes',                                                                 // syncNfeData
+  // 'nfe' (a fiscal, a que vai à SEFAZ) entrou na fase DS: syncNfeData popula
+  // as duas desde a fase AX, e só 'nfes' estava aqui. Toda rota que sincronizava
+  // a NF-e e gravava (salvar pedido, faturar, NF-e manual) copiava a tabela
+  // inteira — com payload_enviado e resposta_focus de cada nota — para este
+  // arquivo, que TODA requisição relê: ~3,4 MB por mês de notas, ~0,3 s por
+  // requisição com um ano delas. A fonte da nota é a tabela `nfe` do banco.
+  'nfes', 'nfe',                                                          // syncNfeData
   'finance', 'financialPayments', 'financialCategories',                  // syncFinanceData
   'costCenters', 'bankAccounts',                                          // syncFinanceData
   'stockMovements', 'stockTransfers',                                     // fase AP: razao no Postgres
@@ -3819,6 +3825,12 @@ function serializeFinanceEntry(entry, data) {
   };
 }
 
+// ATENÇÃO (fase DS): a lista de /api/finance/entries aplica os filtros de
+// campo cru — clientSupplierId, category, costCenter, bankAccountId, datas e
+// valores — NO BANCO, traduzidos em lib/db/financeiro.js (montarFiltroDaLista),
+// e só os três de baixo (busca, tipo, situação) por esta função. Mudou um
+// filtro aqui? Mude lá também; scripts/test-lista-de-lancamentos.js compara as
+// duas listas inteiras e acusa a divergência.
 function filterFinanceEntries(data, query) {
   let entries = (data.finance || []).slice();
 
@@ -3923,7 +3935,15 @@ function buildNfeInstallments(nfe) {
 }
 
 function serializeNfe(nfe, data) {
-  const linkedEntries = (data.finance || []).filter((entry) => entry.nfeId === nfe.id);
+  return nfeParaTela(nfe, (data.finance || []).filter((entry) => entry.nfeId === nfe.id));
+}
+
+// A nota manual como a tela desenha, com as parcelas PASSADAS em vez de
+// filtradas de `data.finance` (fase DS). A lista de NF-e filtra, ordena e
+// pagina por campos da nota — número, cliente, chave, situação, data — e só
+// depois precisa das parcelas, e só das notas da página. Separar o corpo é o que
+// deixa montar a linha sem ter o financeiro carregado.
+function nfeParaTela(nfe, linkedEntries) {
   return {
     id: nfe.id,
     number: nfe.number,
@@ -4573,6 +4593,145 @@ function buildFinanceDashboardSummary(data, query) {
     nfeStats,
     movimentacoesBancarias
   };
+}
+
+// ---------------------------------------------------------------------------
+// O FINANCEIRO CARREGA O QUE A ROTA USA (fase DS)
+//
+// `syncFinanceData` lê as duas tabelas inteiras — 27.362 lançamentos e 25.709
+// baixas, 400 a 700 ms dentro do driver — e era chamada em TODA rota
+// /api/finance/*: em /meta, que não devolve lançamento nenhum; em abrir, baixar,
+// estornar, cancelar e editar UM lançamento; na lista de NF-e, que só precisa
+// das parcelas das notas da página; e na sugestão de conciliação, que por cima
+// disso cruzava cada título com todas as baixas (5,3 s com o servidor parado).
+// Medido em 06/10/2026, ver o diagnóstico da fase.
+//
+// Os carregadores abaixo são recortes do MESMO sync: preenchem as MESMAS chaves
+// de `data`, com objetos que saem do MESMO map de lib/db/financeiro.js, e as
+// funções que leem `data.finance`/`data.financialPayments` (serializeFinanceEntry,
+// recomputeFinanceEntryStatus, findBankTransactionMatches...) continuam as
+// mesmas, sem uma linha mudada. O que muda é QUANTOS registros estão lá — e por
+// isso cada rota que troca de carregador diz, ao lado, por que o recorte basta.
+//
+// `syncFinanceData` continua existindo, inteira e igual, para quem precisa de
+// tudo (relatórios, dashboard geral, vendas, compras).
+//
+// scripts/test-sync-obrigatorio.js conhece estes nomes (POPULA/INFRA). Ele se
+// contenta com um sync PARCIAL — não sabe se a rota precisava de todos os
+// lançamentos —, então quem usar um destes numa rota nova revisa à mão.
+// ---------------------------------------------------------------------------
+
+// As três tabelas pequenas (132 + 0 + 28 linhas, ~3 ms) que dão NOME a
+// categoria, centro de custo e conta. São as mesmas três chamadas de
+// syncFinanceData, sem os lançamentos.
+async function syncFinanceCadastroData(data) {
+  const [categories, costCenters, bankAccounts] = await Promise.all([
+    db.getFinancialCategories(),
+    db.getCostCenters(),
+    db.getBankAccounts()
+  ]);
+  data.financialCategories = categories;
+  data.costCenters = costCenters;
+  data.bankAccounts = bankAccounts;
+}
+
+// Só os lançamentos pedidos e as baixas DELES. `data.finance` sai na ordem de
+// `ids` (o banco não promete ordem nenhuma para `id = any(...)`), e id que não
+// existe simplesmente não entra — o `find` de quem chama devolve undefined, como
+// devolvia na lista inteira. Lista vazia não vai ao banco: é o caso de quem
+// CRIA um lançamento e só precisa das listas existindo.
+async function syncLancamentosPorId(data, ids) {
+  // Só texto: id de lançamento é texto no banco, e um `find` com `===` nunca
+  // acharia número ou objeto vindo de um corpo mal formado — aqui ele também
+  // não vai ao banco (onde viraria erro de tipo em vez do 404 de sempre).
+  const lista = [...new Set((ids || []).filter((id) => typeof id === 'string' && id))];
+  const [entries, payments] = await Promise.all([
+    db.getFinancialEntriesByIds(lista),
+    db.getFinancialPaymentsByEntries(lista)
+  ]);
+  const porId = new Map(entries.map((entry) => [entry.id, entry]));
+  data.finance = lista.map((id) => porId.get(id)).filter(Boolean);
+  data.financialPayments = payments;
+}
+
+// Os títulos pendentes e parciais e as baixas deles — o universo inteiro de
+// findBankTransactionMatches, que descarta todo o resto antes de olhar valor ou
+// data. Ver getLancamentosEmAberto.
+async function syncLancamentosEmAberto(data) {
+  const entries = await db.getLancamentosEmAberto();
+  data.finance = entries;
+  data.financialPayments = await db.getFinancialPaymentsByEntries(entries.map((entry) => entry.id));
+}
+
+// As parcelas de algumas NF-e manuais. serializeNfe só procura em `data.finance`
+// as de `nfeId` igual ao da nota, e nada da lista de NF-e lê baixa.
+async function syncLancamentosDasNotas(data, nfeIds) {
+  data.finance = await db.getFinancialEntriesByNfe(nfeIds);
+  data.financialPayments = [];
+}
+
+// Os dez campos que o resumo do dashboard lê, de todos os lançamentos, e
+// nenhuma baixa. ATENÇÃO: os registros vêm INCOMPLETOS (sem conta, categoria,
+// datas com hora...). Serve para buildFinanceDashboardSummary e nada mais — ver
+// getFinancialEntriesParaResumo.
+async function syncLancamentosParaResumo(data) {
+  data.finance = await db.getFinancialEntriesParaResumo();
+}
+
+// Só as NF-e manuais (fiscal_documentos de origem MANUAL). syncNfeData lê
+// também a tabela fiscal inteira, com os dois jsonb (`payload_enviado`,
+// `resposta_focus`), e a lista de NF-e já lê a fiscal por conta própria — eram
+// duas leituras da mesma tabela, uma delas jogada fora.
+async function syncNfesManuais(data) {
+  data.nfes = await db.getNfes();
+}
+
+// A ordem da lista de lançamentos: data decrescente e, no mesmo dia, id
+// decrescente pelo `localeCompare`. Era a função anônima dentro da rota; ganhou
+// nome para ser a MESMA nos dois passos da lista paginada no banco.
+function compararLancamentosDaLista(a, b) {
+  return b.date === a.date ? String(b.id).localeCompare(String(a.id)) : String(b.date).localeCompare(String(a.date));
+}
+
+// O diretório de pessoas do /api/finance/meta, no recorte que a tela pediu
+// (fase DS; os valores de `pede` estão explicados na rota). Sem pedido, o
+// diretório inteiro, como sempre foi. Os campos de cada recorte são os que as
+// telas leem — conferido nas quatro que chamam a rota.
+function diretorioDoMetaFinanceiro(data, pede) {
+  if (pede === '0') return [];
+  const diretorio = getCadastroDirectory(data);
+  if (pede === 'resumido') return diretorio.map(({ id, name, code }) => ({ id, name, code }));
+  if (pede === 'nfe') {
+    return diretorio.map(({ id, name, code, document, city, state, stateRegistration }) => ({
+      id, name, code, document, city, state, stateRegistration
+    }));
+  }
+  return diretorio;
+}
+
+/**
+ * A LISTA DE LANÇAMENTOS EM DOIS PASSOS (fase DS): quais, e depois a página.
+ *
+ * `parciais` são os lançamentos que já passaram nos filtros que o banco resolve
+ * (igualdade, datas, valores — ver getLancamentosDaLista), com só as colunas
+ * que os filtros restantes leem. Os restantes — busca, tipo e situação — rodam
+ * aqui pela PRÓPRIA filterFinanceEntries, a mesma de antes: um filtro é um E de
+ * condições, e a ordem em que se aplicam não muda o resultado.
+ *
+ * A ordem final é a do comparador da rota, sobre a lista inteira filtrada: é ela
+ * que decide o total e o que cai em cada página, exatamente como antes.
+ *
+ * `data.finance` fica com os parciais ao sair daqui — quem chama troca pelos
+ * lançamentos inteiros da página antes de serializar.
+ */
+function filtrarListaDeLancamentos(data, parciais, query) {
+  const restantes = new URLSearchParams();
+  ['search', 'type', 'status'].forEach((chave) => {
+    const valor = query.get(chave);
+    if (valor !== null) restantes.set(chave, valor);
+  });
+  data.finance = parciais;
+  return filterFinanceEntries(data, restantes).sort(compararLancamentosDaLista);
 }
 
 // Tipos servidos. Um mapa só: antes havia este e um segundo, quase igual, no
@@ -12058,6 +12217,15 @@ async function tratarRequisicao(req, res) {
 
       if (pathname === '/api/fiscal/nfe' && req.method === 'GET') {
         const estabelecimentoId = url.searchParams.get('estabelecimentoId') || undefined;
+        // `limite` (fase DS): as últimas N notas do emitente, sem os jsonb —
+        // é o que o quadro "Últimas NF-e" da emissão mostra (getNfeRecentes).
+        // Sem ele, a resposta de sempre: os logs fiscais mostram payload e
+        // resposta da Focus de cada nota e continuam recebendo tudo.
+        const limite = Math.floor(Number(url.searchParams.get('limite')));
+        if (estabelecimentoId && limite > 0) {
+          const records = await fiscalDb.getNfeRecentes(estabelecimentoId, Math.min(limite, 50));
+          return sendJson(res, { records });
+        }
         const records = await fiscalDb.getNfeRecords(estabelecimentoId);
         return sendJson(res, { records });
       }
@@ -15495,11 +15663,14 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname === '/api/finance' && req.method === 'GET') {
-    const data = loadData();
+    // Quem pergunta vem ANTES de carregar (fase DS), como em todas as rotas
+    // /api/finance/*: sem o módulo, a resposta é o mesmo 403 — só deixa de
+    // custar a carga inteira antes de sair.
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
+    const data = loadData();
     // data.purchases só é populado pelo sync com o Supabase; sem isto vinha vazio.
     // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
@@ -15514,6 +15685,10 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/summary' && req.method === 'GET') {
     try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
       const data = loadData();
       // O DASHBOARD DO FINANCEIRO SAIA TODO ZERADO (fase BC). Esta rota nao
       // sincronizava nada: `finance`, `financialPayments` e `bankAccounts` estao
@@ -15525,15 +15700,16 @@ async function tratarRequisicao(req, res) {
       // syncCadastroData e syncPurchasesData entram porque
       // resolveFinanceCounterparty le people/cnpjs/purchases para escrever o
       // nome do cliente/fornecedor de cada linha.
+      //
+      // Fase DS: os lançamentos vêm só com os dez campos que o resumo lê, e sem
+      // as baixas, que ele nunca leu (syncLancamentosParaResumo). Mesma função
+      // de resumo, mesmos números: 700 ms -> ~150 ms, e o dashboard se
+      // atualiza sozinho a cada minuto em cada tela aberta.
       await Promise.all([
-        syncFinanceData(data),
+        syncLancamentosParaResumo(data),
         syncCadastroData(data),
         syncPurchasesData(data)
       ]);
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('finance')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
       const summary = buildFinanceDashboardSummary(data, url.searchParams);
       return sendJson(res, summary);
     } catch (error) {
@@ -15542,19 +15718,43 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname === '/api/finance/meta' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
     const data = loadData();
+    // CADA TELA PEDE O QUE LÊ (fase DS). Sem parâmetro, a resposta é a de
+    // sempre, campo por campo — as cinco telas de NF-e e qualquer outro
+    // chamador não mudam. Com parâmetro, a tela abre mão do que não usa:
+    //
+    //   produtos=0         sem a lista de produtos (1.179 KB). Só a emissão de
+    //                      NF-e a lê; Lançamentos, Novo Lançamento e Extrato não.
+    //   produtos=nfe       os produtos só com os campos que a emissão lê.
+    //   diretorio=0        sem o diretório de pessoas (1.609 KB) — o Extrato só
+    //                      lê as contas; Lançamentos pede o diretório quando a
+    //                      busca avançada abre.
+    //   diretorio=resumido id, nome e código, que é o que Lançamentos e Novo
+    //                      Lançamento leem.
+    //   diretorio=nfe      o que a emissão lê do destinatário (documento, UF,
+    //                      município, IE). NUNCA `resumido` na NF-e: sem
+    //                      documento e IE, o destinatário sairia em branco.
+    //
+    // Opt-out com `=0` é o padrão do projeto (`?meta=0`, `?formulario=0`): quem
+    // esquece o parâmetro recebe tudo, nunca uma lista vazia por engano.
+    const pedeProdutos = url.searchParams.get('produtos') || '';
+    const pedeDiretorio = url.searchParams.get('diretorio') || '';
+    // Fase DS: as três tabelas pequenas, e não syncFinanceData. Nenhuma chave
+    // desta resposta vinha dos 27 mil lançamentos nem das 25 mil baixas que
+    // aquele sync lia — 700 ms por abertura, de oito telas, para nada.
+    //
     // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
     // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
     // Em sequencia, a rota pagava 2x essa latencia por nada.
     await Promise.all([
-      syncCadastroData(data),
-      syncFinanceData(data)
+      pedeDiretorio === '0' ? null : syncCadastroData(data),
+      syncFinanceCadastroData(data)
     ]);
-    const user = await getCurrentUser(req);
-    if (!user || !user.allowedModules.includes('finance')) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
-    }
     // Fase CD: a tela precisa das TRES coisas para filtrar a lista de contas
     // sozinha, sem uma ida ao servidor a cada troca de estabelecimento — os
     // estabelecimentos, os vinculos gravados, e qual e' o padrao desta pessoa.
@@ -15584,22 +15784,33 @@ async function tratarRequisicao(req, res) {
       podeTrocarEstabelecimento: estabelecimentosQuePodeUsar(user, ehAdministrador) === null
         || estabelecimentosQuePodeUsar(user, ehAdministrador).some((id) => id !== (user.estabelecimentoId || '')),
       estabelecimentosLiberados: estabelecimentosQuePodeUsar(user, ehAdministrador),
-      directory: getCadastroDirectory(data),
+      directory: diretorioDoMetaFinanceiro(data, pedeDiretorio),
       // Produtos com a classificação fiscal: é o que permite montar o item da
       // NF-e a partir do cadastro em vez de digitar NCM e origem a cada
       // emissão — digitado à mão, o NCM erra e a regra fiscal não casa.
-      produtos: (await db.getProducts()).map((p) => ({
-        id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice,
-        ncm: p.ncm, cest: p.cest, ean: p.ean, origem: p.origem,
-        unidadeComercial: p.unidadeComercial, unidadeTributavel: p.unidadeTributavel
-      }))
+      ...(pedeProdutos === '0' ? { produtos: [] } : pedeProdutos === 'nfe' ? {
+        // Fase DS: os campos que a emissão lê (emitir_nfe_focus.js). cest, ean
+        // e unidadeTributavel ficam de fora: a tela não os lê, e o servidor
+        // relê o produto pelo id na hora de emitir (emitirNfeFiscal).
+        produtos: (await db.getProducts()).map((p) => ({
+          id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice,
+          ncm: p.ncm, origem: p.origem, unidadeComercial: p.unidadeComercial
+        }))
+      } : {
+        produtos: (await db.getProducts()).map((p) => ({
+          id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice,
+          ncm: p.ncm, cest: p.cest, ean: p.ean, origem: p.origem,
+          unidadeComercial: p.unidadeComercial, unidadeTributavel: p.unidadeTributavel
+        }))
+      })
     });
   }
 
   if (pathname === '/api/finance/categories' && req.method === 'POST') {
     try {
-      const data = loadData();
-      await syncFinanceData(data);
+      // Fase DS: sem loadData nem syncFinanceData. A rota só cria um registro
+      // e devolve o que o banco gravou; os 27 mil lançamentos que ela lia
+      // (~500 ms por clique no "+" do formulário) não eram usados por nada.
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -15618,8 +15829,9 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/cost-centers' && req.method === 'POST') {
     try {
-      const data = loadData();
-      await syncFinanceData(data);
+      // Fase DS: sem loadData nem syncFinanceData. A rota só cria um registro
+      // e devolve o que o banco gravou; os 27 mil lançamentos que ela lia
+      // (~500 ms por clique no "+" do formulário) não eram usados por nada.
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -15638,8 +15850,9 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/bank-accounts' && req.method === 'POST') {
     try {
-      const data = loadData();
-      await syncFinanceData(data);
+      // Fase DS: sem loadData nem syncFinanceData. A rota só cria um registro
+      // e devolve o que o banco gravou; os 27 mil lançamentos que ela lia
+      // (~500 ms por clique no "+" do formulário) não eram usados por nada.
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -15663,25 +15876,39 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/entries' && req.method === 'GET') {
     try {
-      const data = loadData();
-      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
-      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-      // Em sequencia, a rota pagava 3x essa latencia por nada.
-      await Promise.all([
-        syncCadastroData(data),
-        syncPurchasesData(data),
-        syncFinanceData(data)
-      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
-      const filtered = filterFinanceEntries(data, url.searchParams)
-        .sort((a, b) => (b.date === a.date ? String(b.id).localeCompare(String(a.id)) : String(b.date).localeCompare(String(a.date))));
+      const data = loadData();
+      // A LISTA PAGINA NO BANCO (fase DS). Antes: as duas tabelas inteiras
+      // (27.362 lançamentos + 25.709 baixas, ~600-900 ms) para mostrar 15
+      // linhas. Agora são dois passos:
+      //
+      //   1. quais: o banco aplica os filtros de campo cru e devolve só as
+      //      colunas que os outros filtros e a ordem leem; busca, tipo e
+      //      situação rodam pela mesma filterFinanceEntries, e a ordem pelo
+      //      mesmo comparador — ver filtrarListaDeLancamentos;
+      //   2. a página: os lançamentos escolhidos, inteiros, e as baixas DELES.
+      //
+      // Mesmo total, mesma ordem, mesmas linhas em cada página: conferido
+      // contra a rota antiga em scripts/test-lista-de-lancamentos.js.
+      //
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      const [, , , parciais] = await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceCadastroData(data),
+        db.getLancamentosDaLista(url.searchParams)
+      ]);
+      const filtered = filtrarListaDeLancamentos(data, parciais, url.searchParams);
       const { page, limit } = parsePageParams(url.searchParams, 20);
       const start = (page - 1) * limit;
-      const pageEntries = filtered.slice(start, start + limit).map((entry) => serializeFinanceEntry(entry, data));
+      await syncLancamentosPorId(data, filtered.slice(start, start + limit).map((entry) => entry.id));
+      const pageEntries = data.finance.map((entry) => serializeFinanceEntry(entry, data));
       return sendJson(res, { entries: pageEntries, total: filtered.length, page, limit });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar lançamentos', 500);
@@ -15690,7 +15917,16 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/entries' && req.method === 'POST') {
     try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
       const data = loadData();
+      // Fase DS: nenhum lançamento existente é lido para criar um novo. A
+      // resposta serializa só o que nasceu agora (sem baixa nenhuma), e para
+      // isso bastam as listas vazias e as três tabelas de nomes — no lugar dos
+      // 27 mil lançamentos e 25 mil baixas que vinham antes (~1 s por clique).
+      //
       // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -15698,12 +15934,9 @@ async function tratarRequisicao(req, res) {
       await Promise.all([
         syncCadastroData(data),
         syncPurchasesData(data),
-        syncFinanceData(data)
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [])
       ]);
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('finance')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
       const body = await readBody(req);
       const type = String(body.type || 'DESPESA').toUpperCase();
       if (!['RECEITA', 'DESPESA', 'TRANSFERENCIA'].includes(type)) {
@@ -15757,7 +15990,18 @@ async function tratarRequisicao(req, res) {
 
   if (/^\/api\/finance\/entries\/[^/]+\/payments$/.test(pathname) && req.method === 'POST') {
     try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
       const data = loadData();
+      // Fase DS: esta rota lê UM lançamento e as baixas DELE — o `find` pelo id
+      // e getFinanceEntryPayments/recomputeFinanceEntryStatus filtrando pelo
+      // mesmo id. Carregar só esses dois dá o mesmo objeto, com as mesmas
+      // baixas, e as validações abaixo rodam sobre exatamente o que rodavam
+      // antes: ~1 s por clique virou ~20 ms.
+      //
       // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -15765,13 +16009,9 @@ async function tratarRequisicao(req, res) {
       await Promise.all([
         syncCadastroData(data),
         syncPurchasesData(data),
-        syncFinanceData(data)
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [id])
       ]);
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('finance')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
-      const id = decodeURIComponent(pathname.split('/')[4]);
       const entry = data.finance.find((item) => item.id === id);
       if (!entry) {
         return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
@@ -15828,7 +16068,18 @@ async function tratarRequisicao(req, res) {
 
   if (/^\/api\/finance\/entries\/[^/]+\/estorno$/.test(pathname) && req.method === 'POST') {
     try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
       const data = loadData();
+      // Fase DS: esta rota lê UM lançamento e as baixas DELE — o `find` pelo id
+      // e getFinanceEntryPayments/recomputeFinanceEntryStatus filtrando pelo
+      // mesmo id. Carregar só esses dois dá o mesmo objeto, com as mesmas
+      // baixas, e as validações abaixo rodam sobre exatamente o que rodavam
+      // antes: ~1 s por clique virou ~20 ms.
+      //
       // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -15836,13 +16087,9 @@ async function tratarRequisicao(req, res) {
       await Promise.all([
         syncCadastroData(data),
         syncPurchasesData(data),
-        syncFinanceData(data)
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [id])
       ]);
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('finance')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
-      const id = decodeURIComponent(pathname.split('/')[4]);
       const entry = data.finance.find((item) => item.id === id);
       if (!entry) {
         return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
@@ -15872,7 +16119,18 @@ async function tratarRequisicao(req, res) {
 
   if (/^\/api\/finance\/entries\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
       const data = loadData();
+      // Fase DS: esta rota lê UM lançamento e as baixas DELE — o `find` pelo id
+      // e getFinanceEntryPayments/recomputeFinanceEntryStatus filtrando pelo
+      // mesmo id. Carregar só esses dois dá o mesmo objeto, com as mesmas
+      // baixas, e as validações abaixo rodam sobre exatamente o que rodavam
+      // antes: ~1 s por clique virou ~20 ms.
+      //
       // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -15880,13 +16138,9 @@ async function tratarRequisicao(req, res) {
       await Promise.all([
         syncCadastroData(data),
         syncPurchasesData(data),
-        syncFinanceData(data)
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [id])
       ]);
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('finance')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
-      const id = decodeURIComponent(pathname.split('/')[4]);
       const entry = data.finance.find((item) => item.id === id);
       if (!entry) {
         return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
@@ -15943,7 +16197,18 @@ async function tratarRequisicao(req, res) {
 
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'PUT') {
     try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/finance/entries/', ''));
       const data = loadData();
+      // Fase DS: esta rota lê UM lançamento e as baixas DELE — o `find` pelo id
+      // e getFinanceEntryPayments/recomputeFinanceEntryStatus filtrando pelo
+      // mesmo id. Carregar só esses dois dá o mesmo objeto, com as mesmas
+      // baixas, e as validações abaixo rodam sobre exatamente o que rodavam
+      // antes: ~1 s por clique virou ~20 ms.
+      //
       // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -15951,13 +16216,9 @@ async function tratarRequisicao(req, res) {
       await Promise.all([
         syncCadastroData(data),
         syncPurchasesData(data),
-        syncFinanceData(data)
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [id])
       ]);
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('finance')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
-      const id = decodeURIComponent(pathname.replace('/api/finance/entries/', ''));
       const entry = data.finance.find((item) => item.id === id);
       if (!entry) {
         return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
@@ -16104,7 +16365,18 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname.startsWith('/api/finance/entries/') && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const id = decodeURIComponent(pathname.replace('/api/finance/entries/', ''));
     const data = loadData();
+    // Fase DS: esta rota lê UM lançamento e as baixas DELE — o `find` pelo id
+    // e getFinanceEntryPayments/recomputeFinanceEntryStatus filtrando pelo
+    // mesmo id. Carregar só esses dois dá o mesmo objeto, com as mesmas
+    // baixas, e as validações abaixo rodam sobre exatamente o que rodavam
+    // antes: ~1 s por clique virou ~20 ms.
+    //
     // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
     // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -16112,13 +16384,9 @@ async function tratarRequisicao(req, res) {
     await Promise.all([
       syncCadastroData(data),
       syncPurchasesData(data),
-      syncFinanceData(data)
+      syncFinanceCadastroData(data),
+      syncLancamentosPorId(data, [id])
     ]);
-    const user = await getCurrentUser(req);
-    if (!user || !user.allowedModules.includes('finance')) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
-    }
-    const id = decodeURIComponent(pathname.replace('/api/finance/entries/', ''));
     const entry = data.finance.find((item) => item.id === id);
     if (!entry) {
       return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
@@ -16128,19 +16396,16 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/nfe' && req.method === 'GET') {
     try {
-      const data = loadData();
-      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
-      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-      // Em sequencia, a rota pagava 2x essa latencia por nada.
-      await Promise.all([
-        syncNfeData(data),
-        syncFinanceData(data)
-      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
+      const data = loadData();
+      // Fase DS: só as NF-e manuais aqui (syncNfesManuais) — a fiscal é lida
+      // logo abaixo, uma vez, sem os jsonb; e o financeiro só no fim, para as
+      // notas manuais DA PÁGINA. Antes eram as duas tabelas do financeiro
+      // inteiras (~530 ms com zero notas) e a tabela fiscal duas vezes.
+      await syncNfesManuais(data);
       // A LISTA É UMA SÓ. Antes esta rota mostrava apenas `data.nfes` — o
       // registro manual do Financeiro — e a nota realmente transmitida à
       // SEFAZ não aparecia em lugar nenhum que o usuário fosse olhar.
@@ -16151,18 +16416,32 @@ async function tratarRequisicao(req, res) {
       // lista degrada para as manuais em vez de a tela não abrir.
       let fiscais = [];
       try {
-        fiscais = (await fiscalDb.getNfeRecords()).map(fiscalNfeParaLista);
+        // Só as colunas que fiscalNfeParaLista lê (fase DS): sem
+        // payload_enviado, resposta_focus e condicao_pagamento, que crescem
+        // com cada nota (2,4 KB com 1 item, 8,5 KB com 10) e a lista não mostra.
+        fiscais = (await fiscalDb.getNfeRecordsParaLista()).map(fiscalNfeParaLista);
       } catch (erroFiscal) {
         fiscais = [];
       }
-      const manuais = (data.nfes || []).map((nfe) => ({ ...serializeNfe(nfe, data), origem: 'financeiro' }));
+      // As manuais entram SEM as parcelas: filtrar, ordenar e paginar só leem
+      // número, cliente, chave, situação, data e id. As parcelas são
+      // anexadas depois, às da página.
+      const manuais = (data.nfes || []).map((nfe) => ({ ...nfeParaTela(nfe, []), origem: 'financeiro' }));
       const todas = fiscais.concat(manuais);
 
       const filtered = filterNfes(data, url.searchParams, todas)
         .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
       const { page, limit } = parsePageParams(url.searchParams, 15);
       const start = (page - 1) * limit;
-      const pageItems = filtered.slice(start, start + limit);
+      const daPagina = filtered.slice(start, start + limit);
+      // As parcelas das notas manuais da página, pelo índice nfe_id, e cada uma
+      // remontada pela MESMA serializeNfe de antes — o objeto é o mesmo que a
+      // lista inteira produzia, só que montado para 15 notas e não para todas.
+      await syncLancamentosDasNotas(data, daPagina.filter((nfe) => nfe.origem === 'financeiro').map((nfe) => nfe.id));
+      const brutas = new Map((data.nfes || []).map((nfe) => [nfe.id, nfe]));
+      const pageItems = daPagina.map((nfe) => (nfe.origem === 'financeiro'
+        ? { ...serializeNfe(brutas.get(nfe.id), data), origem: 'financeiro' }
+        : nfe));
       return sendJson(res, { nfes: pageItems, total: filtered.length, page, limit });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar NF-e', 500);
@@ -16171,20 +16450,26 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/nfe' && req.method === 'POST') {
     try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
       const data = loadData();
+      // Fase DS: nenhum lançamento existente é lido aqui. As parcelas desta nota
+      // nascem nesta requisição (`data.finance.push`) e a resposta só mostra as
+      // dela — serializeNfe procura pelo id da nota, que acabou de ser criado.
+      // `syncLancamentosDasNotas(data, [])` deixa as listas vazias e prontas, no
+      // lugar das duas tabelas inteiras.
+      //
       // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
       // Em sequencia, a rota pagava 2x essa latencia por nada.
       await Promise.all([
-        syncFinanceData(data),
+        syncLancamentosDasNotas(data, []),
         syncNfeData(data),
         syncSalesData(data)
       ]);
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('finance')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
       const body = await readBody(req);
 
       const clientName = String(body.customer || '').trim();
@@ -16337,20 +16622,25 @@ async function tratarRequisicao(req, res) {
 
   if (/^\/api\/finance\/nfe\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
-      const data = loadData();
-      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
-      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-      // Em sequencia, a rota pagava 2x essa latencia por nada.
-      await Promise.all([
-        syncNfeData(data),
-        syncFinanceData(data)
-      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.split('/')[4]);
+      const data = loadData();
+      // Fase DS: das parcelas, só as DESTA nota (índice nfe_id) — é tudo o que
+      // o cancelamento lê de `data.finance`. Mesma ordem da lista inteira
+      // (data decrescente), com o id no desempate. E só as notas manuais: esta
+      // rota procura a nota em `data.nfes` e não lê a tabela fiscal.
+      //
+      // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 2x essa latencia por nada.
+      await Promise.all([
+        syncNfesManuais(data),
+        syncLancamentosDasNotas(data, [id])
+      ]);
       const nfe = data.nfes.find((item) => item.id === id);
       if (!nfe) {
         return sendJson(res, { error: 'NF-e não encontrada' }, 404);
@@ -16398,20 +16688,24 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname.startsWith('/api/finance/nfe/') && req.method === 'GET') {
-    const data = loadData();
-    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
-    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-    // Em sequencia, a rota pagava 2x essa latencia por nada.
-    await Promise.all([
-      syncNfeData(data),
-      syncFinanceData(data)
-    ]);
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
     const id = decodeURIComponent(pathname.replace('/api/finance/nfe/', ''));
+    const data = loadData();
+    // Fase DS: a ficha de UMA nota manual lê as parcelas dela, e não o
+    // financeiro inteiro. syncNfesManuais porque a ficha só procura em
+    // `data.nfes` — a tabela fiscal, com os jsonb, não entra.
+    //
+    // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
+    // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+    // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+    // Em sequencia, a rota pagava 2x essa latencia por nada.
+    await Promise.all([
+      syncNfesManuais(data),
+      syncLancamentosDasNotas(data, [id])
+    ]);
     const nfe = data.nfes.find((item) => item.id === id);
     if (!nfe) {
       return sendJson(res, { error: 'NF-e não encontrada' }, 404);
@@ -16421,22 +16715,32 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/bank-transactions' && req.method === 'GET') {
     try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
       const data = loadData();
+      // As transações moram no db.json: filtrar, ordenar e paginar não precisa
+      // do banco.
+      const filtered = filterBankTransactions(data, url.searchParams)
+        .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
+      const { page, limit } = parsePageParams(url.searchParams, 20);
+      const start = (page - 1) * limit;
+      const daPagina = filtered.slice(start, start + limit);
       // serializeBankTransaction resolve, para cada transacao, o lancamento a
       // que ela foi conciliada e a conta bancaria — os dois em `data.finance` e
       // `data.bankAccounts`, que estao em NAO_PERSISTIR. Sem o sync, a coluna
       // Conta sai vazia e a transacao conciliada aparece sem a descricao do
       // lancamento, como se nao estivesse conciliada.
-      await syncFinanceData(data);
-      const user = await getCurrentUser(req);
-      if (!user || !user.allowedModules.includes('finance')) {
-        return sendJson(res, { error: 'Sem permissão' }, 403);
-      }
-      const filtered = filterBankTransactions(data, url.searchParams)
-        .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
-      const { page, limit } = parsePageParams(url.searchParams, 20);
-      const start = (page - 1) * limit;
-      const pageItems = filtered.slice(start, start + limit).map((tx) => serializeBankTransaction(tx, data));
+      //
+      // Fase DS: e o lancamento que ela procura e' UM por transacao, pelo id —
+      // entao bastam os conciliados DA PAGINA, e nao os 27 mil. Id que nao
+      // existe mais continua sem descricao, como antes.
+      await Promise.all([
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, daPagina.map((tx) => tx.matchedEntryId))
+      ]);
+      const pageItems = daPagina.map((tx) => serializeBankTransaction(tx, data));
       const summary = {
         naoConciliado: filtered.filter((tx) => tx.status === 'nao_conciliado').length,
         conciliado: filtered.filter((tx) => tx.status === 'conciliado').length,
@@ -16450,12 +16754,17 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/bank-transactions' && req.method === 'POST') {
     try {
-      const data = loadData();
-      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
+      const data = loadData();
+      // Fase DS: a transacao nova nasce sem lancamento conciliado, entao a
+      // resposta so precisa do nome da conta — nenhum lancamento.
+      await Promise.all([
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [])
+      ]);
       const body = await readBody(req);
       if (!body.bankAccountId) {
         return sendJson(res, { error: 'Selecione a conta bancária' }, 400);
@@ -16478,11 +16787,11 @@ async function tratarRequisicao(req, res) {
 
   if (pathname === '/api/finance/bank-transactions/import' && req.method === 'POST') {
     try {
-      const data = loadData();
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
+      const data = loadData();
       const body = await readBody(req);
       const bankAccountId = body.bankAccountId || '';
       if (!bankAccountId) {
@@ -16558,7 +16867,22 @@ async function tratarRequisicao(req, res) {
   }
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/matches$/.test(pathname) && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
     const data = loadData();
+    const id = decodeURIComponent(pathname.split('/')[4]);
+    const tx = data.bankTransactions.find((item) => item.id === id);
+    if (!tx) {
+      return sendJson(res, { error: 'Transação não encontrada' }, 404);
+    }
+    // Fase DS: só os títulos pendentes e parciais, e as baixas DELES — o
+    // universo inteiro de findBankTransactionMatches, que joga fora todo o
+    // resto antes de fazer conta (ver syncLancamentosEmAberto). Era a tabela
+    // inteira, e cada título filtrava as 25 mil baixas: ~41 milhões de
+    // comparações e 5,3 s com o servidor parado a cada "Conciliar".
+    //
     // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
     // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -16566,36 +16890,18 @@ async function tratarRequisicao(req, res) {
     await Promise.all([
       syncCadastroData(data),
       syncPurchasesData(data),
-      syncFinanceData(data)
+      syncLancamentosEmAberto(data)
     ]);
-    const user = await getCurrentUser(req);
-    if (!user || !user.allowedModules.includes('finance')) {
-      return sendJson(res, { error: 'Sem permissão' }, 403);
-    }
-    const id = decodeURIComponent(pathname.split('/')[4]);
-    const tx = data.bankTransactions.find((item) => item.id === id);
-    if (!tx) {
-      return sendJson(res, { error: 'Transação não encontrada' }, 404);
-    }
     return sendJson(res, { matches: findBankTransactionMatches(tx, data) });
   }
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/conciliar$/.test(pathname) && req.method === 'POST') {
     try {
-      const data = loadData();
-      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
-      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
-      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
-      // Em sequencia, a rota pagava 3x essa latencia por nada.
-      await Promise.all([
-        syncCadastroData(data),
-        syncPurchasesData(data),
-        syncFinanceData(data)
-      ]);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
+      const data = loadData();
       const id = decodeURIComponent(pathname.split('/')[4]);
       const tx = data.bankTransactions.find((item) => item.id === id);
       if (!tx) {
@@ -16606,6 +16912,21 @@ async function tratarRequisicao(req, res) {
       }
 
       const body = await readBody(req);
+      // Fase DS: o lançamento escolhido vem no corpo, e é o ÚNICO que a
+      // conciliação lê — ele e as baixas dele (saldo em aberto, taxa do
+      // cartão, novo status). As recusas acima continuam na mesma ordem: a
+      // carga só acontece depois delas, como as respostas de antes.
+      //
+      // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
+      // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
+      // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
+      // Em sequencia, a rota pagava 3x essa latencia por nada.
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [body.entryId])
+      ]);
       const entry = data.finance.find((item) => item.id === body.entryId);
       if (!entry) {
         return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
@@ -16666,12 +16987,11 @@ async function tratarRequisicao(req, res) {
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/desconciliar$/.test(pathname) && req.method === 'POST') {
     try {
-      const data = loadData();
-      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
+      const data = loadData();
       const id = decodeURIComponent(pathname.split('/')[4]);
       const tx = data.bankTransactions.find((item) => item.id === id);
       if (!tx) {
@@ -16680,6 +17000,12 @@ async function tratarRequisicao(req, res) {
       if (tx.status !== 'conciliado') {
         return sendJson(res, { error: 'Transação não está conciliada' }, 400);
       }
+      // Fase DS: o lançamento que a transação baixou, e as baixas dele — é o
+      // único que o estorno abaixo lê. E o nome da conta, para a resposta.
+      await Promise.all([
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [tx.matchedEntryId])
+      ]);
 
       const entry = data.finance.find((item) => item.id === tx.matchedEntryId);
       if (entry && tx.matchedPaymentId) {
@@ -16703,11 +17029,11 @@ async function tratarRequisicao(req, res) {
   }
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/ignorar$/.test(pathname) && req.method === 'POST') {
-    const data = loadData();
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
+    const data = loadData();
     const id = decodeURIComponent(pathname.split('/')[4]);
     const tx = data.bankTransactions.find((item) => item.id === id);
     if (!tx) {
@@ -16723,11 +17049,11 @@ async function tratarRequisicao(req, res) {
   }
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/reativar$/.test(pathname) && req.method === 'POST') {
-    const data = loadData();
     const user = await getCurrentUser(req);
     if (!user || !user.allowedModules.includes('finance')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
+    const data = loadData();
     const id = decodeURIComponent(pathname.split('/')[4]);
     const tx = data.bankTransactions.find((item) => item.id === id);
     if (!tx) {
@@ -16888,12 +17214,13 @@ async function tratarRequisicao(req, res) {
   // validador. Duas copias da regra foi o que criou o problema.
   if (pathname === '/api/finance' && req.method === 'POST') {
     try {
-      const data = loadData();
-      await syncFinanceData(data);
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
+      // Fase DS: sem syncFinanceData. A rota cria um lançamento e devolve o que
+      // o banco gravou; nenhum outro lançamento era lido.
+      const data = loadData();
 
       const body = await readBody(req);
       // 'sale'/'purchase' continuam sendo aceitos e traduzidos: e o que os

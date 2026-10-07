@@ -11,22 +11,32 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   const { content, api, showToast, state, loadModule, escapeHtml } = ctx;
 
   let meta = { categories: [], costCenters: [], bankAccounts: [], directory: [], estabelecimentos: [], contasPorEstabelecimento: [] };
-  try {
-    meta = await api('/api/finance/meta');
-  } catch (error) {
+  // AS DUAS CARGAS SAEM JUNTAS, e o meta só com o que esta tela lê (fase DS).
+  //
+  // Eram em fila: o meta inteiro (2.818 KB) e só depois o lançamento em edição.
+  // Uma não depende da outra. E do meta esta tela não lê produtos (só a
+  // emissão de NF-e lê), e do diretório lê id, nome e código — o recorte
+  // `resumido`, 548 KB no lugar de 2.818 (169 KB no fio, contra 569).
+  const idEmEdicao = state.financeEditEntryId;
+  state.financeEditEntryId = null;
+  const [respostaMeta, respostaEdicao] = await Promise.allSettled([
+    api('/api/finance/meta?produtos=0&diretorio=resumido'),
+    idEmEdicao ? api(`/api/finance/entries/${idEmEdicao}`) : Promise.resolve(null)
+  ]);
+  if (respostaMeta.status === 'fulfilled') {
+    meta = respostaMeta.value;
+  } else {
     // segue com metadados vazios
     showToast('Não foi possível carregar categorias/centros de custo/contas bancárias. Os campos correspondentes ficarão vazios.', 'warning');
   }
 
   let editEntry = null;
-  if (state.financeEditEntryId) {
-    try {
-      const res = await api(`/api/finance/entries/${state.financeEditEntryId}`);
-      editEntry = res.entry;
-    } catch (error) {
+  if (idEmEdicao) {
+    if (respostaEdicao.status === 'fulfilled') {
+      editEntry = respostaEdicao.value.entry;
+    } else {
       showToast('Não foi possível carregar o lançamento para edição.', 'error');
     }
-    state.financeEditEntryId = null;
   }
 
   // FASE CD — POR QUAL ESTABELECIMENTO ESTE LANCAMENTO E'.

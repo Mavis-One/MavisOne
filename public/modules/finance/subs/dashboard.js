@@ -77,6 +77,12 @@ function financeStatSubRow(tone, label, value) {
 // mencionam o Financeiro. `financeBuildChartSvg` continua valendo como apelido,
 // definido lá; o desenho é literalmente a mesma função.
 
+// O relógio da atualização automática mora FORA da tela (fase DS): sair do
+// dashboard e voltar cria uma tela nova, e a cadeia da anterior acharia o selo
+// "Atualizado há..." da nova e continuaria viva ao lado dela. Um relógio só,
+// trocado por quem abrir a tela por último.
+let financeDashboardRelogio = null;
+
 window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDashboard(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml } = ctx;
 
@@ -87,23 +93,47 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
   let dueTab = 'proximos7';
   let lastLoadedAt = Date.now();
   const AUTO_REFRESH_MS = 60000;
+  // UMA CADEIA SÓ DE ATUALIZAÇÃO (fase DS).
+  //
+  // Cada load() terminava com um `setTimeout(tickLiveBadge, 1000)` novo, sem
+  // cancelar o anterior: clicar num período ou granularidade deixava mais uma
+  // cadeia viva, e cada uma pedia /api/finance/summary a cada minuto. Simulado
+  // com o arquivo real e relógio falso: parado, 10 chamadas em 10 min; depois
+  // de 3 cliques, 39. Cada uma segurava o servidor (um processo só) por
+  // centenas de ms.
+  //
+  // `financeDashboardRelogio` é a cadeia que vale: toda nova cancela a
+  // anterior. `carga` numera as cargas, e só a MAIS NOVA desenha — dois cliques
+  // rápidos podiam desenhar a resposta velha por cima da nova, se ela chegasse
+  // depois.
+  let carga = 0;
+  let carregando = false;
 
   function goTo(sub) {
     state.activeSub = sub;
     loadModule('finance');
   }
 
+  function agendarTick() {
+    clearTimeout(financeDashboardRelogio);
+    financeDashboardRelogio = setTimeout(tickLiveBadge, 1000);
+  }
+
   function tickLiveBadge() {
+    financeDashboardRelogio = null;
     const badge = document.getElementById('financeLiveBadgeText');
     if (!badge || !document.body.contains(badge)) return; // usuário navegou pra outra tela: para o timer
     const elapsedS = Math.round((Date.now() - lastLoadedAt) / 1000);
     if (elapsedS * 1000 >= AUTO_REFRESH_MS) {
-      load();
+      // A atualização automática não se soma a uma carga em andamento (um
+      // clique do usuário, por exemplo): aquela já vai trazer o dado novo e
+      // religar o relógio quando terminar.
+      if (!carregando) load();
       return;
     }
     const nextInS = Math.max(0, Math.round((AUTO_REFRESH_MS - elapsedS * 1000) / 1000));
     badge.textContent = `Atualizado há ${elapsedS}s · próxima em ${nextInS}s`;
-    setTimeout(tickLiveBadge, 1000);
+    agendarTick();
   }
 
   function attachHandlers(data) {
@@ -303,13 +333,19 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
       if (customFrom) params.set('from', customFrom);
       if (customTo) params.set('to', customTo);
     }
+    const minha = ++carga;
+    carregando = true;
     try {
       const data = await api(`/api/finance/summary?${params.toString()}`);
+      if (minha !== carga) return; // chegou depois de uma carga mais nova: descarta
       lastLoadedAt = Date.now();
       renderView(data);
-      setTimeout(tickLiveBadge, 1000);
+      agendarTick();
     } catch (error) {
+      if (minha !== carga) return;
       content.innerHTML = `<div class="panel"><p class="muted">Erro ao carregar o dashboard financeiro: ${escapeHtml(error.message || 'erro desconhecido')}</p></div>`;
+    } finally {
+      if (minha === carga) carregando = false;
     }
   }
 

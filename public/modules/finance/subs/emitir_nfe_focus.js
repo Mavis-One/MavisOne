@@ -157,30 +157,41 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   const modalidadeDoFrete = window.MavisModalidadeFrete.paraNota(doPedido && doPedido.meioDeEnvio);
   const outrasDespesas = doPedido ? Number(doPedido.outrasDespesas || 0) : 0;
 
-  try {
-    const res = await api('/api/fiscal/estabelecimentos');
+  // AS TRÊS CARGAS SAEM JUNTAS (fase DS). Eram três idas e voltas em fila —
+  // estabelecimentos, depois empresas, depois o meta — e nenhuma depende da
+  // outra. No VPS, cada uma é a latência da rede inteira.
+  //
+  // O META VEM NO RECORTE DA EMISSÃO (`diretorio=nfe&produtos=nfe`): do
+  // destinatário, documento, UF, município e IE; dos produtos, o que monta a
+  // linha do item. NUNCA `diretorio=resumido` aqui — sem documento e IE o
+  // destinatário sairia em branco. 2.818 KB -> 1.947 KB (569 -> 414 KB no fio).
+  const [resEstab, resEmpresas, resMeta] = await Promise.allSettled([
+    api('/api/fiscal/estabelecimentos'),
+    api('/api/fiscal/empresas'),
+    api('/api/finance/meta?diretorio=nfe&produtos=nfe')
+  ]);
+  if (resEstab.status === 'fulfilled') {
+    const res = resEstab.value;
     estabelecimentos = (res.estabelecimentos || []).filter((e) => e.ativo && e.emiteNfe);
     // A trava rebaixa produção para homologação no servidor. Sem saber dela, o
     // contador de observações daria o orçamento cheio numa nota que vai levar o
     // aviso de teste no rodapé — ver orcamentoDasObservacoes.
     travadoEmHomologacao = Boolean(res.travadoEmHomologacao);
-    try {
-      // Só a mensagem padrão de cada empresa. Falhar aqui não pode impedir a
-      // emissão: sem a lista, o texto do sistema continua valendo.
-      const resEmpresas = await api('/api/fiscal/empresas');
-      empresasPorId = new Map((resEmpresas.empresas || []).map((emp) => [emp.id, emp.observacaoPadraoNfe || '']));
-    } catch (erroEmpresas) {
-      empresasPorId = new Map();
-    }
-  } catch (error) {
+    // Só a mensagem padrão de cada empresa. Falhar aqui não pode impedir a
+    // emissão: sem a lista, o texto do sistema continua valendo. (Lida só
+    // quando os estabelecimentos vieram, como quando ela era pedida depois.)
+    empresasPorId = resEmpresas.status === 'fulfilled'
+      ? new Map((resEmpresas.value.empresas || []).map((emp) => [emp.id, emp.observacaoPadraoNfe || '']))
+      : new Map();
+  } else {
+    const error = resEstab.reason;
     showToast('Não foi possível carregar os estabelecimentos: ' + (error.message || error), 'error');
   }
 
-  try {
-    meta = await api('/api/finance/meta');
-  } catch {
-    // segue com diretório vazio — busca de cliente cadastrado fica indisponível
+  if (resMeta.status === 'fulfilled') {
+    meta = resMeta.value;
   }
+  // senão, segue com diretório vazio — busca de cliente cadastrado fica indisponível
 
   // Preenche a tela com o pedido. Feito DEPOIS do meta: é dele que sai o
   // endereço do cliente, e sem ele o destinatário sairia só com o nome.
@@ -273,39 +284,63 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   async function loadNotasRecentes() {
     if (!selectedEstabelecimentoId) { notasRecentes = []; return; }
     try {
-      const res = await api(`/api/fiscal/nfe?estabelecimentoId=${encodeURIComponent(selectedEstabelecimentoId)}`);
+      // `limite=10` (fase DS): o servidor devolve só as dez, sem os jsonb. Antes
+      // vinham TODAS as notas do emitente com payload e resposta da Focus —
+      // milhares de notas, megabytes — a cada troca de emitente e a cada
+      // emissão, para a tela cortar em dez.
+      const res = await api(`/api/fiscal/nfe?estabelecimentoId=${encodeURIComponent(selectedEstabelecimentoId)}&limite=10`);
       notasRecentes = (res.records || []).slice(0, 10);
     } catch (error) {
       notasRecentes = [];
     }
   }
 
-  function directoryOptions(filterText) {
-    const term = (filterText || '').trim().toLowerCase();
-    const list = term
-      ? meta.directory.filter((c) => c.name.toLowerCase().includes(term) || String(c.document || '').includes(term))
-      : meta.directory;
-    return list.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.document ? ` (${escapeHtml(c.document)})` : ''}</option>`).join('');
-  }
+  // OS DOIS <select> GIGANTES VIRARAM O CAMPO DE BUSCA DO SISTEMA (fase DS).
+  //
+  // O destinatário desenhava as 6.493 pessoas como <option>, refeitas A CADA
+  // TECLA da busca; e cada linha de item desenhava os 5.561 produtos — com 5
+  // linhas, 28 mil nós no DOM. Medido no Chrome com os dados reais: adicionar
+  // o 5º item travava 1,2 s, escolher um produto 1,3 s, cada tecla na busca de
+  // cliente 100 ms. É o defeito que a fase CH tirou de nove telas
+  // (shared/campo_de_busca.js); esta ficou de fora.
+  //
+  // As opções são montadas UMA vez, com o mesmo texto do <option> de antes —
+  // buscar pelo documento continua achando o cliente, e o produto sem NCM
+  // continua avisando no rótulo.
+  //
+  // O "Nenhum (preencher manualmente abaixo)" do <select> não vira opção:
+  // escolhê-lo não mexia em campo nenhum (o ouvinte saía sem achar cadastro), e
+  // é o que o campo vazio já diz.
+  const opcoesDoCliente = (meta.directory || [])
+    .map((c) => ({ value: c.id, label: `${c.name}${c.document ? ` (${c.document})` : ''}` }));
 
   // Um produto cadastrado traz a própria classificação fiscal. Escolher pela
   // lista preenche a linha e trava NCM e origem: são atributos da mercadoria,
   // e digitá-los por emissão faria o mesmo produto sair com classificações
   // diferentes em notas diferentes. "Item avulso" continua liberando os campos
   // — serviço e mercadoria sem cadastro ainda precisam ser digitados.
-  function opcoesProduto(item) {
-    const lista = meta.produtos || [];
-    return `<option value="">Item avulso</option>` + lista.map((p) => `
-      <option value="${escapeHtml(p.id)}" ${item.produtoId === p.id ? 'selected' : ''}>
-        ${escapeHtml(p.name)}${p.sku ? ` (${escapeHtml(p.sku)})` : ''}${p.ncm ? '' : ' — SEM NCM'}
-      </option>`).join('');
-  }
+  //
+  // "Item avulso" fica FORA da lista que desenha o campo (que então abre vazio,
+  // com o placeholder dizendo o que é) e DENTRO da lista que se busca: quem
+  // digita "avulso" acha a opção e volta a linha para item avulso.
+  const ITEM_AVULSO = { value: '', label: 'Item avulso' };
+  const opcoesDeProduto = (meta.produtos || []).map((p) => ({
+    value: p.id,
+    label: `${p.name}${p.sku ? ` (${p.sku})` : ''}${p.ncm ? '' : ' — SEM NCM'}`
+  }));
+  const opcoesDeProdutoComAvulso = [ITEM_AVULSO].concat(opcoesDeProduto);
 
   function renderItemsRows() {
     return itens.map((item, index) => `
       <tr data-row="${index}">
-        <td>
-          <select data-field="produtoId" data-index="${index}" style="min-width:170px;">${opcoesProduto(item)}</select>
+        <td style="min-width:220px;">
+          ${renderSearchableSelect({
+    id: `nfeFocusProduto${index}`,
+    name: `nfeFocusProduto${index}`,
+    options: opcoesDeProduto,
+    selectedValue: item.produtoId,
+    placeholder: 'Item avulso — buscar produto'
+  })}
         </td>
         <td><input data-field="descricao" data-index="${index}" value="${escapeHtml(item.descricao)}" required placeholder="Descrição" style="min-width:160px;" /></td>
         <td><input data-field="codigoProduto" data-index="${index}" value="${escapeHtml(item.codigoProduto)}" placeholder="Código" style="width:90px;" /></td>
@@ -420,11 +455,18 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="destinatario" hidden>
-            <label>Buscar cliente cadastrado<input type="text" id="nfeFocusClientSearch" placeholder="Buscar por nome ou documento" autocomplete="off" /></label>
-            <select id="nfeFocusClientSelect">
-              <option value="">Nenhum (preencher manualmente abaixo)</option>
-              ${directoryOptions('')}
-            </select>
+            <label>Buscar cliente cadastrado
+              ${/* Um campo só no lugar do par "busca + <select>" (fase DS). Abre
+                   vazio a cada desenho, como o <select> abria em "Nenhum": os
+                   campos abaixo é que guardam o destinatário. */''}
+              ${renderSearchableSelect({
+    id: 'nfeFocusCliente',
+    name: 'nfeFocusCliente',
+    options: opcoesDoCliente,
+    selectedValue: '',
+    placeholder: 'Buscar por nome ou documento — vazio: preencher manualmente abaixo'
+  })}
+            </label>
             <div class="row">
               <label>Nome / Razão social<input name="destNome" required value="${escapeHtml(destinatario.nome)}" /></label>
               <label>CPF/CNPJ<input name="destDocumento" required data-documento value="${escapeHtml(destinatario.documento)}" /></label>
@@ -655,7 +697,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   }
 
   function attachItemsHandlers() {
-    document.querySelectorAll('#nfeFocusItemsBody input').forEach((input) => {
+    // `[data-field]`: o campo de busca do produto também tem <input> (o texto e
+    // o escondido), sem data-index — sem o filtro, digitar nele virava
+    // itens[NaN] e erro.
+    document.querySelectorAll('#nfeFocusItemsBody input[data-field]').forEach((input) => {
       input.addEventListener('input', () => {
         const index = Number(input.dataset.index);
         const field = input.dataset.field;
@@ -668,33 +713,66 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // Escolher o produto preenche a linha a partir do cadastro. Redesenha a
     // tabela porque o NCM passa a ser somente-leitura — e volta a ser editável
     // se a linha virar item avulso.
-    document.querySelectorAll('#nfeFocusItemsBody select[data-field="produtoId"]').forEach((select) => {
-      select.addEventListener('change', () => {
-        const index = Number(select.dataset.index);
-        const produto = (meta.produtos || []).find((p) => p.id === select.value);
-        if (!produto) {
-          itens[index] = { ...itens[index], produtoId: '' };
-          refreshItemsTable();
-          return;
-        }
-        itens[index] = {
-          ...itens[index],
-          produtoId: produto.id,
-          descricao: produto.name,
-          codigoProduto: produto.sku || '',
-          ncm: produto.ncm || '',
-          // Preço do cadastro é ponto de partida: desconto e negociação
-          // mudam por venda, então o campo continua editável.
-          valorUnitario: Number(produto.salePrice || itens[index].valorUnitario || 0),
-          unidadeComercial: produto.unidadeComercial || 'UN',
-          origem: produto.origem === null || produto.origem === undefined ? 0 : Number(produto.origem)
-        };
-        if (!produto.ncm) {
-          showToast(`"${produto.name}" está sem NCM no cadastro — preencha em Estoque → Produtos, senão a emissão será recusada.`, 'warning', 7000);
-        }
-        refreshItemsTable();
+    itens.forEach((_, index) => {
+      if (typeof attachSearchableSelect !== 'function') return;
+      attachSearchableSelect({
+        id: `nfeFocusProduto${index}`,
+        options: opcoesDeProdutoComAvulso,
+        onSelect: (valor) => escolherProduto(index, valor)
+      });
+      // Digitar e sair sem escolher NÃO troca o produto da linha (é o que o
+      // <select> fazia: só a escolha mudava). Então o campo volta a mostrar o
+      // produto que a linha tem — senão a tela diria uma coisa e a nota levaria
+      // outra.
+      const campo = document.getElementById(`nfeFocusProduto${index}Input`);
+      const escondido = document.getElementById(`nfeFocusProduto${index}Value`);
+      segurarEnter(campo);
+      campo?.addEventListener('blur', () => {
+        setTimeout(() => {
+          const atual = itens[index] ? String(itens[index].produtoId || '') : '';
+          if (!escondido || escondido.value === atual) return;
+          escondido.value = atual;
+          const opcao = opcoesDeProduto.find((o) => String(o.value) === atual);
+          campo.value = opcao ? opcao.label : '';
+        }, 200);
       });
     });
+    // ENTER NA BUSCA NÃO EMITE A NOTA. O produto era um <select>, e Enter num
+    // <select> não envia o formulário; num campo de texto envia — e o envio
+    // deste formulário é "Emitir NF-e". Quem procura um produto e aperta Enter
+    // para escolher não pode transmitir um documento fiscal sem querer.
+    function segurarEnter(campo) {
+      campo?.addEventListener('keydown', (evento) => {
+        if (evento.key === 'Enter') evento.preventDefault();
+      });
+    }
+
+    // O corpo do antigo `change` do <select>, com o valor escolhido no lugar de
+    // `select.value`.
+    function escolherProduto(index, valor) {
+      const produto = (meta.produtos || []).find((p) => p.id === valor);
+      if (!produto) {
+        itens[index] = { ...itens[index], produtoId: '' };
+        refreshItemsTable();
+        return;
+      }
+      itens[index] = {
+        ...itens[index],
+        produtoId: produto.id,
+        descricao: produto.name,
+        codigoProduto: produto.sku || '',
+        ncm: produto.ncm || '',
+        // Preço do cadastro é ponto de partida: desconto e negociação
+        // mudam por venda, então o campo continua editável.
+        valorUnitario: Number(produto.salePrice || itens[index].valorUnitario || 0),
+        unidadeComercial: produto.unidadeComercial || 'UN',
+        origem: produto.origem === null || produto.origem === undefined ? 0 : Number(produto.origem)
+      };
+      if (!produto.ncm) {
+        showToast(`"${produto.name}" está sem NCM no cadastro — preencha em Estoque → Produtos, senão a emissão será recusada.`, 'warning', 7000);
+      }
+      refreshItemsTable();
+    }
 
     document.querySelectorAll('[data-remove-item]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -780,13 +858,17 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       renderForm();
     });
 
-    document.getElementById('nfeFocusClientSearch')?.addEventListener('input', (event) => {
-      const select = document.getElementById('nfeFocusClientSelect');
-      if (select) select.innerHTML = `<option value="">Nenhum (preencher manualmente abaixo)</option>${directoryOptions(event.target.value)}`;
+    // A busca e a escolha do cliente num campo só (fase DS). O corpo do
+    // `onSelect` é o do antigo `change` do <select>, linha por linha.
+    if (typeof attachSearchableSelect === 'function') {
+      attachSearchableSelect({ id: 'nfeFocusCliente', options: opcoesDoCliente, onSelect: escolherCliente });
+    }
+    // Mesmo motivo do campo de produto (ver segurarEnter): buscar não emite.
+    document.getElementById('nfeFocusClienteInput')?.addEventListener('keydown', (evento) => {
+      if (evento.key === 'Enter') evento.preventDefault();
     });
 
-    document.getElementById('nfeFocusClientSelect')?.addEventListener('change', (event) => {
-      const id = event.target.value;
+    function escolherCliente(id) {
       selectedClienteId = id;
       const found = meta.directory.find((c) => c.id === id);
       if (!found) return;
@@ -801,7 +883,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // não contribuinte, ou sem IE de contribuinte.
       form.querySelector('[name="destIe"]').value = window.MavisInscricaoEstadual.paraNota(found.stateRegistration) || '';
       form.querySelector('[name="destContribuinte"]').checked = window.MavisInscricaoEstadual.ehContribuinte(found.stateRegistration);
-    });
+    }
 
     document.getElementById('nfeFocusBuscarCep')?.addEventListener('click', async () => {
       const form = document.getElementById('nfeFocusForm');
