@@ -243,12 +243,21 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
 
   // Descobre uma vez se a Focus NFe está configurada — é o que decide se as
   // ações fiscais aparecem habilitadas ou desabilitadas com o motivo.
-  try {
-    const status = await api('/api/focusnfe/status');
-    apiFiscalConfigurada = Boolean(status.configured && status.connected);
-  } catch {
-    apiFiscalConfigurada = false;
-  }
+  //
+  // SEM `await` (fase DS): em produção esta rota faz uma chamada HTTPS à
+  // Focus (até 15 s se ela não responder), e a lista de notas não começava a
+  // carregar antes disso. O status só alimenta o painel de ações, que só
+  // aparece com nota marcada; quando ele chega, o painel é redesenhado. Até
+  // lá vale `false`, que é o que já valia quando a consulta falhava.
+  //
+  // A marca em `content` evita que uma resposta atrasada redesenhe o painel de
+  // OUTRA abertura desta tela (sair e voltar cria uma tela nova no mesmo lugar).
+  const estaAbertura = {};
+  content.__nfeEmitidasAbertura = estaAbertura;
+  api('/api/focusnfe/status')
+    .then((status) => { apiFiscalConfigurada = Boolean(status.configured && status.connected); })
+    .catch(() => { apiFiscalConfigurada = false; })
+    .then(() => { if (content.__nfeEmitidasAbertura === estaAbertura) renderActionsPanel(); });
 
   function buildQuery() {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });

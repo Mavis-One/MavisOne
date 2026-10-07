@@ -24,12 +24,50 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
   let showAdvanced = false;
   let page = 1;
   const limit = 15;
+  // A última resposta da lista e a consulta que a produziu: abrir e fechar a
+  // busca avançada redesenha com ela, sem ir ao servidor (ver o botão).
+  let ultimoResultado = null;
+  let ultimaConsulta = '';
 
-  try {
-    meta = await api('/api/finance/meta');
-  } catch (error) {
-    // segue com metadados vazios: a lista funciona, só os selects ficam sem opções
-    showToast('Não foi possível carregar categorias/centros de custo/contas bancárias para os filtros.', 'warning');
+  // A LISTA NÃO ESPERA O META (fase DS).
+  //
+  // A tela pedia /api/finance/meta (2.818 KB: diretório de 6.492 pessoas e
+  // 5.560 produtos) e SÓ DEPOIS a lista — 798 + 1.523 ms em fila na medição de
+  // base. A primeira pintura não lê nada do meta: categorias, centros, contas e
+  // diretório só aparecem na busca avançada, e as contas no modal de baixa.
+  //
+  // Então o meta sai junto com a lista, e sem o que a tela não lê: nem produtos
+  // (só a emissão de NF-e lê), nem diretório (29 KB no lugar de 2.818). O
+  // diretório vem quando a busca avançada abre pela primeira vez. Quem precisa
+  // do meta espera por `metaPronto` — o modal de baixa e a busca avançada.
+  const metaPronto = api('/api/finance/meta?produtos=0&diretorio=0')
+    .then((resposta) => { meta = { ...meta, ...resposta, directory: meta.directory }; })
+    .catch(() => {
+      // segue com metadados vazios: a lista funciona, só os selects ficam sem opções
+      showToast('Não foi possível carregar categorias/centros de custo/contas bancárias para os filtros.', 'warning');
+    });
+  let diretorioPronto = null;
+  let opcoesDoDiretorio = [];
+  function carregarDiretorio() {
+    if (!diretorioPronto) {
+      diretorioPronto = api('/api/finance/meta?produtos=0&diretorio=resumido')
+        .then((resposta) => {
+          meta.directory = resposta.directory || [];
+          // Montadas UMA vez: o campo de busca indexa estas opções a cada
+          // desenho do painel, e refazer 6.492 rótulos por página virada é o
+          // custo que este campo existe para evitar. Mesmo rótulo do <option>
+          // que havia aqui: "Nome (código)".
+          opcoesDoDiretorio = meta.directory.map((item) => ({
+            value: item.id,
+            label: `${item.name}${item.code ? ` (${item.code})` : ''}`
+          }));
+        })
+        .catch(() => {
+          diretorioPronto = null;
+          showToast('Não foi possível carregar a lista de clientes/fornecedores para o filtro.', 'warning');
+        });
+    }
+    return diretorioPronto;
   }
 
   function optionList(list) {
@@ -47,20 +85,39 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
 
   async function load() {
     let result;
+    const consulta = buildQuery();
     try {
-      result = await api(`/api/finance/entries?${buildQuery()}`);
+      result = await api(`/api/finance/entries?${consulta}`);
     } catch (error) {
       content.innerHTML = `<div class="panel"><p class="muted">Erro ao carregar lançamentos: ${escapeHtml(error.message || 'erro desconhecido')}</p></div>`;
       return;
     }
+    ultimoResultado = result;
+    ultimaConsulta = consulta;
+    // O painel aberto precisa das listas dos selects antes de desenhar.
+    if (showAdvanced) await Promise.all([metaPronto, carregarDiretorio()]);
     renderView(result);
   }
 
   function attachFilterHandlers() {
-    document.getElementById('financeFilterToggleBtn')?.addEventListener('click', () => {
+    // ABRIR E FECHAR A BUSCA AVANÇADA NÃO VAI AO SERVIDOR (fase DS). Era um
+    // load(): a lista inteira de novo (733 ms medidos) só para mostrar ou
+    // esconder o formulário. Agora redesenha com a última resposta — a menos
+    // que a busca rápida tenha sido digitada e não enviada: a consulta mudou,
+    // e o load() de antes a aplicava. Nesse caso continua indo ao servidor.
+    document.getElementById('financeFilterToggleBtn')?.addEventListener('click', async () => {
       showAdvanced = !showAdvanced;
-      load();
+      if (!ultimoResultado || buildQuery() !== ultimaConsulta) {
+        load();
+        return;
+      }
+      if (showAdvanced) await Promise.all([metaPronto, carregarDiretorio()]);
+      renderView(ultimoResultado);
     });
+
+    if (showAdvanced && typeof attachSearchableSelect === 'function') {
+      attachSearchableSelect({ id: 'financeFilterParty', options: opcoesDoDiretorio });
+    }
 
     document.getElementById('financeQuickSearch')?.addEventListener('input', (event) => {
       filters.search = event.target.value;
@@ -167,10 +224,21 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
             </label>
             <label class="cadastro-field">
               <span>Cliente / Fornecedor</span>
-              <select name="clientSupplierId">
-                <option value="">Todos</option>
-                ${optionList(meta.directory)}
-              </select>
+              ${/* CAMPO DE BUSCA, e não <select> (fase DS). Eram 6.493 <option>
+                   redesenhados a cada página virada com o painel aberto — o
+                   mesmo remédio que Novo Lançamento já usa para o mesmo
+                   diretório. O <input type="hidden"> leva o mesmo
+                   name="clientSupplierId", então o FormData do filtro não muda.
+                   Vazio = "Todos", como a primeira opção do <select>; e, como o
+                   <select> (que não marcava a opção escolhida), o campo abre
+                   vazio a cada desenho. */''}
+              ${renderSearchableSelect({
+      id: 'financeFilterParty',
+      name: 'clientSupplierId',
+      options: opcoesDoDiretorio,
+      selectedValue: '',
+      placeholder: 'Todos — buscar por nome ou código'
+    })}
             </label>
             <label class="cadastro-field">
               <span>Plano de Contas</span>
@@ -277,7 +345,9 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
   async function openEntryModal(id, options) {
     let entry;
     try {
-      const res = await api(`/api/finance/entries/${id}`);
+      // O modal de baixa lista as contas bancárias do meta: espera por ele,
+      // que a esta altura quase sempre já chegou (fase DS).
+      const [res] = await Promise.all([api(`/api/finance/entries/${id}`), metaPronto]);
       entry = res.entry;
     } catch (error) {
       showToast(error.message || 'Erro ao carregar lançamento.', 'error');
