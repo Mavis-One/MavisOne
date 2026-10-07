@@ -1468,10 +1468,9 @@ async function formasComCredenciadora(data) {
 async function contrapartidaEmUso(id) {
   const dados = loadData();
   const [comFinanceiro, comEquipamento, documentos] = await Promise.all([
-    (async () => {
-      await syncFinanceData(dados);
-      return (dados.finance || []).some((entry) => entry.clientSupplierId === id);
-    })(),
+    // "Tem lancamento?" respondido no banco (exists, ~15 ms), e nao mais
+    // carregando o Financeiro inteiro (~530 ms). Ver a funcao.
+    lancamentoDaContrapartida(id),
     equipamentosDb.contarPor('pessoa', id).catch(() => 0),
     // FASE BO: as quatro referencias que ficaram de fora da fase BB. Nenhuma
     // delas tem chave estrangeira (sao colunas text apontando para pessoas OU
@@ -1488,6 +1487,46 @@ async function contrapartidaEmUso(id) {
       + 'Marque como inativo em vez de excluir: assim ele some dos formulários e o histórico continua explicável.';
   }
   return cadastrosCore.counterpartyInUse(dados, id);
+}
+
+/**
+ * Existe lançamento financeiro desta contrapartida? (sim ou não)
+ *
+ * Era syncFinanceData seguido de um `some` sobre os 27.362 lançamentos em
+ * memória (~530 ms e ~37 MB no processo único) para uma pergunta de sim ou
+ * não; o exists responde a mesma pergunta na fonte de verdade, em ~15 ms no
+ * pior caso, sem índice novo. Casa as mesmas linhas: `clientSupplierId` é
+ * `client_supplier_id || ''`, e o id que chega da rota nunca é vazio, então o
+ * `=` do banco casa exatamente as mesmas linhas.
+ */
+async function lancamentoDaContrapartida(id) {
+  const { rows } = await consultarBanco(
+    'select exists(select 1 from financial_entries where client_supplier_id = $1) as existe',
+    [String(id || '')]
+  );
+  return Boolean(rows[0] && rows[0].existe);
+}
+
+/**
+ * O que prende uma conta bancária: lançamento, baixa ou transação importada.
+ *
+ * Três `exists` numa consulta só, no lugar de carregar o Financeiro inteiro
+ * para perguntar "tem algum?". De carona corrige a guarda das transações
+ * importadas: `data.bankTransactions` nunca era sincronizado (não está em
+ * syncFinanceData), então ela nunca disparava — quem segurava a exclusão era a
+ * chave estrangeira, com um erro genérico no lugar da explicação.
+ */
+async function usosDaContaBancaria(id) {
+  const { rows } = await consultarBanco(
+    `select
+       exists(select 1 from financial_entries
+               where bank_account_id = $1 or target_bank_account_id = $1) as lancamentos,
+       exists(select 1 from financial_payments where bank_account_id = $1) as baixas,
+       exists(select 1 from bank_transactions where bank_account_id = $1) as transacoes`,
+    [String(id || '')]
+  );
+  const linha = rows[0] || {};
+  return { lancamentos: Boolean(linha.lancamentos), baixas: Boolean(linha.baixas), transacoes: Boolean(linha.transacoes) };
 }
 
 /**
@@ -12541,15 +12580,22 @@ async function tratarRequisicao(req, res) {
       if (!user || !user.allowedModules.includes('cadastros')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
+      const regras = data.productCashbacks || [];
       let productsById = new Map();
-      try {
-        // Índice de RESOLUÇÃO: completo, inclusive escriturais. Quem lê um
-        // registro antigo precisa achar o produto, mesmo o que não é mercadoria.
-        productsById = new Map((await db.getProducts({ incluirEscriturais: true })).map((p) => [p.id, p]));
-      } catch (error) {
-        productsById = new Map();
+      // SEM REGRA, SEM CATALOGO. O indice abaixo le os 5.561 produtos
+      // (`select *`, ~55 ms) so para dar nome a cada regra — e com zero regras
+      // nao ha nome nenhum a dar: a resposta e' `[]` de qualquer jeito. Com
+      // regra, o caminho e' o de sempre.
+      if (regras.length) {
+        try {
+          // Índice de RESOLUÇÃO: completo, inclusive escriturais. Quem lê um
+          // registro antigo precisa achar o produto, mesmo o que não é mercadoria.
+          productsById = new Map((await db.getProducts({ incluirEscriturais: true })).map((p) => [p.id, p]));
+        } catch (error) {
+          productsById = new Map();
+        }
       }
-      const cashbacks = (data.productCashbacks || [])
+      const cashbacks = regras
         .map((item) => {
           const product = productsById.get(item.productId);
           return {
@@ -12839,8 +12885,20 @@ async function tratarRequisicao(req, res) {
         // Conta usada em lancamento, baixa ou extrato nao pode sumir sem
         // quebrar o Financeiro. A conferencia le o BANCO — a mesma regra do
         // cadastros-core, sobre a fonte certa.
+        //
+        // O BANCO RESPONDE "TEM ALGUM?", A REGRA CONTINUA NO cadastros-core.
+        // Era syncFinanceData (~530 ms, o Financeiro inteiro em memoria) para
+        // tres perguntas de sim ou nao. Agora tres `exists` respondem, e cada
+        // colecao que a regra consulta recebe UMA linha de amostra quando ha
+        // uso — basta para o `.some` dela casar. Ordem das perguntas e texto
+        // das mensagens ficam num lugar so, la. As formas de pagamento
+        // continuam vindo do db.json, como sempre.
         const dados = loadData();
-        await syncFinanceData(dados);
+        const usos = await usosDaContaBancaria(id);
+        const amostra = (ha) => (ha ? [{ bankAccountId: id }] : []);
+        dados.finance = amostra(usos.lancamentos);
+        dados.financialPayments = amostra(usos.baixas);
+        dados.bankTransactions = amostra(usos.transacoes);
         const bloqueio = cadastrosCore.CADASTRO_COLLECTIONS['bank-accounts'].inUse(id, dados);
         if (bloqueio) return sendJson(res, { error: bloqueio }, 409);
 

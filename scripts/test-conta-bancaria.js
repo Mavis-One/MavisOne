@@ -82,10 +82,23 @@ check('a rota reusa o build do cadastros-core',
   /const config = cadastrosCore\.CADASTRO_COLLECTIONS\['bank-accounts'\];[\s\S]{0,300}config\.build\(body, atual, loadData\(\), helpers\)/.test(servidor));
 check('e reusa a checagem de "em uso"',
   /CADASTRO_COLLECTIONS\['bank-accounts'\]\.inUse\(id, dados\)/.test(servidor));
-// Sem o sync, data.finance chega vazio e a checagem diria "ninguem usa" sobre
-// uma conta cheia de lancamentos.
-check('  com o financeiro carregado antes de perguntar',
-  /await syncFinanceData\(dados\);\s*\n\s*const bloqueio = cadastrosCore/.test(servidor));
+// Sem o uso respondido ANTES, data.finance chega vazio e a checagem diria
+// "ninguem usa" sobre uma conta cheia de lancamentos.
+//
+// ERA `await syncFinanceData(dados)` (fase BA), e este check exigia essa linha.
+// Mudou na rodada de desempenho: carregar os 27.362 lancamentos e as 25.709
+// baixas (~530 ms) para perguntar "tem algum?" virou tres `exists` no banco
+// (usosDaContaBancaria), e cada colecao da regra recebe uma linha de amostra
+// quando ha uso. O que o check protege continua o mesmo: a regra nunca roda
+// sobre colecao vazia por esquecimento.
+check('  com o uso respondido pelo banco antes de perguntar',
+  /const usos = await usosDaContaBancaria\(id\);[\s\S]{0,200}dados\.finance = amostra\(usos\.lancamentos\);\s*\n\s*dados\.financialPayments = amostra\(usos\.baixas\);\s*\n\s*dados\.bankTransactions = amostra\(usos\.transacoes\);\s*\n\s*const bloqueio = cadastrosCore/.test(servidor));
+check('  e as três perguntas vão às três tabelas',
+  /from financial_entries\s+where bank_account_id = \$1 or target_bank_account_id = \$1\) as lancamentos/.test(servidor)
+  && /from financial_payments where bank_account_id = \$1\) as baixas/.test(servidor)
+  && /from bank_transactions where bank_account_id = \$1\) as transacoes/.test(servidor));
+check('  sem carregar o Financeiro inteiro para isso',
+  !/syncFinanceData\(dados\);\s*\n\s*const bloqueio = cadastrosCore/.test(servidor));
 // Contra `data.bankAccounts` a checagem leria vazio — era parte do mesmo bug.
 check('a duplicata é conferida contra o BANCO',
   /const todas = await db\.getBankAccounts\(\);/.test(servidor));
