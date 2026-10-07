@@ -72,8 +72,15 @@ check('escondida de leitor de tela', /aria-hidden="true"/.test(linha));
 console.log('\n--- as três fontes falham em separado ---');
 // Um KPI indisponível não pode apagar os gráficos, nem o painel de pendências
 // apagar os KPIs.
-check('KPIs têm fallback próprio', /api\(`\/api\/dashboard\?period=[\s\S]{0,90}\.catch\(\(\) => \(\{ kpis: \[\] \}\)\)/.test(src));
-check('pendências têm fallback próprio', /api\('\/api\/dashboard\/atencao'\)\.catch\(\(\) => \(\{ itens: \[\] \}\)\)/.test(src));
+// Desde dashboard-e-sino (07/10/2026) a resposta de reserva leva `falhou: true`:
+// a tela a desenha igual, mas ela não é guardada para reaproveitar na troca de
+// aba (um erro de um instante não pode ficar um minuto na tela). E as
+// pendências saem pela porta do sino (buscarPendencias), com o fallback na
+// mesma posição do Promise.all.
+check('KPIs têm fallback próprio', /api\(`\/api\/dashboard\?period=[\s\S]{0,90}\.catch\(\(\) => \(\{ kpis: \[\](, falhou: true)? \}\)\)/.test(src));
+check('pendências têm fallback próprio', /(api\('\/api\/dashboard\/atencao'\)|buscarPendencias\(\))\.catch\(\(\) => \(\{ itens: \[\](, falhou: true)? \}\)\)/.test(src));
+check('  e resposta de reserva não é guardada',
+  /const algumaFalhou = \[charts, resumo, pendencias\]\.some\(\(resposta\) => resposta && resposta\.falhou\);\s*\n\s*dashboardUltimaAbertura = algumaFalhou \? null :/.test(src));
 // Os gráficos tinham try/catch próprio porque vinham num `await` SEPARADO,
 // antes das outras duas — apesar de o comentário ao lado já dizer "as três
 // fontes". Medido em 17/09/2026: em fila, abrir o Início custava os 383 ms dos
@@ -101,6 +108,47 @@ check('o servidor aceita o período', /getPeriodRange\(url\.searchParams\.get\('
 console.log('\n--- pendências: tela e sino não discordam ---');
 // Mesma rota nos dois lugares.
 check('o painel lê /api/dashboard/atencao', /api\('\/api\/dashboard\/atencao'\)/.test(src));
+// dashboard-e-sino: pela PORTA ÚNICA do sino quando ela existe — na abertura a
+// rota ia duas vezes, a do sino e a do painel —, forçando uma busca nova (o
+// painel continua tão fresco quanto antes) e com a chamada direta de reserva.
+check('  pela porta única do sino quando ela existe',
+  /typeof buscarAtencao === 'function'\s*\n\s*\? buscarAtencao\(\{ forcar: !opcoes\.reusar \}\)\s*\n\s*: api\('\/api\/dashboard\/atencao'\)/.test(src));
+
+console.log('\n--- o que não muda dado não refaz as três rotas ---');
+// Trocar de aba e abrir/fechar a meta refaziam as três rotas para redesenhar o
+// mesmo dado (dashboard-e-sino). Reaproveitam a última abertura — do mesmo
+// usuário, no mesmo período, por no máximo 60 s.
+check('aba reaproveita tudo', /state\.dashboardAba = button\.dataset\.dashboardAba;\s*\n\s*window\.MavisModuleRegistry\.dashboard\(ctx, \{ reusar: 'tudo' \}\)/.test(src));
+check('abrir e fechar a meta também',
+  /state\.dashboardMetaAberta = !state\.dashboardMetaAberta;\s*\n\s*window\.MavisModuleRegistry\.dashboard\(ctx, \{ reusar: 'tudo' \}\)/.test(src)
+  && /state\.dashboardMetaAberta = false;\s*\n\s*window\.MavisModuleRegistry\.dashboard\(ctx, \{ reusar: 'tudo' \}\)/.test(src));
+check('a filial refaz só o gráfico', /state\.dashboardFilial = event\.target\.value;\s*\n\s*window\.MavisModuleRegistry\.dashboard\(ctx, \{ reusar: 'resumo' \}\)/.test(src));
+// O que muda dado busca tudo: o período, gravar e remover a meta.
+check('o período busca tudo', /state\.dashboardChartGranularity = button\.dataset\.dashboardGranularity;\s*\n\s*window\.MavisModuleRegistry\.dashboard\(ctx\);/.test(src));
+check('gravar e remover a meta buscam tudo',
+  (src.match(/showToast\((`Meta de \$\{campoFilial\.value\} salva\.`|'Meta removida\.'), 'success'\);\s*\n\s*window\.MavisModuleRegistry\.dashboard\(ctx\);/g) || []).length === 2);
+check('o reaproveitamento tem validade e dono',
+  /const DASHBOARD_REUSO_MS = 60000;/.test(src)
+  && /\(Date\.now\(\) - anterior\.em\) < DASHBOARD_REUSO_MS/.test(src)
+  && /anterior\.usuario === \(state\.user && state\.user\.id\)/.test(src)
+  && /anterior\.granularity === granularity/.test(src));
+// A validade conta da resposta mais velha: reaproveitar o resumo na troca de
+// filial não pode renovar o relógio dele.
+check('  contada da resposta mais velha', /em: reuso \? reuso\.em : Date\.now\(\),/.test(src));
+
+console.log('\n--- fixar favorito redesenha só os favoritos ---');
+// Fixar refazia o Início inteiro — as três rotas — para mudar uma estrela
+// (front-end:16). Agora troca só a seção, e liga os botões dela de novo.
+check('a seção de favoritos é uma função própria', /function dashboardSecaoFavoritos\(ctx, pinnedSet\)/.test(src)
+  && /\$\{dashboardSecaoFavoritos\(ctx, pinnedSet\)\}/.test(src));
+{
+  const corpo = src.slice(src.indexOf('async function alternarFavoritoDoDashboard('), src.indexOf('function dashboardCartaoKpi('));
+  check('  fixar não refaz a tela', !/MavisModuleRegistry\.dashboard\(/.test(corpo) && /secao\.replaceWith\(nova\)/.test(corpo)
+    && /ligarFavoritosDoDashboard\(ctx, nova\)/.test(corpo));
+  // O conjunto lido NA HORA: depois do primeiro clique a seção foi trocada sem
+  // refazer a tela, e um conjunto guardado desde a abertura desfaria o anterior.
+  check('  e lê os favoritos atuais, não os da abertura', /const pinnedSet = getDashboardPinSet\(\);/.test(corpo));
+}
 check('o sino lê a mesma rota', /api\('\/api\/dashboard\/atencao'\)/.test(appSrc));
 // Mesmas classes de severidade, então a cor significa o mesmo nos dois.
 check('mesma escala de cor', /notif-sev-\$\{escapeHtml\(item\.severidade\)\}/.test(src) && /notif-sev-\$\{escapeHtml\(item\.severidade\)\}/.test(appSrc));
@@ -172,7 +220,10 @@ check('Atenção está fora da filtragem', !/painelAtencao[\s\S]{0,80}abaAtiva/.
 check('e o motivo está escrito', /pendência escondida é pendência\s*\n?\s*\*\s*perdida/.test(src));
 // Favoritos é o atalho para sair do painel — escondê-lo custaria um clique em
 // toda navegação.
-check('Favoritos continua fora das abas', /<section class="panel">\s*\n\s*<div class="dashboard-favoritos-topo">/.test(src));
+// A seção mora numa função própria desde dashboard-e-sino (fixar redesenha só
+// ela), chamada fora de qualquer filtro de aba.
+check('Favoritos continua fora das abas', /<section class="panel" data-dashboard-favoritos>\s*\n\s*<div class="dashboard-favoritos-topo">/.test(src)
+  && !/abaAtiva[\s\S]{0,80}dashboardSecaoFavoritos/.test(src));
 check('a troca de aba redesenha o painel', /state\.dashboardAba = button\.dataset\.dashboardAba;/.test(src));
 // Aba sem gráfico deixaria Atenção pular para a largura cheia.
 check('aba sem gráfico mantém a coluna', /dashboard-aba-vazia/.test(src) && /\.dashboard-aba-vazia \{/.test(cssSrc));

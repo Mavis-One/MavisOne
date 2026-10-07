@@ -244,9 +244,52 @@ check('todos têm título e formato', tudo.every((k) => k.titulo && k.formato));
 console.log('\n--- ligado na rota ---');
 check('o dashboard monta os cartões', /kpis\.montarKpis\(\{/.test(serverSrc));
 check('e os devolve', /kpis: kpiCards,/.test(serverSrc));
-// A faixa do estoque depende de `situation`, que só existe no produto
-// serializado — o produto cru não a tem.
-check('usa o produto serializado', /produtos: canStock \? products\.map\(\(p\) => stockCore\.serializeProduct\(p, data\)\)/.test(serverSrc));
+// A faixa do estoque depende de `situation`, que o produto cru não tem. Era o
+// produto serializado inteiro; desde dashboard-e-sino (07/10/2026) é
+// stockCore.resumoParaKpi — os quatro campos que o cartão lê, com os valores de
+// serializeProduct e SEM a quebra por depósito, que varria o razão inteiro por
+// produto (153 ms com 59 movimentos, 6,1 s com 5.900). A equivalência é
+// conferida logo abaixo, com razão e sem razão.
+check('usa o resumo do produto para o cartão', /produtos: canStock \? products\.map\(\(p\) => stockCore\.resumoParaKpi\(data, p\)\)/.test(serverSrc));
+{
+  const core = require('../lib/stock-core');
+  const dados = {
+    productMeta: { a: { minStock: 5 }, b: { minStock: 1 }, c: { minStock: '3' }, d: {}, f: { minStock: 2, maxStock: 3 } },
+    deposits: [{ id: 'd1', name: 'Loja' }, { id: 'd2', name: 'CD' }],
+    // O razão NÃO entra na conta do cartão: quantidade é a do produto. Com
+    // movimentos aqui, uma versão que lesse o razão daria outro número.
+    stockMovements: [
+      { productId: 'a', depositId: 'd1', quantity: 2, type: 'entrada' },
+      { productId: 'b', depositId: 'd2', quantity: 1, type: 'SAIDA' },
+      { productId: 'f', depositId: 'd1', quantity: 9, type: 'entrada', classValueId: 'cor-1' }
+    ],
+    stockTransfers: [],
+    productCategories: []
+  };
+  // Com mínimo e abaixo dele, sem mínimo, saldo zero e negativo, quantidade e
+  // custo em texto, custo inválido, acima do máximo.
+  const lista = [
+    { id: 'a', stockQuantity: 2, costPrice: 10.5 }, { id: 'b', stockQuantity: '7', costPrice: '1.25' },
+    { id: 'c', stockQuantity: 0, costPrice: null }, { id: 'd', stockQuantity: -1, costPrice: 3 },
+    { id: 'e', stockQuantity: 4, costPrice: 'x' }, { id: 'f', stockQuantity: 4, costPrice: 2 }
+  ];
+  const campos = (p) => ({ stockQuantity: p.stockQuantity, costPrice: p.costPrice, situation: p.situation, minStock: p.minStock });
+  const iguais = lista.every((p) => JSON.stringify(campos(core.serializeProduct(p, dados))) === JSON.stringify(core.resumoParaKpi(dados, p)));
+  check('  e o resumo tem os MESMOS quatro campos de serializeProduct', iguais);
+  const cartao = (produtos) => JSON.stringify(K.kpiEstoque({ produtos, depositos: dados.deposits }));
+  check('  e dá o mesmo cartão de Estoque',
+    cartao(lista.map((p) => core.serializeProduct(p, dados))) === cartao(lista.map((p) => core.resumoParaKpi(dados, p))));
+  // E não depende do razão: sem movimento nenhum, o mesmo resumo.
+  const semRazao = { ...dados, stockMovements: [], deposits: [] };
+  check('  e o resumo não muda sem o razão',
+    lista.every((p) => JSON.stringify(core.resumoParaKpi(dados, p)) === JSON.stringify(core.resumoParaKpi(semRazao, p))));
+}
+// A rota não carrega mais o razão nem o produto inteiro para o cartão.
+{
+  const rotaPainel = serverSrc.slice(serverSrc.indexOf("if (pathname === '/api/dashboard') {"), serverSrc.indexOf("if (pathname === '/api/dashboard/atencao'"));
+  check('  e a rota lê os produtos pelo recorte do cartão', /canStock \? painelInicioDb\.getProductsParaValor\(\)/.test(rotaPainel)
+    && !/stockCore\.serializeProduct\(/.test(rotaPainel));
+}
 // Lançamento cancelado não é dívida nem receita.
 check('descarta lançamento cancelado', /\.filter\(\(e\) => !isFinanceEntryCancelled\(e\)\)/.test(serverSrc));
 check('classifica receita x despesa', /tipo: classifyFinanceEntry\(e\)/.test(serverSrc));

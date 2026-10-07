@@ -192,6 +192,125 @@ function dashboardSparkline(serie) {
     </svg>`;
 }
 
+/**
+ * AS TRÊS RESPOSTAS DA ÚLTIMA ABERTURA, para o que não muda dado nenhum
+ * (dashboard-e-sino, 07/10/2026).
+ *
+ * Trocar de aba e abrir/fechar o formulário de meta só escolhem o que MOSTRAR do
+ * que já chegou — e refaziam as três rotas: cada clique custava o mesmo que a
+ * abertura (medido: ~3,5 s de relógio e ~4,5 s de CPU do servidor com as rotas
+ * juntas, antes dos recortes do servidor), segurando todo mundo atrás do único
+ * event loop para redesenhar a mesma informação.
+ * Trocar a filial só muda o gráfico: os cartões e as pendências não dependem
+ * dela, então só /charts sai de novo.
+ *
+ * QUEM INVALIDA, E QUANDO:
+ *   (a) o tempo — 60 s contados da resposta MAIS VELHA na tela, a mesma validade
+ *       do sino (ATENCAO_VALIDADE_MS) e das listas de Vendas;
+ *   (b) a troca de usuário — a chave tem `state.user.id`, e quem entra depois na
+ *       mesma aba não herda nada;
+ *   (c) voltar ao Início pelo menu, trocar o período, gravar ou remover meta —
+ *       essas chamadas não passam `reusar` e buscam tudo;
+ *   (d) escrita feita em outra tela deste navegador — só se volta ao Início
+ *       navegando, e navegar busca;
+ *   (e) escrita de outra pessoa — aparece no próximo clique depois de 60 s ou na
+ *       próxima navegação, o mesmo contrato que o sino já tinha.
+ */
+const DASHBOARD_REUSO_MS = 60000;
+let dashboardUltimaAbertura = null;
+
+/**
+ * A seção de Favoritos, sozinha — para fixar/desfixar redesenhar só ela.
+ *
+ * Fixar um favorito refazia o Início inteiro: as três rotas do painel de novo
+ * (e a PUT do favorito já tinha envelhecido o sino, então a atenção também era
+ * recalculada no servidor) para mudar uma estrela. Os cartões, os gráficos e as
+ * pendências não dependem de favorito nenhum (front-end:16).
+ */
+function dashboardSecaoFavoritos(ctx, pinnedSet) {
+  const favoriteModules = getVisibleModules(ctx.state).filter((module) => {
+    const mainPinned = pinnedSet.has(buildPinKey(module.key));
+    const hasPinnedItems = module.items.some((item) => pinnedSet.has(buildPinKey(module.key, item.key)));
+    return mainPinned || hasPinnedItems;
+  });
+  return `
+      <section class="panel" data-dashboard-favoritos>
+        <div class="dashboard-favoritos-topo">
+          <h3>Favoritos</h3>
+        </div>
+        ${favoriteModules.length ? `
+          <div class="dashboard-favorites-grid">
+            ${favoriteModules.map((module) => renderModuleGroup(ctx, module, pinnedSet)).join('')}
+          </div>
+        ` : `
+          <div class="dashboard-empty-state">
+            <strong>Sem favoritos</strong>
+            <p class="muted">Use "Fixar módulo" na Área de Trabalho, ou a estrela ao lado de cada tela.</p>
+          </div>
+        `}
+      </section>`;
+}
+
+/**
+ * Liga os botões da seção de Favoritos (abrir módulo, abrir tela, fixar). Só
+ * existem lá: na abertura `raiz` é o conteúdo inteiro, e depois de fixar é a
+ * seção nova.
+ */
+function ligarFavoritosDoDashboard(ctx, raiz) {
+  raiz.querySelectorAll('[data-open-module]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const moduleKey = button.dataset.openModule;
+      if (!moduleKey) return;
+      navigateToModule(ctx, moduleKey, getDefaultSubKey(moduleKey));
+    });
+  });
+
+  raiz.querySelectorAll('[data-open-sub]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const [moduleKey, subKey] = String(button.dataset.openSub || '').split('::');
+      if (!moduleKey || !subKey) return;
+      navigateToModule(ctx, moduleKey, subKey);
+    });
+  });
+
+  raiz.querySelectorAll('[data-pin-key]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const pinKey = button.dataset.pinKey;
+      if (!pinKey) return;
+      alternarFavoritoDoDashboard(ctx, pinKey, getDashboardPinLabel(pinKey));
+    });
+  });
+}
+
+async function alternarFavoritoDoDashboard(ctx, pinKey, label) {
+  const { content, showToast } = ctx;
+  // O conjunto ATUAL, e não o da abertura: depois do primeiro clique a seção
+  // foi redesenhada sem refazer a tela, e um conjunto guardado desde a
+  // abertura desfaria o favorito anterior.
+  const pinnedSet = getDashboardPinSet();
+  const wasPinned = pinnedSet.has(pinKey);
+  const nextPins = wasPinned
+    ? Array.from(pinnedSet).filter((item) => item !== pinKey)
+    : Array.from(new Set([...pinnedSet, pinKey]));
+
+  try {
+    await applyDashboardPins(ctx, nextPins);
+    showToast(wasPinned ? `Removido dos fixados: ${label}` : `Fixado: ${label}`, 'success');
+    const secao = content.querySelector('[data-dashboard-favoritos]');
+    // Sem a seção (a pessoa saiu do Início enquanto a gravação ia e voltava)
+    // não há o que redesenhar: quem abrir o Início de novo já lê o favorito.
+    if (!secao) return;
+    const molde = document.createElement('div');
+    molde.innerHTML = dashboardSecaoFavoritos(ctx, getDashboardPinSet());
+    const nova = molde.firstElementChild;
+    secao.replaceWith(nova);
+    ligarFavoritosDoDashboard(ctx, nova);
+  } catch (error) {
+    showToast(error.message || 'Erro ao salvar favoritos do dashboard.', 'error');
+  }
+}
+
 function dashboardCartaoKpi(kpi, escapeHtml) {
   const v = dashboardValorCurto(kpi.valor);
   const temVariacao = kpi.variacao !== null && kpi.variacao !== undefined;
@@ -229,15 +348,12 @@ function dashboardCartaoKpi(kpi, escapeHtml) {
     </article>`;
 }
 
-window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
+// `opcoes.reusar`: 'tudo' (aba, formulário de meta) ou 'resumo' (filial). Sem
+// ele — navegar até o Início, trocar o período, gravar meta — busca tudo. Ver
+// DASHBOARD_REUSO_MS.
+window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx, opcoes = {}) {
   const { content, state, showToast, api, escapeHtml } = ctx;
-  const visibleModules = getVisibleModules(state);
   const pinnedSet = getDashboardPinSet();
-  const favoriteModules = visibleModules.filter((module) => {
-    const mainPinned = pinnedSet.has(buildPinKey(module.key));
-    const hasPinnedItems = module.items.some((item) => pinnedSet.has(buildPinKey(module.key, item.key)));
-    return mainPinned || hasPinnedItems;
-  });
 
   const granularity = state.dashboardChartGranularity || 'month';
 
@@ -257,27 +373,52 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
   // `Promise.all` sem eles perderia a tela inteira por causa de uma fonte, que
   // é justamente o que os três blocos try/catch de antes evitavam.
   const filialPedida = state.dashboardFilial || '';
+  // O que dá para reaproveitar da última abertura: do MESMO usuário, no MESMO
+  // período e dentro da validade. A filial só precisa bater para reaproveitar o
+  // gráfico — 'resumo' é justamente a troca de filial.
+  const anterior = dashboardUltimaAbertura;
+  const reuso = opcoes.reusar && anterior
+    && anterior.usuario === (state.user && state.user.id)
+    && anterior.granularity === granularity
+    && (opcoes.reusar === 'resumo' || anterior.filial === filialPedida)
+    && (Date.now() - anterior.em) < DASHBOARD_REUSO_MS
+    ? anterior : null;
+  const reusaTudo = Boolean(reuso) && opcoes.reusar === 'tudo';
+  // As pendências pela PORTA ÚNICA do sino (app.js/buscarAtencao). Na abertura
+  // o sino da barra também quer o painel, e a rota ia DUAS vezes — a segunda
+  // era sempre a última a chegar (medido: 0,8 a 2,0 s depois das outras) e
+  // segurava o "Início pronto". Com `forcar`, buscarAtencao não devolve o painel
+  // guardado: devolve a busca que já está em voo (feita depois da última
+  // escrita) ou faz uma nova — o painel continua tão fresco quanto antes. A
+  // troca de filial (`reusar: 'resumo'`) aceita o painel do sino se ele ainda
+  // estiver na validade. `api` direto fica de reserva para quando a porta não
+  // existir (tela carregada fora do app.js).
+  const buscarPendencias = () => (typeof buscarAtencao === 'function'
+    ? buscarAtencao({ forcar: !opcoes.reusar })
+    : api('/api/dashboard/atencao'));
+  // `falhou: true` marca a resposta de reserva: a tela a desenha como antes
+  // (fonte fora não apaga as outras), mas ela não é guardada para reaproveitar —
+  // um erro de rede de um instante não pode ficar um minuto na tela.
   const [charts, resumo, pendencias] = await Promise.all([
-    api(`/api/dashboard/charts?granularity=${granularity}${filialPedida ? `&filial=${encodeURIComponent(filialPedida)}` : ''}`)
-      .catch(() => ({ salesChartSeries: [], financeChartSeries: [], filiais: [], permissions: {} })),
-    api(`/api/dashboard?period=${encodeURIComponent(PERIODO_DO_GRANULARITY[granularity] || 'month')}`).catch(() => ({ kpis: [] })),
-    api('/api/dashboard/atencao').catch(() => ({ itens: [] }))
+    reusaTudo ? reuso.charts : api(`/api/dashboard/charts?granularity=${granularity}${filialPedida ? `&filial=${encodeURIComponent(filialPedida)}` : ''}`)
+      .catch(() => ({ salesChartSeries: [], financeChartSeries: [], filiais: [], permissions: {}, falhou: true })),
+    reuso ? reuso.resumo : api(`/api/dashboard?period=${encodeURIComponent(PERIODO_DO_GRANULARITY[granularity] || 'month')}`).catch(() => ({ kpis: [], falhou: true })),
+    reusaTudo ? reuso.pendencias : buscarPendencias().catch(() => ({ itens: [], falhou: true }))
   ]);
-
-  async function togglePin(pinKey, label) {
-    const wasPinned = pinnedSet.has(pinKey);
-    const nextPins = wasPinned
-      ? Array.from(pinnedSet).filter((item) => item !== pinKey)
-      : Array.from(new Set([...pinnedSet, pinKey]));
-
-    try {
-      await applyDashboardPins(ctx, nextPins);
-      showToast(wasPinned ? `Removido dos fixados: ${label}` : `Fixado: ${label}`, 'success');
-      await window.MavisModuleRegistry.dashboard(ctx);
-    } catch (error) {
-      showToast(error.message || 'Erro ao salvar favoritos do dashboard.', 'error');
-    }
-  }
+  const algumaFalhou = [charts, resumo, pendencias].some((resposta) => resposta && resposta.falhou);
+  dashboardUltimaAbertura = algumaFalhou ? null : {
+    usuario: state.user && state.user.id,
+    granularity,
+    // A filial que o servidor APLICOU, que é a que vai para o seletor (e para
+    // `state.dashboardFilial`, logo abaixo) — e é com ela que o próximo clique
+    // compara. A pedida pode vir noutra grafia ou já não existir.
+    filial: charts.filial || '',
+    // A validade conta da resposta MAIS VELHA que está na tela.
+    em: reuso ? reuso.em : Date.now(),
+    charts,
+    resumo,
+    pendencias
+  };
 
   // O servidor devolve a filial que ele APLICOU. Uma filial que sumiu da lista
   // (ou que o usuário não enxerga) volta vazia, e o seletor tem de mostrar
@@ -495,28 +636,16 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
         ${graficosVisiveis.slice(1).map((grafico) => `<div class="dashboard-charts-grid">${grafico}</div>`).join('')}
       </div>
 
-      <section class="panel">
-        <div class="dashboard-favoritos-topo">
-          <h3>Favoritos</h3>
-        </div>
-        ${favoriteModules.length ? `
-          <div class="dashboard-favorites-grid">
-            ${favoriteModules.map((module) => renderModuleGroup(ctx, module, pinnedSet)).join('')}
-          </div>
-        ` : `
-          <div class="dashboard-empty-state">
-            <strong>Sem favoritos</strong>
-            <p class="muted">Use "Fixar módulo" na Área de Trabalho, ou a estrela ao lado de cada tela.</p>
-          </div>
-        `}
-      </section>
+      ${dashboardSecaoFavoritos(ctx, pinnedSet)}
     </div>
   `;
 
+  // A aba só escolhe o que MOSTRAR do que já chegou: reaproveita as três
+  // respostas (ver DASHBOARD_REUSO_MS).
   content.querySelectorAll('[data-dashboard-aba]').forEach((button) => {
     button.addEventListener('click', () => {
       state.dashboardAba = button.dataset.dashboardAba;
-      window.MavisModuleRegistry.dashboard(ctx);
+      window.MavisModuleRegistry.dashboard(ctx, { reusar: 'tudo' });
     });
   });
 
@@ -529,14 +658,18 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
 
   // A filial manda só no Fluxo de Vendas: é o único bloco do painel que sabe
   // de que loja veio cada número. Cartões de contas e estoque não têm filial.
+  // Por isso só o gráfico sai de novo (`reusar: 'resumo'`): cartões e
+  // pendências são os mesmos com qualquer filial.
   content.querySelector('[data-dashboard-filial]')?.addEventListener('change', (event) => {
     state.dashboardFilial = event.target.value;
-    window.MavisModuleRegistry.dashboard(ctx);
+    window.MavisModuleRegistry.dashboard(ctx, { reusar: 'resumo' });
   });
 
+  // Abrir/fechar o formulário não muda dado nenhum. Gravar e remover a meta
+  // (logo abaixo) mudam, e buscam tudo.
   content.querySelector('[data-dashboard-meta-abrir]')?.addEventListener('click', () => {
     state.dashboardMetaAberta = !state.dashboardMetaAberta;
-    window.MavisModuleRegistry.dashboard(ctx);
+    window.MavisModuleRegistry.dashboard(ctx, { reusar: 'tudo' });
   });
 
   const formMetaEl = content.querySelector('[data-dashboard-meta-form]');
@@ -607,7 +740,7 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
 
     formMetaEl.querySelector('[data-dashboard-meta-fechar]').addEventListener('click', () => {
       state.dashboardMetaAberta = false;
-      window.MavisModuleRegistry.dashboard(ctx);
+      window.MavisModuleRegistry.dashboard(ctx, { reusar: 'tudo' });
     });
   }
 
@@ -620,28 +753,5 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx) {
     });
   });
 
-  content.querySelectorAll('[data-open-module]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const moduleKey = button.dataset.openModule;
-      if (!moduleKey) return;
-      navigateToModule(ctx, moduleKey, getDefaultSubKey(moduleKey));
-    });
-  });
-
-  content.querySelectorAll('[data-open-sub]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const [moduleKey, subKey] = String(button.dataset.openSub || '').split('::');
-      if (!moduleKey || !subKey) return;
-      navigateToModule(ctx, moduleKey, subKey);
-    });
-  });
-
-  content.querySelectorAll('[data-pin-key]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      const pinKey = button.dataset.pinKey;
-      if (!pinKey) return;
-      togglePin(pinKey, getDashboardPinLabel(pinKey));
-    });
-  });
+  ligarFavoritosDoDashboard(ctx, content);
 };

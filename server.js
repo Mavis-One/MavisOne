@@ -54,6 +54,9 @@ const atencao = require('./lib/atencao');
 // Cartões do topo do hub: valor + variação contra o período anterior + a
 // proporção que merece alarme.
 const kpis = require('./lib/kpis');
+// Os recortes do Início (dashboard-e-sino): cada rota do Dashboard Geral e o
+// sino leem só as linhas e colunas que podem somar. Ver o cabeçalho do arquivo.
+const painelInicioDb = require('./lib/db/painel-inicio');
 // Classes de produto (COR e futuras): catálogo global + atribuição por produto.
 const classesDb = require('./lib/db/classes');
 const openFinanceService = require('./lib/openfinance/service');
@@ -4406,6 +4409,95 @@ function buildSalesChartSeries(data, granularity, escopo, { filial = '', metas =
   });
 }
 
+// ===========================================================================
+// O INÍCIO LÊ SÓ O QUE SOMA (dashboard-e-sino, 07/10/2026).
+//
+// As três rotas do Início (/api/dashboard, /charts e /atencao) carregavam a
+// base inteira — os 27.362 lançamentos com as 25.709 baixas, os 14.864 pedidos
+// serializados, o `select *` dos produtos contra o razão, as NF-e com o jsonb da
+// Focus — e devolviam de 0 a 4 KB. Na abertura as quatro chamadas (a atenção ia
+// duas vezes) somavam ~4,5 s de CPU no único processo do servidor, com o event
+// loop travado por até 1,8 s seguidos e pico de 529 MB (o PM2 reinicia acima de
+// 500 MB). Os carregadores daqui populam `data` com os recortes de
+// lib/db/painel-inicio.js; cada um é de UMA rota e diz por que basta.
+//
+// Nenhum traz as baixas (financial_payments): nenhuma das três rotas as lê.
+// ===========================================================================
+
+/** /api/dashboard: os lançamentos que não estão pagos (os únicos que os cartões somam). */
+async function syncLancamentosDoPainel(data) {
+  data.finance = await painelInicioDb.getLancamentosNaoPagos();
+}
+
+/** /api/dashboard/charts: os pagos dentro da janela do gráfico, com um dia de folga. */
+async function syncLancamentosDoGrafico(data, de, ate) {
+  data.finance = await painelInicioDb.getLancamentosPagosEntre(de, ate);
+}
+
+/** /api/dashboard e /charts: as seis colunas que cartões e gráfico leem de cada pedido. */
+async function syncSalesDataParaPainel(data) {
+  const [orders, quotes] = await Promise.all([painelInicioDb.getOrdersParaPainel(), painelInicioDb.getQuotesParaPainel()]);
+  data.orders = orders;
+  data.quotes = quotes;
+}
+
+/**
+ * /api/dashboard/atencao: o que o sino pode contar, e só isso. `limite` é hoje
+ * + 8 (ver a rota); o piso e o prefixo vêm de lib/atencao.js, que é dona da
+ * regra.
+ *
+ * Popula `data.finance` só com Financeiro e `data.orders` só com Vendas — a
+ * MESMA condição de antes. Sem Vendas, `data.orders` fica vazio e
+ * lib/atencao.js trata o título de pedido importado como próprio, exatamente
+ * como fazia com o agregado.
+ *
+ * EM DUAS IDAS, e de propósito: os pedidos citados pelos lançamentos saem DOS
+ * lançamentos que já chegaram (ver getPedidosDoSino). As duas somam ~12 ms.
+ */
+async function syncPendenciasDoSino(data, { limite, financeiro, vendas }) {
+  const regra = { primeiroNumero: atencao.PRIMEIRO_NUMERO_PROPRIO, prefixoImportado: atencao.PREFIXO_IMPORTADO };
+  if (financeiro) data.finance = await painelInicioDb.getLancamentosDoSino(limite, regra);
+  if (vendas) {
+    const referencias = [...new Set((financeiro ? data.finance : []).map((e) => e.referenceId).filter(Boolean))];
+    data.orders = await painelInicioDb.getPedidosDoSino(referencias, regra);
+  }
+}
+
+/**
+ * O VALOR DE UM REGISTRO DE VENDA — o `amount` que serializeSalesRecord
+ * devolve: totalAmount quando é número, senão amount, senão a soma dos itens.
+ * A MESMA expressão da linha `const totalAmount = ...` de serializeSalesRecord
+ * (scripts/test-meu-painel.js confere que as duas continuam iguais), para
+ * totaisDePedidosDoEscopo somar o MESMO número sem serializar o registro.
+ */
+function valorDoRegistroDeVenda(record) {
+  const items = Array.isArray(record.items) ? record.items : [];
+  const itemsTotal = items.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  return typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || itemsTotal || 0);
+}
+
+/**
+ * OS DOIS NÚMEROS DE VENDA DO DASHBOARD GERAL — sem serializar pedido nenhum.
+ *
+ * /api/dashboard chamava buildSalesDashboardSummary(data, escopo).overview e
+ * lia dois campos, totalPedidos e valorPedidos. Para isso serializava os 14.864
+ * pedidos (serializeSalesRecord: ~60 campos, cadastro, número da NF-e) e montava
+ * a lista por vendedor, que a rota jogava fora — 52 ms por chamada, e o único
+ * motivo de a rota carregar as NF-e.
+ *
+ * O MESMO escopo obrigatório (e o mesmo throw quando falta), o mesmo filtro
+ * (vendaVisivel), o mesmo valor por pedido, a mesma ordem de soma e o mesmo
+ * arredondamento de buildSalesDashboardSummary.
+ */
+function totaisDePedidosDoEscopo(data, escopo) {
+  if (!escopo) {
+    throw new Error('totaisDePedidosDoEscopo exige um escopo (lib/relatorios-escopo.js). Sem ele a resposta vazaria as vendas de todos os vendedores.');
+  }
+  const visiveis = (data.orders || []).filter((record) => escopoLib.vendaVisivel(escopo, record.sellerId));
+  const valorPedidos = Math.round(visiveis.reduce((sum, record) => sum + Number(valorDoRegistroDeVenda(record) || 0), 0) * 100) / 100;
+  return { totalPedidos: visiveis.length, valorPedidos };
+}
+
 function buildFinanceDashboardSummary(data, query) {
   const todayStr = toDateStr(getTodayLocal());
   const period = query.get('period') || 'month';
@@ -7743,8 +7835,28 @@ async function tratarRequisicao(req, res) {
     // TUDO NUMA ONDA. Cada carga escreve em chaves distintas de `data` (ou nem
     // toca em `data`) e nenhuma lê o resultado da outra.
     //
-    // sincronizarRazao está aqui porque o painel mostra saldo por depósito, e
-    // sem o razão em memória todo depósito aparecia zerado.
+    // SÓ O QUE A RESPOSTA LÊ (dashboard-e-sino, 07/10/2026). A onda trazia o
+    // razão de estoque, as NF-e, os 27.362 lançamentos com as 25.709 baixas e o
+    // `select *` dos produtos — e a resposta é feita de cinco cartões:
+    //
+    //   razão + NF-e ......... só serializeProduct/serializeSalesRecord liam, e
+    //                          o cartão usa quatro campos do produto e dois
+    //                          números de venda (resumoParaKpi,
+    //                          totaisDePedidosDoEscopo). Nenhum campo da
+    //                          resposta tem saldo por depósito.
+    //   lançamentos .......... só os NÃO PAGOS entram em conta aqui
+    //                          (getLancamentosNaoPagos: 1.698 de 27.362)
+    //   produtos ............. quatro colunas (getProductsParaValor)
+    //   pedidos .............. seis colunas (getOrdersParaPainel)
+    //
+    // Medido com os dados reais (07/10/2026, base x esta versão, o mesmo
+    // banco, mediana de 3): admin 748-998 -> 104-193 ms nos seis períodos;
+    // vendedor restrito 706-840 -> 74-85 ms. A resposta é a mesma centavo a
+    // centavo, para admin e vendedor — o último bit do double
+    // dos cartões A receber/A pagar já variava entre duas chamadas de antes (a
+    // ordem dos empates de `date desc` não era fixa; agora é, ver
+    // lib/db/painel-inicio.js). E o cartão de Estoque deixou de crescer com o
+    // razão: com 5.900 movimentos, serializeProduct custaria ~6 s aqui.
     //
     // O CADASTRO CONTINUA INTEIRO, e a tentativa de enxugá-lo foi desfeita de
     // propósito (fase CM). Trocar por um sync só de depósitos economizava 112 ms
@@ -7769,13 +7881,13 @@ async function tratarRequisicao(req, res) {
     // As cargas condicionadas por permissão continuam condicionadas: quem não
     // vê Estoque não paga os 5.475 produtos.
     const [products] = await Promise.all([
-      canStock ? db.getProducts() : Promise.resolve([]),
-      syncNfeData(data),
+      canStock ? painelInicioDb.getProductsParaValor() : Promise.resolve([]),
       syncCadastroData(data),
-      sincronizarRazao(data),
-      canSales ? syncSalesDataParaAgregado(data) : null,
+      canSales ? syncSalesDataParaPainel(data) : null,
       canPurchases ? syncPurchasesData(data) : null,
-      syncFinanceData(data)
+      // Sem Financeiro nenhum cartão lê lançamento: montarKpis só monta A
+      // receber/A pagar com a permissão, e "a conciliar" exige as duas.
+      canFinance ? syncLancamentosDoPainel(data) : null
     ]);
 
     // Reaproveita o mesmo cálculo do Painel de Vendas para que os dois batam —
@@ -7788,8 +7900,11 @@ async function tratarRequisicao(req, res) {
     // linhas abaixo -- nao o usavam: nao havia o que usar. Um escopo com nome
     // e' um escopo que o proximo bloco lembra de aplicar.
     const escopoVendas = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+    // totaisDePedidosDoEscopo (dashboard-e-sino): os mesmos dois números que o
+    // `overview` de buildSalesDashboardSummary dava, com o mesmo escopo
+    // obrigatório, sem serializar os 14.864 pedidos para lê-los.
     const salesSummary = canSales
-      ? buildSalesDashboardSummary(data, escopoVendas).overview
+      ? totaisDePedidosDoEscopo(data, escopoVendas)
       : null;
     const salesTotal = salesSummary ? salesSummary.valorPedidos : 0;
 
@@ -7897,9 +8012,11 @@ async function tratarRequisicao(req, res) {
         : [],
       compras: activePurchases,
       entradas: entradasClassificadas,
-      // serializeProduct traz `situation` (abaixo-minimo/zerado), que é o que
-      // alimenta a faixa de alerta do cartão de Estoque.
-      produtos: canStock ? products.map((p) => stockCore.serializeProduct(p, data)) : [],
+      // `situation` (abaixo-minimo/zerado) alimenta a faixa de alerta do cartão
+      // de Estoque. resumoParaKpi devolve os quatro campos que o cartão lê, com
+      // os valores de serializeProduct e sem a quebra por depósito (que
+      // varria o razão inteiro por produto).
+      produtos: canStock ? products.map((p) => stockCore.resumoParaKpi(data, p)) : [],
       depositos: data.deposits || [],
       intervalo,
       serieVendas: canSales ? buildSalesChartSeries(data, 'month', escopoVendas) : [],
@@ -7955,6 +8072,17 @@ async function tratarRequisicao(req, res) {
       };
 
       const data = loadData();
+      // O MESMO INSTANTE para o pré-filtro e para as regras: lib/atencao.js
+      // calcula "hoje" a partir de `agora` (em UTC), e o limite do SQL sai dele.
+      // Antes cada um pegava o seu relógio, e o de montarAtencao era lido
+      // depois das cargas.
+      const agora = new Date().toISOString();
+      // hoje + 8: contasAVencer olha hoje..hoje+7 a partir da meia-noite LOCAL
+      // convertida para UTC, o que dá no máximo hoje+7 em qualquer fuso; +8 é
+      // folga. É SUPERCONJUNTO — quem decide o que entra continua sendo
+      // lib/atencao.js.
+      const limiteDoSino = new Date(`${agora.slice(0, 10)}T00:00:00Z`);
+      limiteDoSino.setUTCDate(limiteDoSino.getUTCDate() + 8);
       // Uma ida so': os syncs escrevem em chaves distintas de `data` e
       // nenhum le o do outro, entao esperar um pelo outro era so' latencia.
       //
@@ -7981,26 +8109,52 @@ async function tratarRequisicao(req, res) {
       // `nfeId`, `status`, `date`/`createdAt` e o valor — dez colunas contra as
       // ~60 de `select *`. Medido: 323 ms -> 49 ms na carga dos pedidos, e este
       // sino é chamado em TODA tela.
-      await Promise.all([
-        permissoes.finance ? syncFinanceData(data) : null,
-        permissoes.sales ? syncSalesDataParaAgregado(data) : null,
-        // O aviso de estoque baixo compara saldo por depósito; sem o razão
-        // em memória todo produto parecia zerado e o painel ou gritava por
-        // tudo ou por nada, dependendo do limite cadastrado.
-        permissoes.stock ? sincronizarRazao(data) : null
-      ]);
-
+      //
+      // SÓ O QUE O SINO PODE CONTAR (dashboard-e-sino, 07/10/2026). Ainda
+      // eram os 27.362 lançamentos com as 25.709 baixas, os 14.864 pedidos, o
+      // razão, o `select *` dos 5.560 produtos e das NF-e (com o jsonb da
+      // Focus) — para devolver 1 KB, e o que sobrava depois das regras era o
+      // que NASCEU no MavisONE: zero lançamentos e zero pedidos neste banco.
+      // Medido (07/10/2026, mediana de 3): 668 -> 15 ms (admin), 599 -> 15 ms
+      // (vendedor), a resposta idêntica byte a byte.
+      // Cada fonte vem agora PRÉ-FILTRADA no banco por um superconjunto da
+      // regra, e quem decide continua sendo lib/atencao.js. Provado com o painel
+      // CHEIO contra a versão anterior (piso 15.000, prefixo e mínimos trocados
+      // só em memória: 533 vencidas, 55 a vencer, 235 pedidos sem nota, 107
+      // produtos abaixo do mínimo — resposta idêntica byte a byte, admin e
+      // vendedor), e scripts/test-painel-inicio.js confere o superconjunto em
+      // seis datas e cinco fusos:
+      //
+      //   lançamentos ... em aberto, vencendo até hoje + 8, não importados
+      //   pedidos ....... nascidos aqui sem nota + os citados pelos lançamentos
+      //   NF-e .......... quatro colunas, sem payload_enviado/resposta_focus
+      //   produtos ...... só os que declararam mínimo (idsComMinimo)
+      //
+      // O razão saiu: productSituation lê `stockQuantity` do produto e o mínimo
+      // de `productMeta` — nenhum depósito, nenhum movimento. (O comentário que
+      // estava aqui, "o aviso compara saldo por depósito", é de antes de
+      // productSituation existir.)
+      //
       // A tabela fiscal pode não responder (migração pendente, estabelecimento
       // ainda não cadastrado). O painel degrada para as outras fontes em vez
       // de a tela não abrir — um alerta a menos é melhor do que nenhum.
-      let notasFiscais = [];
-      if (permissoes.fiscal) {
+      const notasDoSino = async () => {
+        if (!permissoes.fiscal) return [];
         try {
-          notasFiscais = await fiscalDb.getNfeRecords();
+          return await painelInicioDb.getNfeParaAtencao();
         } catch (erroFiscal) {
-          notasFiscais = [];
+          return [];
         }
-      }
+      };
+      const [, notasFiscais, produtosComMinimo] = await Promise.all([
+        syncPendenciasDoSino(data, {
+          limite: limiteDoSino.toISOString().slice(0, 10),
+          financeiro: permissoes.finance,
+          vendas: permissoes.sales
+        }),
+        notasDoSino(),
+        permissoes.stock ? painelInicioDb.getProductsPorIds(stockCore.idsComMinimo(data)) : null
+      ]);
 
       // So' a SITUACAO, e nao o produto serializado inteiro.
       //
@@ -8018,7 +8172,7 @@ async function tratarRequisicao(req, res) {
       // acusava os 5.476 produtos deste banco como pendência de reposição. O
       // porquê está em lib/atencao.js/estoqueAbaixoDoMinimo.
       const produtos = permissoes.stock
-        ? (await db.getProducts()).map((p) => ({
+        ? (produtosComMinimo || []).map((p) => ({
           situation: stockCore.productSituation(data, p),
           temMinimo: Number(stockCore.productMeta(data, p.id).minStock || 0) > 0
         }))
@@ -8043,12 +8197,13 @@ async function tratarRequisicao(req, res) {
         // fiscal, invisíveis.
         //
         // É o defeito mais difícil de achar: o código está certo, o teste passa,
-        // e a ligação é que aponta para o lugar errado. O syncSalesData logo
-        // acima já enche `data.orders` nesta mesma rota.
+        // e a ligação é que aponta para o lugar errado. O syncPendenciasDoSino
+        // logo acima já enche `data.orders` nesta mesma rota.
         pedidos: data.orders || [],
         produtos,
         statusQueFaturam,
-        permissoes
+        permissoes,
+        agora
       });
       return sendJson(res, painel);
     } catch (error) {
@@ -8057,8 +8212,13 @@ async function tratarRequisicao(req, res) {
   }
 
   if (pathname === '/api/dashboard/charts' && req.method === 'GET') {
-    const data = loadData();
-    await syncFinanceData(data);
+    // O USUÁRIO PRIMEIRO, E UMA ONDA SÓ (dashboard-e-sino), como /api/dashboard
+    // faz desde a fase DH. Eram syncFinanceData (27.362 lançamentos + 25.709
+    // baixas, ~470 ms) ANTES de saber quem pergunta — quem não tem Financeiro
+    // pagava a carga inteira, e requisição sem sessão pagava antes do 401 — e
+    // o sync de vendas em fila atrás dele. Medido (07/10/2026, mediana de 3):
+    // 618-882 -> 63-130 ms (admin) e 466-498 -> 12-92 ms (só Financeiro), as
+    // séries iguais centavo a centavo.
     const user = await getCurrentUser(req);
     if (!user) {
       return sendJson(res, { error: 'Não autenticado' }, 401);
@@ -8066,10 +8226,19 @@ async function tratarRequisicao(req, res) {
     const granularity = url.searchParams.get('granularity') || 'month';
     const canSales = user.allowedModules.includes('sales');
     const canFinance = user.allowedModules.includes('finance');
-    // Enxuto (fase CM): desta rota sai uma SÉRIE — data e valor por mês. O
-    // buildSalesChartSeries lê `date` e `totalAmount ?? amount` de cada
-    // registro, e mais nada; as outras ~55 colunas eram 274 ms de nada.
-    if (canSales) await syncSalesDataParaAgregado(data);
+    const data = loadData();
+    // Enxuto (fase CM): desta rota sai uma SÉRIE — data e valor por período.
+    // buildSalesChartSeries lê `date`, `status`, `category`, `sellerId` e
+    // `totalAmount ?? amount` de cada registro (getOrdersParaPainel: as seis
+    // colunas), e o gráfico financeiro só soma o REALIZADO com `date` dentro de
+    // um balde (getLancamentosPagosEntre: os pagos da janela, sem as baixas).
+    const janelaDoGrafico = buildPeriodBuckets(granularity);
+    await Promise.all([
+      canFinance
+        ? syncLancamentosDoGrafico(data, janelaDoGrafico[0].from, janelaDoGrafico[janelaDoGrafico.length - 1].to)
+        : null,
+      canSales ? syncSalesDataParaPainel(data) : null
+    ]);
 
     // ESCOPADO (fase DC). O grafico "Fluxo de Vendas" do Inicio desenhava a
     // empresa inteira para um vendedor restrito -- as tres linhas dele. O

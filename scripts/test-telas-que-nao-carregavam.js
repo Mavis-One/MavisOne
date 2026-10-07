@@ -63,9 +63,16 @@ check('  e ela reaproveita a resposta recente',
   && /if \(!forcar && fresco\) return ultimoPainelAtencao;/.test(app));
 // O Dashboard chamava TRÊS vezes na mesma navegação, porque renderApp roda mais
 // de uma vez numa navegação. As três saíam e se atropelavam.
+// Desde dashboard-e-sino (07/10/2026) a busca em voo é reaproveitada só se saiu
+// DEPOIS da última escrita (atencaoGeracao): a que saiu antes leu o banco antes
+// da mudança. E o `finally` só esquece a busca se ainda for ela a em voo — uma
+// mais nova, que saiu depois da escrita, não pode ser apagada pela antiga.
 check('  e uma chamada em voo atende quem pedir no meio dela',
-  /if \(atencaoEmVoo\) return atencaoEmVoo;/.test(app)
-  && /\.finally\(\(\) => \{ atencaoEmVoo = null; \}\)/.test(app));
+  /if \(atencaoEmVoo && atencaoEmVooGeracao === atencaoGeracao\) return atencaoEmVoo;/.test(app)
+  && /\.finally\(\(\) => \{ if \(atencaoEmVoo === voo\) atencaoEmVoo = null; \}\)/.test(app));
+check('  mas não a que saiu antes de uma escrita',
+  /if \(geracao === atencaoGeracao\) \{\s*ultimoPainelAtencao = painel;/.test(app)
+  && /atencaoBuscadaEm = 0;\s*atencaoGeracao \+= 1;/.test(app));
 // Sem isto, um erro de rede silenciaria o sino por um minuto.
 check('  a marca de tempo só é gravada no sucesso',
   /atencaoBuscadaEm = Date\.now\(\);[\s\S]{0,120}return painel;/.test(app));
@@ -73,7 +80,26 @@ check('  a marca de tempo só é gravada no sucesso',
 // porta única.
 check('ninguém mais chama a rota direto',
   (app.match(/api\('\/api\/dashboard\/atencao'\)/g) || []).length === 1);
-check('  o sino da barra lê pela porta', /const painel = await buscarAtencao\(\);/.test(app));
+// `painel = await` sem `const` desde dashboard-e-sino: o sino passou a ler os
+// elementos DEPOIS da espera (pintarSinoDeAtencao), e o painel é declarado
+// antes do try.
+check('  o sino da barra lê pela porta', /painel = await buscarAtencao\(\);/.test(app));
+// O painel do Início também, desde dashboard-e-sino: na abertura a rota ia
+// DUAS vezes (a do sino e a do painel), e a segunda segurava o "pronto".
+const telaInicio = semComentarios(ler('public/modules/dashboard/index.js'));
+check('  e o painel do Início também, forçando uma busca nova na abertura',
+  /buscarAtencao\(\{ forcar: !opcoes\.reusar \}\)/.test(telaInicio));
+
+console.log('\n--- 1c. e o sino vencido espera a tela ---');
+// Com o painel vencido, a busca do sino saía junto com a requisição da tela e
+// dividia com ela o único event loop do servidor: +0,6 a +1,0 s na tela que
+// abria quando o sino vencia. Agora ela espera loadModule terminar.
+const sino = app.slice(app.indexOf('function atualizarSinoDeAtencao('), app.indexOf('async function pintarSinoDeAtencao('));
+check('o sino fresco é pintado na hora', /if \(fresco\) \{\s*pintarSinoDeAtencao\(\);\s*return;/.test(sino));
+check('  e o vencido espera, com um temporizador de reserva',
+  /sinoEsperandoATela = setTimeout\(soltarSinoDeAtencao, SINO_RESERVA_MS\)/.test(sino));
+check('  que loadModule solta quando a tela terminou',
+  /\} finally \{\s*soltarSinoDeAtencao\(\);\s*\}\s*\}/.test(app.slice(app.indexOf('async function loadModule('))));
 // Abrir o painel é a pessoa OLHANDO a lista: pendência resolvida há um minuto
 // não pode continuar listada.
 check('  e abrir o painel força uma busca nova',
@@ -112,9 +138,16 @@ check('ela NÃO chama syncCadastroData', !/syncCadastroData/.test(rota));
 // fase CM: o painel soma e conta, e as ~60 colunas de cada pedido custavam
 // 323 ms contra 49 ms do recorte.
 const blocoParalelo = (/await Promise\.all\(\[[\s\S]*?\]\);/.exec(rota) || [''])[0];
+// Desde dashboard-e-sino (07/10/2026) a onda é de PRÉ-FILTROS: os lançamentos e
+// pedidos que o sino pode contar (syncPendenciasDoSino), as notas em quatro
+// colunas e só os produtos com mínimo declarado — e nem o razão nem o
+// financeiro inteiro (productSituation não lê depósito; ver lib/db/painel-inicio.js).
 check('  e os que sobraram continuam correndo juntos',
-  /syncSalesData(ParaAgregado)?\(data\)/.test(blocoParalelo) && /sincronizarRazao\(data\)/.test(blocoParalelo),
+  /syncPendenciasDoSino\(data/.test(blocoParalelo) && /notasDoSino\(\)/.test(blocoParalelo) && /getProductsPorIds\(/.test(blocoParalelo),
   blocoParalelo ? `${blocoParalelo.length} caracteres no bloco` : 'bloco não encontrado');
+check('  sem o razão, sem o financeiro inteiro e sem o select * dos produtos e das notas',
+  !/sincronizarRazao\(data\)/.test(rota) && !/syncFinanceData\(data\)/.test(rota)
+  && !/db\.getProducts\(\)/.test(rota) && !/getNfeRecords\(/.test(rota));
 // estoqueAbaixoDoMinimo lê DOIS campos: `situation` e, desde a fase CO,
 // `temMinimo` — sem o segundo o painel não separa "produto zerou" de "o razão
 // nunca foi carregado", e acusava os 5.476 produtos deste banco como pendência

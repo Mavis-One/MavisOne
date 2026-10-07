@@ -296,7 +296,12 @@ check('  e NÃO a coleção legada data.sales', !/pedidos: data\.sales/.test(rot
 // Aceita as duas versões do sync porque na fase CM esta rota passou a usar a
 // ENXUTA (só as colunas que um agregado lê — 323 ms viraram 49 ms). O que
 // importa aqui não é o nome: é que alguém popule data.orders antes do uso.
-check('  com um sync de vendas chamado antes', /syncSalesData(ParaAgregado)?\(data\)/.test(rota));
+//
+// Desde dashboard-e-sino (07/10/2026) quem popula `data.orders` aqui é
+// syncPendenciasDoSino: os pedidos que o sino pode contar (nascidos aqui sem
+// nota, e os citados pelos lançamentos), com as colunas do agregado —
+// conferidas logo abaixo, no arquivo novo.
+check('  com um sync de vendas chamado antes', /syncSalesData(ParaAgregado)?\(data\)|syncPendenciasDoSino\(data/.test(rota));
 
 // E O QUE A VERSÃO ENXUTA NÃO PODE DEIXAR DE FORA.
 //
@@ -319,9 +324,25 @@ const recorte = [
 check('a carga enxuta de pedido traz nfe_id', /nfe_id/.test(recorte), recorte || 'recorte não encontrado');
 // `date` e `created_at` são a segunda metade do filtro (o pedido só entra depois
 // de um dia), e o valor é o que o alerta mostra.
-['date', 'created_at', 'total_amount', 'status'].forEach((c) => {
+// E `code` e `id`: nasceuAqui lê o número, e pedidosImportados o id.
+['date', 'created_at', 'total_amount', 'status', 'code', 'id'].forEach((c) => {
   check(`  e também ${c}`, new RegExp(`\\b${c}\\b`).test(recorte));
 });
+
+// O PRÉ-FILTRO DO SINO (dashboard-e-sino) lê ESSE recorte nas duas metades — o
+// pedido nascido aqui sem nota e o pedido citado por um lançamento. Com outra
+// lista, um campo que pedidosSemNota lê poderia faltar só ali.
+const painelDb = ler('lib/db/painel-inicio.js');
+check('getPedidosDoSino lê as colunas do agregado nas duas metades',
+  (painelDb.match(/select \$\{COLUNAS_DE_AGREGADO_PEDIDO\} from orders/g) || []).length === 2
+  && /COLUNAS_DE_AGREGADO_PEDIDO\s*\}\s*=\s*require\('\.\/vendas-compras'\)/.test(painelDb));
+// O pré-filtro recebe a regra de lib/atencao.js em vez de copiá-la: o piso e o
+// prefixo têm um dono só.
+check('a rota passa o piso e o prefixo de lib/atencao.js',
+  /atencao\.PRIMEIRO_NUMERO_PROPRIO/.test(serverSrc) && /atencao\.PREFIXO_IMPORTADO/.test(serverSrc)
+  && A.PRIMEIRO_NUMERO_PROPRIO === 16000 && A.PREFIXO_IMPORTADO === 'fin-viper-');
+// E montarAtencao recebe o MESMO instante de que saiu o limite do SQL.
+check('  e o mesmo `agora` do limite', /const agora = new Date\(\)\.toISOString\(\);/.test(rota) && /permissoes,\s*\n\s*agora\s*\n\s*\}\);/.test(rota));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
