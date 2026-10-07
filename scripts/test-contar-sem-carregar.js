@@ -48,12 +48,15 @@ function dublar(caminho, exports) {
 // não interessa o que o banco responderia, e sim quantas vezes ele foi
 // incomodado e com qual comando.
 let disparadas = [];
-dublar('../lib/db/conexao', {
-  consultar: async (texto) => {
-    disparadas.push(String(texto).replace(/\s+/g, ' ').trim());
-    return { rows: [{ total: 42 }] };
-  }
-});
+const gravar = async (texto) => {
+  disparadas.push(String(texto).replace(/\s+/g, ' ').trim());
+  return { rows: [{ total: 42 }] };
+};
+// Os SELECT do construtor (dados e count) saem por `consultarLeitura` desde a
+// carona em leitura idêntica (lib/db/conexao.js, 07/10/2026); escrita continua
+// em `consultar`. As duas portas gravam no mesmo lugar: para este teste, ida ao
+// banco é ida ao banco, por qualquer uma delas.
+dublar('../lib/db/conexao', { consultar: gravar, consultarLeitura: gravar });
 // Catálogo de mentira com os fatos que o montador consulta.
 dublar('../lib/db/catalogo', {
   obterCatalogo: async () => ({}),
