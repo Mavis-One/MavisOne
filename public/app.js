@@ -30,6 +30,18 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
 }
 
+// O item "Tema" do menu da conta no estado atual, sem redesenhar mais nada.
+function atualizarItemDoTema() {
+  const item = document.getElementById('contaTema');
+  if (!item) return;
+  const escuro = getTheme() === 'dark';
+  const icone = item.querySelector('.topbar-conta-icone');
+  if (icone) icone.innerHTML = themeIconSvg(getTheme());
+  const rotulo = item.querySelector('.topbar-conta-texto em');
+  if (rotulo) rotulo.textContent = escuro ? 'Escuro' : 'Claro';
+  item.querySelector('.topbar-conta-switch')?.classList.toggle('ligado', escuro);
+}
+
 function getSessionToken() {
   return sessionStorage.getItem(SESSION_TOKEN_KEY);
 }
@@ -1709,9 +1721,13 @@ function renderApp() {
     const nextTheme = getTheme() === 'dark' ? 'light' : 'dark';
     applyTheme(nextTheme);
     if (state.user) state.user.theme = nextTheme;
-    // renderApp() redesenha o chip com o ícone, o rótulo e o interruptor no
-    // estado novo — sem isso o menu continuaria dizendo "Claro" no escuro.
-    renderApp();
+    // SÓ O ITEM DO MENU, e não renderApp() (08/10/2026). O renderApp redesenha
+    // a casca inteira, área da tela incluída, e não chama loadModule: trocar o
+    // tema deixava a tela em branco até a pessoa recarregar a página. O resto
+    // do sistema não precisa de nada — as cores são variáveis de CSS e mudam
+    // com o data-theme que applyTheme acabou de trocar. Aqui só o ícone, o
+    // "Claro/Escuro" e o interruptor, que são texto e classe fixos no HTML.
+    atualizarItemDoTema();
     try {
       await api('/api/me/theme', { method: 'PUT', body: JSON.stringify({ theme: nextTheme }) });
     } catch (error) {

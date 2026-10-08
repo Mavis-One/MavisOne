@@ -243,8 +243,17 @@ check('abrir a conta fecha o sino', /fecharPainelAtencao\(\);\s*\n\s*menu\.hidde
 // aconteceria ao clicar.
 check('o tema mostra o estado atual', /getTheme\(\) === 'dark' \? 'Escuro' : 'Claro'/.test(appSrc));
 check('e tem interruptor', /topbar-conta-switch \$\{getTheme\(\) === 'dark' \? 'ligado' : ''\}/.test(appSrc));
-// Sem redesenhar, o menu continuaria dizendo "Claro" depois de virar escuro.
-check('trocar o tema redesenha o chip', /if \(state\.user\) state\.user\.theme = nextTheme;\s*\n(\s*\/\/[^\n]*\n)*\s*renderApp\(\);/.test(appSrc));
+// Sem atualizar, o menu continuaria dizendo "Claro" depois de virar escuro.
+// Mas SÓ o item: com renderApp() a área da tela era redesenhada sem
+// loadModule e ficava em branco até recarregar a página (08/10/2026).
+check('trocar o tema atualiza o item do menu', /if \(state\.user\) state\.user\.theme = nextTheme;\s*\n(\s*\/\/[^\n]*\n)*\s*atualizarItemDoTema\(\);/.test(appSrc));
+{
+  const ini = appSrc.indexOf("getElementById('contaTema')?.addEventListener('click'");
+  // Sem os comentários: o porquê, escrito ao lado, cita o renderApp().
+  const corpo = appSrc.slice(ini, appSrc.indexOf('});', ini)).split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  check('  e não redesenha a casca (a tela ficava em branco)', ini > 0 && !/renderApp\(\)/.test(corpo));
+}
+check('  o item muda ícone, rótulo e interruptor', /function atualizarItemDoTema\(\) \{[\s\S]*?themeIconSvg\(getTheme\(\)\)[\s\S]*?'Escuro' : 'Claro'[\s\S]*?classList\.toggle\('ligado', escuro\)/.test(appSrc));
 // Sair é a única ação do menu que descarta o que está aberto.
 check('sair tem tom de perigo', /\.topbar-conta-sair \{ color: var\(--danger-text\); \}/.test(cssConta));
 
