@@ -99,7 +99,7 @@ window.MavisFiscalDocs = (function () {
     return `
       <label class="fiscal-estab-select">Estabelecimento
         <select id="${id}">
-          ${lista.map((e) => `<option value="${escapeHtml(e.id)}" ${e.id === escolhido ? 'selected' : ''}>${escapeHtml(e.razaoSocial)} — ${escapeHtml(cnpj(e.cnpj))}</option>`).join('')}
+          ${lista.map((e) => `<option value="${escapeHtml(e.id)}" ${e.id === escolhido ? 'selected' : ''}>${escapeHtml(e.nomeFantasia || e.razaoSocial)} — ${escapeHtml(cnpj(e.cnpj))}</option>`).join('')}
         </select>
       </label>`;
   }

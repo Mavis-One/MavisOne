@@ -437,7 +437,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <label>Estabelecimento emitente
                 <select id="nfeFocusEstabSelect" required>
                   <option value="">Selecione</option>
-                  ${estabelecimentos.map((e) => `<option value="${e.id}" ${e.id === selectedEstabelecimentoId ? 'selected' : ''}>${escapeHtml(e.razaoSocial)} — ${escapeHtml(fiscalFormatCnpjSimples(e.cnpj))}</option>`).join('')}
+                  ${estabelecimentos.map((e) => `<option value="${e.id}" ${e.id === selectedEstabelecimentoId ? 'selected' : ''}>${escapeHtml(e.nomeFantasia || e.razaoSocial)} — ${escapeHtml(fiscalFormatCnpjSimples(e.cnpj))}</option>`).join('')}
                 </select>
               </label>
               <label>Tipo de operação (define a tributação)
