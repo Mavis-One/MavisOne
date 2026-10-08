@@ -65,27 +65,28 @@ module.exports = {
       // Com a carona em leitura idêntica (lib/db/conexao.js) o pico de três
       // aberturas juntas cai para 584-638 MB, mas rajadas seguidas sem
       // descanso (abertura, Meu Painel, Lançamentos, relatórios, três vezes)
-      // ainda chegaram a 870-886 MB (07/10/2026). 1024M fica acima de todo
-      // pico medido, com e sem as correções, com ~15% de folga sobre o maior,
-      // e ainda pega vazamento: um processo que vaza cresce sem voltar, e o
-      // ocioso normal é 40-115 MB. Não é mais alto porque o Postgres divide a
-      // máquina com o Node — o conserto de fundo é ler menos (as rotas que
-      // deixam de ler tabela inteira), não subir o teto.
+      // ainda chegaram a 870-886 MB (07/10/2026).
       //
-      // DECISÃO DE DEPLOY: a memória do VPS não é conhecida daqui. Antes de
-      // subir, conferir `free -m` (o Node + o Postgres têm de caber com o teto)
-      // e `pm2 describe mavisone` / `pm2 logs mavisone --lines 5000 --nostream |
-      // grep -i memory` (se o PM2 já reiniciou por memória). PM2_MAX_MEMORY no
-      // ambiente do `pm2 start` troca o número sem mexer neste arquivo; a linha
-      // `[saude]` do log (server.js) mostra o pico real de cada minuto ruim.
+      // O QUE A PRODUÇÃO MOSTROU (08/10/2026): o log do PM2 tinha 11 reinícios
+      // por memória com o teto de 500M — em 16/09, 02/10, 06/10 e 07/10 —, de
+      // 565 a 907 MB. O maior, 907 MB, ficava a menos de 15% de 1024M, e o VPS
+      // tem 16 GB (15 GB livres com o sistema e o Postgres no ar, sem swap).
+      // 2048M dá mais que o dobro do maior pico real e ainda pega vazamento: um
+      // processo que vaza cresce sem voltar, e o ocioso normal é 40-115 MB. O
+      // conserto de fundo continua sendo ler menos (as rotas que deixaram de
+      // ler tabela inteira), não subir o teto.
       //
-      // Numa máquina pequena (1-2 GB), 1024M com o Postgres ao lado NÃO cabe:
+      // `[saude]` no log (server.js) mostra o pico real de cada minuto ruim, e
+      // `grep -i memory ~/.pm2/pm2.log` lista os reinícios por memória.
+      // PM2_MAX_MEMORY no ambiente do `pm2 start` troca o número sem mexer
+      // neste arquivo.
+      //
+      // Numa máquina pequena (1-2 GB), 2048M com o Postgres ao lado NÃO cabe:
       // quem age antes do PM2 é o OOM killer do kernel, e ele pode matar o
       // BANCO em vez do Node — pior que o reinício do PM2 que o teto evita.
       // Nesse caso, subir com PM2_MAX_MEMORY menor (Node + shared_buffers do
-      // Postgres + folga do sistema têm de caber no `free -m`) e aceitar o
-      // reinício.
-      max_memory_restart: process.env.PM2_MAX_MEMORY || '1024M',
+      // Postgres + folga do sistema têm de caber no `free -m`).
+      max_memory_restart: process.env.PM2_MAX_MEMORY || '2048M',
       env: {
         NODE_ENV: 'production',
         PORT: 3000

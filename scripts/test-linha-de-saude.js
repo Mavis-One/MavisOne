@@ -71,9 +71,14 @@ function ligarComMinutoCurto({ atrasoRuimMs = 200, rssRuimMb = 700 } = {}) {
   // novo; 746-850 MB com três pessoas juntas): o PM2 matava o processo no meio
   // de requisições. O teto tem de ficar acima do pico medido, e ainda pegar
   // vazamento (o ocioso normal é 40-115 MB).
+  //
+  // Em produção (log do PM2, 08/10/2026) o maior pico foi 907 MB, e o VPS tem
+  // 16 GB: o teto passou a 2048M, mais que o dobro. O limite de cima continua
+  // existindo para o teto não virar "infinito" e parar de pegar vazamento.
   const padrao = (/max_memory_restart: process\.env\.PM2_MAX_MEMORY \|\| '(\d+)M'/.exec(eco) || [])[1];
   check('o PM2_MAX_MEMORY do deploy troca o número sem mexer no arquivo', padrao !== undefined);
-  check('o teto padrão fica acima do pico medido (886 MB) e abaixo de 1,5 GB', Number(padrao) > 886 && Number(padrao) < 1536, `${padrao}M`);
+  check('o teto padrão fica acima do maior pico de produção (907 MB) com folga, e abaixo de 4 GB',
+    Number(padrao) >= 907 * 1.5 && Number(padrao) < 4096, `${padrao}M`);
   check('o limiar de RSS da linha de saúde fica abaixo do teto do PM2', rssRuim < Number(padrao), `${rssRuim} < ${padrao}`);
   check('continua uma instância em fork', /instances: 1,/.test(eco) && /exec_mode: 'fork'/.test(eco));
 
