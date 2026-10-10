@@ -39,6 +39,11 @@ module.exports = {
       // proteção afrouxada — e tem TTL como rede. Mas está anotado aqui, junto,
       // para a conta de "o que sair da memória antes do cluster" ficar completa.
       //
+      // TERCEIRO ITEM (fase DW): as alterações das operações fiscais
+      // (lib/db/operacoes-fiscais.js) ficam em memória e são recarregadas por
+      // quem grava. Em cluster, os outros trabalhadores só veriam a mudança no
+      // próximo GET da tela — e até lá emitiriam com a operação antiga.
+      //
       // Ou seja: para escalar em cluster um dia, o contador é o próximo a sair
       // da memória, e o cache do cadastro vem logo atrás. Até então, 1 instância.
       exec_mode: 'fork',

@@ -34,6 +34,8 @@ const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
 // gera financeiro e exige documento referenciado — em vez de `if` de
 // finalidade espalhado pelo código de emissão.
 const operacaoFiscal = require('./lib/operacaoFiscal');
+// Fase DW — as alterações feitas pela tela, aplicadas por cima do catálogo.
+const operacoesFiscaisDb = require('./lib/db/operacoes-fiscais');
 // Fase CN — o zip do acervo de XML. Escrito à mão para não trazer dependência;
 // o porquê está no cabeçalho do arquivo.
 const zipUtil = require('./lib/zip');
@@ -5864,6 +5866,9 @@ function resolveFiscalPermission(pathname, method) {
   // Mesmo raciocínio das tabelas: o catálogo de operações é regra do sistema,
   // não dado da empresa, e quem emite precisa saber o que cada operação faz.
   if (pathname === '/api/fiscal/operacoes') return 'visualizar';
+  // Fase DW: editar a operação muda o que a emissão faz (finalidade, estoque,
+  // financeiro) — é configuração fiscal, como a empresa e o estabelecimento.
+  if (pathname.startsWith('/api/fiscal/operacoes/')) return 'configurar';
 
   if (pathname === '/api/fiscal/empresas') return method === 'GET' ? 'visualizar' : 'configurar';
   if (pathname.startsWith('/api/fiscal/empresas/')) return 'configurar';
@@ -12919,9 +12924,18 @@ async function tratarRequisicao(req, res) {
       }
 
       if (pathname === '/api/fiscal/operacoes' && req.method === 'GET') {
+        // Relê as alterações: barato (uma linha por operação alterada) e garante
+        // que a tela mostra o que a emissão está obedecendo agora.
+        const ajustes = await operacoesFiscaisDb.carregar();
+        const porChave = new Map(ajustes.map((a) => [a.chave, a]));
         const operacoes = Object.entries(operacaoFiscal.OPERACOES).map(([chave, op]) => ({
           chave,
           rotulo: op.rotulo,
+          natureza: op.natureza || '',
+          alterada: operacaoFiscal.foiAlterada(chave),
+          alteradaPor: porChave.get(chave)?.atualizadoPorNome || '',
+          alteradaEm: porChave.get(chave)?.atualizadoEm || null,
+          padrao: { ...operacaoFiscal.PADRAO[chave], natureza: operacaoFiscal.PADRAO[chave].natureza || '' },
           finalidade: op.finalidade,
           movimentaEstoque: op.movimentaEstoque === true,
           geraFinanceiro: op.geraFinanceiro === true,
@@ -12932,6 +12946,31 @@ async function tratarRequisicao(req, res) {
           exigeProdutoEscritural: op.exigeProdutoEscritural === true
         }));
         return sendJson(res, { operacoes });
+      }
+
+      // EDITAR UMA OPERAÇÃO (fase DW, 10/10/2026). Só as que existem no código:
+      // a chave é contrato com o pedido, a regra fiscal e a nota. As travas de
+      // combinação estão em operacaoFiscal.validarAjuste.
+      const rotaOperacao = /^\/api\/fiscal\/operacoes\/([A-Z_]+)(\/restaurar)?$/.exec(pathname);
+      if (rotaOperacao && ((req.method === 'PUT' && !rotaOperacao[2]) || (req.method === 'POST' && rotaOperacao[2]))) {
+        const chave = rotaOperacao[1];
+        const antes = operacaoFiscal.OPERACOES[chave] ? { ...operacaoFiscal.OPERACOES[chave] } : null;
+        if (!antes) return sendJson(res, { error: 'Operação não encontrada.' }, 404);
+        if (rotaOperacao[2]) {
+          await operacoesFiscaisDb.restaurar(chave);
+        } else {
+          const campos = operacaoFiscal.normalizarAjuste(await readBody(req));
+          const erros = operacaoFiscal.validarAjuste(chave, { ...antes, ...campos });
+          if (erros.length) return sendJson(res, { error: erros.join(' ') }, 400);
+          await operacoesFiscaisDb.salvar(chave, campos, user);
+        }
+        const depois = { ...operacaoFiscal.OPERACOES[chave] };
+        await registrarAuditoria({
+          action: rotaOperacao[2] ? 'fiscal.operacao.restaurar' : 'fiscal.operacao.editar',
+          targetId: chave, targetUsername: depois.rotulo, byId: user.id, byName: user.name,
+          details: { antes, depois }
+        });
+        return sendJson(res, { success: true, operacao: { chave, ...depois, alterada: operacaoFiscal.foiAlterada(chave) } });
       }
 
       if (pathname === '/api/fiscal/empresas' && req.method === 'GET') {
@@ -19288,6 +19327,8 @@ function startServer(port, retriesLeft) {
       console.log(`  visivel na rede em http://${endereco}:${port} — qualquer um nesta rede alcanca`);
     }
     ligarLinhaDeSaude();
+    // As alterações das operações fiscais (fase DW) por cima do padrão do código.
+    operacoesFiscaisDb.carregar();
   });
 
   server.once('error', (error) => {

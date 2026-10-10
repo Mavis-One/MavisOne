@@ -165,11 +165,24 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // destinatário, documento, UF, município e IE; dos produtos, o que monta a
   // linha do item. NUNCA `diretorio=resumido` aqui — sem documento e IE o
   // destinatário sairia em branco. 2.818 KB -> 1.947 KB (569 -> 414 KB no fio).
-  const [resEstab, resEmpresas, resMeta] = await Promise.allSettled([
+  const [resEstab, resEmpresas, resMeta, resOperacoes] = await Promise.allSettled([
     api('/api/fiscal/estabelecimentos'),
     api('/api/fiscal/empresas'),
-    api('/api/finance/meta?diretorio=nfe&produtos=nfe')
+    api('/api/finance/meta?diretorio=nfe&produtos=nfe'),
+    api('/api/fiscal/operacoes')
   ]);
+  // Fase DW: nome e natureza das operações são editáveis em Fiscal › Operações
+  // Fiscais. A lista acima é só o ponto de partida; o que o servidor devolve
+  // vale. Falhar aqui não impede a emissão — fica a lista escrita.
+  if (resOperacoes.status === 'fulfilled') {
+    const doServidor = new Map((resOperacoes.value.operacoes || []).map((o) => [o.chave, o]));
+    NFE_FOCUS_TIPO_OPERACAO_OPTIONS.forEach((opcao) => {
+      const op = doServidor.get(opcao.value);
+      if (!op) return;
+      opcao.label = op.rotulo || opcao.label;
+      opcao.natureza = op.natureza || undefined;
+    });
+  }
   if (resEstab.status === 'fulfilled') {
     const res = resEstab.value;
     estabelecimentos = (res.estabelecimentos || []).filter((e) => e.ativo && e.emiteNfe);

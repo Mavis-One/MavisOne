@@ -341,7 +341,10 @@ check('a permissão é de leitura, como as Tabelas', /'\/api\/fiscal\/operacoes'
 // `chave` é o que o resto do sistema usa como `tipoOperacao`: sem ela, quem
 // confere um payload não liga "Complemento de ICMS" a COMPLEMENTO_ICMS.
 check('a resposta leva a chave junto do rótulo', /chave,\n\s*rotulo: op\.rotulo/.test(serverSrc));
-check('a tela é consulta — não tem botão de criar nem de salvar', !/<button[^>]*submit|Salvar|Novo/i.test(operacoesSrc));
+// Era só consulta até 10/10/2026; agora EDITA (fase DW, pedido do usuário) —
+// ver scripts/test-operacoes-editaveis.js. Continua sem CRIAR: a chave da
+// operação é contrato com o pedido, a regra e a nota.
+check('a tela edita, mas não cria operação nova', /data-editar-operacao/.test(operacoesSrc) && !/Nova operação|Novo/i.test(operacoesSrc));
 // Um `op.movimentaEstoque` que chegasse undefined renderizaria "—" para uma
 // operação que MOVIMENTA estoque. Normalizar no servidor é o que impede isso.
 check('as bandeiras viram booleano no servidor', /movimentaEstoque: op\.movimentaEstoque === true/.test(serverSrc));
