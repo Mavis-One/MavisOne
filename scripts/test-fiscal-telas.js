@@ -39,12 +39,16 @@ const check = (n, c, d) => { console.log(`${c ? '  OK ' : '  XX '} ${n}${d ? ' -
 const chavesFiscal = moduleSubItems.fiscal.map((i) => i.key);
 
 console.log('\n--- as telas pedidas estão no menu do Fiscal ---');
-const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'arquivos', 'notas_presas', 'grupos_tributarios', 'regras', 'sped_conferir', 'sped_gerar', 'analise_fiscal'];
+const ESPERADAS = ['nfe_emitidas', 'emitir_nfe_focus', 'nova_nfe_avulsa', 'inutilizadas', 'inutilizar', 'eventos', 'logs', 'tabelas', 'operacoes', 'arquivos', 'regras', 'sped_conferir', 'sped_gerar', 'analise_fiscal'];
 ESPERADAS.forEach((k) => {
   const item = moduleSubItems.fiscal.find((i) => i.key === k);
   check(`fiscal.${k}`, Boolean(item), item ? item.label : 'AUSENTE');
 });
 check('nenhuma chave repetida', new Set(chavesFiscal).size === chavesFiscal.length);
+// Excluídas em 10/10/2026 a pedido do usuário: "não há necessidade delas".
+['notas_presas', 'grupos_tributarios'].forEach((k) => {
+  check(`fiscal.${k} foi excluída do menu`, !chavesFiscal.includes(k));
+});
 
 console.log('\n--- toda tela do menu tem quem a desenhe ---');
 // Lê os arquivos do módulo de verdade, em vez de confiar numa lista à parte.

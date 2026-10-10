@@ -202,7 +202,7 @@ check('Enter na busca de produto ou de cliente não emite a nota',
   && /getElementById\('nfeFocusClienteInput'\)\?\.addEventListener\('keydown', \(evento\) => \{\s*if \(evento\.key === 'Enter'\) evento\.preventDefault\(\);/.test(emissao));
 check('as três cargas da emissão saem juntas', /Promise\.allSettled\(\[\s*api\('\/api\/fiscal\/estabelecimentos'\),\s*api\('\/api\/fiscal\/empresas'\),\s*api\('\/api\/finance\/meta/.test(emissao));
 check('"Últimas NF-e" pede só dez', /\/api\/fiscal\/nfe\?estabelecimentoId=\$\{encodeURIComponent\(selectedEstabelecimentoId\)\}&limite=10/.test(emissao));
-const rotaFiscalNfe = semComentarios(src.slice(src.indexOf("if (pathname === '/api/fiscal/nfe' && req.method === 'GET')"), src.indexOf("if (pathname === '/api/fiscal/nfe/problemas' && req.method === 'GET')")));
+const rotaFiscalNfe = semComentarios(src.slice(src.indexOf("if (pathname === '/api/fiscal/nfe' && req.method === 'GET')"), src.indexOf('// Eventos do estabelecimento inteiro. A inutilização')));
 check('  e o servidor atende o limite sem os jsonb, e sem ele devolve o de sempre',
   /fiscalDb\.getNfeRecentes\(estabelecimentoId, Math\.min\(limite, 50\)\)/.test(rotaFiscalNfe) && /fiscalDb\.getNfeRecords\(estabelecimentoId\)/.test(rotaFiscalNfe));
 

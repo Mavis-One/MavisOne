@@ -50,7 +50,6 @@ const serverSrc = ler('server.js');
 const tributos = ler('lib/calcularTributos.js');
 const regrasTela = ler('public/modules/fiscal/subs/regras.js');
 const produtoTela = ler('public/modules/stock/subs/new_product.js');
-const gruposTela = ler('public/modules/fiscal/subs/grupos_tributarios.js');
 const migracao = ler('banco/migrations/fase-cp-grupo-tributario.sql');
 
 console.log('\n--- 1. a migração ---');
@@ -136,31 +135,24 @@ check('e o contexto do pedido o carrega',
 check('o POST de produto grava o grupo',
   /grupoTributarioId: String\(body\.grupoTributarioId \?\? ''\)\.trim\(\)/.test(serverSrc));
 
-console.log('\n--- 6. as rotas ---');
+console.log('\n--- 6. as rotas: só leitura desde 10/10/2026 ---');
+// A tela de cadastro dos grupos foi EXCLUÍDA a pedido do usuário (10/10/2026),
+// e com ela as rotas de gravar, classificar e contar uso. A leitura fica: a
+// Regra Fiscal oferece os grupos que já existem.
 check('GET lista', /pathname === '\/api\/fiscal\/grupos-tributarios' && req\.method === 'GET'/.test(serverSrc));
-check('POST cria', /pathname === '\/api\/fiscal\/grupos-tributarios' && req\.method === 'POST'/.test(serverSrc));
-check('POST classificar em lote',
-  /pathname === '\/api\/fiscal\/grupos-tributarios\/classificar' && req\.method === 'POST'/.test(serverSrc));
-check('PUT atualiza', /pathname\.startsWith\('\/api\/fiscal\/grupos-tributarios\/'\) && req\.method === 'PUT'/.test(serverSrc));
-// A ausência é o teste: DELETE apagaria a classificação dos produtos e levaria
-// as regras do grupo embora pelo cascade.
-check('NÃO existe rota de exclusão',
-  !/grupos-tributarios[\s\S]{0,200}req\.method === 'DELETE'/.test(serverSrc),
-  'desativar substitui, e o porquê está em getUsoDosGruposTributarios');
-check('e o fonte diz que a ausência é decisão',
-  /NÃO existe exclusão de grupo por rota/.test(fiscalDb));
+check('nenhuma rota grava grupo (POST/PUT/DELETE/classificar)',
+  !/grupos-tributarios[^\n]{0,80}req\.method === '(POST|PUT|DELETE)'/.test(serverSrc)
+  && !/grupos-tributarios\/classificar/.test(serverSrc));
+check('o banco não tem mais as funções de gravar',
+  !/createGrupoTributario|updateGrupoTributario|classificarProdutos|getUsoDosGruposTributarios/.test(fiscalDb));
 
-console.log('\n--- 7. permissão: a mesma das regras ---');
+console.log('\n--- 7. permissão ---');
 const permissao = (() => {
   const i = serverSrc.indexOf("function resolveFiscalPermission");
   return serverSrc.slice(i, serverSrc.indexOf('\n}', i));
 })();
-check('ler pede visualizar, escrever pede regras',
-  /if \(pathname === '\/api\/fiscal\/grupos-tributarios'\) return method === 'GET' \? 'visualizar' : 'regras';/.test(permissao));
-check('classificar em lote pede regras',
-  /if \(pathname === '\/api\/fiscal\/grupos-tributarios\/classificar'\) return 'regras';/.test(permissao));
-check('e o porquê está escrito',
-  /mudar a tributação de 5\.000 produtos do que para mudar uma regra/.test(permissao));
+check('ler pede visualizar',
+  /if \(pathname === '\/api\/fiscal\/grupos-tributarios'\) return 'visualizar';/.test(permissao));
 
 console.log('\n--- 8. a tela de regras ---');
 check('oferece o grupo no formulário', /<select name="grupoTributarioId">/.test(regrasTela));
@@ -178,8 +170,8 @@ check('carregar os grupos tem catch próprio',
 console.log('\n--- 9. o formulário de produto ---');
 check('tem o campo', /<select name="grupoTributarioId">\$\{S\.options\(meta\.grupoTributarios/.test(produtoTela));
 check('manda o campo no payload', /grupoTributarioId: formData\.get\('grupoTributarioId'\),/.test(produtoTela));
-check('avisa quando não há grupo cadastrado',
-  /Nenhum grupo cadastrado ainda — crie em Fiscal → Grupos Tributários/.test(produtoTela));
+check('não manda mais para a tela de grupos, que foi excluída',
+  !/Grupos Tributários/.test(produtoTela));
 // O ponto: a lista NÃO pode vir da rota fiscal, senão o campo aparece vazio
 // para quem cadastra produto.
 check('a lista vem do meta do ESTOQUE, não da rota fiscal',
@@ -202,19 +194,9 @@ check('e o meta do estoque a serve',
 check('com catch, para migração não rodada não derrubar o cadastro',
   /fiscalDb\.getGruposTributarios\(null, \{ somenteAtivos: true \}\)[\s\S]{0,160}\.catch\(\(\) => \[\]\)/.test(rotaMetaEstoque));
 
-console.log('\n--- 10. a tela de grupos ---');
-check('está registrada', /window\.MavisSubscreenRegistry\.fiscal\.grupos_tributarios = \{ render: desenhar \}/.test(gruposTela));
-check('não oferece excluir', !/excluir|Excluir/.test(gruposTela));
-check('classificar em lote tem PREVER antes de APLICAR',
-  /id="gtPrever"/.test(gruposTela) && /id="gtAplicar" disabled/.test(gruposTela),
-  'um clique muda a tributação de um conjunto inteiro');
-check('e aplica os ids que a prévia mostrou',
-  /produtoIds: escolhidos/.test(gruposTela),
-  'reenviar o filtro poderia aplicar a um conjunto diferente do visto');
-check('mostra quantos produtos e regras usam cada grupo',
-  /comUso=1/.test(gruposTela) && /<th>Produtos<\/th><th>Regras<\/th>/.test(gruposTela));
-check('diz que desativar preserva o vínculo',
-  /Os produtos e as regras continuam apontando para ele/.test(gruposTela));
+console.log('\n--- 10. a tela de grupos foi excluída (10/10/2026) ---');
+check('o arquivo da tela não existe mais',
+  !fs.existsSync(path.join(RAIZ, 'public/modules/fiscal/subs/grupos_tributarios.js')));
 
 console.log('\n--- 11. a busca de produto passou a incluir NCM ---');
 check('o filtro soma o ncm',

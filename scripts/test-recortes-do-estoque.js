@@ -183,12 +183,11 @@ check('  e o filtro em JS, igual ao de getProducts',
 check('  com a coluna de que o filtro depende', /select\(`\$\{colunas\}, tipo_produto_fiscal`\)/.test(resumidos));
 
 // ---------------------------------------------------------------------------
-console.log('\n--- 4. Fiscal › Grupos Tributários conta sem baixar a lista ---');
-const grupos = ler('public/modules/fiscal/subs/grupos_tributarios.js');
-check('o total sem grupo pede uma linha', /api\('\/api\/stock\/products\?grupoTributario=sem&limit=1'\)/.test(grupos));
-check('  e lê só o total', /Number\(res\.total \|\| 0\)/.test(grupos));
+console.log('\n--- 4. a lista de produtos conta antes de fatiar ---');
+// Nasceu para Fiscal › Grupos Tributários (excluída em 10/10/2026), que pedia
+// ?limit=1 só para ler o total. O contrato da rota continua valendo.
 const lista = pedacoDaRota("pathname === '/api/stock/products' && req.method === 'GET'");
-check('  que a rota calcula ANTES de fatiar a página',
+check('o total vem da seleção inteira, calculado ANTES de fatiar a página',
   /products: ordenada\.slice\(inicio, inicio \+ limit\),[\s\S]{0,200}total: ordenada\.length,/.test(lista));
 
 // ---------------------------------------------------------------------------

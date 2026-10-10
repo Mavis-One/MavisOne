@@ -196,9 +196,6 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
             <div class="row">
               <label class="produto-campo-2">Grupo tributário
                 <select name="grupoTributarioId">${S.options(meta.grupoTributarios, current ? current.grupoTributarioId : '', { empty: 'Sem grupo' })}</select>
-                ${(meta.grupoTributarios || []).length
-    ? ''
-    : '<small class="muted">Nenhum grupo cadastrado ainda — crie em Fiscal → Grupos Tributários.</small>'}
               </label>
             </div>
 

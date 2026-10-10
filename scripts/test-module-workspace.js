@@ -203,7 +203,9 @@ const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
 // E 18 de novo sem "Pré-check do SPED", removido em 01/10/2026 a pedido do
 // usuário: o que ele contava, a geração diz ao recusar.
 // 19 com "Análise Fiscal" (fase DO): o cadastro contra NCM e CEST oficiais.
-check('fiscal tem as 19 telas reais', reais('fiscal') === 19, `${reais('fiscal')} real(is)`);
+// 17 sem "Notas com Problema" e "Grupos Tributários", excluídas em 10/10/2026
+// a pedido do usuário: "não há necessidade delas".
+check('fiscal tem as 17 telas reais', reais('fiscal') === 17, `${reais('fiscal')} real(is)`);
 // Sem nenhuma tela pendente em lugar nenhum, o menu não pode mais oferecer um
 // destino que não abre.
 const pendentesNoSistema = Object.entries(moduleSubItems)

@@ -1961,14 +1961,10 @@ const moduleSubItems = {
     // Fica depois de Logs e antes das telas de referência: é sobre os DOCUMENTOS
     // do período, como Eventos e Logs, e não sobre configuração.
     { key: 'arquivos', label: 'Arquivos Fiscais', desc: 'O XML de cada nota do período, em zip, para a contabilidade — e quais faltam.' },
-    // Imediatamente antes de Regras Fiscais, e a ordem é a da tarefa: primeiro
-    // se decide COMO cada produto é tributado (o grupo), depois se escreve a
-    // regra que atende cada grupo.
-    // Depois do Painel Fiscal de proposito: o painel mostra QUANTAS notas
-    // ficaram pelo caminho, numa rosca por status, e esta responde QUAIS e por
-    // que — o motivo da SEFAZ estava so' na tela de Logs e na de emissao.
-    { key: 'notas_presas', label: 'Notas com Problema', desc: 'O que a SEFAZ recusou, o que ficou em processamento e o que nunca foi transmitido — com o motivo de cada uma.' },
-    { key: 'grupos_tributarios', label: 'Grupos Tributários', desc: 'Como a empresa tributa cada produto — o critério que a regra fiscal usa no lugar de uma regra por NCM.' },
+    // "Notas com Problema" e "Grupos Tributários" moravam aqui e foram
+    // excluídas em 10/10/2026 a pedido do usuário. O grupo tributário continua
+    // existindo como DADO — a regra fiscal e o produto o usam no cálculo —, só
+    // não tem mais tela de cadastro.
     { key: 'regras', label: 'Regras Fiscais', desc: 'Define qual CFOP e qual tributação se aplicam a cada operação.' }
   ],
 

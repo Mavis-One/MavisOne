@@ -342,15 +342,13 @@ const urg = ordemProdutos.ordenar(
 ).map((x) => x.situation).join(' | ');
 check('  e a Situacao ordena por urgencia, nao por alfabeto', urg === 'zerado | normal', urg);
 
-console.log('\n--- e paginar e OPCIONAL: quem classifica em lote recebe tudo ---');
-// A tela de Grupos Tributarios pede ?grupoTributario=sem e ?search=... para
-// classificar em lote. Paginar por padrao a quebraria em silencio: ela
-// classificaria os 100 primeiros e diria que acabou.
+console.log('\n--- e paginar e OPCIONAL: quem nao pede pagina recebe tudo ---');
+// Nasceu para a tela de Grupos Tributarios (classificar em lote), excluida em
+// 10/10/2026. O contrato continua: sem ?page/?limit, a rota devolve a lista
+// inteira, como sempre devolveu a quem a chamava antes da paginacao.
 check('a pagina so sai quando pedida',
   /const querPagina = url\.searchParams\.has\('page'\) \|\| url\.searchParams\.has\('limit'\);/.test(servidor));
 check('  e a tela de produtos pede', /params\.set\('page', String\(pagina\)\);/.test(telaProdutos));
-check('  enquanto Grupos Tributarios nao',
-  !/grupoTributario=sem[^']*page=/.test(ler('public/modules/fiscal/subs/grupos_tributarios.js')));
 // Os quatro cartoes somam a SELECAO. Somando a pagina, "Unidades em estoque"
 // mudaria ao virar a pagina e ninguem entenderia por que.
 check('os totais dos cartoes vem do servidor',

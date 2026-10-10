@@ -5876,16 +5876,10 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/certificados') return method === 'GET' ? 'visualizar' : 'certificado';
   if (pathname.startsWith('/api/fiscal/certificados/')) return 'certificado';
 
-  // GRUPO TRIBUTÁRIO (fase CP). É parametrização fiscal, e por isso a MESMA
-  // permissão das regras: quem define como um produto é tributado está fazendo
-  // exatamente o que a tela de regras faz — só do outro lado da matriz. Dar a
-  // este cadastro uma permissão mais fraca abriria um caminho mais fácil para
-  // mudar a tributação de 5.000 produtos do que para mudar uma regra.
-  //
-  // Ler é 'visualizar': o formulário de produto precisa oferecer a lista.
-  if (pathname === '/api/fiscal/grupos-tributarios') return method === 'GET' ? 'visualizar' : 'regras';
-  if (pathname === '/api/fiscal/grupos-tributarios/classificar') return 'regras';
-  if (pathname.startsWith('/api/fiscal/grupos-tributarios/')) return 'regras';
+  // GRUPO TRIBUTÁRIO (fase CP). Só LEITURA desde 10/10/2026: a tela de
+  // cadastro foi excluída a pedido do usuário, e com ela as rotas de gravar e
+  // classificar. Ler é 'visualizar': a Regra Fiscal oferece a lista.
+  if (pathname === '/api/fiscal/grupos-tributarios') return 'visualizar';
 
   if (pathname === '/api/fiscal/regras') return method === 'GET' ? 'visualizar' : 'regras';
   // Simular é leitura: responde "qual regra se aplicaria", sem gravar nada.
@@ -5903,13 +5897,6 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname.startsWith('/api/fiscal/dfe/')) return 'documentos_recebidos';
 
   if (pathname === '/api/fiscal/nfe') return 'visualizar';
-  // AS NOTAS QUE NAO CHEGARAM AO FIM (fase CR). 'visualizar', pelo mesmo
-  // raciocinio do pre-check: e' leitura, e saber que tres notas estao presas nao
-  // devia exigir poder transmitir. Explicito AQUI, e nao deixado para o
-  // `startsWith('/api/fiscal/nfe/')` do fim da funcao, porque aquele e' o
-  // catch-all: cair nele faria a permissao desta rota depender da ordem das
-  // linhas, e nao de uma decisao escrita.
-  if (pathname === '/api/fiscal/nfe/problemas') return 'visualizar';
   // PRE-CHECK e' LEITURA, e por isso pede 'visualizar' e nao 'emitir': quem
   // confere os pedidos do dia de manha nao precisa poder transmitir. Exigir
   // 'emitir' faria a conferencia so' existir para quem ja' pode errar caro.
@@ -13074,56 +13061,16 @@ async function tratarRequisicao(req, res) {
       // e havia ZERO regras cadastradas — a parametrização, do jeito que
       // estava, não cabia em ninguém. O porquê inteiro está na migração
       // fase-cp-grupo-tributario.sql.
+      //
+      // Só LEITURA desde 10/10/2026: a tela de cadastro foi excluída a pedido
+      // do usuário, e com ela as rotas de gravar, classificar e a contagem de
+      // uso. A Regra Fiscal ainda oferece a lista.
       // -----------------------------------------------------------------------
       if (pathname === '/api/fiscal/grupos-tributarios' && req.method === 'GET') {
         const empresaId = url.searchParams.get('empresaId') || undefined;
         if (!empresaId) return sendJson(res, { error: 'Informe a empresa.' }, 400);
-        // `uso` traz quantos produtos e quantas regras dependem de cada grupo:
-        // é o que faz "desativar" ser decisão informada em vez de chute.
-        const grupos = url.searchParams.get('comUso') === '1'
-          ? await fiscalDb.getUsoDosGruposTributarios(empresaId)
-          : await fiscalDb.getGruposTributarios(empresaId, { somenteAtivos: url.searchParams.get('ativos') === '1' });
+        const grupos = await fiscalDb.getGruposTributarios(empresaId, { somenteAtivos: url.searchParams.get('ativos') === '1' });
         return sendJson(res, { grupos });
-      }
-
-      if (pathname === '/api/fiscal/grupos-tributarios' && req.method === 'POST') {
-        const body = await readBody(req);
-        const nome = String(body.nome || '').trim();
-        if (!body.empresaId) return sendJson(res, { error: 'Informe a empresa.' }, 400);
-        if (nome.length < 2) return sendJson(res, { error: 'O grupo precisa de um nome com pelo menos 2 letras.' }, 400);
-        try {
-          const grupo = await fiscalDb.createGrupoTributario({ ...body, nome });
-          return sendJson(res, { success: true, grupo });
-        } catch (erro) {
-          // O índice único é por (empresa, lower(nome)): dois grupos com o mesmo
-          // nome em caixa diferente fariam metade do catálogo cair num e metade
-          // no outro. A mensagem diz isso, em vez de devolver o erro do Postgres.
-          if (/idx_grupo_tributario_nome|duplicate key/i.test(erro.message || '')) {
-            return sendJson(res, { error: `Já existe um grupo chamado "${nome}" nesta empresa.` }, 400);
-          }
-          throw erro;
-        }
-      }
-
-      // CLASSIFICAR EM LOTE. Explícito antes do /:id abaixo, senão
-      // "classificar" seria lido como id de grupo.
-      if (pathname === '/api/fiscal/grupos-tributarios/classificar' && req.method === 'POST') {
-        const body = await readBody(req);
-        const ids = Array.isArray(body.produtoIds) ? body.produtoIds : [];
-        if (!ids.length) return sendJson(res, { error: 'Nenhum produto selecionado.' }, 400);
-        const quantos = await fiscalDb.classificarProdutos(ids, body.grupoTributarioId || null);
-        return sendJson(res, { success: true, produtos: quantos });
-      }
-
-      if (pathname.startsWith('/api/fiscal/grupos-tributarios/') && req.method === 'PUT') {
-        const id = pathname.split('/').pop();
-        const body = await readBody(req);
-        if (body.nome !== undefined && String(body.nome).trim().length < 2) {
-          return sendJson(res, { error: 'O grupo precisa de um nome com pelo menos 2 letras.' }, 400);
-        }
-        const grupo = await fiscalDb.updateGrupoTributario(id, body);
-        if (!grupo) return sendJson(res, { error: 'Grupo não encontrado.' }, 404);
-        return sendJson(res, { success: true, grupo });
       }
 
       if (pathname === '/api/fiscal/regras' && req.method === 'GET') {
@@ -13464,23 +13411,6 @@ async function tratarRequisicao(req, res) {
         }
         const records = await fiscalDb.getNfeRecords(estabelecimentoId);
         return sendJson(res, { records });
-      }
-
-      // AS NOTAS QUE NÃO CHEGARAM AO FIM (fase CR).
-      //
-      // Consulta própria, e não um filtro sobre /api/fiscal/nfe, por duas
-      // razões: aquela rota traz TODA nota do estabelecimento com as 28 colunas
-      // (inclusive `payload_enviado` e `resposta_focus`, os dois jsonb gordos),
-      // e o que esta tela precisa são treze campos das notas presas — que num
-      // CNPJ saudável são meia dúzia entre milhares. A outra razão é que a
-      // ORDEM importa aqui e é por gravidade, não por data: está em
-      // lib/db/fiscal.js/notasComProblema, com o que cada status significa
-      // para a numeração.
-      if (pathname === '/api/fiscal/nfe/problemas' && req.method === 'GET') {
-        const estabelecimentoId = url.searchParams.get('estabelecimentoId') || '';
-        if (!estabelecimentoId) return sendJson(res, { error: 'Escolha o estabelecimento.' }, 400);
-        const notas = await fiscalDb.notasComProblema(estabelecimentoId);
-        return sendJson(res, { notas });
       }
 
       // Eventos do estabelecimento inteiro. A inutilização de numeração só
