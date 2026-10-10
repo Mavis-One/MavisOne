@@ -271,6 +271,21 @@ label { display: grid; gap: 10px; font-weight: 600; }
 input, select, textarea { padding: 13px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); }
 textarea { min-height: 120px; resize: vertical; }
 
+/* O CAMPO NUNCA PASSA DA COLUNA DELE.
+   Um <select> nasce com a largura da opcao mais comprida ("5102 — Venda de
+   mercadoria adquirida ou recebida de terceiros"), e item de grid nasce com
+   min-width:auto, que respeita essa largura. Resultado: o campo atravessava o
+   vao de 22px e encostava no vizinho (CFOP passava 976px da coluna na regra
+   fiscal). min-width:0 no campo deixa a coluna do rotulo mandar quando o
+   rotulo tem largura definida (celula de grade); o texto longo e cortado
+   dentro da propria caixa.
+   NAO usar minmax(0,1fr) no rotulo: num filtro em linha flexivel
+   (PCP > Qualidade) o rotulo inteiro encolhia ate sobrar so a seta. */
+.row > *, .form-grid > * { min-width: 0; }
+label > input, label > select, label > textarea, label > .searchable-select { min-width: 0; }
+input, select, textarea { max-width: 100%; }
+select { text-overflow: ellipsis; }
+
 /* Campo de busca que substitui um <select> (ver renderSearchableSelect em app.js) */
 .searchable-select { position: relative; }
 /* Espaço à direita reservado para a lupa: sem ele o texto digitado passa por
@@ -1720,8 +1735,10 @@ tr[data-detail] { cursor: pointer; }
 .finance-modal-info-grid strong { font-size: 0.95rem; }
 .finance-modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
 
-.finance-inline-select { display: flex; gap: 6px; align-items: center; }
-.finance-inline-select select { flex: 1; }
+.finance-inline-select { display: flex; gap: 6px; align-items: center; min-width: 0; }
+/* min-width:0: sem ele o select fica da largura do plano de contas mais
+   comprido e empurra o botao "+" para fora da coluna. */
+.finance-inline-select select { flex: 1; min-width: 0; }
 .finance-inline-add { display: flex; gap: 8px; align-items: center; margin-top: -6px; margin-bottom: 6px; }
 
 /* Fase AY: o campo Documento do lancamento. O numero (LF0042) fica ao lado do
