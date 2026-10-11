@@ -84,7 +84,7 @@ check('  e o banco também recusa natOp acima de 60', /natureza text check \(nat
 
 console.log('\n--- 4. a tela e a emissão ---');
 const tela = ler('public/modules/fiscal/subs/operacoes.js');
-const primeiraCelula = /<tr>\s*<td>\s*<button type="button" class="icon-button edit" data-editar-operacao=/.test(tela);
+const primeiraCelula = /<tr>\s*<td class="op-acoes">\s*<button type="button" class="icon-button edit" data-editar-operacao=/.test(tela);
 check('lápis em cada linha, na PRIMEIRA coluna (a tabela rola para o lado)', primeiraCelula);
 check('salva por PUT e restaura por POST, com confirmação',
   /method: 'PUT'/.test(tela) && /\/restaurar`, \{ method: 'POST' \}/.test(tela) && /confirmModal\(/.test(tela));
@@ -92,6 +92,27 @@ check('restaurar só aparece em operação alterada', /\$\{op\.alterada \? '<but
 const emissao = ler('public/modules/finance/subs/emitir_nfe_focus.js');
 check('a emissão pede as operações ao servidor', /api\('\/api\/fiscal\/operacoes'\)/.test(emissao));
 check('  e usa nome e natureza de lá', /opcao\.label = op\.rotulo \|\| opcao\.label;/.test(emissao) && /opcao\.natureza = op\.natureza \|\| undefined;/.test(emissao));
+
+console.log('\n--- 5. "+ Regra" em cada operação (10/10/2026) ---');
+// Abre Fiscal › Regras Fiscais com a regra NOVA já na operação clicada. O que
+// pode dar errado: oferecer o botão numa operação que a tela de regras não
+// tem no select (o formulário abriria em "Venda", em silêncio), ou o
+// formulário não abrir porque chegou sem empresa.
+const regrasTela = ler('public/modules/fiscal/subs/regras.js');
+const tiposDaRegra = [...(/const TIPOS_OPERACAO = \[([\s\S]*?)\];/.exec(regrasTela) || ['', ''])[1].matchAll(/value: '([A-Z_]+)'/g)].map((m) => m[1]);
+const semRegra = JSON.parse(((/const OPERACOES_SEM_REGRA = (\[[^\]]*\]);/.exec(tela) || [])[1] || '[]').replace(/'/g, '"'));
+const comBotao = Object.keys(op.PADRAO).filter((k) => !semRegra.includes(k));
+check('o botão existe por linha', /data-criar-regra="\$\{escapeHtml\(op\.chave\)\}"/.test(tela));
+check('toda operação com "+ Regra" está no select da tela de regras',
+  comBotao.length > 0 && comBotao.every((k) => tiposDaRegra.includes(k)), comBotao.filter((k) => !tiposDaRegra.includes(k)).join(',') || 'ok');
+check('  e toda operação fora do select fica sem o botão',
+  Object.keys(op.PADRAO).filter((k) => !tiposDaRegra.includes(k)).every((k) => semRegra.includes(k)));
+check('o clique leva para Regras com a operação e o pedido de rolar',
+  /state\.fiscalRegraForm = \{ tipoOperacao: botao\.dataset\.criarRegra \};\s*state\.fiscalRegraRolarParaForm = true;\s*state\.activeSub = 'regras';/.test(tela));
+check('a tela de regras completa a empresa de uma regra nova que chegou sem',
+  /if \(state\.fiscalRegraForm && !state\.fiscalRegraForm\.id && !state\.fiscalRegraForm\.empresaId\) \{\s*state\.fiscalRegraForm = \{ prioridade: 0, \.\.\.state\.fiscalRegraForm, empresaId \};/.test(regrasTela));
+check('  e rola até o formulário uma vez só',
+  /if \(state\.fiscalRegraRolarParaForm\) \{\s*state\.fiscalRegraRolarParaForm = false;\s*content\.querySelector\('#fiscalRegraPainel'\)\?\.scrollIntoView/.test(regrasTela));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

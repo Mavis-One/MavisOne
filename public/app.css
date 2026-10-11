@@ -3273,6 +3273,9 @@ tr.is-selecionada > td { background: var(--panel-alt); }
    e o "Sim" — que é a informação — desaparece no meio deles. O `title` no
    <span> mantém a palavra para quem usa leitor de tela ou passa o mouse. */
 .op-bandeira { text-align: center; white-space: nowrap; }
+/* Lapis + "+ Regra" lado a lado, sem quebrar a celula (Operacoes Fiscais). */
+.op-acoes { white-space: nowrap; }
+.op-acoes .op-criar-regra { margin-left: 6px; padding: 6px 10px; font-size: 0.85rem; }
 .op-sim { color: var(--success); font-weight: 600; }
 .op-nao { color: var(--muted); }
 

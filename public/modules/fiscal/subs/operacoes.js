@@ -49,8 +49,15 @@ const BANDEIRAS = [
   { chave: 'exigeProdutoEscritural', titulo: 'Exige produto escritural', ajuda: 'Só aceita produto marcado como escritural no Cadastro.' }
 ];
 
+// "+ Regra" em cada operação (10/10/2026, pedido do usuário) abre Fiscal ›
+// Regras Fiscais com o formulário de regra nova já nessa operação. O
+// Complemento de ICMS fica sem: a regra fiscal não o atende — o CFOP dele sai
+// de cfopSugeridoComplemento (lib/operacaoFiscal.js), e a tela de regras não o
+// oferece como tipo de operação.
+const OPERACOES_SEM_REGRA = ['COMPLEMENTO_ICMS'];
+
 window.MavisSubscreenRegistry.fiscal.operacoes = async function renderOperacoesFiscais(ctx) {
-  const { api, content, escapeHtml, showToast, confirmModal } = ctx;
+  const { api, content, escapeHtml, showToast, confirmModal, state } = ctx;
 
   let operacoes = [];
   // Chave da operação aberta no formulário (null = formulário fechado).
@@ -90,8 +97,9 @@ window.MavisSubscreenRegistry.fiscal.operacoes = async function renderOperacoesF
     const fin = FINALIDADES[op.finalidade] || { rotulo: `finNFe ${op.finalidade}`, ajuda: '' };
     return `
       <tr>
-        <td>
+        <td class="op-acoes">
           <button type="button" class="icon-button edit" data-editar-operacao="${escapeHtml(op.chave)}" title="Editar operação" aria-label="Editar operação ${escapeHtml(op.rotulo)}">${iconeEditar}</button>
+          ${OPERACOES_SEM_REGRA.includes(op.chave) ? '' : `<button type="button" class="secondary op-criar-regra" data-criar-regra="${escapeHtml(op.chave)}" title="Criar regra fiscal para ${escapeHtml(op.rotulo)}">+ Regra</button>`}
         </td>
         <td>
           <strong>${escapeHtml(op.rotulo)}</strong>
@@ -160,7 +168,7 @@ window.MavisSubscreenRegistry.fiscal.operacoes = async function renderOperacoesF
           <table class="table table-actions">
             <thead>
               <tr>
-                <th>Editar</th>
+                <th>Ações</th>
                 <th>Operação</th>
                 <th>Natureza (natOp)</th>
                 <th>Finalidade</th>
@@ -194,6 +202,18 @@ window.MavisSubscreenRegistry.fiscal.operacoes = async function renderOperacoesF
         editando = botao.dataset.editarOperacao;
         desenhar();
         content.querySelector('#fiscalOperacaoPainel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+
+    content.querySelectorAll('[data-criar-regra]').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        // Sem empresa de propósito: a tela de regras completa com a empresa
+        // que o seletor dela mostra (ver o "Vinda de Operações Fiscais" lá).
+        state.fiscalRegraForm = { tipoOperacao: botao.dataset.criarRegra };
+        state.fiscalRegraRolarParaForm = true;
+        state.activeSub = 'regras';
+        ctx.renderApp();
+        ctx.loadModule('fiscal');
       });
     });
 

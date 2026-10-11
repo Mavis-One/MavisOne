@@ -129,6 +129,12 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     }
     const nomeDoGrupo = (id) => (gruposTributarios.find((g) => g.id === id) || {}).nome || '';
 
+    // Vinda de Fiscal › Operações Fiscais ("Criar regra", 10/10/2026): chega
+    // só com a operação, sem empresa. É uma regra NOVA para a empresa escolhida
+    // aqui — a mesma que o seletor desta tela mostra.
+    if (state.fiscalRegraForm && !state.fiscalRegraForm.id && !state.fiscalRegraForm.empresaId) {
+      state.fiscalRegraForm = { prioridade: 0, ...state.fiscalRegraForm, empresaId };
+    }
     const form = state.fiscalRegraForm && state.fiscalRegraForm.empresaId === empresaId
       ? state.fiscalRegraForm
       : null;
@@ -554,6 +560,13 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     `;
 
     Docs.ligarSeletorEmpresa(ctx, () => desenhar(ctx));
+
+    // "Criar regra" de Operações Fiscais: o formulário fica no fim da página,
+    // depois da lista — sem rolar, quem clicou não vê que ele abriu.
+    if (state.fiscalRegraRolarParaForm) {
+      state.fiscalRegraRolarParaForm = false;
+      content.querySelector('#fiscalRegraPainel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 
     function abrirFormulario(regra) {
       state.fiscalRegraForm = { ...(regra || { prioridade: 0, vigenciaInicio: hoje(), tipoOperacao: 'VENDA' }), empresaId };
