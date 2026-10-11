@@ -51,8 +51,9 @@ async function main() {
   });
 
   console.log(`\nDocumentos a importar: ${resumo.total}`);
-  console.log(`  escrituráveis (chave + itens): ${resumo.escrituraveis}`);
-  console.log(`  só histórico (sem chave):      ${resumo.historico}`);
+  // Todas entram como histórico, fora do SPED (fase DY).
+  console.log(`  completas (chave + itens): ${resumo.completas}`);
+  console.log(`  só cabeçalho (sem chave):  ${resumo.soCabecalho}`);
   console.log(`  itens: ${resumo.itens} | canceladas: ${resumo.canceladas}`);
   console.log('  por tipo:', resumo.porTipo);
   console.log('  por estabelecimento:', resumo.porEstabelecimento);

@@ -5,7 +5,8 @@
 //
 //   1. o leitor de .xlsx ler a célula errada (texto compartilhado, coluna
 //      pulada, número serial de data) — e a nota entrar com outro número;
-//   2. a nota sem chave ir para o SPED: o C100 de NF-e sem chave o PVA recusa;
+//   2. uma importada ir para o SPED — o usuário decidiu (fase DY) que todas
+//      são histórico: os SPEDs daqueles meses saíram do Viper;
 //   3. a importação virar cobrança: origem MANUAL gera contas a receber;
 //   4. a filial cair no CNPJ errado (a listagem do Viper não traz CNPJ);
 //   5. duas filiais com o mesmo número se bloquearem (a trava antiga era por
@@ -94,7 +95,8 @@ console.log('\n--- 2. o montador ---');
 const r = imp.montarImportacao({ detalhada: lerXlsx(detalhada), listagem: lerXlsx(listagem) });
 const porRef = (prefixo) => r.documentos.filter((d) => d.ref.startsWith(prefixo));
 const nota = r.documentos.find((d) => d.chaveAcesso === CHAVE);
-check('nota com chave: própria, da matriz, escriturável, com o item', nota && nota.emissaoPropria && nota.estabelecimentoCnpj === '43792899000135' && nota.escriturar && nota.itens.length === 1);
+check('nota com chave: própria, da matriz, completa, com o item — e mesmo assim histórico (fase DY)',
+  nota && nota.emissaoPropria && nota.estabelecimentoCnpj === '43792899000135' && nota.completa && nota.escriturar === false && nota.itens.length === 1);
 check('  com protocolo, série e PIS/COFINS do item', nota.protocolo === '242260482777219' && nota.serie === '1'
   && nota.itens[0].tributos.some((t) => t.tributo === 'PIS' && t.valor === 16.13) && nota.itens[0].tributos.some((t) => t.tributo === 'ICMS' && t.cst === '60'));
 const semChave = r.documentos.find((d) => d.numero === '1633');
@@ -134,7 +136,11 @@ const sped = semComentarios(ler('lib/db/sped-escrituracao.js'));
 check('o SPED só lê documento escriturável', /where d\.estabelecimento_id = \$1(?:\s*--[^\n]*\n)*\s+and d\.escriturar\n/.test(sped));
 const dbImp = ler('lib/db/nfe-importadas.js');
 check('grava com origem IMPORTACAO (nunca MANUAL, que gera parcelas)', /origem: 'IMPORTACAO'/.test(dbImp) && !/origem: 'MANUAL'/.test(dbImp));
-check('escriturar só com chave E itens, não pela bandeira que veio', /Boolean\(d\.escriturar && d\.chaveAcesso && itens\.length\)/.test(dbImp));
+check('a importada é gravada SEMPRE fora do SPED, ignorando a bandeira que veio (fase DY)', /\[id, false, texto\(d\.protocolo, 20\)/.test(dbImp));
+const migDy = ler('banco/migrations/fase-dy-importadas-so-historico.sql');
+check('a fase DY tira do SPED o que já tinha sido importado',
+  /update fiscal_documentos\s+set escriturar = false[\s\S]*?where origem = 'IMPORTACAO' and escriturar;/.test(migDy));
+check('  e o banco trava importada escriturável', /check \(origem <> 'IMPORTACAO' or not escriturar\)/.test(migDy));
 check('reimportar não duplica (chave, ou referência)', /select 1 from fiscal_documentos where chave_acesso = \$1/.test(dbImp) && /importacao_ref = \$1/.test(dbImp));
 check('participante do cadastro vem com a ficha inteira (endereço do 0150)', /\.\.\.\(pessoa\.extra \|\| \{\}\)/.test(dbImp));
 const server = semComentarios(ler('server.js'));
