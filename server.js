@@ -36,6 +36,8 @@ const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
 const operacaoFiscal = require('./lib/operacaoFiscal');
 // Fase DW — as alterações feitas pela tela, aplicadas por cima do catálogo.
 const operacoesFiscaisDb = require('./lib/db/operacoes-fiscais');
+// Fase DX — as NF-e do sistema anterior (Viper), importadas como registro.
+const nfeImportadasDb = require('./lib/db/nfe-importadas');
 // Fase CN — o zip do acervo de XML. Escrito à mão para não trazer dependência;
 // o porquê está no cabeçalho do arquivo.
 const zipUtil = require('./lib/zip');
@@ -5869,6 +5871,9 @@ function resolveFiscalPermission(pathname, method) {
   // Fase DW: editar a operação muda o que a emissão faz (finalidade, estoque,
   // financeiro) — é configuração fiscal, como a empresa e o estabelecimento.
   if (pathname.startsWith('/api/fiscal/operacoes/')) return 'configurar';
+  // Fase DX: importar NF-e do sistema anterior grava documento fiscal em lote.
+  // Além de 'configurar', a rota exige administrador.
+  if (pathname.startsWith('/api/fiscal/importacao/')) return 'configurar';
 
   if (pathname === '/api/fiscal/empresas') return method === 'GET' ? 'visualizar' : 'configurar';
   if (pathname.startsWith('/api/fiscal/empresas/')) return 'configurar';
@@ -12948,6 +12953,19 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { operacoes });
       }
 
+      // IMPORTAR NF-e DO SISTEMA ANTERIOR (fase DX, 11/10/2026).
+      //
+      // Recebe os documentos já montados (lib/importacao-nfe-viper.js, rodado
+      // pelo scripts/importar-nfe-viper.js) em lotes. Só administrador: é
+      // escrita em massa de documento fiscal. Tudo é conferido de novo em
+      // lib/db/nfe-importadas.js; reimportar não duplica.
+      if (pathname === '/api/fiscal/importacao/nfe' && req.method === 'POST') {
+        if (!(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador importa notas fiscais.' }, 403);
+        const body = await readBody(req);
+        const resultado = await nfeImportadasDb.gravarLote(body.documentos, { lote: body.lote, usuario: user });
+        return sendJson(res, { success: true, ...resultado });
+      }
+
       // EDITAR UMA OPERAÇÃO (fase DW, 10/10/2026). Só as que existem no código:
       // a chave é contrato com o pedido, a regra fiscal e a nota. As travas de
       // combinação estão em operacaoFiscal.validarAjuste.
@@ -17825,7 +17843,16 @@ async function tratarRequisicao(req, res) {
       // número, cliente, chave, situação, data e id. As parcelas são
       // anexadas depois, às da página.
       const manuais = (data.nfes || []).map((nfe) => ({ ...nfeParaTela(nfe, []), origem: 'financeiro' }));
-      const todas = fiscais.concat(manuais);
+      // Fase DX: as notas EMITIDAS no sistema anterior, importadas como
+      // registro (origem 'importada'). Só consulta: a tela não oferece ação
+      // nenhuma para elas. Falhar aqui (migração pendente) não derruba a lista.
+      let importadas = [];
+      try {
+        importadas = await nfeImportadasDb.listarEmitidasParaLista();
+      } catch (erroImportadas) {
+        importadas = [];
+      }
+      const todas = fiscais.concat(manuais, importadas);
 
       const filtered = filterNfes(data, url.searchParams, todas)
         .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
@@ -18082,6 +18109,23 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { success: true, nfe: serializeNfe(nfe, data) });
     } catch (error) {
       return sendErro(res, error, 'Erro ao cancelar NF-e', 400);
+    }
+  }
+
+  // A ficha de uma NF-e importada do sistema anterior (fase DX): cabeçalho e
+  // itens, no formato do modal da lista. Antes da rota genérica abaixo, que
+  // só procura nas notas manuais.
+  if (pathname.startsWith('/api/finance/nfe/importada/') && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    try {
+      const nfe = await nfeImportadasDb.obterParaTela(decodeURIComponent(pathname.replace('/api/finance/nfe/importada/', '')));
+      if (!nfe) return sendJson(res, { error: 'NF-e importada não encontrada.' }, 404);
+      return sendJson(res, { nfe });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao carregar a NF-e importada', 500);
     }
   }
 

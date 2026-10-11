@@ -197,6 +197,9 @@ window.MavisNfeActions = (function () {
       return n === 0 ? 'Selecione uma NF-e.' : 'Selecione apenas uma NF-e para esta ação.';
     }
     if (action.scope === 'batch' && n === 0) return 'Selecione ao menos uma NF-e.';
+    // Fase DX: nota importada do sistema anterior é registro — nada de
+    // imprimir DANFE, cancelar, carta de correção ou duplicar por aqui.
+    if (ctx.selecionadas.some((nota) => nota.origem === 'importada')) return 'NF-e importada do sistema anterior: só consulta.';
     if (action.needsApi && !ctx.apiFiscalConfigurada) return AGUARDA_API;
     // Antes de needsAuthorized: uma nota manual nunca chega a "autorizada" na
     // SEFAZ, e dizer "só para autorizada" mandaria o usuário tentar autorizar

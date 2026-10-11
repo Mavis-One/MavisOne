@@ -569,10 +569,10 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
                   <td>${escapeHtml(nfe.customer)}</td>
                   <td>${nfeFormatDocument(nfe.clientDocument)}</td>
                   <td>${financeFormatBRL(nfe.amount)}</td>
-                  <td>${nfeStatusBadge(nfe.status)}</td>
+                  <td>${nfeStatusBadge(nfe.status)}${nfe.origem === 'importada' ? ' <span class="finance-badge finance-badge-muted" title="Emitida no sistema anterior e importada como registro">importada</span>' : ''}</td>
                   <td>${nfe.key ? escapeHtml(nfe.key) : '<span class="muted">-</span>'}</td>
                   <td>${financialSummary(nfe)}</td>
-                  <td>${nfe.status === 'autorizada' ? `<button type="button" class="secondary" data-quick-cancel="${nfe.id}">Cancelar</button>` : ''}</td>
+                  <td>${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="secondary" data-quick-cancel="${nfe.id}">Cancelar</button>` : ''}</td>
                 </tr>
               `).join('') : `<tr><td colspan="11" class="muted">Nenhuma NF-e encontrada.</td></tr>`}
             </tbody>
@@ -662,6 +662,12 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     // operações diferentes, em rotas diferentes — descobrir isso pela origem
     // evita mandar uma para a outra.
     const nota = notasDaPagina.find((n) => n.id === id);
+    // Fase DX: a importada foi emitida (e, se for o caso, cancelada) no
+    // sistema anterior. Aqui ela é registro — não há o que cancelar.
+    if (nota && nota.origem === 'importada') {
+      showToast('NF-e importada do sistema anterior: só consulta.', 'error');
+      return;
+    }
     const ehFiscal = nota ? nota.origem === 'fiscal' : false;
 
     if (!ehFiscal) {
@@ -724,6 +730,10 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
         // foi transmitido, e é ela que deve ser mostrada, não uma remontagem.
         const res = await api(`/api/fiscal/nfe/${encodeURIComponent(id)}`);
         nfe = fiscalParaModal(res.nfe, naLista);
+      } else if (naLista && naLista.origem === 'importada') {
+        // Fase DX: emitida no sistema anterior, importada como registro.
+        const res = await api(`/api/finance/nfe/importada/${encodeURIComponent(id)}`);
+        nfe = { ...naLista, ...res.nfe, origem: 'importada' };
       } else {
         const res = await api(`/api/finance/nfe/${id}`);
         nfe = res.nfe;
@@ -829,7 +839,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
 
         <div class="finance-modal-actions">
           <button type="button" class="secondary" id="nfeModalPrint">Imprimir</button>
-          ${nfe.status === 'autorizada' ? `<button type="button" class="btn-danger" id="nfeModalCancel">Cancelar NF-e</button>` : ''}
+          ${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="btn-danger" id="nfeModalCancel">Cancelar NF-e</button>` : ''}
         </div>
       </div>
     `;
