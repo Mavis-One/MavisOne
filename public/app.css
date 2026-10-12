@@ -911,8 +911,32 @@ button.success:hover { background: var(--success-hover); }
 .pcp-prog-barra-success span { background: var(--success); }
 .pcp-prog-barra-warning span { background: #f59e0b; }
 .pcp-prog-barra-danger span { background: var(--danger); }
+/* PCP › Montadores do Dia (fase EC): um quadro por montador. */
+.pcp-mont-novo {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr) minmax(0, 2fr) minmax(0, 0.55fr) minmax(0, 0.8fr) minmax(0, 0.6fr) auto;
+  gap: 22px;
+  align-items: end;
+}
+.pcp-montadores-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr));
+  gap: 18px;
+}
+.pcp-montador .pcp-prog-barra { margin: 0 18px 4px; }
+/* O quadro é estreito: a tabela cabe nele (o nome do produto quebra linha)
+   em vez de herdar os 640px mínimos das listas e esconder Tempo/OP. */
+.pcp-montador .table { min-width: 0; }
+.pcp-montador .table td:first-child { white-space: normal; }
+.pcp-montador .table-actions th:last-child, .pcp-montador .table-actions td:last-child { width: 44px; }
+.pcp-montador .pcp-prog-qtd { width: 76px; }
+.pcp-montador-topo { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.pcp-montador-acoes { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.pcp-montador-jornada { display: grid; gap: 4px; font-size: 0.8rem; }
+.pcp-montador-jornada input { width: 90px; }
+.pcp-montador-passou { color: var(--danger); }
 @media (max-width: 900px) {
-  .pcp-prog-novo { grid-template-columns: 1fr 1fr; }
+  .pcp-prog-novo, .pcp-mont-novo { grid-template-columns: 1fr 1fr; }
   .pcp-prog-produto { grid-column: 1 / -1; }
 }
 

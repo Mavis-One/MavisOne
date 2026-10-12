@@ -40,8 +40,10 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     }
 
     const recarregar = () => loadModule('pcp');
+    // O que foi entregue a um MONTADOR (fase EC) mora em Montadores do Dia,
+    // com a jornada dele: contar aqui também somaria as mesmas horas duas vezes.
     const doDia = (lista) => lista.filter((x) => String(x.date || '').slice(0, 10) === filtro.date
-      && String(x.sectorId || '') === String(filtro.sectorId || ''));
+      && String(x.sectorId || '') === String(filtro.sectorId || '') && !x.montadorId);
     const setor = (meta.sectors || []).find((s) => s.id === filtro.sectorId) || null;
     const ajuste = doDia(jornadas)[0] || null;
     const jornadaHoras = T.jornadaDoDia({ ajuste, setor });

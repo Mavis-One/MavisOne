@@ -2023,6 +2023,16 @@ function getRepresentantesDirectory(data) {
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
 }
 
+// Montador (fase EC): pessoa — ou empresa, quando a montagem é terceirizada —
+// com o papel "Montador" no Cadastros, menos as inativas.
+function getMontadoresDirectory(data) {
+  return [...(data.people || []), ...(data.cnpjs || [])]
+    .filter((entry) => Array.isArray(entry.roles) && entry.roles.includes('Montador'))
+    .filter((entry) => String(entry.status || 'ativo').toLowerCase() !== 'inativo')
+    .map((entry) => ({ id: entry.id, name: entry.name }))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+}
+
 // Transportadora pode ser pessoa física (motorista autônomo) ou empresa, por
 // isso varre as duas listas — diferente de vendedor, que só é pessoa.
 function getCarriersDirectory(data) {
@@ -5785,10 +5795,12 @@ async function recusaDoPlanejamentoPcp(recurso, corpo, id) {
     const horas = Number(valor('horas'));
     if (!(horas >= 0 && horas <= 24)) return 'A jornada do dia vai de 0 a 24 horas.';
     const setor = String(valor('sectorId') || '');
+    const montador = String(valor('montadorId') || '');
     const dia = String(valor('date')).slice(0, 10);
     const outro = (await modulosDb.listar(recurso))
-      .find((j) => String(j.sectorId || '') === setor && String(j.date || '').slice(0, 10) === dia && j.id !== id);
-    if (outro) return 'Este dia já tem jornada ajustada para este setor.';
+      .find((j) => String(j.sectorId || '') === setor && String(j.montadorId || '') === montador
+        && String(j.date || '').slice(0, 10) === dia && j.id !== id);
+    if (outro) return montador ? 'Este dia já tem jornada ajustada para este montador.' : 'Este dia já tem jornada ajustada para este setor.';
   }
   if (recurso === 'pcp/programacao') {
     if (!valor('date')) return 'Informe o dia.';
@@ -9699,6 +9711,14 @@ async function tratarRequisicao(req, res) {
             const dados = loadData();
             await syncCadastroData(dados);
             apoio.representantes = getRepresentantesDirectory(dados);
+          }
+          // MONTADORES (fase EC): pessoas do Cadastros com o papel "Montador",
+          // menos as inativas — os quadros de PCP › Montadores do Dia. Também só
+          // para quem pede, pelo mesmo custo de ler o cadastro.
+          if (url.searchParams.get('montadores') === '1') {
+            const dados = loadData();
+            await syncCadastroData(dados);
+            apoio.montadores = getMontadoresDirectory(dados);
           }
         }
         if (modulo === 'contracts') {

@@ -63,7 +63,7 @@
   const PAPEIS_EXIBIDOS = [
     ['showClients', 'Cliente'], ['showSuppliers', 'Fornecedor'], ['showTechnicians', 'Técnico'],
     ['showCollaborators', 'Colaborador'], ['showTransporters', 'Transportadora'], ['showSellers', 'Vendedor'],
-    ['showLeaders', 'Líder'], ['showManagers', 'Gerente'], ['showRepresented', 'Representada'], ['showRepresentatives', 'Representante'],
+    ['showLeaders', 'Líder'], ['showManagers', 'Gerente'], ['showRepresented', 'Representada'], ['showRepresentatives', 'Representante'], ['showAssemblers', 'Montador'],
     ['showCredenciadoras', 'Credenciadora'], ['showManufacturers', 'Fabricante']
   ];
 
@@ -117,6 +117,7 @@
       showManagers: g.showManagers ?? true,
       showRepresented: g.showRepresented ?? true,
       showRepresentatives: g.showRepresentatives ?? true,
+      showAssemblers: g.showAssemblers ?? true,
       showCredenciadoras: g.showCredenciadoras ?? true,
       showManufacturers: g.showManufacturers ?? true,
       onlyInactive: g.onlyInactive ?? false,

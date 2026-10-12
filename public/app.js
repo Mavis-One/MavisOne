@@ -2135,6 +2135,7 @@ const moduleSubItems = {
     { key: 'nova_ordem', label: 'Nova Ordem Produção', desc: 'Abre uma ordem a partir de um produto.' },
     { key: 'representantes', label: 'Representantes', desc: 'Representantes das ordens, do Cadastros.' },
     { key: 'programacao', label: 'Programação do Dia', desc: 'Encaixa modelos na jornada do dia até fechar as horas.' },
+    { key: 'montadores', label: 'Montadores do Dia', desc: 'Distribui modelos e OPs entre os montadores e imprime a folha de cada um.' },
     { key: 'tempos', label: 'Tempos de Produção', desc: 'Quanto tempo leva uma unidade de cada modelo.' },
     { key: 'setores', label: 'Setores PCP', desc: 'Centros de trabalho, na ordem em que a peça caminha.' },
     { key: 'novo_setor', label: 'Novo Setor PCP', desc: 'Cadastra um setor com responsável e capacidade.' },
@@ -6604,7 +6605,7 @@ async function loadModule(moduleName) {
       };
 
       const roles = [
-        'Cliente', 'Transportadora', 'Técnico', 'Fornecedor', 'Colaborador', 'Representada', 'Representante', 'Vendedor', 'Líder', 'Gerente', 'Credenciadora', 'Fabricante'
+        'Cliente', 'Transportadora', 'Técnico', 'Fornecedor', 'Colaborador', 'Montador', 'Representada', 'Representante', 'Vendedor', 'Líder', 'Gerente', 'Credenciadora', 'Fabricante'
       ];
 
       const section = (title, body) => `
@@ -7287,6 +7288,7 @@ async function loadModule(moduleName) {
                   <label><input type="checkbox" name="showManagers" ${listFilters.showManagers ? 'checked' : ''} /> Exibir Gerentes</label>
                   <label><input type="checkbox" name="showRepresented" ${listFilters.showRepresented ? 'checked' : ''} /> Exibir Representadas</label>
                   <label><input type="checkbox" name="showRepresentatives" ${listFilters.showRepresentatives ? 'checked' : ''} /> Exibir Representantes</label>
+                  <label><input type="checkbox" name="showAssemblers" ${listFilters.showAssemblers ? 'checked' : ''} /> Exibir Montadores</label>
                   <label><input type="checkbox" name="showCredenciadoras" ${listFilters.showCredenciadoras ? 'checked' : ''} /> Exibir Credenciadoras</label>
                   <label><input type="checkbox" name="showManufacturers" ${listFilters.showManufacturers ? 'checked' : ''} /> Exibir Fabricantes</label>
                   <label><input type="checkbox" name="onlyInactive" ${listFilters.onlyInactive ? 'checked' : ''} /> Somente inativos</label>
@@ -7434,6 +7436,7 @@ async function loadModule(moduleName) {
             showManagers: Boolean(data.get('showManagers')),
             showRepresented: Boolean(data.get('showRepresented')),
             showRepresentatives: Boolean(data.get('showRepresentatives')),
+            showAssemblers: Boolean(data.get('showAssemblers')),
             showCredenciadoras: Boolean(data.get('showCredenciadoras')),
             showManufacturers: Boolean(data.get('showManufacturers')),
             onlyInactive: Boolean(data.get('onlyInactive')),
@@ -7491,6 +7494,7 @@ async function loadModule(moduleName) {
             showManagers: true,
             showRepresented: true,
             showRepresentatives: true,
+            showAssemblers: true,
             showCredenciadoras: true,
             showManufacturers: true,
             onlyInactive: false,
