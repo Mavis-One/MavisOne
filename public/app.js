@@ -58,6 +58,77 @@ function clearSessionToken() {
   localStorage.removeItem('token');
 }
 
+// ---------------------------------------------------------------------------
+// AS ABAS DO MESMO NAVEGADOR DIVIDEM A SESSÃO (12/10/2026)
+//
+// O token mora no sessionStorage, que é POR ABA, e o servidor tem sessão única
+// por usuário (lib/db/sessoes.js/abrirUnica). Juntas, as duas regras faziam:
+// aba nova = tela de login; entrar nela = a primeira aba caía com "sua conta
+// entrou em outro dispositivo". Ninguém conseguia trabalhar com duas abas.
+//
+// As abas passam a conversar por um BroadcastChannel (só abas do MESMO site no
+// MESMO navegador o enxergam):
+//   - aba nova sem sessão PEDE a sessão às abertas e entra sem novo login —
+//     nenhuma sessão é derrubada, e a regra de sessão única continua valendo
+//     entre computadores/navegadores diferentes;
+//   - entrar numa aba entrega o token novo às outras (o login derrubou o
+//     antigo no servidor — elas passam a usar o novo em vez de cair);
+//   - sair numa aba sai de todas.
+// Fechou TODAS as abas, a sessão some como antes (sessionStorage).
+// Navegador sem BroadcastChannel continua como era: uma sessão por aba.
+const canalDeSessao = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('mavisone:sessao') : null;
+
+function avisarAbas(mensagem) {
+  try { canalDeSessao?.postMessage(mensagem); } catch (_) { /* aba fechando */ }
+}
+
+/** Pede a sessão às outras abas abertas. Resolve com o token, ou null. */
+function pedirSessaoAsOutrasAbas(esperaMs = 500) {
+  if (!canalDeSessao) return Promise.resolve(null);
+  const pedido = Math.random().toString(36).slice(2);
+  return new Promise((resolver) => {
+    const ouvir = (evento) => {
+      const m = evento.data || {};
+      if (m.tipo === 'sessao' && m.para === pedido && m.token) {
+        canalDeSessao.removeEventListener('message', ouvir);
+        clearTimeout(desistir);
+        resolver(m.token);
+      }
+    };
+    const desistir = setTimeout(() => { canalDeSessao.removeEventListener('message', ouvir); resolver(null); }, esperaMs);
+    canalDeSessao.addEventListener('message', ouvir);
+    avisarAbas({ tipo: 'pedir', id: pedido });
+  });
+}
+
+if (canalDeSessao) {
+  canalDeSessao.addEventListener('message', (evento) => {
+    const m = evento.data || {};
+    if (m.tipo === 'pedir') {
+      // Só quem está DENTRO responde — aba na tela de login não tem o que dar.
+      const token = getSessionToken();
+      if (token && state.user) avisarAbas({ tipo: 'sessao', para: m.id, token });
+    } else if (m.tipo === 'entrou' && m.token) {
+      const outroUsuario = state.user && m.userId && m.userId !== state.user.id;
+      setSessionToken(m.token);
+      sessaoEncerradaAvisada = false;
+      // Outra pessoa entrou nesta máquina: esta aba mostra dados do usuário
+      // anterior com o token do novo — recarrega para não misturar.
+      if (outroUsuario) { window.location.reload(); return; }
+      // Aba que estava no login entra junto.
+      if (!state.user) abrirSessaoExistente().catch(() => {});
+    } else if (m.tipo === 'saiu') {
+      if (!state.user && !getSessionToken()) return;
+      cancelarSaidaDaVirada();
+      clearSessionToken();
+      state.user = null;
+      state.activeModule = 'dashboard';
+      state.activeSub = null;
+      renderAuth('Você saiu do sistema em outra aba.');
+    }
+  });
+}
+
 function persistLastRoute() {
   const payload = {
     module: state.activeModule || 'dashboard',
@@ -625,7 +696,7 @@ function salesLerUrl() {
   };
 }
 
-async function api(path, options = {}) {
+async function api(path, options = {}, jaRepetiu = false) {
   const headers = {};
   if (options.body) {
     headers['Content-Type'] = 'application/json';
@@ -649,6 +720,12 @@ async function api(path, options = {}) {
   // Tratado aqui, e não em cada chamada, porque `api` é o único caminho até o
   // servidor — qualquer outro lugar seria um a mais para alguém esquecer.
   if (response.status === 401 && data.motivo) {
+    // OUTRA ABA ENTROU enquanto esta chamada viajava: o login dela derrubou o
+    // token antigo, e o novo já chegou (canalDeSessao). Repete uma vez com ele
+    // em vez de mandar esta aba para o login.
+    if (!jaRepetiu && getSessionToken() && getSessionToken() !== token) {
+      return api(path, options, true);
+    }
     encerrarSessaoLocal(data.error || 'Sua sessão foi encerrada.');
     // Interrompe quem chamou: sem isto a tela seguiria montando com dados que
     // nunca vieram.
@@ -1061,6 +1138,9 @@ function renderAuth(error = '') {
         body: JSON.stringify({ username: formData.get('username'), password: formData.get('password') })
       });
       setSessionToken(response.token);
+      // As outras abas passam a usar o token novo: o login acabou de derrubar o
+      // antigo no servidor (sessão única), e elas cairiam no próximo clique.
+      avisarAbas({ tipo: 'entrou', token: response.token, userId: response.user && response.user.id });
       // Libera o aviso de "derrubado" para a sessão nova: sem isto, quem já foi
       // derrubado uma vez e entrou de novo cairia em silêncio na segunda.
       sessaoEncerradaAvisada = false;
@@ -1467,15 +1547,18 @@ function renderApp() {
   app.innerHTML = `
     <div class="layout">
       <aside class="sidebar">
-        <div class="sidebar-header">
-          <span class="logo-marca logo-sidebar" role="img" aria-label="MavisONE"></span>
-          <h2 class="brand">
+        <!-- A MARCA É O CAMINHO PARA O DASHBOARD (12/10/2026): raio e "MO"
+             viraram um botão só, e o ícone do Dashboard saiu do menu. -->
+        <button type="button" class="sidebar-header sidebar-marca" id="marcaDashboardBtn" title="Dashboard" aria-label="Ir para o Dashboard">
+          <span class="logo-marca logo-sidebar" aria-hidden="true"></span>
+          <span class="brand">
             <span class="brand-full"><span class="brand-mavis">Mavis</span><span class="brand-one">ONE</span></span>
             <span class="brand-short"><span class="brand-mavis">M</span><span class="brand-one">O</span></span>
-          </h2>
-        </div>
+          </span>
+        </button>
         <div class="nav-list">
           ${MENU_MODULOS
+            .filter((module) => module !== 'dashboard')
             .filter((module) => state.user?.allowedModules?.includes(module) && moduloTemTelaVisivel(module))
             .map((module) => `
               <div class="nav-block">
@@ -1624,6 +1707,17 @@ function renderApp() {
   });
 
   // main nav click handlers
+  const marcaDashboard = document.getElementById('marcaDashboardBtn');
+  if (marcaDashboard) {
+    marcaDashboard.onclick = () => {
+      esconderDicaDaSidebar();
+      state.activeModule = 'dashboard';
+      state.activeSub = null;
+      state.selectedModule = getSecondarySidebarConfig('dashboard') ? 'dashboard' : null;
+      renderApp();
+      loadModule('dashboard');
+    };
+  }
   document.querySelectorAll('.nav-open-item').forEach((button) => {
     button.onclick = () => {
       const module = button.dataset.module;
@@ -1757,6 +1851,8 @@ function renderApp() {
     // e deixá-lo vivo jogaria um aviso de "o dia virou" na tela de login.
     cancelarSaidaDaVirada();
     clearSessionToken();
+    // Sair é sair de todas as abas: a sessão acabou no servidor.
+    avisarAbas({ tipo: 'saiu' });
     localStorage.removeItem(LAST_ROUTE_KEY);
     state.user = null;
     state.selectedModule = null;
@@ -3408,6 +3504,18 @@ async function loadModule(moduleName) {
         if (state.salesDraft?.novoStatus) delete state.salesDraft.novoStatus;
 
         const origem = editRecord || duplicado;
+
+        // A VENDA É DO VENDEDOR QUE A FEZ (ver lib/venda-do-vendedor.js).
+        // Venda nova já nasce com o vendedor do usuário logado; o vendedor
+        // comum (`travado`) não troca o vendedor e só lê o pedido de colega.
+        const meuVendedor = meta.meuVendedor || { sellerId: '', travado: false };
+        const deOutroVendedor = Boolean(isEditing && meuVendedor.travado
+          && editRecord.sellerId && editRecord.sellerId !== meuVendedor.sellerId);
+        const vendedorInicial = deOutroVendedor
+          ? editRecord.sellerId
+          : (meuVendedor.travado
+            ? meuVendedor.sellerId
+            : (origem ? (origem.sellerId || '') : meuVendedor.sellerId));
         // Uma lista de itens, e so. O pedido ja teve grupos de produtos (fase
         // AH): a tela foi retirada porque separava o que ninguem separava na
         // pratica, e cada venda comecava com um "Grupo de Produtos Padrao - 01"
@@ -3751,7 +3859,7 @@ async function loadModule(moduleName) {
         const formState = {
           clientSupplierId: origem?.clientSupplierId || '',
           companyId: origem?.companyId || '',
-          sellerId: origem?.sellerId || '',
+          sellerId: vendedorInicial,
           depositId: origem?.depositId || '',
           // Registro antigo chega com o status legado ('pendente', 'em aberto',
           // …); normalizar aqui evita que ele apareça como opção órfã no select
@@ -4175,6 +4283,7 @@ async function loadModule(moduleName) {
         const salesRecordActionsContext = () => ({
           recordType,
           isEditing,
+          somenteLeitura: deOutroVendedor,
           status: formState.status,
           escapeHtml,
           showToast,
@@ -4608,6 +4717,8 @@ async function loadModule(moduleName) {
           // Em registro novo mostra quem está preenchendo — é quem vai constar
           // como autor assim que salvar.
           const alteradoPor = editRecord?.updatedByName || editRecord?.createdByName || state.user?.name || '';
+          // Quem CRIOU fica parado; quem alterou acompanha cada gravação.
+          const criadoPor = isEditing ? (editRecord.createdByName || '') : (state.user?.name || '');
           const dataAlteracao = formatarDataHora(editRecord?.updatedAt || editRecord?.createdAt);
 
           content.innerHTML = `
@@ -4670,9 +4781,14 @@ async function loadModule(moduleName) {
                          que servem a qualquer uma). Ver depositosDaLoja. */''}
                     ${renderSearchableSelect({ id: 'salesDeposit', name: 'depositId', options: depositosDaLoja(meta, formState.companyId, formState.depositId).map((d) => ({ value: d.id, label: d.name })), selectedValue: formState.depositId, placeholder: 'Buscar depósito...' })}
                   </label>
+                  ${meuVendedor.travado || deOutroVendedor ? `
+                  <label class="campo-somente-leitura">Vendedor
+                    <input value="${escapeHtml((meta.sellers.find((s) => s.id === formState.sellerId) || {}).name || '')}" disabled />
+                    <input type="hidden" name="sellerId" value="${escapeHtml(formState.sellerId)}" />
+                  </label>` : `
                   <label>Vendedor
                     ${renderSearchableSelect({ id: 'salesSeller', name: 'sellerId', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })), selectedValue: formState.sellerId, placeholder: 'Buscar vendedor...' })}
-                  </label>
+                  </label>`}
                   <label class="campo-somente-leitura" title="Sequencial gerado pelo sistema — não é editável.">Código
                     <input value="${isEditing ? escapeHtml(String(editRecord.code)) : 'Gerado ao salvar'}" disabled />
                   </label>
@@ -4925,6 +5041,9 @@ async function loadModule(moduleName) {
                         <input name="relatedOrderCode" type="number" min="0" step="1" value="${Number(formState.relatedOrderCode || 0)}" />
                       </label>
 
+                      <label class="sales-total-field is-readonly">${title} criado por
+                        <input value="${escapeHtml(criadoPor)}" disabled />
+                      </label>
                       <label class="sales-total-field is-readonly">Alterado por
                         <input value="${escapeHtml(alteradoPor)}" disabled />
                       </label>
@@ -5349,6 +5468,19 @@ async function loadModule(moduleName) {
               loadModule('sales');
             }
           }, salesRecordActionsContext());
+
+          // Pedido de outro vendedor: abre para consulta, sem campo editável
+          // nem Salvar. Voltar, Imprimir e Duplicar (cópia é venda nova dele)
+          // continuam valendo.
+          if (deOutroVendedor) {
+            document.querySelectorAll('#salesRecordForm input, #salesRecordForm select, #salesRecordForm textarea, #salesRecordForm button')
+              .forEach((campo) => { campo.disabled = true; });
+            const salvar = document.getElementById('salesRecordActionsSave');
+            if (salvar) {
+              salvar.disabled = true;
+              salvar.title = 'Este pedido/orçamento é de outro vendedor.';
+            }
+          }
 
           // Os dados de impressão do cliente vêm ao escolhê-lo, e já do que o
           // pedido aberto tiver — ver dadosDoCliente. Guardados: repetir a cada
@@ -5843,6 +5975,12 @@ async function loadModule(moduleName) {
 
           form.addEventListener('submit', async (event) => {
             event.preventDefault();
+            // Pedido de outro vendedor: só leitura. O servidor recusa do mesmo
+            // jeito (ver lib/venda-do-vendedor.js); aqui é só não deixar tentar.
+            if (deOutroVendedor) {
+              showToast('Este pedido/orçamento é de outro vendedor. Só o vendedor dele ou um administrador pode alterá-lo.', 'warning');
+              return;
+            }
             // CLIQUE DUPLO NÃO GRAVA DOIS PEDIDOS (fase BS).
             //
             // Não havia guarda: dois cliques em Salvar criavam dois documentos.
@@ -6169,7 +6307,16 @@ async function loadModule(moduleName) {
         // servidor resolve o escolhido pela mesma regra de baixo (o pedido, se
         // estiver na lista; senão o primeiro), e só ele vem com `orders`.
         const draft = state.salesDraft || {};
-        const { bySeller, escopo } = await api(`/api/sales/dashboard?vendedor=${encodeURIComponent(draft.sellerDashboardId || '')}`);
+        // FILTROS (12/10/2026): período, situação e filial. Recortam no
+        // servidor ANTES das contas — cards, seletor e lista do mesmo recorte
+        // (ver lib/filtro-painel-vendedor.js).
+        const filtroPainel = draft.painelVendedorFiltro || { de: '', ate: '', status: '', filial: '' };
+        const filtrosAbertos = Boolean(draft.painelVendedorFiltrosAbertos);
+        const consultaPainel = new URLSearchParams({ vendedor: draft.sellerDashboardId || '' });
+        Object.entries(filtroPainel).forEach(([chave, valor]) => { if (valor) consultaPainel.set(chave, valor); });
+        const { bySeller, escopo, filiais = [] } = await api(`/api/sales/dashboard?${consultaPainel.toString()}`);
+        const filtrosAtivos = Object.values(filtroPainel).filter(Boolean).length;
+        const statusDePedido = SalesStatus.CATALOGO.filter((s) => s.tipo === 'order');
 
         // Lista vazia tem DUAS causas diferentes, e dizer a errada manda a
         // pessoa procurar o problema no lugar errado: "cadastre um vendedor"
@@ -6228,22 +6375,81 @@ async function loadModule(moduleName) {
         // justamente a informação que falta.
         content.innerHTML = `
           <div class="panel">
-            ${escopo && !escopo.podeEscolherVendedor ? `
-              <h3>${escapeHtml(selected.sellerName)}</h3>
-              <p class="muted">${escapeHtml(escopo.rotulo)}</p>
-            ` : `
-              <label>Vendedor
-                <select id="sellerDashboardSelect">
-                  ${bySeller.map((s) => `<option value="${s.sellerId}" ${s.sellerId === selectedSellerId ? 'selected' : ''}>${escapeHtml(s.sellerName)}</option>`).join('')}
-                </select>
-              </label>
-            `}
+            <div class="painel-vendedor-topo">
+              ${escopo && !escopo.podeEscolherVendedor ? `
+                <div>
+                  <h3>${escapeHtml(selected.sellerName)}</h3>
+                  <p class="muted">${escapeHtml(escopo.rotulo)}</p>
+                </div>
+              ` : `
+                <label>Vendedor
+                  <select id="sellerDashboardSelect">
+                    ${bySeller.map((s) => `<option value="${s.sellerId}" ${s.sellerId === selectedSellerId ? 'selected' : ''}>${escapeHtml(s.sellerName)}</option>`).join('')}
+                  </select>
+                </label>
+              `}
+              <button type="button" class="secondary" id="painelVendedorFiltrosBtn">Filtros${filtrosAtivos ? ` (${filtrosAtivos})` : ''}</button>
+            </div>
+            ${filtrosAbertos ? `
+              <form id="painelVendedorFiltroForm" class="cadastro-filter-panel">
+                <div class="cadastro-filter-grid-5">
+                  <label class="cadastro-field">
+                    <span>Data inicial</span>
+                    <input type="date" name="de" value="${escapeHtml(filtroPainel.de)}" />
+                  </label>
+                  <label class="cadastro-field">
+                    <span>Data final</span>
+                    <input type="date" name="ate" value="${escapeHtml(filtroPainel.ate)}" />
+                  </label>
+                  <label class="cadastro-field">
+                    <span>Situação</span>
+                    <select name="status">
+                      <option value="">Todas</option>
+                      ${statusDePedido.map((s) => `<option value="${escapeHtml(s.value)}" ${filtroPainel.status === s.value ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}
+                    </select>
+                  </label>
+                  <label class="cadastro-field">
+                    <span>Filial</span>
+                    <select name="filial">
+                      <option value="">Todas</option>
+                      ${filiais.map((f) => `<option value="${escapeHtml(f)}" ${filtroPainel.filial === f ? 'selected' : ''}>${escapeHtml(f)}</option>`).join('')}
+                    </select>
+                  </label>
+                </div>
+                <div class="cadastro-filter-actions">
+                  <button type="button" class="secondary" id="painelVendedorLimparBtn">Limpar</button>
+                  <button type="submit">Filtrar</button>
+                </div>
+              </form>
+            ` : ''}
           </div>
           <div id="sellerDashboardPanel">${renderSellerPanel()}</div>
         `;
 
         document.getElementById('sellerDashboardSelect')?.addEventListener('change', (event) => {
           state.salesDraft = { ...state.salesDraft, sellerDashboardId: event.target.value };
+          loadModule('sales');
+        });
+        document.getElementById('painelVendedorFiltrosBtn')?.addEventListener('click', () => {
+          state.salesDraft = { ...state.salesDraft, painelVendedorFiltrosAbertos: !filtrosAbertos };
+          loadModule('sales');
+        });
+        document.getElementById('painelVendedorFiltroForm')?.addEventListener('submit', (event) => {
+          event.preventDefault();
+          const campos = new FormData(event.target);
+          state.salesDraft = {
+            ...state.salesDraft,
+            painelVendedorFiltro: {
+              de: String(campos.get('de') || ''),
+              ate: String(campos.get('ate') || ''),
+              status: String(campos.get('status') || ''),
+              filial: String(campos.get('filial') || '')
+            }
+          };
+          loadModule('sales');
+        });
+        document.getElementById('painelVendedorLimparBtn')?.addEventListener('click', () => {
+          state.salesDraft = { ...state.salesDraft, painelVendedorFiltro: null };
           loadModule('sales');
         });
         return;
@@ -8281,26 +8487,40 @@ document.addEventListener('click', (evento) => {
   // Clear legacy token from older versions that used localStorage.
   localStorage.removeItem('token');
 
-  const token = getSessionToken();
+  // Aba nova não tem o token (sessionStorage é por aba): pede às abertas.
+  let token = getSessionToken();
+  if (!token) {
+    token = await pedirSessaoAsOutrasAbas();
+    if (token) setSessionToken(token);
+  }
   if (!token) {
     renderAuth();
     return;
   }
 
   try {
-    const response = await api('/api/me');
-    // Recarregar a página recria o timer da virada: ele vive na memória da
-    // aba, então some a cada F5.
-    agendarSaidaDaVirada(response.sessaoExpiraEm);
-    adotarUsuarioDaSessao(response.user);
-    restoreLastRoute();
-    const moduleHistory = ensureModuleRouteHistory(state.activeModule);
-    moduleHistory.currentRouteKey = getRouteKey(state.activeModule, state.activeSub);
-    renderApp();
-    await loadModule(state.activeModule);
+    await abrirSessaoExistente();
   } catch (error) {
     clearSessionToken();
     showToast(error.message || 'Sua sessão expirou. Faça login novamente.', 'error');
     renderAuth(error.message);
   }
 })();
+
+/**
+ * Entra com o token que já está nesta aba (recarregar a página, ou a sessão
+ * que outra aba entregou). O mesmo caminho para os dois — antes vivia só
+ * dentro do bootstrap.
+ */
+async function abrirSessaoExistente() {
+  const response = await api('/api/me');
+  // Recarregar a página recria o timer da virada: ele vive na memória da
+  // aba, então some a cada F5.
+  agendarSaidaDaVirada(response.sessaoExpiraEm);
+  adotarUsuarioDaSessao(response.user);
+  restoreLastRoute();
+  const moduleHistory = ensureModuleRouteHistory(state.activeModule);
+  moduleHistory.currentRouteKey = getRouteKey(state.activeModule, state.activeSub);
+  renderApp();
+  await loadModule(state.activeModule);
+}

@@ -40,6 +40,7 @@ const operacoesFiscaisDb = require('./lib/db/operacoes-fiscais');
 const nfeImportadasDb = require('./lib/db/nfe-importadas');
 // 12/10/2026 — pedidos e orçamentos do Viper (Listagem de Vendas) como histórico.
 const pedidosImportadosDb = require('./lib/db/pedidos-importados');
+const produtosImportadosDb = require('./lib/db/produtos-importados');
 // Fase CN — o zip do acervo de XML. Escrito à mão para não trazer dependência;
 // o porquê está no cabeçalho do arquivo.
 const zipUtil = require('./lib/zip');
@@ -100,6 +101,9 @@ const salesBulk = require('./public/modules/shared/sales_bulk_actions');
 // Relatório de Vendas: a regra de quem vê o quê e o cálculo do relatório, os
 // dois em funções puras. Ver o cabeçalho de lib/relatorios-escopo.js.
 const escopoLib = require('./lib/relatorios-escopo');
+// A venda é do vendedor que a fez: vendedor gravado e quem pode mexer nela.
+const vendaDoVendedor = require('./lib/venda-do-vendedor');
+const filtroPainelVendedor = require('./lib/filtro-painel-vendedor');
 const relatoriosVendas = require('./lib/relatorios-vendas');
 // Fase DB: as colunas do CSV do Financeiro e do Estoque, que nao tinham
 // exportacao nenhuma. Puro, como o de vendas.
@@ -3819,13 +3823,20 @@ async function mudarStatusSalesRecord(serializado, destino, data, user) {
   return efeitos.updated;
 }
 
-async function excluirSalesRecord(id, data, user) {
+async function excluirSalesRecord(id, data, user, escopo = null) {
   const order = await db.getOrderById(id);
   const isOrder = Boolean(order);
   const record = order || await db.getQuoteById(id);
   if (!record) {
     const erro = new Error('Registro não encontrado.');
     erro.status = 404;
+    throw erro;
+  }
+  // Venda de outro vendedor (ver lib/venda-do-vendedor.js). Aqui, e não só na
+  // rota, porque a exclusão em lote passa por esta mesma função.
+  if (escopo && !vendaDoVendedor.podeMexerNaVenda(escopo, record.sellerId)) {
+    const erro = new Error(vendaDoVendedor.MOTIVO_DE_OUTRO_VENDEDOR);
+    erro.status = 403;
     throw erro;
   }
   if (isOrder && record.stockApplied) {
@@ -3858,7 +3869,7 @@ async function excluirSalesRecord(id, data, user) {
   });
 }
 
-async function duplicarSalesRecord(serializado, data, user) {
+async function duplicarSalesRecord(serializado, data, user, escopo = null) {
   const tipo = serializado.type === 'quote' ? 'quote' : 'order';
   // A cópia nasce como RASCUNHO do próprio tipo. Duplicar um pedido faturado e
   // a cópia já nascer faturada baixaria estoque e criaria contas a receber de
@@ -3907,6 +3918,9 @@ async function duplicarSalesRecord(serializado, data, user) {
     // O chassi identifica UMA unidade física: copiá-lo criaria duas vendas do
     // mesmo equipamento.
     items: (serializado.items || []).map((item) => ({ ...item, chassi: '' })),
+    // A cópia é uma venda nova de quem duplicou: o vendedor que duplica o
+    // pedido de um colega fica com uma cópia DELE.
+    sellerId: vendaDoVendedor.vendedorAoGravar(escopo, serializado.sellerId),
     createdBy: user.id,
     createdByName: user.name,
     createdAt: new Date().toISOString(),
@@ -4064,11 +4078,13 @@ function valorDoRegistro(record) {
   return typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || itemsTotal || 0);
 }
 
-function resumoDoPainelDeVendas(data, escopo) {
+function resumoDoPainelDeVendas(data, escopo, filtro = null) {
   if (!escopo) {
     throw new Error('resumoDoPainelDeVendas exige um escopo (lib/relatorios-escopo.js). Sem ele a resposta vazaria as vendas de todos os vendedores.');
   }
-  const visivel = (record) => escopoLib.vendaVisivel(escopo, record.sellerId);
+  // `filtro` = os filtros do Painel Vendedor (lib/filtro-painel-vendedor.js);
+  // sem ele, a conta de sempre.
+  const visivel = (record) => escopoLib.vendaVisivel(escopo, record.sellerId) && filtroPainelVendedor.passa(record, filtro);
   const enxuto = (record) => ({
     sellerId: record.sellerId || '',
     amount: valorDoRegistro(record),
@@ -10636,11 +10652,19 @@ async function tratarRequisicao(req, res) {
       saldosPorDeposito = {};
     }
 
+    const escopoDoUsuario = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
     return sendJson(res, {
       reservas,
       saldosPorDeposito,
       companies: data.companies,
       sellers: getSellersDirectory(data),
+      // O vendedor do usuário logado: a venda nova já nasce com ele. `travado`
+      // = vendedor comum, que não escolhe outro nem altera venda de colega
+      // (quem decide de verdade é o servidor; ver lib/venda-do-vendedor.js).
+      meuVendedor: {
+        sellerId: String(user.sellerId || '').trim(),
+        travado: Boolean(vendaDoVendedor.vendedorTravado(escopoDoUsuario))
+      },
       deposits: data.deposits,
       // SÓ id E name (fase DS), como na lista de Vendas (fase CJ). O formulário
       // usa o diretório para BUSCAR o cliente — id no valor, nome no texto. Os
@@ -10777,7 +10801,10 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
-      const resumo = resumoDoPainelDeVendas(data, escopo);
+      // Filtros só no Painel Vendedor; o Painel Vendas (`parte=resumo`) segue
+      // com a conta inteira.
+      const filtro = querVendedor ? filtroPainelVendedor.lerFiltro(url.searchParams) : null;
+      const resumo = resumoDoPainelDeVendas(data, escopo, filtro);
       const escopoDaTela = {
         tipo: escopo.tipo,
         rotulo: escopo.rotulo,
@@ -10793,9 +10820,15 @@ async function tratarRequisicao(req, res) {
       if (escolhido) {
         // `orders` SÓ no escolhido: nos outros a chave não vem, em vez de vir
         // vazia — lista vazia diria "nenhuma venda", e não é isso.
-        escolhido.orders = pedidosDoVendedorNoPainel(await db.getOrdersResumidosDoVendedor(escolhido.sellerId), data);
+        const doVendedor = (await db.getOrdersResumidosDoVendedor(escolhido.sellerId))
+          .filter((registro) => filtroPainelVendedor.passa(registro, filtro));
+        escolhido.orders = pedidosDoVendedorNoPainel(doVendedor, data);
       }
-      return sendJson(res, { overview: resumo.overview, bySeller, escopo: escopoDaTela });
+      // As filiais que o seletor oferece: as dos pedidos que este usuário vê.
+      const filiais = filialDaVenda.listarFiliais(
+        (data.orders || []).filter((o) => escopoLib.vendaVisivel(escopo, o.sellerId))
+      ).map((f) => f.nome);
+      return sendJson(res, { overview: resumo.overview, bySeller, escopo: escopoDaTela, filtro, filiais });
     }
     // Uma ONDA so de ida ao banco, e nao 2 em fila. Cada consulta ao
     // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
@@ -11071,6 +11104,9 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const body = await readBody(req);
+      // Vendedor grava venda no PRÓPRIO nome, venha o que vier (ver
+      // lib/venda-do-vendedor.js); admin e quem não é vendedor escolhem.
+      const escopoDoUsuario = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
       const tipoPedido = body.type || 'order';
       // Quem manda no tipo é o STATUS, não o campo `type` — a tela é uma só e
       // o usuário escolhe "Orçamento" ou "Pedido" no campo Status. `type` só
@@ -11100,7 +11136,7 @@ async function tratarRequisicao(req, res) {
           clientSupplierId: body.clientSupplierId || '',
           clientSupplierName: body.clientSupplierName || '',
           companyId: body.companyId || '',
-          sellerId: body.sellerId || '',
+          sellerId: vendaDoVendedor.vendedorAoGravar(escopoDoUsuario, body.sellerId),
           depositId: body.depositId || '',
           date: body.date || new Date().toISOString().slice(0, 10),
           dueDate: body.dueDate || '',
@@ -11225,6 +11261,19 @@ async function tratarRequisicao(req, res) {
       // Teto: uma seleção de milhares viraria milhares de idas ao Supabase numa
       // requisição só, e o navegador desistiria antes do fim.
       if (ids.length > 200) return sendJson(res, { error: 'Selecione no máximo 200 registros por vez.' }, 400);
+      // A PERMISSÃO DA AÇÃO, e não a do POST (12/10/2026). O portão central lê
+      // esta rota como POST = `sales.criar`, e com isso quem não tinha
+      // `sales.excluir` excluía pelo lote (provado no banco local: DELETE 403,
+      // lote "excluir" 200). Cada ação cobra o que o botão dela cobraria.
+      const permissaoDaAcao = acaoId === 'excluir' ? 'sales.excluir' : (acaoId === 'duplicar' ? '' : 'sales.editar');
+      if (permissaoDaAcao) {
+        const acesso = await db.rbac.carregarAcessoDoUsuario(user.id);
+        const pode = acesso
+          ? permissoes.usuarioPode({ ...user, roles: acesso.roles }, permissaoDaAcao, acesso)
+          : permissoes.podePeloModulo(user, permissaoDaAcao);
+        if (!pode) return sendJson(res, { error: `Sem permissão para "${permissaoDaAcao}".` }, 403);
+      }
+      const escopoDoUsuario = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
       await Promise.all([
         syncCadastroData(data),
         syncSalesDataDosIds(data, ids),
@@ -11250,10 +11299,13 @@ async function tratarRequisicao(req, res) {
       for (const registro of elegiveis) {
         try {
           if (acaoId === 'duplicar') {
-            const copia = await duplicarSalesRecord(registro, data, user);
+            // Duplicar não mexe no original: vale para venda de outro vendedor.
+            const copia = await duplicarSalesRecord(registro, data, user, escopoDoUsuario);
             resultados.push({ id: registro.id, code: registro.code, novo: copia.code });
+          } else if (!vendaDoVendedor.podeMexerNaVenda(escopoDoUsuario, registro.sellerId)) {
+            falhas.push({ code: registro.code, motivo: vendaDoVendedor.MOTIVO_DE_OUTRO_VENDEDOR });
           } else if (acaoId === 'excluir') {
-            await excluirSalesRecord(registro.id, data, user);
+            await excluirSalesRecord(registro.id, data, user, escopoDoUsuario);
             resultados.push({ id: registro.id, code: registro.code });
           } else if (acao.destino) {
             await mudarStatusSalesRecord(registro, acao.destino(registro), data, user);
@@ -11314,6 +11366,14 @@ async function tratarRequisicao(req, res) {
 
       if (req.method === 'GET' && !anexoId) {
         return sendJson(res, { attachments: fichas });
+      }
+
+      // Anexar e excluir anexo é mexer na venda; ver e baixar, não.
+      if (req.method !== 'GET') {
+        const escopoDoUsuario = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+        if (!vendaDoVendedor.podeMexerNaVenda(escopoDoUsuario, registro.sellerId)) {
+          return sendJson(res, { error: vendaDoVendedor.MOTIVO_DE_OUTRO_VENDEDOR }, 403);
+        }
       }
 
       if (req.method === 'POST' && !anexoId) {
@@ -11729,6 +11789,12 @@ async function tratarRequisicao(req, res) {
       if (!current) {
         return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       }
+      // Pedido de outro vendedor: o vendedor vê, mas não altera. Antes de ler
+      // o corpo — nada do que vier nele muda a resposta.
+      const escopoDoUsuario = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+      if (!vendaDoVendedor.podeMexerNaVenda(escopoDoUsuario, current.sellerId)) {
+        return sendJson(res, { error: vendaDoVendedor.MOTIVO_DE_OUTRO_VENDEDOR }, 403);
+      }
       const body = await readBody(req);
       const itensBrutos = normalizeSalesItems(await completarNomesDosItens(body.items));
       if (!itensBrutos.length) {
@@ -11762,7 +11828,7 @@ async function tratarRequisicao(req, res) {
         clientSupplierId: body.clientSupplierId || '',
         clientSupplierName: body.clientSupplierName || '',
         companyId: body.companyId || '',
-        sellerId: body.sellerId || '',
+        sellerId: vendaDoVendedor.vendedorAoGravar(escopoDoUsuario, body.sellerId),
         depositId: body.depositId || '',
         date: body.date || current.date,
         dueDate: body.dueDate || '',
@@ -11827,7 +11893,7 @@ async function tratarRequisicao(req, res) {
       // aqui a divergência custaria reserva de estoque presa para sempre ou
       // arquivo órfão em pedido_anexo.
       try {
-        await excluirSalesRecord(id, data, user);
+        await excluirSalesRecord(id, data, user, escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) }));
       } catch (erro) {
         if (/não encontrado/.test(erro.message)) {
           return sendErro(res, erro, 'Pedido/orçamento não encontrado', 404);
@@ -15761,6 +15827,45 @@ async function tratarRequisicao(req, res) {
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar produto', 500);
+    }
+  }
+
+  // PRODUTOS DO VIPER pela planilha "Produtos" (12/10/2026). Só administrador:
+  // cadastra produto em massa. `simular: true` confere sem gravar. O que entra
+  // e por quê: lib/importacao-produtos-viper.js.
+  if (pathname === '/api/stock/importacao/viper' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador importa produtos do sistema anterior.' }, 403);
+      const body = await readBody(req, 16 * 1024 * 1024);
+      const resultado = await produtosImportadosDb.gravarProdutos(body.itens, { simular: body.simular === true });
+      if (!resultado.simulado && resultado.criados.length) {
+        // A situação (ativo/inativo) mora no meta do produto, como na tela.
+        const data = loadData();
+        data.productMeta = data.productMeta || {};
+        for (const criado of resultado.criados) {
+          data.productMeta[criado.id] = stockCore.buildProductMeta({ status: criado.ativo ? 'ativo' : 'inativo', unit: 'UN' });
+        }
+        saveData(data);
+      }
+      if (!resultado.simulado && (resultado.criados.length || resultado.ncmPreenchidos)) {
+        await registrarAuditoria({
+          action: 'estoque.importacao.viper', targetId: 'products', targetUsername: String(resultado.criados.length),
+          byId: user.id, byName: user.name,
+          details: { criados: resultado.criados.length, ncmPreenchidos: resultado.ncmPreenchidos, existentes: resultado.existentes }
+        });
+      }
+      return sendJson(res, {
+        success: true,
+        simulado: resultado.simulado,
+        criados: resultado.criados.length,
+        ncmPreenchidos: resultado.ncmPreenchidos,
+        existentes: resultado.existentes,
+        novos: resultado.novos,
+        ncm: resultado.ncm
+      });
+    } catch (erro) {
+      return sendErro(res, erro, 'Erro ao importar produtos', 400);
     }
   }
 

@@ -187,7 +187,7 @@ check('e o lote também', /await aplicarEfeitosDeStatus\(\{[\s\S]{0,400}items: c
 check('a exclusão virou função', /async function excluirSalesRecord\(/.test(serverSrc));
 // O DELETE tinha a própria cópia: devolução de estoque e remoção de anexos
 // estavam só lá.
-check('e a rota DELETE passou a usá-la', /await excluirSalesRecord\(id, data, user\)/.test(serverSrc));
+check('e a rota DELETE passou a usá-la', /await excluirSalesRecord\(id, data, user[,)]/.test(serverSrc));
 // Duplicar um pedido faturado e a cópia nascer faturada baixaria estoque e
 // criaria contas a receber de uma venda que ninguém fez.
 check('a cópia nasce como rascunho', /status = salesStatus\.padraoDoTipo\(tipo\)/.test(serverSrc));

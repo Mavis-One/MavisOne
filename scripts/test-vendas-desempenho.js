@@ -58,6 +58,7 @@ const NOMES = [
 ];
 const contexto = {
   escopoLib: require(path.join(RAIZ, 'lib/relatorios-escopo')),
+  filtroPainelVendedor: require(path.join(RAIZ, 'lib/filtro-painel-vendedor')),
   salesStatus: require(path.join(RAIZ, 'public/modules/shared/sales_status')),
   bandeiraCartao: require(path.join(RAIZ, 'public/modules/shared/bandeira_cartao')),
   console

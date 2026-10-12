@@ -436,6 +436,25 @@ button.success:hover { background: var(--success-hover); }
 }
 
 .sidebar h2 { margin-top: 0; white-space: nowrap; overflow: hidden; }
+
+/* A marca é o botão do Dashboard: tira o visual de botão e mantém o do
+   cabeçalho (o "MO" no tamanho do antigo h2). */
+.sidebar-marca {
+  width: 100%;
+  padding: 0 0 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.sidebar-marca .brand { font-size: 1.5rem; font-weight: 700; white-space: nowrap; }
+.sidebar-marca:hover .logo-sidebar,
+.sidebar-marca:focus-visible .logo-sidebar {
+  filter: saturate(1.8) drop-shadow(0 0 12px rgba(118, 234, 0, 0.5));
+}
+.sidebar-marca:focus-visible { outline: 2px solid var(--marca-verde); outline-offset: 2px; }
 .brand { display:inline-flex; align-items:center; gap:8px; }
 .brand .brand-full { display: none; }
 .brand .brand-short { display: inline-block; font-weight:700; }
@@ -851,6 +870,18 @@ button.success:hover { background: var(--success-hover); }
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 22px;
 }
+
+/* Painel Vendedor: vendedor à esquerda, botão Filtros à direita; o painel de
+   filtros abre logo abaixo. */
+.painel-vendedor-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+.painel-vendedor-topo > label { flex: 0 1 320px; min-width: 0; }
+.painel-vendedor-topo + .cadastro-filter-panel { margin-top: 16px; }
 
 .cadastro-filter-toggle-list {
   display: grid;
@@ -1870,6 +1901,9 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
   padding: 10px 22px; border-radius: 8px; font-weight: 600; cursor: pointer;
 }
 .actions-save:hover { background: var(--success-hover); }
+/* Desligado (pedido de outro vendedor): tem de parecer desligado. */
+.actions-save:disabled,
+.actions-save:disabled:hover { background: var(--panel-alt-hover); color: var(--muted); cursor: not-allowed; }
 
 .actions-back {
   background: #0f172a; color: #fff; border: 0;

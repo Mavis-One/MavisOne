@@ -10,6 +10,8 @@ window.MavisSalesRecordActions = (function () {
   const SALVE_ANTES = 'Salve o registro antes de usar esta ação.';
   const SEM_MODULO = 'Módulo ainda não existe no sistema.';
   const SEM_INTEGRACAO = 'Requer integração de envio ainda não configurada.';
+  // Pedido de outro vendedor: o vendedor vê, mas não muda (ver lib/venda-do-vendedor.js).
+  const DE_OUTRO_VENDEDOR = 'Este pedido/orçamento é de outro vendedor.';
 
   // O tipo vem do status (tela única) — mas o ctx ainda manda `recordType`
   // porque é o que a tela já tem em mãos; os dois concordam por construção.
@@ -32,6 +34,7 @@ window.MavisSalesRecordActions = (function () {
       id: 'cancelar', label: 'Cancelar Pedido', icon: I.cancel, tone: 'danger',
       enabled: (ctx) => {
         if (!ctx.isEditing) return SALVE_ANTES;
+        if (ctx.somenteLeitura) return DE_OUTRO_VENDEDOR;
         if (S.ehCancelado(ctx.status)) return 'Este registro já está cancelado.';
         if (S.geraFinanceiro(ctx.status)) return 'Pedido faturado não pode ser cancelado por aqui — cancele a NF-e primeiro.';
         return true;
@@ -46,6 +49,7 @@ window.MavisSalesRecordActions = (function () {
       id: 'aprovar', label: 'Aprovar Pedido', icon: I.check, tone: 'success',
       enabled: (ctx) => {
         if (!ctx.isEditing) return SALVE_ANTES;
+        if (ctx.somenteLeitura) return DE_OUTRO_VENDEDOR;
         if (ehPedido(ctx)) {
           if (S.geraFinanceiro(ctx.status)) return 'Este pedido já está faturado.';
           if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não pode ser faturado.';
@@ -67,6 +71,7 @@ window.MavisSalesRecordActions = (function () {
       id: 'aprovar_sem_faturamento', label: 'Aprovar Sem Faturamento', icon: I.check,
       enabled: (ctx) => {
         if (!ctx.isEditing) return SALVE_ANTES;
+        if (ctx.somenteLeitura) return DE_OUTRO_VENDEDOR;
         if (!ehPedido(ctx)) return 'Só pedido baixa estoque — aprove o orçamento primeiro.';
         if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não baixa estoque.';
         if (jaBaixouEstoque(ctx)) return 'O estoque deste pedido já foi baixado.';
@@ -83,6 +88,7 @@ window.MavisSalesRecordActions = (function () {
       id: 'gerar_nfe', label: 'Gerar NF-e', icon: I.note, tone: 'success',
       enabled: (ctx) => {
         if (!ctx.isEditing) return SALVE_ANTES;
+        if (ctx.somenteLeitura) return DE_OUTRO_VENDEDOR;
         if (!ehPedido(ctx)) return 'Só pedido gera NF-e — aprove o orçamento e fature o pedido primeiro.';
         if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não emite NF-e.';
         // Aprovado sem faturamento também emite: é justamente a nota de
@@ -101,6 +107,7 @@ window.MavisSalesRecordActions = (function () {
       id: 'emitir_nfce', label: 'Emitir NFC-e', icon: I.barcode, tone: 'success',
       enabled: (ctx) => {
         if (!ctx.isEditing) return SALVE_ANTES;
+        if (ctx.somenteLeitura) return DE_OUTRO_VENDEDOR;
         if (!ehPedido(ctx)) return 'Só pedido emite NFC-e — aprove o orçamento primeiro.';
         if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não emite NFC-e.';
         if (ctx.nfeId) return 'Este pedido já tem nota fiscal emitida.';
