@@ -66,7 +66,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       if (falta <= 0) return `${C.badge('Montado', 'success')} ${desfazer}`;
       return `<div class="pcp-baixa">
           <input type="number" class="pcp-baixa-qtd" data-baixa-qtd="${C.escape(l.id)}" min="0" max="${falta}" step="any" value="${falta}" />
-          <button type="button" class="success" data-baixa="${C.escape(l.id)}" ${depositosProntos ? '' : 'disabled title="Escolha os depósitos de desmontadas e de montadas"'}>Dar baixa</button>
+          <button type="button" class="success" data-baixa="${C.escape(l.id)}">Dar baixa</button>
           ${desfazer}
         </div>`;
     };
@@ -290,6 +290,20 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         const itemId = botao.dataset.baixa;
         const quantidade = Number(content.querySelector(`[data-baixa-qtd="${itemId}"]`)?.value || 0);
         if (botao.disabled) return;
+        // Sem os dois depósitos o botão NÃO fica desligado (13/10/2026): desligado,
+        // o clique não fazia nada e o motivo só aparecia passando o mouse — no
+        // celular, nem isso. Agora diz o que falta e leva até o campo.
+        if (!depositosProntos) {
+          showToast('Antes de dar baixa, escolha no topo de qual depósito sai (desmontadas) e para qual vai (montadas).', 'warning');
+          const campo = document.getElementById(config.depositoDesmontadasId ? 'pcpMontMontadas' : 'pcpMontDesmontadas');
+          campo?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          campo?.focus();
+          return;
+        }
+        if (!(quantidade > 0)) {
+          showToast('Informe quantas foram montadas.', 'warning');
+          return;
+        }
         botao.disabled = true;
         try {
           await api('/api/pcp/baixas', { method: 'POST', body: JSON.stringify({ programacaoId: itemId, quantidade }) });

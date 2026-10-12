@@ -41,6 +41,7 @@ const nfeImportadasDb = require('./lib/db/nfe-importadas');
 // 12/10/2026 — pedidos e orçamentos do Viper (Listagem de Vendas) como histórico.
 const pedidosImportadosDb = require('./lib/db/pedidos-importados');
 const produtosImportadosDb = require('./lib/db/produtos-importados');
+const contasImportadasDb = require('./lib/db/contas-importadas');
 // Fase CN — o zip do acervo de XML. Escrito à mão para não trazer dependência;
 // o porquê está no cabeçalho do arquivo.
 const zipUtil = require('./lib/zip');
@@ -12224,6 +12225,28 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { success: true });
     } catch (error) {
       return sendErro(res, error, 'Erro ao excluir pedido/orçamento', 400);
+    }
+  }
+
+  // CONTAS A PAGAR E A RECEBER DO VIPER (13/10/2026). Só administrador: grava
+  // título financeiro em massa. `simular: true` confere sem gravar. O que entra
+  // e por quê: lib/importacao-contas-viper.js.
+  if (pathname === '/api/finance/importacao/viper' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador importa contas do sistema anterior.' }, 403);
+      const body = await readBody(req, 16 * 1024 * 1024);
+      const resultado = await contasImportadasDb.gravarContas(body.titulos, { simular: body.simular === true, usuario: user });
+      if (!resultado.simulado && resultado.criados) {
+        await registrarAuditoria({
+          action: 'financeiro.importacao.viper', targetId: 'financial_entries', targetUsername: String(resultado.criados),
+          byId: user.id, byName: user.name,
+          details: { criados: resultado.criados, pagar: resultado.pagar, receber: resultado.receber, falhas: resultado.falhas.length }
+        });
+      }
+      return sendJson(res, { success: true, ...resultado });
+    } catch (erro) {
+      return sendErro(res, erro, 'Erro ao importar contas', 400);
     }
   }
 

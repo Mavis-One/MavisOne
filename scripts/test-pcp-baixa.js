@@ -53,7 +53,9 @@ console.log('\n--- 3. tela ---');
 const mont = semComentarios(ler('public/modules/pcp/subs/montadores.js'));
 check('escolhe os dois depósitos (salvos no servidor)', /id="pcpMontDesmontadas"/.test(mont) && /id="pcpMontMontadas"/.test(mont) && /api\('\/api\/pcp\/config', \{\s*method: 'PUT'/.test(mont));
 check('coluna Montadas (x/y) e "Dar baixa" com o que falta sugerido', /<th>Montadas<\/th>/.test(mont) && /value="\$\{falta\}"/.test(mont) && /data-baixa="/.test(mont));
-check('sem depósitos, o botão fica desligado', /depositosProntos \? '' : 'disabled/.test(mont));
+// Era desligado (13/10/2026): o clique não fazia nada e o usuário achou que o
+// botão estava quebrado. Agora avisa o que falta.
+check('sem depósitos, o clique AVISA o que falta', /if \(!depositosProntos\) \{\s*showToast\('Antes de dar baixa, escolha no topo/.test(mont) && !/depositosProntos \? '' : 'disabled/.test(mont));
 check('"Desfazer" estorna a última baixa da linha', /data-desfazer=/.test(mont) && /method: 'DELETE'/.test(mont));
 check('linha montada mostra "Montado"', /C\.badge\('Montado', 'success'\)/.test(mont));
 
