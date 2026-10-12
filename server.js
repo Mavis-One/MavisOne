@@ -12682,9 +12682,9 @@ async function tratarRequisicao(req, res) {
             nsuInicial = Math.max(0, pedido - 1);
           }
 
-          const resultado = await focusNfe.distribuicaoDfe({
+          const resultado = await (await focusNfe.forEstabelecimento(estabelecimento.id)).distribuicaoDfe({
             cnpj, modo, nsu: nsuInicial, chave: body.chave
-          }, await focusNfe.forEstabelecimento(estabelecimento.id));
+          });
 
           // O recorte de data, quando o modo pede.
           let documentos = resultado.documentos;
@@ -12773,12 +12773,12 @@ async function tratarRequisicao(req, res) {
           // A SEFAZ PRIMEIRO, o banco depois. Gravar antes e depois falhar deixaria
           // a tela dizendo "manifestada" sobre uma nota que a Receita continua
           // esperando — e o usuario nao tentaria de novo.
-          const resposta = await focusNfe.manifestarNfe({
+          const resposta = await (await focusNfe.forEstabelecimento(estabelecimento.id)).manifestarNfe({
             chave: documento.chave,
             codigo: evento.codigo,
             justificativa: body.justificativa,
             cnpj: documento.cnpjDestinatario
-          }, await focusNfe.forEstabelecimento(estabelecimento.id));
+          });
 
           const atualizado = await dfeDb.registrarManifestacao(id, {
             codigo: evento.codigo, usuarioId: user?.id, usuarioNome: user?.name
@@ -12792,9 +12792,9 @@ async function tratarRequisicao(req, res) {
           let temXml = documento.tipoDocumento === 'completo';
           if (evento.liberaXml && !temXml) {
             try {
-              const completo = await focusNfe.distribuicaoDfe({
+              const completo = await (await focusNfe.forEstabelecimento(estabelecimento.id)).distribuicaoDfe({
                 cnpj: documento.cnpjDestinatario, modo: 'chave', chave: documento.chave
-              }, await focusNfe.forEstabelecimento(estabelecimento.id));
+              });
               const achado = completo.documentos.find((d) => d.chave === documento.chave && d.xml);
               if (achado) {
                 await dfeDb.guardarXml(id, achado.xml);

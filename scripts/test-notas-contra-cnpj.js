@@ -168,6 +168,21 @@ check('  pede financeiro junto', /gerarFinanceiro: true/.test(tela));
 // que a primeira metade valeu.
 check('  falha no lançamento avisa que a manifestação valeu', /a manifestação valeu/.test(tela));
 
+console.log('\n--- a busca e a manifestação usam o token do estabelecimento DE VERDADE (12/10/2026) ---');
+// O defeito: as rotas passavam o objeto devolvido por forEstabelecimento (um
+// cliente com funções) como se fosse a credencial. Sem `.token` nele, toda
+// busca na SEFAZ era recusada com "falta o token" — com o token cadastrado.
+const srvSemComent = ler('server.js');
+check('nenhuma rota passa o cliente do estabelecimento como credencial',
+  !/\}, await focusNfe\.forEstabelecimento\(/.test(srvSemComent));
+check('busca e manifestação saem do cliente do estabelecimento',
+  (srvSemComent.match(/await \(await focusNfe\.forEstabelecimento\(estabelecimento\.id\)\)\.(distribuicaoDfe|manifestarNfe)\(/g) || []).length === 3);
+const focusLib = ler('lib/focusnfe.js');
+check('o cliente do estabelecimento tem a busca e a manifestação ligadas ao token',
+  /distribuicaoDfe: \(args\) => distribuicaoDfe\(args, creds\)/.test(focusLib) && /manifestarNfe: \(args\) => manifestarNfe\(args, creds\)/.test(focusLib));
+check('  e a manifestação continua ANTES de registrar (a ordem que a rota garante)',
+  rotaManifestar.indexOf('.manifestarNfe(') > 0 && rotaManifestar.indexOf('.manifestarNfe(') < rotaManifestar.indexOf('dfeDb.registrarManifestacao'));
+
 console.log('\n--- o aviso de token olha o token DE CADA ESTABELECIMENTO (12/10/2026) ---');
 // A busca usa focusNfe.forEstabelecimento (o token do estabelecimento). A tela
 // olhava só o FOCUS_NFE_TOKEN do .env — que em produção não existe desde a
