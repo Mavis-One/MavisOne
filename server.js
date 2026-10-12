@@ -12634,10 +12634,15 @@ async function tratarRequisicao(req, res) {
           // ESTABELECIMENTOS: `empresa` guarda so a raiz do CNPJ (8 digitos), e
           // a SEFAZ consulta o CNPJ inteiro — que so o estabelecimento tem,
           // junto com as credenciais da Focus.
-          empresas: estabelecimentos.map((e) => ({ id: e.id, nome: e.razaoSocial || e.nomeFantasia || '', cnpj: e.cnpj })),
+          // `temToken`: a busca usa o token DO ESTABELECIMENTO
+          // (focusNfe.forEstabelecimento). Antes a tela olhava só o
+          // FOCUS_NFE_TOKEN do .env — que em produção não existe desde a fase
+          // CF (a chave mora no banco) — e dizia "Focus não configurada" com a
+          // Focus funcionando (12/10/2026).
+          empresas: estabelecimentos.map((e) => ({ id: e.id, nome: e.razaoSocial || e.nomeFantasia || '', cnpj: e.cnpj, temToken: Boolean(e.focusTokenConfigured) })),
           ponteiros,
           manifestacoes: manifestacao.CATALOGO,
-          focusConfigurado: focusNfe.isConfigured()
+          focusConfigurado: estabelecimentos.some((e) => e.focusTokenConfigured) || focusNfe.isConfigured()
         });
       }
 

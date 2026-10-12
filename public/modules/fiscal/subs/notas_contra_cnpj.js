@@ -62,6 +62,18 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   }
 
   // ---------------------------------------------------------------- a busca
+  // A busca usa o token DE CADA ESTABELECIMENTO (focusNfe.forEstabelecimento).
+  // O aviso diz quais estão sem — antes dizia "Focus não configurada" olhando
+  // só o .env, com a Focus funcionando em produção (12/10/2026).
+  function avisoDeToken() {
+    const semToken = (dados.empresas || []).filter((e) => !e.temToken);
+    if (!dados.focusConfigurado) {
+      return '<p class="finance-badge finance-badge-warning">Nenhum estabelecimento tem token da Focus NFe — a busca na SEFAZ vai recusar até o token ser cadastrado.</p>';
+    }
+    if (!semToken.length) return '';
+    return `<p class="finance-badge finance-badge-warning">Sem token da Focus NFe: ${semToken.map((e) => escapeHtml(e.nome)).join(', ')}.</p>`;
+  }
+
   function blocoBusca() {
     if (!tela.busca) return '';
     const modo = tela.busca.modo;
@@ -73,8 +85,8 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
             <select id="dfeEmpresa">
               <option value="">— escolha —</option>
               ${dados.empresas.map((e) => `
-                <option value="${escapeHtml(e.id)}" ${tela.busca.empresaId === e.id ? 'selected' : ''}>
-                  ${escapeHtml(e.nome)} — ${cnpjFormatado(e.cnpj)}
+                <option value="${escapeHtml(e.id)}" ${tela.busca.empresaId === e.id ? 'selected' : ''} ${e.temToken === false ? 'disabled' : ''}>
+                  ${escapeHtml(e.nome)} — ${cnpjFormatado(e.cnpj)}${e.temToken === false ? ' (sem token da Focus)' : ''}
                 </option>
               `).join('')}
             </select>
@@ -141,10 +153,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
           <h3>Notas emitidas contra CNPJ</h3>
           <button type="button" id="dfeAbrirBusca">Buscar documentos na SEFAZ</button>
         </div>
-        ${dados.focusConfigurado ? '' : `
-          <p class="finance-badge finance-badge-warning">
-            A Focus NFe não está configurada — a busca na SEFAZ vai recusar até o token do estabelecimento ser cadastrado.
-          </p>`}
+        ${avisoDeToken()}
         ${blocoBusca()}
         <div class="table-scroll">
           <table class="table table-actions">

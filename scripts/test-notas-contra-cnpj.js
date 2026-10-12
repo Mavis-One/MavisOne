@@ -168,5 +168,17 @@ check('  pede financeiro junto', /gerarFinanceiro: true/.test(tela));
 // que a primeira metade valeu.
 check('  falha no lançamento avisa que a manifestação valeu', /a manifestação valeu/.test(tela));
 
+console.log('\n--- o aviso de token olha o token DE CADA ESTABELECIMENTO (12/10/2026) ---');
+// A busca usa focusNfe.forEstabelecimento (o token do estabelecimento). A tela
+// olhava só o FOCUS_NFE_TOKEN do .env — que em produção não existe desde a
+// fase CF — e dizia "Focus não configurada" com a Focus funcionando.
+const servidorDfe = ler('server.js');
+check('a rota diz, por estabelecimento, se há token (sem expor o token)',
+  /temToken: Boolean\(e\.focusTokenConfigured\)/.test(servidorDfe));
+check('"configurado" = algum estabelecimento com token (ou a reserva do .env)',
+  /focusConfigurado: estabelecimentos\.some\(\(e\) => e\.focusTokenConfigured\) \|\| focusNfe\.isConfigured\(\)/.test(servidorDfe));
+check('a tela lista os estabelecimentos sem token', /Sem token da Focus NFe:/.test(tela) && !/A Focus NFe não está configurada/.test(tela));
+check('  e não deixa escolher, na busca, quem não tem token', /\$\{e\.temToken === false \? 'disabled' : ''\}/.test(tela));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);
