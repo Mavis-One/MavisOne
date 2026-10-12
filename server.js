@@ -4472,6 +4472,7 @@ function serializeNfe(nfe, data) {
 function nfeParaTela(nfe, linkedEntries) {
   return {
     id: nfe.id,
+    estabelecimentoId: nfe.estabelecimentoId || '',
     number: nfe.number,
     series: nfe.series || '1',
     date: nfe.date,
@@ -4515,6 +4516,7 @@ function fiscalNfeParaLista(nfe) {
   return {
     id: nfe.id,
     origem: 'fiscal',
+    estabelecimentoId: nfe.estabelecimentoId || '',
     // 55 = NF-e, 65 = NFC-e. A tela usa para o rótulo, o prazo de cancelamento
     // (24 h contra 30 min) e para esconder a Carta de Correção da NFC-e.
     modelo: Number(nfe.modelo || 55),
@@ -4561,7 +4563,41 @@ function filterNfes(data, query, listaBase) {
   if (dateFrom) list = list.filter((nfe) => nfe.date >= dateFrom);
   if (dateTo) list = list.filter((nfe) => nfe.date <= dateTo);
 
+  // A empresa (estabelecimento) da nota — pedido do usuário em 11/10/2026,
+  // com as notas do Viper: a 124 de Araquari e a 124 de Marcolla eram
+  // indistinguíveis na lista.
+  const estabelecimentoId = query.get('estabelecimentoId');
+  if (estabelecimentoId) list = list.filter((nfe) => nfe.estabelecimentoId === estabelecimentoId);
+
+  // NF-e (55) ou NFC-e (65). A nota manual não diz o modelo: é sempre NF-e.
+  const modelo = query.get('modelo');
+  if (modelo === '55' || modelo === '65') list = list.filter((nfe) => String(nfe.modelo || 55) === modelo);
+
   return list;
+}
+
+/**
+ * A ORDEM DA LISTA DE NF-e (11/10/2026, pedido do usuário: "puxar diferente
+ * por número"). Número é comparado COMO NÚMERO — em texto, 30100 viria antes
+ * de 3100 e 225 depois de 1224. O desempate é sempre data e id, para a mesma
+ * busca não trocar de ordem entre uma página e outra.
+ */
+const ORDENS_DA_LISTA_DE_NFE = {
+  numero: (a, b) => (Number(a.number) || 0) - (Number(b.number) || 0) || String(a.series || '').localeCompare(String(b.series || '')),
+  data: (a, b) => String(a.date || '').localeCompare(String(b.date || '')),
+  cliente: (a, b) => String(a.customer || '').localeCompare(String(b.customer || ''), 'pt-BR', { sensitivity: 'base' }),
+  empresa: (a, b) => String(a.empresa || '').localeCompare(String(b.empresa || ''), 'pt-BR', { sensitivity: 'base' }),
+  valor: (a, b) => Number(a.amount || 0) - Number(b.amount || 0),
+  status: (a, b) => String(a.status || '').localeCompare(String(b.status || ''))
+};
+
+function ordenarNfes(list, query) {
+  const campo = ORDENS_DA_LISTA_DE_NFE[query.get('sort')] ? query.get('sort') : 'data';
+  const sinal = (query.get('dir') || (campo === 'data' ? 'desc' : 'asc')) === 'asc' ? 1 : -1;
+  const comparar = ORDENS_DA_LISTA_DE_NFE[campo];
+  return list.sort((a, b) => sinal * comparar(a, b)
+    || String(b.date || '').localeCompare(String(a.date || ''))
+    || String(b.id).localeCompare(String(a.id)));
 }
 
 function serializeBankTransaction(tx, data) {
@@ -17854,9 +17890,19 @@ async function tratarRequisicao(req, res) {
       }
       const todas = fiscais.concat(manuais, importadas);
 
-      const filtered = filterNfes(data, url.searchParams, todas)
-        .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
-      const { page, limit } = parsePageParams(url.searchParams, 15);
+      // A empresa de cada nota, pelo estabelecimento. Falhar aqui não derruba
+      // a lista: a coluna sai vazia.
+      let estabelecimentos = [];
+      try { estabelecimentos = await fiscalDb.getEstabelecimentos(); } catch (erroEstab) { estabelecimentos = []; }
+      const nomeDoEstabelecimento = new Map(estabelecimentos.map((e) => [e.id, e.nomeFantasia || e.razaoSocial || '']));
+      todas.forEach((nfe) => { nfe.empresa = nomeDoEstabelecimento.get(nfe.estabelecimentoId) || ''; });
+
+      const filtered = ordenarNfes(filterNfes(data, url.searchParams, todas), url.searchParams);
+      // De 30 a 250 por página (pedido do usuário, 11/10/2026). Abaixo de 30
+      // sobe para 30, acima de 250 desce para 250.
+      const pedido = parsePageParams(url.searchParams, 30, 250);
+      const page = pedido.page;
+      const limit = Math.min(250, Math.max(30, pedido.limit));
       const start = (page - 1) * limit;
       const daPagina = filtered.slice(start, start + limit);
       // As parcelas das notas manuais da página, pelo índice nfe_id, e cada uma
@@ -17867,7 +17913,12 @@ async function tratarRequisicao(req, res) {
       const pageItems = daPagina.map((nfe) => (nfe.origem === 'financeiro'
         ? { ...serializeNfe(brutas.get(nfe.id), data), origem: 'financeiro' }
         : nfe));
-      return sendJson(res, { nfes: pageItems, total: filtered.length, page, limit });
+      const empresaPorId = new Map(filtered.map((nfe) => [nfe.id, nfe.empresa]));
+      pageItems.forEach((nfe) => { nfe.empresa = empresaPorId.get(nfe.id) || nfe.empresa || ''; });
+      return sendJson(res, {
+        nfes: pageItems, total: filtered.length, page, limit,
+        empresas: estabelecimentos.map((e) => ({ id: e.id, nome: e.nomeFantasia || e.razaoSocial || '' }))
+      });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar NF-e', 500);
     }

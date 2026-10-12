@@ -231,9 +231,16 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   // que tem. Por isso a queda para 'finance' e não um terceiro caso.
   const moduloAtual = () => (state.activeModule === 'fiscal' ? 'fiscal' : 'finance');
 
-  const filters = { search: '', status: '', dateFrom: '', dateTo: '' };
+  const filters = { search: '', status: '', dateFrom: '', dateTo: '', estabelecimentoId: '', modelo: '' };
   let page = 1;
-  const limit = 15;
+  // Notas por página: de 30 a 250 (pedido do usuário, 11/10/2026). Guardado no
+  // state para sobreviver a sair e voltar à tela; o servidor também limita.
+  const POR_PAGINA = [30, 50, 100, 150, 200, 250];
+  let limit = POR_PAGINA.includes(state.nfeListaPorPagina) ? state.nfeListaPorPagina : 30;
+  // A ordem: clicar no cabeçalho ordena; clicar de novo inverte. O servidor
+  // compara o número COMO número (ordenarNfes em server.js).
+  const ordem = state.nfeListaOrdem || { campo: 'data', direcao: 'desc' };
+  const COLUNAS_ORDENAVEIS = { numero: 'Número', data: 'Data', empresa: 'Empresa', cliente: 'Cliente', valor: 'Valor', status: 'Status' };
 
   // Seleção guardada por id (não por índice) para sobreviver a refiltragem;
   // `notasDaPagina` guarda os objetos completos, que o painel de ações precisa.
@@ -260,7 +267,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     .then(() => { if (content.__nfeEmitidasAbertura === estaAbertura) renderActionsPanel(); });
 
   function buildQuery() {
-    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    const params = new URLSearchParams({ page: String(page), limit: String(limit), sort: ordem.campo, dir: ordem.direcao });
     Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
     return params.toString();
   }
@@ -506,8 +513,24 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     loadModule('sales');
   }
 
+  function cabecalhoOrdenavel(campo) {
+    const ativa = campo === ordem.campo;
+    const seta = ativa ? (ordem.direcao === 'asc' ? '▲' : '▼') : '';
+    const proxima = ativa && ordem.direcao === 'asc' ? 'decrescente' : 'crescente';
+    return `
+      <th aria-sort="${ativa ? (ordem.direcao === 'asc' ? 'ascending' : 'descending') : 'none'}">
+        <button type="button" class="lista-ordenar ${ativa ? 'is-ativa' : ''}" data-ordenar="${campo}"
+                title="Ordenar por ${escapeHtml(COLUNAS_ORDENAVEIS[campo])} em ordem ${proxima}">
+          <span>${escapeHtml(COLUNAS_ORDENAVEIS[campo])}</span>
+          <span class="lista-ordenar-seta" aria-hidden="true">${seta}</span>
+        </button>
+      </th>`;
+  }
+
   function renderView(result) {
+    limit = Number(result.limit) || limit;
     const totalPages = Math.max(1, Math.ceil(result.total / limit));
+    const empresas = (result.empresas || []).filter((e) => e.nome);
     notasDaPagina = result.nfes || [];
     // Descarta da seleção o que saiu da página atual (filtro/paginação mudou).
     const idsVisiveis = new Set(notasDaPagina.map((n) => n.id));
@@ -525,8 +548,8 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
         </div>
       </div>
 
-      <form id="nfeFilterForm" class="row" style="margin-bottom: 12px;">
-        <label class="cadastro-field" style="grid-column: span 2;">
+      <form id="nfeFilterForm" class="nfe-filtros" style="margin-bottom: 12px;">
+        <label class="cadastro-field nfe-filtro-busca">
           <span>Busca</span>
           <input name="search" value="${escapeHtml(filters.search)}" placeholder="Número, cliente ou chave" />
         </label>
@@ -538,6 +561,14 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
           </select>
         </label>
         <label class="cadastro-field">
+          <span>Modelo</span>
+          <select name="modelo">
+            <option value="">Todos</option>
+            <option value="55" ${filters.modelo === '55' ? 'selected' : ''}>NF-e</option>
+            <option value="65" ${filters.modelo === '65' ? 'selected' : ''}>NFC-e</option>
+          </select>
+        </label>
+        <label class="cadastro-field">
           <span>Data inicial</span>
           <input type="date" name="dateFrom" value="${escapeHtml(filters.dateFrom)}" />
         </label>
@@ -545,7 +576,15 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
           <span>Data final</span>
           <input type="date" name="dateTo" value="${escapeHtml(filters.dateTo)}" />
         </label>
-        <div style="align-self: end;"><button type="submit" class="secondary">Filtrar</button></div>
+        ${empresas.length > 1 ? `
+        <label class="cadastro-field">
+          <span>Empresa</span>
+          <select name="estabelecimentoId">
+            <option value="">Todas</option>
+            ${empresas.map((e) => `<option value="${escapeHtml(e.id)}" ${filters.estabelecimentoId === e.id ? 'selected' : ''}>${escapeHtml(e.nome)}</option>`).join('')}
+          </select>
+        </label>` : ''}
+        <div class="nfe-filtro-acao"><button type="submit" class="secondary">Filtrar</button></div>
       </form>
 
       <div id="nfeActionsPanel" class="nfe-actions-panel" hidden></div>
@@ -556,16 +595,18 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
             <thead>
               <tr>
                 <th class="nfe-check-col"><input type="checkbox" id="nfeSelectAll" ${todasMarcadas ? 'checked' : ''} title="Selecionar todas desta página" /></th>
-                <th>Número</th><th>Série</th><th>Data</th><th>Cliente</th><th>CPF/CNPJ</th><th>Valor</th><th>Status</th><th>Chave</th><th>Lançamento financeiro</th><th>Ações</th>
+                <th>Modelo</th>${cabecalhoOrdenavel('numero')}<th>Série</th>${cabecalhoOrdenavel('data')}${cabecalhoOrdenavel('empresa')}${cabecalhoOrdenavel('cliente')}<th>CPF/CNPJ</th>${cabecalhoOrdenavel('valor')}${cabecalhoOrdenavel('status')}<th>Chave</th><th>Lançamento financeiro</th><th>Ações</th>
               </tr>
             </thead>
             <tbody>
               ${result.nfes.length ? result.nfes.map((nfe) => `
                 <tr class="cadastro-row-clickable finance-entry-row ${selecionadas.has(nfe.id) ? 'is-selected' : ''}" data-id="${escapeHtml(nfe.id)}">
                   <td class="nfe-check-col"><input type="checkbox" data-select="${escapeHtml(nfe.id)}" ${selecionadas.has(nfe.id) ? 'checked' : ''} /></td>
+                  <td>${Number(nfe.modelo) === 65 ? 'NFC-e' : 'NF-e'}</td>
                   <td>${escapeHtml(nfe.number)}</td>
                   <td>${escapeHtml(nfe.series)}</td>
                   <td>${financeFormatDate(nfe.date)}</td>
+                  <td class="nfe-empresa">${escapeHtml(nfe.empresa || '-')}</td>
                   <td>${escapeHtml(nfe.customer)}</td>
                   <td>${nfeFormatDocument(nfe.clientDocument)}</td>
                   <td>${financeFormatBRL(nfe.amount)}</td>
@@ -574,7 +615,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
                   <td>${financialSummary(nfe)}</td>
                   <td>${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="secondary" data-quick-cancel="${nfe.id}">Cancelar</button>` : ''}</td>
                 </tr>
-              `).join('') : `<tr><td colspan="11" class="muted">Nenhuma NF-e encontrada.</td></tr>`}
+              `).join('') : `<tr><td colspan="13" class="muted">Nenhuma NF-e encontrada.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -582,6 +623,11 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
           <button type="button" class="secondary" id="nfePrevPage" ${page <= 1 ? 'disabled' : ''}>Anterior</button>
           <span class="muted">Página ${page} de ${totalPages}</span>
           <button type="button" class="secondary" id="nfeNextPage" ${page >= totalPages ? 'disabled' : ''}>Próxima</button>
+          <label class="nfe-por-pagina">Por página
+            <select id="nfePorPagina">
+              ${POR_PAGINA.map((n) => `<option value="${n}" ${n === limit ? 'selected' : ''}>${n}</option>`).join('')}
+            </select>
+          </label>
         </div>
       </div>
     `;
@@ -598,6 +644,31 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       filters.status = formData.get('status') || '';
       filters.dateFrom = formData.get('dateFrom') || '';
       filters.dateTo = formData.get('dateTo') || '';
+      filters.estabelecimentoId = formData.get('estabelecimentoId') || '';
+      filters.modelo = formData.get('modelo') || '';
+      page = 1;
+      load();
+    });
+
+    content.querySelectorAll('[data-ordenar]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const campo = btn.dataset.ordenar;
+        if (!COLUNAS_ORDENAVEIS[campo]) return;
+        // Mesma coluna inverte; coluna nova começa crescente (data, decrescente:
+        // a mais recente primeiro, como a lista sempre abriu).
+        if (campo === ordem.campo) ordem.direcao = ordem.direcao === 'asc' ? 'desc' : 'asc';
+        else { ordem.campo = campo; ordem.direcao = campo === 'data' ? 'desc' : 'asc'; }
+        state.nfeListaOrdem = { ...ordem };
+        page = 1;
+        load();
+      });
+    });
+
+    document.getElementById('nfePorPagina')?.addEventListener('change', (event) => {
+      const n = Number(event.target.value);
+      if (!POR_PAGINA.includes(n)) return;
+      limit = n;
+      state.nfeListaPorPagina = n;
       page = 1;
       load();
     });

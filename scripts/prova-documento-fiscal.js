@@ -41,7 +41,9 @@ const CHAVES_NFE = [
   'clientSupplierId', 'clientDocument', 'clientAddress', 'clientCity',
   'clientState', 'clientStateRegistration', 'taxNotes', 'paymentType',
   'installmentsCount', 'installmentIntervalDays', 'orderId', 'createdBy',
-  'createdByName', 'createdAt', 'updatedAt', 'items'
+  'createdByName', 'createdAt', 'updatedAt', 'items',
+  // 11/10/2026: a lista de NF-e passou a mostrar a empresa de cada nota.
+  'estabelecimentoId'
 ];
 const CHAVES_ITEM = ['id', 'code', 'description', 'quantity', 'unitPrice', 'total', 'cfop', 'ncm'];
 

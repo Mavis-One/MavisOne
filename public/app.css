@@ -375,9 +375,14 @@ input[type="checkbox"]:focus-visible {
 button {
   /* Acompanha a altura do campo: botao e campo dividem linha em quase toda
      tela (Buscar ao lado da busca, + ao lado do select), e 6px de diferenca
-     entre eles deixa a linha serrilhada. */
-  padding: 12px 16px;
-  border: none;
+     entre eles deixa a linha serrilhada.
+     A CONTA TEM DE FECHAR com a do campo (13px de folga + 1px de borda, ver
+     `input, select, textarea`). Era 12px sem borda: todo botão ficava 4px mais
+     baixo que o campo ao lado — a varredura de 11/10/2026 achou isso em Buscar,
+     Filtrar e Adicionar de várias telas. A borda transparente ocupa o mesmo
+     1px sem aparecer. */
+  padding: 13px 16px;
+  border: 1px solid transparent;
   border-radius: 10px;
   background: var(--primary);
   color: var(--on-primary);
@@ -1822,8 +1827,24 @@ tr[data-detail] { cursor: pointer; }
   background: var(--panel);
 }
 
-.nfe-check-col { width: 38px; text-align: center; }
-.nfe-check-col input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--success); }
+/* A seleção da lista de NF-e é o interruptor padrão (a regra global de
+   checkbox, 40x22). Esta coluna forçava 16x16 — sobra de quando era caixinha — e a
+   bolinha de 18px saía por baixo do trilho achatado. A coluna cabe o
+   interruptor inteiro. */
+.nfe-check-col { width: 56px; text-align: center; }
+.nfe-check-col input { cursor: pointer; }
+/* Lista de NF-e (11/10/2026): o Filtrar encosta na base dos campos da linha
+   (a altura já é a mesma — ver `button`), a empresa não quebra em duas
+   linhas e o "Por página" fica junto da paginação. */
+/* Os filtros em linha flexível, e não na grade da .row: na grade o botão
+   ocupava uma coluna inteira e, a 1400px, caía sozinho numa segunda linha. */
+.nfe-filtros { display: flex; flex-wrap: wrap; gap: 16px 22px; align-items: flex-end; }
+.nfe-filtros > .cadastro-field { flex: 1 1 120px; min-width: 0; }
+.nfe-filtros > .nfe-filtro-busca { flex: 2 1 200px; }
+.nfe-filtro-acao { flex: 0 0 auto; display: flex; }
+.nfe-empresa { white-space: nowrap; }
+.nfe-por-pagina { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-left: 12px; }
+.nfe-por-pagina select { width: auto; }
 tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transparent); }
 
 @media (max-width: 640px) {

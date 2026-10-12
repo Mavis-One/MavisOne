@@ -59,7 +59,11 @@ const CHAVES_NFE = [
   'clientSupplierId', 'clientDocument', 'clientAddress', 'clientCity',
   'clientState', 'clientStateRegistration', 'taxNotes', 'paymentType',
   'installmentsCount', 'installmentIntervalDays', 'orderId', 'createdBy',
-  'createdByName', 'createdAt', 'updatedAt', 'items'
+  'createdByName', 'createdAt', 'updatedAt', 'items',
+  // A ÚNICA chave acrescentada ao contrato (11/10/2026): a lista de NF-e
+  // passou a mostrar a empresa de cada nota, e a manual precisa dizer de qual
+  // estabelecimento é. Acrescentar é compatível; tirar qualquer outra, não.
+  'estabelecimentoId'
 ];
 const CHAVES_ITEM = ['id', 'code', 'description', 'quantity', 'unitPrice', 'total', 'cfop', 'ncm'];
 
@@ -85,9 +89,9 @@ const docSintetico = {
 const comoNfe = fiscal.comoNfe(docSintetico);
 const faltando = CHAVES_NFE.filter((k) => !(k in comoNfe));
 const sobrando = Object.keys(comoNfe).filter((k) => !CHAVES_NFE.includes(k));
-check('nenhuma das 24 chaves do contrato faltando', faltando.length === 0, faltando.join(', ') || 'nenhuma');
+check('nenhuma das 25 chaves do contrato faltando', faltando.length === 0, faltando.join(', ') || 'nenhuma');
 check('e nenhuma chave a mais', sobrando.length === 0, sobrando.join(', ') || 'nenhuma');
-check('  sao 24', CHAVES_NFE.length === 24, String(CHAVES_NFE.length));
+check('  sao 25 (as 24 originais + estabelecimentoId)', CHAVES_NFE.length === 25, String(CHAVES_NFE.length));
 
 const item = comoNfe.items[0];
 const faltaItem = CHAVES_ITEM.filter((k) => !(k in item));
