@@ -50,5 +50,14 @@ check('OP: campo Representante no formulário', /name: 'representanteId', label:
 check('  coluna e filtro na lista de ordens', /label: 'Representante', render: \(i, meta\) => nomeDe\(meta\.representantes, i\.representanteId\)/.test(pcp) && /\{ name: 'representanteId', label: 'Representante', type: 'select', options:/.test(pcp));
 check('  e as duas telas pedem a lista', /R\.ordens = C\.makeListScreen\(\{\s*\.\.\.baseComRepresentantes/.test(pcp) && /R\.nova_ordem = C\.makeFormScreen\(\{\s*\.\.\.baseComRepresentantes/.test(pcp));
 
+console.log('\n--- 5. setor: o Responsável é um representante ---');
+check('Novo Setor: Responsável lista SÓ os representantes', /name: 'responsibleId', label: 'Responsável', type: 'select', empty: 'Sem responsável', options: \(meta\) => meta\.representantes \|\| \[\]/.test(pcp));
+check('  e as telas de setor pedem a lista', /R\.setores = C\.makeListScreen\(\{\s*\.\.\.baseSetores/.test(pcp) && /R\.novo_setor = C\.makeFormScreen\(\{\s*\.\.\.baseSetores/.test(pcp) && /baseSetores = \{ \.\.\.baseSemProdutos, metaEndpoint: '\/api\/pcp\/meta\?produtos=0&representantes=1' \}/.test(pcp));
+check('  setor antigo com responsável do RH não vira traço na lista', /representante !== '-' \? representante : nomeDe\(meta\.employees, i\.responsibleId\)/.test(pcp));
+const migEa = ler('banco/migrations/fase-ea-responsavel-do-setor-e-representante.sql');
+check('  o banco aceita o id do Cadastros (sai a chave para hr_employees)', /c\.contype = 'f'[\s\S]{0,80}a\.attname = 'responsible_id'[\s\S]{0,120}alter table pcp_sectors drop constraint %I/.test(migEa));
+check('  RECRIAR-DO-ZERO inclui a fase EA', ler('banco/RECRIAR-DO-ZERO.sql').includes('fase-ea-responsavel-do-setor-e-representante.sql'));
+check('Inspetor da qualidade continua vindo do RH', /name: 'inspectorId', label: 'Inspetor', type: 'select', empty: 'Não informado', options: \(meta\) => meta\.employees/.test(pcp));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

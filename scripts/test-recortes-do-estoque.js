@@ -93,10 +93,14 @@ function telas(fonte) {
   return partes.map((p) => ({ chave: p.match(/^([a-z_]+)/)[1], corpo: p }));
 }
 const pcpTelas = telas(pcp);
-const pcpErradas = pcpTelas.filter((t) => /\.\.\.baseSemProdutos/.test(t.corpo) && /meta\.products/.test(t.corpo)).map((t) => t.chave);
+// `baseSetores` (12/10/2026) é a baseSemProdutos mais os representantes: as
+// telas de setor continuam sem catálogo, só ganharam o Responsável.
+const SEM_CATALOGO = /\.\.\.base(SemProdutos|Setores)\b/;
+const pcpErradas = pcpTelas.filter((t) => SEM_CATALOGO.test(t.corpo) && /meta\.products/.test(t.corpo)).map((t) => t.chave);
 const pcpAToa = pcpTelas.filter((t) => /\.\.\.base,/.test(t.corpo) && !/meta\.products|nomeProduto/.test(t.corpo)).map((t) => t.chave);
-check('PCP: telas sem produto dispensam o catálogo', pcpTelas.filter((t) => /\.\.\.baseSemProdutos/.test(t.corpo)).length === 6,
-  pcpTelas.filter((t) => /\.\.\.baseSemProdutos/.test(t.corpo)).map((t) => t.chave).join(', '));
+check('PCP: telas sem produto dispensam o catálogo', pcpTelas.filter((t) => SEM_CATALOGO.test(t.corpo)).length === 6,
+  pcpTelas.filter((t) => SEM_CATALOGO.test(t.corpo)).map((t) => t.chave).join(', '));
+check('  baseSetores também não pede o catálogo', /baseSetores = \{ \.\.\.baseSemProdutos, metaEndpoint: '\/api\/pcp\/meta\?produtos=0&/.test(pcp));
 check('  e nenhuma delas lê meta.products', pcpErradas.length === 0, pcpErradas.join(', ') || 'nenhuma');
 check('  e quem mantém o catálogo o lê', pcpAToa.length === 0, pcpAToa.join(', ') || 'nenhuma');
 check('  `baseSemProdutos` é o meta com produtos=0', /const baseSemProdutos = \{ \.\.\.base, metaEndpoint: '\/api\/pcp\/meta\?produtos=0' \};/.test(pcp));

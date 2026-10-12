@@ -16,6 +16,15 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   // Cadastros com esse papel. Só estas telas pedem a lista, que custa a
   // leitura do cadastro inteiro.
   const baseComRepresentantes = { ...base, metaEndpoint: '/api/pcp/meta?representantes=1' };
+  // O RESPONSÁVEL DO SETOR é um representante (decisão do usuário, 12/10/2026):
+  // só os representantes do Cadastros, e não mais o quadro do RH.
+  const baseSetores = { ...baseSemProdutos, metaEndpoint: '/api/pcp/meta?produtos=0&representantes=1' };
+  // Setor gravado antes da troca aponta para um colaborador do RH: a lista
+  // mostra o nome dele em vez de um traço, até alguém escolher o representante.
+  const responsavelDoSetor = (i, meta) => {
+    const representante = nomeDe(meta.representantes, i.responsibleId);
+    return representante !== '-' ? representante : nomeDe(meta.employees, i.responsibleId);
+  };
 
   // ETAPAS são fixas: é por elas que o código sabe que a ordem terminou. Os
   // STATUS que a empresa cadastra ("Aguardando matéria-prima", "Em setup",
@@ -239,7 +248,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
 
   // ------------------------------------------------------------------ Setores
   R.setores = C.makeListScreen({
-    ...baseSemProdutos,
+    ...baseSetores,
     title: 'Setores PCP',
     tableTitle: 'Setores',
     endpoint: '/api/pcp/sectors',
@@ -252,7 +261,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     columns: [
       { label: 'Seq.', render: (i) => `<strong>${Number(i.sequencia || 0)}</strong>` },
       { label: 'Setor', render: (i) => `<strong>${C.escape(i.name || '-')}</strong>` },
-      { label: 'Responsável', render: (i, meta) => nomeDe(meta.employees, i.responsibleId) },
+      { label: 'Responsável', render: responsavelDoSetor },
       { label: 'Capacidade', render: (i) => (i.capacidadeHora ? `${qtd(i.capacidadeHora)}/h` : '-') },
       { label: 'Descrição', render: (i) => C.escape(i.description || '-') },
       { label: 'Situação', render: (i) => C.statusBadge(i.active === false ? 'inativo' : 'ativo') }
@@ -260,7 +269,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   });
 
   R.novo_setor = C.makeFormScreen({
-    ...baseSemProdutos,
+    ...baseSetores,
     title: 'Novo Setor PCP',
     entityLabel: 'setor',
     endpoint: '/api/pcp/sectors',
@@ -273,7 +282,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         fields: [
           { name: 'name', label: 'Nome do setor', required: true },
           { name: 'sequencia', label: 'Sequência no fluxo', type: 'number', step: '1', min: 0, default: 0 },
-          { name: 'responsibleId', label: 'Responsável', type: 'select', empty: 'Sem responsável', options: (meta) => meta.employees || [] }
+          { name: 'responsibleId', label: 'Responsável', type: 'select', empty: 'Sem responsável', options: (meta) => meta.representantes || [] }
         ]
       },
       {
