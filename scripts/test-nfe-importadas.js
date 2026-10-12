@@ -186,6 +186,23 @@ check('  duas candidatas = ambígua, não escolhe', /if \(candidatas\.length > 1
 check('a rota de completar é só de administrador',
   /pathname === '\/api\/fiscal\/importacao\/completar-chaves' && req\.method === 'POST'\) \{\s*if \(!\(await ehAdmin\(user\)\)\) return sendJson/.test(server));
 check('o script de chaves só envia com --enviar', /if \(!tem\('enviar'\)\) \{/.test(ler('scripts/completar-chaves-nfe.js')));
+check('  e lê PDF, planilha, XML e texto (SPED)', /const LIDOS = \/\\\.\(pdf\|xlsx\|csv\|xml\|txt\)\$\/i;/.test(ler('scripts/completar-chaves-nfe.js')));
+
+console.log('\n--- 6. entradas de fornecedor pela nota recebida (12/10/2026) ---');
+// A entrada do Viper não tem o CNPJ do fornecedor; número repete entre
+// fornecedores. Casa empresa + número + mês + VALOR, 1 para 1 nos dois
+// sentidos (na matriz: 455 de 455 desde maio/2026).
+const recebidas = dbImp.slice(dbImp.indexOf('async function completarChavesDasRecebidas'), dbImp.indexOf('async function listarEmitidasParaLista'));
+check('casa CNPJ destinatário, número, mês e valor', /r\.cnpj_destinatario = i\.cnpj and r\.numero = i\.numero and r\.mes = i\.mes and r\.valor = i\.valor/.test(recebidas));
+check('  só entrada de terceiro importada e ainda sem chave', /d\.origem = 'IMPORTACAO' and d\.chave_acesso is null and not d\.emissao_propria/.test(recebidas));
+check('  uma entrada com uma nota (having count = 1)', /having count\(\*\) = 1/.test(recebidas));
+check('  e a nota com uma entrada só', /\(select count\(\*\) from pares p where p\.chave = u\.chave\) = 1/.test(recebidas));
+check('  nunca repete chave que já está em outro documento', /not exists \(select 1 from fiscal_documentos x where x\.chave_acesso = u\.chave\)/.test(recebidas));
+check('  e não cria nada (só update)', !/insert into/.test(recebidas));
+check('a busca na SEFAZ completa sozinha ao terminar, sem derrubar a busca',
+  /try \{ chavesCompletadas = \(await nfeImportadasDb\.completarChavesDasRecebidas\(\)\)\.completadas; \} catch/.test(server));
+check('a rota manual é só de administrador',
+  /pathname === '\/api\/fiscal\/importacao\/completar-chaves-recebidas' && req\.method === 'POST'\) \{\s*if \(!\(await ehAdmin\(user\)\)\) return sendJson/.test(server));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

@@ -344,7 +344,8 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
             nsu: tela.busca.nsu, chave: tela.busca.chave
           })
         });
-        const resumo = `${r.encontrados} ${r.encontrados === 1 ? 'documento' : 'documentos'} · ${r.novos} ${r.novos === 1 ? 'novo' : 'novos'}`;
+        const resumo = `${r.encontrados} ${r.encontrados === 1 ? 'documento' : 'documentos'} · ${r.novos} ${r.novos === 1 ? 'novo' : 'novos'}`
+          + (r.chavesCompletadas ? ` · ${r.chavesCompletadas} ${r.chavesCompletadas === 1 ? 'entrada importada ganhou a chave' : 'entradas importadas ganharam a chave'}` : '');
         showToast(r.faltaBuscar ? `${resumo}. Ainda há notas a buscar — repita a busca.` : `${resumo}.`, 'success');
       } catch (erro) {
         showToast(erro.message || 'Erro ao consultar a SEFAZ.', 'error');

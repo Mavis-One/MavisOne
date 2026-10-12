@@ -12720,10 +12720,17 @@ async function tratarRequisicao(req, res) {
             detail: { cnpj, modo, encontrados: documentos.length, novos }
           });
 
+          // As entradas de fornecedor importadas do Viper sem chave ganham a chave
+          // da nota recebida que casa com elas (empresa + número + mês + valor,
+          // 1 para 1). Falhar aqui não derruba a busca.
+          let chavesCompletadas = 0;
+          try { chavesCompletadas = (await nfeImportadasDb.completarChavesDasRecebidas()).completadas; } catch (erroChaves) { chavesCompletadas = 0; }
+
           return sendJson(res, {
             success: true,
             encontrados: documentos.length,
             novos,
+            chavesCompletadas,
             ponteiro: ponteiroFinal,
             // A SEFAZ entrega no maximo 50 por consulta: dizer que ainda falta e o
             // que evita alguem achar que sincronizou tudo com uma clicada.
@@ -13010,6 +13017,15 @@ async function tratarRequisicao(req, res) {
       // COMPLETAR A CHAVE das notas importadas que vieram sem ela (12/10/2026).
       // Recebe chaves soltas (DANFE, carta de correção) e só PREENCHE nota que
       // já existe — nunca cria. Ver lib/db/nfe-importadas.js/completarChaves.
+      // A mesma coisa para as ENTRADAS de fornecedor, a partir das notas
+      // recebidas já gravadas pela busca na SEFAZ (sem rede). A busca já chama
+      // isto ao terminar; a rota existe para rodar de novo sem buscar.
+      if (pathname === '/api/fiscal/importacao/completar-chaves-recebidas' && req.method === 'POST') {
+        if (!(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador completa chaves de notas importadas.' }, 403);
+        const resultado = await nfeImportadasDb.completarChavesDasRecebidas();
+        return sendJson(res, { success: true, ...resultado });
+      }
+
       if (pathname === '/api/fiscal/importacao/completar-chaves' && req.method === 'POST') {
         if (!(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador completa chaves de notas importadas.' }, 403);
         const body = await readBody(req);
