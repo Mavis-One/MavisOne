@@ -5776,6 +5776,45 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
  * produto que já estava gravado.
  */
 /**
+ * DEPÓSITOS DE MONTADOS E DESMONTADOS (fase EE, 13/10/2026).
+ *
+ * "A classificação de montados e desmontados só na empresa matriz, para
+ * organização de estoque e conexão com o PCP" — decisão do usuário. A matriz é
+ * a SAL INFINITY PLUS 43.792.899/0001-35; as empresas moram no data/db.json.
+ */
+const CNPJ_MATRIZ_DA_MONTAGEM = '43792899000135';
+const CLASSIFICACOES_DE_DEPOSITO = ['desmontados', 'montados'];
+
+function ehEmpresaMatriz(companyId) {
+  if (!companyId) return false;
+  const empresa = (loadData().companies || []).find((c) => c.id === companyId);
+  return Boolean(empresa) && String(empresa.document || empresa.cnpj || '').replace(/\D/g, '') === CNPJ_MATRIZ_DA_MONTAGEM;
+}
+
+/** '' quando aceita; senão a mensagem. Um depósito de cada classificação. */
+function recusaDaClassificacao(classificacao, companyId, depositos, idAtual) {
+  if (!classificacao) return '';
+  if (!CLASSIFICACOES_DE_DEPOSITO.includes(classificacao)) return 'Classificação inválida: use desmontados ou montados.';
+  if (!ehEmpresaMatriz(companyId)) return 'A classificação de montados e desmontados só vale para depósito da matriz (SAL INFINITY PLUS 43.792.899/0001-35).';
+  const outro = (depositos || []).find((d) => d.classificacao === classificacao && d.id !== idAtual);
+  if (outro) return `O depósito de ${classificacao} já é o "${outro.name}". Tire a classificação dele antes.`;
+  return '';
+}
+
+/** Os depósitos que a baixa de montagem usa (origem e destino). */
+async function depositosDaMontagem() {
+  const depositos = await db.getDeposits();
+  const desm = depositos.find((d) => d.classificacao === 'desmontados') || null;
+  const mont = depositos.find((d) => d.classificacao === 'montados') || null;
+  return {
+    depositoDesmontadasId: desm ? desm.id : '',
+    depositoDesmontadasNome: desm ? desm.name : '',
+    depositoMontadasId: mont ? mont.id : '',
+    depositoMontadasNome: mont ? mont.name : ''
+  };
+}
+
+/**
  * TEMPOS, JORNADAS E PROGRAMAÇÃO DO PCP (fase EB): a mensagem em português
  * antes do CHECK/UNIQUE do banco, que é quem garante. `id` é o registro em
  * edição (o PUT pode trazer só parte dos campos). Devolve '' quando aceita.
@@ -9482,27 +9521,12 @@ async function tratarRequisicao(req, res) {
     try {
       const usuario = await getCurrentUser(req);
       if (!usuario || !usuario.allowedModules.includes('pcp')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      // Fase EE: os depósitos da baixa são os CLASSIFICADOS (desmontados e
+      // montados, só na matriz) — não há mais escolha nesta tela.
       if (req.method === 'GET') {
-        const { rows } = await consultarBanco('select deposito_desmontadas_id, deposito_montadas_id from pcp_config where id = 1');
-        const linha = rows[0] || {};
-        return sendJson(res, { config: { depositoDesmontadasId: linha.deposito_desmontadas_id || '', depositoMontadasId: linha.deposito_montadas_id || '' } });
+        return sendJson(res, { config: await depositosDaMontagem() });
       }
-      if (req.method === 'PUT') {
-        const corpo = await readBody(req);
-        const origem = String(corpo.depositoDesmontadasId || '').trim();
-        const destino = String(corpo.depositoMontadasId || '').trim();
-        if (origem && destino && origem === destino) {
-          return sendJson(res, { error: 'O depósito de desmontadas e o de montadas não podem ser o mesmo.' }, 400);
-        }
-        await consultarBanco(
-          `insert into pcp_config (id, deposito_desmontadas_id, deposito_montadas_id, atualizado_em) values (1, nullif($1, ''), nullif($2, ''), now())
-           on conflict (id) do update set deposito_desmontadas_id = excluded.deposito_desmontadas_id,
-             deposito_montadas_id = excluded.deposito_montadas_id, atualizado_em = now()`,
-          [origem, destino]
-        );
-        return sendJson(res, { config: { depositoDesmontadasId: origem, depositoMontadasId: destino } });
-      }
-      return sendJson(res, { error: 'Método não suportado' }, 405);
+      return sendJson(res, { error: 'Os depósitos da baixa vêm da classificação em Cadastros › Depósitos.' }, 405);
     } catch (erro) {
       return sendErro(res, erro, 'Erro na configuração do PCP', 400);
     }
@@ -9542,11 +9566,9 @@ async function tratarRequisicao(req, res) {
         if (quantidade > falta + 1e-9) {
           return sendJson(res, { error: `Só faltam ${falta.toLocaleString('pt-BR')} para montar nesta linha.` }, 400);
         }
-        const { rows: cfg } = await consultarBanco('select deposito_desmontadas_id, deposito_montadas_id from pcp_config where id = 1');
-        const origem = (cfg[0] || {}).deposito_desmontadas_id || '';
-        const destino = (cfg[0] || {}).deposito_montadas_id || '';
+        const { depositoDesmontadasId: origem, depositoMontadasId: destino } = await depositosDaMontagem();
         if (!origem || !destino) {
-          return sendJson(res, { error: 'Escolha o depósito de desmontadas e o de montadas antes de dar baixa.' }, 400);
+          return sendJson(res, { error: 'Classifique os depósitos da matriz (desmontados e montados) em Cadastros › Depósitos antes de dar baixa.' }, 400);
         }
 
         const { data, productsById } = await loadStockContextDosProdutos([item.productId]);
@@ -14918,7 +14940,7 @@ async function tratarRequisicao(req, res) {
     if (!user || !user.allowedModules.includes('cadastros')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
     }
-    return sendJson(res, { deposits: await db.getDeposits() });
+    return sendJson(res, { deposits: (await db.getDeposits()).map((d) => ({ ...d, daMatriz: ehEmpresaMatriz(d.companyId) })) });
   }
 
   if (pathname === '/api/cadastros/deposits' && req.method === 'POST') {
@@ -14944,10 +14966,14 @@ async function tratarRequisicao(req, res) {
       if (companyId && !(loadData().companies || []).some((c) => c.id === companyId)) {
         return sendJson(res, { error: 'Empresa não encontrada.' }, 404);
       }
+      const classificacao = String(body.classificacao || '').trim();
+      const recusaClassificacao = recusaDaClassificacao(classificacao, companyId, deposits, null);
+      if (recusaClassificacao) return sendJson(res, { error: recusaClassificacao }, 400);
       const created = await db.createDeposit({
         name,
         code,
         companyId,
+        classificacao,
         status: String(body.status || 'ativo').trim() || 'ativo',
         address: body.address || '',
         city: body.city || '',
@@ -14989,10 +15015,14 @@ async function tratarRequisicao(req, res) {
       if (companyId && !(loadData().companies || []).some((c) => c.id === companyId)) {
         return sendJson(res, { error: 'Empresa não encontrada.' }, 404);
       }
+      const classificacao = String(body.classificacao ?? current.classificacao ?? '').trim();
+      const recusaClassificacao = recusaDaClassificacao(classificacao, companyId, deposits, id);
+      if (recusaClassificacao) return sendJson(res, { error: recusaClassificacao }, 400);
       const updated = await db.updateDeposit(id, {
         name,
         code,
         companyId,
+        classificacao,
         status: String(body.status ?? current.status ?? 'ativo').trim() || 'ativo',
         address: body.address ?? current.address ?? '',
         city: body.city ?? current.city ?? '',

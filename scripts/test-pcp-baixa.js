@@ -39,7 +39,9 @@ const server = semComentarios(ler('server.js'));
 const bloco = server.slice(server.indexOf("const baixaMatch = pathname.match("), server.indexOf('const rotaModulo = pathname.match('));
 check('rotas antes da rota genérica do PCP', bloco.length > 0 && server.indexOf("if (pathname === '/api/pcp/config')") < server.indexOf('const rotaModulo = pathname.match('));
 check('não baixa mais do que falta', /if \(quantidade > falta \+ 1e-9\)/.test(bloco));
-check('exige os dois depósitos escolhidos', /Escolha o depósito de desmontadas e o de montadas antes de dar baixa\./.test(bloco));
+// Fase EE (13/10/2026): os depósitos são os da matriz classificados como
+// desmontados e montados, e não mais escolhidos nesta tela.
+check('exige os depósitos classificados da matriz', /await depositosDaMontagem\(\);\s*if \(!origem \|\| !destino\)/.test(bloco) && /Classifique os depósitos da matriz/.test(bloco));
 check('confere o saldo na origem (desmontadas) antes', /assertMovementIsPossible\(data, productsById, \{\s*productId: item\.productId, depositId: origem, type: 'saida'/.test(bloco));
 check('saída das desmontadas e entrada nas montadas', /type: 'saida', depositId: origem/.test(bloco) && /type: 'entrada', depositId: destino/.test(bloco));
 check('baixa, total montado e movimentos na MESMA transação', /commitStockMovements\(data, \[saida, entrada\], productsById, \{\s*tambemNaTransacao:/.test(bloco));
@@ -51,11 +53,11 @@ check('quantidade não fica abaixo do montado; o total montado não vem do corpo
 
 console.log('\n--- 3. tela ---');
 const mont = semComentarios(ler('public/modules/pcp/subs/montadores.js'));
-check('escolhe os dois depósitos (salvos no servidor)', /id="pcpMontDesmontadas"/.test(mont) && /id="pcpMontMontadas"/.test(mont) && /api\('\/api\/pcp\/config', \{\s*method: 'PUT'/.test(mont));
+check('mostra os depósitos da baixa (sem escolha manual)', /config\.depositoDesmontadasNome/.test(mont) && /config\.depositoMontadasNome/.test(mont) && !/id="pcpMontDesmontadas"/.test(mont) && !/method: 'PUT'[\s\S]{0,40}pcp\/config|pcp\/config'[\s\S]{0,40}method: 'PUT'/.test(mont));
 check('coluna Montadas (x/y) e "Dar baixa" com o que falta sugerido', /<th>Montadas<\/th>/.test(mont) && /value="\$\{falta\}"/.test(mont) && /data-baixa="/.test(mont));
 // Era desligado (13/10/2026): o clique não fazia nada e o usuário achou que o
 // botão estava quebrado. Agora avisa o que falta.
-check('sem depósitos, o clique AVISA o que falta', /if \(!depositosProntos\) \{\s*showToast\('Antes de dar baixa, escolha no topo/.test(mont) && !/depositosProntos \? '' : 'disabled/.test(mont));
+check('sem depósitos, o clique AVISA o que falta', /if \(!depositosProntos\) \{\s*showToast\('Antes de dar baixa, classifique os depósitos/.test(mont) && !/depositosProntos \? '' : 'disabled/.test(mont));
 check('"Desfazer" estorna a última baixa da linha', /data-desfazer=/.test(mont) && /method: 'DELETE'/.test(mont));
 check('linha montada mostra "Montado"', /C\.badge\('Montado', 'success'\)/.test(mont));
 

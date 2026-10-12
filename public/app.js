@@ -7091,6 +7091,10 @@ async function loadModule(moduleName) {
                 ${field('Responsável', 'manager', depositDraft.manager || '')}
                 ${field('Observações', 'notes', depositDraft.notes || '')}
               </div>
+              ${depositDraft.daMatriz ? `
+              <div class="cadastro-grid cadastro-grid-3">
+                ${selectField('Classificação (montagem PCP)', 'classificacao', depositDraft.classificacao || '', [{ value: '', label: 'Nenhuma' }, { value: 'desmontados', label: 'Desmontados' }, { value: 'montados', label: 'Montados' }])}
+              </div>` : ''}
               ${depositDraft.error ? `<p class="form-error">${escapeHtml(depositDraft.error)}</p>` : ''}
             `)}
 
@@ -7188,12 +7192,13 @@ async function loadModule(moduleName) {
             <div class="cadastro-section-body">
               ${filteredDeposits.length ? `
                 <table class="table table-actions">
-                  <thead><tr><th>Nome</th><th>Código</th><th>Cidade/UF</th><th>Responsável</th><th>Status</th><th>Ações</th></tr></thead>
+                  <thead><tr><th>Nome</th><th>Código</th><th>Montagem</th><th>Cidade/UF</th><th>Responsável</th><th>Status</th><th>Ações</th></tr></thead>
                   <tbody>
                     ${filteredDeposits.map((deposit) => `
                       <tr>
                         <td>${escapeHtml(deposit.name || '-')}</td>
                         <td>${escapeHtml(deposit.code || '-')}</td>
+                        <td>${deposit.classificacao === 'desmontados' ? '<span class="badge warning">Desmontados</span>' : (deposit.classificacao === 'montados' ? '<span class="badge success">Montados</span>' : '-')}</td>
                         <td>${escapeHtml([deposit.city, deposit.state].filter(Boolean).join('/') || '-')}</td>
                         <td>${escapeHtml(deposit.manager || '-')}</td>
                         <td>${escapeHtml(deposit.status || 'ativo')}</td>
@@ -8410,6 +8415,8 @@ async function loadModule(moduleName) {
           manager: String(formData.get('manager') || '').trim(),
           notes: String(formData.get('notes') || '').trim()
         };
+        // Fase EE: só existe no formulário de depósito da matriz.
+        if (formData.has('classificacao')) payload.classificacao = String(formData.get('classificacao') || '');
 
         if (!payload.name) {
           showToast('Informe o nome do depósito.', 'warning');

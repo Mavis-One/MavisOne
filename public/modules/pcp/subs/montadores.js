@@ -135,19 +135,10 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
           </div></section>` : `
         <section class="cadastro-section">
           <div class="cadastro-section-body">
-            <div class="form-grid pcp-mont-depositos">
-              <label class="cadastro-field"><span>Baixa tira do depósito (desmontadas)</span>
-                <select id="pcpMontDesmontadas">
-                  <option value="">Selecione</option>
-                  ${(meta.deposits || []).map((d) => `<option value="${C.escape(d.id)}" ${d.id === config.depositoDesmontadasId ? 'selected' : ''}>${C.escape(d.name)}</option>`).join('')}
-                </select>
-              </label>
-              <label class="cadastro-field"><span>E põe no depósito (montadas)</span>
-                <select id="pcpMontMontadas">
-                  <option value="">Selecione</option>
-                  ${(meta.deposits || []).map((d) => `<option value="${C.escape(d.id)}" ${d.id === config.depositoMontadasId ? 'selected' : ''}>${C.escape(d.name)}</option>`).join('')}
-                </select>
-              </label>
+            <div class="pcp-mont-depositos" id="pcpMontDepositos">
+              ${depositosProntos
+                ? `<span class="muted">Baixa:</span> <strong>${C.escape(config.depositoDesmontadasNome)}</strong> <span class="badge warning">desmontados</span> <span class="muted">→</span> <strong>${C.escape(config.depositoMontadasNome)}</strong> <span class="badge success">montados</span>`
+                : `<span class="pcp-montador-passou">Os depósitos de desmontados e montados da matriz não estão classificados.</span> <button type="button" class="secondary" id="pcpMontIrDepositos">Classificar em Cadastros › Depósitos</button>`}
             </div>
             <form id="pcpMontForm" class="form-grid pcp-mont-novo">
               <label class="cadastro-field"><span>Dia</span>
@@ -264,24 +255,15 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         catch (erro) { showToast(erro.message || 'Erro ao mudar a quantidade.', 'error'); }
       });
     });
-    // Os dois depósitos ficam guardados no servidor (pcp_config): valem para
-    // todos, até alguém trocar.
-    const salvarDepositos = async () => {
-      try {
-        await api('/api/pcp/config', {
-          method: 'PUT',
-          body: JSON.stringify({
-            depositoDesmontadasId: document.getElementById('pcpMontDesmontadas').value,
-            depositoMontadasId: document.getElementById('pcpMontMontadas').value
-          })
-        });
-      } catch (erro) {
-        showToast(erro.message || 'Erro ao salvar os depósitos.', 'error');
-      }
-      recarregar();
-    };
-    document.getElementById('pcpMontDesmontadas')?.addEventListener('change', salvarDepositos);
-    document.getElementById('pcpMontMontadas')?.addEventListener('change', salvarDepositos);
+    // Fase EE: os depósitos da baixa são os da matriz classificados como
+    // desmontados e montados (Cadastros › Depósitos); aqui só se mostram.
+    document.getElementById('pcpMontIrDepositos')?.addEventListener('click', () => {
+      state.activeModule = 'cadastros';
+      state.activeSub = 'deposits';
+      state.selectedModule = null;
+      renderApp();
+      loadModule('cadastros');
+    });
 
     // DAR BAIXA: transfere do depósito de desmontadas para o de montadas
     // (fase ED). A quantidade sugerida é o que falta; dá para baixar menos.
@@ -294,10 +276,8 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         // o clique não fazia nada e o motivo só aparecia passando o mouse — no
         // celular, nem isso. Agora diz o que falta e leva até o campo.
         if (!depositosProntos) {
-          showToast('Antes de dar baixa, escolha no topo de qual depósito sai (desmontadas) e para qual vai (montadas).', 'warning');
-          const campo = document.getElementById(config.depositoDesmontadasId ? 'pcpMontMontadas' : 'pcpMontDesmontadas');
-          campo?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          campo?.focus();
+          showToast('Antes de dar baixa, classifique os depósitos de desmontados e montados da matriz em Cadastros › Depósitos.', 'warning');
+          document.getElementById('pcpMontDepositos')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
           return;
         }
         if (!(quantidade > 0)) {
