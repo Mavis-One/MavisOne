@@ -108,12 +108,12 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     content.innerHTML = `
       <div class="cadastro-page-head">
         <div>
-          <h3>Extrato Open Finance</h3>
+          <h3>Conciliação Bancária</h3>
           <p class="muted">${result.total} movimentação${result.total === 1 ? '' : 'ões'}</p>
         </div>
         <div class="cadastro-list-actions">
           <button type="button" id="extratoNewBtn">+ Nova movimentação</button>
-          <button type="button" class="secondary" id="extratoImportBtn">Importar CSV</button>
+          <button type="button" class="secondary" id="extratoImportBtn">Importar extrato (OFX/CSV)</button>
           <button type="button" class="secondary" id="extratoRefreshBtn">Atualizar</button>
         </div>
       </div>
@@ -345,10 +345,12 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal modal-lg">
-        <h3>Importar extrato (CSV)</h3>
+        <h3>Importar extrato</h3>
         <form id="extratoImportForm" class="form-grid">
           <label>Conta bancária de destino<select name="bankAccountId" required><option value="">Selecione</option>${bankAccountOptions('')}</select></label>
-          <label>Conteúdo CSV<textarea name="csvText" rows="8" placeholder="data,descricao,valor,tipo
+          <label>Arquivo do banco (OFX ou CSV)<input type="file" name="arquivo" id="extratoImportArquivo" accept=".ofx,.OFX,.csv,.CSV,.txt" /></label>
+          <p class="muted" id="extratoImportResumo" hidden></p>
+          <label>Ou cole o CSV<textarea name="csvText" rows="6" placeholder="data,descricao,valor,tipo
 2026-08-01,PIX recebido Cliente X,2500,entrada
 2026-08-02,Tarifa bancaria,25.50,saida"></textarea></label>
           <div class="modal-actions">
@@ -361,6 +363,37 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (event) => { if (event.target === overlay) closeExtratoModal(); });
     document.getElementById('extratoImportCancel')?.addEventListener('click', closeExtratoModal);
+    // O ARQUIVO É LIDO AQUI, no navegador (shared/ofx.js): o OFX vira as
+    // mesmas linhas que o CSV manda, com o FITID de cada lançamento — é ele que
+    // deixa reimportar o arquivo sem duplicar. CSV escolhido como arquivo cai
+    // no campo de texto, como se tivesse sido colado.
+    let linhasDoOfx = null;
+    const resumo = document.getElementById('extratoImportResumo');
+    document.getElementById('extratoImportArquivo')?.addEventListener('change', async (event) => {
+      linhasDoOfx = null;
+      resumo.hidden = true;
+      const arquivo = event.target.files && event.target.files[0];
+      if (!arquivo) return;
+      try {
+        const bytes = new Uint8Array(await arquivo.arrayBuffer());
+        const texto = window.MavisOfx.decodificar(bytes);
+        if (/\.ofx$/i.test(arquivo.name) || /<OFX>/i.test(texto)) {
+          const lido = window.MavisOfx.lerOfx(texto);
+          linhasDoOfx = lido.transacoes;
+          const entradas = lido.transacoes.filter((t) => t.type === 'entrada').length;
+          resumo.textContent = `${lido.transacoes.length} lançamento(s) no arquivo (${entradas} entrada(s), ${lido.transacoes.length - entradas} saída(s))`
+            + (lido.conta.numero ? ` · conta ${lido.conta.numero}` : '')
+            + (lido.ignoradas.length ? ` · ${lido.ignoradas.length} sem data ou valor (fora)` : '');
+        } else {
+          event.target.form.querySelector('[name="csvText"]').value = texto;
+          resumo.textContent = 'CSV carregado no campo abaixo.';
+        }
+        resumo.hidden = false;
+      } catch (erro) {
+        showToast(erro.message || 'Não foi possível ler o arquivo.', 'error');
+        event.target.value = '';
+      }
+    });
     document.getElementById('extratoImportForm')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const submitBtn = event.target.querySelector('button[type="submit"]');
@@ -368,9 +401,12 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       submitBtn.disabled = true;
       const formData = new FormData(event.target);
       try {
+        const corpo = linhasDoOfx
+          ? { bankAccountId: formData.get('bankAccountId'), rows: linhasDoOfx, origem: 'ofx' }
+          : { bankAccountId: formData.get('bankAccountId'), text: formData.get('csvText') };
         const result = await api('/api/finance/bank-transactions/import', {
           method: 'POST',
-          body: JSON.stringify({ bankAccountId: formData.get('bankAccountId'), text: formData.get('csvText') })
+          body: JSON.stringify(corpo)
         });
         // `repetidas` (fase BR) precisa aparecer: sem ele, reimportar o mesmo
         // arquivo mostraria "0 importadas" e pareceria falha, quando na verdade

@@ -2013,7 +2013,9 @@ const moduleSubItems = {
     { key: 'nfe_emitidas', label: 'NF-e Emitidas', desc: 'Notas emitidas, com DANFE e XML.' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e, com pré-visualização antes de enviar.' },
     { key: 'emitir_nfe_focus', label: 'Emitir NF-e (Focus)', desc: 'Emissão pela integração Focus NFe.' },
-    { key: 'extrato_open_finance', label: 'Extrato Open Finance', desc: 'Extrato bancário puxado via Open Finance.' },
+    // O nome era "Extrato Open Finance" e escondia que a conciliação mora aqui
+    // (12/10/2026). A chave fica: atalhos e favoritos salvos apontam para ela.
+    { key: 'extrato_open_finance', label: 'Conciliação Bancária', desc: 'Extrato do banco (Open Finance, OFX ou CSV) conciliado com os lançamentos.' },
     { key: 'bancos_conectados', label: 'Bancos Conectados', desc: 'Bancos ligados e situação de cada conexão.' }
   ],
 
@@ -4268,6 +4270,75 @@ async function loadModule(moduleName) {
           if (direta) win.print();
         };
 
+        // CUPOM PARA IMPRESSORA TÉRMICA (12/10/2026): o mesmo pedido numa
+        // coluna de 80 ou 58 mm. A montagem do HTML mora em
+        // shared/cupom_pedido.js; aqui só se juntam os dados da tela. Abre e já
+        // manda imprimir — na bobina não há o que conferir antes.
+        const salesRecordCupom = async ({ largura }) => {
+          syncFormState();
+          const totais = computeTotals();
+          const win = window.open('', '_blank');
+          if (!win) { showToast('O navegador bloqueou a janela de impressão. Libere os pop-ups deste site e tente de novo.', 'warning'); return; }
+          win.opener = null;
+          const clienteId = formState.clientSupplierId;
+          const cliente = (await dadosDoCliente(clienteId)) || meta.directory.find((e) => e.id === clienteId);
+          if (win.closed) return;
+          const emitente = meta.emitente || null;
+          const catalogo = new Map((meta.products || []).map((p) => [p.id, p]));
+          const vendedor = meta.sellers.find((s) => s.id === formState.sellerId);
+          const aPrazo = (formState.paymentInfo && formState.paymentInfo.paymentTerm) === 'aprazo';
+          const html = window.MavisCupomPedido.montarCupom({
+            titulo: title,
+            numero: editRecord?.code ? String(editRecord.code) : '',
+            data: formState.date,
+            hora: formState.registrationTime || '',
+            validade: formState.dueDate || '',
+            status: SalesStatus.rotulo(formState.status),
+            vendedor: vendedor?.name || '',
+            emitente: emitente ? {
+              nome: emitente.nomeFantasia || emitente.razaoSocial || '',
+              cnpj: emitente.cnpj || '',
+              endereco: [[emitente.logradouro, emitente.numero].filter(Boolean).join(', '), emitente.bairro, emitente.municipio && emitente.uf ? `${emitente.municipio}-${emitente.uf}` : emitente.municipio]
+                .map((p) => String(p || '').trim()).filter(Boolean).join(' - '),
+              telefone: emitente.telefone || ''
+            } : null,
+            cliente: cliente ? {
+              nome: cliente.name || '',
+              documento: cliente.document || '',
+              telefone: cliente.phone || '',
+              endereco: [cliente.address, cliente.city && cliente.state ? `${cliente.city}-${cliente.state}` : (cliente.city || cliente.state || '')]
+                .map((p) => String(p || '').trim()).filter(Boolean).join(', ')
+            } : null,
+            itens: items.map((i) => ({
+              codigo: i.sku || '',
+              descricao: [i.name, i.classValueName, i.chassi].filter(Boolean).join(' - '),
+              quantidade: i.quantity,
+              unidade: (catalogo.get(i.productId) || {}).unidadeComercial || 'UN',
+              unitario: i.unitPrice
+            })),
+            totais: {
+              produtos: totais.valorProdutos + totais.valorServicos,
+              frete: totais.freteCobrado,
+              outros: Number(totais.despesasGerais || 0) + Number(totais.taxaMontagem || 0),
+              desconto: totais.descontoTotal,
+              total: totais.totalAmount
+            },
+            condicao: aPrazo ? 'A prazo' : 'À vista',
+            pagamentos: (payments || []).map((linha) => ({
+              forma: linha.methodName || (meta.paymentMethods.find((f) => f.id === linha.methodId) || {}).name || '',
+              valor: linha.amount,
+              vencimento: aPrazo ? linha.dueDate : ''
+            })),
+            observacao: formState.note || '',
+            // Venda a prazo: o cupom fica com o cliente assinando a dívida.
+            assinatura: aPrazo
+          }, { largura });
+          win.document.write(html);
+          win.document.close();
+          win.focus();
+          setTimeout(() => { if (!win.closed) win.print(); }, 250);
+        };
+
         // Troca de aba mexe só nas classes/`hidden`: sem redesenhar, o que já
         // foi digitado nas outras abas continua no lugar (e no FormData).
         const abrirAba = (id) => {
@@ -4292,6 +4363,7 @@ async function loadModule(moduleName) {
           escapeHtml,
           showToast,
           imprimir: salesRecordPrint,
+          imprimirCupom: salesRecordCupom,
           focarObservacoes: () => {
             // O campo mora na última aba: focar sem abri-la não mostraria nada.
             abrirAba('observacoes');

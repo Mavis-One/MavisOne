@@ -87,17 +87,20 @@ check('  começando depois do maior número que já existe',
 check('  e ela está no arquivo do zero', /create sequence if not exists sales_code_seq/.test(ler('banco/RECRIAR-DO-ZERO.sql')));
 
 console.log('--- 3. o extrato não entra duas vezes ---');
+// Desde o OFX (12/10/2026) são três índices: pelo FITID do banco, pela chave
+// dos que entraram sem FITID, e pela chave de todos. Ver o teste
+// scripts/test-ofx-conciliacao.js.
 check('a importação monta um índice do que já existe',
-  /const jaExistem = new Set\(\(data\.bankTransactions \|\| \[\]\)\.map\(chaveDaTransacao\)\);/.test(src));
+  /\(data\.bankTransactions \|\| \[\]\)\.forEach\(\(tx\) => \{\s*todas\.add\(chaveDaTransacao\(tx\)\);/.test(src));
 // Conta + data + descrição normalizada + valor + tipo: duas compras iguais no
 // mesmo dia são indistinguíveis num CSV, e importar uma só é melhor do que
 // duplicar toda vez que alguém reimporta o arquivo.
 check('  pela conta, data, descrição, valor e tipo',
   /tx\.bankAccountId, tx\.date,[\s\S]{0,200}?Number\(tx\.amount \|\| 0\)\.toFixed\(2\), tx\.type/.test(src));
 check('  com a descrição normalizada', /toLowerCase\(\)\.replace\(\/\\s\+\/g, ' '\)/.test(src));
-check('e pula o que já estava lá', /if \(jaExistem\.has\(chave\)\) \{\s*\n\s*repetidas \+= 1;/.test(src));
+check('e pula o que já estava lá', /: todas\.has\(chave\);\s*\n\s*if \(repetida\) \{\s*\n\s*repetidas \+= 1;/.test(src));
 // Duas linhas iguais DENTRO do mesmo arquivo também são uma só.
-check('  incluindo repetições dentro do próprio arquivo', /jaExistem\.add\(chave\);/.test(src));
+check('  incluindo repetições dentro do próprio arquivo', /todas\.add\(chave\);\s*\n\s*data\.bankTransactions\.push\(tx\);/.test(src));
 check('a resposta conta as repetidas', /repetidas,/.test(src));
 // Sem esse número, reimportar mostraria "0 importadas" e pareceria falha.
 check('e a tela mostra esse número',

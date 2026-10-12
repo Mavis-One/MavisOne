@@ -126,6 +126,18 @@ window.MavisSalesRecordActions = (function () {
       run: (ctx) => ctx.imprimir({ direta: true })
     },
     {
+      // Cupom para impressora térmica (12/10/2026): o pedido numa bobina de
+      // 80 ou 58 mm. Ver shared/cupom_pedido.js.
+      id: 'cupom_80', label: 'Imprimir Cupom 80mm', icon: I.printer,
+      enabled: precisaSalvar,
+      run: (ctx) => ctx.imprimirCupom({ largura: 80 })
+    },
+    {
+      id: 'cupom_58', label: 'Imprimir Cupom 58mm', icon: I.printer,
+      enabled: precisaSalvar,
+      run: (ctx) => ctx.imprimirCupom({ largura: 58 })
+    },
+    {
       id: 'email', label: 'Enviar por E-mail', icon: I.mail,
       enabled: () => SEM_INTEGRACAO
     },

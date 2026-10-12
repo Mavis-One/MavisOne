@@ -5803,9 +5803,18 @@ async function recusaDoPlanejamentoPcp(recurso, corpo, id) {
     if (outro) return montador ? 'Este dia já tem jornada ajustada para este montador.' : 'Este dia já tem jornada ajustada para este setor.';
   }
   if (recurso === 'pcp/programacao') {
+    // O total montado é da rota de baixa (fase ED); o corpo não o escreve.
+    delete corpo.quantidadeMontada;
     if (!valor('date')) return 'Informe o dia.';
     if (!String(valor('productId') || '').trim()) return 'Escolha o produto.';
     if (!(Number(valor('quantidade')) > 0)) return 'Informe a quantidade (maior que zero).';
+    const montada = Number(atual?.quantidadeMontada || 0);
+    if (montada > 0 && Number(valor('quantidade')) < montada) {
+      return `Já foram montadas ${montada.toLocaleString('pt-BR')} desta linha; a quantidade não pode ficar abaixo disso.`;
+    }
+    if (montada > 0 && atual && corpo.productId !== undefined && corpo.productId !== atual.productId) {
+      return 'Esta linha já tem baixa de montagem; o produto não pode ser trocado.';
+    }
   }
   return '';
 }
@@ -9450,6 +9459,207 @@ async function tratarRequisicao(req, res) {
     }
   }
 
+  // ==========================================================================
+  // BAIXA DE MONTAGEM (fase ED, 12/10/2026).
+  //
+  // "Um botão para dar baixa conforme o pessoal montar, e essa baixa tem que
+  // movimentar o estoque de desmontadas." A desmontada é o MESMO produto num
+  // depósito de desmontadas; dar baixa = transferir a quantidade montada desse
+  // depósito para o de montadas (decisão do usuário). Parcial: montou 3 de 6,
+  // baixa 3.
+  //
+  // Os dois movimentos de estoque, o registro da baixa e o total montado da
+  // linha entram NUMA transação (gancho `tambemNaTransacao`): ou tudo, ou
+  // nada — baixa sem movimento, ou movimento sem baixa, deixaria o estoque e a
+  // tela discordando sem ninguém saber qual está certo.
+  //
+  // Vêm antes da rota genérica de módulos, que leria "config" e "baixas" como
+  // recursos do motor — e antes de from-sale, para cada uma terminar num começo
+  // de rota que scripts/test-sync-obrigatorio.js reconhece.
+  // ==========================================================================
+  if (pathname === '/api/pcp/config') {
+    try {
+      const usuario = await getCurrentUser(req);
+      if (!usuario || !usuario.allowedModules.includes('pcp')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      if (req.method === 'GET') {
+        const { rows } = await consultarBanco('select deposito_desmontadas_id, deposito_montadas_id from pcp_config where id = 1');
+        const linha = rows[0] || {};
+        return sendJson(res, { config: { depositoDesmontadasId: linha.deposito_desmontadas_id || '', depositoMontadasId: linha.deposito_montadas_id || '' } });
+      }
+      if (req.method === 'PUT') {
+        const corpo = await readBody(req);
+        const origem = String(corpo.depositoDesmontadasId || '').trim();
+        const destino = String(corpo.depositoMontadasId || '').trim();
+        if (origem && destino && origem === destino) {
+          return sendJson(res, { error: 'O depósito de desmontadas e o de montadas não podem ser o mesmo.' }, 400);
+        }
+        await consultarBanco(
+          `insert into pcp_config (id, deposito_desmontadas_id, deposito_montadas_id, atualizado_em) values (1, nullif($1, ''), nullif($2, ''), now())
+           on conflict (id) do update set deposito_desmontadas_id = excluded.deposito_desmontadas_id,
+             deposito_montadas_id = excluded.deposito_montadas_id, atualizado_em = now()`,
+          [origem, destino]
+        );
+        return sendJson(res, { config: { depositoDesmontadasId: origem, depositoMontadasId: destino } });
+      }
+      return sendJson(res, { error: 'Método não suportado' }, 405);
+    } catch (erro) {
+      return sendErro(res, erro, 'Erro na configuração do PCP', 400);
+    }
+  }
+
+  const baixaMatch = pathname.match(/^\/api\/pcp\/baixas(?:\/([^/?]+))?$/);
+  if (baixaMatch) {
+    try {
+      const usuario = await getCurrentUser(req);
+      if (!usuario || !usuario.allowedModules.includes('pcp')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const baixaId = baixaMatch[1] ? decodeURIComponent(baixaMatch[1]) : '';
+
+      if (req.method === 'GET' && !baixaId) {
+        const dia = String(url.searchParams.get('date') || '').slice(0, 10);
+        const { rows } = await consultarBanco(
+          `select id, programacao_id, date::text as date, product_id, quantidade, montador_id, origem_deposit_id, destino_deposit_id,
+                  estornada_em, created_by_name, created_at
+             from pcp_baixas where ($1 = '' or date = $1::date) order by created_at`,
+          [/^\d{4}-\d{2}-\d{2}$/.test(dia) ? dia : '']
+        );
+        return sendJson(res, {
+          baixas: rows.map((b) => ({
+            id: b.id, programacaoId: b.programacao_id, date: b.date, productId: b.product_id, quantidade: Number(b.quantidade),
+            montadorId: b.montador_id || '', origemDepositId: b.origem_deposit_id, destinoDepositId: b.destino_deposit_id,
+            estornada: Boolean(b.estornada_em), criadoPor: b.created_by_name || '', criadoEm: b.created_at
+          }))
+        });
+      }
+
+      if (req.method === 'POST' && !baixaId) {
+        const corpo = await readBody(req);
+        const item = await modulosDb.obter('pcp/programacao', String(corpo.programacaoId || ''));
+        if (!item) return sendJson(res, { error: 'Item da programação não encontrado.' }, 404);
+        const quantidade = Number(corpo.quantidade);
+        const falta = Number(item.quantidade || 0) - Number(item.quantidadeMontada || 0);
+        if (!(quantidade > 0)) return sendJson(res, { error: 'Informe quantas foram montadas (maior que zero).' }, 400);
+        if (quantidade > falta + 1e-9) {
+          return sendJson(res, { error: `Só faltam ${falta.toLocaleString('pt-BR')} para montar nesta linha.` }, 400);
+        }
+        const { rows: cfg } = await consultarBanco('select deposito_desmontadas_id, deposito_montadas_id from pcp_config where id = 1');
+        const origem = (cfg[0] || {}).deposito_desmontadas_id || '';
+        const destino = (cfg[0] || {}).deposito_montadas_id || '';
+        if (!origem || !destino) {
+          return sendJson(res, { error: 'Escolha o depósito de desmontadas e o de montadas antes de dar baixa.' }, 400);
+        }
+
+        const { data, productsById } = await loadStockContextDosProdutos([item.productId]);
+        let classesDoProduto = [];
+        try {
+          classesDoProduto = (await classesDb.classesDosProdutos([item.productId])).get(item.productId) || [];
+        } catch (erroClasses) {
+          classesDoProduto = [];
+          console.warn('[pcp] classes do produto indisponíveis na baixa:', erroClasses.message);
+        }
+        const classValueId = String(corpo.classValueId || '').trim();
+        if (!(data.deposits || []).some((d) => d.id === destino)) return sendJson(res, { error: 'Depósito de montadas não encontrado.' }, 404);
+        assertMovementIsPossible(data, productsById, {
+          productId: item.productId, depositId: origem, type: 'saida', quantity: quantidade, classValueId, classesDoProduto
+        });
+
+        const id = createId('baixa');
+        const dia = String(item.date || '').slice(0, 10) || stockCore.todayStr();
+        const comum = {
+          productId: item.productId, quantity: quantidade, date: stockCore.todayStr(),
+          document: `PCP ${dia}`, origin: 'montagem-pcp', referenceType: 'pcp-baixa', referenceId: id,
+          classValueId, classId: classValueId ? ((classesDoProduto.find((c) => c.valores.some((v) => v.id === classValueId)) || {}).id || '') : ''
+        };
+        const saida = buildMovementRecord(data, { ...comum, type: 'saida', depositId: origem, note: 'Montagem PCP (saiu das desmontadas)' }, usuario);
+        const entrada = buildMovementRecord(data, { ...comum, type: 'entrada', depositId: destino, note: 'Montagem PCP (entrou nas montadas)' }, usuario);
+        await commitStockMovements(data, [saida, entrada], productsById, {
+          tambemNaTransacao: async (cliente) => {
+            await cliente.query(
+              `insert into pcp_baixas (id, programacao_id, date, product_id, quantidade, montador_id, origem_deposit_id, destino_deposit_id,
+                                       class_value_id, movimento_saida_id, movimento_entrada_id, created_by, created_by_name)
+               values ($1, $2, $3::date, $4, $5, nullif($6, ''), $7, $8, nullif($9, ''), $10, $11, $12, $13)`,
+              [id, item.id, dia, item.productId, quantidade, item.montadorId || '', origem, destino, classValueId, saida.id, entrada.id, usuario.id, usuario.name]
+            );
+            // A soma é do banco, sob a trava da linha: duas baixas ao mesmo
+            // tempo não passam juntas do programado.
+            const r = await cliente.query(
+              `update pcp_programacao set quantidade_montada = quantidade_montada + $2
+                where id = $1 and quantidade_montada + $2 <= quantidade + 0.000001`,
+              [item.id, quantidade]
+            );
+            if (!r.rowCount) {
+              const erro = new Error('Outra baixa desta linha entrou agora; recarregue a tela e confira o que falta.');
+              erro.status = 409;
+              throw erro;
+            }
+          }
+        });
+        saveData(data);
+        await registrarAuditoria({
+          action: 'pcp.baixa.montagem', targetId: id, targetUsername: String(quantidade),
+          byId: usuario.id, byName: usuario.name, details: { programacaoId: item.id, productId: item.productId, quantidade, origem, destino }
+        });
+        return sendJson(res, { success: true, baixa: { id, quantidade }, montada: Number(item.quantidadeMontada || 0) + quantidade }, 201);
+      }
+
+      if (req.method === 'DELETE' && baixaId) {
+        // ESTORNO: os movimentos contrários (sai das montadas, volta às
+        // desmontadas), a baixa marcada como estornada e o total da linha
+        // devolvido — também numa transação.
+        const { rows } = await consultarBanco('select * from pcp_baixas where id = $1', [baixaId]);
+        const baixa = rows[0];
+        if (!baixa) return sendJson(res, { error: 'Baixa não encontrada.' }, 404);
+        if (baixa.estornada_em) return sendJson(res, { error: 'Esta baixa já foi desfeita.' }, 409);
+        const quantidade = Number(baixa.quantidade);
+        const { data, productsById } = await loadStockContextDosProdutos([baixa.product_id]);
+        let classesDoProduto = [];
+        try {
+          classesDoProduto = (await classesDb.classesDosProdutos([baixa.product_id])).get(baixa.product_id) || [];
+        } catch (erroClasses) {
+          classesDoProduto = [];
+          console.warn('[pcp] classes do produto indisponíveis na baixa:', erroClasses.message);
+        }
+        assertMovementIsPossible(data, productsById, {
+          productId: baixa.product_id, depositId: baixa.destino_deposit_id, type: 'saida', quantity: quantidade,
+          classValueId: baixa.class_value_id || '', classesDoProduto
+        });
+        const comum = {
+          productId: baixa.product_id, quantity: quantidade, date: stockCore.todayStr(),
+          document: `PCP ${String(baixa.date instanceof Date ? baixa.date.toISOString() : baixa.date).slice(0, 10)}`,
+          origin: 'montagem-pcp-estorno', referenceType: 'pcp-baixa', referenceId: baixa.id,
+          classValueId: baixa.class_value_id || ''
+        };
+        const saida = buildMovementRecord(data, { ...comum, type: 'saida', depositId: baixa.destino_deposit_id, note: 'Estorno de montagem PCP (saiu das montadas)' }, usuario);
+        const entrada = buildMovementRecord(data, { ...comum, type: 'entrada', depositId: baixa.origem_deposit_id, note: 'Estorno de montagem PCP (voltou às desmontadas)' }, usuario);
+        await commitStockMovements(data, [saida, entrada], productsById, {
+          tambemNaTransacao: async (cliente) => {
+            const r = await cliente.query(
+              'update pcp_baixas set estornada_em = now(), estornada_por_nome = $2 where id = $1 and estornada_em is null',
+              [baixa.id, usuario.name]
+            );
+            if (!r.rowCount) {
+              const erro = new Error('Esta baixa já foi desfeita.');
+              erro.status = 409;
+              throw erro;
+            }
+            await cliente.query(
+              'update pcp_programacao set quantidade_montada = greatest(0, quantidade_montada - $2) where id = $1',
+              [baixa.programacao_id, quantidade]
+            );
+          }
+        });
+        saveData(data);
+        await registrarAuditoria({
+          action: 'pcp.baixa.estorno', targetId: baixa.id, targetUsername: String(quantidade),
+          byId: usuario.id, byName: usuario.name, details: { programacaoId: baixa.programacao_id, quantidade }
+        });
+        return sendJson(res, { success: true });
+      }
+      return sendJson(res, { error: 'Método não suportado' }, 405);
+    } catch (erro) {
+      return sendErro(res, erro, 'Erro na baixa de montagem', 400);
+    }
+  }
+
   // Pedido de venda -> ordens de produção.
   //
   // Fica ANTES do bloco genérico de propósito: o regex abaixo leria
@@ -9719,6 +9929,9 @@ async function tratarRequisicao(req, res) {
             const dados = loadData();
             await syncCadastroData(dados);
             apoio.montadores = getMontadoresDirectory(dados);
+            // Os depósitos de desmontadas e de montadas (fase ED) são escolhidos
+            // na mesma tela.
+            apoio.deposits = (dados.deposits || []).map((d) => ({ id: d.id, name: d.name }));
           }
         }
         if (modulo === 'contracts') {
@@ -9860,6 +10073,15 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { [def.item]: registro });
       }
       if (req.method === 'DELETE' && id) {
+        // Linha da programação com baixa de montagem (fase ED) não sai: o
+        // estoque já foi movido por ela. O banco recusa também (RESTRICT);
+        // aqui é para a mensagem dizer o que fazer.
+        if (recurso === 'pcp/programacao') {
+          const linha = await modulosDb.obter(recurso, id);
+          if (linha && Number(linha.quantidadeMontada || 0) > 0) {
+            return sendJson(res, { error: 'Esta linha já tem baixa de montagem. Desfaça as baixas antes de tirá-la.' }, 409);
+          }
+        }
         // EXCLUIR A ORDEM NÃO PODE LEVAR O ESTOQUE JUNTO (fase BP).
         //
         // pcp_entries tem `on delete cascade` para pcp_orders: apagar a ordem
@@ -18554,7 +18776,7 @@ async function tratarRequisicao(req, res) {
       }
       const rows = Array.isArray(body.rows) ? body.rows : (body.text ? parseCsv(body.text) : []);
       if (!rows.length) {
-        return sendJson(res, { error: 'Nenhuma linha para importar. Verifique o CSV (cabeçalho: data,descricao,valor,tipo).' }, 400);
+        return sendJson(res, { error: 'Nenhuma linha para importar. Escolha o arquivo OFX do banco, ou confira o CSV (cabeçalho: data,descricao,valor,tipo).' }, 400);
       }
 
       // IMPORTAR O MESMO EXTRATO DUAS VEZES NÃO DUPLICA (fase BR).
@@ -18577,7 +18799,22 @@ async function tratarRequisicao(req, res) {
         String(tx.description || '').trim().toLowerCase().replace(/\s+/g, ' '),
         Number(tx.amount || 0).toFixed(2), tx.type
       ].join('|');
-      const jaExistem = new Set((data.bankTransactions || []).map(chaveDaTransacao));
+      // OFX (12/10/2026): o FITID é o identificador que o banco dá a cada
+      // lançamento. Com ele, reimportar o arquivo não duplica, e dois PIX
+      // iguais no mesmo dia — mesma descrição, mesmo valor — entram os dois
+      // (cada um tem o seu FITID). Sem FITID (CSV, digitado) vale a chave de
+      // sempre; e um lançamento do OFX igual a um que entrou SEM FITID também
+      // é recusado, para CSV e OFX do mesmo período não se somarem.
+      const chaveDoFitid = (contaId, fitid) => `${contaId}|fitid|${String(fitid).trim()}`;
+      const origemOfx = body.origem === 'ofx';
+      const comFitid = new Set();
+      const semFitid = new Set();
+      const todas = new Set();
+      (data.bankTransactions || []).forEach((tx) => {
+        todas.add(chaveDaTransacao(tx));
+        if (tx.providerTransactionId && (tx.source === 'ofx')) comFitid.add(chaveDoFitid(tx.bankAccountId, tx.providerTransactionId));
+        else semFitid.add(chaveDaTransacao(tx));
+      });
 
       const created = [];
       let skipped = 0;
@@ -18593,15 +18830,22 @@ async function tratarRequisicao(req, res) {
         const date = row.date || row.data || row.Data || new Date().toISOString().slice(0, 10);
         const typeRaw = String(row.type || row.tipo || row.Tipo || '').toLowerCase();
         const type = (typeRaw.startsWith('sa') || Number(String(rawAmount).replace(',', '.')) < 0) ? 'saida' : 'entrada';
-        const tx = buildBankTransaction({ bankAccountId, date, description, amount, type }, user, 'csv');
+        const fitid = origemOfx ? String(row.fitid || '').trim().slice(0, 200) : '';
+        const tx = buildBankTransaction({ bankAccountId, date, description, amount, type }, user, origemOfx ? 'ofx' : 'csv');
+        if (fitid) tx.providerTransactionId = fitid;
         const chave = chaveDaTransacao(tx);
-        // O Set recebe a chave junto: duas linhas iguais DENTRO do mesmo
-        // arquivo também são uma só.
-        if (jaExistem.has(chave)) {
+        // Os Sets recebem a chave junto: duas linhas iguais DENTRO do mesmo
+        // arquivo também são uma só (no OFX, o mesmo FITID).
+        const repetida = fitid
+          ? comFitid.has(chaveDoFitid(bankAccountId, fitid)) || semFitid.has(chave)
+          : todas.has(chave);
+        if (repetida) {
           repetidas += 1;
           return;
         }
-        jaExistem.add(chave);
+        if (fitid) comFitid.add(chaveDoFitid(bankAccountId, fitid));
+        else semFitid.add(chave);
+        todas.add(chave);
         data.bankTransactions.push(tx);
         created.push(tx);
       });

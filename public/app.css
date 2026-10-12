@@ -935,6 +935,19 @@ button.success:hover { background: var(--success-hover); }
 .pcp-montador-jornada { display: grid; gap: 4px; font-size: 0.8rem; }
 .pcp-montador-jornada input { width: 90px; }
 .pcp-montador-passou { color: var(--danger); }
+/* Baixa de montagem (fase ED): de qual depósito sai e para qual vai, e o
+   "quantas + Dar baixa" de cada linha. */
+.pcp-mont-depositos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 22px;
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.pcp-baixa { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pcp-baixa-qtd { width: 70px; }
+.pcp-baixa button { padding: 9px 12px; }
 @media (max-width: 900px) {
   .pcp-prog-novo, .pcp-mont-novo { grid-template-columns: 1fr 1fr; }
   .pcp-prog-produto { grid-column: 1 / -1; }

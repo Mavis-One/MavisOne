@@ -23,14 +23,22 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     state.pcpMontadores = state.pcpMontadores || { date: hoje(), montadorId: '' };
     const filtro = state.pcpMontadores;
 
-    let meta = { products: [], orders: [], tempos: [], montadores: [] };
+    let meta = { products: [], orders: [], tempos: [], montadores: [], deposits: [] };
     let itensTodos = [];
     let jornadas = [];
+    // Fase ED: os depósitos da baixa e as baixas do dia (para "desfazer").
+    let config = { depositoDesmontadasId: '', depositoMontadasId: '' };
+    let baixas = [];
     try {
-      const [m, p, j] = await Promise.all([api('/api/pcp/meta?montadores=1'), api('/api/pcp/programacao'), api('/api/pcp/jornadas')]);
+      const [m, p, j, c, b] = await Promise.all([
+        api('/api/pcp/meta?montadores=1'), api('/api/pcp/programacao'), api('/api/pcp/jornadas'),
+        api('/api/pcp/config'), api(`/api/pcp/baixas?date=${encodeURIComponent(filtro.date)}`)
+      ]);
       meta = { ...meta, ...m };
       itensTodos = p.programacao || [];
       jornadas = j.jornadas || [];
+      config = c.config || config;
+      baixas = (b.baixas || []).filter((x) => !x.estornada);
     } catch (erro) {
       showToast(erro.message || 'Erro ao carregar os montadores.', 'error');
     }
@@ -47,6 +55,21 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       return window.MavisRotuloProduto ? window.MavisRotuloProduto.rotulo(p) : p.name;
     };
     const nomeOp = (id) => ((meta.orders || []).find((o) => o.id === id) || {}).name || '';
+    const depositosProntos = Boolean(config.depositoDesmontadasId && config.depositoMontadasId);
+    // A última baixa ATIVA de cada linha — é a que o "Desfazer" estorna.
+    const ultimaBaixa = (itemId) => baixas.filter((x) => x.programacaoId === itemId).slice(-1)[0] || null;
+    const celulaBaixa = (l) => {
+      const montada = Number(l.quantidadeMontada || 0);
+      const falta = Math.max(0, Number(l.quantidade || 0) - montada);
+      const ultima = ultimaBaixa(l.id);
+      const desfazer = ultima ? `<button type="button" class="link-button" data-desfazer="${C.escape(ultima.id)}" title="Desfazer a baixa de ${C.escape(qtd(ultima.quantidade))}">Desfazer</button>` : '';
+      if (falta <= 0) return `${C.badge('Montado', 'success')} ${desfazer}`;
+      return `<div class="pcp-baixa">
+          <input type="number" class="pcp-baixa-qtd" data-baixa-qtd="${C.escape(l.id)}" min="0" max="${falta}" step="any" value="${falta}" />
+          <button type="button" class="success" data-baixa="${C.escape(l.id)}" ${depositosProntos ? '' : 'disabled title="Escolha os depósitos de desmontadas e de montadas"'}>Dar baixa</button>
+          ${desfazer}
+        </div>`;
+    };
 
     // O dia de cada montador: os itens dele, a jornada (ajuste do dia ou 8h) e o resumo.
     const quadros = montadores.map((m) => {
@@ -81,17 +104,18 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
           <div class="cadastro-section-body">
             <div class="table-scroll">
               <table class="table table-actions">
-                <thead><tr><th>Produto</th><th>Qtd.</th><th>Tempo</th><th>OP</th><th></th></tr></thead>
+                <thead><tr><th>Produto</th><th>Qtd.</th><th>Montadas</th><th>Tempo</th><th>Baixa</th><th></th></tr></thead>
                 <tbody>
                   ${resumo.linhas.length === 0
-                    ? '<tr><td colspan="5" class="muted" style="text-align:center; padding:16px;">Nada para este dia.</td></tr>'
+                    ? '<tr><td colspan="6" class="muted" style="text-align:center; padding:16px;">Nada para este dia.</td></tr>'
                     : resumo.linhas.map((l) => `
                       <tr>
-                        <td><strong>${C.escape(rotulo(l.productId))}</strong></td>
-                        <td><input type="number" class="pcp-prog-qtd" data-item="${C.escape(l.id)}" min="0" step="any" value="${C.escape(String(Number(l.quantidade)))}" /></td>
+                        <td><strong>${C.escape(rotulo(l.productId))}</strong>${l.orderId ? `<br /><span class="muted">${C.escape(nomeOp(l.orderId))}</span>` : ''}</td>
+                        <td><input type="number" class="pcp-prog-qtd" data-item="${C.escape(l.id)}" min="${Number(l.quantidadeMontada || 0)}" step="any" value="${C.escape(String(Number(l.quantidade)))}" /></td>
+                        <td><strong>${C.escape(qtd(l.quantidadeMontada || 0))}</strong>/${C.escape(qtd(l.quantidade))}</td>
                         <td>${l.minutosTotal !== null ? C.escape(T.formatarMinutos(l.minutosTotal)) : C.badge('sem tempo', 'warning')}</td>
-                        <td>${C.escape(nomeOp(l.orderId) || '-')}</td>
-                        <td><button type="button" class="icon-button" data-remover="${C.escape(l.id)}" title="Tirar do montador">${C.trashIcon}</button></td>
+                        <td>${celulaBaixa(l)}</td>
+                        <td>${Number(l.quantidadeMontada || 0) > 0 ? '' : `<button type="button" class="icon-button" data-remover="${C.escape(l.id)}" title="Tirar do montador">${C.trashIcon}</button>`}</td>
                       </tr>`).join('')}
                 </tbody>
               </table>
@@ -111,6 +135,20 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
           </div></section>` : `
         <section class="cadastro-section">
           <div class="cadastro-section-body">
+            <div class="form-grid pcp-mont-depositos">
+              <label class="cadastro-field"><span>Baixa tira do depósito (desmontadas)</span>
+                <select id="pcpMontDesmontadas">
+                  <option value="">Selecione</option>
+                  ${(meta.deposits || []).map((d) => `<option value="${C.escape(d.id)}" ${d.id === config.depositoDesmontadasId ? 'selected' : ''}>${C.escape(d.name)}</option>`).join('')}
+                </select>
+              </label>
+              <label class="cadastro-field"><span>E põe no depósito (montadas)</span>
+                <select id="pcpMontMontadas">
+                  <option value="">Selecione</option>
+                  ${(meta.deposits || []).map((d) => `<option value="${C.escape(d.id)}" ${d.id === config.depositoMontadasId ? 'selected' : ''}>${C.escape(d.name)}</option>`).join('')}
+                </select>
+              </label>
+            </div>
             <form id="pcpMontForm" class="form-grid pcp-mont-novo">
               <label class="cadastro-field"><span>Dia</span>
                 <input type="date" id="pcpMontDia" value="${C.escape(filtro.date)}" />
@@ -226,6 +264,55 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         catch (erro) { showToast(erro.message || 'Erro ao mudar a quantidade.', 'error'); }
       });
     });
+    // Os dois depósitos ficam guardados no servidor (pcp_config): valem para
+    // todos, até alguém trocar.
+    const salvarDepositos = async () => {
+      try {
+        await api('/api/pcp/config', {
+          method: 'PUT',
+          body: JSON.stringify({
+            depositoDesmontadasId: document.getElementById('pcpMontDesmontadas').value,
+            depositoMontadasId: document.getElementById('pcpMontMontadas').value
+          })
+        });
+      } catch (erro) {
+        showToast(erro.message || 'Erro ao salvar os depósitos.', 'error');
+      }
+      recarregar();
+    };
+    document.getElementById('pcpMontDesmontadas')?.addEventListener('change', salvarDepositos);
+    document.getElementById('pcpMontMontadas')?.addEventListener('change', salvarDepositos);
+
+    // DAR BAIXA: transfere do depósito de desmontadas para o de montadas
+    // (fase ED). A quantidade sugerida é o que falta; dá para baixar menos.
+    content.querySelectorAll('[data-baixa]').forEach((botao) => {
+      botao.addEventListener('click', async () => {
+        const itemId = botao.dataset.baixa;
+        const quantidade = Number(content.querySelector(`[data-baixa-qtd="${itemId}"]`)?.value || 0);
+        if (botao.disabled) return;
+        botao.disabled = true;
+        try {
+          await api('/api/pcp/baixas', { method: 'POST', body: JSON.stringify({ programacaoId: itemId, quantidade }) });
+          showToast(`Baixa de ${qtd(quantidade)} feita: saiu das desmontadas e entrou nas montadas.`, 'success');
+          recarregar();
+        } catch (erro) {
+          botao.disabled = false;
+          showToast(erro.message || 'Erro ao dar baixa.', 'error');
+        }
+      });
+    });
+    content.querySelectorAll('[data-desfazer]').forEach((botao) => {
+      botao.addEventListener('click', async () => {
+        try {
+          await api(`/api/pcp/baixas/${encodeURIComponent(botao.dataset.desfazer)}`, { method: 'DELETE' });
+          showToast('Baixa desfeita: voltou para as desmontadas.', 'success');
+          recarregar();
+        } catch (erro) {
+          showToast(erro.message || 'Erro ao desfazer a baixa.', 'error');
+        }
+      });
+    });
+
     content.querySelectorAll('[data-remover]').forEach((botao) => {
       botao.addEventListener('click', async () => {
         try { await api(`/api/pcp/programacao/${encodeURIComponent(botao.dataset.remover)}`, { method: 'DELETE' }); recarregar(); }
