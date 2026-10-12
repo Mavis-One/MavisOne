@@ -2001,6 +2001,28 @@ function getSellersDirectory(data) {
   return indiceDoCadastro(data).vendedores;
 }
 
+// Representante (fase DZ): pessoa ou empresa — representante comercial é
+// muitas vezes PJ —, com o papel "Representante" no Cadastros. Vai com
+// documento, telefone, e-mail e cidade porque a tela Representantes do PCP
+// lista essas colunas.
+function getRepresentantesDirectory(data) {
+  const marcar = (lista, kind) => (lista || []).map((entry) => ({ entry, kind }));
+  return [...marcar(data.people, 'people'), ...marcar(data.cnpjs, 'cnpj')]
+    .filter(({ entry }) => Array.isArray(entry.roles) && entry.roles.includes('Representante'))
+    .map(({ entry, kind }) => ({
+      id: entry.id,
+      // De que tabela veio: a edição no Cadastros busca por rota diferente.
+      kind,
+      name: entry.name,
+      document: entry.document || '',
+      phone: entry.phone || '',
+      email: entry.email || '',
+      city: [entry.city, entry.state].filter(Boolean).join('/'),
+      active: String(entry.status || 'ativo').toLowerCase() !== 'inativo'
+    }))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+}
+
 // Transportadora pode ser pessoa física (motorista autônomo) ou empresa, por
 // isso varre as duas listas — diferente de vendedor, que só é pessoa.
 function getCarriersDirectory(data) {
@@ -9628,6 +9650,15 @@ async function tratarRequisicao(req, res) {
           apoio.sectors = setores.map((s) => ({ id: s.id, name: s.name }));
           apoio.statuses = statuses.map((s) => ({ id: s.id, name: s.name }));
           apoio.employees = pessoal.map((e) => ({ id: e.id, name: e.name }));
+          // REPRESENTANTES (fase DZ): pessoas e empresas do Cadastros com o
+          // papel "Representante". Só para quem pede (`?representantes=1`):
+          // ler o cadastro inteiro custa ~260 ms com o cache frio, e só a
+          // ordem de produção e a lista de representantes usam.
+          if (url.searchParams.get('representantes') === '1') {
+            const dados = loadData();
+            await syncCadastroData(dados);
+            apoio.representantes = getRepresentantesDirectory(dados);
+          }
         }
         if (modulo === 'contracts') {
           const [modelos, tipos] = await Promise.all([

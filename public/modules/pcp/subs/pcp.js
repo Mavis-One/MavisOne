@@ -12,6 +12,10 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   // lerem setores, status, ordens e o quadro de pessoal. O padrão (`base`)
   // continua mandando — tela nova nasce com o seletor cheio.
   const baseSemProdutos = { ...base, metaEndpoint: '/api/pcp/meta?produtos=0' };
+  // A ordem de produção mostra e escolhe o REPRESENTANTE (fase DZ): pessoa do
+  // Cadastros com esse papel. Só estas telas pedem a lista, que custa a
+  // leitura do cadastro inteiro.
+  const baseComRepresentantes = { ...base, metaEndpoint: '/api/pcp/meta?representantes=1' };
 
   // ETAPAS são fixas: é por elas que o código sabe que a ordem terminou. Os
   // STATUS que a empresa cadastra ("Aguardando matéria-prima", "Em setup",
@@ -40,7 +44,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
 
   // ------------------------------------------------------ Ordens de produção
   R.ordens = C.makeListScreen({
-    ...base,
+    ...baseComRepresentantes,
     title: 'Ordens de Produção',
     tableTitle: 'Ordens',
     endpoint: '/api/pcp/orders',
@@ -53,12 +57,14 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     filters: [
       { name: 'status', label: 'Etapa', type: 'select', options: ETAPAS_OP },
       { name: 'sectorId', label: 'Setor', type: 'select', options: (meta) => meta.sectors || [] },
-      { name: 'statusId', label: 'Status', type: 'select', options: (meta) => meta.statuses || [] }
+      { name: 'statusId', label: 'Status', type: 'select', options: (meta) => meta.statuses || [] },
+      { name: 'representanteId', label: 'Representante', type: 'select', options: (meta) => meta.representantes || [] }
     ],
     columns: [
       { label: 'OP', render: (i) => `<strong>${C.escape(i.code || i.id.slice(-6))}</strong>` },
       { label: 'Produto', render: nomeProduto },
       { label: 'Setor', render: (i, meta) => nomeDe(meta.sectors, i.sectorId) },
+      { label: 'Representante', render: (i, meta) => nomeDe(meta.representantes, i.representanteId) },
       { label: 'Previsto', render: (i) => qtd(i.quantity) },
       { label: 'Produzido', render: (i) => qtd(i.quantityDone) },
       // Saldo é derivado: guardar também o restante criaria um número que pode
@@ -80,7 +86,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   });
 
   R.nova_ordem = C.makeFormScreen({
-    ...base,
+    ...baseComRepresentantes,
     title: 'Nova Ordem Produção',
     entityLabel: 'ordem',
     endpoint: '/api/pcp/orders',
@@ -93,7 +99,8 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         fields: [
           { name: 'code', label: 'Número da OP', type: 'number', min: 1 },
           { name: 'productId', label: 'Produto', type: 'select', required: true, options: (meta) => meta.products || [] },
-          { name: 'sectorId', label: 'Setor', type: 'select', empty: 'Sem setor', options: (meta) => meta.sectors || [] }
+          { name: 'sectorId', label: 'Setor', type: 'select', empty: 'Sem setor', options: (meta) => meta.sectors || [] },
+          { name: 'representanteId', label: 'Representante', type: 'select', empty: 'Sem representante', options: (meta) => meta.representantes || [] }
         ]
       },
       {
@@ -114,6 +121,121 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       { title: 'Observação', columns: 1, fields: [{ name: 'notes', label: 'Observação', type: 'textarea', full: true }] }
     ]
   });
+
+  // ---------------------------------------------------------- Representantes
+  // Fase DZ. O representante é PESSOA (ou empresa) do Cadastros com o papel
+  // "Representante" — decisão do usuário, para o mesmo cadastro servir depois
+  // a vendas e notas. Por isso esta tela não tem formulário próprio: o
+  // cadastro exige documento e endereço completos, e uma segunda cópia do
+  // formulário de Pessoas divergiria dele. "+ Novo representante" abre o
+  // formulário do Cadastros com o papel já marcado; o lápis abre o cadastro.
+  R.representantes = async function renderRepresentantes(ctx) {
+    const { content, api, showToast, state, renderApp, loadModule } = ctx;
+    state.cadastroDraft = state.cadastroDraft || {};
+    let lista = [];
+    try {
+      lista = (await api('/api/pcp/meta?produtos=0&representantes=1')).representantes || [];
+    } catch (erro) {
+      showToast(erro.message || 'Erro ao carregar os representantes.', 'error');
+    }
+    let busca = state.cadastroDraft.pcpRepresentantesBusca || '';
+    const podeCadastrar = typeof window.hasModuleAccess !== 'function' || window.hasModuleAccess('cadastros');
+
+    const abrirNoCadastros = (people, sub) => {
+      state.activeModule = 'cadastros';
+      state.selectedModule = null;
+      state.cadastroDraft = { ...state.cadastroDraft, activeType: 'people', people };
+      state.activeSub = sub;
+      renderApp();
+      loadModule('cadastros');
+    };
+
+    function render() {
+      const termo = C.normalizeText ? C.normalizeText(busca) : String(busca).toLowerCase();
+      const visiveis = lista.filter((r) => !termo || [r.name, r.document, r.phone, r.email, r.city]
+        .some((v) => (C.normalizeText ? C.normalizeText(v) : String(v || '').toLowerCase()).includes(termo)));
+      content.innerHTML = `
+        <div class="panel cadastros-shell">
+          ${C.pageHead('Representantes', '', '', podeCadastrar
+            ? '<button type="button" class="success" id="pcpRepresentanteNovo">+ Novo representante</button>'
+            : '')}
+          <section class="cadastro-section">
+            <div class="cadastro-section-header">
+              <div>
+                <h4>Representantes</h4>
+                <p>${visiveis.length} de ${lista.length} registro(s).</p>
+              </div>
+            </div>
+            <div class="cadastro-section-body">
+              <label class="cadastro-field">
+                <span>Busca</span>
+                <input id="pcpRepresentanteBusca" value="${C.escape(busca)}" placeholder="Nome, documento, telefone ou cidade" />
+              </label>
+              <div class="table-scroll">
+                <table class="table table-actions">
+                  <thead><tr><th>Nome</th><th>CPF/CNPJ</th><th>Telefone</th><th>E-mail</th><th>Cidade</th><th>Situação</th><th>Ações</th></tr></thead>
+                  <tbody>
+                    ${visiveis.length === 0
+                      ? `<tr><td colspan="7" class="muted" style="text-align:center; padding:24px;">${lista.length === 0 ? 'Nenhum representante cadastrado ainda.' : 'Nenhum representante para esta busca.'}</td></tr>`
+                      : visiveis.map((r) => `
+                        <tr>
+                          <td><strong>${C.escape(r.name || '-')}</strong></td>
+                          <td>${C.escape(r.document || '-')}</td>
+                          <td>${C.escape(r.phone || '-')}</td>
+                          <td>${C.escape(r.email || '-')}</td>
+                          <td>${C.escape(r.city || '-')}</td>
+                          <td>${C.statusBadge(r.active === false ? 'inativo' : 'ativo')}</td>
+                          <td>${podeCadastrar ? `<button type="button" class="icon-button edit" data-representante="${C.escape(r.id)}" data-kind="${C.escape(r.kind)}" title="Editar no Cadastros">${C.editIcon}</button>` : ''}</td>
+                        </tr>
+                      `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+      `;
+
+      const campoBusca = document.getElementById('pcpRepresentanteBusca');
+      campoBusca?.addEventListener('input', () => {
+        busca = campoBusca.value;
+        state.cadastroDraft.pcpRepresentantesBusca = busca;
+        const fim = campoBusca.selectionEnd;
+        render();
+        const novo = document.getElementById('pcpRepresentanteBusca');
+        novo?.focus();
+        try { novo?.setSelectionRange(fim, fim); } catch (_) { /* sem seleção */ }
+      });
+
+      document.getElementById('pcpRepresentanteNovo')?.addEventListener('click', () => {
+        abrirNoCadastros({ roles: ['Representante'], status: 'ativo' }, 'register');
+      });
+
+      // A edição abre com o registro INTEIRO, buscado pelo id — mesma regra da
+      // lista de Pessoas: salvar a partir da linha resumida gravaria vazio por
+      // cima do endereço e dos contatos.
+      content.querySelectorAll('[data-representante]').forEach((botao) => {
+        botao.addEventListener('click', async () => {
+          const id = botao.dataset.representante;
+          const ehEmpresa = botao.dataset.kind === 'cnpj';
+          try {
+            const resposta = await api(ehEmpresa
+              ? `/api/cadastros/cnpjs/${encodeURIComponent(id)}`
+              : `/api/cadastros/pessoas/${encodeURIComponent(id)}`);
+            const registro = ehEmpresa ? resposta.cnpj : resposta.person;
+            if (!registro) throw new Error('Cadastro não encontrado.');
+            abrirNoCadastros(ehEmpresa
+              ? { ...registro, kind: 'cnpj', type: 'pessoa-juridica', error: '', documentMessage: '' }
+              : { ...registro, kind: 'people', error: '', documentMessage: '' }, 'edit');
+          } catch (erro) {
+            showToast(erro.message || 'Não foi possível abrir o cadastro.', 'error');
+          }
+        });
+      });
+    }
+
+    render();
+  };
 
   // ------------------------------------------------------------------ Setores
   R.setores = C.makeListScreen({
