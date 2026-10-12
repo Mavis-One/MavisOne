@@ -2134,6 +2134,8 @@ const moduleSubItems = {
     { key: 'ordens', label: 'Ordens de Produção', desc: 'Ordens abertas, em curso e concluídas, com setor e status.' },
     { key: 'nova_ordem', label: 'Nova Ordem Produção', desc: 'Abre uma ordem a partir de um produto.' },
     { key: 'representantes', label: 'Representantes', desc: 'Representantes das ordens, do Cadastros.' },
+    { key: 'programacao', label: 'Programação do Dia', desc: 'Encaixa modelos na jornada do dia até fechar as horas.' },
+    { key: 'tempos', label: 'Tempos de Produção', desc: 'Quanto tempo leva uma unidade de cada modelo.' },
     { key: 'setores', label: 'Setores PCP', desc: 'Centros de trabalho, na ordem em que a peça caminha.' },
     { key: 'novo_setor', label: 'Novo Setor PCP', desc: 'Cadastra um setor com responsável e capacidade.' },
     { key: 'status_pcp', label: 'Status PCP', desc: 'Os status que a empresa usa dentro de cada etapa da produção.' },

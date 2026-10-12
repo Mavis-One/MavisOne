@@ -5764,6 +5764,40 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
  * campos, e conferir só o corpo deixaria passar trocar o componente para o
  * produto que já estava gravado.
  */
+/**
+ * TEMPOS, JORNADAS E PROGRAMAÇÃO DO PCP (fase EB): a mensagem em português
+ * antes do CHECK/UNIQUE do banco, que é quem garante. `id` é o registro em
+ * edição (o PUT pode trazer só parte dos campos). Devolve '' quando aceita.
+ */
+async function recusaDoPlanejamentoPcp(recurso, corpo, id) {
+  if (!['pcp/tempos', 'pcp/jornadas', 'pcp/programacao'].includes(recurso)) return '';
+  const atual = id ? await modulosDb.obter(recurso, id) : null;
+  const valor = (campo) => (corpo[campo] === undefined ? atual?.[campo] : corpo[campo]);
+  if (recurso === 'pcp/tempos') {
+    const produto = String(valor('productId') || '').trim();
+    if (!produto) return 'Escolha o produto.';
+    if (!(Number(valor('minutos')) > 0)) return 'Informe o tempo de produção em minutos (maior que zero).';
+    const outro = (await modulosDb.listar(recurso)).find((t) => t.productId === produto && t.id !== id);
+    if (outro) return 'Este produto já tem tempo de produção cadastrado. Edite o tempo existente.';
+  }
+  if (recurso === 'pcp/jornadas') {
+    if (!valor('date')) return 'Informe o dia.';
+    const horas = Number(valor('horas'));
+    if (!(horas >= 0 && horas <= 24)) return 'A jornada do dia vai de 0 a 24 horas.';
+    const setor = String(valor('sectorId') || '');
+    const dia = String(valor('date')).slice(0, 10);
+    const outro = (await modulosDb.listar(recurso))
+      .find((j) => String(j.sectorId || '') === setor && String(j.date || '').slice(0, 10) === dia && j.id !== id);
+    if (outro) return 'Este dia já tem jornada ajustada para este setor.';
+  }
+  if (recurso === 'pcp/programacao') {
+    if (!valor('date')) return 'Informe o dia.';
+    if (!String(valor('productId') || '').trim()) return 'Escolha o produto.';
+    if (!(Number(valor('quantidade')) > 0)) return 'Informe a quantidade (maior que zero).';
+  }
+  return '';
+}
+
 function recusaDeFichaTecnica(corpo, anterior) {
   const produtoId = String((corpo.productId ?? anterior?.productId) || '').trim();
   const componenteId = String((corpo.componentId ?? anterior?.componentId) || '').trim();
@@ -9635,19 +9669,26 @@ async function tratarRequisicao(req, res) {
           // continua sendo mandar, pelo motivo escrito no /api/stock/meta. A
           // lista sai na mesma ordem de getProducts (ver getProductsResumidos).
           const querProdutos = url.searchParams.get('produtos') !== '0';
-          const [produtos, ordens, setores, statuses, pessoal] = await Promise.all([
-            querProdutos ? db.getProductsResumidos('id, name') : [],
+          const [produtos, ordens, setores, statuses, pessoal, tempos] = await Promise.all([
+            // O SKU vai junto (fase EB): é o código do modelo ("RUNNER é o
+            // 100128"), e o campo de busca mostra e procura por ele.
+            querProdutos ? db.getProductsResumidos('id, name, sku') : [],
             modulosDb.listar('pcp/orders'),
             modulosDb.listar('pcp/sectors'),
             modulosDb.listar('pcp/statuses'),
             // Encarregado de setor e inspetor de qualidade são colaboradores.
             // Vem do RH porque é lá que o quadro de pessoal mora — duplicar a
             // lista aqui criaria duas fontes divergindo.
-            modulosDb.listar('hr/employees')
+            modulosDb.listar('hr/employees'),
+            modulosDb.listar('pcp/tempos')
           ]);
-          apoio.products = produtos.map((p) => ({ id: p.id, name: p.name }));
-          apoio.orders = ordens.map((o) => ({ id: o.id, name: `OP ${o.code || o.id.slice(-6)}` }));
-          apoio.sectors = setores.map((s) => ({ id: s.id, name: s.name }));
+          apoio.products = produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '' }));
+          apoio.orders = ordens.map((o) => ({ id: o.id, name: `OP ${o.code || o.id.slice(-6)}`, productId: o.productId, quantity: o.quantity }));
+          // Minutos de UMA unidade de cada produto (fase EB): a lista de OPs
+          // mostra o tempo da ordem e a Programação do Dia soma o dia.
+          apoio.tempos = tempos.map((t) => ({ productId: t.productId, minutos: Number(t.minutos) }));
+          // Jornada padrão do setor vai junto: a Programação do Dia parte dela.
+          apoio.sectors = setores.map((s) => ({ id: s.id, name: s.name, jornadaHoras: s.jornadaHoras === null || s.jornadaHoras === undefined ? null : Number(s.jornadaHoras) }));
           apoio.statuses = statuses.map((s) => ({ id: s.id, name: s.name }));
           apoio.employees = pessoal.map((e) => ({ id: e.id, name: e.name }));
           // REPRESENTANTES (fase DZ): pessoas e empresas do Cadastros com o
@@ -9724,6 +9765,8 @@ async function tratarRequisicao(req, res) {
           const recusa = recusaDeFichaTecnica(corpo, null);
           if (recusa) return sendJson(res, { error: recusa }, 400);
         }
+        const recusaDoPlano = await recusaDoPlanejamentoPcp(recurso, corpo, null);
+        if (recusaDoPlano) return sendJson(res, { error: recusaDoPlano }, 400);
         // Estoque ANTES de gravar o apontamento: faltando componente, nada é
         // criado, em vez de sobrar um apontamento que não baixou nada.
         const efeito = recurso === 'pcp/entries'
@@ -9745,6 +9788,8 @@ async function tratarRequisicao(req, res) {
           const recusa = recusaDeFichaTecnica(corpo, await modulosDb.obter(recurso, id));
           if (recusa) return sendJson(res, { error: recusa }, 400);
         }
+        const recusaDoPlano = await recusaDoPlanejamentoPcp(recurso, corpo, id);
+        if (recusaDoPlano) return sendJson(res, { error: recusaDoPlano }, 400);
         if (anterior) {
           const novaOrdem = corpo.orderId ?? anterior.orderId;
           const novaQtd = corpo.quantity === undefined ? Number(anterior.quantity || 0) : Number(corpo.quantity || 0);

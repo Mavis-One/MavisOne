@@ -57,6 +57,8 @@ const COMUNS = [
   'public/modules/shared/rotulo_produto.js',
   'public/modules/shared/campo_de_busca.js',
   'public/modules/shared/bandeira_cartao.js',
+  // As contas de tempo do PCP (fase EB): a lista de OPs e a de tempos usam.
+  'public/modules/shared/pcp_tempo.js',
   'public/modules/cadastros/shared.js'
 ];
 const DIR_CADASTROS = 'public/modules/cadastros/subs';

@@ -883,6 +883,39 @@ button.success:hover { background: var(--success-hover); }
 .painel-vendedor-topo > label { flex: 0 1 320px; min-width: 0; }
 .painel-vendedor-topo + .cadastro-filter-panel { margin-top: 16px; }
 
+/* PCP › Programação do Dia (fase EB). */
+.pcp-prog-filtros {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 22px;
+  align-items: end;
+}
+.pcp-prog-jornada-acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.pcp-prog-novo {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.8fr) auto;
+  gap: 22px;
+  align-items: end;
+}
+.pcp-prog-cabem { display: grid; gap: 6px; padding-bottom: 12px; }
+.pcp-prog-cabem strong { font-size: 1.05rem; }
+.pcp-prog-qtd { max-width: 110px; }
+.pcp-prog-barra {
+  height: 12px;
+  margin: 4px 0 18px;
+  border-radius: 999px;
+  background: var(--panel-alt);
+  overflow: hidden;
+}
+.pcp-prog-barra span { display: block; height: 100%; border-radius: inherit; transition: width 300ms ease; }
+.pcp-prog-barra-success span { background: var(--success); }
+.pcp-prog-barra-warning span { background: #f59e0b; }
+.pcp-prog-barra-danger span { background: var(--danger); }
+@media (max-width: 900px) {
+  .pcp-prog-novo { grid-template-columns: 1fr 1fr; }
+  .pcp-prog-produto { grid-column: 1 / -1; }
+}
+
 .cadastro-filter-toggle-list {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

@@ -114,8 +114,10 @@ check('  Vencimentos (que não é fábrica) também dispensa',
   /api\('\/api\/contracts\/meta\?diretorio=0'\)/.test(contratos) && !/api\('\/api\/contracts\/meta'\)/.test(contratos));
 
 const metaGenerico = servidor.slice(servidor.indexOf("if (nomeRecurso === 'meta') {"), servidor.indexOf('const recurso = `${modulo}/${nomeRecurso}`;'));
-check('o servidor do PCP lê `produtos=0` e manda id e nome',
-  /url\.searchParams\.get\('produtos'\) !== '0'/.test(metaGenerico) && /db\.getProductsResumidos\('id, name'\)/.test(metaGenerico)
+// O SKU entrou em 12/10/2026 (fase EB): é o código do modelo, e o campo de
+// busca mostra e procura por ele. Continua sendo um recorte, não `select *`.
+check('o servidor do PCP lê `produtos=0` e manda id, nome e SKU',
+  /url\.searchParams\.get\('produtos'\) !== '0'/.test(metaGenerico) && /db\.getProductsResumidos\('id, name, sku'\)/.test(metaGenerico)
   && !/db\.getProducts\(\)/.test(metaGenerico));
 // O campo Cadastro do Novo Contrato vira busca pelo NOME (campo_de_busca.js) e
 // grava o id. Os outros nove campos do diretório não tinham leitor.

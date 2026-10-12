@@ -50,6 +50,17 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
   const nomeProduto = (item, meta) => nomeDe(meta.products, item.productId);
   const nomeOrdem = (item, meta) => nomeDe(meta.orders, item.orderId);
   const qtd = (v) => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 4 });
+  const T = window.MavisPcpTempo;
+  const tempoDaOrdem = (i, meta) => {
+    const minutos = T.minutosDe(i.productId, i.quantity, T.mapaDeTempos(meta.tempos));
+    return minutos === null ? '-' : C.escape(T.formatarMinutos(minutos));
+  };
+  // Produto com o código na frente, como o campo de busca mostra ("100128 · RUNNER").
+  const rotuloProduto = (meta, id) => {
+    const p = (meta.products || []).find((x) => x.id === id);
+    if (!p) return '-';
+    return C.escape(window.MavisRotuloProduto ? window.MavisRotuloProduto.rotulo(p) : p.name);
+  };
 
   // ------------------------------------------------------ Ordens de produção
   R.ordens = C.makeListScreen({
@@ -79,6 +90,8 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       // Saldo é derivado: guardar também o restante criaria um número que pode
       // discordar dos outros dois.
       { label: 'Falta', render: (i) => qtd(Math.max(0, Number(i.quantity || 0) - Number(i.quantityDone || 0))) },
+      // Fase EB: quantidade × tempo do modelo. Sem tempo cadastrado, traço.
+      { label: 'Tempo', render: (i, meta) => tempoDaOrdem(i, meta) },
       { label: 'Entrega', render: (i) => C.formatDate(i.dueDate) },
       // Mostra o status cadastrado quando existe; sem ele, a etapa crua. A cor
       // sempre vem da etapa — é ela que diz o que a ordem realmente é.
@@ -246,6 +259,34 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     render();
   };
 
+  // ------------------------------------------------------ Tempos de produção
+  // Fase EB: quanto tempo leva UMA unidade de cada modelo. É o que a ordem de
+  // produção e a Programação do Dia usam para somar horas. Um tempo por
+  // produto — o banco recusa o segundo (UNIQUE).
+  R.tempos = C.makeInlineRegisterScreen({
+    ...base,
+    title: 'Tempos de Produção',
+    tableTitle: 'Tempo por modelo',
+    entityLabel: 'tempo',
+    endpoint: '/api/pcp/tempos',
+    listKey: 'tempos',
+    itemKey: 'tempo',
+    searchFields: ['notes'],
+    searchPlaceholder: 'Observação',
+    columns: [
+      { label: 'Produto', render: (i, meta) => `<strong>${rotuloProduto(meta, i.productId)}</strong>` },
+      { label: 'Tempo por unidade', render: (i) => C.escape(T.formatarMinutos(i.minutos)) },
+      { label: 'Unidades em 8h', render: (i) => (Number(i.minutos) > 0 ? qtd(Math.floor(480 / Number(i.minutos))) : '-') },
+      { label: 'Observação', render: (i) => C.escape(i.notes || '-') }
+    ],
+    formColumns: 3,
+    fields: [
+      { name: 'productId', label: 'Produto (modelo)', type: 'select', required: true, options: (meta) => meta.products || [] },
+      { name: 'minutos', label: 'Tempo por unidade (minutos)', type: 'number', step: '1', min: 1, required: true },
+      { name: 'notes', label: 'Observação' }
+    ]
+  });
+
   // ------------------------------------------------------------------ Setores
   R.setores = C.makeListScreen({
     ...baseSetores,
@@ -262,7 +303,10 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       { label: 'Seq.', render: (i) => `<strong>${Number(i.sequencia || 0)}</strong>` },
       { label: 'Setor', render: (i) => `<strong>${C.escape(i.name || '-')}</strong>` },
       { label: 'Responsável', render: responsavelDoSetor },
-      { label: 'Capacidade', render: (i) => (i.capacidadeHora ? `${qtd(i.capacidadeHora)}/h` : '-') },
+      // Fase EB: a jornada padrão do dia substitui a capacidade por hora (que
+      // era um número só para o setor inteiro e não serve quando cada modelo
+      // tem o seu tempo). O dado antigo fica no banco.
+      { label: 'Jornada', render: (i) => (i.jornadaHoras !== null && i.jornadaHoras !== undefined && i.jornadaHoras !== '' ? `${qtd(i.jornadaHoras)}h/dia` : '-') },
       { label: 'Descrição', render: (i) => C.escape(i.description || '-') },
       { label: 'Situação', render: (i) => C.statusBadge(i.active === false ? 'inativo' : 'ativo') }
     ]
@@ -288,7 +332,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       {
         title: 'Capacidade',
         fields: [
-          { name: 'capacidadeHora', label: 'Capacidade por hora', type: 'number', step: '0.0001', min: 0 },
+          { name: 'jornadaHoras', label: 'Jornada padrão (horas por dia)', type: 'number', step: '0.25', min: 0, default: 8 },
           { name: 'active', label: 'Setor ativo', type: 'checkbox', default: true }
         ]
       },
