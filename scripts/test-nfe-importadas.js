@@ -141,6 +141,13 @@ const migDy = ler('banco/migrations/fase-dy-importadas-so-historico.sql');
 check('a fase DY tira do SPED o que já tinha sido importado',
   /update fiscal_documentos\s+set escriturar = false[\s\S]*?where origem = 'IMPORTACAO' and escriturar;/.test(migDy));
 check('  e o banco trava importada escriturável', /check \(origem <> 'IMPORTACAO' or not escriturar\)/.test(migDy));
+// A trava é conferida NA INSERÇÃO: a importada tem de nascer fora do SPED. Com
+// o escriturar só no update depois do insert, o banco recusava toda importação
+// nova (descoberto ao importar as NFC-e, 12/10/2026: 288 de 288 recusadas).
+check('  por isso a importada NASCE fora do SPED (escriturar no insert)',
+  /origem: 'IMPORTACAO',\s*escriturar: false,/.test(dbImp)
+  && /modalidade_frete,\s*escriturar\s*\) values/.test(ler('lib/db/fiscal-documentos.js'))
+  && /payload\.escriturar === undefined \? true : Boolean\(payload\.escriturar\)/.test(ler('lib/db/fiscal-documentos.js')));
 check('reimportar não duplica (chave, ou referência)', /select 1 from fiscal_documentos where chave_acesso = \$1/.test(dbImp) && /importacao_ref = \$1/.test(dbImp));
 check('participante do cadastro vem com a ficha inteira (endereço do 0150)', /\.\.\.\(pessoa\.extra \|\| \{\}\)/.test(dbImp));
 const server = semComentarios(ler('server.js'));
