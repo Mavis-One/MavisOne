@@ -114,4 +114,6 @@ async function main() {
   console.log(`Relatório: ${arqRelatorio}`);
 }
 
-main().catch((erro) => { console.error('\nFALHOU:', erro.message); process.exit(1); });
+// exitCode, e não process.exit(): sair à força com a conexão aberta faz o Node
+// no Windows imprimir "Assertion failed ... UV_HANDLE_CLOSING" (ruído, mas assusta).
+main().catch((erro) => { console.error('\nFALHOU:', erro.message); process.exitCode = 1; });

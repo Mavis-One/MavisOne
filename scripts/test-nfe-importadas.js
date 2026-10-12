@@ -166,5 +166,26 @@ check('o painel de ações trava tudo para importada', /ctx\.selecionadas\.some\
 check('a ficha da importada vem da rota própria', /\/api\/finance\/nfe\/importada\//.test(tela) && /pathname\.startsWith\('\/api\/finance\/nfe\/importada\/'\)/.test(server));
 check('o script só grava com --enviar', /if \(!tem\('enviar'\)\) \{/.test(ler('scripts/importar-nfe-viper.js')));
 
+console.log('\n--- 5. completar a chave pelos DANFEs (12/10/2026) ---');
+// A SEFAZ não lista as notas que nós emitimos e a chave tem 8 dígitos
+// aleatórios: ela só sai de um documento da nota. As notas que o Viper listou
+// sem chave ganham a do DANFE — e só se a nota importada já existir.
+const CH = '42260743792899000569550010000001241719101868';
+check('a chave verdadeira passa no dígito verificador', imp.chaveValida(CH));
+check('  e um dígito trocado não passa', !imp.chaveValida(CH.slice(0, 43) + ((Number(CH[43]) + 1) % 10)));
+check('o DANFE (blocos de 4) é lido', imp.chavesDoTexto('CHAVE 4226 0743 7928 9900 0569 5500 1000 0001 2417 1910 1868 x').join() === CH);
+check('a carta de correção (ID do evento + chave + sequência) é lida',
+  imp.chavesDoTexto('ID1101104226074379289900080155001000000058156656148601').join() === '42260743792899000801550010000000581566561486');
+check('número qualquer de 44 dígitos que não é chave é ignorado', imp.chavesDoTexto('1'.repeat(44)).length === 0);
+const partes = imp.partesDaChave(CH);
+check('a chave diz CNPJ, modelo, série, número e mês', partes.cnpj === '43792899000569' && partes.modelo === '55' && partes.serie === '1' && partes.numero === '124' && partes.anoMes === '2026-07');
+const completar = dbImp.slice(dbImp.indexOf('async function completarChaves'), dbImp.indexOf('async function listarEmitidasParaLista'));
+check('completar NUNCA cria nota (só update de nota sem chave)', !/insert into|criarDocumento/.test(completar) && /update fiscal_documentos\s+set chave_acesso = \$2/.test(completar) && /where id = \$1 and chave_acesso is null/.test(completar));
+check('  casa empresa, número, modelo, série e MÊS', /estabelecimento_id = \$1 and numero = \$2 and modelo = \$3/.test(completar) && /to_char\(data_emissao, 'YYYY-MM'\) = \$5/.test(completar));
+check('  duas candidatas = ambígua, não escolhe', /if \(candidatas\.length > 1\) \{ r\.ambiguas\.push/.test(completar));
+check('a rota de completar é só de administrador',
+  /pathname === '\/api\/fiscal\/importacao\/completar-chaves' && req\.method === 'POST'\) \{\s*if \(!\(await ehAdmin\(user\)\)\) return sendJson/.test(server));
+check('o script de chaves só envia com --enviar', /if \(!tem\('enviar'\)\) \{/.test(ler('scripts/completar-chaves-nfe.js')));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

@@ -13007,6 +13007,22 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { success: true, ...resultado });
       }
 
+      // COMPLETAR A CHAVE das notas importadas que vieram sem ela (12/10/2026).
+      // Recebe chaves soltas (DANFE, carta de correção) e só PREENCHE nota que
+      // já existe — nunca cria. Ver lib/db/nfe-importadas.js/completarChaves.
+      if (pathname === '/api/fiscal/importacao/completar-chaves' && req.method === 'POST') {
+        if (!(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador completa chaves de notas importadas.' }, 403);
+        const body = await readBody(req);
+        const resultado = await nfeImportadasDb.completarChaves(body.chaves);
+        if (resultado.completadas) {
+          await registrarAuditoria({
+            action: 'fiscal.importacao.completar_chaves', targetId: 'nfe-importadas', targetUsername: String(resultado.completadas),
+            byId: user.id, byName: user.name, details: { completadas: resultado.completadas, semNota: resultado.semNota.length, ambiguas: resultado.ambiguas.length }
+          });
+        }
+        return sendJson(res, { success: true, ...resultado });
+      }
+
       // EDITAR UMA OPERAÇÃO (fase DW, 10/10/2026). Só as que existem no código:
       // a chave é contrato com o pedido, a regra fiscal e a nota. As travas de
       // combinação estão em operacaoFiscal.validarAjuste.
