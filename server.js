@@ -38,6 +38,8 @@ const operacaoFiscal = require('./lib/operacaoFiscal');
 const operacoesFiscaisDb = require('./lib/db/operacoes-fiscais');
 // Fase DX — as NF-e do sistema anterior (Viper), importadas como registro.
 const nfeImportadasDb = require('./lib/db/nfe-importadas');
+// 12/10/2026 — pedidos e orçamentos do Viper (Listagem de Vendas) como histórico.
+const pedidosImportadosDb = require('./lib/db/pedidos-importados');
 // Fase CN — o zip do acervo de XML. Escrito à mão para não trazer dependência;
 // o porquê está no cabeçalho do arquivo.
 const zipUtil = require('./lib/zip');
@@ -11838,6 +11840,28 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { success: true });
     } catch (error) {
       return sendErro(res, error, 'Erro ao excluir pedido/orçamento', 400);
+    }
+  }
+
+  // PEDIDOS E ORÇAMENTOS DO VIPER, como histórico (12/10/2026). Só
+  // administrador: grava documento de venda em massa, com o número do Viper.
+  // `simular: true` confere tudo — inclusive os números que já existem aqui —
+  // sem gravar. Ver lib/db/pedidos-importados.js.
+  if (pathname === '/api/sales/importacao/viper' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador importa pedidos do sistema anterior.' }, 403);
+      const body = await readBody(req);
+      const resultado = await pedidosImportadosDb.gravarPedidos(body.documentos, { usuario: user, simular: body.simular === true });
+      if (!resultado.simulado && resultado.criados) {
+        await registrarAuditoria({
+          action: 'vendas.importacao.viper', targetId: 'orders', targetUsername: String(resultado.criados),
+          byId: user.id, byName: user.name, details: { criados: resultado.criados, existentes: resultado.existentes, conflitos: resultado.conflitos.length }
+        });
+      }
+      return sendJson(res, { success: true, ...resultado });
+    } catch (erro) {
+      return sendErro(res, erro, 'Erro ao importar pedidos', 400);
     }
   }
 
