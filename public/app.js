@@ -3246,7 +3246,7 @@ async function loadModule(moduleName) {
                 }).join('')}<th>Ações</th></tr></thead>
                 <tbody>
                   ${records.length ? records.map((record) => `
-                    <tr class="${draft.selecionados.includes(record.id) ? 'is-selecionada' : ''}">
+                    <tr class="${draft.selecionados.includes(record.id) ? 'is-selecionada' : ''}" data-abrir-registro="${escapeHtml(record.id)}">
                       <td class="sales-col-selecao">
                         <input type="checkbox" class="sales-selecionar" data-id="${escapeHtml(record.id)}"
                           ${draft.selecionados.includes(record.id) ? 'checked' : ''} />
@@ -3464,15 +3464,27 @@ async function loadModule(moduleName) {
         document.getElementById('salesNextPage')?.addEventListener('click', () => {
           if (page < totalPages) { state.salesDraft.ordersPage = page + 1; loadModule('sales'); }
         });
+        const abrirRegistroDaLista = (id) => {
+          const record = records.find((entry) => entry.id === id);
+          if (!record) return;
+          state.salesDraft.editRecord = record;
+          state.salesDraft.novoStatus = '';
+          state.activeSub = 'new_sale';
+          renderApp();
+          loadModule('sales');
+        };
         document.querySelectorAll('.sales-edit-record').forEach((btn) => {
-          btn.addEventListener('click', () => {
-            const record = records.find((entry) => entry.id === btn.dataset.id);
-            if (!record) return;
-            state.salesDraft.editRecord = record;
-            state.salesDraft.novoStatus = '';
-            state.activeSub = 'new_sale';
-            renderApp();
-            loadModule('sales');
+          btn.addEventListener('click', () => abrirRegistroDaLista(btn.dataset.id));
+        });
+        // DUPLO CLIQUE NA LINHA ABRE O PEDIDO (13/10/2026, pedido do usuário) —
+        // o mesmo que o lápis. Menos na caixa de seleção e nos botões da
+        // linha: lá o duplo clique é dois cliques, e cada um faz o seu.
+        document.querySelectorAll('tr[data-abrir-registro]').forEach((linha) => {
+          linha.addEventListener('dblclick', (evento) => {
+            if (evento.target.closest('input, button, a, select, label')) return;
+            const selecao = window.getSelection && window.getSelection();
+            if (selecao && selecao.removeAllRanges) selecao.removeAllRanges();
+            abrirRegistroDaLista(linha.dataset.abrirRegistro);
           });
         });
         document.querySelectorAll('.sales-delete-record').forEach((btn) => {
