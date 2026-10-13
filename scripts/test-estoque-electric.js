@@ -30,5 +30,34 @@ erro = '';
 try { lerPlanilha([[['SAL INFINITY ELECTRIC LTDA'], ['Código', 'Descrição', 'UN', 'Tipo', 'Estoque', 'Preço']]]); } catch (e) { erro = e.message; }
 check('cabeçalho fora do lugar é recusado', erro.length > 0, erro);
 
+// O RELATÓRIO "ESTOQUES" DO VIPER (posição atual de UM depósito) — 13/10/2026.
+// Com ele o "Depósito Electric" fica igual ao relatório; provado no banco
+// local: 891 itens, 16.296,61 unidades, 136 ajustes a zero (CNT-0014).
+const { lerPlanilhaEstoques, CABECALHO_ESTOQUES } = require('../lib/importacao-estoque-electric');
+const relatorio = (empresa, linhas) => [[['ESTOQUES'], [empresa], ['Posição atual'], CABECALHO_ESTOQUES, ...linhas]];
+const deEstoque = (sku, saldo, deposito = 'ELECTRIC (ASSISTENCIA)', empresaDaLinha = 'SAL INFINITY ELECTRIC LTDA') =>
+  [sku, 'ITEM ' + sku, '', empresaDaLinha, deposito, '10', saldo, '0'];
+const e = lerPlanilhaEstoques(relatorio('SAL INFINITY ELECTRIC LTDA', [
+  deEstoque('1', '3'), deEstoque('2', '0'), deEstoque('3', '-1'), deEstoque('4', '16.296,61'), ['Totais', 'Saldo físico: 16.299,61', '']
+]));
+check('Estoques: entram só os positivos', e.itens.map((i) => i.sku).join(',') === '1,4', e.itens.map((i) => i.sku).join(','));
+check('Estoques: o saldo com milhar e vírgula', e.itens[1].quantidade === 16296.61, e.itens[1].quantidade);
+check('Estoques: a linha de Totais não vira item', !e.itens.concat(e.invalidos).some((i) => i.sku === 'Totais'));
+check('Estoques: diz de qual depósito do Viper é', e.depositoDoViper === 'ELECTRIC (ASSISTENCIA)' && e.formato === 'estoques');
+check('Estoques: negativo fica de fora', e.negativos.length === 1 && e.zerados === 1);
+erro = '';
+try { lerPlanilhaEstoques(relatorio('SAL INFINITY ELECTRIC LTDA', [deEstoque('1', '3'), deEstoque('2', '5', 'ELECTRIC (LOJA)')])); } catch (x) { erro = x.message; }
+check('Estoques: dois depósitos no mesmo arquivo são recusados', /UM depósito/.test(erro), erro);
+erro = '';
+try { lerPlanilhaEstoques(relatorio('SAL INFINITY PLUS COMERCIO LTDA', [deEstoque('1', '3')])); } catch (x) { erro = x.message; }
+check('Estoques: relatório de outra empresa é recusado', /não da SAL INFINITY ELECTRIC/.test(erro), erro);
+const outra = lerPlanilhaEstoques(relatorio('SAL INFINITY ELECTRIC LTDA', [deEstoque('1', '3'), deEstoque('9', '7', 'ELECTRIC (ASSISTENCIA)', 'SAL INFINITY PLUS COMERCIO LTDA')]));
+check('Estoques: linha de outra empresa não entra', outra.itens.length === 1 && outra.invalidos.some((i) => i.sku === '9'));
+const fonte = require('fs').readFileSync(require('path').join(__dirname, 'importar-estoque-electric.js'), 'utf8');
+check('o script reconhece os dois formatos', /lerPlanilha\(abas\)/.test(fonte) && /lerPlanilhaEstoques\(abas\)/.test(fonte));
+check('  igualar zera quem tem saldo aqui e não está no relatório', /if \(saldo !== 0 && !naPlanilha\.has\(p\.id\)\) zerar\.push/.test(fonte));
+check('  e os zeros entram na mesma contagem', /const faltam = \[\.\.\.casados, \.\.\.zerar\]/.test(fonte));
+check('  com marca própria (roda depois da carga da planilha Produtos)', /MARCA_ESTOQUES/.test(fonte) && /const MARCA = igualar \? MARCA_ESTOQUES : MARCA_PRODUTOS;/.test(fonte));
+
 console.log(falhas ? `\n${falhas} FALHA(S)` : '\nTudo certo.');
 process.exitCode = falhas ? 1 : 0;

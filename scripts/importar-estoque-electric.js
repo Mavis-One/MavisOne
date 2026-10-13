@@ -23,13 +23,19 @@
 // desfaria a venda). Se parou no meio, a contagem aberta é retomada.
 //
 // Por que a coluna Estoque é da Electric: lib/importacao-estoque-electric.js.
+//
+// TAMBÉM LÊ O RELATÓRIO "ESTOQUES" DO VIPER (posição atual de UM depósito,
+// 13/10/2026). Com ele o depósito fica IGUAL ao relatório: além dos itens com
+// saldo, a contagem leva com ZERO todo produto que tem saldo no depósito daqui
+// e não está no relatório com saldo (decisão do usuário). A marca da contagem
+// é outra, então esta carga roda mesmo depois da carga da planilha Produtos.
 // A planilha NÃO entra no repositório.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { lerXlsx } = require('../lib/xlsx-leitor');
-const { lerPlanilha, CNPJ_ELECTRIC } = require('../lib/importacao-estoque-electric');
+const { lerPlanilha, lerPlanilhaEstoques, CNPJ_ELECTRIC } = require('../lib/importacao-estoque-electric');
 
 const argumento = (nome) => { const i = process.argv.indexOf('--' + nome); return i >= 0 ? process.argv[i + 1] : undefined; };
 const tem = (nome) => process.argv.includes('--' + nome);
@@ -37,7 +43,8 @@ const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', c
 const qtd = (v) => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 4 });
 // Marca na observação da contagem: é por ela que uma segunda rodada reconhece
 // a carga já feita.
-const MARCA = 'Carga do estoque da Electric (planilha Produtos do Viper)';
+const MARCA_PRODUTOS = 'Carga do estoque da Electric (planilha Produtos do Viper)';
+const MARCA_ESTOQUES = 'Estoque da Electric igualado ao relatório Estoques do Viper';
 
 // Os dados da Electric para o cadastro de empresa de Vendas, se faltar —
 // os mesmos do emitente fiscal (ver a fase DV).
@@ -68,8 +75,21 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  const lido = lerPlanilha(lerXlsx(arquivo));
-  console.log(`Planilha: ${path.basename(arquivo)} — ${lido.empresa}`);
+  // O formato pelo cabeçalho: planilha Produtos ou relatório Estoques.
+  const abas = lerXlsx(arquivo);
+  let lido;
+  try {
+    lido = { formato: 'produtos', ...lerPlanilha(abas) };
+  } catch (erroProdutos) {
+    try {
+      lido = lerPlanilhaEstoques(abas);
+    } catch (erroEstoques) {
+      throw new Error(`${erroProdutos.message} / ${erroEstoques.message}`);
+    }
+  }
+  const igualar = lido.formato === 'estoques';
+  const MARCA = igualar ? MARCA_ESTOQUES : MARCA_PRODUTOS;
+  console.log(`Planilha: ${path.basename(arquivo)} — ${lido.empresa}${igualar ? ` — relatório Estoques do depósito ${lido.depositoDoViper}` : ''}`);
   console.log(`  com estoque: ${lido.itens.length} produtos, ${qtd(lido.unidades)} unidades`);
   console.log(`  estoque zero: ${lido.zerados} | negativos (ficam de fora): ${lido.negativos.length}`);
   lido.negativos.forEach((n) => console.log(`    negativo ${n.sku}  ${n.nome}  ${qtd(n.quantidade)}`));
@@ -142,6 +162,22 @@ async function main() {
   semCadastro.forEach((i) => console.log(`  FORA (código não cadastrado) ${i.sku}  ${i.nome}  ${qtd(i.quantidade)}`));
   ambiguos.forEach((i) => console.log(`  FORA (SKU repetido no cadastro) ${i.sku}  ${i.nome}`));
 
+  // 2b. IGUALAR: quem tem saldo no depósito daqui e não está no relatório com
+  // saldo entra na contagem com ZERO. A lista inteira de produtos traz o saldo
+  // de cada depósito (`balances`); negativo também vai a zero.
+  const zerar = [];
+  if (igualar && deposito) {
+    const { products: comSaldos } = await chamar('GET', '/api/stock/products');
+    const naPlanilha = new Set(casados.map((i) => i.productId));
+    for (const p of comSaldos || []) {
+      const saldo = Number(((p.balances || []).find((b) => b.depositId === deposito.id) || {}).quantity || 0);
+      if (saldo !== 0 && !naPlanilha.has(p.id)) zerar.push({ sku: p.sku, nome: p.name, productId: p.id, quantidade: 0, saldoAtual: saldo });
+    }
+    console.log(`\nVão a ZERO em ${deposito.name} (têm saldo aqui e não estão no relatório com saldo): ${zerar.length} produtos, ${qtd(zerar.reduce((t, i) => t + i.saldoAtual, 0))} unidades`);
+    zerar.slice(0, 15).forEach((i) => console.log(`    ${i.sku}  ${String(i.nome).slice(0, 50)}  ${qtd(i.saldoAtual)} -> 0`));
+    if (zerar.length > 15) console.log(`    ... e mais ${zerar.length - 15}`);
+  }
+
   // 3. Carga já feita?
   let aberta = null;
   if (deposito) {
@@ -180,20 +216,20 @@ async function main() {
   if (!aberta) {
     ({ count: aberta } = await chamar('POST', '/api/stock/counts', {
       depositId: deposito.id, date: data,
-      note: `${MARCA} — ${lido.itens.length} itens, ${path.basename(arquivo)}`
+      note: `${MARCA} — ${lido.itens.length} itens${zerar.length ? ` + ${zerar.length} a zero` : ''}, ${path.basename(arquivo)}`
     }));
     console.log(`Contagem aberta: ${aberta.code} em ${deposito.name}, data ${data}`);
   }
   const { items: jaContados } = await chamar('GET', `/api/stock/counts/${encodeURIComponent(aberta.id)}`);
   const feitos = new Set((jaContados || []).map((i) => i.productId));
-  const faltam = casados.filter((i) => !feitos.has(i.productId));
+  const faltam = [...casados, ...zerar].filter((i) => !feitos.has(i.productId));
   let n = 0;
   for (const item of faltam) {
     await chamar('POST', `/api/stock/counts/${encodeURIComponent(aberta.id)}/items`, {
       productId: item.productId, countedQuantity: item.quantidade
     });
     n += 1;
-    if (n % 50 === 0 || n === faltam.length) process.stdout.write(`\r  itens lançados: ${feitos.size + n} de ${casados.length}`);
+    if (n % 50 === 0 || n === faltam.length) process.stdout.write(`\r  itens lançados: ${feitos.size + n} de ${casados.length + zerar.length}`);
   }
   console.log(`\n  itens na contagem: ${feitos.size + n}`);
 
