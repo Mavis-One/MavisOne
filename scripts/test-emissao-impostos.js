@@ -112,6 +112,17 @@ check('a tela tem a aba e manda o grupo', /data-tab="transporte"/.test(tela) && 
 check('a transportadora do pedido abre preenchida', /carrierId: formState\.carrierId \|\| '',/.test(ler('public/app.js'))
   && /if \(doPedido\.carrierId\) escolherTransportadora\(doPedido\.carrierId\);/.test(tela));
 
+console.log('\n--- 6b. IBS/CBS editáveis na tela ---');
+const ibs = B.resumoFiscalDaPrevia(montar({ cstIbsCbs: '000', classTrib: '000001', aliquotaIbsUf: 0.1, aliquotaIbsMun: 0, aliquotaCbs: 0.9 }));
+check('CST e cClassTrib digitados chegam à nota mesmo sem a regra declarar',
+  ibs.itens[0].cstIbsCbs === '000' && ibs.itens[0].classTrib === '000001');
+check('  alíquotas refazem os valores (1000 x 0,1% e 0,9%)', ibs.itens[0].valorIbs === 1 && ibs.itens[0].valorCbs === 9);
+check('  IBS do município zero vai como zero', ibs.itens[0].aliquotaIbsMun === 0);
+check('  e os totais trazem IBS e CBS', ibs.totais.ibs === 1 && ibs.totais.cbs === 9);
+check('a tela tem o grupo IBS/CBS com CST e cClassTrib',
+  /titulo: 'IBS\/CBS', campos: \[\['cstIbsCbs', 'CST'\], \['classTrib', 'cClassTrib'\]/.test(tela));
+check('  e os valores são só leitura', /const CAMPOS_SO_LEITURA = \['valorIbs', 'valorCbs'\];/.test(tela));
+
 console.log('\n--- 7. cobrança: fatura e duplicatas ---');
 // Nomes conferidos em campos.focusnfe.com.br/nfe/NotaFiscalXML.html (13/10/2026).
 const amanha = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);

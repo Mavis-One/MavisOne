@@ -859,9 +859,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     { titulo: 'ICMS-ST', campos: [['baseIcmsSt', 'Base'], ['aliquotaIcmsSt', 'Alíquota %'], ['valorIcmsSt', 'Valor'], ['mvaSt', 'MVA %']] },
     { titulo: 'IPI', campos: [['cstIpi', 'CST'], ['baseIpi', 'Base'], ['aliquotaIpi', 'Alíquota %'], ['valorIpi', 'Valor']] },
     { titulo: 'PIS', campos: [['cstPis', 'CST'], ['basePis', 'Base'], ['aliquotaPis', 'Alíquota %'], ['valorPis', 'Valor']] },
-    { titulo: 'COFINS', campos: [['cstCofins', 'CST'], ['baseCofins', 'Base'], ['aliquotaCofins', 'Alíquota %'], ['valorCofins', 'Valor']] }
+    { titulo: 'COFINS', campos: [['cstCofins', 'CST'], ['baseCofins', 'Base'], ['aliquotaCofins', 'Alíquota %'], ['valorCofins', 'Valor']] },
+    // Reforma tributária. Os valores são só leitura: saem da base (valor do
+    // item) vezes a alíquota, e é a alíquota que se edita.
+    { titulo: 'IBS/CBS', campos: [['cstIbsCbs', 'CST'], ['classTrib', 'cClassTrib'], ['aliquotaIbsUf', 'IBS UF %'], ['aliquotaIbsMun', 'IBS Mun. %'], ['aliquotaCbs', 'CBS %'], ['valorIbs', 'IBS (valor)'], ['valorCbs', 'CBS (valor)']] }
   ];
-  const CAMPOS_DE_TEXTO = ['cfop', 'ncm', 'cstIcms', 'codigoBeneficioFiscal', 'cstIpi', 'cstPis', 'cstCofins'];
+  const CAMPOS_DE_TEXTO = ['cfop', 'ncm', 'cstIcms', 'codigoBeneficioFiscal', 'cstIpi', 'cstPis', 'cstCofins', 'cstIbsCbs', 'classTrib'];
+  const CAMPOS_SO_LEITURA = ['valorIbs', 'valorCbs'];
 
   /** O que o campo mostra: o editado, senão o que a prévia montou. */
   function valorFiscal(item, linha, campo) {
@@ -913,6 +917,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                   <label class="${editado(item, campo) ? 'is-editado' : ''}">${rotulo}
                     <input data-fiscal-index="${index}" data-fiscal-campo="${campo}"
                            ${CAMPOS_DE_TEXTO.includes(campo) ? '' : 'type="number" step="0.01"'}
+                           ${CAMPOS_SO_LEITURA.includes(campo) ? 'readonly' : ''}
                            value="${escapeHtml(String(valorFiscal(item, linha, campo)))}" />
                   </label>`).join('')}
               </div>
@@ -952,6 +957,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           ${linha('IPI', t ? t.ipi : undefined)}
           ${linha('PIS', t ? t.pis : undefined)}
           ${linha('COFINS', t ? t.cofins : undefined)}
+          ${linha('IBS', t ? t.ibs : undefined)}
+          ${linha('CBS', t ? t.cbs : undefined)}
           ${linha('Total da nota', t ? t.total : undefined, true)}
         </tbody>
       </table>`;
