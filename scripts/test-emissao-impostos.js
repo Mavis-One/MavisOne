@@ -112,5 +112,39 @@ check('a tela tem a aba e manda o grupo', /data-tab="transporte"/.test(tela) && 
 check('a transportadora do pedido abre preenchida', /carrierId: formState\.carrierId \|\| '',/.test(ler('public/app.js'))
   && /if \(doPedido\.carrierId\) escolherTransportadora\(doPedido\.carrierId\);/.test(tela));
 
+console.log('\n--- 7. cobrança: fatura e duplicatas ---');
+// Nomes conferidos em campos.focusnfe.com.br/nfe/NotaFiscalXML.html (13/10/2026).
+const amanha = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+const depois = new Date(Date.now() + 40 * 86400000).toISOString().slice(0, 10);
+const cb = comTransporte(undefined, {
+  dataEmissao: new Date().toISOString(),
+  cobranca: { numeroFatura: '16333', valorDesconto: 10, duplicatas: [{ vencimento: amanha, valor: 400 }, { vencimento: depois, valor: '590' }, { vencimento: '', valor: 0 }] }
+});
+check('duplicatas numeradas 001, 002 (linha vazia fora)', cb.duplicatas.length === 2 && cb.duplicatas[0].numero === '001' && cb.duplicatas[1].numero === '002');
+check('  com data_vencimento e valor', cb.duplicatas[1].data_vencimento === depois && cb.duplicatas[1].valor === 590);
+check('fatura: líquido = soma, original = soma + desconto',
+  cb.numero_fatura === '16333' && cb.valor_liquido_fatura === 990 && cb.valor_original_fatura === 1000 && cb.valor_desconto_fatura === 10);
+check('sem duplicata, nenhum campo de fatura', !Object.keys(comTransporte(undefined, { cobranca: { numeroFatura: '1' } })).some((k) => /fatura|duplicatas/.test(k)));
+let vencida = null;
+try { B.grupoCobranca({ duplicatas: [{ vencimento: '2026-10-01', valor: 5 }] }, '2026-10-13T12:00:00Z'); } catch (erro) { vencida = erro; }
+check('vencimento antes da emissão é recusado antes da SEFAZ', vencida && vencida.status === 400);
+// 22h30 em Brasília já é amanhã em UTC: vencer "hoje" não pode ser recusado.
+check('  a data da emissão é a de Brasília, não a UTC',
+  B.grupoCobranca({ duplicatas: [{ vencimento: '2026-10-13', valor: 5 }] }, '2026-10-14T01:30:00Z').duplicatas.length === 1);
+check('duplicatas acima do total da nota são recusadas', /excedem/.test(B.conferirCobrancaDaNota({ valor_total: 100, duplicatas: [{ valor: 150 }] })));
+check('  abaixo (entrada à vista) passam', B.conferirCobrancaDaNota({ valor_total: 100, duplicatas: [{ valor: 60 }] }) === '');
+check('o servidor repassa e confere a cobrança', /cobranca: body\.cobranca,/.test(servidor) && /const cobrancaExcede = conferirCobrancaDaNota\(payload\);/.test(servidor));
+
+// Na nota avulsa, as duplicatas viram o contas a receber.
+const corpo = (nome) => (new RegExp(`function ${nome}\\([\\s\\S]*?\\n\\}`).exec(servidor) || [''])[0];
+const parcelasDaNfeAvulsa = new Function('buildNfeInstallments', `${corpo('parcelasDaNfeAvulsa')}; return parcelasDaNfeAvulsa;`)(() => [{ number: 1, dueDate: 'x', amount: 0 }]);
+const avulsa = parcelasDaNfeAvulsa({ duplicatas: [{ vencimento: '2026-11-13', valor: 300 }, { vencimento: '2026-12-13', valor: 300 }] }, 1000, '2026-10-13');
+check('avulsa: entrada na emissão + as duas duplicatas', avulsa.length === 3 && avulsa[0].amount === 400 && avulsa[0].dueDate === '2026-10-13' && avulsa[2].dueDate === '2026-12-13', JSON.stringify(avulsa));
+check('  sem duplicatas, o parcelamento de sempre', parcelasDaNfeAvulsa({ tipo: 'avista' }, 1000, '2026-10-13')[0].dueDate === 'x');
+check('  e a condição guarda as duplicatas', /\.\.\.\(duplicatas\.length \? \{ duplicatas \} : \{\}\)/.test(corpo('condicaoPagamentoDoBody')));
+check('a tela manda a cobrança e o pedido leva o vencimento',
+  /cobrancaDaNota\(\) \? \{ cobranca: cobrancaDaNota\(\) \}/.test(tela) && /vencimento: linha\.dueDate \|\| '',/.test(ler('public/app.js')));
+check('  cartão não vira duplicata', /!FORMAS_DE_CARTAO\.includes\(linha\.forma\)/.test(tela));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

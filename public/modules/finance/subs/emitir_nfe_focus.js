@@ -174,6 +174,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     veiculo: { placa: '', uf: '', rntc: '' },
     volumes: []
   };
+  // A COBRANÇA (fatura e duplicatas, 13/10/2026). Enquanto ninguém mexe, as
+  // duplicatas seguem as parcelas (do pedido ou do parcelamento da avulsa);
+  // editou uma vez, ficam como estão até "Refazer pelas parcelas".
+  let cobrancaEditada = false;
+  const cobranca = {
+    numeroFatura: doPedido && doPedido.code ? String(doPedido.code) : '',
+    valorDesconto: 0,
+    duplicatas: []
+  };
   // A PRÉVIA DA ABA IMPOSTOS (13/10/2026): o que o servidor montaria, com as
   // regras fiscais e o que foi editado. Ver carregarPrevia.
   let previa = null;
@@ -642,6 +651,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <label>Número de parcelas<input type="number" name="installmentsCount" min="2" max="60" step="1" value="2" /></label>
               <label>Intervalo entre parcelas (dias)<input type="number" name="installmentIntervalDays" min="1" value="30" /></label>
             </div>
+            <div id="nfeFocusCobranca"></div>
           </div>
 
           <!-- Abas 4 e 7 (13/10/2026): desenhadas por renderImpostos e
@@ -1150,6 +1160,143 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     });
   }
 
+  // ------------------------------------------- cobrança (aba Pagamento)
+  //
+  // Grupo cobr da NF-e: fatura e duplicatas. O número de cada duplicata
+  // ("001", "002"...) quem dá é o servidor (grupoCobranca); aqui só vencimento
+  // e valor. Na nota avulsa, as mesmas parcelas viram o contas a receber.
+  const FORMAS_DE_CARTAO = ['03', '04'];
+
+  function hojeLocal() {
+    const agora = new Date();
+    return new Date(agora.getTime() - agora.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  }
+
+  function somarDias(iso, dias) {
+    const d = new Date(`${iso}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + dias);
+    return d.toISOString().slice(0, 10);
+  }
+
+  /**
+   * As duplicatas que as parcelas pedem. Do pedido: as linhas a PRAZO
+   * (vencimento depois de hoje), menos cartão — o cartão quem paga é a
+   * credenciadora, não o cliente. Da avulsa: o parcelamento escolhido, na
+   * mesma divisão do contas a receber (centavos na última).
+   */
+  function duplicatasSugeridas() {
+    const hoje = hojeLocal();
+    if (pagamentosDoPedido.length) {
+      return pagamentosDoPedido
+        .filter((linha) => String(linha.vencimento || '') > hoje && !FORMAS_DE_CARTAO.includes(linha.forma))
+        .map((linha) => ({ vencimento: linha.vencimento, valor: Number(linha.valor || 0) }));
+    }
+    const form = document.getElementById('nfeFocusForm');
+    if (!form || (form.querySelector('[name="paymentType"]') || {}).value !== 'parcelado') return [];
+    const quantas = Math.min(60, Math.max(2, Math.round(Number(form.querySelector('[name="installmentsCount"]')?.value || 2))));
+    const intervalo = Math.max(1, Number(form.querySelector('[name="installmentIntervalDays"]')?.value || 30));
+    const total = grandTotal();
+    const parte = Math.floor((total / quantas) * 100) / 100;
+    return Array.from({ length: quantas }, (_, i) => ({
+      vencimento: somarDias(hoje, intervalo * (i + 1)),
+      valor: i === quantas - 1 ? Math.round((total - parte * (quantas - 1)) * 100) / 100 : parte
+    }));
+  }
+
+  function atualizarCobrancaSugerida() {
+    if (!cobrancaEditada) cobranca.duplicatas = duplicatasSugeridas();
+    renderCobranca();
+  }
+
+  function somaDasDuplicatas() {
+    return Math.round(cobranca.duplicatas.reduce((soma, d) => soma + Number(d.valor || 0), 0) * 100) / 100;
+  }
+
+  /** O grupo que vai no corpo, ou null quando não há parcela. */
+  function cobrancaDaNota() {
+    const duplicatas = cobranca.duplicatas.filter((d) => Number(d.valor || 0) > 0);
+    if (!duplicatas.length) return null;
+    return {
+      numeroFatura: cobranca.numeroFatura,
+      valorDesconto: Number(cobranca.valorDesconto || 0),
+      duplicatas: duplicatas.map((d) => ({ vencimento: d.vencimento, valor: Number(d.valor) }))
+    };
+  }
+
+  function renderCobranca() {
+    const caixa = document.getElementById('nfeFocusCobranca');
+    if (!caixa) return;
+    const liquido = somaDasDuplicatas();
+    const descontoFatura = Number(cobranca.valorDesconto || 0);
+    caixa.innerHTML = `
+      <div class="cadastro-section">
+        <div class="cadastro-section-header"><h4>Cobrança (fatura e duplicatas)</h4></div>
+        <div class="cadastro-section-body">
+          <div class="nfe-transporte-campos">
+            <label>Nº da fatura<input data-cobranca="numeroFatura" maxlength="60" value="${escapeHtml(cobranca.numeroFatura)}" /></label>
+            <label>Desconto da fatura (R$)<input type="number" step="0.01" min="0" data-cobranca="valorDesconto" value="${descontoFatura || ''}" /></label>
+            <label>Valor original<input readonly value="${financeFormatBRL(liquido + descontoFatura)}" /></label>
+            <label>Valor líquido<input readonly value="${financeFormatBRL(liquido)}" /></label>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table nfe-duplicatas">
+              <thead><tr><th>Nº</th><th>Vencimento</th><th>Valor (R$)</th><th></th></tr></thead>
+              <tbody>
+                ${cobranca.duplicatas.map((d, i) => `<tr>
+                  <td>${String(i + 1).padStart(3, '0')}</td>
+                  <td><input type="date" data-duplicata-index="${i}" data-duplicata-campo="vencimento" value="${escapeHtml(d.vencimento || '')}" /></td>
+                  <td><input type="number" step="0.01" min="0" data-duplicata-index="${i}" data-duplicata-campo="valor" value="${d.valor === '' || d.valor === undefined ? '' : Number(d.valor)}" /></td>
+                  <td><button type="button" class="secondary" data-duplicata-remover="${i}">Remover</button></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div class="nfe-impostos-topo" style="margin-top: 8px;">
+            <button type="button" class="secondary" data-duplicata-adicionar>+ Adicionar parcela</button>
+            ${cobrancaEditada ? '<button type="button" class="secondary" data-duplicata-refazer>Refazer pelas parcelas</button>' : ''}
+          </div>
+          ${liquido > grandTotal() + 0.01 ? `<p class="form-error">As duplicatas somam ${financeFormatBRL(liquido)} e a nota tem ${financeFormatBRL(grandTotal())}.</p>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function ligarCobranca() {
+    const caixa = document.getElementById('nfeFocusCobranca');
+    if (!caixa) return;
+    caixa.addEventListener('change', (evento) => {
+      const alvo = evento.target;
+      if (alvo.dataset.cobranca) {
+        cobranca[alvo.dataset.cobranca] = alvo.dataset.cobranca === 'valorDesconto' ? Math.max(0, Number(alvo.value || 0)) : alvo.value;
+        renderCobranca();
+        return;
+      }
+      if (!alvo.dataset.duplicataCampo) return;
+      const dup = cobranca.duplicatas[Number(alvo.dataset.duplicataIndex)];
+      if (!dup) return;
+      dup[alvo.dataset.duplicataCampo] = alvo.dataset.duplicataCampo === 'valor' ? Number(alvo.value || 0) : alvo.value;
+      cobrancaEditada = true;
+      renderCobranca();
+    });
+    caixa.addEventListener('click', (evento) => {
+      const alvo = evento.target;
+      if (alvo.matches('[data-duplicata-adicionar]')) {
+        const ultima = cobranca.duplicatas[cobranca.duplicatas.length - 1];
+        const resto = Math.max(0, Math.round((grandTotal() - somaDasDuplicatas()) * 100) / 100);
+        cobranca.duplicatas.push({ vencimento: somarDias(ultima && ultima.vencimento ? ultima.vencimento : hojeLocal(), 30), valor: resto });
+        cobrancaEditada = true;
+      } else if (alvo.dataset.duplicataRemover !== undefined) {
+        cobranca.duplicatas.splice(Number(alvo.dataset.duplicataRemover), 1);
+        cobrancaEditada = true;
+      } else if (alvo.matches('[data-duplicata-refazer]')) {
+        cobrancaEditada = false;
+        cobranca.duplicatas = duplicatasSugeridas();
+      } else {
+        return;
+      }
+      renderCobranca();
+    });
+  }
+
   // O CORPO DA NOTA, num lugar só (13/10/2026): o envio e a PRÉVIA da aba
   // Impostos mandam exatamente o mesmo — senão a prévia mostraria uma nota e o
   // botão transmitiria outra.
@@ -1229,6 +1376,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // valor era metade do defeito da fase CY.
       ...(modalidadeEscolhida === undefined ? {} : { modalidadeFrete: modalidadeEscolhida }),
       ...(transporteDaNota() ? { transporte: transporteDaNota() } : {}),
+      ...(cobrancaDaNota() ? { cobranca: cobrancaDaNota() } : {}),
       ...(outrasDespesas ? { outrasDespesas } : {}),
       // Com pedido de origem, o servidor NÃO gera contas a receber: quem
       // gerou foi o pedido, e um segundo recebível pelo mesmo valor só
@@ -1250,6 +1398,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     ligarImpostosETotais();
     ligarTransporte();
     renderTransporte();
+    ligarCobranca();
+    atualizarCobrancaSugerida();
     renderImpostos();
     renderTotais();
     // Trocar de aba mexe so no `hidden`: sem redesenhar, o que ja foi digitado
@@ -1268,6 +1418,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       if (alvo === 'impostos' || alvo === 'totais') carregarPrevia();
       // A modalidade sugerida acompanha o frete, que a aba Totais pode ter mudado.
       if (alvo === 'transporte') renderTransporte();
+      // E as duplicatas sugeridas, o total da nota.
+      if (alvo === 'pagamento') atualizarCobrancaSugerida();
     };
 
     content.querySelectorAll('.cadastro-tab').forEach((tabBtn) => {
@@ -1391,7 +1543,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     document.getElementById('nfeFocusPaymentType')?.addEventListener('change', (evento) => {
       document.getElementById('nfeFocusInstallmentFields')
         ?.classList.toggle('hidden', evento.target.value !== 'parcelado');
+      atualizarCobrancaSugerida();
     });
+    // Número de parcelas e intervalo refazem as duplicatas enquanto ninguém as editou.
+    document.getElementById('nfeFocusInstallmentFields')?.addEventListener('change', atualizarCobrancaSugerida);
 
     // Trocar de operação redesenha a tela: no complemento não há aba de itens
     // nem de pagamento, e há uma de nota original. Esconder por CSS deixaria

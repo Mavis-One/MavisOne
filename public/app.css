@@ -4833,3 +4833,5 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .nfe-volumes { width: 100%; table-layout: fixed; min-width: 640px; }
 .nfe-volumes th:last-child { width: 100px; }
 .nfe-volumes input { width: 100%; min-width: 0; }
+.nfe-duplicatas { max-width: 560px; }
+.nfe-duplicatas input { width: 100%; min-width: 0; }

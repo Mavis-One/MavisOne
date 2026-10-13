@@ -4663,6 +4663,9 @@ async function loadModule(moduleName) {
                     forma: window.MavisFormaPagamento.codigoNfe(forma?.type),
                     rotulo: forma?.name || linha.methodName || '',
                     valor: Number(linha.amount || 0),
+                    // O vencimento da linha: as linhas a prazo viram as
+                    // duplicatas da nota (aba Pagamento, 13/10/2026).
+                    vencimento: linha.dueDate || '',
                     // O methodId VIAJA JUNTO (fase BW). É por ele que o servidor
                     // busca a credenciadora da forma e o CNPJ dela na hora de
                     // emitir. O CNPJ não vem daqui de propósito: se viesse, a

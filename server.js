@@ -27,6 +27,7 @@ const {
   buildNfePayload, buildNfcePayload, conferirLimitesDeTexto, conferirPagamentosDaNota, conferirCartoesDaNota,
   conferirEscalaDosItens,
   conferirDestinatarioDaNota,
+  conferirCobrancaDaNota,
   limparEdicaoFiscal,
   resumoFiscalDaPrevia
 } = require('./lib/nfePayloadBuilder');
@@ -6279,11 +6280,39 @@ async function encontrarNfeIdempotente(estabelecimentoId, payloadFocus) {
 // R$ 0,01" ou intervalo zero entrariam do jeito que viessem.
 function condicaoPagamentoDoBody(body) {
   const parcelado = body.paymentType === 'parcelado';
+  // AS DUPLICATAS DA NOTA, quando há (13/10/2026). Editadas na aba Pagamento,
+  // são elas que viram o contas a receber: a nota e o financeiro declaram as
+  // mesmas parcelas, nos mesmos vencimentos.
+  const duplicatas = (Array.isArray(body.cobranca?.duplicatas) ? body.cobranca.duplicatas : [])
+    .map((d) => ({ vencimento: String(d?.vencimento || '').slice(0, 10), valor: Math.round(Number(d?.valor || 0) * 100) / 100 }))
+    .filter((d) => d.valor > 0 && /^\d{4}-\d{2}-\d{2}$/.test(d.vencimento));
   return {
     tipo: parcelado ? 'parcelado' : 'avista',
     parcelas: parcelado ? Math.min(60, Math.max(2, Math.round(Number(body.installmentsCount || 2)))) : 1,
-    intervaloDias: Math.max(1, Number(body.installmentIntervalDays || 30))
+    intervaloDias: Math.max(1, Number(body.installmentIntervalDays || 30)),
+    ...(duplicatas.length ? { duplicatas } : {})
   };
+}
+
+/**
+ * As parcelas do contas a receber da nota avulsa. Com duplicatas, são elas; o
+ * que a nota tem além da soma delas (uma entrada) vence na emissão, como a
+ * linha de diferença do pedido (lib/vendas-financeiro.js).
+ */
+function parcelasDaNfeAvulsa(condicao, total, emissao) {
+  const duplicatas = Array.isArray(condicao.duplicatas) ? condicao.duplicatas : [];
+  if (!duplicatas.length) {
+    return buildNfeInstallments({
+      amount: total,
+      date: emissao,
+      installmentsCount: condicao.tipo === 'parcelado' ? condicao.parcelas : 1,
+      installmentIntervalDays: condicao.intervaloDias
+    });
+  }
+  const linhas = duplicatas.map((d) => ({ dueDate: d.vencimento, amount: d.valor }));
+  const resto = Math.round((total - linhas.reduce((soma, l) => soma + l.amount, 0)) * 100) / 100;
+  if (resto > 0.05) linhas.unshift({ dueDate: emissao, amount: resto });
+  return linhas.map((linha, i) => ({ number: i + 1, ...linha }));
 }
 
 /**
@@ -7028,6 +7057,8 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     modalidadeFrete: body.modalidadeFrete,
     // Aba Transporte (13/10/2026): transportadora, veículo e volumes.
     transporte: body.transporte,
+    // Fatura e duplicatas (13/10/2026).
+    cobranca: body.cobranca,
     informacoesAdicionais: body.informacoesAdicionais,
     // Quem manda é o ambiente EFETIVO (já considerando a trava de
     // homologação), não o que está salvo no estabelecimento: é ele que decide
@@ -7073,6 +7104,14 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   const cartaoIncompleto = conferirCartoesDaNota(payload);
   if (cartaoIncompleto) {
     const err = new Error(cartaoIncompleto);
+    err.status = 400;
+    throw err;
+  }
+
+  // E as duplicatas cabem na nota? (13/10/2026)
+  const cobrancaExcede = conferirCobrancaDaNota(payload);
+  if (cobrancaExcede) {
+    const err = new Error(cobrancaExcede);
     err.status = 400;
     throw err;
   }
@@ -7393,12 +7432,7 @@ async function gerarFinanceiroDaNfeAvulsa(nfe, user) {
   if ((data.finance || []).some((entry) => entry.nfeId === nfe.id)) return 0;
 
   const emissao = String(nfe.dataEmissao || '').slice(0, 10) || getTodayLocal().toISOString().slice(0, 10);
-  const parcelas = buildNfeInstallments({
-    amount: Number(nfe.valorTotal || 0),
-    date: emissao,
-    installmentsCount: condicao.tipo === 'parcelado' ? condicao.parcelas : 1,
-    installmentIntervalDays: condicao.intervaloDias
-  });
+  const parcelas = parcelasDaNfeAvulsa(condicao, Number(nfe.valorTotal || 0), emissao);
 
   // Sem número, a referência: a nota existe e precisa ser achável mesmo antes
   // de a SEFAZ devolver o número.
