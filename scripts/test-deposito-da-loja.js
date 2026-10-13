@@ -113,7 +113,14 @@ check('  e o campo desenhado também',
 console.log('\n--- 5. trocar a loja mexe no depósito ---');
 const onSelect = (appSrc.match(/id: 'salesCompany',[\s\S]*?onSelect: \(valor\) => \{[\s\S]*?\n          \}/) || [''])[0];
 check('a troca de empresa tem tratamento', onSelect.length > 0);
-check('  religa o campo de depósito', /attachSearchableSelect\(\{\s*id: 'salesDeposit'/.test(onSelect));
+// Desde 13/10/2026 a troca de empresa REDESENHA o formulário (como a troca de
+// depósito, fase CK): religa o campo e atualiza a coluna "Disponível".
+check('  redesenha o formulário (religa o depósito e atualiza o saldo)', /formState\.depositId = escolhido;\s*renderForm\(\);/.test(onSelect));
+// O erro corrigido: conferir contra depositosDaLoja(meta, loja, ATUAL) — que
+// devolve o atual como "(de outra loja)" — fazia o depósito antigo nunca sair.
+check('  confere contra os depósitos DA LOJA, sem o atual', /const daLojaNova = depositosDaLoja\(meta, valor, ''\);/.test(onSelect));
+check('matriz com dois depósitos: sugere o de montados (decisão do usuário)', /const montados = daLoja\.find\(\(d\) => d\.classificacao === 'montados'\);/.test(appSrc));
+check('  e depósito inativo não é sugerido', /String\(d\.status \|\| 'ativo'\)\.toLowerCase\(\) !== 'inativo'/.test(appSrc));
 // Trocar um deposito que JA serve a loja nova seria desfazer escolha do usuario.
 check('  e só troca se o atual não serve à loja nova', /precisaTrocar/.test(onSelect));
 

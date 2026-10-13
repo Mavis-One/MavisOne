@@ -47,7 +47,7 @@
     { id: 'BONIFICACAO', name: 'Bonificação' }
   ];
 
-  const chave = (nome) => String(nome || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+  const chave = (nome) => String(nome || '').normalize('NFD').replace(/\p{M}/gu, '')
     .toLowerCase().replace(/\s+/g, ' ').trim();
 
   /** "Venda de Materiais e Serviços / Timbo" -> "Venda de Materiais e Serviços" */

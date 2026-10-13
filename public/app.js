@@ -2277,11 +2277,18 @@ function depositosDaLoja(meta, companyId, depositoAtual) {
  * ninguém confere: a mercadoria sai do galpão quando devia sair do salão e a
  * diferença aparece no inventário.
  */
+//
+// A MATRIZ TEM DOIS (fase EE): Desmontados e Montados. Decisão do usuário
+// (13/10/2026): a venda da matriz sai do de MONTADOS por padrão — peça ou
+// caixa fechada a pessoa troca na hora. Depósito inativo não é sugerido.
 function depositoSugeridoDaLoja(meta, companyId) {
   const escolhida = String(companyId || '').trim();
   if (!escolhida) return '';
-  const daLoja = (meta.deposits || []).filter((d) => d.companyId === escolhida);
-  return daLoja.length === 1 ? daLoja[0].id : '';
+  const daLoja = (meta.deposits || [])
+    .filter((d) => d.companyId === escolhida && String(d.status || 'ativo').toLowerCase() !== 'inativo');
+  if (daLoja.length === 1) return daLoja[0].id;
+  const montados = daLoja.find((d) => d.classificacao === 'montados');
+  return montados ? montados.id : '';
 }
 
 /**
@@ -5573,26 +5580,23 @@ async function loadModule(moduleName) {
             id: 'salesCompany',
             options: meta.companies.map((c) => ({ value: c.id, label: rotuloDaEmpresa(c) })),
             onSelect: (valor) => {
-              formState.companyId = valor;
-              const sugerido = depositoSugeridoDaLoja(meta, valor);
               const atual = document.getElementById('salesDepositValue')?.value || '';
-              const permitidos = depositosDaLoja(meta, valor, atual);
               // Troca o depósito quando o que estava lá não é da loja nova. Se
               // for, fica: o usuário pode ter escolhido de propósito.
-              const precisaTrocar = !atual || !permitidos.some((d) => d.id === atual);
-              const escolhido = precisaTrocar ? sugerido : atual;
-              const campoTexto = document.getElementById('salesDepositInput');
-              const campoValor = document.getElementById('salesDepositValue');
-              if (campoValor) campoValor.value = escolhido;
-              if (campoTexto) {
-                const achado = permitidos.find((d) => d.id === escolhido);
-                campoTexto.value = achado ? achado.name : '';
-              }
+              //
+              // A conferência é contra os depósitos DA LOJA (sem passar o atual):
+              // depositosDaLoja(meta, loja, atual) devolve também o atual, como
+              // "(de outra loja)", e conferir contra essa lista fazia o depósito
+              // da loja anterior nunca ser trocado (13/10/2026).
+              const daLojaNova = depositosDaLoja(meta, valor, '');
+              const precisaTrocar = !atual || !daLojaNova.some((d) => d.id === atual);
+              const escolhido = precisaTrocar ? depositoSugeridoDaLoja(meta, valor) : atual;
+              // Redesenha como a troca de depósito faz (fase CK): a coluna
+              // "Disponível" e o alerta de sem saldo são do depósito escolhido.
+              syncFormState();
+              formState.companyId = valor;
               formState.depositId = escolhido;
-              attachSearchableSelect({
-                id: 'salesDeposit',
-                options: permitidos.map((d) => ({ value: d.id, label: d.name }))
-              });
+              renderForm();
             }
           });
           attachSearchableSelect({ id: 'salesSeller', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })) });
