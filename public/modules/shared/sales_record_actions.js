@@ -31,11 +31,19 @@ window.MavisSalesRecordActions = (function () {
     const situacao = String(ctx.nfeStatus || '').toUpperCase();
     return !situacao || NOTA_VALENDO.includes(situacao);
   };
-  // Cancelar a NF-e devolve o pedido para "Não Faturado" com o estoque de
-  // volta (fase BF) — e é justamente para reemitir. A nota nova fatura o
-  // pedido de novo quando autorizada (faturarPedidoDaNota).
-  const voltouDeNotaCancelada = (ctx) => S.normalizar(ctx.status) === 'pedido-nao-faturado'
-    && Boolean(ctx.nfeId) && !temNotaValendo(ctx);
+  // O FLUXO É APROVAR E DEPOIS EMITIR (13/10/2026, pedido do usuário).
+  //
+  // Faturar exige documento fiscal (fase AV) e a nota autorizada fatura o
+  // pedido sozinha (fase BE). Então "Aprovar Pedido" não fatura: leva o pedido
+  // a "Pedido Pré-Faturado" — aprovado, esperando a nota, sem baixar estoque
+  // nem gerar financeiro. Daí saem a NF-e e a NFC-e; a autorização fatura.
+  // Antes, "Aprovar" pedia faturar e o servidor recusava por falta de nota, e
+  // "Gerar NF-e" pedia o pedido já faturado: um pedido novo não tinha saída.
+  const ehPreFaturado = (ctx) => S.normalizar(ctx.status) === 'pedido-pre-faturado';
+  // Aprovado para emitir: pré-faturado, ou já com estoque baixado (faturado
+  // com dispensa, aprovado sem faturamento — a nota de transferência).
+  const aprovadoParaEmitir = (ctx) => ehPreFaturado(ctx) || jaBaixouEstoque(ctx);
+  const APROVE_ANTES = 'Aprove o pedido antes de emitir a nota.';
 
   const CATALOG = [
     {
@@ -69,15 +77,23 @@ window.MavisSalesRecordActions = (function () {
         if (ehPedido(ctx)) {
           if (S.geraFinanceiro(ctx.status)) return 'Este pedido já está faturado.';
           if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não pode ser faturado.';
+          if (ehPreFaturado(ctx)) return 'Este pedido já está aprovado — gere a NF-e ou a NFC-e.';
           return true;
         }
         if (ctx.status === 'orcamento-aprovado') return 'Este orçamento já está aprovado.';
         if (S.ehCancelado(ctx.status)) return 'Orçamento reprovado não pode ser aprovado.';
         return true;
       },
-      run: (ctx) => ehPedido(ctx)
-        ? ctx.mudarStatus('pedido-faturado', 'Faturar este pedido? O estoque será baixado e as contas a receber serão geradas.')
-        : ctx.mudarStatus('orcamento-aprovado', 'Aprovar este orçamento?')
+      run: (ctx) => {
+        if (!ehPedido(ctx)) return ctx.mudarStatus('orcamento-aprovado', 'Aprovar este orçamento?');
+        // Com nota já valendo, falta só o faturamento (a autorização não o
+        // aplicou): aí sim fatura direto.
+        if (temNotaValendo(ctx)) {
+          return ctx.mudarStatus('pedido-faturado', 'Faturar este pedido? O estoque será baixado e as contas a receber serão geradas.');
+        }
+        return ctx.mudarStatus('pedido-pre-faturado',
+          'Aprovar este pedido? Em seguida gere a NF-e ou a NFC-e: a autorização da nota baixa o estoque e gera as contas a receber.');
+      }
     },
     {
       // A saída de mercadoria que NÃO é venda: transferência entre depósitos,
@@ -91,6 +107,7 @@ window.MavisSalesRecordActions = (function () {
         if (!ehPedido(ctx)) return 'Só pedido baixa estoque — aprove o orçamento primeiro.';
         if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não baixa estoque.';
         if (jaBaixouEstoque(ctx)) return 'O estoque deste pedido já foi baixado.';
+        if (ehPreFaturado(ctx)) return 'Este pedido já foi aprovado para sair com nota.';
         return true;
       },
       run: (ctx) => ctx.mudarStatus(
@@ -99,33 +116,33 @@ window.MavisSalesRecordActions = (function () {
       )
     },
     {
-      // Só aparece habilitada depois de faturar: NF-e é documento fiscal, e
-      // emitir a de um pedido que ainda pode mudar é pedir para cancelar nota.
+      // Depois de aprovar (a autorização fatura), do faturado com dispensa e
+      // do aprovado sem faturamento (a nota de transferência/remessa). O
+      // servidor confere o estoque antes de transmitir.
       id: 'gerar_nfe', label: 'Gerar NF-e', icon: I.note, tone: 'success',
       enabled: (ctx) => {
         if (!ctx.isEditing) return SALVE_ANTES;
         if (ctx.somenteLeitura) return DE_OUTRO_VENDEDOR;
-        if (!ehPedido(ctx)) return 'Só pedido gera NF-e — aprove o orçamento e fature o pedido primeiro.';
+        if (!ehPedido(ctx)) return 'Só pedido gera NF-e — aprove o orçamento primeiro.';
         if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não emite NF-e.';
-        // Aprovado sem faturamento também emite: é justamente a nota de
-        // transferência/remessa, que é NF-e sem financeiro por trás.
-        if (!jaBaixouEstoque(ctx) && !voltouDeNotaCancelada(ctx)) return 'Fature (ou aprove) o pedido antes de emitir a NF-e.';
+        if (!aprovadoParaEmitir(ctx)) return APROVE_ANTES;
         if (temNotaValendo(ctx)) return 'Este pedido já tem NF-e emitida.';
         return true;
       },
       run: (ctx) => ctx.gerarNfe()
     },
     {
-      // NFC-e: a nota do balcão. Ao contrário da NF-e, NÃO espera o pedido ser
-      // faturado: é a autorização da NFC-e que fatura o pedido (baixa o estoque
-      // e cria a conta a receber). O servidor monta a nota do próprio pedido e
-      // recusa o que não é venda a consumidor — com o motivo.
+      // NFC-e: a nota do balcão. Como a NF-e, sai do pedido APROVADO e é a
+      // autorização que fatura (baixa o estoque e cria a conta a receber). O
+      // servidor monta a nota do próprio pedido e recusa o que não é venda a
+      // consumidor — com o motivo.
       id: 'emitir_nfce', label: 'Emitir NFC-e', icon: I.barcode, tone: 'success',
       enabled: (ctx) => {
         if (!ctx.isEditing) return SALVE_ANTES;
         if (ctx.somenteLeitura) return DE_OUTRO_VENDEDOR;
         if (!ehPedido(ctx)) return 'Só pedido emite NFC-e — aprove o orçamento primeiro.';
         if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não emite NFC-e.';
+        if (!aprovadoParaEmitir(ctx)) return APROVE_ANTES;
         if (temNotaValendo(ctx)) return 'Este pedido já tem nota fiscal emitida.';
         return true;
       },

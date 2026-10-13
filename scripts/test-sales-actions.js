@@ -34,12 +34,36 @@ check('duplicar pede para salvar antes', /Salve o registro/.test(motivo('duplica
 console.log('\n--- pedido salvo, ainda não faturado ---');
 const pendente = ctx({ recordType: 'order', isEditing: true, status: 'pedido' });
 const libPendente = liberadas(pendente);
-check('aprovar (faturar) liberado', libPendente.includes('aprovar'));
+// O FLUXO É APROVAR E DEPOIS EMITIR (13/10/2026, pedido do usuário). Faturar
+// exige NF-e no servidor (fase AV) e a autorização fatura o pedido (fase BE);
+// antes, "Aprovar" pedia faturar e voltava "Este pedido não tem NF-e", e
+// "Gerar NF-e" pedia o pedido já faturado — um pedido novo não tinha saída.
+check('aprovar liberado', libPendente.includes('aprovar'));
+const aprovou = [];
+CATALOG.find((a) => a.id === 'aprovar').run({ ...pendente, mudarStatus: (st) => aprovou.push(st) });
+check('  e leva a Pedido Pré-Faturado (não fatura sem nota)', aprovou[0] === 'pedido-pre-faturado', aprovou[0]);
+const faturouPelaNota = [];
+CATALOG.find((a) => a.id === 'aprovar').run({ ...pendente, nfeId: 'n1', nfeStatus: 'AUTORIZADO', mudarStatus: (st) => faturouPelaNota.push(st) });
+check('  com nota já valendo, aprovar fatura direto', faturouPelaNota[0] === 'pedido-faturado', faturouPelaNota[0]);
 check('aprovar sem faturamento liberado', libPendente.includes('aprovar_sem_faturamento'));
 check('cancelar liberado', libPendente.includes('cancelar'));
 check('imprimir e impressão direta liberados', libPendente.includes('imprimir') && libPendente.includes('impressao_direta'));
 check('duplicar e baixar liberados', libPendente.includes('duplicar') && libPendente.includes('baixar'));
-check('NF-e ainda bloqueada (nada saiu do estoque)', /antes de emitir/.test(motivo('gerar_nfe', pendente)), motivo('gerar_nfe', pendente));
+check('NF-e e NFC-e esperam a aprovação', /Aprove o pedido/.test(motivo('gerar_nfe', pendente)) && /Aprove o pedido/.test(motivo('emitir_nfce', pendente)), motivo('gerar_nfe', pendente));
+
+console.log('\n--- pedido APROVADO (Pré-Faturado), esperando a nota ---');
+const preFaturado = ctx({ recordType: 'order', isEditing: true, status: 'pedido-pre-faturado' });
+check('gera NF-e e NFC-e', liberadas(preFaturado).includes('gerar_nfe') && liberadas(preFaturado).includes('emitir_nfce'), motivo('gerar_nfe', preFaturado));
+check('  não aprova duas vezes', /já está aprovado/.test(motivo('aprovar', preFaturado)), motivo('aprovar', preFaturado));
+// A transição pré-faturado -> aprovado sem faturamento não existe no banco.
+check('  nem vira "aprovado sem faturamento"', /já foi aprovado/.test(motivo('aprovar_sem_faturamento', preFaturado)), motivo('aprovar_sem_faturamento', preFaturado));
+check('  e ainda pode ser cancelado (nada saiu do estoque)', liberadas(preFaturado).includes('cancelar'), motivo('cancelar', preFaturado));
+const SS = global.window.MavisSalesStatus;
+check('pedido -> pré-faturado -> faturado existem no catálogo',
+  SS.podeTransicionar('pedido', 'pedido-pre-faturado') && SS.podeTransicionar('pedido-pre-faturado', 'pedido-faturado')
+  && SS.podeTransicionar('pedido-nao-faturado', 'pedido-pre-faturado'));
+check('a tela fica no pedido depois de aprovar',
+  /novoStatus === 'pedido-pre-faturado' && resposta\?\.record/.test(fs.readFileSync(path.join(raiz, 'public/app.js'), 'utf8')));
 
 console.log('\n--- pedido FATURADO ---');
 const faturado = ctx({ recordType: 'order', isEditing: true, status: 'pedido-faturado' });
@@ -61,15 +85,15 @@ console.log('\n--- NF-e CANCELADA: o pedido volta a poder emitir (13/10/2026) --
 // com a nota cancelada fica — documento fiscal não se apaga. O menu lia esse
 // vínculo como "já tem NF-e" e o pedido nunca mais oferecia a nota nova.
 const voltou = ctx({ recordType: 'order', isEditing: true, status: 'pedido-nao-faturado', nfeId: 'n1', nfeStatus: 'CANCELADO' });
-check('gerar NF-e liberado depois do cancelamento', liberadas(voltou).includes('gerar_nfe'), motivo('gerar_nfe', voltou));
-check('  e NFC-e também', liberadas(voltou).includes('emitir_nfce'), motivo('emitir_nfce', voltou));
+check('depois do cancelamento, aprova de novo', liberadas(voltou).includes('aprovar'), motivo('aprovar', voltou));
+const voltouAprovado = { ...voltou, status: 'pedido-pre-faturado' };
+check('  e aí gera NF-e (a nota cancelada não trava)', liberadas(voltouAprovado).includes('gerar_nfe'), motivo('gerar_nfe', voltouAprovado));
+check('  e NFC-e também', liberadas(voltouAprovado).includes('emitir_nfce'), motivo('emitir_nfce', voltouAprovado));
 const comNotaViva = ctx({ recordType: 'order', isEditing: true, status: 'pedido-faturado', nfeId: 'n1', nfeStatus: 'AUTORIZADO' });
 check('nota AUTORIZADA continua travando', /já tem NF-e/.test(motivo('gerar_nfe', comNotaViva)));
 check('  e a que está PROCESSANDO também',
   /já tem NF-e/.test(motivo('gerar_nfe', { ...comNotaViva, nfeStatus: 'PROCESSANDO' })));
 check('  e a nota manual (sem situação) também', /já tem NF-e/.test(motivo('gerar_nfe', { ...comNotaViva, nfeStatus: '' })));
-check('pedido não faturado SEM nota cancelada continua pedindo para faturar',
-  /antes de emitir/.test(motivo('gerar_nfe', ctx({ recordType: 'order', isEditing: true, status: 'pedido-nao-faturado' }))));
 const fonte = (rel) => fs.readFileSync(path.join(raiz, rel), 'utf8');
 check('o pedido leva a situação da nota para a tela', /nfeStatus: \(\(\) => \{/.test(fonte('server.js'))
   && /nfeStatus: editRecord\?\.nfeStatus \|\| '',/.test(fonte('public/app.js')));

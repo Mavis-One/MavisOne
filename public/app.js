@@ -4566,6 +4566,16 @@ async function loadModule(moduleName) {
                 return;
               }
 
+              // Aprovou: o passo seguinte é gerar a NF-e ou NFC-e deste mesmo
+              // pedido (13/10/2026). Fica nele, já com o status novo.
+              if (novoStatus === 'pedido-pre-faturado' && resposta?.record) {
+                state.salesDraft.editRecord = resposta.record;
+                state.salesDraft.novoStatus = '';
+                renderApp();
+                loadModule('sales');
+                return;
+              }
+
               state.salesDraft.editRecord = null;
               state.activeSub = 'orders_quotes';
               renderApp();
