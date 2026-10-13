@@ -41,6 +41,7 @@ const nfeImportadasDb = require('./lib/db/nfe-importadas');
 // 12/10/2026 — pedidos e orçamentos do Viper (Listagem de Vendas) como histórico.
 const pedidosImportadosDb = require('./lib/db/pedidos-importados');
 const produtosImportadosDb = require('./lib/db/produtos-importados');
+const pessoasImportadasDb = require('./lib/db/pessoas-importadas');
 const contasImportadasDb = require('./lib/db/contas-importadas');
 // Fase CN — o zip do acervo de XML. Escrito à mão para não trazer dependência;
 // o porquê está no cabeçalho do arquivo.
@@ -14208,6 +14209,33 @@ async function tratarRequisicao(req, res) {
       }
     } catch (error) {
       return sendErro(res, error, 'Erro ao processar dados fiscais', 500);
+    }
+  }
+
+  // PESSOAS DO VIPER pela planilha "Pessoas" (13/10/2026). Só administrador:
+  // mexe em cadastro em massa. `simular: true` confere sem gravar. O que entra
+  // e por quê: lib/importacao-pessoas-viper.js.
+  if (pathname === '/api/cadastros/importacao/viper-pessoas' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador importa pessoas do sistema anterior.' }, 403);
+      const body = await readBody(req, 4 * 1024 * 1024);
+      const resultado = await pessoasImportadasDb.gravarPessoas(body.itens, {
+        papel: 'Cliente',
+        simular: body.simular === true,
+        documentoValido: isValidDocument,
+        hoje: toDateStr(getTodayLocal())
+      });
+      if (!resultado.simulado && (resultado.criados || resultado.papelGravado)) {
+        await registrarAuditoria({
+          action: 'cadastros.importacao.viper', targetId: 'people', targetUsername: String(resultado.criados),
+          byId: user.id, byName: user.name,
+          details: { criados: resultado.criados, papelCliente: resultado.papelGravado, jaTinham: resultado.jaTinham }
+        });
+      }
+      return sendJson(res, { success: true, ...resultado });
+    } catch (erro) {
+      return sendErro(res, erro, 'Erro ao importar pessoas', 400);
     }
   }
 
