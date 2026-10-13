@@ -125,9 +125,9 @@ const metasLib = require('./lib/metas');
 const metasDb = require('./lib/db/metas');
 // Fase DD: a filial de cada venda, lida do fim da categoria.
 const filialDaVenda = require('./lib/filial-da-venda');
-const { opcoesDeEmpresa } = require('./lib/rotulo-da-empresa');
-const { observacoesDasEmpresas } = require('./lib/observacao-da-empresa');
+const { opcoesDeEmpresa, rotuloDaEmpresa } = require('./lib/rotulo-da-empresa');
 const { bancosDasContas } = require('./lib/banco-da-conta');
+const { observacoesDasEmpresas } = require('./lib/observacao-da-empresa');
 // Fase EF: o que a categoria de venda faz (estoque, financeiro, fiscal, venda).
 const categoriaVenda = require('./public/modules/shared/categoria_venda');
 // Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
@@ -138,6 +138,10 @@ const razaoEstoque = require('./lib/db/estoque-razao');
 // Fase CU: a folha de contagem. Monta o documento; quem grava saldo continua
 // sendo commitStockMovements.
 const contagemDb = require('./lib/db/contagem-estoque');
+// Fase EG: inventários — o retrato do estoque da empresa numa data.
+const inventariosDb = require('./lib/db/inventarios');
+const inventarioLib = require('./lib/inventario');
+const custoMedio = require('./lib/custo-medio');
 const { emTransacao, consultar: consultarBanco } = require('./lib/db/conexao');
 // Fase AT: o numero do lancamento financeiro (LF0001) — mesmo formato na tela.
 const lancamentoCodigo = require('./public/modules/shared/lancamento_codigo');
@@ -11126,7 +11130,6 @@ async function tratarRequisicao(req, res) {
         const termos = observacoesDasEmpresas(data.companies, fiscaisDasEmpresas[0], fiscaisDasEmpresas[1]);
         return (data.companies || []).map((c) => ({ ...c, observacaoPadrao: termos.get(c.id) || '' }));
       })(),
-
       sellers: getSellersDirectory(data),
       // O vendedor do usuário logado: a venda nova já nasce com ele. `travado`
       // = vendedor comum, que não escolhe outro nem altera venda de colega
@@ -17117,6 +17120,154 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { success: true });
     } catch (error) {
       return sendErro(res, error, 'Erro ao estornar transferência');
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // INVENTÁRIOS (fase EG)
+  //
+  // O retrato do estoque de UMA empresa (todos os depósitos dela) no fim de um
+  // dia, valorado e GRAVADO — a tela Inventários do Viper. Só lê o razão; não
+  // mexe em saldo. Ver banco/migrations/fase-eg-inventarios.sql.
+  // --------------------------------------------------------------------------
+  if (pathname === '/api/stock/inventories' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const ano = Number(url.searchParams.get('ano') || 0);
+      const inventarios = await inventariosDb.listar({
+        companyId: url.searchParams.get('companyId') || '',
+        ano: ano >= 2000 && ano <= 2100 ? ano : null
+      });
+      return sendJson(res, { inventories: inventarios });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao listar inventários', 500);
+    }
+  }
+
+  // Com `simular: true` devolve a prévia (totais, o que ficou de fora) e não
+  // grava; sem ele, grava. A conta é a mesma nos dois caminhos.
+  if (pathname === '/api/stock/inventories' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const body = await readBody(req);
+      const companyId = String(body.companyId || '').trim();
+      const empresa = (loadData().companies || []).find((c) => c.id === companyId);
+      if (!empresa) return sendJson(res, { error: 'Selecione a empresa do inventário.' }, 400);
+
+      const dataReferencia = String(body.dataReferencia || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dataReferencia) || Number.isNaN(Date.parse(dataReferencia))) {
+        return sendJson(res, { error: 'Informe a data de referência.' }, 400);
+      }
+      // Inventário de amanhã leria o saldo de hoje e diria que é o de amanhã.
+      if (dataReferencia > stockCore.todayStr()) {
+        return sendJson(res, { error: 'A data de referência não pode estar no futuro.' }, 400);
+      }
+      const valoracao = inventariosDb.VALORACOES.includes(body.valoracao) ? body.valoracao : 'custo_medio';
+      const motivo = inventariosDb.MOTIVOS.includes(String(body.motivo || '')) ? String(body.motivo) : '01';
+
+      // TODOS os depósitos da empresa, ativos ou não: depósito desativado com
+      // saldo na data ainda tinha mercadoria naquele dia.
+      const depositos = (await db.getDeposits()).filter((d) => d.companyId === companyId);
+      if (!depositos.length) {
+        return sendJson(res, {
+          error: `${rotuloDaEmpresa(empresa)} não tem depósito vinculado.`
+            + ' Vincule em Estoque › Depósitos (campo Filial) antes de gerar o inventário.'
+        }, 400);
+      }
+
+      const saldos = await inventariosDb.saldosNaData(depositos.map((d) => d.id), dataReferencia);
+      const positivos = saldos.filter((s) => s.saldo > 0).map((s) => s.productId);
+      const [produtos, movimentos] = await Promise.all([
+        inventariosDb.dadosDosProdutos(saldos.map((s) => s.productId)),
+        valoracao === 'custo_medio' ? inventariosDb.movimentosAteAData(positivos, dataReferencia) : []
+      ]);
+      const montado = inventarioLib.montarInventario({
+        saldos,
+        medios: custoMedio.custoMedioPorProduto(movimentos),
+        produtos,
+        valoracao
+      });
+      const resumo = {
+        companyId,
+        companyName: rotuloDaEmpresa(empresa),
+        dataReferencia,
+        valoracao,
+        motivo,
+        depositos: depositos.map((d) => ({ id: d.id, name: d.name })),
+        itens: montado.itens.length,
+        quantidadeTotal: montado.quantidadeTotal,
+        valorTotal: montado.valorTotal,
+        pelaOrigem: montado.pelaOrigem,
+        negativos: montado.negativos
+      };
+
+      const repetido = await inventariosDb.existente({ companyId, dataReferencia, valoracao });
+      if (body.simular) return sendJson(res, { previa: { ...resumo, repetido: repetido ? repetido.code : '' } });
+
+      if (repetido) {
+        return sendJson(res, {
+          error: `Já existe o inventário ${repetido.code} desta empresa nesta data, com a mesma valoração.`
+            + ' Exclua-o antes de gerar de novo.'
+        }, 409);
+      }
+      if (!montado.itens.length) {
+        return sendJson(res, { error: 'Nenhum produto com saldo nos depósitos desta empresa nessa data.' }, 400);
+      }
+      const id = stockCore.createId('inv');
+      await inventariosDb.criar({
+        id,
+        companyId,
+        companyName: rotuloDaEmpresa(empresa),
+        companyDocument: String(empresa.document || ''),
+        dataReferencia,
+        valoracao,
+        motivo,
+        depositos: resumo.depositos,
+        quantidadeTotal: montado.quantidadeTotal,
+        valorTotal: montado.valorTotal,
+        note: String(body.note || '').slice(0, 500),
+        createdBy: user.id,
+        createdByName: user.name
+      }, montado.itens);
+      return sendJson(res, { success: true, inventory: await inventariosDb.buscar(id) });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao gerar o inventário');
+    }
+  }
+
+  if (/^\/api\/stock\/inventories\/[^/]+(\/export)?$/.test(pathname) && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const exportar = pathname.endsWith('/export');
+      const id = decodeURIComponent(pathname.replace('/api/stock/inventories/', '').replace(/\/export$/, ''));
+      const inventario = await inventariosDb.buscar(id);
+      if (!inventario) return sendJson(res, { error: 'Inventário não encontrado' }, 404);
+      const itens = await inventariosDb.itensDoInventario(id);
+      if (!exportar) return sendJson(res, { inventory: inventario, items: itens });
+
+      const conteudo = relatoriosCsv.inventario(itens);
+      return enviarCsv(res, conteudo, `inventario-${inventario.code}-${inventario.dataReferencia}.csv`);
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao abrir o inventário', 500);
+    }
+  }
+
+  // Excluir é permitido: o inventário é um retrato que se gera de novo a partir
+  // do razão, e não documento fiscal. É o caminho para corrigir um gerado com a
+  // data ou a valoração errada.
+  if (/^\/api\/stock\/inventories\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.replace('/api/stock/inventories/', ''));
+      const apagou = await inventariosDb.apagar(id);
+      if (!apagou) return sendJson(res, { error: 'Inventário não encontrado' }, 404);
+      return sendJson(res, { success: true });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao excluir o inventário');
     }
   }
 

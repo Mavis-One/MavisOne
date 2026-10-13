@@ -1989,6 +1989,9 @@ const moduleSubItems = {
     // por isso sao duas telas e nao quatro.
     { key: 'counts', label: 'Contagens de Estoque', desc: 'Inventário e carga inicial: folhas de contagem e acuracidade.' },
     { key: 'new_count', label: 'Nova Contagem de Estoque', desc: 'Conta um depósito e gera os ajustes ao fechar.' },
+    // Fase EG. Nao e' a contagem: o inventario so' le o razao e guarda o
+    // retrato (quantidade e valor por empresa numa data); nao ajusta saldo.
+    { key: 'inventories', label: 'Inventários', desc: 'O estoque de cada empresa numa data, valorado a custo médio e guardado.' },
     { key: 'products', label: 'Produtos', desc: 'Produtos com saldo, custo e preço de venda.' },
     { key: 'new_product', label: 'Novo Produto', desc: 'Cadastra um produto novo.' },
     // A descricao dizia "Situacoes que um produto pode assumir", que promete um
