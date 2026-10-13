@@ -4463,16 +4463,74 @@ async function loadModule(moduleName) {
             renderApp();
             loadModule('sales');
           },
-          baixar: () => {
+          // BAIXAR É O PDF DO PEDIDO (13/10/2026, pedido do usuário) — antes
+          // baixava um JSON com o payload. O conteúdo é o da impressão A4
+          // (salesRecordPrint): mesma empresa no cabeçalho, mesmos campos,
+          // mesma ordem. Quem desenha é shared/pdf_pedido.js.
+          baixar: async () => {
             syncFormState();
-            const payload = { ...buildPayload(), code: editRecord?.code, totals: computeTotals() };
-            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
+            const P = window.MavisPdfPedido;
+            if (!P) { showToast('Gerador de PDF indisponível. Recarregue a página.', 'error'); return; }
+            const totais = computeTotals();
+            const cliente = (await dadosDoCliente(formState.clientSupplierId))
+              || meta.directory.find((e) => e.id === formState.clientSupplierId);
+            const empresa = meta.companies.find((c) => c.id === formState.companyId);
+            const vendedor = meta.sellers.find((s) => s.id === formState.sellerId);
+            const emitente = emitenteDaImpressao();
+            const catalogo = new Map((meta.products || []).map((p) => [p.id, p]));
+            const juntar = (partes, sep) => partes.map((p) => String(p || '').trim()).filter(Boolean).join(sep);
+            const enderecoCliente = cliente
+              ? juntar([juntar([cliente.address, cliente.city && cliente.state ? `${cliente.city}-${cliente.state}` : (cliente.city || cliente.state)], ', '), cliente.zipCode], ' - ')
+              : '';
+            const outros = Number(totais.despesasGerais || 0) + Number(totais.taxaMontagem || 0);
+            const qtd4 = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+            const bytes = P.montarPdfDoPedido({
+              titulo: title,
+              numero: editRecord?.code ? String(editRecord.code) : '',
+              emissao: formState.date || '-',
+              validade: formState.dueDate || '',
+              emitente: emitente ? {
+                nome: `${emitente.razaoSocial || emitente.nomeFantasia || ''}${emitente.cnpj ? `, CNPJ: ${P.mascaraDocumento(emitente.cnpj)}` : ''}`,
+                linhas: [
+                  juntar([juntar([emitente.logradouro, emitente.numero, emitente.complemento], ', '),
+                    juntar([emitente.bairro, emitente.cep, emitente.municipio && emitente.uf ? `${emitente.municipio}-${emitente.uf}` : emitente.municipio], ', ')], ', '),
+                  juntar([emitente.email, emitente.telefone], ' / ')
+                ].filter(Boolean),
+                aviso: emitente.unidades > 1 ? `Dados da matriz${emitente.nomeFantasia ? ` (${emitente.nomeFantasia})` : ''} — há ${emitente.unidades} estabelecimentos cadastrados.` : ''
+              } : null,
+              cliente: [
+                ['Cliente:', cliente?.name || '-', 'Telefone:', cliente?.phone || ''],
+                ['Endereço:', enderecoCliente, 'CPF/CNPJ:', P.mascaraDocumento(cliente?.document)],
+                ['Condições:', (formState.paymentInfo && formState.paymentInfo.paymentTerm) === 'aprazo' ? 'A prazo' : 'À vista',
+                  'Frete por Conta:', (formState.delivery && formState.delivery.shippingMethod) || ''],
+                ['Vendedor:', vendedor?.name || '-', 'Status:', SalesStatus.rotulo(formState.status)],
+                ...(formState.saleOrigin || formState.customerPoCode || empresa
+                  ? [['Origem:', formState.saleOrigin || '', formState.customerPoCode ? 'OC do cliente:' : 'Loja:', formState.customerPoCode || (empresa ? rotuloDaEmpresa(empresa) : '')]]
+                  : [])
+              ],
+              itens: items.map((i) => {
+                const produto = catalogo.get(i.productId) || {};
+                return [i.sku || '-', produto.ncm || '', juntar([i.name, i.classValueName, i.chassi], ' — '), qtd4(i.quantity),
+                  produto.unidadeComercial || '', salesFormatBRL(i.unitPrice), salesFormatBRL(Number(i.quantity) * Number(i.unitPrice))];
+              }),
+              totalItens: salesFormatBRL(totais.valorProdutos + totais.valorServicos),
+              totais: {
+                cabecalho: ['Frete', 'Outros', `Desconto${totais.percentualAplicado ? ` (${totais.percentualAplicado}%)` : ''}`, 'Total Sem Desconto', 'Total Final'],
+                valores: [salesFormatBRL(totais.freteCobrado), salesFormatBRL(outros), `${totais.descontoTotal ? '-' : ''}${salesFormatBRL(totais.descontoTotal)}`,
+                  salesFormatBRL(totais.base), salesFormatBRL(totais.totalAmount)]
+              },
+              termos: formState.salesTerms || '',
+              observacoes: formState.note || '',
+              rodape: 'Documento interno, sem valor fiscal.'
+            });
+            const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${recordType === 'order' ? 'pedido' : 'orcamento'}-${editRecord?.code || 'rascunho'}.json`;
+            a.download = `${recordType === 'order' ? 'pedido' : 'orcamento'}-${editRecord?.code || 'rascunho'}.pdf`;
+            document.body.appendChild(a);
             a.click();
-            URL.revokeObjectURL(url);
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
           },
           mudarStatus: async (novoStatus, pergunta) => {
             const ok = await confirmModal(pergunta);

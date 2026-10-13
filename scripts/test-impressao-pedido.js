@@ -126,7 +126,8 @@ check('a tela escolhe pela empresa do pedido', /const empresa = \(meta\.companie
   && /formState\.companyId \|\|/.test(escolhaDaTela));
 check('  o estabelecimento do MESMO CNPJ primeiro', /\.find\(\(e\) => String\(e\.cnpj \|\| ''\)\.replace\(\/\\D\/g, ''\) === cnpj\)/.test(escolhaDaTela));
 check('  senão a própria empresa, e a matriz só sem empresa', /razaoSocial: empresa\.name/.test(escolhaDaTela) && /if \(!empresa\) return padrao;/.test(escolhaDaTela));
-check('A4 e cupom usam a mesma escolha', (tela.match(/const emitente = emitenteDaImpressao\(\);/g) || []).length === 2);
+// Três desde 13/10/2026: A4, cupom e o PDF do botão Baixar.
+check('A4, cupom e PDF usam a mesma escolha', (tela.match(/const emitente = emitenteDaImpressao\(\);/g) || []).length === 3);
 // Pedido SEM empresa (o 16333 em produção): a do depósito; e, sem os dois, a
 // SAL INFINITY PLUS matriz — não "a primeira MATRIZ", que era a KACCAU.
 check('  sem empresa no pedido, usa a do depósito',
