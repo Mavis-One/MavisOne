@@ -56,6 +56,25 @@ check('emite NF-e (é a nota de transferência)', liberadas(semFaturamento).incl
 check('não repete a baixa de estoque', /já foi baixado/.test(motivo('aprovar_sem_faturamento', semFaturamento)));
 check('cancelar segue liberado (não gerou financeiro)', liberadas(semFaturamento).includes('cancelar'), motivo('cancelar', semFaturamento) || 'liberado');
 
+console.log('\n--- NF-e CANCELADA: o pedido volta a poder emitir (13/10/2026) ---');
+// Cancelar a nota devolve o pedido para "Não Faturado" (fase BF), mas o vínculo
+// com a nota cancelada fica — documento fiscal não se apaga. O menu lia esse
+// vínculo como "já tem NF-e" e o pedido nunca mais oferecia a nota nova.
+const voltou = ctx({ recordType: 'order', isEditing: true, status: 'pedido-nao-faturado', nfeId: 'n1', nfeStatus: 'CANCELADO' });
+check('gerar NF-e liberado depois do cancelamento', liberadas(voltou).includes('gerar_nfe'), motivo('gerar_nfe', voltou));
+check('  e NFC-e também', liberadas(voltou).includes('emitir_nfce'), motivo('emitir_nfce', voltou));
+const comNotaViva = ctx({ recordType: 'order', isEditing: true, status: 'pedido-faturado', nfeId: 'n1', nfeStatus: 'AUTORIZADO' });
+check('nota AUTORIZADA continua travando', /já tem NF-e/.test(motivo('gerar_nfe', comNotaViva)));
+check('  e a que está PROCESSANDO também',
+  /já tem NF-e/.test(motivo('gerar_nfe', { ...comNotaViva, nfeStatus: 'PROCESSANDO' })));
+check('  e a nota manual (sem situação) também', /já tem NF-e/.test(motivo('gerar_nfe', { ...comNotaViva, nfeStatus: '' })));
+check('pedido não faturado SEM nota cancelada continua pedindo para faturar',
+  /antes de emitir/.test(motivo('gerar_nfe', ctx({ recordType: 'order', isEditing: true, status: 'pedido-nao-faturado' }))));
+const fonte = (rel) => fs.readFileSync(path.join(raiz, rel), 'utf8');
+check('o pedido leva a situação da nota para a tela', /nfeStatus: \(\(\) => \{/.test(fonte('server.js'))
+  && /nfeStatus: editRecord\?\.nfeStatus \|\| '',/.test(fonte('public/app.js')));
+check('  e a consulta das notas traz a situação', /select id, numero, status from nfe/.test(fonte('lib/db/vendas-compras.js')));
+
 console.log('\n--- pedido CANCELADO ---');
 const cancelado = ctx({ recordType: 'order', isEditing: true, status: 'pedido-cancelado' });
 check('não cancela duas vezes', /já está cancelado/.test(motivo('cancelar', cancelado)), motivo('cancelar', cancelado));

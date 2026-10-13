@@ -20,6 +20,22 @@ window.MavisSalesRecordActions = (function () {
   // "Já saiu mercadoria" — vale tanto para faturado quanto para aprovado sem
   // faturamento. É o que separa um documento ainda editável de um consumado.
   const jaBaixouEstoque = (ctx) => S.baixaEstoque(ctx.status);
+  // "TEM NOTA" É A NOTA VALER, NÃO O VÍNCULO EXISTIR (13/10/2026). O pedido
+  // guarda o id da nota mesmo depois de cancelada — documento fiscal não se
+  // apaga —, e ler só `nfeId` deixava o pedido sem como emitir a nota nova.
+  // Mesma regra do servidor (notaQueSustentaOFaturamento): vale a AUTORIZADA e
+  // a que está PROCESSANDO. Sem situação (nota manual), continua valendo.
+  const NOTA_VALENDO = ['AUTORIZADO', 'PROCESSANDO'];
+  const temNotaValendo = (ctx) => {
+    if (!ctx.nfeId) return false;
+    const situacao = String(ctx.nfeStatus || '').toUpperCase();
+    return !situacao || NOTA_VALENDO.includes(situacao);
+  };
+  // Cancelar a NF-e devolve o pedido para "Não Faturado" com o estoque de
+  // volta (fase BF) — e é justamente para reemitir. A nota nova fatura o
+  // pedido de novo quando autorizada (faturarPedidoDaNota).
+  const voltouDeNotaCancelada = (ctx) => S.normalizar(ctx.status) === 'pedido-nao-faturado'
+    && Boolean(ctx.nfeId) && !temNotaValendo(ctx);
 
   const CATALOG = [
     {
@@ -93,8 +109,8 @@ window.MavisSalesRecordActions = (function () {
         if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não emite NF-e.';
         // Aprovado sem faturamento também emite: é justamente a nota de
         // transferência/remessa, que é NF-e sem financeiro por trás.
-        if (!jaBaixouEstoque(ctx)) return 'Fature (ou aprove) o pedido antes de emitir a NF-e.';
-        if (ctx.nfeId) return 'Este pedido já tem NF-e emitida.';
+        if (!jaBaixouEstoque(ctx) && !voltouDeNotaCancelada(ctx)) return 'Fature (ou aprove) o pedido antes de emitir a NF-e.';
+        if (temNotaValendo(ctx)) return 'Este pedido já tem NF-e emitida.';
         return true;
       },
       run: (ctx) => ctx.gerarNfe()
@@ -110,7 +126,7 @@ window.MavisSalesRecordActions = (function () {
         if (ctx.somenteLeitura) return DE_OUTRO_VENDEDOR;
         if (!ehPedido(ctx)) return 'Só pedido emite NFC-e — aprove o orçamento primeiro.';
         if (S.ehCancelado(ctx.status)) return 'Pedido cancelado não emite NFC-e.';
-        if (ctx.nfeId) return 'Este pedido já tem nota fiscal emitida.';
+        if (temNotaValendo(ctx)) return 'Este pedido já tem nota fiscal emitida.';
         return true;
       },
       run: (ctx) => ctx.emitirNfce()

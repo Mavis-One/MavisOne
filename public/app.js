@@ -4609,6 +4609,8 @@ async function loadModule(moduleName) {
           },
 
           nfeId: editRecord?.nfeId || '',
+          // Cancelada a nota, o vínculo fica e o pedido pode emitir outra.
+          nfeStatus: editRecord?.nfeStatus || '',
           gerarNfe: async () => {
             syncFormState();
             // A pergunta do fluxo: as observações do pedido acompanham a nota?

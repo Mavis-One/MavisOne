@@ -2276,8 +2276,9 @@ async function syncFinanceDataDosPedidos(data, ids) {
  * da lista. Hoje são 0 notas neste banco; em produção são as NFC-e de cada dia,
  * e cada abertura da lista de pedidos parseava todas.
  *
- * MESMA FORMA DOS CAMPOS LIDOS: `data.nfe` com `{ id, numero }` (o que
- * mapNfeRow devolve nesses dois) e `data.nfes` com `{ id, number }` (o que
+ * MESMA FORMA DOS CAMPOS LIDOS: `data.nfe` com `{ id, numero, status }` (o
+ * que mapNfeRow devolve nesses três; `status` desde 13/10/2026, para o
+ * nfeStatus do pedido) e `data.nfes` com `{ id, number }` (o que
  * comoNfe devolve). O mesmo `.catch` da fiscal: tabela fiscal indisponível não
  * derruba a lista, só deixa o número em branco, como antes.
  *
@@ -3342,6 +3343,16 @@ function serializeSalesRecord(record, data) {
       if (fiscal) return String(fiscal.numero || '');
       const manual = indice.manuais.get(record.nfeId);
       return manual ? String(manual.number || '') : '';
+    })(),
+    // A SITUAÇÃO da nota vinculada (13/10/2026). `nfeId` continua apontando
+    // para a nota depois de cancelada — documento fiscal não se apaga —, e o
+    // menu do pedido lia "tem nfeId" como "tem nota": cancelada a nota, o
+    // pedido nunca mais oferecia gerar outra. Vazio = nota manual ou não
+    // achada, e aí o menu continua tratando como nota válida.
+    nfeStatus: (() => {
+      if (!record.nfeId) return '';
+      const fiscal = indiceDasNotas(data).fiscais.get(record.nfeId);
+      return fiscal ? String(fiscal.status || '').toUpperCase() : '';
     })(),
     // Data de envio: mora dentro do grupo de entrega, e a lista precisa dela
     // achatada para poder ordenar e mostrar como coluna.
