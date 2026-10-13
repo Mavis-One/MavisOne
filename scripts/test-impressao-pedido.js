@@ -47,7 +47,9 @@ const servidor = ler('server.js');
 // Só o template da impressão: `server.js` e o resto de `app.js` falam de
 // "Seguro", "NCM" e "TOTAL" por outros motivos, e um check sobre o arquivo
 // inteiro daria verde para o papel errado.
-const template = (tela.match(/const emitente = meta\.emitente \|\| null;[\s\S]*?<\/body><\/html>`\);/) || [''])[0];
+// Desde 13/10/2026 o emitente é o da EMPRESA DO PEDIDO (emitenteDaImpressao),
+// e não mais `meta.emitente` direto.
+const template = (tela.match(/const emitente = emitenteDaImpressao\(\);[\s\S]*?<\/body><\/html>`\);/) || [''])[0];
 
 console.log('--- 1. o template existe e é o da impressão ---');
 check('o trecho do documento foi encontrado', template.length > 1000, template.length + ' caracteres');
@@ -113,8 +115,18 @@ console.log('\n--- 6. o emitente: sem segredo, e sem moldura vazia ---');
 const emitenteFn = (servidor.match(/async function emitenteParaImpressao\(\) \{[\s\S]*?\n\}/) || [''])[0];
 check('a função do emitente existe', emitenteFn.length > 200, emitenteFn.length + ' caracteres');
 check('ela escolhe campo por campo, sem spread do estabelecimento',
-  /razaoSocial: escolhido\.razaoSocial/.test(emitenteFn)
-  && !/\.\.\.escolhido/.test(emitenteFn));
+  /const contato = \(e\) => \(\{\s*razaoSocial: e\.razaoSocial/.test(emitenteFn)
+  && !/\.\.\.escolhido\b(?!\))/.test(emitenteFn.replace(/\.\.\.contato\(escolhido\)/g, '')));
+// 13/10/2026: o cabeçalho saía com a KACCAU (a "matriz" dos estabelecimentos)
+// num pedido da SAL INFINITY PLUS. A rota manda todos os ativos, pelo mesmo
+// recorte de campos, e a tela acha o da empresa do pedido pelo CNPJ.
+check('manda todos os estabelecimentos ativos, pelo mesmo recorte', /estabelecimentos: ativos\.map\(contato\)/.test(emitenteFn));
+const escolhaDaTela = (tela.match(/const emitenteDaImpressao = \(\) => \{[\s\S]*?\n {8}\};/) || [''])[0];
+check('a tela escolhe pela empresa do pedido', /const empresa = \(meta\.companies \|\| \[\]\)\.find\(\(c\) => c\.id === formState\.companyId\);/.test(escolhaDaTela));
+check('  o estabelecimento do MESMO CNPJ primeiro', /\.find\(\(e\) => String\(e\.cnpj \|\| ''\)\.replace\(\/\\D\/g, ''\) === cnpj\)/.test(escolhaDaTela));
+check('  senão a própria empresa, e a matriz só sem empresa', /razaoSocial: empresa\.name/.test(escolhaDaTela) && /if \(!empresa\) return padrao;/.test(escolhaDaTela));
+check('A4 e cupom usam a mesma escolha', (tela.match(/const emitente = emitenteDaImpressao\(\);/g) || []).length === 2);
+check('"Loja:" mostra a filial, não a razão social', /empresa \? rotuloDaEmpresa\(empresa\) : ''/.test(template));
 check('NENHUM campo da Focus sai nele',
   !/focus/i.test(emitenteFn.replace(/^\s*\/\/.*$/gm, '')));
 check('sem estabelecimento devolve null, e não um objeto vazio',

@@ -3891,6 +3891,37 @@ async function loadModule(moduleName) {
           if (!TP) return '';
           return TP.padraoDaEmpresa((meta.companies || []).find((c) => c.id === companyId));
         };
+        // O CABEÇALHO DA IMPRESSÃO É A EMPRESA DO PEDIDO (13/10/2026). Antes
+        // era sempre a matriz dos estabelecimentos — em produção, a KACCAU num
+        // pedido da SAL INFINITY PLUS. Pela ordem: o estabelecimento fiscal com
+        // o MESMO CNPJ da empresa do pedido; senão a própria empresa
+        // (Cadastros › Empresas); e só o pedido sem empresa cai na matriz, que
+        // vem com o aviso "Dados da matriz" (`unidades`).
+        const emitenteDaImpressao = () => {
+          const padrao = meta.emitente || null;
+          const empresa = (meta.companies || []).find((c) => c.id === formState.companyId);
+          if (!empresa) return padrao;
+          const cnpj = String(empresa.document || '').replace(/\D/g, '');
+          const doCnpj = cnpj && ((padrao && padrao.estabelecimentos) || [])
+            .find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpj);
+          if (doCnpj) return { ...doCnpj, unidades: 1 };
+          return {
+            razaoSocial: empresa.name || '',
+            nomeFantasia: empresa.tradeName || '',
+            cnpj: empresa.document || '',
+            inscricaoEstadual: empresa.stateRegistration || '',
+            email: empresa.email || '',
+            telefone: empresa.phone || '',
+            logradouro: empresa.address || '',
+            numero: empresa.addressNumber || '',
+            complemento: '',
+            bairro: empresa.neighborhood || '',
+            municipio: empresa.city || '',
+            uf: empresa.state || '',
+            cep: empresa.zipCode || '',
+            unidades: 1
+          };
+        };
         // Hora de agora só para registro novo — editar não pode carimbar a hora
         // por cima da que o pedido já tinha.
         const horaAgora = new Date().toTimeString().slice(0, 5);
@@ -4144,7 +4175,7 @@ async function loadModule(moduleName) {
           //   "Total Sem Desconto" É `base`, e não `base + frete`: é o valor de
           //   produtos e serviços antes de qualquer abatimento, que é o que o
           //   nome diz. Frete e despesas aparecem nas próprias colunas.
-          const emitente = meta.emitente || null;
+          const emitente = emitenteDaImpressao();
           const catalogo = new Map((meta.products || []).map((p) => [p.id, p]));
           // CPF e CNPJ COM MÁSCARA, como no modelo ("46.877.837/0001-14"). Sem
           // isto o cabeçalho saía "43792899000135", que é o mesmo número e não
@@ -4244,7 +4275,7 @@ async function loadModule(moduleName) {
                   ${linhaCliente('Condições:', condicoes)}<th>Frete por Conta:</th><td>${escapeHtml(fretePorConta)}</td></tr>
                   ${linhaCliente('Vendedor:', vendedor?.name || '-')}<th>Status:</th><td>${escapeHtml(SalesStatus.rotulo(formState.status))}</td></tr>
                   ${formState.saleOrigin || formState.customerPoCode || empresa?.name ? `
-                  ${linhaCliente('Origem:', formState.saleOrigin || '')}<th>${formState.customerPoCode ? 'OC do cliente:' : 'Loja:'}</th><td>${escapeHtml(formState.customerPoCode || empresa?.name || '')}</td></tr>` : ''}
+                  ${linhaCliente('Origem:', formState.saleOrigin || '')}<th>${formState.customerPoCode ? 'OC do cliente:' : 'Loja:'}</th><td>${escapeHtml(formState.customerPoCode || (empresa ? rotuloDaEmpresa(empresa) : ''))}</td></tr>` : ''}
                 </tbody>
               </table>
 
@@ -4322,7 +4353,7 @@ async function loadModule(moduleName) {
           const clienteId = formState.clientSupplierId;
           const cliente = (await dadosDoCliente(clienteId)) || meta.directory.find((e) => e.id === clienteId);
           if (win.closed) return;
-          const emitente = meta.emitente || null;
+          const emitente = emitenteDaImpressao();
           const catalogo = new Map((meta.products || []).map((p) => [p.id, p]));
           const vendedor = meta.sellers.find((s) => s.id === formState.sellerId);
           const aPrazo = (formState.paymentInfo && formState.paymentInfo.paymentTerm) === 'aprazo';

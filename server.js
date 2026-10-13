@@ -1909,26 +1909,35 @@ async function emitenteParaImpressao() {
   }
   const ativos = (lista || []).filter((e) => e && e.ativo !== false);
   if (!ativos.length) return null;
+  // Os campos de contato de UM estabelecimento, escolhidos um a um (ver acima).
+  const contato = (e) => ({
+    razaoSocial: e.razaoSocial || '',
+    nomeFantasia: e.nomeFantasia || '',
+    cnpj: e.cnpj || '',
+    inscricaoEstadual: e.inscricaoEstadual || '',
+    email: e.email || '',
+    telefone: e.telefone || '',
+    logradouro: e.logradouro || '',
+    numero: e.numero || '',
+    complemento: e.complemento || '',
+    bairro: e.bairro || '',
+    municipio: e.municipio || '',
+    uf: e.uf || '',
+    cep: e.cep || ''
+  });
   const escolhido = ativos.length === 1
     ? ativos[0]
     : (ativos.find((e) => String(e.tipo || '').toUpperCase() === 'MATRIZ') || ativos[0]);
   return {
-    razaoSocial: escolhido.razaoSocial || '',
-    nomeFantasia: escolhido.nomeFantasia || '',
-    cnpj: escolhido.cnpj || '',
-    inscricaoEstadual: escolhido.inscricaoEstadual || '',
-    email: escolhido.email || '',
-    telefone: escolhido.telefone || '',
-    logradouro: escolhido.logradouro || '',
-    numero: escolhido.numero || '',
-    complemento: escolhido.complemento || '',
-    bairro: escolhido.bairro || '',
-    municipio: escolhido.municipio || '',
-    uf: escolhido.uf || '',
-    cep: escolhido.cep || '',
+    ...contato(escolhido),
     // Para a tela poder dizer "são vários, este é o da matriz" sem que quem
     // imprime tenha de adivinhar de onde vieram os dados.
-    unidades: ativos.length
+    unidades: ativos.length,
+    // TODOS os ativos (13/10/2026): o cabeçalho é o da EMPRESA DO PEDIDO,
+    // achada pelo CNPJ na tela (emitenteDaImpressao em public/app.js). A
+    // matriz acima ficou só para o pedido sem empresa — o cabeçalho com a
+    // KACCAU num pedido da SAL INFINITY PLUS foi o que o usuário mostrou.
+    estabelecimentos: ativos.map(contato)
   };
 }
 
