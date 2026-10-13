@@ -10,6 +10,9 @@
 //       CONFERE (login de administrador), sem gravar: cada código, o
 //       produto, o saldo de hoje no depósito e o saldo depois.
 //
+//   ... --lote correcao-codigos --itens "9194:-5,9193:-10,9589:5,9587:10"
+//       um segundo lote no mesmo dia; quantidade negativa é SAÍDA.
+//
 //   ... --enviar
 //       grava uma movimentação de ENTRADA por item, pelo mesmo caminho da
 //       tela Estoque › Nova Movimentação, com o custo do cadastro.
@@ -24,7 +27,13 @@ const tem = (nome) => process.argv.includes('--' + nome);
 const qtd = (v) => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 4 });
 const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const chave = (t) => String(t || '').normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
-const MARCA = 'Entrada em lote a pedido do usuário';
+// CORREÇÃO (13/10/2026): a carga dos montados entrou em produção com dois
+// códigos errados (Ayla 500 em 9194 e Flic em 9193; os certos são 9589 e
+// 9587). Quantidade NEGATIVA vira SAÍDA, e `--lote <nome>` separa um segundo
+// lote no mesmo dia — a trava de repetição olha a marca COM o lote, então a
+// correção não esbarra na carga original, e rodá-la duas vezes é recusado.
+const LOTE = argumento('lote') ? String(argumento('lote')).trim() : '';
+const MARCA = `Entrada em lote a pedido do usuário${LOTE ? ` (${LOTE})` : ''}`;
 
 function perguntar(texto) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -37,7 +46,7 @@ function lerItens(texto) {
   for (const parte of String(texto || '').split(',').map((p) => p.trim()).filter(Boolean)) {
     const [sku, q] = parte.split(':').map((p) => String(p || '').trim());
     const quantidade = Number(String(q).replace(',', '.'));
-    if (!sku || !Number.isFinite(quantidade) || quantidade <= 0) throw new Error(`Item inválido: "${parte}" (use código:quantidade).`);
+    if (!sku || !Number.isFinite(quantidade) || quantidade === 0) throw new Error(`Item inválido: "${parte}" (use código:quantidade; negativo é saída).`);
     if (itens.some((i) => i.sku === sku)) throw new Error(`Código repetido: ${sku}.`);
     itens.push({ sku, quantidade });
   }
@@ -94,7 +103,10 @@ async function main() {
     if (p === undefined) { console.log(`  XX ${item.sku}: código não cadastrado`); problemas += 1; continue; }
     if (p === null) { console.log(`  XX ${item.sku}: código repetido no cadastro`); problemas += 1; continue; }
     const saldo = Number(((p.balances || []).find((b) => b.depositId === deposito.id) || {}).quantity || 0);
-    console.log(`  ${item.sku}  ${String(p.name).slice(0, 48).padEnd(48)}  +${qtd(item.quantidade)}  (${qtd(saldo)} -> ${qtd(saldo + item.quantidade)})`);
+    console.log(`  ${item.sku}  ${String(p.name).slice(0, 48).padEnd(48)}  ${item.quantidade > 0 ? '+' : ''}${qtd(item.quantidade)}  (${qtd(saldo)} -> ${qtd(saldo + item.quantidade)})`);
+    // Saída maior que o saldo do depósito: o servidor recusaria no meio do
+    // lote, com parte já gravada. Melhor parar aqui, antes de gravar nada.
+    if (saldo + item.quantidade < 0) { console.log(`  XX ${item.sku}: saída de ${qtd(-item.quantidade)} com saldo ${qtd(saldo)} neste depósito`); problemas += 1; continue; }
     linhas.push({ ...item, produto: p });
   }
   const total = linhas.reduce((t, l) => t + l.quantidade, 0);
@@ -108,7 +120,7 @@ async function main() {
 
   const hoje = new Date().toLocaleDateString('sv-SE');
   const { movements } = await chamar('GET', `/api/stock/movements?depositId=${encodeURIComponent(deposito.id)}&dateFrom=${hoje}&dateTo=${hoje}&limit=200`).catch(() => ({ movements: [] }));
-  const jaFeitas = (movements || []).filter((m) => String(m.note || '').startsWith(MARCA));
+  const jaFeitas = (movements || []).filter((m) => String(m.note || '').startsWith(`${MARCA} — `));
   if (jaFeitas.length) {
     console.log(`\nJÁ HÁ ${jaFeitas.length} entrada(s) desta carga hoje neste depósito. Nada foi gravado (rodar de novo somaria em dobro).`);
     process.exitCode = 1;
@@ -121,16 +133,17 @@ async function main() {
   }
   for (const l of linhas) {
     await chamar('POST', '/api/stock/movements', {
-      type: 'entrada',
+      type: l.quantidade > 0 ? 'entrada' : 'saida',
       productId: l.produto.id,
       depositId: deposito.id,
       date: hoje,
-      quantity: l.quantidade,
+      quantity: Math.abs(l.quantidade),
       unitCost: Number(l.produto.costPrice || 0),
       note: `${MARCA} — ${l.sku}`
     });
   }
-  console.log(`\nGRAVADO em ${base}: ${linhas.length} entradas, ${qtd(total)} unidades em ${deposito.name}.`);
+  const entradas = linhas.filter((l) => l.quantidade > 0).length;
+  console.log(`\nGRAVADO em ${base}: ${entradas} entrada(s) e ${linhas.length - entradas} saída(s), saldo ${total >= 0 ? '+' : ''}${qtd(total)} unidades em ${deposito.name}.`);
 }
 
 // exitCode, e não process.exit(): ver scripts/completar-chaves-nfe.js.
