@@ -4404,6 +4404,12 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 
 .rel-tabela-topo { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
 .rel-tabela-topo h3 { margin: 0; }
+/* A tabela é larga (a chave tem 44 dígitos): sem isto ela alargava o formulário
+   inteiro, que é grid; com isto ela rola dentro da aba. */
+#peopleNotasFiscais { contain: inline-size; min-width: 0; }
+.notas-pessoa-topo { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.notas-pessoa-tabela td { white-space: nowrap; }
+.notas-pessoa-tabela .notas-pessoa-chave { font-family: ui-monospace, monospace; font-size: 12px; }
 
 /* Numero alinhado a' direita e com digito de largura fixa: e' o que permite
    comparar duas linhas de dinheiro passando o olho pela coluna. */

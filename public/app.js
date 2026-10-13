@@ -6785,6 +6785,10 @@ async function loadModule(moduleName) {
                   <span>Mais dados</span>
                   <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </button>
+                ${isEditMode && sanitizeDigits(peopleDraft.document || '') ? `<button type="button" class="cadastro-tab" data-tab="notas" role="tab" aria-selected="false">
+                  <span>Notas Fiscais</span>
+                  <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>` : ''}
                 <button type="button" class="cadastro-tab" data-tab="billing" role="tab" aria-selected="false" id="billingTabBtn" ${peopleDraft.billingDifferent ? '' : 'hidden'}>
                   <span>Endereço de Cobrança</span>
                   <svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
@@ -6935,6 +6939,10 @@ async function loadModule(moduleName) {
                     ${field('País', 'deliveryCountry', peopleDraft.deliveryCountry || 'Brasil')}
                   </div>
                 `)}
+              </div>
+
+              <div class="cadastro-tab-panel" data-tab-panel="notas" hidden>
+                <div id="peopleNotasFiscais"></div>
               </div>
 
               ${section('Observações', `
@@ -8192,8 +8200,19 @@ async function loadModule(moduleName) {
           document.querySelectorAll('#peopleRegisterForm .cadastro-tab-panel').forEach((panel) => {
             panel.hidden = panel.dataset.tabPanel !== target;
           });
+          // A lista só é buscada quando a aba abre — e uma vez por formulário.
+          if (target === 'notas') carregarNotasDaPessoa();
         });
       });
+
+      let notasDaPessoaCarregadas = false;
+      async function carregarNotasDaPessoa() {
+        const caixa = document.getElementById('peopleNotasFiscais');
+        if (!caixa || notasDaPessoaCarregadas) return;
+        notasDaPessoaCarregadas = true;
+        const draft = (state.cadastroDraft && state.cadastroDraft.people) || {};
+        await window.MavisNotasDaPessoa.mostrar(caixa, sanitizeDigits(draft.document || ''), { api, escapeHtml, showToast });
+      }
 
       // Endereço de cobrança/entrega diferente: abre (ou fecha) a aba correspondente ao ligar/desligar a chave.
       const bindDifferentAddressToggle = (checkboxName, tabBtnId) => {

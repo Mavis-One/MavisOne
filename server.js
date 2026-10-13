@@ -4666,6 +4666,15 @@ function filterNfes(data, query, listaBase) {
   const modelo = query.get('modelo');
   if (modelo === '55' || modelo === '65') list = list.filter((nfe) => String(nfe.modelo || 55) === modelo);
 
+  // O CPF/CNPJ do destinatário, só dígitos e exato (13/10/2026): é a aba Notas
+  // Fiscais do cadastro da pessoa. Com máscara ou sem, a nota é a mesma; e
+  // "contém" ligaria o CPF 123 a todo documento que tivesse 123 no meio.
+  // Só dígitos à mão, e não sanitizeDigits: scripts/test-financeiro-por-recorte.js
+  // roda esta função isolada, sem o resto do servidor em volta.
+  const digitos = (v) => String(v || '').replace(/\D/g, '');
+  const documento = digitos(query.get('documento'));
+  if (documento) list = list.filter((nfe) => digitos(nfe.clientDocument) === documento);
+
   return list;
 }
 
