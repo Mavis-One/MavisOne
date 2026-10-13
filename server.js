@@ -125,6 +125,7 @@ const metasDb = require('./lib/db/metas');
 // Fase DD: a filial de cada venda, lida do fim da categoria.
 const filialDaVenda = require('./lib/filial-da-venda');
 const { opcoesDeEmpresa } = require('./lib/rotulo-da-empresa');
+const { bancosDasContas } = require('./lib/banco-da-conta');
 // Fase EF: o que a categoria de venda faz (estoque, financeiro, fiscal, venda).
 const categoriaVenda = require('./public/modules/shared/categoria_venda');
 // Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
@@ -10495,7 +10496,7 @@ async function tratarRequisicao(req, res) {
       const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
       const [depositos, contas, vendedores, filiais, estabelecimentos] = await Promise.all([
         consultarBanco('select id, name from deposits order by name'),
-        consultarBanco('select id, name from bank_accounts where coalesce(ativo, true) order by name'),
+        consultarBanco('select id, name, bank, bank_code from bank_accounts where coalesce(ativo, true) order by name'),
         escopo.podeEscolherVendedor
           ? consultarBanco(`select id, name from people where extra->'roles' @> '["Vendedor"]'::jsonb order by name`)
           : Promise.resolve({ rows: [] }),
@@ -10522,7 +10523,10 @@ async function tratarRequisicao(req, res) {
         grupos: catalogoDeRelatorios.catalogoVisivel(porta.user, porta.ehAdministrador),
         opcoes: {
           depositos: depositos.rows,
-          contas: contas.rows,
+          contas: contas.rows.map((c) => ({ id: c.id, name: c.name })),
+          // Os bancos das contas (lib/banco-da-conta.js): o campo "banco" veio
+          // vazio do Viper, e o nome da conta é que diz "ITAU PLUS".
+          bancos: bancosDasContas(contas.rows.map((c) => ({ name: c.name, bank: c.bank, bankCode: c.bank_code }))),
           vendedores: vendedores.rows,
           filiais: [...porChave.values()].sort((a, b) => a.localeCompare(b, 'pt-BR')),
           estabelecimentos: estabelecimentos.rows,

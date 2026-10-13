@@ -115,6 +115,7 @@ window.MavisRelatoriosCatalogo = (function () {
       usa('dias') ? `<label>Dias<input type="number" min="1" max="3650" step="1" data-rel-cat="dias" value="${escapeHtml(String(filtros.dias || ''))}" /></label>` : '',
       usa('deposito') ? select('depositoId', 'Depósito', opcoes.depositos, 'Todos') : '',
       usa('conta') ? select('contaId', 'Conta', opcoes.contas, 'Todas') : '',
+      usa('banco') ? select('banco', 'Banco', opcoes.bancos, 'Todos', (o) => o, (o) => o) : '',
       usa('vendedor') && opcoes.podeEscolherVendedor ? select('vendedorId', 'Vendedor', opcoes.vendedores, 'Todos') : '',
       usa('filial') ? select('filial', 'Filial', opcoes.filiais, 'Todas', (o) => o, (o) => o) : '',
       usa('estabelecimento') ? select('estabelecimentoId', 'Estabelecimento', opcoes.estabelecimentos, 'Todos') : '',
