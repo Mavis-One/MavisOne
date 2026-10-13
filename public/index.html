@@ -118,6 +118,10 @@
     <script src="/modules/shared/contas_por_estabelecimento.js"></script>
     <script src="/modules/shared/sales_bulk_actions.js"></script>
     <script src="/modules/shared/fiscal_permissoes.js"></script>
+    <!-- O que o modulo marcado na ficha ja da (hoje: Financeiro ver/lancar/
+         editar). A ficha do usuario mostra; lib/permissoes.js faz require() do
+         MESMO arquivo e concede. -->
+    <script src="/modules/shared/permissoes_do_modulo.js"></script>
     <!-- O que cada CST do ICMS admite. Carregado antes do modulo Fiscal:
          a tela de Regras usa para esconder alIquota em CST isento, e o
          server.js faz require() do MESMO arquivo. -->

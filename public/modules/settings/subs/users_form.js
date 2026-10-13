@@ -393,7 +393,8 @@ async function renderSettingsUserForm(ctx, mode) {
       caixa.innerHTML = secao('Permissões', '<p class="muted">Administrador: acesso total.</p>');
       return;
     }
-    const doPapel = permissoesDosPapeis(papeisPedidos());
+    const doModulo = new Set(window.MavisPermissoesDoModulo.permissoesDosModulos(modulosMarcados()));
+    const doPapel = new Set([...permissoesDosPapeis(papeisPedidos()), ...doModulo]);
     caixa.innerHTML = secao('Permissões', `
       <div class="rbac-recursos">
         ${recursosOrdenados.map(([recurso, lista]) => `
@@ -406,7 +407,7 @@ async function renderSettingsUserForm(ctx, mode) {
                 <label class="rbac-permissao">
                   <input type="checkbox" class="usuario-permissao" value="${escapeHtml(permissao.slug)}" ${marcada ? 'checked' : ''} />
                   <span>${escapeHtml(permissao.action)}</span>
-                  ${doPapel.has(permissao.slug) ? '<em class="rbac-origem">do papel</em>' : ''}
+                  ${doPapel.has(permissao.slug) ? `<em class="rbac-origem">${permissoesDosPapeis(papeisPedidos()).has(permissao.slug) ? 'do papel' : 'do módulo'}</em>` : ''}
                   <small>${escapeHtml(permissao.description)}</small>
                 </label>`;
             }).join('')}
@@ -434,6 +435,9 @@ async function renderSettingsUserForm(ctx, mode) {
     // para voltar sozinho no dia em que alguém remarcasse o módulo.
     modulosSemAcesso().forEach((modulo) => delete telasBloqueadas[modulo]);
     pintarTelasPorModulo();
+    // Marcar Financeiro já dá ver/lançar/editar (fase EF): a aba Permissões
+    // tem que mostrar isso na hora.
+    pintarPermissoes();
   }));
   form.querySelector('[name="tipo"]').addEventListener('change', () => {
     pintarTelasPorModulo();
@@ -488,8 +492,13 @@ async function renderSettingsUserForm(ctx, mode) {
       // FormData): não mandar é o que mantém o "ativo" dele como está.
       ...(ehOProprio ? {} : { active: formData.get('active') === 'on' })
     };
+    // O módulo marcado também conta como "já dado" (fase EF): PERMITIR do que
+    // ele já dá seria linha redundante, e desmarcar vira NEGAR.
     if (comRbac) {
-      const doPapel = permissoesDosPapeis(papeisPedidos());
+      const doPapel = new Set([
+        ...permissoesDosPapeis(papeisPedidos()),
+        ...window.MavisPermissoesDoModulo.permissoesDosModulos(formData.getAll('module'))
+      ]);
       campos.roles = papeisPedidos();
       campos.exceptions = [...excecoes]
         .filter(([slug, efeito]) => (efeito === 'PERMITIR') !== doPapel.has(slug))

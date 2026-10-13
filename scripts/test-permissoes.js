@@ -73,6 +73,21 @@ const bloqueado = usuario({ active: false, role: 'admin' });
 check('bloqueado não faz nada, nem sendo admin', P.usuarioPode(bloqueado, 'dashboard.ler', acesso(['dashboard.ler'])) === false);
 check('usuário inexistente não faz nada', P.usuarioPode(null, 'dashboard.ler', acesso(['dashboard.ler'])) === false);
 
+console.log('\n--- módulo Financeiro marcado já dá ver/lançar/editar (fase EF) ---');
+// Medido em 13/10/2026: tipo Usuário + módulo Financeiro marcado levava 403
+// "finance.ler" — o papel não traz finance, e o módulo só mostrava o menu.
+const financeiro = usuario({ allowedModules: ['dashboard', 'finance'] });
+check('módulo marcado dá ler', P.usuarioPode(financeiro, 'finance.ler', acesso()) === true);
+check('módulo marcado dá criar', P.usuarioPode(financeiro, 'finance.criar', acesso()) === true);
+check('módulo marcado dá editar', P.usuarioPode(financeiro, 'finance.editar', acesso()) === true);
+check('mas NÃO dá excluir', P.usuarioPode(financeiro, 'finance.excluir', acesso()) === false);
+check('excluir liberado à parte continua valendo', P.usuarioPode(financeiro, 'finance.excluir', acesso(['finance.excluir'])) === true);
+check('NEGAR vence o módulo marcado', P.usuarioPode(financeiro, 'finance.criar', acesso([], ['finance.criar'])) === false);
+check('sem o módulo, nada de financeiro', P.usuarioPode(usuario({ allowedModules: ['sales'] }), 'finance.ler', acesso()) === false);
+check('a regra é só do Financeiro: vendas marcado sem papel continua barrado',
+  P.usuarioPode(usuario({ allowedModules: ['sales'] }), 'sales.ler', acesso()) === false);
+check('bloqueado não ganha nada pelo módulo', P.usuarioPode(usuario({ active: false, allowedModules: ['finance'] }), 'finance.ler', acesso()) === false);
+
 console.log('\n--- migração pendente: cai no modelo antigo, sem trancar ninguém ---');
 const antigo = usuario({ allowedModules: ['sales', 'dashboard'] });
 check('módulo liberado permite a ação', P.podePeloModulo(antigo, 'sales.criar') === true);
