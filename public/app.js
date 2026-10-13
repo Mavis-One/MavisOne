@@ -533,7 +533,7 @@ function rotuloDaEmpresa(empresa) {
   // Sem fantasia: razão social + cidade + número da filial no CNPJ, como em
   // lib/rotulo-da-empresa.js — senão as lojas voltam a sair iguais.
   const nome = String((empresa && empresa.name) || '');
-  const digitos = String((empresa && empresa.document) || '').replace(/D/g, '');
+  const digitos = String((empresa && empresa.document) || '').replace(/\D/g, '');
   const extras = [String((empresa && empresa.city) || '').trim(), digitos.length === 14 ? digitos.slice(8, 12) : ''].filter(Boolean);
   return extras.length ? `${nome} — ${extras.join(' ')}` : nome;
 }
@@ -3866,6 +3866,13 @@ async function loadModule(moduleName) {
         // não são campo de formulário — não vão no payload do salvar.
         let anexos = (origem && Array.isArray(origem.attachments)) ? origem.attachments.slice() : [];
         let anexosOcupado = false;
+        // O texto com que o pedido nasce para a empresa `companyId`: o termo
+        // dela, que /api/sales/meta manda resolvido; senão, o do sistema.
+        const padraoDaEmpresaDoPedido = (companyId) => {
+          const TP = window.MavisNfeTextoPadrao;
+          if (!TP) return '';
+          return TP.padraoDaEmpresa((meta.companies || []).find((c) => c.id === companyId));
+        };
         // Hora de agora só para registro novo — editar não pode carimbar a hora
         // por cima da que o pedido já tinha.
         const horaAgora = new Date().toTimeString().slice(0, 5);
@@ -3893,7 +3900,10 @@ async function loadModule(moduleName) {
           // Só no novo: um registro salvo traz o texto que ALGUÉM escreveu, e
           // sobrepor o padrão apagaria o ajuste. Duplicata idem — ela copia o
           // original, inclusive as observações.
-          note: origem ? (origem.note || '') : (window.MavisNfeTextoPadrao?.PADRAO || ''),
+          //
+          // Desde 13/10/2026, o texto da EMPRESA do pedido quando ela tem um
+          // (o termo da Electric); senão, o do sistema. Ver padraoDaEmpresa.
+          note: origem ? (origem.note || '') : padraoDaEmpresaDoPedido(origem?.companyId || ''),
           // Os campos de Dados e de Informações Gerais entram aqui pelo mesmo
           // motivo dos de cabeçalho: o redesenho abaixo os apagaria da tela.
           ...Object.fromEntries(CAMPOS_EXTRA.map((campo) => [campo, origem?.[campo] ?? ''])),
@@ -4515,6 +4525,9 @@ async function loadModule(moduleName) {
                 unitPrice: Number(item.unitPrice || 0)
               })),
               taxNotes: copiarObservacoes ? formState.note : '',
+              // A empresa do pedido escolhe o emitente na emissão (13/10/2026):
+              // é do emitente que sai o termo, e sem ele a nota não o tinha.
+              empresaCnpj: String((meta.companies.find((c) => c.id === formState.companyId) || {}).document || '').replace(/\D/g, ''),
               payments: payments.map((linha) => ({ ...linha })),
               // AS LINHAS DE PAGAMENTO, TRADUZIDAS PARA O GRUPO `pag` (fase BU).
               //
@@ -5599,7 +5612,19 @@ async function loadModule(moduleName) {
               const escolhido = precisaTrocar ? depositoSugeridoDaLoja(meta, valor) : atual;
               // Redesenha como a troca de depósito faz (fase CK): a coluna
               // "Disponível" e o alerta de sem saldo são do depósito escolhido.
+              // A empresa ANTERIOR, lida antes do syncFormState: ele copia o
+              // campo, que a busca já trocou para a nova.
+              const empresaAnterior = formState.companyId;
               syncFormState();
+              // As observações seguem a empresa — só se ninguém as editou
+              // (13/10/2026; ver observacaoAoTrocarEmpresa).
+              if (window.MavisNfeTextoPadrao) {
+                formState.note = window.MavisNfeTextoPadrao.observacaoAoTrocarEmpresa({
+                  atual: formState.note,
+                  padraoAnterior: padraoDaEmpresaDoPedido(empresaAnterior),
+                  padraoNovo: padraoDaEmpresaDoPedido(valor)
+                });
+              }
               formState.companyId = valor;
               formState.depositId = escolhido;
               renderForm();

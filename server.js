@@ -126,6 +126,7 @@ const metasDb = require('./lib/db/metas');
 // Fase DD: a filial de cada venda, lida do fim da categoria.
 const filialDaVenda = require('./lib/filial-da-venda');
 const { opcoesDeEmpresa } = require('./lib/rotulo-da-empresa');
+const { observacoesDasEmpresas } = require('./lib/observacao-da-empresa');
 const { bancosDasContas } = require('./lib/banco-da-conta');
 // Fase EF: o que a categoria de venda faz (estoque, financeiro, fiscal, venda).
 const categoriaVenda = require('./public/modules/shared/categoria_venda');
@@ -10974,7 +10975,7 @@ async function tratarRequisicao(req, res) {
     // Os pedidos da reserva e o razão continuam com o `catch` estreito de
     // antes, cada um no seu: sem eles a tela cai no saldo físico em vez de não
     // abrir. Os demais derrubam a rota, como sempre derrubaram.
-    const [, user, products, pedidosDaReserva, razaoCarregado, emitente, origensAtivas, categoriasAtivas, formas] = await Promise.all([
+    const [, user, products, pedidosDaReserva, razaoCarregado, emitente, origensAtivas, categoriasAtivas, fiscaisDasEmpresas, formas] = await Promise.all([
       syncCadastroData(data),
       getCurrentUser(req),
       // Oito campos por produto, e não os vinte e três de getProducts() — ver
@@ -10985,6 +10986,13 @@ async function tratarRequisicao(req, res) {
       emitenteParaImpressao(),
       origensVendaDb.listar({ apenasAtivas: true }),
       categoriasVendaDb.listar({ apenasAtivas: true }),
+      // O termo de cada empresa (13/10/2026) — ver lib/observacao-da-empresa.js.
+      // Falhar aqui não derruba o formulário: o pedido nasce com o texto do
+      // sistema, como antes.
+      Promise.all([fiscalDb.getEstabelecimentos(), fiscalDb.getEmpresas()]).catch((erro) => {
+        console.warn('Termo das empresas indisponível no formulário de venda:', erro.message);
+        return [[], []];
+      }),
       // Lê `data.paymentMethods`, que vem do db.json pelo loadData() — não
       // depende de nenhum sync desta onda.
       formasComCredenciadora(data)
@@ -11051,7 +11059,13 @@ async function tratarRequisicao(req, res) {
     return sendJson(res, {
       reservas,
       saldosPorDeposito,
-      companies: data.companies,
+      // Cada empresa com o termo dela já resolvido (`observacaoPadrao`): o
+      // pedido novo nasce com ele, e o vendedor não alcança /api/fiscal/*.
+      companies: (() => {
+        const termos = observacoesDasEmpresas(data.companies, fiscaisDasEmpresas[0], fiscaisDasEmpresas[1]);
+        return (data.companies || []).map((c) => ({ ...c, observacaoPadrao: termos.get(c.id) || '' }));
+      })(),
+
       sellers: getSellersDirectory(data),
       // O vendedor do usuário logado: a venda nova já nasce com ele. `travado`
       // = vendedor comum, que não escolhe outro nem altera venda de colega

@@ -245,10 +245,16 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // `taxNotes` é o texto que o vendedor escreveu no pedido e confirmou copiar
     // para a nota. Ele era perguntado e depois DESCARTADO — esta tela não lia o
     // campo. Perguntar e ignorar é pior do que não perguntar.
-    if (TextoPadrao) {
-      notaDoPedido = doPedido.taxNotes || '';
-      observacoes = TextoPadrao.montar({ observacaoDoPedido: notaDoPedido });
-    }
+    // O texto em si é montado logo abaixo, por padraoAtual(), já com a base
+    // do emitente: montar sem ela empilhava o termo da empresa sobre a
+    // observação do pedido, que já nasce com ele (13/10/2026).
+    if (TextoPadrao) notaDoPedido = doPedido.taxNotes || '';
+    // O EMITENTE É A EMPRESA DO PEDIDO, pelo CNPJ (13/10/2026). Sem isto a
+    // tela abria sem emitente, e o termo do CNPJ não entrava na nota. Sem
+    // estabelecimento com o mesmo CNPJ, continua a escolha manual de sempre.
+    const cnpjDoPedido = String(doPedido.empresaCnpj || '').replace(/\D/g, '');
+    const doMesmoCnpj = cnpjDoPedido && estabelecimentos.find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpjDoPedido);
+    if (doMesmoCnpj) selectedEstabelecimentoId = doMesmoCnpj.id;
   }
 
   // O que o botão "Restaurar texto padrão" devolve. Vindo de um pedido, é o
@@ -1270,6 +1276,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     });
   }
 
+  // Emitente já escolhido pela empresa do pedido: as últimas notas dele
+  // aparecem de saída, como apareceriam se a pessoa o escolhesse na mão.
+  if (selectedEstabelecimentoId) await loadNotasRecentes();
   renderForm();
 };
 

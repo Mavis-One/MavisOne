@@ -37,5 +37,15 @@ const servidor = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'
 check('o meta do Estoque usa o rótulo da filial', /companies: opcoesDeEmpresa\(data\.companies\)/.test(servidor));
 check('  e não manda mais a razão social crua', !/companies: \(data\.companies \|\| \[\]\)\.map\(\(c\) => \(\{ id: c\.id, name: c\.name \}\)\)/.test(servidor));
 
+// A cópia da tela (rotuloDaEmpresa em public/app.js) rodada de verdade: em
+// 13/10/2026 ela saiu com /D/g no lugar de /\D/g, e o número da filial
+// sumia sem erro nenhum.
+const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+const fonteDaTela = (app.match(/function rotuloDaEmpresa\(empresa\) \{[\s\S]*?\n\}/) || [''])[0];
+// eslint-disable-next-line no-new-func
+const daTela = new Function(`${fonteDaTela}; return rotuloDaEmpresa;`)();
+check('a cópia da tela dá o mesmo rótulo', daTela({ name: RAZAO, city: 'Timbó', document: '43.792.899/0005-69' }) === `${RAZAO} — Timbó 0005`,
+  daTela({ name: RAZAO, city: 'Timbó', document: '43.792.899/0005-69' }));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

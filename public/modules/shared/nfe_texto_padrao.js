@@ -122,9 +122,44 @@ ${RODAPE}`;
    * dúvida o resultado é `false`, e o texto entra como observação extra — pior
    * ter uma linha a mais do que perder o que o vendedor escreveu.
    */
-  function ehTextoPadrao(texto) {
+  //
+  // `base` (13/10/2026): o texto da EMPRESA (observacaoPadraoNfe). Desde que o
+  // pedido nasce com o texto da empresa dele, a observação do pedido também
+  // pode SER esse texto — o termo da Electric não tem "CHASSI:" nem a bateria,
+  // e sem esta regra ele saía duas vezes no infCpl. Comparado sem diferença de
+  // espaço e quebra de linha: o textarea e o banco não guardam igual.
+  function ehTextoPadrao(texto, base) {
     const conteudo = String(texto || '');
-    return /^[ \t]*CHASSI[ \t]*:/im.test(conteudo) && /CUIDADOS COM A BATERIA/i.test(conteudo);
+    if (/^[ \t]*CHASSI[ \t]*:/im.test(conteudo) && /CUIDADOS COM A BATERIA/i.test(conteudo)) return true;
+    const daEmpresa = compacto(base);
+    return Boolean(daEmpresa) && compacto(conteudo).includes(daEmpresa);
+  }
+
+  /** Espaços e quebras de linha viram um espaço só — para comparar textos. */
+  function compacto(texto) {
+    return String(texto || '').replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * O texto com que o pedido NASCE para uma empresa (13/10/2026): o termo
+   * dela (Configurações › Empresa, "Observação padrão das notas deste CNPJ"),
+   * que o servidor manda resolvido em `observacaoPadrao` de cada empresa do
+   * formulário de venda; sem termo, o texto do sistema, como sempre foi.
+   */
+  function padraoDaEmpresa(empresa) {
+    const daEmpresa = String((empresa && empresa.observacaoPadrao) || '').trim();
+    return daEmpresa || PADRAO;
+  }
+
+  /**
+   * Trocar a empresa do pedido troca as observações — SÓ se ninguém mexeu
+   * nelas. Mesma regra da troca de emitente na emissão: texto escrito à mão não
+   * é apagado porque alguém corrigiu a empresa.
+   */
+  function observacaoAoTrocarEmpresa({ atual, padraoAnterior, padraoNovo } = {}) {
+    return String(atual || '').trim() === String(padraoAnterior || '').trim()
+      ? String(padraoNovo || '')
+      : String(atual || '');
   }
 
   /**
@@ -142,7 +177,7 @@ ${RODAPE}`;
   // Ausente, continua sendo o texto do sistema — que é o que era antes.
   function montar({ observacaoDoPedido = '', base } = {}) {
     const extra = String(observacaoDoPedido || '').trim();
-    if (ehTextoPadrao(extra)) return extra;
+    if (ehTextoPadrao(extra, base)) return extra;
     const inicio = String(base || '').trim() || PADRAO;
     return [inicio, extra].filter(Boolean).join('\n\n');
   }
@@ -217,7 +252,7 @@ ${RODAPE}`;
   const api = {
     PADRAO, FICHA, RODAPE, LIMITE_INFCPL, LIMITE_INFADPROD, CAMPOS_A_PREENCHER,
     SEPARADOR_RODAPE,
-    ficha, montar, comChassi, chassiDoTexto, ehTextoPadrao, camposVazios,
+    ficha, montar, comChassi, chassiDoTexto, ehTextoPadrao, camposVazios, padraoDaEmpresa, observacaoAoTrocarEmpresa,
     excedeLimite, excedeLimiteDoItem, avisoDeHomologacao, orcamentoDoRodape
   };
 
