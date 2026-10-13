@@ -6618,18 +6618,29 @@ function leiturasDaConferencia() {
 // opcional e não pode ser contribuinte, a operação é sempre interna e de
 // venda, e a nota de balcão não leva frete.
 /**
- * Os itens do pedido marcados "Permite pedido sem estoque" (productMeta.
- * vendeSemEstoque) cujo saldo não cobre a quantidade — a mesma conta do
- * faturamento (transitionOrderStockEffect): pela cor quando o item tem cor,
- * senão pelo saldo do produto, somando as linhas repetidas. Produto não
- * marcado não entra: para ele nada mudou (decisão do usuário, 13/10/2026).
+ * Os itens do pedido cujo saldo não cobre a quantidade — a MESMA conta do
+ * faturamento (transitionOrderStockEffect): todo item com produto, pela cor
+ * quando o item tem cor, senão pelo saldo do produto, somando as linhas
+ * repetidas.
+ *
+ * Primeiro só para os produtos marcados "Permite pedido sem estoque"; no
+ * mesmo dia (13/10/2026) o usuário pediu para valer para TODOS — a brecha
+ * (nota autorizada, faturamento recusado depois, só na auditoria) era a mesma
+ * em qualquer produto.
+ *
+ * Só quando o faturamento VAI baixar estoque, como em aplicarEfeitosDeStatus:
+ * pedido que já baixou (Aprovado Sem Faturamento) não baixa de novo, e
+ * categoria que não altera estoque não baixa nada — recusar a nota deles
+ * seria travar um faturamento que nunca falharia.
  */
 async function itensSemEstoqueParaFaturar(pedido) {
+  if (pedido.stockApplied) return [];
+  const regra = await regraDaCategoriaDoPedido(pedido.category);
+  if (!regra.alteraEstoque) return [];
   const data = loadData();
   const precisa = new Map();
   for (const item of pedido.items || []) {
     if (!item.productId) continue;
-    if (stockCore.productMeta(data, item.productId).vendeSemEstoque !== true) continue;
     const chave = `${item.productId}|${item.classValueId || ''}`;
     const atual = precisa.get(chave) || { item, quantidade: 0 };
     atual.quantidade += Number(item.quantity || 0);
@@ -6767,12 +6778,11 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
       err.status = 409;
       throw err;
     }
-    // PRODUTO QUE ENTRA EM PEDIDO SEM ESTOQUE NÃO SAI EM NOTA SEM ESTOQUE
-    // (13/10/2026). A autorização fatura o pedido, e faturar sem saldo é
-    // recusado — mas DEPOIS de a nota existir na SEFAZ, e a recusa só vai para
-    // a auditoria (faturarPedidoDaNota). Para o produto marcado "Permite pedido
-    // sem estoque", que é justamente o que chega aqui zerado, a conta é feita
-    // antes de transmitir.
+    // PEDIDO SEM ESTOQUE NÃO SAI EM NOTA (13/10/2026). A autorização fatura o
+    // pedido, e faturar sem saldo é recusado — mas DEPOIS de a nota existir na
+    // SEFAZ, e a recusa só ia para a auditoria (faturarPedidoDaNota). A conta
+    // do faturamento é feita aqui, antes de transmitir. Ver
+    // itensSemEstoqueParaFaturar.
     const pedido = await db.getOrderById(pedidoDaNota);
     const faltando = pedido ? await itensSemEstoqueParaFaturar(pedido) : [];
     if (faltando.length) {

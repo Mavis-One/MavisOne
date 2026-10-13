@@ -3,11 +3,11 @@
  * PEDIDO SEM ESTOQUE, FATURAMENTO NÃO — E A TELA SEM NEGATIVO NEM RESERVA
  * (13/10/2026, pedido do usuário).
  *
- * 1. O produto ganhou "Permite pedido sem estoque (não fatura sem saldo)". O
- *    pedido com ele zerado salva como sempre; a NF-e do pedido é recusada
+ * 1. Pedido com produto zerado salva como sempre; a NF-e do pedido é recusada
  *    ANTES de ir à SEFAZ enquanto o saldo não cobrir. Sem isso a nota saía, e
  *    o faturamento que a autorização dispara falhava calado (só auditoria).
- *    Produto não marcado: nada mudou (decisão do usuário).
+ *    Primeiro só para o produto marcado "Permite pedido sem estoque"; no
+ *    mesmo dia o usuário pediu para valer para todos.
  * 2. Produtos (Estoque), busca de produto e itens do pedido: negativo aparece
  *    como 0, e o número reservado não aparece.
  *
@@ -43,7 +43,11 @@ console.log('\n--- 2. a NF-e do pedido confere antes de transmitir ---');
 const servidor = ler('server.js');
 const conta = (servidor.match(/async function itensSemEstoqueParaFaturar\(pedido\) \{[\s\S]*?\n\}/) || [''])[0];
 check('a conta existe', conta.length > 0);
-check('  só os produtos marcados', /vendeSemEstoque !== true\) continue;/.test(conta));
+// No mesmo dia o usuário pediu a trava para TODOS os produtos.
+check('  vale para todo produto, marcado ou não', !/vendeSemEstoque/.test(conta));
+check('  só quando o faturamento vai baixar: pedido que já baixou fica de fora', /if \(pedido\.stockApplied\) return \[\];/.test(conta));
+check('  e categoria que não altera estoque também',
+  /const regra = await regraDaCategoriaDoPedido\(pedido\.category\);\s*if \(!regra\.alteraEstoque\) return \[\];/.test(conta));
 check('  pela cor quando o item tem cor, senão pelo produto', /item\.classValueId\s*\? stockCore\.classValueBalance/.test(conta));
 check('  somando linhas repetidas do mesmo produto', /atual\.quantidade \+= Number\(item\.quantity \|\| 0\)/.test(conta));
 const preparar = servidor.slice(servidor.indexOf('async function prepararNfeParaTransmitir'), servidor.indexOf('async function emitirNfeFiscal'));
