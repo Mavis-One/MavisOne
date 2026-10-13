@@ -644,6 +644,14 @@ function salesColunasVisiveis() {
 function adotarUsuarioDaSessao(user) {
   state.user = user;
   state.preferences = (user && user.preferences) || {};
+  // A LISTA DE LANÇAMENTOS GUARDA ESTADO NA SESSÃO (fase EI): filtros, ordem e
+  // a SELEÇÃO. Sair e entrar com outro usuário na mesma aba não recarrega a
+  // página — e quem entrasse herdaria os selecionados de quem saiu, com o
+  // botão Baixar valendo para eles. Todo login passa por aqui.
+  state.financeLista = null;
+  state.financeFilters = null;
+  state.financeOpenEntryId = null;
+  state.financeListaInstancia = null;
   state.user.dashboardPins = normalizeDashboardPins([
     ...(Array.isArray(state.user.dashboardPins) ? state.user.dashboardPins : []),
     ...readStoredDashboardPins(state.user.id)

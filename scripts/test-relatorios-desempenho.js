@@ -164,14 +164,15 @@ const recortar = (fonte, nome) => {
   const mapProduto = new Function(`${recortar(ler('lib/db/estoque.js'), 'mapProductRow')}; return mapProductRow;`)();
 
   const LANCAMENTOS = [
-    { type: 'RECEITA', status: 'paid', amount: 150.1, date: '2026-09-01', due_date: '2026-09-10' },
-    { type: 'DESPESA', status: 'pending', amount: null, date: '2026-09-02', due_date: '2026-08-01' },
-    { type: 'transfer', status: 'CANCELADO', amount: '12.5', date: '2026-09-03', due_date: null }
+    { id: 'fin-1', type: 'RECEITA', status: 'paid', amount: 150.1, date: '2026-09-01', due_date: '2026-09-10' },
+    { id: 'fin-2', type: 'DESPESA', status: 'pending', amount: null, date: '2026-09-02', due_date: '2026-08-01' },
+    { id: 'fin-3', type: 'transfer', status: 'CANCELADO', amount: '12.5', date: '2026-09-03', due_date: null }
   ];
   linhasFalsas = { financial_entries: LANCAMENTOS };
   const enxutos = await cargas.lancamentosDaSintese();
-  const campos = ['type', 'status', 'amount', 'date', 'dueDate'];
-  check('lançamentos: os cinco campos que a Síntese lê, com a conversão de mapFinancialEntryRow',
+  // `id` desde a fase EI: o baixado dos parciais é achado por ele.
+  const campos = ['id', 'type', 'status', 'amount', 'date', 'dueDate'];
+  check('lançamentos: os seis campos que a Síntese lê, com a conversão de mapFinancialEntryRow',
     enxutos.every((e, i) => campos.every((c) => Object.is(e[c], mapLancamento(LANCAMENTOS[i])[c])))
     && enxutos.every((e) => Object.keys(e).sort().join() === campos.slice().sort().join()));
   check('  ordem estável: data decrescente e id', /order by date desc, id$/.test(consultas[0]), consultas[0]);
@@ -230,7 +231,10 @@ const recortar = (fonte, nome) => {
     const f = servidor.indexOf('\n  }\n', i);
     return servidor.slice(i, f + 5);
   })();
-  const ajudantes = ['classifyFinanceEntry', 'isFinanceEntryRealized', 'isFinanceEntryCancelled', 'financeEntryDueDate', 'sumFinanceAmount']
+  // Fase EI: os quatro últimos são a regra do título parcial (em aberto =
+  // previsto menos baixado).
+  const ajudantes = ['classifyFinanceEntry', 'isFinanceEntryRealized', 'isFinanceEntryCancelled', 'financeEntryDueDate', 'sumFinanceAmount',
+    'isFinanceEntryPartial', 'financeEntryOpenAmount', 'sumFinanceOpenAmount', 'sumFinancePartialPaid']
     .map((nome) => recortar(servidor, nome)).join('\n');
   const contasDoFinanceiro = new Function(`${ajudantes}\n${contasSrc}\nreturn contasDoFinanceiro;`)();
   const HOJE = '2026-10-06';
@@ -243,24 +247,34 @@ const recortar = (fonte, nome) => {
     { type: 'DESPESA', status: 'pendente', amount: 7, date: '2026-01-01', dueDate: '2026-01-01' }, // 'pendente' não é pending
     { type: 'purchase', status: 'pending', amount: 40, date: '2026-01-01', dueDate: '2026-11-01' },
     { type: 'DESPESA', status: 'Paid', amount: 3, date: '2026-01-01', dueDate: '2026-01-01' },
-    { type: 'TRANSFERENCIA', status: 'pending', amount: 500, date: '2026-01-01', dueDate: '2026-01-01' }
+    { type: 'TRANSFERENCIA', status: 'pending', amount: 500, date: '2026-01-01', dueDate: '2026-01-01' },
+    // Fase EI — os PARCIAIS: em aberto só o que falta, o baixado em
+    // recebidas/pagas. p3 recebeu juros (baixou mais que o previsto): em
+    // aberto 0, nunca negativo. O parcial sem id lá em cima (25) não tem
+    // baixa no Map e conta cheio.
+    { id: 'p1', type: 'RECEITA', status: 'parcial', amount: 1000, date: '2026-09-01', dueDate: '2026-10-01' },
+    { id: 'p2', type: 'DESPESA', status: 'Parcial', amount: 300, date: '2026-09-01', dueDate: '2026-10-20' },
+    { id: 'p3', type: 'DESPESA', status: 'parcial', amount: 50, date: '2026-09-01', dueDate: '2026-10-20' }
   ];
-  const contas = contasDoFinanceiro(casos, HOJE);
-  check('a receber: total, vencidas, a vencer e recebidas',
-    JSON.stringify(contas.contasAReceber) === JSON.stringify({ total: 175, vencidas: 100, aReceber: 75, recebidas: 10 }),
+  const pagoDosParciais = new Map([['p1', 400], ['p2', 100], ['p3', 80]]);
+  const contas = contasDoFinanceiro(casos, HOJE, pagoDosParciais);
+  check('a receber: total, vencidas, a vencer e recebidas (parcial pelo que falta)',
+    JSON.stringify(contas.contasAReceber) === JSON.stringify({ total: 775, vencidas: 700, aReceber: 75, recebidas: 410 }),
     JSON.stringify(contas.contasAReceber));
-  check('a pagar: cancelado, transferência e status desconhecido fora',
-    JSON.stringify(contas.contasAPagar) === JSON.stringify({ total: 40, vencidas: 0, aVencer: 40, pagas: 3 }),
+  check('a pagar: cancelado, transferência e status desconhecido fora; baixa a mais não fica negativa',
+    JSON.stringify(contas.contasAPagar) === JSON.stringify({ total: 240, vencidas: 0, aVencer: 240, pagas: 183 }),
     JSON.stringify(contas.contasAPagar));
   // E as linhas do painel são as mesmas, palavra por palavra: quem mudar a
   // regra lá precisa mudar aqui (ou passar a chamar esta).
   const painel = recortar(servidor, 'buildFinanceDashboardSummary');
   const normalizar = (s) => s.replace(/\s+/g, ' ');
   const regra = ['const pendingOrPartial = (entry) => { const s = String(entry.status || \'\').toLowerCase(); return s === \'pending\' || s === \'parcial\'; };',
-    'total: sumFinanceAmount(despesaEntries.filter(pendingOrPartial))', 'vencidas: sumFinanceAmount(despesaEntries.filter(isOverdue))',
-    'aVencer: sumFinanceAmount(despesaEntries.filter(isUpcoming))', 'pagas: sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized))',
-    'total: sumFinanceAmount(receitaEntries.filter(pendingOrPartial))', 'vencidas: sumFinanceAmount(receitaEntries.filter(isOverdue))',
-    'aReceber: sumFinanceAmount(receitaEntries.filter(isUpcoming))', 'recebidas: sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized))'];
+    'total: sumFinanceOpenAmount(despesaEntries.filter(pendingOrPartial), pagoPorId)', 'vencidas: sumFinanceOpenAmount(despesaEntries.filter(isOverdue), pagoPorId)',
+    'aVencer: sumFinanceOpenAmount(despesaEntries.filter(isUpcoming), pagoPorId)',
+    'pagas: sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized)) + sumFinancePartialPaid(despesaEntries, pagoPorId)',
+    'total: sumFinanceOpenAmount(receitaEntries.filter(pendingOrPartial), pagoPorId)', 'vencidas: sumFinanceOpenAmount(receitaEntries.filter(isOverdue), pagoPorId)',
+    'aReceber: sumFinanceOpenAmount(receitaEntries.filter(isUpcoming), pagoPorId)',
+    'recebidas: sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized)) + sumFinancePartialPaid(receitaEntries, pagoPorId)'];
   // O PAINEL TEM DE SER ACHADO. A primeira versão deste check passava quando
   // `buildFinanceDashboardSummary` sumia do server.js (`!painel || ...`): se
   // alguém a movesse para lib/ e mudasse a regra lá, a Síntese passaria a
@@ -280,7 +294,9 @@ const recortar = (fonte, nome) => {
   // teste à toa; mudar a regra das contas, sim.
   const painelRodando = (() => {
     if (!painel) return null;
-    const fornecidos = { getTodayLocal: () => new Date(2026, 9, 6) };
+    // lancamentoCodigo desde a fase EI: "Últimos lançamentos" mostra o LF0042,
+    // e um esboço no lugar dele derrubaria o painel inteiro aqui.
+    const fornecidos = { getTodayLocal: () => new Date(2026, 9, 6), lancamentoCodigo: require(path.join(RAIZ, 'public/modules/shared/lancamento_codigo')) };
     const esboco = () => ({});
     const escopo = new Proxy(fornecidos, {
       has: (alvo, nome) => typeof nome === 'string' && (nome in alvo || !(nome in globalThis)),
@@ -296,7 +312,7 @@ const recortar = (fonte, nome) => {
   })();
   let doPainel = null;
   try {
-    doPainel = painelRodando && painelRodando({ finance: casos }, new URLSearchParams());
+    doPainel = painelRodando && painelRodando({ finance: casos }, new URLSearchParams(), { pagoDosParciais });
   } catch (erro) {
     doPainel = { erro: erro.message };
   }
@@ -304,6 +320,9 @@ const recortar = (fonte, nome) => {
     !!doPainel && JSON.stringify({ contasAPagar: doPainel.contasAPagar, contasAReceber: doPainel.contasAReceber }) === JSON.stringify(contas),
     doPainel ? JSON.stringify({ erro: doPainel.erro, contasAPagar: doPainel.contasAPagar, contasAReceber: doPainel.contasAReceber })
       : 'o painel não rodou fora do servidor');
+  // O saldo é o que entrou menos o que saiu, com as baixas dos parciais.
+  check('  e o saldo do painel é recebido menos pago (410 - 183)', !!doPainel && doPainel.saldoAtual === 227,
+    doPainel ? String(doPainel.saldoAtual) : '');
   check('a Síntese e o Estoque leem pelas cargas enxutas',
     /cargasDosRelatorios\.lancamentosDaSintese\(\)/.test(servidorSemComent) && /cargasDosRelatorios\.produtosDoValorEmEstoque\(\)/.test(servidorSemComent));
   check('  e a função que lia o sistema inteiro não voltou', !/baseDosRelatoriosGerais\(/.test(servidorSemComent));

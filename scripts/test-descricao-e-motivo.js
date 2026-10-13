@@ -159,8 +159,10 @@ const telaLanc = ler('public/modules/finance/subs/lancamentos.js');
 // O CHECK QUE ENCONTROU UM ERRO REAL: a coluna "Codigo" mostrava
 // String(entry.id).slice(-8) — pedaco de uuid. A fase AT criou o numero do
 // lancamento e ligou so o titulo da tela de edicao.
+// Fase EI: a tabela passou a ser desenhada pelo catálogo de colunas
+// (FINANCE_LISTA_COLUNAS) — a coluna Código é a entrada `codigo` dele.
 check('a coluna Código mostra o número do lançamento',
-  /<td>\$\{escapeHtml\(entry\.codigo \|\| '-'\)\}<\/td>/.test(telaLanc));
+  /chave: 'codigo'[^\n]*valor: \(e, f\) => f\.esc\(e\.codigo \|\| '-'\)/.test(telaLanc));
 check('  e não mais um pedaço do id interno',
   !/escapeHtml\(String\(entry\.id\)\.slice\(-8\)\)/.test(telaLanc));
 check('cancelar abre o promptModal com mínimo 10',

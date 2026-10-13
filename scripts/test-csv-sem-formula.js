@@ -186,8 +186,9 @@ const servidor = (inicioEnviar < 0 ? servidorInteiro
 const rotasCsv = (servidor.match(/text\/csv/g) || []).length;
 // O catálogo de relatórios (lib/relatorios) monta TODOS os seus arquivos por
 // um só montador, motorDeRelatorios.paraCsv — conferido no fim deste teste.
-// O inventário (fase EG) usa o terceiro montador de lib/relatorios-csv.js.
-const MONTADOR = /relatoriosVendas\.montarCsv\(|relatoriosCsv\.(financeiro|estoque|inventario)\(|motorDeRelatorios\.paraCsv\(/;
+// O inventário (fase EG) usa o terceiro montador de lib/relatorios-csv.js, e a
+// exportação da lista de lançamentos (fase EI), o quarto.
+const MONTADOR = /relatoriosVendas\.montarCsv\(|relatoriosCsv\.(financeiro|estoque|inventario|lancamentos)\(|motorDeRelatorios\.paraCsv\(/;
 const montagens = (servidor.match(new RegExp(MONTADOR.source, 'g')) || []).length;
 check(`toda rota de CSV chama um montador (${rotasCsv} rota(s), ${montagens} montagem(ns))`,
   rotasCsv > 0 && montagens >= rotasCsv,
@@ -213,8 +214,8 @@ check('cada uma chama um montador, e nenhuma junta células por conta própria',
 // naquele arquivo.
 const outros = semComentarios(ler('lib/relatorios-csv.js'));
 check('relatorios-csv requer lib/csv', /require\('\.\/csv'\)/.test(ler('lib/relatorios-csv.js')));
-check('  e monta os três documentos por ele',
-  (outros.match(/csv\.documento\(/g) || []).length === 3);
+check('  e monta os quatro documentos por ele',
+  (outros.match(/csv\.documento\(/g) || []).length === 4);
 check('  sem join manual', !/\.join\(';'\)/.test(outros));
 // Texto pelo `celula` (neutraliza), número pelo `numero` (não neutraliza, senão
 // a planilha pararia de somar a coluna).

@@ -56,9 +56,28 @@ const NOMES = [
   'compararLancamentosDaLista', 'filtrarListaDeLancamentos', 'getFinanceEntryPayments',
   'financeEntryEffectiveDue', 'financeEntryPaidTotal', 'esperadoNoExtrato', 'scoreBankTransactionMatch',
   'looseNameMatch', 'findBankTransactionMatches', 'getPeriodRange', 'getPreviousPeriodRange',
-  'buildPeriodBuckets', 'buildFinanceChartSeries', 'buildFinanceDashboardSummary'
+  'buildPeriodBuckets', 'buildFinanceChartSeries', 'buildFinanceDashboardSummary',
+  // Fase EI: a ordem por coluna e o resumo das abas.
+  'ordenarListaDeLancamentos', 'resumirListaDeLancamentos', 'situacaoPorUrgencia',
+  // Fase EI: o título parcial no dashboard (em aberto = previsto - baixado).
+  'isFinanceEntryPartial', 'financeEntryOpenAmount', 'sumFinanceOpenAmount', 'sumFinancePartialPaid'
 ];
-const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corpoDe).join('\n')}\nreturn { ${NOMES.join(', ')} };`)();
+// Constantes de topo que as funções acima leem — do `const NOME = {` até o
+// primeiro `};` no começo de linha, como corpoDe faz com as funções.
+function constanteDe(nome) {
+  const marca = `\nconst ${nome} = {`;
+  const ini = src.indexOf(marca);
+  if (ini < 0) throw new Error(`server.js não tem mais a constante ${nome}`);
+  return src.slice(ini, src.indexOf('\n};', ini + 1) + 3);
+}
+// Os módulos que o server.js recebe por require (fase EI): a busca procura no
+// código formatado e reconhece valor; a ordem e as abas vêm do catálogo.
+const lancamentoCodigo = require(path.join(RAIZ, 'public/modules/shared/lancamento_codigo'));
+const listaDeLancamentos = require(path.join(RAIZ, 'public/modules/shared/lancamentos_lista'));
+const descricaoLancamento = require(path.join(RAIZ, 'public/modules/shared/descricao_lancamento'));
+const S = new Function('lancamentoCodigo', 'listaDeLancamentos', 'descricaoLancamento',
+  `const CACHE_DIRETORIO = new WeakMap();\n${constanteDe('ORDENS_DA_LISTA_DE_LANCAMENTOS')}\n${NOMES.map(corpoDe).join('\n')}\nreturn { ${NOMES.join(', ')} };`
+)(lancamentoCodigo, listaDeLancamentos, descricaoLancamento);
 
 (async () => {
   if (!process.env.DATABASE_URL) {
@@ -75,13 +94,15 @@ const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corp
   const db = require('../db');
 
   try {
-    const [inteiros, baixas, people, cnpjs, purchases] = await Promise.all([
-      db.getFinancialEntries(), db.getAllFinancialPayments(), db.getPeople(), db.getCnpjs(), db.getPurchases()
+    const [inteiros, baixas, people, cnpjs, purchases, financialCategories, costCenters, bankAccounts] = await Promise.all([
+      db.getFinancialEntries(), db.getAllFinancialPayments(), db.getPeople(), db.getCnpjs(), db.getPurchases(),
+      db.getFinancialCategories(), db.getCostCenters(), db.getBankAccounts()
     ]);
     const dbjson = (() => {
       try { return JSON.parse(fs.readFileSync(path.join(RAIZ, 'data', 'db.json'), 'utf8')); } catch { return {}; }
     })();
-    const base = { people, cnpjs, purchases, sales: dbjson.sales || [] };
+    // Categorias, centros e contas (fase EI): a ordem por coluna lê o NOME deles.
+    const base = { people, cnpjs, purchases, sales: dbjson.sales || [], financialCategories, costCenters, bankAccounts };
     console.log(`(${inteiros.length} lançamentos, ${baixas.length} baixas)`);
     // A ORDEM DOS EMPATES. getFinancialEntries ordena só por data, e os do mesmo
     // dia saíam numa ordem que o Postgres escolhia a cada leitura (sort em disco,
@@ -132,10 +153,42 @@ const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corp
       { dueFrom: `${hoje}\u0000`, dueTo: '2026-12\u0000' }, { dateFrom: '2026-0\u00003' }, { amountMin: '1\u0000' },
       { search: 'a\u0000' }
     ];
+    // FASE EI — a busca por código, documento e valor, as situações juntas das
+    // abas e a ordem por coluna. Cada ordem é comparada com a da leitura
+    // INTEIRA: se getLancamentosDaLista esquecer a coluna que a ordem lê, o
+    // parcial chega com o valor padrão do map e a ordem sai outra.
+    const comCodigo = inteiros.find((e) => e.code) || {};
+    const comDocumento = inteiros.find((e) => String(e.document || '').length > 6) || {};
+    const valorReal = inteiros.find((e) => Number(e.amount) >= 1000) || { amount: 2500 };
+    const emReais = (v) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    casos.push(
+      { search: lancamentoCodigo.formatar(comCodigo.code) }, { search: `lf${comCodigo.code}` }, { search: String(comCodigo.code || '') },
+      { search: String(comDocumento.document || '').slice(-6) },
+      { search: emReais(valorReal.amount) }, { search: `R$ ${emReais(valorReal.amount)}` }, { search: String(Number(valorReal.amount)) },
+      { search: '100' }, { search: '100,00' }, { search: '2.500' }, { search: '1,234' }, { search: 'joao' }, { search: 'icms a recolher' },
+      { status: 'pendente,vencido,parcial' }, { status: 'pago,recebido' }, { status: ' vencido , pendente ' }, { status: 'cancelado,xyz' },
+      { status: ',' }, { type: 'despesa', status: 'pendente,vencido,parcial', search: 'a' },
+      // O recorte do parcial vencido (aba Vencidos), sozinho e com o vencido.
+      { status: 'vencido,parcial-vencido' }, { status: 'parcial-vencido' }, { status: 'parcial-vencido', sort: 'status', dir: 'asc' }
+    );
+    listaDeLancamentos.ORDENAVEIS.forEach((sort) => {
+      casos.push({ sort, dir: 'asc' }, { sort, dir: 'desc' });
+    });
+    casos.push(
+      { sort: 'constructor' }, { sort: '__proto__', dir: 'asc' }, { sort: 'xyz', dir: 'asc' }, { sort: 'amount', dir: 'xyz' },
+      { sort: 'amount', dir: 'asc', type: 'despesa', status: 'vencido' },
+      { sort: 'clienteFornecedor', dir: 'asc', search: 'a' },
+      { sort: 'category', dir: 'desc', category: amostra.cat || 'x' },
+      { sort: 'dueDate', dir: 'asc', status: 'pendente,vencido,parcial', dueFrom: '2026-01-01' },
+      { sort: 'description', dir: 'asc', search: emReais(valorReal.amount) }
+    );
     let iguais = 0;
     for (const caso of casos) {
       const q = new URLSearchParams(caso);
-      const antes = S.filterFinanceEntries({ ...base, finance: inteiros }, q).sort(S.compararLancamentosDaLista).map((e) => e.id);
+      const filtrada = S.filterFinanceEntries({ ...base, finance: inteiros }, q);
+      // Sem ?sort=, o oráculo continua sendo o sort de sempre, escrito aqui: é o
+      // que prova que a ordem padrão não mudou na fase EI.
+      const antes = (q.get('sort') ? S.ordenarListaDeLancamentos(filtrada, q, base) : filtrada.sort(S.compararLancamentosDaLista)).map((e) => e.id);
       const dados = { ...base };
       const parciais = await db.getLancamentosDaLista(q);
       const depois = S.filtrarListaDeLancamentos(dados, parciais, q).map((e) => e.id);
@@ -144,6 +197,54 @@ const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corp
       else check(`lista igual para ${JSON.stringify(caso)}`, false, `${antes.length} x ${depois.length}`);
     }
     check(`as ${casos.length} combinações dão a mesma lista inteira, na mesma ordem`, iguais === casos.length, `${iguais}/${casos.length}`);
+
+    // ----------------------------------------------------------------- 1b
+    console.log('\n--- 1b. a rota em dois tempos (fase EI) dá a mesma lista, e o resumo fecha ---');
+    // A rota filtra por tudo menos a situação (para as abas contarem) e depois
+    // pela situação. Tem de dar a lista de um tempo só.
+    const somaBaixas = new Map();
+    baixas.forEach((b) => somaBaixas.set(b.entryId, (somaBaixas.get(b.entryId) || 0) + Number(b.amount || 0)));
+    // O que as baixas ABATERAM (fase EI): valor + desconto − juros − multa — a
+    // conta do "em aberto" da lista, a mesma da rota de baixa.
+    const abatido = new Map();
+    baixas.forEach((b) => abatido.set(b.entryId, (abatido.get(b.entryId) || 0)
+      + Number(b.amount || 0) + Number(b.discount || 0) - Number(b.interest || 0) - Number(b.fine || 0)));
+    const casosDaRota = [
+      {}, { status: 'vencido' }, { status: 'pendente,vencido,parcial', sort: 'amount', dir: 'desc' },
+      { status: 'parcial' }, { status: 'pago,recebido', type: 'receita', search: 'pedido' },
+      { status: 'pendente', sort: 'dueDate', dir: 'asc', dueFrom: '2026-01-01' }, { search: emReais(valorReal.amount) }
+    ];
+    let rotaIgual = 0;
+    let resumoIgual = 0;
+    let contagemFecha = 0;
+    for (const caso of casosDaRota) {
+      const q = new URLSearchParams(caso);
+      const semSituacao = new URLSearchParams(q);
+      semSituacao.delete('status');
+      const dados = { ...base };
+      const todos = S.filtrarListaDeLancamentos(dados, await db.getLancamentosDaLista(q), semSituacao);
+      const emDoisTempos = q.get('status')
+        ? S.filterFinanceEntries({ ...dados, finance: todos }, new URLSearchParams({ status: q.get('status') }))
+        : todos;
+      const deUmaVez = S.filtrarListaDeLancamentos({ ...base }, await db.getLancamentosDaLista(q), q);
+      if (emDoisTempos.map((e) => e.id).join() === deUmaVez.map((e) => e.id).join()) rotaIgual += 1;
+      else check(`rota em dois tempos para ${JSON.stringify(caso)}`, false, `${emDoisTempos.length} x ${deUmaVez.length}`);
+
+      // O resumo dos PARCIAIS (o que a rota calcula) é o mesmo da leitura
+      // inteira: prova que as colunas sempre trazidas bastam para as abas.
+      const abatidoDosParciais = new Map(emDoisTempos.filter((e) => S.financeEntryStatusLabel(e) === 'parcial').map((e) => [e.id, abatido.get(e.id) || 0]));
+      const resumoDaRota = S.resumirListaDeLancamentos(todos, emDoisTempos, abatidoDosParciais);
+      const porId = new Map(inteiros.map((e) => [e.id, e]));
+      const resumoInteiro = S.resumirListaDeLancamentos(todos.map((e) => porId.get(e.id)), emDoisTempos.map((e) => porId.get(e.id)), abatido);
+      if (JSON.stringify(resumoDaRota) === JSON.stringify(resumoInteiro)) resumoIgual += 1;
+      else check(`resumo para ${JSON.stringify(caso)}`, false, `${JSON.stringify(resumoDaRota.totais)} x ${JSON.stringify(resumoInteiro.totais)}`);
+      const somaDasAbas = Object.values(resumoDaRota.situacoes).reduce((s, x) => s + x.quantidade, 0);
+      if (somaDasAbas === todos.length && resumoDaRota.totais.quantidade === emDoisTempos.length) contagemFecha += 1;
+      else check(`contagem das abas para ${JSON.stringify(caso)}`, false, `${somaDasAbas} x ${todos.length}`);
+    }
+    check(`a rota em dois tempos dá a lista de um tempo só (${casosDaRota.length} casos)`, rotaIgual === casosDaRota.length, `${rotaIgual}/${casosDaRota.length}`);
+    check('o resumo das abas é o mesmo com as colunas parciais e com a leitura inteira', resumoIgual === casosDaRota.length, `${resumoIgual}/${casosDaRota.length}`);
+    check('as abas somam a lista sem situação, e o total é o da lista filtrada', contagemFecha === casosDaRota.length, `${contagemFecha}/${casosDaRota.length}`);
 
     // ------------------------------------------------------------------ 2
     console.log('\n--- 2. as sugestões de conciliação são as mesmas ---');
@@ -178,7 +279,19 @@ const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corp
     // ------------------------------------------------------------------ 3
     console.log('\n--- 3. o resumo do dashboard é o mesmo ---');
     const paraResumo = await db.getFinancialEntriesParaResumo();
-    check('as dez colunas vêm na mesma ordem da leitura inteira', paraResumo.map((e) => e.id).join() === inteiros.map((e) => e.id).join());
+    check('as colunas do resumo vêm na mesma ordem da leitura inteira', paraResumo.map((e) => e.id).join() === inteiros.map((e) => e.id).join());
+    // FASE EI — o baixado dos parciais, lido só para eles, é o que sai de todas
+    // as baixas. Em centavos: a ordem das baixas de mesmo instante pode mudar o
+    // último bit da soma, e a tela mostra centavos.
+    const pagoDosParciais = await db.getPagoDosParciais();
+    const parciaisNoJs = inteiros.filter((e) => String(e.status || '').toLowerCase() === 'parcial');
+    const centavos = (v) => Math.round(Number(v || 0) * 100);
+    check('o baixado dos parciais é o das baixas inteiras, título a título',
+      pagoDosParciais.size === parciaisNoJs.filter((e) => somaBaixas.has(e.id)).length
+      && parciaisNoJs.every((e) => centavos(pagoDosParciais.get(e.id)) === centavos(somaBaixas.get(e.id))),
+      `${pagoDosParciais.size} parciais com baixa`);
+    // O mesmo `extras` nos dois lados: aqui se compara a LEITURA dos lançamentos.
+    const extras = { pagoDosParciais, nfesAutorizadas: 7 };
     let iguaisResumo = 0;
     const periodos = [
       { period: 'month', granularity: 'month' }, { period: 'year', granularity: 'year' },
@@ -187,13 +300,41 @@ const S = new Function(`const CACHE_DIRETORIO = new WeakMap();\n${NOMES.map(corp
     ];
     for (const p of periodos) {
       const q = new URLSearchParams(p);
-      const antes = S.buildFinanceDashboardSummary({ ...base, finance: inteiros }, q);
-      const depois = S.buildFinanceDashboardSummary({ ...base, finance: paraResumo }, q);
+      const antes = S.buildFinanceDashboardSummary({ ...base, finance: inteiros }, q, extras);
+      const depois = S.buildFinanceDashboardSummary({ ...base, finance: paraResumo }, q, extras);
       const mesmo = JSON.stringify(antes) === JSON.stringify(depois);
       if (mesmo) iguaisResumo += 1;
       else check(`resumo ${JSON.stringify(p)}`, false);
     }
     check(`o resumo de ${periodos.length} períodos é o mesmo, byte a byte`, iguaisResumo === periodos.length, `${iguaisResumo}/${periodos.length}`);
+
+    // FASE EI, sobre os dados de verdade: o que o painel passou a dizer.
+    const comBaixas = S.buildFinanceDashboardSummary({ ...base, finance: paraResumo }, new URLSearchParams(), extras);
+    const semBaixas = S.buildFinanceDashboardSummary({ ...base, finance: paraResumo }, new URLSearchParams());
+    const tipoDe = (e) => S.classifyFinanceEntry(e);
+    const pagoDe = (e) => Number(pagoDosParciais.get(e.id) || 0);
+    const emAbertoTirado = parciaisNoJs.filter((e) => ['receita', 'despesa'].includes(tipoDe(e)))
+      .reduce((s, e) => s + Math.min(pagoDe(e), Number(e.amount || 0)), 0);
+    check('a pagar + a receber caem exatamente o baixado dos parciais',
+      centavos(semBaixas.contasAPagar.total + semBaixas.contasAReceber.total - comBaixas.contasAPagar.total - comBaixas.contasAReceber.total)
+        === centavos(emAbertoTirado), `R$ ${emAbertoTirado.toFixed(2)}`);
+    const saldoDosParciais = parciaisNoJs.reduce((s, e) => s + (tipoDe(e) === 'receita' ? pagoDe(e) : (tipoDe(e) === 'despesa' ? -pagoDe(e) : 0)), 0);
+    check('e o saldo passa a ver o baixado deles', centavos(comBaixas.saldoAtual - semBaixas.saldoAtual) === centavos(saldoDosParciais),
+      `R$ ${saldoDosParciais.toFixed(2)}`);
+    const maioresCodigos = inteiros.filter((e) => !S.isFinanceEntryCancelled(e) && Number(e.code) > 0)
+      .map((e) => Number(e.code)).sort((a, b) => b - a).slice(0, 8).map((c) => lancamentoCodigo.formatar(c));
+    check('"Últimos lançamentos" são os 8 de maior número, com o LF', comBaixas.ultimosLancamentos.map((e) => e.codigo).join() === maioresCodigos.join(),
+      comBaixas.ultimosLancamentos.map((e) => e.codigo).join(' '));
+    const hojeStr = S.toDateStr(S.getTodayLocal());
+    const abas = comBaixas.proximosVencimentos;
+    const emOrdem = (itens) => itens.every((item, i) => i === 0 || itens[i - 1].dueDate <= item.dueDate);
+    check('cada aba de vencimentos: no máximo 10, em ordem de vencimento, com quantidade e total da aba',
+      ['hoje', 'amanha', 'proximos7', 'proximos30'].every((k) => abas[k] && abas[k].itens.length <= 10 && emOrdem(abas[k].itens)
+        && abas[k].quantidade >= abas[k].itens.length && typeof abas[k].total === 'number')
+      && (abas.proximos30.quantidade === 0 || abas.proximos30.itens[0].dueDate >= hojeStr),
+      ['hoje', 'amanha', 'proximos7', 'proximos30'].map((k) => `${k} ${abas[k] && abas[k].itens.length}/${abas[k] && abas[k].quantidade}`).join(', '));
+    check('o cartão de NF-e mostra a contagem que a rota passou', comBaixas.totalNfesEmitidas === 7 && semBaixas.totalNfesEmitidas === null
+      && !('nfeStats' in comBaixas));
 
     // ------------------------------------------------------------------ 4
     console.log('\n--- 4. um lançamento por id é o mesmo objeto, com as mesmas baixas ---');

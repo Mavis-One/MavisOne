@@ -20,7 +20,8 @@ const NFE_STATUS_META = {
 
 function nfeStatusBadge(status) {
   const meta = NFE_STATUS_META[status] || { label: status || '-', tone: 'muted' };
-  return `<span class="finance-badge finance-badge-${meta.tone}">${meta.label}</span>`;
+  // escapeHtml (fase EI): status fora do vocabulário entra cru no rótulo.
+  return `<span class="finance-badge finance-badge-${meta.tone}">${escapeHtml(meta.label)}</span>`;
 }
 
 function nfeFormatDocument(value) {
@@ -231,7 +232,15 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   // que tem. Por isso a queda para 'finance' e não um terceiro caso.
   const moduloAtual = () => (state.activeModule === 'fiscal' ? 'fiscal' : 'finance');
 
-  const filters = { search: '', status: '', dateFrom: '', dateTo: '', estabelecimentoId: '', modelo: '' };
+  // Os filtros ficam no state (fase EI), como a ordem e o tamanho da página já
+  // ficavam: eram locais e sumiam ao abrir outra tela e voltar. Só as chaves
+  // conhecidas e só texto, para um state velho não injetar parâmetro na busca.
+  const FILTROS_VAZIOS = { search: '', status: '', dateFrom: '', dateTo: '', estabelecimentoId: '', modelo: '', valorDe: '', valorAte: '' };
+  const filters = { ...FILTROS_VAZIOS };
+  const filtrosSalvos = state.nfeListaFiltros || {};
+  Object.keys(FILTROS_VAZIOS).forEach((chave) => {
+    if (typeof filtrosSalvos[chave] === 'string') filters[chave] = filtrosSalvos[chave];
+  });
   let page = 1;
   // Notas por página: de 30 a 250 (pedido do usuário, 11/10/2026). Guardado no
   // state para sobreviver a sair e voltar à tela; o servidor também limita.
@@ -283,10 +292,62 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     renderView(result);
   }
 
+  // Parcela cancelada não entra na conta (fase EI): depois de cancelar a nota,
+  // "1/3 parcelas pagas" dizia que faltavam duas que ninguém vai receber.
+  const PARCELA_CANCELADA = ['cancelado', 'cancelled', 'canceled'];
   function financialSummary(nfe) {
-    if (!nfe.financialEntries.length) return '-';
-    const paid = nfe.financialEntries.filter((e) => e.status === 'pago' || e.status === 'recebido').length;
-    return `${paid}/${nfe.financialEntries.length} parcela${nfe.financialEntries.length === 1 ? '' : 's'} paga${paid === 1 ? '' : 's'}`;
+    const todas = nfe.financialEntries || [];
+    if (!todas.length) return '-';
+    const vivas = todas.filter((e) => !PARCELA_CANCELADA.includes(String(e.status || '').toLowerCase()));
+    if (!vivas.length) return `<span class="muted">${todas.length} parcela${todas.length === 1 ? '' : 's'} cancelada${todas.length === 1 ? '' : 's'}</span>`;
+    const paid = vivas.filter((e) => e.status === 'pago' || e.status === 'recebido').length;
+    return `${paid}/${vivas.length} parcela${vivas.length === 1 ? '' : 's'} paga${paid === 1 ? '' : 's'}`;
+  }
+
+  // O botão Cancelar da linha e o do modal seguem a MESMA regra do painel de
+  // ações (fase EI). Olhavam só "autorizada e não importada": fora do prazo
+  // (24 h na NF-e, 30 min na NFC-e) o botão aparecia, a pessoa escrevia a
+  // justificativa inteira e só então levava a recusa do servidor. Devolve o
+  // motivo do bloqueio, ou '' quando pode cancelar. Nota manual continua
+  // liberada: a regra só olha prazo de nota que foi à SEFAZ.
+  function motivoParaNaoCancelar(nfe) {
+    const acoes = window.MavisNfeActions;
+    const acao = acoes && acoes.CATALOG.find((a) => a.id === 'cancelar');
+    if (!acao) return '';
+    const motivo = acoes.motivoBloqueio(acao, { ...actionsContext(), selecionadas: [nfe], nfe });
+    if (!motivo) return '';
+    // A NF-e (não a NFC-e) vencida ainda tem a saída do extemporâneo.
+    const extemporaneoPossivel = nfe.origem === 'fiscal' && nfe.status === 'autorizada' && Number(nfe.modelo) !== 65;
+    return extemporaneoPossivel
+      ? `${motivo} Para pedir, marque a nota e use "Cancelamento Extemporâneo de NF-e" no painel de ações.`
+      : motivo;
+  }
+
+  // A chave tem 44 dígitos e, com o nowrap da tabela, ocupava sozinha ~350 px
+  // e empurrava Lançamento e Ações para fora da tela (fase EI). Na linha vão os
+  // 8 últimos; a inteira fica na dica, no clique (copia) e no modal.
+  async function copiarChave(chave) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(chave);
+      } else {
+        // Fora de HTTPS o navegador não oferece a área de transferência
+        // moderna; o caminho antigo ainda funciona.
+        const campo = document.createElement('textarea');
+        campo.value = chave;
+        campo.setAttribute('readonly', '');
+        campo.style.position = 'fixed';
+        campo.style.opacity = '0';
+        document.body.appendChild(campo);
+        campo.select();
+        const copiou = document.execCommand('copy');
+        campo.remove();
+        if (!copiou) throw new Error('cópia recusada');
+      }
+      showToast('Chave de acesso copiada.', 'success');
+    } catch (error) {
+      showToast('Não foi possível copiar a chave. Abra a nota para ver a chave inteira.', 'error');
+    }
   }
 
   // Contexto entregue ao painel de ações: seleção atual + os callbacks que cada
@@ -517,9 +578,12 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     const ativa = campo === ordem.campo;
     const seta = ativa ? (ordem.direcao === 'asc' ? '▲' : '▼') : '';
     const proxima = ativa && ordem.direcao === 'asc' ? 'decrescente' : 'crescente';
+    // Dinheiro à direita (fase EI), o título junto da coluna: col-valor alinha
+    // o <th>, mas o botão de ordenar é flex e precisa do próprio ajuste.
+    const direita = campo === 'valor';
     return `
-      <th aria-sort="${ativa ? (ordem.direcao === 'asc' ? 'ascending' : 'descending') : 'none'}">
-        <button type="button" class="lista-ordenar ${ativa ? 'is-ativa' : ''}" data-ordenar="${campo}"
+      <th ${direita ? 'class="col-valor" ' : ''}aria-sort="${ativa ? (ordem.direcao === 'asc' ? 'ascending' : 'descending') : 'none'}">
+        <button type="button" class="lista-ordenar ${ativa ? 'is-ativa' : ''}" data-ordenar="${campo}"${direita ? ' style="justify-content: flex-end;"' : ''}
                 title="Ordenar por ${escapeHtml(COLUNAS_ORDENAVEIS[campo])} em ordem ${proxima}">
           <span>${escapeHtml(COLUNAS_ORDENAVEIS[campo])}</span>
           <span class="lista-ordenar-seta" aria-hidden="true">${seta}</span>
@@ -530,6 +594,15 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   function renderView(result) {
     limit = Number(result.limit) || limit;
     const totalPages = Math.max(1, Math.ceil(result.total / limit));
+    // Página além do fim (fase EI): cancelar a única nota da última página com
+    // Status = Autorizada deixava "Página 3 de 2" vazia e o Próxima desligado.
+    // O servidor não corrige a página pelo total; aqui volta para a última, uma
+    // recarga só (na volta, page <= totalPages).
+    if (page > totalPages && result.total > 0) {
+      page = totalPages;
+      load();
+      return;
+    }
     const empresas = (result.empresas || []).filter((e) => e.nome);
     notasDaPagina = result.nfes || [];
     // Descarta da seleção o que saiu da página atual (filtro/paginação mudou).
@@ -541,7 +614,8 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       <div class="cadastro-page-head">
         <div>
           <h3>NF-e Emitidas</h3>
-          <p class="muted">${result.total} nota${result.total === 1 ? '' : 's'} encontrada${result.total === 1 ? '' : 's'}</p>
+          <p class="muted">${result.total} nota${result.total === 1 ? '' : 's'} encontrada${result.total === 1 ? '' : 's'}${typeof result.valorAutorizado === 'number'
+            ? ` · Total autorizado: <strong title="Soma das NF-e autorizadas do filtro inteiro, não só desta página">${financeFormatBRL(result.valorAutorizado)}</strong>` : ''}</p>
         </div>
         <div class="cadastro-list-actions">
           <button type="button" id="nfeNewBtn">+ Nova NF-e</button>
@@ -551,7 +625,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       <form id="nfeFilterForm" class="nfe-filtros" style="margin-bottom: 12px;">
         <label class="cadastro-field nfe-filtro-busca">
           <span>Busca</span>
-          <input name="search" value="${escapeHtml(filters.search)}" placeholder="Número, cliente ou chave" />
+          <input name="search" value="${escapeHtml(filters.search)}" placeholder="Número, cliente, CPF/CNPJ ou chave" />
         </label>
         <label class="cadastro-field">
           <span>Status</span>
@@ -576,6 +650,14 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
           <span>Data final</span>
           <input type="date" name="dateTo" value="${escapeHtml(filters.dateTo)}" />
         </label>
+        <label class="cadastro-field">
+          <span>Valor de (R$)</span>
+          <input name="valorDe" type="number" step="0.01" min="0" value="${escapeHtml(filters.valorDe)}" placeholder="0,00" />
+        </label>
+        <label class="cadastro-field">
+          <span>Valor até (R$)</span>
+          <input name="valorAte" type="number" step="0.01" min="0" value="${escapeHtml(filters.valorAte)}" placeholder="0,00" />
+        </label>
         ${empresas.length > 1 ? `
         <label class="cadastro-field">
           <span>Empresa</span>
@@ -584,7 +666,10 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
             ${empresas.map((e) => `<option value="${escapeHtml(e.id)}" ${filters.estabelecimentoId === e.id ? 'selected' : ''}>${escapeHtml(e.nome)}</option>`).join('')}
           </select>
         </label>` : ''}
-        <div class="nfe-filtro-acao"><button type="submit" class="secondary">Filtrar</button></div>
+        <div class="nfe-filtro-acao" style="gap: 8px;">
+          <button type="submit" class="secondary">Filtrar</button>
+          <button type="button" class="secondary" id="nfeFilterClear">Limpar filtros</button>
+        </div>
       </form>
 
       <div id="nfeActionsPanel" class="nfe-actions-panel" hidden></div>
@@ -599,23 +684,32 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
               </tr>
             </thead>
             <tbody>
-              ${result.nfes.length ? result.nfes.map((nfe) => `
+              ${result.nfes.length ? result.nfes.map((nfe) => {
+                // Fase EI: Cliente e Empresa vão cortados com "…" e o nome
+                // inteiro na dica (com o nowrap da tabela, razão social longa
+                // empurrava Valor e Status para fora da tela), e o Cancelar
+                // segue a regra de prazo do painel (motivoParaNaoCancelar).
+                const bloqueioCancelar = nfe.status === 'autorizada' && nfe.origem !== 'importada' ? motivoParaNaoCancelar(nfe) : '';
+                return `
                 <tr class="cadastro-row-clickable finance-entry-row ${selecionadas.has(nfe.id) ? 'is-selected' : ''}" data-id="${escapeHtml(nfe.id)}">
                   <td class="nfe-check-col"><input type="checkbox" data-select="${escapeHtml(nfe.id)}" ${selecionadas.has(nfe.id) ? 'checked' : ''} /></td>
                   <td>${Number(nfe.modelo) === 65 ? 'NFC-e' : 'NF-e'}</td>
                   <td>${escapeHtml(nfe.number)}</td>
                   <td>${escapeHtml(nfe.series)}</td>
                   <td>${financeFormatDate(nfe.date)}</td>
-                  <td class="nfe-empresa">${escapeHtml(nfe.empresa || '-')}</td>
-                  <td>${escapeHtml(nfe.customer)}</td>
-                  <td>${nfeFormatDocument(nfe.clientDocument)}</td>
-                  <td>${financeFormatBRL(nfe.amount)}</td>
+                  <td class="nfe-empresa"><span class="texto-cortado is-curto" title="${escapeHtml(nfe.empresa || '')}">${escapeHtml(nfe.empresa || '-')}</span></td>
+                  <td><span class="texto-cortado is-medio" title="${escapeHtml(nfe.customer || '')}">${escapeHtml(nfe.customer || '-')}</span></td>
+                  <td>${escapeHtml(nfeFormatDocument(nfe.clientDocument))}</td>
+                  <td class="col-valor">${financeFormatBRL(nfe.amount)}</td>
                   <td>${nfeStatusBadge(nfe.status)}${nfe.origem === 'importada' ? ' <span class="finance-badge finance-badge-muted" title="Emitida no sistema anterior e importada como registro">importada</span>' : ''}</td>
-                  <td>${nfe.key ? escapeHtml(nfe.key) : '<span class="muted">-</span>'}</td>
+                  <td>${nfe.key
+                    ? `<button type="button" class="link-button" data-copiar-chave="${escapeHtml(nfe.key)}" title="${escapeHtml(nfe.key)} (clique para copiar)">…${escapeHtml(String(nfe.key).slice(-8))}</button>`
+                    : '<span class="muted">-</span>'}</td>
                   <td>${financialSummary(nfe)}</td>
-                  <td>${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="secondary" data-quick-cancel="${nfe.id}">Cancelar</button>` : ''}</td>
+                  <td>${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="secondary" data-quick-cancel="${escapeHtml(nfe.id)}"${bloqueioCancelar ? ` disabled title="${escapeHtml(bloqueioCancelar)}"` : ''}>Cancelar</button>` : ''}</td>
                 </tr>
-              `).join('') : `<tr><td colspan="13" class="muted">Nenhuma NF-e encontrada.</td></tr>`}
+              `;
+              }).join('') : `<tr><td colspan="13" class="muted">Nenhuma NF-e encontrada.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -628,6 +722,12 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
               ${POR_PAGINA.map((n) => `<option value="${n}" ${n === limit ? 'selected' : ''}>${n}</option>`).join('')}
             </select>
           </label>
+          ${totalPages > 1 ? `
+            <form id="nfeIrParaPagina" class="muted" style="display:flex;align-items:center;gap:6px;margin-left:12px;">
+              Ir para
+              <input type="number" min="1" max="${totalPages}" value="${page}" style="width:70px;" aria-label="Ir para a página" />
+              <button type="submit" class="secondary">Ir</button>
+            </form>` : ''}
         </div>
       </div>
     `;
@@ -646,8 +746,38 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       filters.dateTo = formData.get('dateTo') || '';
       filters.estabelecimentoId = formData.get('estabelecimentoId') || '';
       filters.modelo = formData.get('modelo') || '';
+      filters.valorDe = formData.get('valorDe') || '';
+      filters.valorAte = formData.get('valorAte') || '';
+      state.nfeListaFiltros = { ...filters };
       page = 1;
       load();
+    });
+
+    document.getElementById('nfeFilterClear')?.addEventListener('click', () => {
+      Object.assign(filters, FILTROS_VAZIOS);
+      state.nfeListaFiltros = { ...filters };
+      page = 1;
+      load();
+    });
+
+    // Mesmo padrão de Vendas: número fora da faixa avisa em vez de buscar.
+    document.getElementById('nfeIrParaPagina')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const alvo = Number(event.target.querySelector('input').value);
+      if (!Number.isFinite(alvo) || alvo < 1 || alvo > totalPages) {
+        showToast(`Informe uma página entre 1 e ${totalPages}.`, 'warning');
+        return;
+      }
+      page = Math.floor(alvo);
+      load();
+    });
+
+    content.querySelectorAll('[data-copiar-chave]').forEach((btn) => {
+      btn.addEventListener('click', (event) => {
+        // Copiar não abre a nota: a linha inteira é clicável.
+        event.stopPropagation();
+        copiarChave(btn.dataset.copiarChave);
+      });
     });
 
     content.querySelectorAll('[data-ordenar]').forEach((btn) => {
@@ -820,6 +950,14 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   // do payload enviado à SEFAZ.
   function fiscalParaModal(fiscal, daLista) {
     const payload = (fiscal && fiscal.payloadEnviado) || {};
+    // A condição de pagamento da NF-e avulsa (fase EI): o modal dizia sempre
+    // "À vista", e a nota em 3x tinha 3 parcelas no Financeiro. Com duplicatas
+    // editadas, são elas que viram parcelas. Sem condição (nota de pedido, ou
+    // operação que não gera financeiro) não há o que afirmar: a de pedido
+    // segue a condição do pedido, a outra fica "-".
+    const condicao = (fiscal && fiscal.condicaoPagamento) || null;
+    const parcelado = Boolean(condicao && condicao.tipo === 'parcelado');
+    const duplicatas = condicao && Array.isArray(condicao.duplicatas) ? condicao.duplicatas.length : 0;
     return {
       ...daLista,
       ...(fiscal || {}),
@@ -840,10 +978,12 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       clientState: payload.uf_destinatario || '',
       clientStateRegistration: payload.inscricao_estadual_destinatario || '',
       taxNotes: payload.informacoes_adicionais_contribuinte || '',
-      paymentType: 'avista',
-      installmentsCount: 1,
-      installmentIntervalDays: 30,
-      financialEntries: [],
+      paymentType: parcelado ? 'parcelado' : 'avista',
+      installmentsCount: parcelado ? (duplicatas || Number(condicao.parcelas) || 1) : 1,
+      installmentIntervalDays: Number(condicao && condicao.intervaloDias) || 30,
+      paymentLabel: condicao ? '' : (daLista.orderId ? 'Conforme o pedido' : '-'),
+      // As parcelas vêm da lista, que já as anexa às notas fiscais da página.
+      financialEntries: daLista.financialEntries || [],
       items: (payload.items || []).map((item) => ({
         code: item.codigo_produto || '',
         description: item.descricao || '',
@@ -856,6 +996,13 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
 
   function renderNfeModal(nfe) {
     closeNfeModal();
+    // Mesma regra do botão da linha (fase EI); fora do prazo o motivo aparece
+    // também por extenso, porque a dica de botão desligado passa despercebida.
+    // A nota manual vem da rota sem `origem`: a da lista completa o que falta.
+    const naLista = notasDaPagina.find((n) => n.id === nfe.id);
+    const bloqueioCancelar = nfe.status === 'autorizada' && nfe.origem !== 'importada'
+      ? motivoParaNaoCancelar({ ...(naLista || {}), ...nfe })
+      : '';
     const overlay = document.createElement('div');
     overlay.id = 'nfeModal';
     overlay.className = 'modal-overlay';
@@ -873,13 +1020,13 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
 
         <div class="finance-modal-info-grid">
           <div><span class="muted">Data de emissão</span><strong>${financeFormatDate(nfe.date)}</strong></div>
-          <div><span class="muted">CPF/CNPJ</span><strong>${nfeFormatDocument(nfe.clientDocument)}</strong></div>
+          <div><span class="muted">CPF/CNPJ</span><strong>${escapeHtml(nfeFormatDocument(nfe.clientDocument))}</strong></div>
           <div><span class="muted">Endereço</span><strong>${escapeHtml(nfe.clientAddress || '-')}</strong></div>
           <div><span class="muted">Cidade/UF</span><strong>${escapeHtml(nfe.clientCity || '-')} ${nfe.clientState ? '/ ' + escapeHtml(nfe.clientState) : ''}</strong></div>
           <div><span class="muted">Inscrição estadual</span><strong>${escapeHtml(nfe.clientStateRegistration || '-')}</strong></div>
           <div><span class="muted">Chave de acesso</span><strong>${escapeHtml(nfe.key || '-')}</strong></div>
           <div><span class="muted">Valor total</span><strong>${financeFormatBRL(nfe.amount)}</strong></div>
-          <div><span class="muted">Forma de pagamento</span><strong>${nfe.paymentType === 'parcelado' ? `Parcelado (${nfe.installmentsCount}x)` : 'À vista'}</strong></div>
+          <div><span class="muted">Forma de pagamento</span><strong>${escapeHtml(nfe.paymentLabel || (nfe.paymentType === 'parcelado' ? `Parcelado (${nfe.installmentsCount}x)` : 'À vista'))}</strong></div>
         </div>
 
         <h4>Itens</h4>
@@ -897,7 +1044,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
         ${nfe.financialEntries.length ? `
           <div class="finance-due-list">
             ${nfe.financialEntries.map((entry) => `
-              <div class="finance-due-item finance-clickable-row" data-view-entry="${entry.id}">
+              <div class="finance-due-item finance-clickable-row" data-view-entry="${escapeHtml(entry.id)}">
                 <div>
                   <strong>${escapeHtml(entry.description)}</strong>
                   <div class="muted">Vencimento: ${financeFormatDate(entry.dueDate)}</div>
@@ -908,9 +1055,10 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
           </div>
         ` : '<p class="muted">Nenhum lançamento vinculado.</p>'}
 
+        ${bloqueioCancelar ? `<p class="muted">${escapeHtml(bloqueioCancelar)}</p>` : ''}
         <div class="finance-modal-actions">
           <button type="button" class="secondary" id="nfeModalPrint">Imprimir</button>
-          ${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="btn-danger" id="nfeModalCancel">Cancelar NF-e</button>` : ''}
+          ${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="btn-danger" id="nfeModalCancel"${bloqueioCancelar ? ` disabled title="${escapeHtml(bloqueioCancelar)}"` : ''}>Cancelar NF-e</button>` : ''}
         </div>
       </div>
     `;

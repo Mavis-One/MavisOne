@@ -67,7 +67,8 @@ const tela = ler('public/modules/finance/subs/nfe_emitidas.js');
 check('as opções de página são 30 a 250', /const POR_PAGINA = \[30, 50, 100, 150, 200, 250\];/.test(tela));
 check('cabeçalhos ordenáveis (número, data, empresa, cliente, valor, status)',
   ['numero', 'data', 'empresa', 'cliente', 'valor', 'status'].every((c) => tela.includes(`cabecalhoOrdenavel('${c}')`)));
-check('coluna Empresa nas linhas', /<td class="nfe-empresa">\$\{escapeHtml\(nfe\.empresa \|\| '-'\)\}<\/td>/.test(tela));
+// Fase EI: o nome vai cortado com "…" e inteiro na dica (texto-cortado).
+check('coluna Empresa nas linhas', /<td class="nfe-empresa"><span class="texto-cortado is-curto" title="\$\{escapeHtml\(nfe\.empresa \|\| ''\)\}">\$\{escapeHtml\(nfe\.empresa \|\| '-'\)\}<\/span><\/td>/.test(tela));
 check('a ordem e o tamanho de página vão na consulta', /sort: ordem\.campo, dir: ordem\.direcao/.test(tela));
 check('o colspan da linha vazia acompanha as 13 colunas', /colspan="13"/.test(tela));
 check('coluna e filtro de modelo (NF-e / NFC-e)',

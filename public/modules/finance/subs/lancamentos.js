@@ -7,27 +7,175 @@ const FINANCE_ENTRY_TYPE_OPTIONS = [
   { value: 'transferencia', label: 'Transferência' }
 ];
 
-const FINANCE_ENTRY_STATUS_OPTIONS = [
-  { value: 'pendente', label: 'Pendente' },
+// A SITUAÇÃO DA BUSCA AVANÇADA (fase EI): as de sempre, uma a uma, e as
+// junções que as abas usam — o servidor aceita várias separadas por vírgula.
+// Ver MavisListaDeLancamentos.ABAS.
+const FINANCE_SITUACAO_OPCOES = [
+  { value: '', label: 'Todas' },
+  { value: 'pendente,vencido,parcial', label: 'Em aberto (a vencer, vencido ou parcial)' },
+  { value: 'pendente', label: 'A vencer' },
+  { value: 'vencido,parcial-vencido', label: 'Vencido (inclui parcial vencido)' },
+  { value: 'parcial', label: 'Parcial' },
+  { value: 'pago,recebido', label: 'Pago ou recebido' },
   { value: 'pago', label: 'Pago' },
   { value: 'recebido', label: 'Recebido' },
-  { value: 'vencido', label: 'Vencido' },
-  { value: 'parcial', label: 'Parcial' },
   { value: 'cancelado', label: 'Cancelado' }
 ];
 
+// O ATALHO DE VENCIMENTO da barra de busca. Vai para o estado pelo NOME, e
+// vira datas só na hora de perguntar ao servidor — "Vence hoje" deixado aberto
+// de um dia para o outro mostra o dia de quem olha, como os períodos de Vendas.
+const FINANCE_VENCIMENTOS = [
+  { chave: '', rotulo: 'Qualquer data' },
+  { chave: 'hoje', rotulo: 'Vence hoje' },
+  { chave: 'amanha', rotulo: 'Vence amanhã' },
+  { chave: '7dias', rotulo: 'Próximos 7 dias' },
+  { chave: '30dias', rotulo: 'Próximos 30 dias' },
+  { chave: 'mes', rotulo: 'Este mês' },
+  { chave: 'proximomes', rotulo: 'Próximo mês' },
+  { chave: 'mespassado', rotulo: 'Mês passado' },
+  { chave: 'personalizado', rotulo: 'Personalizado…' }
+];
+
+const FINANCE_POR_PAGINA = [15, 30, 50, 100];
+
+// Quantos caracteres da descrição a coluna mostra (pedido de 13/10/2026). O
+// texto inteiro fica no `title` da célula e no modal do lançamento.
+const FINANCE_DESCRICAO_LIMITE = 60;
+
+// A data de hoje no fuso de quem olha. toISOString() é UTC: no Brasil, depois
+// das 21h, já devolve o dia seguinte — e a baixa nasceria com a data de amanhã.
+function financeHojeLocal(deslocamentoEmDias = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + deslocamentoEmDias);
+  return financeDataIso(d);
+}
+
+function financeDataIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function financePeriodoDeVencimento(chave) {
+  const hoje = new Date();
+  const mes = (deslocamento) => ({
+    dueFrom: financeDataIso(new Date(hoje.getFullYear(), hoje.getMonth() + deslocamento, 1)),
+    // Dia 0 do mês seguinte = último dia deste: o Date resolve fevereiro sozinho.
+    dueTo: financeDataIso(new Date(hoje.getFullYear(), hoje.getMonth() + deslocamento + 1, 0))
+  });
+  if (chave === 'hoje') return { dueFrom: financeHojeLocal(), dueTo: financeHojeLocal() };
+  if (chave === 'amanha') return { dueFrom: financeHojeLocal(1), dueTo: financeHojeLocal(1) };
+  // "Próximos 7 dias" conta hoje: hoje + 6.
+  if (chave === '7dias') return { dueFrom: financeHojeLocal(), dueTo: financeHojeLocal(6) };
+  if (chave === '30dias') return { dueFrom: financeHojeLocal(), dueTo: financeHojeLocal(29) };
+  if (chave === 'mes') return mes(0);
+  if (chave === 'proximomes') return mes(1);
+  if (chave === 'mespassado') return mes(-1);
+  return null;
+}
+
+// O que ainda falta pagar ou receber. O servidor manda pronto (`emAberto`, a
+// regra da rota de baixa: juros, multa e desconto entram); "previsto menos
+// realizado" fica só para resposta antiga sem o campo, e erra no cartão
+// baixado pelo líquido — a taxa apareceria "em aberto" num título pago.
+function financeEmAberto(entry) {
+  if (entry.emAberto != null) return Number(entry.emAberto) || 0;
+  if (entry.status === 'cancelado' || entry.status === 'pago' || entry.status === 'recebido') return 0;
+  return Math.max(0, Number(entry.amountPrevisto || 0) - Number(entry.amountRealizado || 0));
+}
+
+// O CATÁLOGO DE COLUNAS (fase EI), no padrão de SALES_COLUNAS: a tabela, o
+// seletor de colunas e a preferência salva leem esta lista. `ordem` é a chave
+// que o servidor ordena (MavisListaDeLancamentos.ORDENAVEIS); coluna sem ela
+// não ganha cabeçalho clicável. `f` traz os formatadores que dependem do ctx.
+const FINANCE_LISTA_COLUNAS = [
+  { chave: 'codigo', rotulo: 'Código', ordem: 'codigo', fixa: true, valor: (e, f) => f.esc(e.codigo || '-') },
+  { chave: 'date', rotulo: 'Data', ordem: 'date', valor: (e) => financeFormatDate(e.date) },
+  { chave: 'dueDate', rotulo: 'Vencimento', ordem: 'dueDate', valor: (e) => financeFormatDate(e.dueDate) },
+  {
+    chave: 'description',
+    rotulo: 'Descrição',
+    ordem: 'description',
+    // O RESUMO, E NÃO SÓ O CORTE: 98% das descrições começam com a mesma frase
+    // do Viper, e cortar sem resumir deixaria todas as linhas iguais. Ver
+    // `resumir` em shared/descricao_lancamento.js.
+    valor: (e, f) => {
+      const inteira = String(e.description || '').trim();
+      if (!inteira) return '-';
+      const D = window.MavisDescricaoLancamento;
+      const curta = D && D.resumir ? D.cortar(D.resumir(inteira), FINANCE_DESCRICAO_LIMITE) : inteira;
+      return `<span class="texto-cortado" title="${f.esc(inteira)}">${f.esc(curta)}</span>`;
+    }
+  },
+  { chave: 'type', rotulo: 'Tipo', ordem: 'type', valor: (e, f) => FINANCE_TYPE_LABEL[e.type] || f.esc(e.type || '-') },
+  { chave: 'category', rotulo: 'Categoria', ordem: 'category', valor: (e, f) => f.cortado(e.categoryName, 'is-curto') },
+  { chave: 'clienteFornecedor', rotulo: 'Cliente/Fornecedor', ordem: 'clienteFornecedor', valor: (e, f) => f.cortado(e.clienteFornecedor, 'is-medio') },
+  { chave: 'amountPrevisto', rotulo: 'Valor previsto', ordem: 'amount', dinheiro: true, valor: (e) => financeFormatBRL(e.amountPrevisto) },
+  { chave: 'amountRealizado', rotulo: 'Valor realizado', dinheiro: true, valor: (e) => financeFormatBRL(e.amountRealizado) },
+  { chave: 'emAberto', rotulo: 'Em aberto', dinheiro: true, valor: (e) => financeFormatBRL(financeEmAberto(e)) },
+  {
+    chave: 'status',
+    rotulo: 'Situação',
+    ordem: 'status',
+    // O parcial cujo vencimento passou aparece na aba Vencidos: o selo diz
+    // por quê, em vez de um "Parcial" amarelo no meio dos vermelhos.
+    valor: (e) => (e.status === 'parcial' && e.dueDate && e.dueDate < financeHojeLocal()
+      ? '<span class="finance-badge finance-badge-danger">Parcial vencido</span>'
+      : financeStatusBadge(e.status))
+  },
+  {
+    chave: 'document',
+    rotulo: 'Documento',
+    ordem: 'document',
+    // O Documento nasce com o código na frente ("LF0042 · 000123", fase AY), e
+    // a linha já mostra o código duas colunas antes: aqui fica só a referência
+    // externa, que é o que distingue uma linha da outra. O inteiro vai no title.
+    valor: (e, f) => {
+      const C = window.MavisLancamentoCodigo;
+      return f.cortado(C ? C.referencia(e.code, e.document) : e.document, 'is-curto', e.document);
+    }
+  },
+  { chave: 'costCenter', rotulo: 'Centro de custo', ordem: 'costCenter', valor: (e, f) => f.cortado(e.costCenterName, 'is-curto') },
+  { chave: 'bankAccount', rotulo: 'Conta bancária', ordem: 'bankAccount', valor: (e, f) => f.cortado(e.bankAccountName, 'is-curto') },
+  { chave: 'createdByName', rotulo: 'Lançado por', valor: (e, f) => f.cortado(e.createdByName, 'is-curto') }
+];
+
+// Para quem nunca escolheu: as colunas que a tela tinha antes do seletor.
+const FINANCE_COLUNAS_PADRAO = ['codigo', 'date', 'dueDate', 'description', 'type', 'category', 'clienteFornecedor', 'amountPrevisto', 'amountRealizado', 'status', 'document'];
+
+const financeFiltrosVazios = () => ({
+  search: '', type: '', status: '', periodo: '', clientSupplierId: '', category: '', costCenter: '', bankAccountId: '',
+  dateFrom: '', dateTo: '', dueFrom: '', dueTo: '', amountMin: '', amountMax: ''
+});
+
 window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinanceLancamentos(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml, confirmModal } = ctx;
+  const Lista = window.MavisListaDeLancamentos;
 
   let meta = { categories: [], costCenters: [], bankAccounts: [], directory: [] };
-  const filters = { search: '', type: '', status: '', clientSupplierId: '', category: '', costCenter: '', bankAccountId: '', dateFrom: '', dateTo: '', dueFrom: '', dueTo: '', amountMin: '', amountMax: '' };
-  let showAdvanced = false;
-  let page = 1;
-  const limit = 15;
-  // A última resposta da lista e a consulta que a produziu: abrir e fechar a
-  // busca avançada redesenha com ela, sem ir ao servidor (ver o botão).
-  let ultimoResultado = null;
-  let ultimaConsulta = '';
+
+  // O ESTADO DA LISTA MORA NO `state` (fase EI). Era local a esta função, e
+  // toda volta à tela — abrir um lançamento para editar e voltar, ir ao pedido
+  // e voltar — recomeçava na página 1, sem filtro, sem a ordem escolhida.
+  // Seleção, filtros, página e ordem agora sobrevivem à navegação da sessão.
+  const preferencia = (state.preferences && state.preferences.finance_lancamentos) || {};
+  const lista = state.financeLista || (state.financeLista = {
+    filtros: financeFiltrosVazios(),
+    page: 1,
+    limit: FINANCE_POR_PAGINA.includes(preferencia.limit) ? preferencia.limit : 15,
+    sort: '',
+    dir: 'desc',
+    selecao: {},
+    showAdvanced: false,
+    showColunas: false
+  });
+  // QUEM CHEGA COM UM FILTRO PRONTO, uma vez: o pedido faturado em várias
+  // parcelas manda para cá procurando pelo código dele (app.js). Esse filtro
+  // era montado e ignorado — a tela abria a lista inteira.
+  if (state.financeFilters) {
+    lista.filtros = Object.assign(financeFiltrosVazios(), state.financeFilters);
+    lista.page = 1;
+    state.financeFilters = null;
+  }
 
   // A LISTA NÃO ESPERA O META (fase DS).
   //
@@ -70,95 +218,775 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
     return diretorioPronto;
   }
 
-  function optionList(list) {
-    return (list || []).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}${item.code ? ` (${escapeHtml(item.code)})` : ''}</option>`).join('');
+  function optionList(list, selecionado) {
+    return (list || []).map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === selecionado ? 'selected' : ''}>${escapeHtml(item.name)}${item.code ? ` (${escapeHtml(item.code)})` : ''}</option>`).join('');
   }
 
-  function buildQuery(extra) {
-    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-    Object.entries(filters).forEach(([key, value]) => {
-      if (value) params.set(key, value);
-    });
-    if (extra) Object.entries(extra).forEach(([key, value]) => params.set(key, value));
-    return params.toString();
+  const brl = (v) => financeFormatBRL(v);
+  const numero = (v) => Number(v || 0).toLocaleString('pt-BR');
+  const formatadores = {
+    esc: escapeHtml,
+    // Texto de cadastro (categoria, cliente, documento) cortado na largura da
+    // coluna, com o texto inteiro no title. Ver .texto-cortado no app.css.
+    cortado: (texto, tamanho, titulo) => {
+      const t = String(texto || '').trim();
+      if (!t) return '-';
+      return `<span class="texto-cortado ${tamanho || ''}" title="${escapeHtml(String(titulo || t))}">${escapeHtml(t)}</span>`;
+    }
+  };
+
+  function porPagina() {
+    return FINANCE_POR_PAGINA.includes(lista.limit) ? lista.limit : 15;
   }
+
+  function colunasVisiveis() {
+    const salvas = state.preferences && state.preferences.finance_lancamentos
+      ? state.preferences.finance_lancamentos.colunas
+      : null;
+    const validas = Array.isArray(salvas) ? salvas.filter((c) => FINANCE_LISTA_COLUNAS.some((col) => col.chave === c)) : [];
+    const escolhidas = validas.length ? validas : FINANCE_COLUNAS_PADRAO;
+    return FINANCE_LISTA_COLUNAS.filter((col) => col.fixa || escolhidas.includes(col.chave));
+  }
+
+  function salvarPreferenciaDaLista(mudanca) {
+    const atual = (state.preferences && state.preferences.finance_lancamentos) || {};
+    const valor = Object.assign({}, atual, mudanca);
+    if (typeof salvarPreferencia === 'function') salvarPreferencia('finance_lancamentos', valor);
+    else state.preferences = Object.assign({}, state.preferences || {}, { finance_lancamentos: valor });
+  }
+
+  // A PERGUNTA AO SERVIDOR. `paginado: false` é a exportação: mesmos filtros
+  // e mesma ordem, sem página.
+  function consulta({ paginado = true } = {}) {
+    const f = lista.filtros;
+    const params = new URLSearchParams();
+    if (paginado) {
+      params.set('page', String(lista.page));
+      params.set('limit', String(porPagina()));
+    }
+    ['search', 'type', 'status', 'clientSupplierId', 'category', 'costCenter', 'bankAccountId', 'dateFrom', 'dateTo', 'amountMin', 'amountMax']
+      .forEach((chave) => { if (f[chave]) params.set(chave, f[chave]); });
+    // Atalho de vencimento vira datas agora; "Personalizado" usa as digitadas.
+    const atalho = financePeriodoDeVencimento(f.periodo);
+    const dueFrom = atalho ? atalho.dueFrom : f.dueFrom;
+    const dueTo = atalho ? atalho.dueTo : f.dueTo;
+    if (dueFrom) params.set('dueFrom', dueFrom);
+    if (dueTo) params.set('dueTo', dueTo);
+    if (lista.sort) {
+      params.set('sort', lista.sort);
+      params.set('dir', lista.dir === 'asc' ? 'asc' : 'desc');
+    }
+    return params;
+  }
+
+  // A última resposta da lista e a consulta que a produziu: abrir e fechar a
+  // busca avançada, marcar uma linha, escolher colunas — tudo isso redesenha
+  // com ela, sem ir ao servidor.
+  let ultimoResultado = null;
+  let ultimaConsulta = '';
+  // RESPOSTA VELHA NÃO PINTA POR CIMA DA NOVA. Com a busca enquanto se digita,
+  // dois pedidos podem estar no ar ao mesmo tempo, e o primeiro a sair pode
+  // chegar por último — a tabela mostraria o resultado de "25" com "2500" na
+  // caixa. Cada pedido leva um número; só o mais recente desenha.
+  let pedidoAtual = 0;
+
+  // ESTA TELA AINDA É A DA VEZ? A busca espera 450 ms antes de ir ao servidor,
+  // e a resposta pode chegar depois de a pessoa ter ido para outra tela — ou
+  // saído e voltado, o que cria outra instância desta função. Sem esta
+  // conferência, a lista seria desenhada por cima da tela que está aberta.
+  const instancia = {};
+  state.financeListaInstancia = instancia;
+  // Lido e apagado JÁ: se a pessoa sair antes da lista chegar, o id não fica
+  // para trás abrindo o modal numa visita futura — nem sobre outra tela.
+  const idParaAbrir = state.financeOpenEntryId;
+  state.financeOpenEntryId = null;
+  const telaAtiva = () => state.financeListaInstancia === instancia
+    && state.activeModule === 'finance' && state.activeSub === 'lancamentos';
 
   async function load() {
+    if (!telaAtiva()) return;
+    const params = consulta();
+    const chave = params.toString();
+    const meu = ++pedidoAtual;
+    document.getElementById('financeListaPainel')?.classList.add('finance-lista-carregando');
     let result;
-    const consulta = buildQuery();
     try {
-      result = await api(`/api/finance/entries?${consulta}`);
+      result = await api(`/api/finance/entries?${chave}`);
     } catch (error) {
+      if (meu !== pedidoAtual || !telaAtiva()) return;
+      if (ultimoResultado) {
+        // Já há uma lista na tela: ela fica, e o erro vai num aviso — trocar a
+        // tela inteira por uma mensagem faria perder filtros e seleção de vista.
+        document.getElementById('financeListaPainel')?.classList.remove('finance-lista-carregando');
+        showToast(`Erro ao carregar lançamentos: ${error.message || 'erro desconhecido'}`, 'error');
+        return;
+      }
       content.innerHTML = `<div class="panel"><p class="muted">Erro ao carregar lançamentos: ${escapeHtml(error.message || 'erro desconhecido')}</p></div>`;
       return;
     }
+    if (meu !== pedidoAtual || !telaAtiva()) return;
+    // PÁGINA ALÉM DO FIM: baixou ou cancelou o último da última página, ou
+    // filtrou estando na página 9. Volta para a última que existe, em vez de
+    // mostrar "Página 9 de 2" vazia.
+    const ultimaPagina = Math.max(1, Math.ceil((result.total || 0) / porPagina()));
+    if (lista.page > ultimaPagina) {
+      lista.page = ultimaPagina;
+      return load();
+    }
     ultimoResultado = result;
-    ultimaConsulta = consulta;
+    ultimaConsulta = chave;
+    // O RETRATO DOS SELECIONADOS QUE VIERAM NESTA RESPOSTA é renovado: baixou
+    // um deles pelo modal, e a barra continuaria somando o saldo de antes e
+    // oferecendo "Baixar" para um título já pago.
+    (result.entries || []).forEach((entry) => { if (estaSelecionado(entry.id)) marcar(entry, true); });
     // O painel aberto precisa das listas dos selects antes de desenhar.
-    if (showAdvanced) await Promise.all([metaPronto, carregarDiretorio()]);
+    if (lista.showAdvanced) await Promise.all([metaPronto, carregarDiretorio()]);
+    if (meu !== pedidoAtual || !telaAtiva()) return;
     renderView(result);
   }
 
-  function attachFilterHandlers() {
-    // ABRIR E FECHAR A BUSCA AVANÇADA NÃO VAI AO SERVIDOR (fase DS). Era um
-    // load(): a lista inteira de novo (733 ms medidos) só para mostrar ou
-    // esconder o formulário. Agora redesenha com a última resposta — a menos
-    // que a busca rápida tenha sido digitada e não enviada: a consulta mudou,
-    // e o load() de antes a aplicava. Nesse caso continua indo ao servidor.
-    document.getElementById('financeFilterToggleBtn')?.addEventListener('click', async () => {
-      showAdvanced = !showAdvanced;
-      if (!ultimoResultado || buildQuery() !== ultimaConsulta) {
-        load();
-        return;
-      }
-      if (showAdvanced) await Promise.all([metaPronto, carregarDiretorio()]);
-      renderView(ultimoResultado);
+  // Redesenha com a última resposta — ou vai ao servidor, se a consulta mudou
+  // desde ela (a busca digitada e ainda não enviada, por exemplo).
+  async function redesenhar() {
+    if (!ultimoResultado || consulta().toString() !== ultimaConsulta) return load();
+    if (lista.showAdvanced) await Promise.all([metaPronto, carregarDiretorio()]);
+    if (!telaAtiva()) return undefined;
+    renderView(ultimoResultado);
+    return undefined;
+  }
+
+  function irParaPagina(n) {
+    lista.page = n;
+    load();
+  }
+
+  function mudarFiltro(mudanca) {
+    Object.assign(lista.filtros, mudanca);
+    lista.page = 1;
+    descartarRascunho = true;
+    load();
+  }
+
+  // --- Seleção ---------------------------------------------------------------
+  //
+  // A seleção guarda um RETRATO de cada linha marcada (código, situação,
+  // valores), e não só o id: assim ela atravessa páginas — marcar na 1, ir à 2,
+  // marcar mais — e a barra continua sabendo somar e dizer quem pode ser
+  // baixado. O retrato é renovado a cada resposta que traz a linha (load), e
+  // os valores do modal do lote vêm de uma prévia do servidor — o retrato de
+  // uma linha de outra página pode estar velho.
+  const retrato = (e) => ({
+    id: e.id, codigo: e.codigo, rawStatus: e.rawStatus, status: e.status, type: e.type,
+    description: e.description, amountPrevisto: e.amountPrevisto, amountRealizado: e.amountRealizado,
+    emAberto: e.emAberto
+  });
+  // UM LOTE POR VEZ. Fechar o modal no meio do envio deixava a barra com
+  // "Baixar" ativo e a mesma seleção — e um segundo envio baixava tudo de
+  // novo. Enquanto um lote está no ar, a barra trava e o modal não fecha. (O
+  // servidor também trava por lançamento: é a garantia de verdade.)
+  let loteEmAndamento = false;
+  const selecionados = () => Object.values(lista.selecao);
+  const estaSelecionado = (id) => Object.prototype.hasOwnProperty.call(lista.selecao, id);
+  function marcar(entry, sim) {
+    if (sim) lista.selecao[entry.id] = retrato(entry);
+    else delete lista.selecao[entry.id];
+  }
+
+  function barraDeLote() {
+    const itens = selecionados();
+    if (!itens.length) return '';
+    const somaPor = (tipo) => itens.filter((l) => l.type === tipo && l.status !== 'cancelado')
+      .reduce((s, l) => s + Number(l.amountPrevisto || 0), 0);
+    const receitas = somaPor('receita');
+    const despesas = somaPor('despesa');
+    const emAberto = itens.reduce((s, l) => s + financeEmAberto(l), 0);
+    const idsDaPagina = new Set(((ultimoResultado && ultimoResultado.entries) || []).map((e) => e.id));
+    const foraDaPagina = itens.filter((l) => !idsDaPagina.has(l.id)).length;
+    const baixa = Lista.avaliar('baixar', itens);
+    const cancela = Lista.avaliar('cancelar', itens);
+    // O botão diz para QUANTOS vale. Zero elegíveis = desabilitado com o
+    // primeiro motivo, que é o que a pessoa precisa saber.
+    const botao = (acao, avaliacao, classe) => {
+      const motivo = loteEmAndamento
+        ? 'Aguarde: uma ação em lote está sendo gravada.'
+        : (avaliacao.elegiveis.length ? '' : ((avaliacao.ignorados[0] && avaliacao.ignorados[0].motivo) || 'Nenhum selecionado pode.'));
+      const parcial = avaliacao.elegiveis.length && avaliacao.elegiveis.length < itens.length;
+      return `<button type="button" class="${classe}" data-lote="${acao}" ${motivo ? 'disabled' : ''}
+        title="${escapeHtml(motivo || `${avaliacao.elegiveis.length} de ${itens.length} selecionado(s)`)}">${Lista.ACOES[acao].rotulo}${parcial ? ` (${avaliacao.elegiveis.length})` : ''}</button>`;
+    };
+    return `
+      <div class="sales-lote-barra">
+        <strong>${numero(itens.length)} selecionado${itens.length === 1 ? '' : 's'}</strong>
+        <span class="finance-lote-soma">
+          ${receitas ? `Receitas ${brl(receitas)} · ` : ''}${despesas ? `Despesas ${brl(despesas)} · ` : ''}Em aberto ${brl(emAberto)}${foraDaPagina ? ` · ${numero(foraDaPagina)} em outras páginas` : ''}
+        </span>
+        ${botao('baixar', baixa, 'secondary')}
+        ${botao('cancelar', cancela, 'btn-danger')}
+        <button type="button" class="secondary" data-lote="exportar">Exportar selecionados</button>
+        <button type="button" class="secondary" data-lote="limpar">Limpar seleção</button>
+      </div>`;
+  }
+
+  // Marcar uma linha NÃO redesenha a tabela: só a barra, a cor da linha e a
+  // caixa do cabeçalho. Redesenhar tudo jogaria a rolagem para o topo a cada
+  // clique numa lista de 100.
+  function atualizarSelecao() {
+    const barra = document.getElementById('financeLoteBarra');
+    if (barra) {
+      barra.innerHTML = barraDeLote();
+      ligarBarraDeLote();
+    }
+    const entries = (ultimoResultado && ultimoResultado.entries) || [];
+    content.querySelectorAll('.finance-entry-row').forEach((linha) => {
+      const sim = estaSelecionado(linha.dataset.id);
+      linha.classList.toggle('is-selecionada', sim);
+      const caixa = linha.querySelector('.finance-selecionar');
+      if (caixa) caixa.checked = sim;
+    });
+    const todas = document.getElementById('financeSelecionarPagina');
+    if (todas) {
+      const marcadas = entries.filter((e) => estaSelecionado(e.id)).length;
+      todas.checked = entries.length > 0 && marcadas === entries.length;
+      todas.indeterminate = marcadas > 0 && marcadas < entries.length;
+    }
+  }
+
+  // --- Desenho ---------------------------------------------------------------
+
+  // A TELA É REDESENHADA A CADA RESPOSTA, e a busca anda enquanto se digita.
+  // Sem guardar e devolver, cada resposta tiraria a pessoa do campo no meio da
+  // palavra — ou apagaria o "Valor mínimo" que ela digitava no painel avançado
+  // enquanto a busca de cima ainda respondia. Guarda-se o campo com foco (e o
+  // cursor) e o RASCUNHO do painel: o que está escrito e ainda não foi aplicado.
+  //
+  // O rascunho só NÃO volta quando quem pediu o desenho mudou os filtros de
+  // propósito (Aplicar, Limpar, uma aba, uma etiqueta): aí o painel tem de
+  // mostrar o que passou a valer.
+  let descartarRascunho = false;
+  function lembrarFoco() {
+    const memoria = { foco: null, rascunho: null, textoDaPessoa: null };
+    const ativo = document.activeElement;
+    if (ativo && content.contains(ativo) && (ativo.id || ativo.name)) {
+      memoria.foco = { id: ativo.id || '', name: ativo.name || '', inicio: null, fim: null };
+      try { memoria.foco.inicio = ativo.selectionStart; memoria.foco.fim = ativo.selectionEnd; } catch (_) { /* select e date não têm cursor */ }
+    }
+    const form = document.getElementById('financeFilterForm');
+    if (form && !descartarRascunho) {
+      memoria.rascunho = [...form.elements].filter((el) => el.name && !el.disabled).map((el) => [el.name, el.value]);
+      const pessoa = document.getElementById('financeFilterPartyInput');
+      if (pessoa) memoria.textoDaPessoa = pessoa.value;
+    }
+    descartarRascunho = false;
+    return memoria;
+  }
+  function restaurarFoco(memoria) {
+    if (!memoria) return;
+    const form = document.getElementById('financeFilterForm');
+    if (form && memoria.rascunho) {
+      memoria.rascunho.forEach(([name, valor]) => {
+        const campo = form.elements.namedItem(name);
+        if (campo && !campo.disabled && 'value' in campo) campo.value = valor;
+      });
+      const pessoa = document.getElementById('financeFilterPartyInput');
+      if (pessoa && memoria.textoDaPessoa !== null) pessoa.value = memoria.textoDaPessoa;
+    }
+    if (!memoria.foco) return;
+    const { id, name, inicio, fim } = memoria.foco;
+    const campo = (id && document.getElementById(id)) || (name && content.querySelector(`[name="${name.replace(/"/g, '')}"]`));
+    if (!campo || campo.disabled) return;
+    campo.focus();
+    if (inicio !== null && inicio !== undefined) {
+      try { campo.setSelectionRange(inicio, fim); } catch (_) { /* campo sem cursor */ }
+    }
+  }
+
+  function dicaDaBusca() {
+    const texto = String(lista.filtros.search || '').trim();
+    if (!texto) return '';
+    const valor = Lista.valorDaBusca(texto);
+    const codigo = Lista.codigoDaBusca(texto);
+    if (codigo !== null) return `Procurando o lançamento LF${String(codigo).padStart(4, '0')} e o texto "${escapeHtml(texto)}".`;
+    if (valor !== null) return `Procurando também pelo valor ${brl(valor)} (previsto, ou líquido do cartão).`;
+    return '';
+  }
+
+  function abasDeSituacao(resumo) {
+    const situacoes = (resumo && resumo.situacoes) || {};
+    const todas = Object.values(situacoes).reduce((s, x) => s + (x.quantidade || 0), 0);
+    const atual = Lista.situacoesDoFiltro(lista.filtros.status).slice().sort().join();
+    return `
+      <div class="finance-abas" role="tablist" aria-label="Situação">
+        ${Lista.ABAS.map((aba) => {
+          // 'parcial-vencido' não é rótulo (ver ABAS): a contagem dele vem à
+          // parte, em `parciaisVencidos`, e `situacoes` segue somando a lista.
+          const contar = (x) => (x === 'parcial-vencido'
+            ? ((resumo && resumo.parciaisVencidos && resumo.parciaisVencidos.quantidade) || 0)
+            : ((situacoes[x] && situacoes[x].quantidade) || 0));
+          const quantos = aba.status.length ? aba.status.reduce((s, x) => s + contar(x), 0) : todas;
+          const ativa = aba.status.slice().sort().join() === atual;
+          const perigo = aba.chave === 'vencido' && quantos > 0 && !ativa;
+          return `<button type="button" role="tab" aria-selected="${ativa}" class="finance-aba${ativa ? ' is-ativa' : ''}${perigo ? ' is-perigo' : ''}"
+            data-aba="${escapeHtml(aba.status.join(','))}">${escapeHtml(aba.rotulo)}<span class="finance-aba-contagem">${numero(quantos)}</span></button>`;
+        }).join('')}
+      </div>`;
+  }
+
+  function faixaDeTotais(resumo) {
+    const t = resumo && resumo.totais;
+    if (!t || !t.quantidade) return '';
+    const saldo = Number(t.receitas || 0) - Number(t.despesas || 0);
+    return `
+      <div class="finance-totais" aria-label="Totais do filtro, todas as páginas">
+        <div><span>Receitas previstas</span><strong class="is-receita">${brl(t.receitas)}</strong></div>
+        <div><span>Despesas previstas</span><strong class="is-despesa">${brl(t.despesas)}</strong></div>
+        <div><span>Saldo previsto</span><strong class="${saldo < 0 ? 'is-despesa' : 'is-receita'}">${brl(saldo)}</strong></div>
+        <div><span>A receber em aberto</span><strong>${brl(t.aReceber)}</strong></div>
+        <div><span>A pagar em aberto</span><strong>${brl(t.aPagar)}</strong></div>
+      </div>`;
+  }
+
+  // Os filtros da busca avançada que estão valendo, como etiquetas — com o
+  // painel fechado, era a única forma de saber por que a lista tem 12 linhas.
+  function etiquetasDeFiltro() {
+    const f = lista.filtros;
+    const nome = (listaDeNomes, id) => ((listaDeNomes || []).find((x) => x.id === id) || {}).name || 'selecionado';
+    const etiquetas = [];
+    if (f.clientSupplierId) {
+      const pessoa = opcoesDoDiretorio.find((o) => o.value === f.clientSupplierId);
+      etiquetas.push({ campos: 'clientSupplierId', texto: `Cliente/Fornecedor: ${pessoa ? pessoa.label : 'selecionado'}` });
+    }
+    if (f.category) etiquetas.push({ campos: 'category', texto: `Categoria: ${nome(meta.categories, f.category)}` });
+    if (f.costCenter) etiquetas.push({ campos: 'costCenter', texto: `Centro de custo: ${nome(meta.costCenters, f.costCenter)}` });
+    if (f.bankAccountId) etiquetas.push({ campos: 'bankAccountId', texto: `Conta: ${nome(meta.bankAccounts, f.bankAccountId)}` });
+    if (f.dateFrom || f.dateTo) etiquetas.push({ campos: 'dateFrom,dateTo', texto: `Data: ${f.dateFrom ? financeFormatDate(f.dateFrom) : '…'} a ${f.dateTo ? financeFormatDate(f.dateTo) : '…'}` });
+    if (f.periodo === 'personalizado' && (f.dueFrom || f.dueTo)) {
+      etiquetas.push({ campos: 'dueFrom,dueTo,periodo', texto: `Vencimento: ${f.dueFrom ? financeFormatDate(f.dueFrom) : '…'} a ${f.dueTo ? financeFormatDate(f.dueTo) : '…'}` });
+    }
+    if (f.amountMin || f.amountMax) etiquetas.push({ campos: 'amountMin,amountMax', texto: `Valor: ${f.amountMin ? brl(f.amountMin) : '…'} a ${f.amountMax ? brl(f.amountMax) : '…'}` });
+    const situacao = FINANCE_SITUACAO_OPCOES.find((o) => o.value && o.value === f.status);
+    // Situação que nenhuma aba representa (ex.: só "Parcial") também vira etiqueta.
+    if (f.status && !Lista.ABAS.some((a) => a.status.join(',') === f.status)) {
+      etiquetas.push({ campos: 'status', texto: `Situação: ${situacao ? situacao.label : f.status}` });
+    }
+    if (!etiquetas.length || lista.showAdvanced) return '';
+    return `
+      <div class="finance-abas" aria-label="Filtros ativos">
+        ${etiquetas.map((e) => `<button type="button" class="finance-aba" data-limpar="${e.campos}" title="Remover este filtro">${escapeHtml(e.texto)} <span aria-hidden="true">×</span></button>`).join('')}
+        <button type="button" class="finance-aba" id="financeLimparEtiquetas">Limpar filtros</button>
+      </div>`;
+  }
+
+  function painelAvancado() {
+    const f = lista.filtros;
+    const atalho = financePeriodoDeVencimento(f.periodo);
+    // Com um atalho de vencimento valendo, as datas mostram o que ele calcula
+    // e ficam travadas — desabilitado não entra no FormData, então aplicar o
+    // painel não transforma "Próximos 7 dias" em datas fixas sem querer.
+    const vencDe = atalho ? atalho.dueFrom : f.dueFrom;
+    const vencAte = atalho ? atalho.dueTo : f.dueTo;
+    return `
+      <form id="financeFilterForm" class="cadastro-filter-panel">
+        <div class="cadastro-filter-grid-5">
+          <label class="cadastro-field">
+            <span>Situação</span>
+            <select name="status">
+              ${FINANCE_SITUACAO_OPCOES.map((opt) => `<option value="${opt.value}" ${f.status === opt.value ? 'selected' : ''}>${escapeHtml(opt.label)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="cadastro-field">
+            <span>Cliente / Fornecedor</span>
+            ${/* CAMPO DE BUSCA, e não <select> (fase DS): eram 6.493 <option>
+                 redesenhados a cada página virada com o painel aberto. O
+                 <input type="hidden"> leva o mesmo name="clientSupplierId".
+                 Fase EI: abre com o escolhido, em vez de vazio. */''}
+            ${renderSearchableSelect({
+              id: 'financeFilterParty',
+              name: 'clientSupplierId',
+              options: opcoesDoDiretorio,
+              selectedValue: f.clientSupplierId,
+              placeholder: 'Todos — buscar por nome ou código'
+            })}
+          </label>
+          <label class="cadastro-field">
+            <span>Plano de Contas</span>
+            <select name="category"><option value="">Todos</option>${optionList(meta.categories, f.category)}</select>
+          </label>
+          <label class="cadastro-field">
+            <span>Centro de custo</span>
+            <select name="costCenter"><option value="">Todos</option>${optionList(meta.costCenters, f.costCenter)}</select>
+          </label>
+          <label class="cadastro-field">
+            <span>Conta bancária</span>
+            <select name="bankAccountId"><option value="">Todas</option>${optionList(meta.bankAccounts, f.bankAccountId)}</select>
+          </label>
+          <label class="cadastro-field">
+            <span>Data inicial</span>
+            <input type="date" name="dateFrom" value="${escapeHtml(f.dateFrom)}" />
+          </label>
+          <label class="cadastro-field">
+            <span>Data final</span>
+            <input type="date" name="dateTo" value="${escapeHtml(f.dateTo)}" />
+          </label>
+          <label class="cadastro-field" ${atalho ? 'title="Definido pelo atalho de vencimento da barra de busca"' : ''}>
+            <span>Vencimento de</span>
+            <input type="date" name="dueFrom" id="financeVencimentoDe" value="${escapeHtml(vencDe || '')}" ${atalho ? 'disabled' : ''} />
+          </label>
+          <label class="cadastro-field" ${atalho ? 'title="Definido pelo atalho de vencimento da barra de busca"' : ''}>
+            <span>Vencimento até</span>
+            <input type="date" name="dueTo" value="${escapeHtml(vencAte || '')}" ${atalho ? 'disabled' : ''} />
+          </label>
+          <label class="cadastro-field">
+            <span>Valor mínimo</span>
+            <input type="number" step="0.01" min="0" name="amountMin" value="${escapeHtml(f.amountMin)}" />
+          </label>
+          <label class="cadastro-field">
+            <span>Valor máximo</span>
+            <input type="number" step="0.01" min="0" name="amountMax" value="${escapeHtml(f.amountMax)}" />
+          </label>
+        </div>
+        <div class="cadastro-filter-actions">
+          <button type="submit">Aplicar filtros</button>
+          <button type="button" class="secondary" id="financeFilterClearBtn">Limpar filtros</button>
+        </div>
+      </form>`;
+  }
+
+  function painelDeColunas(colunas) {
+    return `
+      <div class="panel" id="financeColunasPainel" style="margin-bottom:12px;">
+        <p class="muted" style="margin-top:0;">Colunas visíveis</p>
+        <div class="cadastro-filter-grid-5">
+          ${FINANCE_LISTA_COLUNAS.map((col) => `
+            <label class="muted" style="display:flex;align-items:center;gap:6px;">
+              <input type="checkbox" data-coluna-visivel="${col.chave}"
+                ${colunas.some((c) => c.chave === col.chave) ? 'checked' : ''}
+                ${col.fixa ? 'disabled title="O código identifica a linha e não pode ser escondido."' : ''} />
+              ${escapeHtml(col.rotulo)}
+            </label>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  function cabecalho(col) {
+    const classe = col.dinheiro ? ' class="col-valor"' : '';
+    if (!col.ordem) return `<th${classe}>${escapeHtml(col.rotulo)}</th>`;
+    const ativa = lista.sort === col.ordem;
+    // A seta mostra a ordem ATUAL, e não a que o clique vai aplicar.
+    const seta = ativa ? (lista.dir === 'asc' ? '▲' : '▼') : '';
+    return `<th${classe} aria-sort="${ativa ? (lista.dir === 'asc' ? 'ascending' : 'descending') : 'none'}">
+      <button type="button" class="lista-ordenar${ativa ? ' is-ativa' : ''}" data-ordenar="${col.ordem}" title="Ordenar por ${escapeHtml(col.rotulo)}">
+        ${escapeHtml(col.rotulo)}<span class="lista-ordenar-seta" aria-hidden="true">${seta}</span>
+      </button></th>`;
+  }
+
+  function renderView(result) {
+    const foco = lembrarFoco();
+    const f = lista.filtros;
+    const limit = porPagina();
+    const total = result.total || 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const entries = result.entries || [];
+    const colunas = colunasVisiveis();
+    const de = total ? (lista.page - 1) * limit + 1 : 0;
+    const ate = Math.min(total, lista.page * limit);
+    const temFiltro = Object.keys(f).some((k) => f[k]);
+    const dica = dicaDaBusca();
+
+    content.innerHTML = `
+      <div class="cadastro-page-head">
+        <div>
+          <h3>Lançamentos</h3>
+          <p class="muted">${numero(total)} lançamento${total === 1 ? '' : 's'} encontrado${total === 1 ? '' : 's'}</p>
+        </div>
+        <div class="cadastro-list-actions">
+          <button type="button" id="financeNewEntryBtn">+ Novo Lançamento</button>
+          <button type="button" class="secondary" id="financeExportarBtn" title="Baixa um CSV com todos os lançamentos do filtro, de todas as páginas, na ordem da tela">Exportar CSV</button>
+          <button type="button" class="secondary" id="financeColunasBtn" aria-expanded="${Boolean(lista.showColunas)}" title="Escolher colunas visíveis">Colunas</button>
+          <button type="button" class="secondary" id="financeFilterToggleBtn" aria-expanded="${Boolean(lista.showAdvanced)}">${lista.showAdvanced ? 'Ocultar filtros' : 'Busca avançada'}</button>
+        </div>
+      </div>
+
+      ${lista.showColunas ? painelDeColunas(colunas) : ''}
+
+      <form id="financeQuickSearchForm" class="finance-lista-busca" role="search">
+        <label class="cadastro-field">
+          <span>Busca</span>
+          <input id="financeQuickSearch" type="search" name="search" value="${escapeHtml(f.search)}" autocomplete="off"
+            placeholder="Código, descrição, documento, cliente/fornecedor ou valor (ex.: 2.500,00)" />
+        </label>
+        <label class="cadastro-field">
+          <span>Tipo</span>
+          <select id="financeTipoRapido">
+            <option value="">Todos</option>
+            ${FINANCE_ENTRY_TYPE_OPTIONS.map((opt) => `<option value="${opt.value}" ${f.type === opt.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="cadastro-field">
+          <span>Vencimento</span>
+          <select id="financeVencimentoRapido">
+            ${FINANCE_VENCIMENTOS.map((p) => `<option value="${p.chave}" ${(f.periodo || '') === p.chave ? 'selected' : ''}>${escapeHtml(p.rotulo)}</option>`).join('')}
+          </select>
+        </label>
+        <div style="align-self: end;"><button type="submit" class="secondary">Buscar</button></div>
+        ${dica ? `<p class="muted finance-busca-dica">${dica}</p>` : ''}
+      </form>
+
+      ${lista.showAdvanced ? painelAvancado() : ''}
+      ${etiquetasDeFiltro()}
+      ${abasDeSituacao(result.resumo)}
+      ${faixaDeTotais(result.resumo)}
+      <div id="financeLoteBarra">${barraDeLote()}</div>
+
+      <div class="panel" id="financeListaPainel">
+        <div class="table-scroll">
+          <table class="table table-actions finance-tabela">
+            <thead>
+              <tr>
+                <th class="sales-col-selecao">
+                  <input type="checkbox" id="financeSelecionarPagina" title="Selecionar os desta página" aria-label="Selecionar os desta página"
+                    ${entries.length && entries.every((e) => estaSelecionado(e.id)) ? 'checked' : ''} />
+                </th>
+                ${colunas.map(cabecalho).join('')}
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${entries.length ? entries.map((entry, indice) => `
+                <tr class="cadastro-row-clickable finance-entry-row${estaSelecionado(entry.id) ? ' is-selecionada' : ''}" data-id="${escapeHtml(entry.id)}" data-indice="${indice}">
+                  <td class="sales-col-selecao">
+                    <input type="checkbox" class="finance-selecionar" data-id="${escapeHtml(entry.id)}" aria-label="Selecionar ${escapeHtml(entry.codigo || 'lançamento')}"
+                      ${estaSelecionado(entry.id) ? 'checked' : ''} />
+                  </td>
+                  ${colunas.map((col) => `<td${col.dinheiro ? ' class="col-valor"' : ''}>${col.valor(entry, formatadores)}</td>`).join('')}
+                  <td>
+                    ${Lista.ACOES.baixar.elegivel(entry) === true ? `<button type="button" class="secondary" data-quick-baixa="${escapeHtml(entry.id)}">Baixar</button>` : ''}
+                  </td>
+                </tr>
+              `).join('') : `
+                <tr><td colspan="${colunas.length + 2}" class="muted">
+                  ${temFiltro ? 'Nenhum lançamento encontrado com os filtros atuais. <button type="button" class="secondary" id="financeVazioLimpar">Limpar filtros</button>' : 'Nenhum lançamento cadastrado.'}
+                </td></tr>`}
+            </tbody>
+          </table>
+        </div>
+        <div class="finance-pagination">
+          <button type="button" class="secondary" id="financePrimeiraPagina" ${lista.page <= 1 ? 'disabled' : ''} title="Primeira página" aria-label="Primeira página">«</button>
+          <button type="button" class="secondary" id="financePrevPage" ${lista.page <= 1 ? 'disabled' : ''}>Anterior</button>
+          <span class="muted finance-pagina-info">Página ${numero(lista.page)} de ${numero(totalPages)}${total ? ` · ${numero(de)}–${numero(ate)} de ${numero(total)}` : ''}</span>
+          <button type="button" class="secondary" id="financeNextPage" ${lista.page >= totalPages ? 'disabled' : ''}>Próxima</button>
+          <button type="button" class="secondary" id="financeUltimaPagina" ${lista.page >= totalPages ? 'disabled' : ''} title="Última página" aria-label="Última página">»</button>
+          <label class="muted" style="display:flex;align-items:center;gap:6px;">
+            Por página
+            <select id="financePorPagina">
+              ${FINANCE_POR_PAGINA.map((n) => `<option value="${n}" ${n === limit ? 'selected' : ''}>${n}</option>`).join('')}
+            </select>
+          </label>
+          ${totalPages > 1 ? `
+            <form id="financeIrParaPagina" class="muted" style="display:flex;align-items:center;gap:6px;">
+              Ir para
+              <input type="number" min="1" max="${totalPages}" value="${lista.page}" style="width:80px;" aria-label="Ir para a página" />
+              <button type="submit" class="secondary">Ir</button>
+            </form>` : ''}
+        </div>
+      </div>
+    `;
+
+    ligarCabecalhoEBusca(result, totalPages);
+    ligarTabela(result, totalPages);
+    ligarBarraDeLote();
+    // indeterminate só existe como propriedade, não como atributo do HTML.
+    atualizarSelecao();
+    restaurarFoco(foco);
+  }
+
+  // --- Eventos ---------------------------------------------------------------
+
+  let esperaDaBusca = null;
+
+  function ligarCabecalhoEBusca() {
+    document.getElementById('financeNewEntryBtn')?.addEventListener('click', () => {
+      state.financeEditEntryId = null;
+      state.activeSub = 'novo_lancamento';
+      loadModule('finance');
+    });
+    document.getElementById('financeExportarBtn')?.addEventListener('click', () => {
+      baixarCsv(`/api/finance/entries/exportar?${consulta({ paginado: false }).toString()}`, 'lancamentos.csv');
+    });
+    document.getElementById('financeColunasBtn')?.addEventListener('click', () => {
+      lista.showColunas = !lista.showColunas;
+      redesenhar();
+    });
+    content.querySelectorAll('[data-coluna-visivel]').forEach((caixa) => {
+      caixa.addEventListener('change', () => {
+        const escolhidas = [...content.querySelectorAll('[data-coluna-visivel]')]
+          .filter((c) => c.checked).map((c) => c.dataset.colunaVisivel);
+        if (escolhidas.filter((c) => c !== 'codigo').length === 0) {
+          showToast('Deixe ao menos uma coluna além do código.', 'warning');
+          caixa.checked = true;
+          return;
+        }
+        // Na ORDEM do catálogo, não na de clique: é ela que desenha a tabela.
+        salvarPreferenciaDaLista({ colunas: FINANCE_LISTA_COLUNAS.map((c) => c.chave).filter((c) => escolhidas.includes(c)) });
+        redesenhar();
+      });
     });
 
-    if (showAdvanced && typeof attachSearchableSelect === 'function') {
+    // ABRIR E FECHAR A BUSCA AVANÇADA NÃO VAI AO SERVIDOR (fase DS) — a menos
+    // que a busca rápida tenha sido digitada e não enviada (ver redesenhar).
+    document.getElementById('financeFilterToggleBtn')?.addEventListener('click', () => {
+      lista.showAdvanced = !lista.showAdvanced;
+      redesenhar();
+    });
+    if (lista.showAdvanced && typeof attachSearchableSelect === 'function') {
       attachSearchableSelect({ id: 'financeFilterParty', options: opcoesDoDiretorio });
     }
 
-    document.getElementById('financeQuickSearch')?.addEventListener('input', (event) => {
-      filters.search = event.target.value;
+    // A BUSCA ANDA ENQUANTO SE DIGITA (fase EI), com uma pausa de 450 ms: o
+    // bastante para não pedir uma lista por letra, pouco para não parecer que
+    // a caixa não faz nada. Enter continua buscando na hora.
+    const campo = document.getElementById('financeQuickSearch');
+    campo?.addEventListener('input', (event) => {
+      lista.filtros.search = event.target.value;
+      clearTimeout(esperaDaBusca);
+      esperaDaBusca = setTimeout(() => { lista.page = 1; load(); }, 450);
     });
     document.getElementById('financeQuickSearchForm')?.addEventListener('submit', (event) => {
       event.preventDefault();
-      page = 1;
+      clearTimeout(esperaDaBusca);
+      lista.filtros.search = campo ? campo.value : lista.filtros.search;
+      lista.page = 1;
       load();
+    });
+    document.getElementById('financeTipoRapido')?.addEventListener('change', (event) => {
+      mudarFiltro({ type: event.target.value });
+    });
+    document.getElementById('financeVencimentoRapido')?.addEventListener('change', async (event) => {
+      const chave = event.target.value;
+      if (chave === 'personalizado') {
+        // As datas são digitadas na busca avançada: abre o painel nelas, já
+        // com as do atalho que valia — a lista não pula, e ajustar "Este mês"
+        // para "até dia 20" é mudar um campo, não digitar os dois.
+        const anterior = financePeriodoDeVencimento(lista.filtros.periodo);
+        if (anterior) Object.assign(lista.filtros, anterior);
+        lista.filtros.periodo = 'personalizado';
+        lista.showAdvanced = true;
+        await redesenhar();
+        document.getElementById('financeVencimentoDe')?.focus();
+        return;
+      }
+      mudarFiltro({ periodo: chave, dueFrom: '', dueTo: '' });
     });
 
     document.getElementById('financeFilterForm')?.addEventListener('submit', (event) => {
       event.preventDefault();
       const formData = new FormData(event.target);
-      filters.type = formData.get('type') || '';
-      filters.status = formData.get('status') || '';
-      filters.clientSupplierId = formData.get('clientSupplierId') || '';
-      filters.category = formData.get('category') || '';
-      filters.costCenter = formData.get('costCenter') || '';
-      filters.bankAccountId = formData.get('bankAccountId') || '';
-      filters.dateFrom = formData.get('dateFrom') || '';
-      filters.dateTo = formData.get('dateTo') || '';
-      filters.dueFrom = formData.get('dueFrom') || '';
-      filters.dueTo = formData.get('dueTo') || '';
-      filters.amountMin = formData.get('amountMin') || '';
-      filters.amountMax = formData.get('amountMax') || '';
-      page = 1;
+      const ler = (k) => String(formData.get(k) || '');
+      const mudanca = {
+        status: ler('status'),
+        clientSupplierId: ler('clientSupplierId'),
+        category: ler('category'),
+        costCenter: ler('costCenter'),
+        bankAccountId: ler('bankAccountId'),
+        dateFrom: ler('dateFrom'),
+        dateTo: ler('dateTo'),
+        amountMin: ler('amountMin'),
+        amountMax: ler('amountMax')
+      };
+      // Datas de vencimento só entram quando não há atalho valendo (com
+      // atalho, os campos estão desabilitados e não vêm no FormData).
+      if (formData.has('dueFrom') || formData.has('dueTo')) {
+        mudanca.dueFrom = ler('dueFrom');
+        mudanca.dueTo = ler('dueTo');
+        mudanca.periodo = (mudanca.dueFrom || mudanca.dueTo) ? 'personalizado' : '';
+      }
+      mudarFiltro(mudanca);
+    });
+    const limparTudo = () => {
+      lista.filtros = financeFiltrosVazios();
+      const busca = document.getElementById('financeQuickSearch');
+      if (busca) busca.value = '';
+      lista.page = 1;
+      descartarRascunho = true;
       load();
+    };
+    document.getElementById('financeFilterClearBtn')?.addEventListener('click', limparTudo);
+    document.getElementById('financeLimparEtiquetas')?.addEventListener('click', limparTudo);
+    document.getElementById('financeVazioLimpar')?.addEventListener('click', limparTudo);
+    content.querySelectorAll('[data-limpar]').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        const mudanca = {};
+        botao.dataset.limpar.split(',').forEach((campoDoFiltro) => { mudanca[campoDoFiltro] = ''; });
+        mudarFiltro(mudanca);
+      });
     });
 
-    document.getElementById('financeFilterClearBtn')?.addEventListener('click', () => {
-      Object.keys(filters).forEach((key) => { filters[key] = ''; });
-      const searchInput = document.getElementById('financeQuickSearch');
-      if (searchInput) searchInput.value = '';
-      page = 1;
-      load();
+    content.querySelectorAll('[data-aba]').forEach((botao) => {
+      botao.addEventListener('click', () => mudarFiltro({ status: botao.dataset.aba }));
     });
   }
 
-  function attachTableHandlers(result) {
+  function ligarTabela(result, totalPages) {
+    const entries = result.entries || [];
+
+    // Ordenar: clicar na coluna ordenada inverte; numa coluna nova, texto
+    // começa de A a Z e data/valor do maior para o menor.
+    content.querySelectorAll('[data-ordenar]').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        const coluna = botao.dataset.ordenar;
+        if (lista.sort === coluna) lista.dir = lista.dir === 'asc' ? 'desc' : 'asc';
+        else lista.dir = Lista.COMECA_CRESCENTE.includes(coluna) ? 'asc' : 'desc';
+        lista.sort = coluna;
+        lista.page = 1;
+        load();
+      });
+    });
+
+    // SELEÇÃO. O "todos" marca os DESTA página — marcar o que não se vê e
+    // depois agir é como se perde dado sem perceber (mesma regra de Vendas).
+    document.getElementById('financeSelecionarPagina')?.addEventListener('change', (event) => {
+      entries.forEach((entry) => marcar(entry, event.target.checked));
+      atualizarSelecao();
+    });
+    // Shift+clique marca o intervalo desde a última caixa clicada, como em
+    // qualquer lista de e-mail: selecionar 30 parcelas seguidas não pode ser
+    // 30 cliques.
+    let ultimoIndice = -1;
+    content.querySelectorAll('.finance-selecionar').forEach((caixa) => {
+      caixa.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const linha = caixa.closest('tr');
+        const indice = Number(linha && linha.dataset.indice);
+        const marcarComo = caixa.checked;
+        if (event.shiftKey && ultimoIndice >= 0 && ultimoIndice !== indice) {
+          const [a, b] = ultimoIndice < indice ? [ultimoIndice, indice] : [indice, ultimoIndice];
+          entries.slice(a, b + 1).forEach((entry) => marcar(entry, marcarComo));
+        } else {
+          const entry = entries[indice];
+          if (entry) marcar(entry, marcarComo);
+        }
+        ultimoIndice = indice;
+        atualizarSelecao();
+      });
+    });
+    // A célula da caixa inteira marca: a caixa de 18 px é um alvo pequeno, e
+    // errar por 2 px abria o modal do lançamento.
+    content.querySelectorAll('.finance-entry-row td.sales-col-selecao').forEach((celula) => {
+      celula.addEventListener('click', (event) => {
+        if (event.target.closest('input')) return;
+        event.stopPropagation();
+        // Um clique de verdade, com o Shift de quem clicou: .click() perderia
+        // a tecla, e shift+clique na célula não marcaria o intervalo.
+        celula.querySelector('input')?.dispatchEvent(new MouseEvent('click', {
+          bubbles: true, cancelable: true, shiftKey: event.shiftKey
+        }));
+      });
+    });
+
     content.querySelectorAll('.finance-entry-row').forEach((row) => {
-      row.addEventListener('click', () => openEntryModal(row.dataset.id));
+      row.addEventListener('click', (event) => {
+        if (event.target.closest('button, input, a, .sales-col-selecao')) return;
+        openEntryModal(row.dataset.id);
+      });
     });
     content.querySelectorAll('[data-quick-baixa]').forEach((btn) => {
       btn.addEventListener('click', (event) => {
@@ -167,179 +995,286 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
       });
     });
 
-    document.getElementById('financePrevPage')?.addEventListener('click', () => {
-      if (page > 1) { page -= 1; load(); }
+    document.getElementById('financePrimeiraPagina')?.addEventListener('click', () => { if (lista.page > 1) irParaPagina(1); });
+    document.getElementById('financePrevPage')?.addEventListener('click', () => { if (lista.page > 1) irParaPagina(lista.page - 1); });
+    document.getElementById('financeNextPage')?.addEventListener('click', () => { if (lista.page < totalPages) irParaPagina(lista.page + 1); });
+    document.getElementById('financeUltimaPagina')?.addEventListener('click', () => { if (lista.page < totalPages) irParaPagina(totalPages); });
+    document.getElementById('financePorPagina')?.addEventListener('change', (event) => {
+      lista.limit = Number(event.target.value) || 15;
+      salvarPreferenciaDaLista({ limit: lista.limit });
+      // Volta para a 1: com 100 por página, a página 7 de antes pode nem existir.
+      irParaPagina(1);
     });
-    document.getElementById('financeNextPage')?.addEventListener('click', () => {
-      const totalPages = Math.max(1, Math.ceil(result.total / limit));
-      if (page < totalPages) { page += 1; load(); }
-    });
-
-    document.getElementById('financeNewEntryBtn')?.addEventListener('click', () => {
-      state.financeEditEntryId = null;
-      state.activeSub = 'novo_lancamento';
-      loadModule('finance');
+    document.getElementById('financeIrParaPagina')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const alvo = Number(event.target.querySelector('input').value);
+      if (!Number.isFinite(alvo) || alvo < 1 || alvo > totalPages) {
+        showToast(`Informe uma página entre 1 e ${totalPages}.`, 'warning');
+        return;
+      }
+      irParaPagina(Math.floor(alvo));
     });
   }
 
-  function renderView(result) {
-    const totalPages = Math.max(1, Math.ceil(result.total / limit));
+  function ligarBarraDeLote() {
+    document.querySelectorAll('#financeLoteBarra [data-lote]').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        const acao = botao.dataset.lote;
+        if (acao === 'limpar') {
+          lista.selecao = {};
+          atualizarSelecao();
+        } else if (acao === 'exportar') {
+          exportarSelecionados();
+        } else if (acao === 'baixar') {
+          abrirBaixaEmLote();
+        } else if (acao === 'cancelar') {
+          cancelarEmLote();
+        }
+      });
+    });
+  }
 
-    content.innerHTML = `
-      <div class="cadastro-page-head">
-        <div>
-          <h3>Lançamentos</h3>
-          <p class="muted">${result.total} lançamento${result.total === 1 ? '' : 's'} encontrado${result.total === 1 ? '' : 's'}</p>
-        </div>
-        <div class="cadastro-list-actions">
-          <button type="button" id="financeNewEntryBtn">+ Novo Lançamento</button>
-          <button type="button" class="secondary" id="financeFilterToggleBtn">${showAdvanced ? 'Ocultar filtros' : 'Busca avançada'}</button>
-        </div>
-      </div>
+  // --- Ações em lote ---------------------------------------------------------
 
-      <form id="financeQuickSearchForm" class="row" style="margin-bottom: 12px;">
-        <label class="cadastro-field" style="grid-column: span 3;">
-          <span>Busca</span>
-          <input id="financeQuickSearch" name="search" value="${escapeHtml(filters.search)}" placeholder="Código, descrição ou cliente/fornecedor" />
-        </label>
-        <div style="align-self: end;"><button type="submit" class="secondary">Buscar</button></div>
-      </form>
+  // Baixa o arquivo que o servidor montou, com o token da sessão — um <a href>
+  // direto iria sem ele. Mesmo caminho dos relatórios (reports/subs/catalogo.js).
+  async function baixarCsv(endereco, nomePadrao) {
+    let url = null;
+    try {
+      const resposta = await fetch(endereco, {
+        headers: { 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' }
+      });
+      if (!resposta.ok) {
+        const corpo = await resposta.json().catch(() => ({}));
+        showToast(corpo.error || `Não consegui exportar (HTTP ${resposta.status}).`, 'error');
+        return;
+      }
+      const nome = (/filename="([^"]+)"/.exec(resposta.headers.get('Content-Disposition') || '') || [])[1] || nomePadrao;
+      url = URL.createObjectURL(await resposta.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = nome;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (erro) {
+      showToast(erro.message || 'Não consegui exportar.', 'error');
+    } finally {
+      if (url) setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+  }
 
-      ${showAdvanced ? `
-        <form id="financeFilterForm" class="cadastro-filter-panel">
-          <div class="cadastro-filter-grid-5">
-            <label class="cadastro-field">
-              <span>Tipo</span>
-              <select name="type">
-                <option value="">Todos</option>
-                ${FINANCE_ENTRY_TYPE_OPTIONS.map((opt) => `<option value="${opt.value}" ${filters.type === opt.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
-              </select>
-            </label>
-            <label class="cadastro-field">
-              <span>Situação</span>
-              <select name="status">
-                <option value="">Todas</option>
-                ${FINANCE_ENTRY_STATUS_OPTIONS.map((opt) => `<option value="${opt.value}" ${filters.status === opt.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
-              </select>
-            </label>
-            <label class="cadastro-field">
-              <span>Cliente / Fornecedor</span>
-              ${/* CAMPO DE BUSCA, e não <select> (fase DS). Eram 6.493 <option>
-                   redesenhados a cada página virada com o painel aberto — o
-                   mesmo remédio que Novo Lançamento já usa para o mesmo
-                   diretório. O <input type="hidden"> leva o mesmo
-                   name="clientSupplierId", então o FormData do filtro não muda.
-                   Vazio = "Todos", como a primeira opção do <select>; e, como o
-                   <select> (que não marcava a opção escolhida), o campo abre
-                   vazio a cada desenho. */''}
-              ${renderSearchableSelect({
-      id: 'financeFilterParty',
-      name: 'clientSupplierId',
-      options: opcoesDoDiretorio,
-      selectedValue: '',
-      placeholder: 'Todos — buscar por nome ou código'
-    })}
-            </label>
-            <label class="cadastro-field">
-              <span>Plano de Contas</span>
-              <select name="category">
-                <option value="">Todos</option>
-                ${optionList(meta.categories)}
-              </select>
-            </label>
-            <label class="cadastro-field">
-              <span>Centro de custo</span>
-              <select name="costCenter">
-                <option value="">Todos</option>
-                ${optionList(meta.costCenters)}
-              </select>
-            </label>
-            <label class="cadastro-field">
-              <span>Conta bancária</span>
-              <select name="bankAccountId">
-                <option value="">Todas</option>
-                ${optionList(meta.bankAccounts)}
-              </select>
-            </label>
-            <label class="cadastro-field">
-              <span>Data inicial</span>
-              <input type="date" name="dateFrom" value="${escapeHtml(filters.dateFrom)}" />
-            </label>
-            <label class="cadastro-field">
-              <span>Data final</span>
-              <input type="date" name="dateTo" value="${escapeHtml(filters.dateTo)}" />
-            </label>
-            <label class="cadastro-field">
-              <span>Vencimento de</span>
-              <input type="date" name="dueFrom" value="${escapeHtml(filters.dueFrom)}" />
-            </label>
-            <label class="cadastro-field">
-              <span>Vencimento até</span>
-              <input type="date" name="dueTo" value="${escapeHtml(filters.dueTo)}" />
-            </label>
-            <label class="cadastro-field">
-              <span>Valor mínimo</span>
-              <input type="number" step="0.01" name="amountMin" value="${escapeHtml(filters.amountMin)}" />
-            </label>
-            <label class="cadastro-field">
-              <span>Valor máximo</span>
-              <input type="number" step="0.01" name="amountMax" value="${escapeHtml(filters.amountMax)}" />
-            </label>
+  function exportarSelecionados() {
+    const ids = selecionados().map((l) => l.id);
+    if (!ids.length) return;
+    if (ids.length > Lista.MAXIMO_DO_LOTE) {
+      showToast(`Exporte até ${Lista.MAXIMO_DO_LOTE} selecionados por vez — ou use Exportar CSV, que leva o filtro inteiro.`, 'warning');
+      return;
+    }
+    const params = new URLSearchParams({ ids: ids.join(',') });
+    if (lista.sort) { params.set('sort', lista.sort); params.set('dir', lista.dir); }
+    baixarCsv(`/api/finance/entries/exportar?${params.toString()}`, 'lancamentos-selecionados.csv');
+  }
+
+  // A resposta do lote vem do SERVIDOR, e não do que a tela previu: entre
+  // desenhar e clicar, alguém pode ter baixado um dos selecionados. Os
+  // processados saem da seleção; os ignorados ficam marcados, para a pessoa
+  // ver quais foram e por quê.
+  async function mostrarResultadoDoLote(resposta) {
+    const naoFeitos = resposta.ignorados || [];
+    (resposta.processados || []).forEach((p) => { delete lista.selecao[p.id]; });
+    showToast(resposta.resumo || 'Pronto.', naoFeitos.length ? 'warning' : 'success');
+    await load();
+    if (naoFeitos.length && telaAtiva()) {
+      await confirmModal(`${resposta.resumo}\n\n${naoFeitos.map((i) => `${i.codigo}: ${i.motivo}`).join('\n')}`);
+    }
+  }
+
+  // A PRÉVIA: o que o servidor faria com cada selecionado, AGORA — saldo,
+  // valor da baixa (o líquido, no cartão com taxa) e quem fica de fora. É com
+  // ela que o modal e a pergunta do cancelamento contam e somam; o retrato da
+  // seleção pode ser de uma página que a pessoa viu há meia hora.
+  async function previaDoLote(acao, ids) {
+    const resposta = await api('/api/finance/entries/lote', {
+      method: 'POST',
+      body: JSON.stringify({ acao, ids, previa: true })
+    });
+    const itens = resposta.itens || [];
+    return {
+      elegiveis: itens.filter((i) => !i.motivo),
+      ignorados: itens.filter((i) => i.motivo)
+    };
+  }
+
+  function travarLote(sim) {
+    loteEmAndamento = sim;
+    atualizarSelecao();
+  }
+
+  async function abrirBaixaEmLote() {
+    if (loteEmAndamento) return;
+    const ids = selecionados().filter((l) => Lista.ACOES.baixar.elegivel(l) === true).map((l) => l.id);
+    if (!ids.length) return;
+    if (ids.length > Lista.MAXIMO_DO_LOTE) {
+      showToast(`Baixe até ${Lista.MAXIMO_DO_LOTE} lançamentos por vez.`, 'warning');
+      return;
+    }
+    let previa;
+    travarLote(true);
+    try {
+      [previa] = await Promise.all([previaDoLote('baixar', ids), metaPronto]);
+    } catch (erro) {
+      showToast(erro.message || 'Não foi possível conferir os lançamentos selecionados.', 'error');
+      return;
+    } finally {
+      travarLote(false);
+    }
+    const { elegiveis, ignorados } = previa;
+    if (!elegiveis.length) {
+      showToast(`Nenhum selecionado pode ser baixado agora: ${ignorados[0] ? ignorados[0].motivo : 'sem saldo em aberto'}`, 'warning');
+      return;
+    }
+    const totalDaBaixa = elegiveis.reduce((s, l) => s + Number(l.valor || 0), 0);
+    const comTaxa = elegiveis.filter((l) => Number(l.desconto) > 0).length;
+    document.getElementById('financeLoteBaixaModal')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'financeLoteBaixaModal';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="financeLoteBaixaTitulo">
+        <div class="finance-modal-head">
+          <div>
+            <h3 id="financeLoteBaixaTitulo">Baixar ${numero(elegiveis.length)} lançamento${elegiveis.length === 1 ? '' : 's'}</h3>
+            <p class="muted">Cada um é baixado pelo saldo em aberto, com a data e a conta escolhidas aqui. Uma linha de auditoria por lançamento.</p>
           </div>
-          <div class="cadastro-filter-actions">
-            <button type="submit">Aplicar filtros</button>
-            <button type="button" class="secondary" id="financeFilterClearBtn">Limpar filtros</button>
-          </div>
-        </form>
-      ` : ''}
-
-      <div class="panel">
-        <div class="table-scroll">
-          <table class="table table-actions">
-            <thead>
-              <tr>
-                <th>Código</th><th>Data</th><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>Categoria</th>
-                <th>Cliente/Fornecedor</th><th>Valor previsto</th><th>Valor realizado</th><th>Situação</th><th>Documento</th><th>Ações</th>
-              </tr>
-            </thead>
+          <button type="button" class="icon-button" data-fechar title="Fechar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+        </div>
+        ${ignorados.length ? `<p class="prompt-aviso">${numero(ignorados.length)} selecionado${ignorados.length === 1 ? '' : 's'} fica${ignorados.length === 1 ? '' : 'm'} de fora: ${escapeHtml(ignorados[0].motivo)}${ignorados.length > 1 ? ' (e outros)' : ''}</p>` : ''}
+        <div class="table-scroll" style="max-height: 260px; overflow-y: auto;">
+          <table class="table">
+            <thead><tr><th>Código</th><th>Descrição</th><th class="col-valor">Em aberto</th><th class="col-valor">Será baixado</th></tr></thead>
             <tbody>
-              ${result.entries.length ? result.entries.map((entry) => `
-                <tr class="cadastro-row-clickable finance-entry-row" data-id="${escapeHtml(entry.id)}">
-                  ${/* ERRO CORRIGIDO AQUI (fase AX). A coluna "Código" mostrava os oito
-                       últimos caracteres do id interno — "41196-9q1" — que não é
-                       número, não ordena e ninguém dita ao telefone. A fase AT criou
-                       o número do lançamento (LF0042) e ligou o título da tela de
-                       edição; ESTA coluna, que é onde o número é procurado, continuou
-                       com o pedaço de uuid. Ver shared/lancamento_codigo.js. */''}
-                  <td>${escapeHtml(entry.codigo || '-')}</td>
-                  <td>${financeFormatDate(entry.date)}</td>
-                  <td>${financeFormatDate(entry.dueDate)}</td>
-                  <td>${escapeHtml(entry.description || '-')}</td>
-                  <td>${FINANCE_TYPE_LABEL[entry.type] || entry.type}</td>
-                  <td>${escapeHtml(entry.categoryName || '-')}</td>
-                  <td>${escapeHtml(entry.clienteFornecedor || '-')}</td>
-                  <td>${financeFormatBRL(entry.amountPrevisto)}</td>
-                  <td>${financeFormatBRL(entry.amountRealizado)}</td>
-                  <td>${financeStatusBadge(entry.status)}</td>
-                  <td>${escapeHtml(entry.document || '-')}</td>
-                  <td>
-                    ${(entry.rawStatus === 'pending' || entry.rawStatus === 'parcial') ? `<button type="button" class="secondary" data-quick-baixa="${escapeHtml(entry.id)}">Baixar</button>` : ''}
-                  </td>
-                </tr>
-              `).join('') : `<tr><td colspan="12" class="muted">Nenhum lançamento encontrado com os filtros atuais.</td></tr>`}
+              ${elegiveis.map((l) => {
+                const D = window.MavisDescricaoLancamento;
+                const inteira = String(l.descricao || '');
+                const curta = D && D.resumir ? D.cortar(D.resumir(inteira), 48) : inteira;
+                return `<tr>
+                  <td>${escapeHtml(l.codigo || '-')}</td>
+                  <td><span class="texto-cortado is-medio" title="${escapeHtml(inteira)}">${escapeHtml(curta || '-')}</span></td>
+                  <td class="col-valor">${brl(l.emAberto)}</td>
+                  <td class="col-valor" ${Number(l.desconto) > 0 ? `title="Líquido do cartão: taxa de ${escapeHtml(brl(l.desconto))} como desconto"` : ''}>${brl(l.valor)}</td>
+                </tr>`;
+              }).join('')}
             </tbody>
+            <tfoot><tr><th colspan="3">Total</th><th class="col-valor">${brl(totalDaBaixa)}</th></tr></tfoot>
           </table>
         </div>
-        <div class="finance-pagination">
-          <button type="button" class="secondary" id="financePrevPage" ${page <= 1 ? 'disabled' : ''}>Anterior</button>
-          <span class="muted">Página ${page} de ${totalPages}</span>
-          <button type="button" class="secondary" id="financeNextPage" ${page >= totalPages ? 'disabled' : ''}>Próxima</button>
-        </div>
-      </div>
-    `;
+        <form id="financeLoteBaixaForm" class="form-grid">
+          <div class="row">
+            <label>Data da baixa<input type="date" name="date" required value="${financeHojeLocal()}" /></label>
+            <label>Conta bancária
+              <select name="bankAccountId">
+                <option value="">A conta de cada lançamento</option>
+                ${(meta.bankAccounts || []).map((acc) => `<option value="${escapeHtml(acc.id)}">${escapeHtml(acc.name)}</option>`).join('')}
+              </select>
+            </label>
+          </div>
+          ${comTaxa ? `<p class="muted" style="margin:0;">${numero(comTaxa)} de cartão com taxa: baixado${comTaxa === 1 ? '' : 's'} pelo líquido, com a taxa como desconto — como na baixa de um só.</p>` : ''}
+          <div class="finance-modal-actions">
+            <button type="button" class="secondary" data-fechar>Voltar</button>
+            <button type="submit">Baixar ${numero(elegiveis.length)}</button>
+          </div>
+        </form>
+      </div>`;
+    document.body.appendChild(overlay);
+    // Enquanto o envio está no ar, o modal NÃO fecha: fechado, a barra voltaria
+    // a oferecer "Baixar" com a mesma seleção, e o segundo envio repetiria tudo.
+    const fechar = () => { if (!loteEmAndamento) overlay.remove(); };
+    overlay.addEventListener('click', (event) => { if (event.target === overlay) fechar(); });
+    overlay.querySelectorAll('[data-fechar]').forEach((b) => b.addEventListener('click', fechar));
+    overlay.querySelector('#financeLoteBaixaForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const enviar = event.target.querySelector('button[type="submit"]');
+      if (loteEmAndamento) return;
+      const formData = new FormData(event.target);
+      travarLote(true);
+      enviar.disabled = true;
+      enviar.textContent = 'Baixando…';
+      overlay.querySelectorAll('[data-fechar]').forEach((b) => { b.disabled = true; });
+      try {
+        const resposta = await api('/api/finance/entries/lote', {
+          method: 'POST',
+          body: JSON.stringify({
+            acao: 'baixar',
+            ids: elegiveis.map((l) => l.id),
+            date: formData.get('date'),
+            bankAccountId: formData.get('bankAccountId') || ''
+          })
+        });
+        travarLote(false);
+        overlay.remove();
+        await mostrarResultadoDoLote(resposta);
+      } catch (erro) {
+        travarLote(false);
+        showToast(erro.message || 'Não foi possível baixar os lançamentos.', 'error');
+        enviar.disabled = false;
+        enviar.textContent = `Baixar ${numero(elegiveis.length)}`;
+        overlay.querySelectorAll('[data-fechar]').forEach((b) => { b.disabled = false; });
+      }
+    });
+  }
 
-    attachFilterHandlers();
-    attachTableHandlers(result);
+  async function cancelarEmLote() {
+    if (loteEmAndamento) return;
+    const ids = selecionados().filter((l) => Lista.ACOES.cancelar.elegivel(l) === true).map((l) => l.id);
+    if (!ids.length) return;
+    if (ids.length > Lista.MAXIMO_DO_LOTE) {
+      showToast(`Cancele até ${Lista.MAXIMO_DO_LOTE} lançamentos por vez.`, 'warning');
+      return;
+    }
+    let previa;
+    travarLote(true);
+    try {
+      previa = await previaDoLote('cancelar', ids);
+    } catch (erro) {
+      showToast(erro.message || 'Não foi possível conferir os lançamentos selecionados.', 'error');
+      return;
+    } finally {
+      travarLote(false);
+    }
+    const { elegiveis, ignorados } = previa;
+    if (!elegiveis.length) {
+      showToast(`Nenhum selecionado pode ser cancelado agora: ${ignorados[0] ? ignorados[0].motivo : ''}`, 'warning');
+      return;
+    }
+    const fora = ignorados.length
+      ? ` ${ignorados.length} selecionado${ignorados.length === 1 ? '' : 's'} fica${ignorados.length === 1 ? '' : 'm'} de fora: ${ignorados[0].motivo}`
+      : '';
+    // O MESMO MOTIVO OBRIGATÓRIO de cancelar um só (fase AX), gravado em cada um.
+    const motivo = await promptModal({
+      titulo: `Cancelar ${elegiveis.length} lançamento${elegiveis.length === 1 ? '' : 's'}`,
+      descricao: `Os lançamentos continuam na lista, marcados como cancelados, com este motivo registrado em cada um. O histórico não se perde.${fora}`,
+      rotulo: 'Motivo do cancelamento',
+      placeholder: 'Ex.: parcelas lançadas em duplicidade na importação',
+      minimo: 10,
+      maximo: 300,
+      confirmar: `Cancelar ${elegiveis.length}`
+    });
+    if (!motivo || loteEmAndamento) return;
+    travarLote(true);
+    try {
+      const resposta = await api('/api/finance/entries/lote', {
+        method: 'POST',
+        body: JSON.stringify({ acao: 'cancelar', ids: elegiveis.map((l) => l.id), motivo })
+      });
+      travarLote(false);
+      await mostrarResultadoDoLote(resposta);
+    } catch (erro) {
+      travarLote(false);
+      showToast(erro.message || 'Não foi possível cancelar os lançamentos.', 'error');
+    }
   }
 
   async function openEntryModal(id, options) {
@@ -350,9 +1285,12 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
       const [res] = await Promise.all([api(`/api/finance/entries/${id}`), metaPronto]);
       entry = res.entry;
     } catch (error) {
-      showToast(error.message || 'Erro ao carregar lançamento.', 'error');
+      if (telaAtiva()) showToast(error.message || 'Erro ao carregar lançamento.', 'error');
       return;
     }
+    // A pessoa pode ter ido para outra tela enquanto o lançamento chegava: o
+    // modal dele não abre por cima de Vendas (fase EI).
+    if (!telaAtiva()) return;
     renderEntryModal(entry, options || {});
   }
 
@@ -367,7 +1305,11 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
     const canPay = entry.rawStatus === 'pending' || entry.rawStatus === 'parcial';
     const canCancel = entry.rawStatus !== 'paid' && entry.rawStatus !== 'cancelado';
     const canEstorno = entry.payments.length > 0;
-    const saldoRestante = Math.max(0, entry.amountPrevisto - entry.amountRealizado);
+    // O saldo da regra da baixa (fase EI): juros, multa e desconto das baixas
+    // anteriores entram. Previsto − realizado só para resposta sem o campo.
+    const saldoRestante = entry.emAberto != null
+      ? Number(entry.emAberto)
+      : Math.max(0, entry.amountPrevisto - entry.amountRealizado);
     // A TAXA DA MAQUININHA (fase BX). Só na PRIMEIRA baixa: com uma baixa
     // parcial no meio, o que falta já não é o líquido inteiro, e sugerir que é
     // colocaria um número errado no campo.
@@ -461,7 +1403,7 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
           <form id="financePaymentForm" class="form-grid">
             <div class="row">
               <label>Valor<input type="number" step="0.01" name="amount" required value="${Number(valorSugerido).toFixed(2)}" /></label>
-              <label>Data<input type="date" name="date" required value="${new Date().toISOString().slice(0, 10)}" /></label>
+              <label>Data<input type="date" name="date" required value="${financeHojeLocal()}" /></label>
               <label>Conta bancária<select name="bankAccountId"><option value="">Selecione</option>${optionListInline(entry, 'bankAccounts')}</select></label>
             </div>
             <div class="row">
@@ -573,9 +1515,7 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
 
   await load();
 
-  if (state.financeOpenEntryId) {
-    const entryIdToOpen = state.financeOpenEntryId;
-    state.financeOpenEntryId = null;
-    openEntryModal(entryIdToOpen);
-  }
+  // O lançamento pedido por outra tela (dashboard, extrato, NF-e) — lido e
+  // apagado no começo desta função, e aberto só se ela ainda é a da vez.
+  if (idParaAbrir && telaAtiva()) openEntryModal(idParaAbrir);
 };

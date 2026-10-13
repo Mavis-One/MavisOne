@@ -354,6 +354,12 @@ const PARCIAIS = {
     '/api/finance/entries/:id/payments POST',
     '/api/finance/entries/:id/estorno POST',
     '/api/finance/entries/:id/cancelar POST',
+    // Fase EI. Exportar: os do filtro (ou os selecionados) inteiros, com as
+    // baixas, e serializados um a um — a mesma leitura da página, sem limite.
+    // Lote: os selecionados e as baixas deles, as mesmas regras de baixar e
+    // cancelar UM; não serializa nada.
+    '/api/finance/entries/exportar GET',
+    '/api/finance/entries/lote POST',
     '/api/finance/bank-transactions GET',
     '/api/finance/bank-transactions POST',
     '/api/finance/bank-transactions/:id/conciliar POST',

@@ -151,6 +151,12 @@ const lancamentoCodigo = require('./public/modules/shared/lancamento_codigo');
 // Fase AX: a descricao do lancamento financeiro. Quatro origens escreviam
 // quatro frases diferentes para a mesma coisa — ver o cabecalho do catalogo.
 const descricaoLancamento = require('./public/modules/shared/descricao_lancamento');
+// Fase EI: a lista de lançamentos — busca por valor, abas de situação, ordens
+// aceitas e quem pode ser baixado ou cancelado em lote. Mesmo arquivo na tela.
+const listaDeLancamentos = require('./public/modules/shared/lancamentos_lista');
+// Fase EI: a Conciliação Bancária — data da linha importada, ordem da lista e
+// os cartões de resumo. Ver o cabeçalho do arquivo.
+const extratoBancario = require('./lib/extrato-bancario');
 // Fase AS: categoria da VENDA (Varejo, Atacado, Bonificacao) — nao a do produto.
 const categoriasVendaDb = require('./lib/db/categorias-venda');
 // Fase AZ: origem da VENDA (Balcao, Televendas, E-commerce). Era uma lista
@@ -1436,6 +1442,30 @@ function financeEntryStatusLabel(entry) {
 
 function sumFinanceAmount(entries) {
   return entries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+}
+
+// O TÍTULO PARCIAL (fase EI). O dashboard e a Síntese somavam o parcial pelo
+// valor cheio em "a pagar"/"a receber", e o saldo não via o que já tinha sido
+// baixado dele. `pagoPorId` é o Map id -> soma das baixas dos parciais
+// (getPagoDosParciais, lib/db/financeiro.js). Em aberto é previsto menos
+// baixado, nunca negativo — a conta de resumirListaDeLancamentos. Sem o Map, ou
+// sem parcial, as somas saem iguais às de sumFinanceAmount, bit a bit.
+function isFinanceEntryPartial(entry) {
+  return String(entry.status || '').toLowerCase() === 'parcial';
+}
+
+function financeEntryOpenAmount(entry, pagoPorId) {
+  const previsto = Number(entry.amount || 0);
+  if (!isFinanceEntryPartial(entry)) return previsto;
+  return Math.max(0, previsto - Number((pagoPorId && pagoPorId.get(entry.id)) || 0));
+}
+
+function sumFinanceOpenAmount(entries, pagoPorId) {
+  return entries.reduce((sum, entry) => sum + financeEntryOpenAmount(entry, pagoPorId), 0);
+}
+
+function sumFinancePartialPaid(entries, pagoPorId) {
+  return entries.reduce((sum, entry) => sum + (isFinanceEntryPartial(entry) ? Number((pagoPorId && pagoPorId.get(entry.id)) || 0) : 0), 0);
 }
 
 // Cadastros (pessoas/CNPJs) são Supabase de verdade a partir desta fase —
@@ -4296,6 +4326,14 @@ function financeEntryPaidTotal(payments) {
   return sumBy(payments, 'amount');
 }
 
+// O saldo em aberto de UM lançamento com as baixas dele (fase EI): a mesma
+// conta com que a rota de baixa decide até quanto aceita. Pago e cancelado: 0.
+function financeEntryEmAberto(entry, payments) {
+  if (isFinanceEntryRealized(entry) || isFinanceEntryCancelled(entry)) return 0;
+  const falta = financeEntryEffectiveDue(entry, payments || []) - financeEntryPaidTotal(payments || []);
+  return Math.max(0, Math.round(falta * 100) / 100);
+}
+
 /**
  * O QUE UM LANÇAMENTO PRECISA RESPEITAR — AO NASCER E AO SER EDITADO (fase BG).
  *
@@ -4325,6 +4363,12 @@ function financeEntryPaidTotal(payments) {
 function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, type }) {
   if (!String(description == null ? '' : description).trim()) {
     return 'Informe a descrição do lançamento';
+  }
+  // UM TETO (fase EI). Não havia nenhum além dos 8 MB do corpo: uma descrição
+  // de 300 mil caracteres passava, e a lista a resume e corta em toda tela que
+  // a mostra. A maior gravada até hoje tem 220; mil sobra para qualquer uso.
+  if (String(description).length > 1000) {
+    return 'A descrição passa de 1.000 caracteres. Use a observação para o que não couber.';
   }
   if (!(Number(amount || 0) > 0)) {
     return 'Informe um valor maior que zero';
@@ -4427,8 +4471,12 @@ async function addFinanceAuditLog(_data, { action, entry, byId, byName, details 
   });
 }
 
-function serializeFinanceEntry(entry, data) {
-  const payments = getFinanceEntryPayments(data, entry.id);
+// `baixasDoLancamento` (fase EI) é para quem serializa MUITOS de uma vez: sem
+// ele, cada chamada filtra a lista inteira de baixas — 27 mil lançamentos ×
+// 25 mil baixas na exportação sem filtro eram ~700 milhões de comparações, 10 a
+// 18 s com o servidor inteiro parado. Quem passa já agrupou por lançamento.
+function serializeFinanceEntry(entry, data, baixasDoLancamento) {
+  const payments = baixasDoLancamento || getFinanceEntryPayments(data, entry.id);
   return {
     id: entry.id,
     // Fase AT: o numero do lancamento e o codigo pronto (LF0042). Os dois vao
@@ -4461,6 +4509,12 @@ function serializeFinanceEntry(entry, data) {
     // entradas antigas de vendas/compras marcam status 'paid' direto, sem registrar baixa em financialPayments;
     // sem esse fallback o valor realizado aparece como R$ 0,00 para um lançamento já "Pago/Recebido"
     amountRealizado: payments.length > 0 ? financeEntryPaidTotal(payments) : (isFinanceEntryRealized(entry) ? Number(entry.amount || 0) : 0),
+    // O QUE FALTA, pela regra da baixa (fase EI): devido efetivo (previsto +
+    // juros + multa − desconto das baixas) menos o baixado. "Previsto menos
+    // realizado" errava no cartão: baixado pelo líquido com a taxa de
+    // desconto, o título ficava pago e a lista mostrava a taxa "em aberto".
+    // Pago e cancelado não devem nada.
+    emAberto: financeEntryEmAberto(entry, payments),
     editable: !entry.referenceId && !entry.nfeId,
     // Vinculado a um pedido ou a uma NF-e: NÃO significa mais "intocável".
     // Valor, data, descrição e cliente pertencem à origem; vencimento, conta,
@@ -4472,6 +4526,13 @@ function serializeFinanceEntry(entry, data) {
     camposTravados: (entry.referenceId || entry.nfeId)
       ? ['amount', 'date', 'description', 'clientSupplierId', 'clientSupplierName', 'type']
       : [],
+    // Fase EI: de qual pedido e de qual estabelecimento. A tela de edição
+    // precisa dos dois: sem `estabelecimentoId` o campo abria em "Nenhum" (ou
+    // no primeiro da lista) e salvar trocava o estabelecimento do lançamento
+    // em silêncio; sem `referenceId`, "Voltar ao pedido" aparecia em
+    // lançamento de outro pedido. Só acrescenta: a lista lê este mesmo objeto.
+    referenceId: entry.referenceId || '',
+    estabelecimentoId: entry.estabelecimentoId || '',
     status: financeEntryStatusLabel(entry),
     rawStatus: entry.status,
     createdByName: entry.createdByName || '',
@@ -4518,21 +4579,57 @@ function serializeFinanceEntry(entry, data) {
 function filterFinanceEntries(data, query) {
   let entries = (data.finance || []).slice();
 
+  // A BUSCA RÁPIDA (fase EI). Procurava só na descrição, no id interno e no
+  // nome da contraparte — e a caixa dizia "Código, descrição ou cliente": quem
+  // digitava LF26262, o número que a coluna Código mostra, não achava nada,
+  // porque o id é "fin-…". Agora procura também no código (LF0042), no
+  // documento, e pelo VALOR quando o texto é um valor ("2.500,00", "2500"):
+  // previsto ou, no cartão, o líquido que a credenciadora credita. Sem acento
+  // e sem diferença de maiúscula, pela mesma normalizeText do resto do sistema.
   const search = String(query.get('search') || '').trim().toLowerCase();
   if (search) {
+    const termo = normalizeText(search);
+    const valor = listaDeLancamentos.valorDaBusca(search);
+    const emCentavos = valor === null ? null : listaDeLancamentos.centavos(valor);
+    const codigo = listaDeLancamentos.codigoDaBusca(search);
+    // O ATALHO EXATO: texto só com ASCII imprimível e sem espaço duplo sai de
+    // normalizeText igual a toLowerCase().trim() — não há acento a tirar nem
+    // espaço a juntar — e custa metade. São 5 campos × 27 mil linhas por busca.
+    const asciiSimples = /^[\x20-\x7e]*$/;
+    const paraBusca = (valor) => {
+      const texto = String(valor || '');
+      return asciiSimples.test(texto) && !texto.includes('  ') ? texto.trim().toLowerCase() : normalizeText(texto);
+    };
     entries = entries.filter((entry) => {
+      if (emCentavos !== null && (listaDeLancamentos.centavos(entry.amount) === emCentavos
+        || (entry.netAmount != null && listaDeLancamentos.centavos(entry.netAmount) === emCentavos))) return true;
+      if (codigo !== null && Number(entry.code) === codigo) return true;
       const name = resolveFinanceCounterparty(entry, data) || '';
-      return String(entry.description || '').toLowerCase().includes(search)
-        || String(entry.id || '').toLowerCase().includes(search)
-        || name.toLowerCase().includes(search);
+      return [entry.description, entry.id, name, entry.document, lancamentoCodigo.formatar(entry.code)]
+        .some((campo) => paraBusca(campo).includes(termo));
     });
   }
 
   const type = query.get('type');
   if (type) entries = entries.filter((entry) => classifyFinanceEntry(entry) === type);
 
+  // Uma situação ou várias, separadas por vírgula: as abas da lista juntam
+  // ("Em aberto" = pendente,vencido,parcial). Ver listaDeLancamentos.ABAS.
+  //
+  // 'parcial-vencido' não é rótulo, é um recorte: o parcial cujo vencimento
+  // passou. O rótulo dele continua 'parcial' (ainda não pago por inteiro), mas
+  // a aba Vencidos precisa dele — o dashboard o conta como vencido, e a aba
+  // que o esquecesse mostraria menos do que o cartão de lá.
   const status = query.get('status');
-  if (status) entries = entries.filter((entry) => financeEntryStatusLabel(entry) === status);
+  if (status) {
+    const aceitas = listaDeLancamentos.situacoesDoFiltro(status);
+    const hoje = toDateStr(getTodayLocal());
+    entries = entries.filter((entry) => {
+      const rotulo = financeEntryStatusLabel(entry);
+      return aceitas.includes(rotulo)
+        || (rotulo === 'parcial' && aceitas.includes('parcial-vencido') && financeEntryDueDate(entry) < hoje);
+    });
+  }
 
   const clientSupplierId = query.get('clientSupplierId');
   if (clientSupplierId) entries = entries.filter((entry) => entry.clientSupplierId === clientSupplierId);
@@ -4622,6 +4719,20 @@ function serializeNfe(nfe, data) {
   return nfeParaTela(nfe, (data.finance || []).filter((entry) => entry.nfeId === nfe.id));
 }
 
+// Uma parcela vinculada à nota, como a lista e o modal de NF-e desenham. Tem
+// função própria (fase EI) porque a NF-e FISCAL também tem parcelas: a avulsa
+// gera o contas a receber com nfeId = id da nota (gerarFinanceiroDaNfeAvulsa),
+// e a lista as anexa no mesmo formato da manual.
+function parcelaDaNfeParaTela(entry) {
+  return {
+    id: entry.id,
+    description: entry.description,
+    dueDate: financeEntryDueDate(entry),
+    amount: Number(entry.amount || 0),
+    status: financeEntryStatusLabel(entry)
+  };
+}
+
 // A nota manual como a tela desenha, com as parcelas PASSADAS em vez de
 // filtradas de `data.finance` (fase DS). A lista de NF-e filtra, ordena e
 // pagina por campos da nota — número, cliente, chave, situação, data — e só
@@ -4649,13 +4760,7 @@ function nfeParaTela(nfe, linkedEntries) {
     paymentType: nfe.paymentType || 'avista',
     installmentsCount: nfe.installmentsCount || 1,
     installmentIntervalDays: nfe.installmentIntervalDays || 30,
-    financialEntries: linkedEntries.map((entry) => ({
-      id: entry.id,
-      description: entry.description,
-      dueDate: financeEntryDueDate(entry),
-      amount: Number(entry.amount || 0),
-      status: financeEntryStatusLabel(entry)
-    })),
+    financialEntries: linkedEntries.map(parcelaDaNfeParaTela),
     createdByName: nfe.createdByName || '',
     createdAt: nfe.createdAt || ''
   };
@@ -4671,6 +4776,27 @@ function nfeParaTela(nfe, linkedEntries) {
  * do Financeiro não tem chave, nem XML, nem o que consultar na SEFAZ.
  */
 function fiscalNfeParaLista(nfe) {
+  // O DIA DA NOTA EM BRASÍLIA (fase EI). data_emissao e criado_em são
+  // timestamptz e chegam em ISO UTC ("...Z"); cortar o texto nos 10 primeiros
+  // caracteres jogava a NFC-e das 21h30 de 13/10 (00:30Z do dia 14) para o
+  // dia 14, e ela sumia do filtro "13/10 a 13/10". Mas meia-noite UTC em ponto
+  // é DATA CIVIL: a tela de emissão manda `new Date('AAAA-MM-DD').toISOString()`,
+  // e converter essa para Brasília mostraria toda NF-e dela no dia anterior
+  // (21h). Por isso as duas leituras. criado_em é sempre instante.
+  // Aqui dentro, e não em função à parte: os testes extraem esta função isolada.
+  // O formatador fica guardado na própria função: criar um Intl.DateTimeFormat
+  // por nota custa ~70 µs (medido: 495 ms para 7 mil notas, contra 8 ms
+  // reaproveitando), e esta função roda para toda nota fiscal a cada listagem.
+  const formatoBrasilia = fiscalNfeParaLista.formatoBrasilia
+    || (fiscalNfeParaLista.formatoBrasilia = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }));
+  const diaDaNfeEmBrasilia = (valor, sempreInstante) => {
+    const texto = String(valor || '');
+    if (!texto) return '';
+    if (!sempreInstante && /T00:00:00(?:\.0+)?(?:Z|[+-]00:?00)$/.test(texto)) return texto.slice(0, 10);
+    const instante = new Date(texto);
+    if (Number.isNaN(instante.getTime())) return texto.slice(0, 10);
+    return formatoBrasilia.format(instante);
+  };
   return {
     id: nfe.id,
     origem: 'fiscal',
@@ -4680,7 +4806,7 @@ function fiscalNfeParaLista(nfe) {
     modelo: Number(nfe.modelo || 55),
     number: nfe.numero || '',
     series: nfe.serie || '',
-    date: String(nfe.dataEmissao || nfe.criadoEm || '').slice(0, 10),
+    date: nfe.dataEmissao ? diaDaNfeEmBrasilia(nfe.dataEmissao) : diaDaNfeEmBrasilia(nfe.criadoEm, true),
     status: normalizeNfeStatus(nfe.status),
     statusFiscal: nfe.status,
     key: nfe.chaveAcesso || '',
@@ -4697,7 +4823,9 @@ function fiscalNfeParaLista(nfe) {
     // Sem este campo a tela não teria como desabilitar o botão, e a pessoa só
     // descobriria o vencimento depois de escrever a justificativa inteira.
     autorizadoEm: nfe.autorizadoEm || '',
-    // A nota fiscal não gera parcela por si: o financeiro vem do pedido.
+    // Vazio aqui: a rota anexa depois as parcelas das notas DA PÁGINA (fase
+    // EI). A NF-e avulsa tem parcelas com nfeId = id da nota; a de pedido não,
+    // porque o financeiro dela é do pedido (referenceId).
     financialEntries: [],
     items: []
   };
@@ -4705,13 +4833,37 @@ function fiscalNfeParaLista(nfe) {
 
 function filterNfes(data, query, listaBase) {
   let list = listaBase ? listaBase.slice() : (data.nfes || []).slice();
+  // Só dígitos à mão, e não sanitizeDigits: scripts/test-financeiro-por-recorte.js
+  // roda esta função isolada, sem o resto do servidor em volta.
+  const digitos = (v) => String(v || '').replace(/\D/g, '');
 
   const search = String(query.get('search') || '').trim().toLowerCase();
   if (search) {
+    // CPF/CNPJ e referência na busca (fase EI). O documento só casa quando o
+    // termo é só número (com ou sem máscara) e tem 6 dígitos ou mais: "124"
+    // é número de nota, e casar documento com ele traria todo CPF com 124 no
+    // meio — o mesmo cuidado do filtro `documento`, logo abaixo.
+    const docDaBusca = /^[\d.\-/\s]+$/.test(search) ? digitos(search) : '';
+    const casaDocumento = docDaBusca.length >= 6;
     list = list.filter((nfe) => String(nfe.number || '').toLowerCase().includes(search)
       || String(nfe.customer || '').toLowerCase().includes(search)
-      || String(nfe.key || '').toLowerCase().includes(search));
+      || String(nfe.key || '').toLowerCase().includes(search)
+      || String(nfe.referencia || '').toLowerCase().includes(search)
+      || (casaDocumento && digitos(nfe.clientDocument).includes(docDaBusca)));
   }
+
+  // Faixa de valor (fase EI), em centavos para 1250.1 + 0.2 não errar a
+  // borda. Vazio ou não numérico não filtra; vírgula decimal vale.
+  const centavos = (v) => {
+    const texto = String(v ?? '').trim().replace(',', '.');
+    if (!texto) return null;
+    const n = Number(texto);
+    return Number.isFinite(n) ? Math.round(n * 100) : null;
+  };
+  const valorDe = centavos(query.get('valorDe'));
+  const valorAte = centavos(query.get('valorAte'));
+  if (valorDe !== null) list = list.filter((nfe) => Math.round(Number(nfe.amount || 0) * 100) >= valorDe);
+  if (valorAte !== null) list = list.filter((nfe) => Math.round(Number(nfe.amount || 0) * 100) <= valorAte);
 
   const status = query.get('status');
   if (status) list = list.filter((nfe) => normalizeNfeStatus(nfe.status) === status);
@@ -4734,9 +4886,7 @@ function filterNfes(data, query, listaBase) {
   // O CPF/CNPJ do destinatário, só dígitos e exato (13/10/2026): é a aba Notas
   // Fiscais do cadastro da pessoa. Com máscara ou sem, a nota é a mesma; e
   // "contém" ligaria o CPF 123 a todo documento que tivesse 123 no meio.
-  // Só dígitos à mão, e não sanitizeDigits: scripts/test-financeiro-por-recorte.js
-  // roda esta função isolada, sem o resto do servidor em volta.
-  const digitos = (v) => String(v || '').replace(/\D/g, '');
+  // (`digitos` está no começo da função.)
   const documento = digitos(query.get('documento'));
   if (documento) list = list.filter((nfe) => digitos(nfe.clientDocument) === documento);
 
@@ -4798,16 +4948,49 @@ function filterBankTransactions(data, query) {
   const type = query.get('type');
   if (type) list = list.filter((tx) => tx.type === type);
 
-  const search = String(query.get('search') || '').trim().toLowerCase();
-  if (search) list = list.filter((tx) => String(tx.description || '').toLowerCase().includes(search));
+  // A BUSCA PROCURA TAMBÉM O VALOR (fase EI). Procurava só na descrição, e o
+  // jeito de achar no extrato o crédito de R$ 1.250,00 para conciliar era rolar
+  // a lista. Texto que é valor ("1.250,00", "1250", "R$ 1.250") casa o valor da
+  // movimentação ao centavo — pela MESMA leitura da busca de Lançamentos, para
+  // as duas telas entenderem "2.500" igual. Descrição sem acento e sem
+  // diferença de maiúscula, pela normalizeText do resto do sistema.
+  const search = String(query.get('search') || '').trim();
+  if (search) {
+    const termo = normalizeText(search);
+    const valor = listaDeLancamentos.valorDaBusca(search);
+    const emCentavos = valor === null ? null : listaDeLancamentos.centavos(valor);
+    list = list.filter((tx) => (emCentavos !== null && listaDeLancamentos.centavos(tx.amount) === emCentavos)
+      || normalizeText(tx.description).includes(termo));
+  }
 
   const dateFrom = query.get('dateFrom');
   const dateTo = query.get('dateTo');
   if (dateFrom) list = list.filter((tx) => tx.date >= dateFrom);
   if (dateTo) list = list.filter((tx) => tx.date <= dateTo);
 
+  // Faixa de valor (fase EI): "entre R$ 1.000 e R$ 1.500", para quando não se
+  // sabe o valor exato. Em centavos, pela mesma razão da busca; número que não
+  // é número não filtra, em vez de esvaziar a lista.
+  const faixa = (nome) => {
+    const bruto = String(query.get(nome) || '').trim().replace(',', '.');
+    return bruto && Number.isFinite(Number(bruto)) ? listaDeLancamentos.centavos(Number(bruto)) : null;
+  };
+  const amountMin = faixa('amountMin');
+  const amountMax = faixa('amountMax');
+  if (amountMin !== null) list = list.filter((tx) => listaDeLancamentos.centavos(tx.amount) >= amountMin);
+  if (amountMax !== null) list = list.filter((tx) => listaDeLancamentos.centavos(tx.amount) <= amountMax);
+
   return list;
 }
+
+// CONCILIAÇÕES EM ANDAMENTO, pelo id da movimentação (fase EI). A rota de
+// conciliar confere `tx.status === 'conciliado'` no começo e só grava o novo
+// status no fim, depois de várias idas ao banco (~1 s). Um clique duplo em
+// "Conciliar com este" passava duas vezes pela conferência e criava DUAS
+// baixas; a segunda sobrescrevia matchedPaymentId e a primeira ficava órfã
+// (Desconciliar só apaga uma). O servidor roda num processo só (PM2 em fork,
+// instances: 1), então um Set em memória vale para todas as requisições.
+const conciliacoesEmAndamento = new Set();
 
 function buildBankTransaction(body, user, source) {
   return {
@@ -5019,9 +5202,11 @@ function buildOpenFinanceSyncDeps() {
 // erro) ainda mantém salvo o progresso da 1ª — cada conta/transação já foi
 // gravada de forma independente pelos callbacks acima, não há nada a
 // descartar nem um saveData() final pra esquecer de chamar no catch.
-async function syncOpenFinanceConnection(connectionId) {
+// `autor` ({ byId, byName }) vai para a auditoria da sincronização (fase EI);
+// o webhook chama sem autor, porque não há usuário por trás dele.
+async function syncOpenFinanceConnection(connectionId, autor) {
   const deps = buildOpenFinanceSyncDeps();
-  return openFinanceSync.syncConnection(connectionId, deps);
+  return openFinanceSync.syncConnection(connectionId, deps, autor);
 }
 
 // Janela de datas por granularidade — compartilhada entre o gráfico do Financeiro
@@ -5281,7 +5466,13 @@ function totaisDePedidosDoEscopo(data, escopo) {
   return { totalPedidos: visiveis.length, valorPedidos };
 }
 
-function buildFinanceDashboardSummary(data, query) {
+// `extras` (fase EI) traz o que a rota lê fora de `data`, para não pendurar
+// chave nova no objeto do db.json: `pagoDosParciais` (Map id -> baixado, ver
+// getPagoDosParciais) e `nfesAutorizadas` (contarNfeAutorizadas). Sem eles, o
+// resumo sai como antes da fase — o parcial pelo valor cheio e o cartão de NF-e
+// sem número.
+function buildFinanceDashboardSummary(data, query, extras = {}) {
+  const pagoPorId = extras.pagoDosParciais instanceof Map ? extras.pagoDosParciais : new Map();
   const todayStr = toDateStr(getTodayLocal());
   const period = query.get('period') || 'month';
   const granularity = query.get('granularity') || 'month';
@@ -5298,18 +5489,21 @@ function buildFinanceDashboardSummary(data, query) {
   const isOverdue = (entry) => pendingOrPartial(entry) && financeEntryDueDate(entry) < todayStr;
   const isUpcoming = (entry) => pendingOrPartial(entry) && financeEntryDueDate(entry) >= todayStr;
 
+  // Em aberto só o que FALTA do parcial; pago/recebido inclui o que já foi
+  // baixado dele (fase EI). contasDoFinanceiro repete estas linhas, palavra por
+  // palavra (scripts/test-relatorios-desempenho.js confere).
   const contasAPagar = {
-    total: sumFinanceAmount(despesaEntries.filter(pendingOrPartial)),
-    vencidas: sumFinanceAmount(despesaEntries.filter(isOverdue)),
-    aVencer: sumFinanceAmount(despesaEntries.filter(isUpcoming)),
-    pagas: sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized))
+    total: sumFinanceOpenAmount(despesaEntries.filter(pendingOrPartial), pagoPorId),
+    vencidas: sumFinanceOpenAmount(despesaEntries.filter(isOverdue), pagoPorId),
+    aVencer: sumFinanceOpenAmount(despesaEntries.filter(isUpcoming), pagoPorId),
+    pagas: sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized)) + sumFinancePartialPaid(despesaEntries, pagoPorId)
   };
 
   const contasAReceber = {
-    total: sumFinanceAmount(receitaEntries.filter(pendingOrPartial)),
-    vencidas: sumFinanceAmount(receitaEntries.filter(isOverdue)),
-    aReceber: sumFinanceAmount(receitaEntries.filter(isUpcoming)),
-    recebidas: sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized))
+    total: sumFinanceOpenAmount(receitaEntries.filter(pendingOrPartial), pagoPorId),
+    vencidas: sumFinanceOpenAmount(receitaEntries.filter(isOverdue), pagoPorId),
+    aReceber: sumFinanceOpenAmount(receitaEntries.filter(isUpcoming), pagoPorId),
+    recebidas: sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized)) + sumFinancePartialPaid(receitaEntries, pagoPorId)
   };
 
   const periodReceitas = sumFinanceAmount(
@@ -5331,7 +5525,9 @@ function buildFinanceDashboardSummary(data, query) {
     ? ((periodReceitas - periodDespesas - resultadoAnterior) / Math.abs(resultadoAnterior)) * 100
     : null;
 
-  const saldoAtual = sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized)) - sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized));
+  // O que entrou menos o que saiu — com as baixas dos parciais (fase EI). Sem
+  // parcial, é a conta de antes: realizado de receitas menos o de despesas.
+  const saldoAtual = contasAReceber.recebidas - contasAPagar.pagas;
   const previsaoFinanceira = saldoAtual + contasAReceber.aReceber - contasAPagar.aVencer;
 
   const dueBuckets = { hoje: [], amanha: [], proximos7: [], proximos30: [] };
@@ -5353,7 +5549,8 @@ function buildFinanceDashboardSummary(data, query) {
         type: classifyFinanceEntry(entry),
         clienteFornecedor: resolveFinanceCounterparty(entry, data),
         dueDate,
-        amount: Number(entry.amount || 0),
+        // O que falta pagar/receber: no parcial, sem o que já foi baixado (fase EI).
+        amount: financeEntryOpenAmount(entry, pagoPorId),
         status: financeEntryStatusLabel(entry)
       };
       if (dueDate === todayStr) dueBuckets.hoje.push(item);
@@ -5362,12 +5559,40 @@ function buildFinanceDashboardSummary(data, query) {
       if (dueDate <= thirtyDaysStr) dueBuckets.proximos30.push(item);
     });
 
+  // CADA ABA EM ORDEM DE VENCIMENTO, E SÓ AS DEZ PRIMEIRAS (fase EI). As listas
+  // saíam na ordem de `entries` — data decrescente, que nos títulos do Viper é
+  // o vencimento: o que vence amanhã ficava no FIM. E sem corte: 417 cartões em
+  // "Próximos 30 dias" neste banco. Agora o mais urgente primeiro (no mesmo dia,
+  // o maior valor; depois o id, para não trocar de lugar a cada minuto), dez
+  // itens, e a quantidade e o total da aba inteira para a tela dizer quanto
+  // ficou de fora.
+  const ITENS_POR_ABA = 10;
+  const proximosVencimentos = {};
+  Object.keys(dueBuckets).forEach((aba) => {
+    const lista = dueBuckets[aba].sort((a, b) => (a.dueDate === b.dueDate
+      ? (b.amount - a.amount) || (String(a.id) < String(b.id) ? -1 : (String(a.id) > String(b.id) ? 1 : 0))
+      : (a.dueDate < b.dueDate ? -1 : 1)));
+    proximosVencimentos[aba] = {
+      itens: lista.slice(0, ITENS_POR_ABA),
+      quantidade: lista.length,
+      total: Math.round(lista.reduce((soma, item) => soma + item.amount, 0) * 100) / 100
+    };
+  });
+
+  // OS ÚLTIMOS CADASTRADOS (fase EI). A ordem era a da data, que nos títulos do
+  // Viper é o vencimento: o quadro mostrava os que vencem em dezembro, e quem
+  // acabou de lançar algo não o achava ali. O número do lançamento (LF0042) vem
+  // da sequence e segue a ordem de cadastro; sem número (0) vai para o fim, e o
+  // empate cai na ordem de antes. `codigo` é o mesmo LF da lista de Lançamentos
+  // — a coluna mostrava um pedaço do id, que não bate com nada que se procure.
+  const porDataDecrescente = (a, b) => (b.date === a.date ? String(b.id).localeCompare(String(a.id)) : String(b.date).localeCompare(String(a.date)));
   const ultimosLancamentos = entries
     .slice()
-    .sort((a, b) => (b.date === a.date ? String(b.id).localeCompare(String(a.id)) : String(b.date).localeCompare(String(a.date))))
+    .sort((a, b) => ((Number(b.code) || 0) - (Number(a.code) || 0)) || porDataDecrescente(a, b))
     .slice(0, 8)
     .map((entry) => ({
       id: entry.id,
+      codigo: lancamentoCodigo.formatar(entry.code),
       date: entry.date,
       description: entry.description,
       type: classifyFinanceEntry(entry),
@@ -5377,12 +5602,12 @@ function buildFinanceDashboardSummary(data, query) {
       status: financeEntryStatusLabel(entry)
     }));
 
-  const nfes = data.nfes || [];
-  const nfeStats = nfes.reduce((acc, nfe) => {
-    const status = String(nfe.status || 'emitida').toLowerCase();
-    acc[status] = (acc[status] || 0) + 1;
-    return acc;
-  }, {});
+  // O cartão "NF-e emitidas" contava a lista `nfes` de `data`, que nunca chegava
+  // a esta rota (NAO_PERSISTIR, sem sync): era 0 sempre (fase EI). A contagem vem do banco, pela rota
+  // (contarNfeAutorizadas). `nfeStats` saiu junto: nenhuma tela o lia.
+  // null = a contagem não veio (tabela fiscal fora do ar): a tela mostra "—",
+  // e não um 0 que pareceria número de verdade.
+  const totalNfesEmitidas = Number.isFinite(extras.nfesAutorizadas) ? extras.nfesAutorizadas : null;
 
   const bankTransactions = data.bankTransactions || [];
   const movimentacoesBancarias = {
@@ -5405,10 +5630,9 @@ function buildFinanceDashboardSummary(data, query) {
     resultadoDeltaPercent,
     previsaoFinanceira,
     chartSeries: buildFinanceChartSeries(entries, granularity),
-    proximosVencimentos: dueBuckets,
+    proximosVencimentos,
     ultimosLancamentos,
-    totalNfesEmitidas: nfes.length,
-    nfeStats,
+    totalNfesEmitidas,
     movimentacoesBancarias
   };
 }
@@ -5511,6 +5735,174 @@ function compararLancamentosDaLista(a, b) {
   return b.date === a.date ? String(b.id).localeCompare(String(a.id)) : String(b.date).localeCompare(String(a.date));
 }
 
+/**
+ * A ORDEM POR COLUNA DA LISTA DE LANÇAMENTOS (fase EI). Cada chave diz o que a
+ * coluna É: número compara como número (LF10000 depois de LF9999, R$ 1.000
+ * depois de R$ 999), data compara como texto ISO, e texto compara em pt-BR sem
+ * diferenciar acento nem maiúscula. As chaves aceitas são as de
+ * listaDeLancamentos.ORDENAVEIS — a tela só desenha seta nelas.
+ *
+ * Nome de categoria, conta e centro de custo vêm de mapas montados UMA vez por
+ * pedido: resolveById varre a lista inteira, e fazer isso dentro do comparador
+ * seria uma varredura por comparação, ~400 mil numa lista de 27 mil.
+ */
+const ORDENS_DA_LISTA_DE_LANCAMENTOS = {
+  codigo: { tipo: 'numero', valor: (e) => Number(e.code) || 0 },
+  date: { tipo: 'data', valor: (e) => String(e.date || '') },
+  dueDate: { tipo: 'data', valor: (e) => String(financeEntryDueDate(e) || '') },
+  // Descrição e Documento ordenam pelo que a COLUNA MOSTRA. Pelo texto gravado,
+  // 13.742 descrições começam com "Valor de R$ X (Parcela...)" e sairiam em
+  // ordem do valor escondido; e todo documento começa com o próprio LF, então
+  // ordenar por ele era ordenar por código. Ver resumir e referencia.
+  description: { tipo: 'texto', valor: (e) => descricaoLancamento.resumir(e.description) },
+  type: { tipo: 'texto', valor: (e) => classifyFinanceEntry(e) },
+  category: { tipo: 'texto', valor: (e, nomes) => nomes.categorias.get(e.category) },
+  clienteFornecedor: { tipo: 'texto', valor: (e, nomes, data) => resolveFinanceCounterparty(e, data) },
+  amount: { tipo: 'numero', valor: (e) => Number(e.amount || 0) },
+  // Situação pela URGÊNCIA, e não pelo alfabeto ("cancelado" viria primeiro):
+  // crescente põe o vencido no topo, que é o que se procura ao ordenar por ela
+  // — e o parcial vencido logo depois, antes do que ainda não venceu.
+  status: { tipo: 'numero', valor: (e) => situacaoPorUrgencia(e) },
+  document: { tipo: 'texto', valor: (e) => lancamentoCodigo.referencia(e.code, e.document) },
+  costCenter: { tipo: 'texto', valor: (e, nomes) => nomes.centros.get(e.costCenter) },
+  bankAccount: { tipo: 'texto', valor: (e, nomes) => nomes.contas.get(e.bankAccountId) }
+};
+
+// Os lançamentos com uma baixa ou um cancelamento sendo gravado AGORA (fase
+// EI). Ver a rota do lote: dois pedidos sobre o mesmo título não podem ler o
+// mesmo saldo antes de qualquer um gravar.
+const lancamentosEmGravacao = new Set();
+
+/**
+ * O que o lote faria com UM lançamento, sem gravar nada (fase EI): o motivo de
+ * não fazer, ou — na baixa — o valor e o desconto. A prévia do modal e a
+ * gravação usam esta mesma função, então o total que o modal anuncia é o que
+ * se grava.
+ *
+ * A baixa é pelo saldo em aberto inteiro, com uma exceção: a TAXA DO CARTÃO
+ * (fase BX). Na primeira baixa de um título com taxa, vai o líquido que a
+ * credenciadora credita, com a taxa como desconto — o mesmo que o modal de um
+ * lançamento sugere. Baixar pelo bruto deixaria o título parcial pela taxa,
+ * para sempre.
+ */
+function planoDoLote(acao, entry, baixas) {
+  const veredito = listaDeLancamentos.ACOES[acao].elegivel({ rawStatus: entry.status });
+  if (veredito !== true) return { motivo: veredito };
+  if (acao !== 'baixar') return {};
+  const emAberto = financeEntryEffectiveDue(entry, baixas) - financeEntryPaidTotal(baixas);
+  const comTaxa = entry.feeAmount != null && entry.netAmount != null
+    && Number(entry.feeAmount) > 0 && !baixas.length;
+  const desconto = comTaxa ? Number(entry.feeAmount) : 0;
+  const valor = Math.round((comTaxa ? Number(entry.netAmount) : emAberto) * 100) / 100;
+  if (!(valor > 0) || valor > emAberto - desconto + 0.01) return { motivo: 'Sem saldo em aberto para baixar.' };
+  return { valor, desconto };
+}
+
+function situacaoPorUrgencia(entry) {
+  const rotulo = financeEntryStatusLabel(entry);
+  if (rotulo === 'parcial' && financeEntryDueDate(entry) < toDateStr(getTodayLocal())) return 1.5;
+  return ({ vencido: 1, pendente: 2, parcial: 3, pago: 4, recebido: 4, cancelado: 5 })[rotulo] || 6;
+}
+
+/**
+ * Ordena a lista pela coluna pedida em ?sort=/?dir=. Sem coluna válida, é a
+ * ordem de sempre (compararLancamentosDaLista) — byte a byte a de antes.
+ *
+ * O DESEMPATE é sempre a ordem de sempre: duas linhas com o mesmo valor não
+ * trocam de lugar entre uma página e outra, que é como uma linha "some" ao
+ * virar a página. E o VAZIO vai para o fim nos dois sentidos — "-" no topo da
+ * ordem crescente esconderia as linhas que a pessoa queria ver.
+ */
+function ordenarListaDeLancamentos(lista, query, data) {
+  const chave = String(query.get('sort') || '');
+  const ordem = listaDeLancamentos.ORDENAVEIS.includes(chave) && ORDENS_DA_LISTA_DE_LANCAMENTOS[chave];
+  if (!ordem) return lista.sort(compararLancamentosDaLista);
+  const sinal = query.get('dir') === 'asc' ? 1 : -1;
+  const nomePorId = (itens) => new Map((itens || []).map((item) => [item.id, item.name]));
+  const nomes = {
+    categorias: nomePorId(data.financialCategories),
+    centros: nomePorId(data.costCenters),
+    contas: nomePorId(data.bankAccounts)
+  };
+  const colacao = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
+  const vazio = (v) => v === undefined || v === null || v === '' || v === '-';
+  const comChave = lista.map((entry) => {
+    const bruto = ordem.valor(entry, nomes, data);
+    return { entry, chave: ordem.tipo === 'texto' ? String(bruto == null ? '' : bruto).trim() : bruto };
+  });
+  comChave.sort((x, y) => {
+    const vx = vazio(x.chave);
+    const vy = vazio(y.chave);
+    if (vx !== vy) return vx ? 1 : -1;
+    let diferenca = 0;
+    if (!vx) {
+      if (ordem.tipo === 'numero') diferenca = x.chave - y.chave;
+      else if (ordem.tipo === 'texto') diferenca = colacao.compare(x.chave, y.chave);
+      else diferenca = x.chave < y.chave ? -1 : (x.chave > y.chave ? 1 : 0);
+    }
+    return sinal * diferenca || compararLancamentosDaLista(x.entry, y.entry);
+  });
+  return comChave.map((item) => item.entry);
+}
+
+/**
+ * O RESUMO DA LISTA FILTRADA (fase EI): as contagens de cada aba de situação e
+ * os totais em reais — de TODAS as páginas, que é a pergunta de quem filtra
+ * ("quanto vence esta semana?"), e não só das 15 linhas da tela.
+ *
+ *   `situacoes` — quantos e quanto em cada situação, sobre a lista filtrada
+ *                 por tudo MENOS a situação. É o que a aba mostra antes de ser
+ *                 clicada: "Vencidos 37" com o filtro de tipo e de data já
+ *                 aplicados, mas sem o da aba escolhida.
+ *   `totais`    — da lista com todos os filtros: previsto de receitas e de
+ *                 despesas, e o que segue em aberto de cada lado.
+ *
+ * EM ABERTO é a conta da rota de baixa (financeEntryEmAberto): previsto menos
+ * o que as baixas abateram — o valor baixado mais o desconto, menos juros e
+ * multa. Só o parcial precisa das baixas — pendente e vencido não têm
+ * nenhuma, pago e cancelado não devem nada —, e por isso quem chama passa o
+ * abatido só dos parciais (`abatidoPorId`). Cancelado não entra em total
+ * nenhum: é valor que não vai entrar nem sair.
+ *
+ * `parciaisVencidos` conta à parte o parcial cujo vencimento passou: a aba
+ * Vencidos o inclui (ver o filtro 'parcial-vencido'), mas ele continua contado
+ * em `situacoes.parcial` — assim `situacoes` segue somando a lista inteira.
+ */
+function resumirListaDeLancamentos(semSituacao, filtrados, abatidoPorId) {
+  const situacoes = {};
+  const parciaisVencidos = { quantidade: 0, valor: 0 };
+  const hoje = toDateStr(getTodayLocal());
+  semSituacao.forEach((entry) => {
+    const rotulo = financeEntryStatusLabel(entry);
+    const item = situacoes[rotulo] || (situacoes[rotulo] = { quantidade: 0, valor: 0 });
+    item.quantidade += 1;
+    item.valor += Number(entry.amount || 0);
+    if (rotulo === 'parcial' && financeEntryDueDate(entry) < hoje) {
+      parciaisVencidos.quantidade += 1;
+      parciaisVencidos.valor += Number(entry.amount || 0);
+    }
+  });
+  const totais = { quantidade: filtrados.length, receitas: 0, despesas: 0, aReceber: 0, aPagar: 0 };
+  filtrados.forEach((entry) => {
+    const rotulo = financeEntryStatusLabel(entry);
+    if (rotulo === 'cancelado') return;
+    const tipo = classifyFinanceEntry(entry);
+    const previsto = Number(entry.amount || 0);
+    let emAberto = 0;
+    if (rotulo === 'pendente' || rotulo === 'vencido') emAberto = previsto;
+    else if (rotulo === 'parcial') emAberto = Math.max(0, previsto - Number(abatidoPorId.get(entry.id) || 0));
+    if (tipo === 'receita') { totais.receitas += previsto; totais.aReceber += emAberto; }
+    if (tipo === 'despesa') { totais.despesas += previsto; totais.aPagar += emAberto; }
+  });
+  // Arredondado em centavos: somar 1.600 valores em ponto flutuante deixa
+  // R$ 152.334,1200000003, e a tela não deve receber o resto.
+  const centavo = (v) => Math.round(v * 100) / 100;
+  Object.values(situacoes).forEach((item) => { item.valor = centavo(item.valor); });
+  parciaisVencidos.valor = centavo(parciaisVencidos.valor);
+  ['receitas', 'despesas', 'aReceber', 'aPagar'].forEach((k) => { totais[k] = centavo(totais[k]); });
+  return { situacoes, parciaisVencidos, totais };
+}
+
 // O diretório de pessoas do /api/finance/meta, no recorte que a tela pediu
 // (fase DS; os valores de `pede` estão explicados na rota). Sem pedido, o
 // diretório inteiro, como sempre foi. Os campos de cada recorte são os que as
@@ -5537,7 +5929,9 @@ function diretorioDoMetaFinanceiro(data, pede) {
  * condições, e a ordem em que se aplicam não muda o resultado.
  *
  * A ordem final é a do comparador da rota, sobre a lista inteira filtrada: é ela
- * que decide o total e o que cai em cada página, exatamente como antes.
+ * que decide o total e o que cai em cada página, exatamente como antes. Com
+ * ?sort= (fase EI), a coluna pedida — e os parciais trazem a coluna que ela lê
+ * (ver getLancamentosDaLista).
  *
  * `data.finance` fica com os parciais ao sair daqui — quem chama troca pelos
  * lançamentos inteiros da página antes de serializar.
@@ -5549,7 +5943,8 @@ function filtrarListaDeLancamentos(data, parciais, query) {
     if (valor !== null) restantes.set(chave, valor);
   });
   data.finance = parciais;
-  return filterFinanceEntries(data, restantes).sort(compararLancamentosDaLista);
+  // A ordem pedida (fase EI) — sem ?sort=, a de sempre. Ver ordenarListaDeLancamentos.
+  return ordenarListaDeLancamentos(filterFinanceEntries(data, restantes), query, data);
 }
 
 // Tipos servidos. Um mapa só: antes havia este e um segundo, quase igual, no
@@ -10495,8 +10890,11 @@ async function tratarRequisicao(req, res) {
    * usa oito números. A igualdade com o painel foi conferida nos dados reais
    * (o relatório de antes saía de buildFinanceDashboardSummary) e
    * scripts/test-relatorios-desempenho.js fixa a regra em casos de borda.
+   *
+   * `pagoPorId` (fase EI): o baixado de cada título parcial, como no painel —
+   * em aberto só o que falta, e o já baixado em Recebido/Pago.
    */
-  function contasDoFinanceiro(lancamentos, hoje) {
+  function contasDoFinanceiro(lancamentos, hoje, pagoPorId = new Map()) {
     const entries = lancamentos.filter((entry) => !isFinanceEntryCancelled(entry));
     const receitaEntries = entries.filter((entry) => classifyFinanceEntry(entry) === 'receita');
     const despesaEntries = entries.filter((entry) => classifyFinanceEntry(entry) === 'despesa');
@@ -10508,16 +10906,16 @@ async function tratarRequisicao(req, res) {
     const isUpcoming = (entry) => pendingOrPartial(entry) && financeEntryDueDate(entry) >= hoje;
     return {
       contasAPagar: {
-        total: sumFinanceAmount(despesaEntries.filter(pendingOrPartial)),
-        vencidas: sumFinanceAmount(despesaEntries.filter(isOverdue)),
-        aVencer: sumFinanceAmount(despesaEntries.filter(isUpcoming)),
-        pagas: sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized))
+        total: sumFinanceOpenAmount(despesaEntries.filter(pendingOrPartial), pagoPorId),
+        vencidas: sumFinanceOpenAmount(despesaEntries.filter(isOverdue), pagoPorId),
+        aVencer: sumFinanceOpenAmount(despesaEntries.filter(isUpcoming), pagoPorId),
+        pagas: sumFinanceAmount(despesaEntries.filter(isFinanceEntryRealized)) + sumFinancePartialPaid(despesaEntries, pagoPorId)
       },
       contasAReceber: {
-        total: sumFinanceAmount(receitaEntries.filter(pendingOrPartial)),
-        vencidas: sumFinanceAmount(receitaEntries.filter(isOverdue)),
-        aReceber: sumFinanceAmount(receitaEntries.filter(isUpcoming)),
-        recebidas: sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized))
+        total: sumFinanceOpenAmount(receitaEntries.filter(pendingOrPartial), pagoPorId),
+        vencidas: sumFinanceOpenAmount(receitaEntries.filter(isOverdue), pagoPorId),
+        aReceber: sumFinanceOpenAmount(receitaEntries.filter(isUpcoming), pagoPorId),
+        recebidas: sumFinanceAmount(receitaEntries.filter(isFinanceEntryRealized)) + sumFinancePartialPaid(receitaEntries, pagoPorId)
       }
     };
   }
@@ -10525,12 +10923,17 @@ async function tratarRequisicao(req, res) {
   /** A Síntese Financeira: a série do período e as contas. Tela e arquivo. */
   async function baseFinanceiraDosRelatorios(params) {
     const granularity = params.get('granularity') || 'month';
-    const lancamentos = (await cargasDosRelatorios.lancamentosDaSintese())
-      .filter((entry) => !isFinanceEntryCancelled(entry));
+    // O baixado dos parciais vem junto, na mesma onda (fase EI): sem ele a
+    // Síntese contaria o parcial cheio em "a receber", e discordaria do painel.
+    const [todos, pagoDosParciais] = await Promise.all([
+      cargasDosRelatorios.lancamentosDaSintese(),
+      db.getPagoDosParciais()
+    ]);
+    const lancamentos = todos.filter((entry) => !isFinanceEntryCancelled(entry));
     return {
       granularity,
       serieFinanceiro: buildFinanceChartSeries(lancamentos, granularity),
-      contas: contasDoFinanceiro(lancamentos, toDateStr(getTodayLocal()))
+      contas: contasDoFinanceiro(lancamentos, toDateStr(getTodayLocal()), pagoDosParciais)
     };
   }
 
@@ -13277,7 +13680,18 @@ async function tratarRequisicao(req, res) {
       // verdade chegar. providerEventId e connectionId ficam null até lá,
       // mas o evento bruto é gravado do mesmo jeito (nunca se perde).
       const providerEventId = body.eventId || body.id || null;
-      const connectionId = body.connectionId || body.itemId || null;
+      // O id que vem no corpo é o do PROVIDER, nunca o nosso UUID (fase EI):
+      // a conexão nasce lá primeiro e só o id dele fica guardado em
+      // provider_connection_id. Traduz para o id local ANTES de gravar o
+      // evento — connection_id da tabela de eventos é uuid com FK, e o id cru
+      // do provider fazia o insert falhar (o evento se perdia e o provider
+      // reenviava sem parar). Conexão desconhecida grava o evento sem
+      // conexão; o id bruto continua dentro do payload.
+      const providerConnectionId = body.connectionId || body.itemId || null;
+      const conexaoLocal = providerConnectionId
+        ? await openFinanceDb.getConnectionByProviderId(provider, providerConnectionId)
+        : null;
+      const connectionId = conexaoLocal ? conexaoLocal.id : null;
       const evento = await openFinanceDb.recordWebhookEvent({ provider, connectionId, providerEventId, payload: body });
 
       if (evento.processed) {
@@ -13288,6 +13702,11 @@ async function tratarRequisicao(req, res) {
       try {
         if (connectionId) {
           await syncOpenFinanceConnection(connectionId);
+        } else if (providerConnectionId) {
+          // Id do provider sem conexão local (fase EI): fica registrado como
+          // não processado, com o motivo, em vez de passar por "processado"
+          // sem ter sincronizado nada.
+          throw new Error(`Conexão ${providerConnectionId} do provider ${provider} não encontrada.`);
         }
         await openFinanceDb.markWebhookEventProcessed(evento.id, null);
       } catch (syncError) {
@@ -18182,12 +18601,19 @@ async function tratarRequisicao(req, res) {
       // as baixas, que ele nunca leu (syncLancamentosParaResumo). Mesma função
       // de resumo, mesmos números: 700 ms -> ~150 ms, e o dashboard se
       // atualiza sozinho a cada minuto em cada tela aberta.
-      await Promise.all([
+      //
+      // Fase EI, na mesma onda: o baixado de cada título PARCIAL (só deles — 45
+      // neste banco, e não as 25 mil baixas) e a contagem de notas autorizadas
+      // do cartão "NF-e emitidas". A contagem fiscal falhar (migração pendente)
+      // não derruba o dashboard: o cartão sai sem número.
+      const [, , , pagoDosParciais, nfesAutorizadas] = await Promise.all([
         syncLancamentosParaResumo(data),
         syncCadastroData(data),
-        syncPurchasesData(data)
+        syncPurchasesData(data),
+        db.getPagoDosParciais(),
+        fiscalDb.contarNfeAutorizadas().catch(() => null)
       ]);
-      const summary = buildFinanceDashboardSummary(data, url.searchParams);
+      const summary = buildFinanceDashboardSummary(data, url.searchParams, { pagoDosParciais, nfesAutorizadas });
       return sendJson(res, summary);
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar o resumo financeiro', 500);
@@ -18384,14 +18810,240 @@ async function tratarRequisicao(req, res) {
         syncFinanceCadastroData(data),
         db.getLancamentosDaLista(url.searchParams)
       ]);
-      const filtered = filtrarListaDeLancamentos(data, parciais, url.searchParams);
+      // AS ABAS CONTAM SEM A PRÓPRIA SITUAÇÃO (fase EI). A lista sai em dois
+      // tempos: filtrada por tudo menos a situação — é sobre ela que cada aba
+      // diz quantos tem —, e depois pela situação pedida. Filtrar depois de
+      // ordenar dá a mesma lista que filtrar antes: a ordem é total (desempata
+      // pelo id), e filter não mexe nela.
+      const semSituacao = new URLSearchParams(url.searchParams);
+      semSituacao.delete('status');
+      const todos = filtrarListaDeLancamentos(data, parciais, semSituacao);
+      const situacao = url.searchParams.get('status');
+      const filtered = situacao
+        ? filterFinanceEntries({ ...data, finance: todos }, new URLSearchParams({ status: situacao }))
+        : todos;
       const { page, limit } = parsePageParams(url.searchParams, 20);
       const start = (page - 1) * limit;
-      await syncLancamentosPorId(data, filtered.slice(start, start + limit).map((entry) => entry.id));
+      // O "em aberto" do parcial é previsto menos o que as baixas abateram
+      // (valor + desconto − juros − multa, a regra de financeEntryEmAberto):
+      // só eles precisam das baixas, e vão na mesma onda da página.
+      const idsParciais = filtered.filter((entry) => financeEntryStatusLabel(entry) === 'parcial').map((entry) => entry.id);
+      const [, baixasDosParciais] = await Promise.all([
+        syncLancamentosPorId(data, filtered.slice(start, start + limit).map((entry) => entry.id)),
+        idsParciais.length ? db.getFinancialPaymentsByEntries(idsParciais) : []
+      ]);
+      const abatidoPorId = new Map();
+      baixasDosParciais.forEach((p) => abatidoPorId.set(p.entryId, (abatidoPorId.get(p.entryId) || 0)
+        + Number(p.amount || 0) + Number(p.discount || 0) - Number(p.interest || 0) - Number(p.fine || 0)));
       const pageEntries = data.finance.map((entry) => serializeFinanceEntry(entry, data));
-      return sendJson(res, { entries: pageEntries, total: filtered.length, page, limit });
+      return sendJson(res, {
+        entries: pageEntries,
+        total: filtered.length,
+        page,
+        limit,
+        resumo: resumirListaDeLancamentos(todos, filtered, abatidoPorId)
+      });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar lançamentos', 500);
+    }
+  }
+
+  // EXPORTAR A LISTA DE LANÇAMENTOS (fase EI). Antes desta rota, a lista não
+  // saía da tela: quem precisava de uma planilha dos vencidos copiava quinze
+  // linhas por vez. Leva a lista INTEIRA do filtro, todas as páginas, na ordem
+  // da tela — ou, com ?ids=, só os selecionados. Fica ANTES do GET /:id, que
+  // trataria "exportar" como o id de um lançamento.
+  if (pathname === '/api/finance/entries/exportar' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const selecionados = [...new Set(String(url.searchParams.get('ids') || '')
+        .split(',').map((id) => id.trim()).filter(Boolean))];
+      // O limite do lote vale aqui pelo tamanho da URL: 200 ids já são ~5 KB, e
+      // proxy costuma recusar linha de pedido acima de 8 KB. Mais que isso sai
+      // pelo filtro, que não tem limite.
+      if (selecionados.length > listaDeLancamentos.MAXIMO_DO_LOTE) {
+        return sendJson(res, { error: `Exporte até ${listaDeLancamentos.MAXIMO_DO_LOTE} selecionados por vez, ou exporte pelo filtro.` }, 400);
+      }
+      const data = loadData();
+      const [, , , parciais] = await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceCadastroData(data),
+        selecionados.length ? [] : db.getLancamentosDaLista(url.searchParams)
+      ]);
+      const ids = selecionados.length
+        ? selecionados
+        : filtrarListaDeLancamentos(data, parciais, url.searchParams).map((entry) => entry.id);
+      await syncLancamentosPorId(data, ids);
+      // Os do filtro já vêm na ordem da lista (syncLancamentosPorId devolve na
+      // ordem dos ids); os selecionados, que podem ser de várias páginas, são
+      // ordenados aqui pela mesma regra.
+      const lista = selecionados.length
+        ? ordenarListaDeLancamentos(data.finance.slice(), url.searchParams, data)
+        : data.finance;
+      // AS BAIXAS AGRUPADAS UMA VEZ. serializeFinanceEntry procuraria as de
+      // cada lançamento varrendo todas: sem filtro, 27 mil × 25 mil.
+      const baixasPorLancamento = new Map();
+      data.financialPayments.forEach((p) => {
+        const doLancamento = baixasPorLancamento.get(p.entryId);
+        if (doLancamento) doLancamento.push(p);
+        else baixasPorLancamento.set(p.entryId, [p]);
+      });
+      const conteudo = relatoriosCsv.lancamentos(lista.map((entry) =>
+        serializeFinanceEntry(entry, data, baixasPorLancamento.get(entry.id) || [])));
+      return enviarCsv(res, conteudo, `lancamentos-${toDateStr(getTodayLocal())}.csv`);
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao exportar lançamentos', 500);
+    }
+  }
+
+  // AÇÕES EM LOTE NA LISTA DE LANÇAMENTOS (fase EI): baixar ou cancelar os
+  // selecionados. Cada um passa pelas MESMAS regras da rota de um lançamento só
+  // — elegibilidade em listaDeLancamentos.ACOES, saldo em aberto, motivo de
+  // cancelamento de 10 caracteres, uma linha de auditoria por lançamento.
+  //
+  // Um que não dá não derruba os outros: a resposta diz quantos foram e o
+  // motivo de CADA um que ficou, como o lote de vendas. "Baixei 15" quando
+  // foram 9 é o erro que este formato existe para impedir.
+  //
+  // `previa: true` responde o que SERIA feito, sem gravar nada: é com ela que
+  // o modal da tela mostra os valores — e o que ele anuncia é o que se grava,
+  // pela mesma planoDoLote. O retrato que a tela guardou ao marcar a linha
+  // pode estar velho (outra pessoa baixou, ou a própria pessoa, pelo modal).
+  if (pathname === '/api/finance/entries/lote' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      const acao = String(body.acao || '');
+      if (!Object.prototype.hasOwnProperty.call(listaDeLancamentos.ACOES, acao)) {
+        return sendJson(res, { error: 'Ação em lote desconhecida.' }, 400);
+      }
+      const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).filter((id) => typeof id === 'string' && id))];
+      if (!ids.length) {
+        return sendJson(res, { error: 'Selecione ao menos um lançamento.' }, 400);
+      }
+      if (ids.length > listaDeLancamentos.MAXIMO_DO_LOTE) {
+        return sendJson(res, { error: `No máximo ${listaDeLancamentos.MAXIMO_DO_LOTE} lançamentos por vez.` }, 400);
+      }
+      const previa = body.previa === true;
+      const motivo = String(body.motivo || '').trim();
+      if (!previa && acao === 'cancelar' && motivo.length < 10) {
+        return sendJson(res, {
+          error: 'Informe o motivo do cancelamento (pelo menos 10 caracteres). '
+            + 'Lançamento cancelado sem motivo é um valor que some do caixa sem explicação.'
+        }, 400);
+      }
+      const dataDaBaixa = String(body.date || '').trim() || toDateStr(getTodayLocal());
+      if (!previa && acao === 'baixar' && !/^\d{4}-\d{2}-\d{2}$/.test(dataDaBaixa)) {
+        return sendJson(res, { error: 'Informe a data da baixa.' }, 400);
+      }
+
+      const data = loadData();
+      await Promise.all([syncFinanceCadastroData(data), syncLancamentosPorId(data, ids)]);
+      const contaEscolhida = String(body.bankAccountId || '');
+      if (!previa && acao === 'baixar' && contaEscolhida && !data.bankAccounts.some((conta) => conta.id === contaEscolhida)) {
+        return sendJson(res, { error: 'Conta bancária não encontrada.' }, 400);
+      }
+
+      if (previa) {
+        const itens = ids.map((id) => {
+          const entry = data.finance.find((item) => item.id === id);
+          if (!entry) return { id, codigo: id, descricao: '', emAberto: 0, valor: null, motivo: 'Lançamento não encontrado.' };
+          const baixas = getFinanceEntryPayments(data, id);
+          const plano = planoDoLote(acao, entry, baixas);
+          return {
+            id,
+            codigo: lancamentoCodigo.formatar(entry.code) || id,
+            descricao: entry.description || '',
+            emAberto: financeEntryEmAberto(entry, baixas),
+            valor: plano.valor == null ? null : plano.valor,
+            desconto: plano.desconto || 0,
+            motivo: plano.motivo || ''
+          };
+        });
+        return sendJson(res, { previa: true, itens });
+      }
+
+      const processados = [];
+      const ignorados = [];
+      for (const id of ids) {
+        const doRetrato = data.finance.find((item) => item.id === id);
+        const codigo = (doRetrato && lancamentoCodigo.formatar(doRetrato.code)) || id;
+        // UM POR VEZ POR LANÇAMENTO. Dois envios do mesmo lote (o modal fechado
+        // no meio do primeiro e reaberto), ou o lote e a baixa avulsa juntos,
+        // leriam o mesmo saldo antes de qualquer um gravar — e o título sairia
+        // baixado duas vezes. Produção é um processo só (ecosystem.config.js,
+        // fork, 1 instância), então a trava em memória basta; e a releitura
+        // DENTRO dela vê o que o outro acabou de gravar.
+        if (lancamentosEmGravacao.has(id)) {
+          ignorados.push({ id, codigo, motivo: 'Outra baixa ou cancelamento deste lançamento está em andamento.' });
+          continue;
+        }
+        lancamentosEmGravacao.add(id);
+        try {
+          const [entry] = await db.getFinancialEntriesByIds([id]);
+          if (!entry) { ignorados.push({ id, codigo, motivo: 'Lançamento não encontrado.' }); continue; }
+          const baixas = await db.getFinancialPaymentsByEntries([id]);
+          const plano = planoDoLote(acao, entry, baixas);
+          if (plano.motivo) { ignorados.push({ id, codigo, motivo: plano.motivo }); continue; }
+          if (acao === 'baixar') {
+            const payment = await db.createFinancialPayment({
+              entryId: entry.id,
+              amount: plano.valor,
+              date: dataDaBaixa,
+              bankAccountId: contaEscolhida || entry.bankAccountId || '',
+              interest: 0,
+              fine: 0,
+              discount: plano.desconto,
+              note: 'Baixa em lote',
+              createdBy: user.id,
+              createdByName: user.name
+            });
+            entry.status = recomputeFinanceEntryStatus(entry, { financialPayments: [...baixas, payment] });
+            entry.updatedAt = new Date().toISOString();
+            await db.updateFinancialEntry(entry.id, { status: entry.status });
+            await addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount: plano.valor, lote: true } });
+          } else {
+            const agora = new Date().toISOString();
+            entry.status = 'cancelado';
+            entry.cancelReason = motivo;
+            entry.cancelledAt = agora;
+            entry.cancelledByName = user.name || '';
+            entry.updatedAt = agora;
+            await db.updateFinancialEntry(entry.id, {
+              status: 'cancelado',
+              cancelReason: motivo,
+              cancelledAt: agora,
+              cancelledByName: user.name || ''
+            });
+            await addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name, details: { motivo, lote: true } });
+          }
+          processados.push({ id, codigo });
+        } catch (erro) {
+          // Erro nosso (com .status) chega com a mensagem; o resto, com a
+          // genérica e o rastro no log — o mesmo critério do sendErro.
+          const resposta = respostaDeErro(erro, 'Não foi possível gravar este lançamento.');
+          if (resposta.codigo) console.error(`[erro ${resposta.codigo}] lote de lançamentos (${acao} ${id}):`, (erro && erro.stack) || erro);
+          ignorados.push({ id, codigo, motivo: resposta.mensagem });
+        } finally {
+          lancamentosEmGravacao.delete(id);
+        }
+      }
+      saveData(data);
+      return sendJson(res, {
+        success: true,
+        processados,
+        ignorados,
+        resumo: listaDeLancamentos.resumo(processados.length, ignorados.length)
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro na ação em lote', 400);
     }
   }
 
@@ -18469,12 +19121,20 @@ async function tratarRequisicao(req, res) {
   }
 
   if (/^\/api\/finance\/entries\/[^/]+\/payments$/.test(pathname) && req.method === 'POST') {
+    // A trava do lote (fase EI) vale aqui também: a baixa avulsa e a do lote
+    // sobre o mesmo título, juntas, leriam o mesmo saldo antes de gravar.
+    let travado = null;
     try {
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.split('/')[4]);
+      if (lancamentosEmGravacao.has(id)) {
+        return sendJson(res, { error: 'Este lançamento está sendo baixado ou cancelado agora. Confira a lista e tente de novo.' }, 409);
+      }
+      lancamentosEmGravacao.add(id);
+      travado = id;
       const data = loadData();
       // Fase DS: esta rota lê UM lançamento e as baixas DELE — o `find` pelo id
       // e getFinanceEntryPayments/recomputeFinanceEntryStatus filtrando pelo
@@ -18543,6 +19203,8 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
       return sendErro(res, error, 'Erro ao registrar pagamento', 400);
+    } finally {
+      if (travado) lancamentosEmGravacao.delete(travado);
     }
   }
 
@@ -18586,10 +19248,32 @@ async function tratarRequisicao(req, res) {
 
       await db.deleteFinancialPayment(last.id);
       data.financialPayments = data.financialPayments.filter((p) => p.id !== last.id);
+      // A BAIXA ESTORNADA PODE TER VINDO DA CONCILIAÇÃO (fase EI). A movimentação
+      // do extrato ficava "Conciliado", apontando para uma baixa que não existe
+      // mais: o título voltava a ser oferecido na conciliação e duas
+      // movimentações passavam a apontar para ele. Ela volta a "Não conciliado",
+      // como faria o Desconciliar. A busca é pela BAIXA estornada, e não pelo
+      // título, porque o estorno apaga só a última — que pode não ser a da
+      // conciliação.
+      const transacaoConciliada = (data.bankTransactions || []).find((tx) => tx.matchedPaymentId === last.id);
+      if (transacaoConciliada) {
+        transacaoConciliada.status = 'nao_conciliado';
+        transacaoConciliada.matchedEntryId = '';
+        transacaoConciliada.matchedPaymentId = '';
+        transacaoConciliada.updatedAt = new Date().toISOString();
+      }
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
       await db.updateFinancialEntry(entry.id, { status: entry.status });
-      await addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: last.id, amount: last.amount } });
+      await addFinanceAuditLog(data, {
+        action: 'estornarLancamento', entry, byId: user.id, byName: user.name,
+        details: {
+          paymentId: last.id,
+          amount: last.amount,
+          // Na trilha fica que o estorno também desfez a conciliação.
+          ...(transacaoConciliada ? { transacaoDesconciliada: transacaoConciliada.id, motivo: 'Estorno da baixa conciliada: movimentação do extrato voltou a Não conciliado' } : {})
+        }
+      });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
@@ -18936,15 +19620,30 @@ async function tratarRequisicao(req, res) {
       // As parcelas das notas manuais da página, pelo índice nfe_id, e cada uma
       // remontada pela MESMA serializeNfe de antes — o objeto é o mesmo que a
       // lista inteira produzia, só que montado para 15 notas e não para todas.
-      await syncLancamentosDasNotas(data, daPagina.filter((nfe) => nfe.origem === 'financeiro').map((nfe) => nfe.id));
+      // Fase EI: e as das notas FISCAIS da página. A NF-e avulsa autorizada
+      // gera o contas a receber com nfeId = id da nota, e a lista mostrava "-"
+      // em Lançamento financeiro (e o modal "Nenhum lançamento vinculado") com
+      // as parcelas lá. A importada não tem parcela aqui: ficou no Viper.
+      await syncLancamentosDasNotas(data, daPagina.filter((nfe) => nfe.origem === 'financeiro' || nfe.origem === 'fiscal').map((nfe) => nfe.id));
       const brutas = new Map((data.nfes || []).map((nfe) => [nfe.id, nfe]));
-      const pageItems = daPagina.map((nfe) => (nfe.origem === 'financeiro'
-        ? { ...serializeNfe(brutas.get(nfe.id), data), origem: 'financeiro' }
-        : nfe));
+      const pageItems = daPagina.map((nfe) => {
+        if (nfe.origem === 'financeiro') return { ...serializeNfe(brutas.get(nfe.id), data), origem: 'financeiro' };
+        if (nfe.origem === 'fiscal') {
+          return { ...nfe, financialEntries: (data.finance || []).filter((entry) => entry.nfeId === nfe.id).map(parcelaDaNfeParaTela) };
+        }
+        return nfe;
+      });
       const empresaPorId = new Map(filtered.map((nfe) => [nfe.id, nfe.empresa]));
       pageItems.forEach((nfe) => { nfe.empresa = empresaPorId.get(nfe.id) || nfe.empresa || ''; });
+      // O total do filtro inteiro, não da página (fase EI): sem ele, conferir o
+      // faturado do mês era somar à mão, página por página. Só AUTORIZADAS:
+      // cancelada, rejeitada, rascunho e erro não são faturamento. Em
+      // centavos, para a soma de milhares de notas não acumular resto.
+      const centavosAutorizados = filtered.reduce((soma, nfe) => (nfe.status === 'autorizada'
+        ? soma + Math.round(Number(nfe.amount || 0) * 100) : soma), 0);
       return sendJson(res, {
         nfes: pageItems, total: filtered.length, page, limit,
+        valorAutorizado: centavosAutorizados / 100,
         empresas: estabelecimentos.map((e) => ({ id: e.id, nome: e.nomeFantasia || e.razaoSocial || '' }))
       });
     } catch (error) {
@@ -19242,9 +19941,17 @@ async function tratarRequisicao(req, res) {
       }
       const data = loadData();
       // As transações moram no db.json: filtrar, ordenar e paginar não precisa
-      // do banco.
-      const filtered = filterBankTransactions(data, url.searchParams)
-        .sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
+      // do banco — exceto ordenar por Conta, que precisa do NOME da conta
+      // (fase EI). Só nesse caso o cadastro é lido antes; nos outros ele vai na
+      // onda de baixo, como sempre foi.
+      const ordem = extratoBancario.ordemDoExtrato(url.searchParams);
+      const ordenaPorConta = ordem.campo === 'conta';
+      if (ordenaPorConta) await syncFinanceCadastroData(data);
+      const filtered = extratoBancario.ordenarExtrato(
+        filterBankTransactions(data, url.searchParams),
+        ordem,
+        (tx) => resolveById(data.bankAccounts, tx.bankAccountId)
+      );
       const { page, limit } = parsePageParams(url.searchParams, 20);
       const start = (page - 1) * limit;
       const daPagina = filtered.slice(start, start + limit);
@@ -19258,15 +19965,18 @@ async function tratarRequisicao(req, res) {
       // entao bastam os conciliados DA PAGINA, e nao os 27 mil. Id que nao
       // existe mais continua sem descricao, como antes.
       await Promise.all([
-        syncFinanceCadastroData(data),
+        ordenaPorConta ? null : syncFinanceCadastroData(data),
         syncLancamentosPorId(data, daPagina.map((tx) => tx.matchedEntryId))
       ]);
       const pageItems = daPagina.map((tx) => serializeBankTransaction(tx, data));
-      const summary = {
-        naoConciliado: filtered.filter((tx) => tx.status === 'nao_conciliado').length,
-        conciliado: filtered.filter((tx) => tx.status === 'conciliado').length,
-        ignorado: filtered.filter((tx) => tx.status === 'ignorado').length
-      };
+      // OS CARTÕES CONTAM SEM O FILTRO DE SITUAÇÃO (fase EI). Contados sobre a
+      // lista já filtrada, escolher "Conciliado" zerava "Não conciliadas" e
+      // "Ignoradas", e a conciliação parecia em dia com dezenas pendentes. Os
+      // outros filtros (conta, período, busca) continuam valendo — é o mesmo
+      // desenho das abas de Lançamentos. Agora com o valor de cada situação.
+      const semStatus = new URLSearchParams(url.searchParams);
+      semStatus.delete('status');
+      const summary = extratoBancario.resumoDoExtrato(filterBankTransactions(data, semStatus));
       return sendJson(res, { transactions: pageItems, total: filtered.length, page, limit, summary });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar extrato', 500);
@@ -19297,7 +20007,14 @@ async function tratarRequisicao(req, res) {
       if (!(amount > 0)) {
         return sendJson(res, { error: 'Informe um valor maior que zero' }, 400);
       }
-      const tx = buildBankTransaction({ ...body, amount }, user, 'manual');
+      // A data passa pela mesma conferência da importação (fase EI): gravada
+      // como veio, uma data fora do padrão sumia do filtro por período e saía
+      // fora de ordem. Sem data, recusa — antes virava "hoje" em silêncio.
+      const date = extratoBancario.dataDoExtrato(body.date);
+      if (!date) {
+        return sendJson(res, { error: 'Informe a data da movimentação (dd/mm/aaaa).' }, 400);
+      }
+      const tx = buildBankTransaction({ ...body, amount, date }, user, 'manual');
       data.bankTransactions.push(tx);
       saveData(data);
       return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
@@ -19371,7 +20088,16 @@ async function tratarRequisicao(req, res) {
           skipped += 1;
           return;
         }
-        const date = row.date || row.data || row.Data || new Date().toISOString().slice(0, 10);
+        // A DATA DA LINHA É CONFERIDA (fase EI). Era gravada como viesse, e o
+        // CSV de banco brasileiro traz 13/10/2026: a movimentação sumia do
+        // filtro por período e a sugestão de conciliação a comparava com hoje.
+        // AAAA-MM-DD e dd/mm/aaaa entram normalizados; linha sem data ou com
+        // outro formato conta como inválida, em vez de virar "hoje".
+        const date = extratoBancario.dataDoExtrato(row.date || row.data || row.Data);
+        if (!date) {
+          skipped += 1;
+          return;
+        }
         const typeRaw = String(row.type || row.tipo || row.Tipo || '').toLowerCase();
         const type = (typeRaw.startsWith('sa') || Number(String(rawAmount).replace(',', '.')) < 0) ? 'saida' : 'entrada';
         const fitid = origemOfx ? String(row.fitid || '').trim().slice(0, 200) : '';
@@ -19439,6 +20165,9 @@ async function tratarRequisicao(req, res) {
   }
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/conciliar$/.test(pathname) && req.method === 'POST') {
+    // Fora do try para o `finally` enxergar: o id que esta requisição travou
+    // em conciliacoesEmAndamento (fase EI), e só ele é destravado.
+    let conciliacaoTravada = '';
     try {
       const user = await getCurrentUser(req);
       if (!user || !user.allowedModules.includes('finance')) {
@@ -19453,6 +20182,13 @@ async function tratarRequisicao(req, res) {
       if (tx.status === 'conciliado') {
         return sendJson(res, { error: 'Transação já está conciliada' }, 400);
       }
+      // Antes do primeiro await: entre ler o db.json e travar não pode haver
+      // espera, senão a segunda requisição passaria pela mesma brecha.
+      if (conciliacoesEmAndamento.has(id)) {
+        return sendJson(res, { error: 'Esta movimentação já está sendo conciliada. Aguarde e atualize a tela.' }, 409);
+      }
+      conciliacoesEmAndamento.add(id);
+      conciliacaoTravada = id;
 
       const body = await readBody(req);
       // Fase DS: o lançamento escolhido vem no corpo, e é o ÚNICO que a
@@ -19525,6 +20261,10 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data), entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
       return sendErro(res, error, 'Erro ao conciliar transação', 400);
+    } finally {
+      // Sucesso, recusa ou erro: a trava sai. Presa, a movimentação ficaria
+      // inconciliável até o servidor reiniciar.
+      if (conciliacaoTravada) conciliacoesEmAndamento.delete(conciliacaoTravada);
     }
   }
 
@@ -19650,7 +20390,24 @@ async function tratarRequisicao(req, res) {
 
       if (pathname === '/api/open-finance/connections' && req.method === 'GET') {
         const estabelecimentoId = url.searchParams.get('estabelecimentoId') || undefined;
-        const connections = await openFinanceDb.getConnections(estabelecimentoId);
+        const conexoes = await openFinanceDb.getConnections(estabelecimentoId);
+        // O nome do estabelecimento vai junto (fase EI). A tela buscava a lista
+        // em /api/fiscal/estabelecimentos, que exige Fiscal > Visualizar: quem
+        // é só do Financeiro (ou quando o estabelecimento foi inativado) via o
+        // UUID cru na coluna. Só o NOME sai daqui — nada de CNPJ, token ou
+        // ambiente Focus. Falha ao ler os estabelecimentos não derruba a lista:
+        // a conexão aparece sem nome, como antes.
+        let nomePorEstabelecimento = new Map();
+        try {
+          const estabelecimentos = await fiscalDb.getEstabelecimentos();
+          nomePorEstabelecimento = new Map(estabelecimentos.map((e) => [String(e.id), e.nomeFantasia || e.razaoSocial || null]));
+        } catch (erroEstab) {
+          nomePorEstabelecimento = new Map();
+        }
+        const connections = conexoes.map((c) => ({
+          ...c,
+          estabelecimentoNome: nomePorEstabelecimento.get(String(c.estabelecimentoId)) || null
+        }));
         return sendJson(res, { connections });
       }
 
@@ -19685,7 +20442,7 @@ async function tratarRequisicao(req, res) {
 
       if (/^\/api\/open-finance\/connections\/[^/]+\/sync$/.test(pathname) && req.method === 'POST') {
         const id = decodeURIComponent(pathname.split('/')[4]);
-        const resultado = await syncOpenFinanceConnection(id);
+        const resultado = await syncOpenFinanceConnection(id, { byId: user.id, byName: user.name });
         return sendJson(res, { success: true, resultado });
       }
 
@@ -19786,7 +20543,12 @@ async function tratarRequisicao(req, res) {
         date: body.date || new Date().toISOString().slice(0, 10),
         description: String(body.description).trim(),
         amount,
-        status: body.status || 'pending',
+        // Sempre 'pending' (fase EI). A rota gravava o `status` que viesse no
+        // corpo, sem conferir: um texto qualquer virava a situação do título e
+        // chegava cru ao selo de situação das telas. 'paid' também não: título
+        // pago nasce de uma baixa, e um 'paid' sem baixa voltaria a 'pending'
+        // no primeiro recomputeFinanceEntryStatus.
+        status: 'pending',
         createdBy: user.id,
         createdByName: user.name
       });

@@ -80,14 +80,19 @@ function corpoDe(nome) {
 }
 const blocoStatus = src.slice(src.indexOf('const NFE_STATUS_FISCAL = {'), src.indexOf('};', src.indexOf('const NFE_STATUS_FISCAL = {')) + 2);
 const NOMES = ['pad2', 'toDateStr', 'getTodayLocal', 'classifyFinanceEntry', 'financeEntryDueDate', 'financeEntryStatusLabel',
-  'normalizeNfeStatus', 'serializeNfe', 'nfeParaTela', 'fiscalNfeParaLista', 'filterNfes'];
+  'normalizeNfeStatus', 'serializeNfe', 'parcelaDaNfeParaTela', 'nfeParaTela', 'fiscalNfeParaLista', 'filterNfes'];
 const S = new Function(`${blocoStatus}\n${NOMES.map(corpoDe).join('\n')}\nreturn { ${NOMES.join(', ')} };`)();
 
 // A rota, como ela é agora: os mesmos passos, na mesma ordem.
 const rotaNfe = semComentarios(rotas.find((r) => /pathname === '\/api\/finance\/nfe' && req\.method === 'GET'/.test(r.cabeca)).corpo);
 check('a rota monta as manuais sem parcelas antes de filtrar', /\(data\.nfes \|\| \[\]\)\.map\(\(nfe\) => \(\{ \.\.\.nfeParaTela\(nfe, \[\]\), origem: 'financeiro' \}\)\)/.test(rotaNfe));
-check('e carrega as parcelas só das notas manuais da página', /syncLancamentosDasNotas\(data, daPagina\.filter\(\(nfe\) => nfe\.origem === 'financeiro'\)\.map\(\(nfe\) => nfe\.id\)\)/.test(rotaNfe));
+// Fase EI: as fiscais da página também — a NF-e avulsa gera parcelas com
+// nfeId = id da nota, e a lista mostrava "-" com elas lá.
+check('e carrega as parcelas só das notas (manuais e fiscais) da página',
+  /syncLancamentosDasNotas\(data, daPagina\.filter\(\(nfe\) => nfe\.origem === 'financeiro' \|\| nfe\.origem === 'fiscal'\)\.map\(\(nfe\) => nfe\.id\)\)/.test(rotaNfe));
 check('e remonta a manual pela mesma serializeNfe', /\{ \.\.\.serializeNfe\(brutas\.get\(nfe\.id\), data\), origem: 'financeiro' \}/.test(rotaNfe));
+check('e anexa à fiscal as parcelas dela, no formato da manual',
+  /\{ \.\.\.nfe, financialEntries: \(data\.finance \|\| \[\]\)\.filter\(\(entry\) => entry\.nfeId === nfe\.id\)\.map\(parcelaDaNfeParaTela\) \}/.test(rotaNfe));
 check('e não lê mais o financeiro inteiro nem a tabela fiscal duas vezes', !/syncFinanceData\(|syncNfeData\(/.test(rotaNfe));
 
 // Dados sintéticos: notas manuais com e sem parcelas, notas fiscais, datas
@@ -115,14 +120,27 @@ manuais.forEach((n, i) => {
       dueDate: pegar(['2025-01-01', '2026-12-31', '2026-10-07']), amount: 10 + k, type: 'RECEITA', status: pegar(['pending', 'paid', 'cancelado']) });
   }
 });
+// Fase EI: a NF-e fiscal avulsa também tem parcelas (nfeId = id da nota).
+fiscais.forEach((n, i) => {
+  for (let k = 0; k < i % 3; k += 1) {
+    parcelas.push({ id: `fin-${n.id}-${k}`, nfeId: n.id, description: `Venda ${k + 1}`, date: n.dataEmissao.slice(0, 10),
+      dueDate: pegar(['2025-01-01', '2026-12-31', '2026-10-07']), amount: 20 + k, type: 'RECEITA', status: pegar(['pending', 'paid', 'cancelado']) });
+  }
+});
+const parcelasFiscais = parcelas.filter((p) => p.nfeId.startsWith('fis-')).length;
 const outrosLancamentos = Array.from({ length: 50 }, (_, i) => ({ id: `fin-x-${i}`, nfeId: '', date: '2026-01-01', amount: 1, type: 'DESPESA', status: 'paid' }));
 const financeInteiro = [...parcelas, ...outrosLancamentos]
   .sort((a, b) => (a.date === b.date ? (a.id < b.id ? 1 : -1) : (a.date < b.date ? 1 : -1)));
 
 const ordenar = (l) => l.sort((a, b) => (String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id))));
+// A referência: tudo montado com o financeiro INTEIRO carregado — a manual pela
+// serializeNfe, a fiscal com as parcelas de nfeId igual ao dela.
 function listaAntiga(query, page, limit) {
   const data = { nfes: manuais, finance: financeInteiro };
-  const todas = fiscais.map(S.fiscalNfeParaLista).concat(manuais.map((nfe) => ({ ...S.serializeNfe(nfe, data), origem: 'financeiro' })));
+  const todas = fiscais.map((nfe) => {
+    const linha = S.fiscalNfeParaLista(nfe);
+    return { ...linha, financialEntries: financeInteiro.filter((e) => e.nfeId === linha.id).map(S.parcelaDaNfeParaTela) };
+  }).concat(manuais.map((nfe) => ({ ...S.serializeNfe(nfe, data), origem: 'financeiro' })));
   const filtered = ordenar(S.filterNfes(data, query, todas));
   return { nfes: filtered.slice((page - 1) * limit, page * limit), total: filtered.length };
 }
@@ -131,11 +149,15 @@ function listaNova(query, page, limit) {
   const todas = fiscais.map(S.fiscalNfeParaLista).concat(manuais.map((nfe) => ({ ...S.nfeParaTela(nfe, []), origem: 'financeiro' })));
   const filtered = ordenar(S.filterNfes(data, query, todas));
   const daPagina = filtered.slice((page - 1) * limit, page * limit);
-  const ids = new Set(daPagina.filter((n) => n.origem === 'financeiro').map((n) => n.id));
+  const ids = new Set(daPagina.filter((n) => n.origem === 'financeiro' || n.origem === 'fiscal').map((n) => n.id));
   data.finance = financeInteiro.filter((e) => ids.has(e.nfeId)); // = getFinancialEntriesByNfe
   const brutas = new Map(manuais.map((n) => [n.id, n]));
   return {
-    nfes: daPagina.map((n) => (n.origem === 'financeiro' ? { ...S.serializeNfe(brutas.get(n.id), data), origem: 'financeiro' } : n)),
+    nfes: daPagina.map((n) => {
+      if (n.origem === 'financeiro') return { ...S.serializeNfe(brutas.get(n.id), data), origem: 'financeiro' };
+      if (n.origem === 'fiscal') return { ...n, financialEntries: data.finance.filter((e) => e.nfeId === n.id).map(S.parcelaDaNfeParaTela) };
+      return n;
+    }),
     total: filtered.length
   };
 }
@@ -153,6 +175,14 @@ for (const search of ['', 'maria', '100', 'ltda', '4', 'zzz']) {
 }
 check('a montagem nova dá a mesma lista que a antiga', iguais === casos, `${iguais}/${casos} combinações`);
 check('  e há parcelas nas páginas comparadas (o teste não é vazio)', parcelas.length > 20, `${parcelas.length} parcelas`);
+check('  inclusive de notas fiscais', parcelasFiscais > 10, `${parcelasFiscais} parcelas fiscais`);
+// E a página de verdade traz as parcelas da fiscal (não só "igual à antiga").
+{
+  const pagina = listaNova(new URLSearchParams({}), 1, 100).nfes;
+  const comParcela = pagina.filter((n) => n.origem === 'fiscal' && n.financialEntries.length > 0);
+  check('  a NF-e fiscal da página sai com as parcelas dela', comParcela.length > 0
+    && comParcela.every((n) => n.financialEntries.every((e) => e.id.startsWith(`fin-${n.id}-`))), `${comParcela.length} fiscais com parcela`);
+}
 
 console.log('\n--- 4. a NF-e fiscal não volta para o db.json ---');
 const blocoSet = /const NAO_PERSISTIR = new Set\(\[([\s\S]*?)\]\)/.exec(src)[1].replace(/\/\/[^\n]*/g, '');
@@ -211,9 +241,12 @@ check('NF-e Emitidas não espera o status da Focus para carregar a lista', !/awa
   && /api\('\/api\/focusnfe\/status'\)\s*\.then/.test(listaNfe));
 
 const lancamentos = semComentarios(ler('public/modules/finance/subs/lancamentos.js'));
-const botao = lancamentos.slice(lancamentos.indexOf("getElementById('financeFilterToggleBtn')"), lancamentos.indexOf("getElementById('financeQuickSearchForm')"));
-check('Lançamentos: abrir a busca avançada redesenha com a última resposta', /renderView\(ultimoResultado\)/.test(botao));
-check('  e só volta ao servidor quando a consulta mudou', /buildQuery\(\) !== ultimaConsulta/.test(botao));
+// Fase EI: o botão chama redesenhar(), que é quem decide entre a última
+// resposta e uma ida ao servidor — o mesmo caminho do seletor de colunas.
+const botao = lancamentos.slice(lancamentos.indexOf("getElementById('financeFilterToggleBtn')"), lancamentos.indexOf("getElementById('financeQuickSearch')"));
+const redesenhar = lancamentos.slice(lancamentos.indexOf('async function redesenhar()'), lancamentos.indexOf('function irParaPagina('));
+check('Lançamentos: abrir a busca avançada redesenha com a última resposta', /redesenhar\(\)/.test(botao) && /renderView\(ultimoResultado\)/.test(redesenhar));
+check('  e só volta ao servidor quando a consulta mudou', /consulta\(\)\.toString\(\) !== ultimaConsulta\) return load\(\)/.test(redesenhar));
 check('  o filtro de cliente é campo de busca, com o mesmo name', /renderSearchableSelect\(\{\s*id: 'financeFilterParty',\s*name: 'clientSupplierId'/.test(lancamentos));
 check('  a lista não espera o meta', !/meta = await api\(/.test(lancamentos));
 

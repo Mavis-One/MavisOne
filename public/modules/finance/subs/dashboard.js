@@ -46,9 +46,14 @@ function financeFormatDate(value) {
   return `${d}/${m}/${y}`;
 }
 
+// O rótulo vai ESCAPADO (fase EI): para situação fora do catálogo ele é o
+// próprio status gravado, e a rota legada POST /api/finance gravava o que viesse
+// no corpo. A CSP barra script inline, mas HTML injetado ainda desenhava o que
+// quisesse por cima da tela. Esta função também serve Lançamentos e NF-e
+// Emitidas. `escapeHtml` é a global do app.js, resolvida na hora da chamada.
 function financeStatusBadge(status) {
   const meta = FINANCE_STATUS_META[status] || { label: status || '-', tone: 'muted' };
-  return `<span class="finance-badge finance-badge-${meta.tone}">${meta.label}</span>`;
+  return `<span class="finance-badge finance-badge-${meta.tone}">${escapeHtml(meta.label)}</span>`;
 }
 
 function financeStatCard({ tone, label, value, badge, sub, delta }) {
@@ -125,6 +130,15 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
     if (!badge || !document.body.contains(badge)) return; // usuário navegou pra outra tela: para o timer
     const elapsedS = Math.round((Date.now() - lastLoadedAt) / 1000);
     if (elapsedS * 1000 >= AUTO_REFRESH_MS) {
+      // "Personalizado" sem as duas datas aplicadas não atualiza (fase EI): a
+      // carga iria sem datas, o servidor devolveria só o dia de hoje com a
+      // pílula Personalizado marcada, e o redesenho apagaria as datas que a
+      // pessoa estava digitando. O relógio segue; atualiza depois do Aplicar.
+      if (period === 'custom' && (!customFrom || !customTo)) {
+        badge.textContent = `Atualizado há ${elapsedS}s · aplique o período para atualizar`;
+        agendarTick();
+        return;
+      }
       // A atualização automática não se soma a uma carga em andamento (um
       // clique do usuário, por exemplo): aquela já vai trazer o dado novo e
       // religar o relógio quando terminar.
@@ -176,16 +190,72 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
       btn.addEventListener('click', () => goTo(btn.dataset.goto));
     });
 
+    // OS VENCIMENTOS DA ABA, NA LISTA (fase EI). As janelas das abas daqui
+    // (hoje, amanhã, hoje..+6, hoje..+29, só em aberto) são as mesmas dos
+    // atalhos de Vencimento de Lançamentos — a lista abre com os mesmos N
+    // títulos que o painel contou. lancamentos.js lê state.financeFilters
+    // uma vez, na entrada.
+    content.querySelectorAll('[data-ver-vencimentos]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const periodo = { hoje: 'hoje', amanha: 'amanha', proximos7: '7dias', proximos30: '30dias' }[dueTab];
+        state.financeFilters = { status: 'pendente,vencido,parcial', periodo: periodo || '' };
+        goTo('lancamentos');
+      });
+    });
+
+    // A linha abre O lançamento clicado (fase EI), e não a lista na página 1:
+    // é o contrato que Extrato e NF-e Emitidas já usam — lancamentos.js lê
+    // state.financeOpenEntryId e abre o modal dele, buscando pelo id.
     content.querySelectorAll('.finance-clickable-row').forEach((row) => {
-      row.addEventListener('click', () => goTo('lancamentos'));
+      row.addEventListener('click', () => {
+        if (row.dataset.entryId) state.financeOpenEntryId = row.dataset.entryId;
+        goTo('lancamentos');
+      });
     });
   }
 
   function renderView(data, preserveCustomInputs) {
     const ap = data.contasAPagar || {};
     const ar = data.contasAReceber || {};
-    const dueList = (data.proximosVencimentos && data.proximosVencimentos[dueTab]) || [];
+    // Cada aba chega como { itens, quantidade, total } (fase EI): os dez que
+    // vencem primeiro e o tamanho da aba inteira. A lista solta é o formato de
+    // antes, aceito para a tela não ficar vazia com o servidor velho.
+    const dueBucket = (data.proximosVencimentos && data.proximosVencimentos[dueTab]) || {};
+    const dueList = Array.isArray(dueBucket) ? dueBucket : (dueBucket.itens || []);
+    const dueQuantidade = Array.isArray(dueBucket) ? dueBucket.length : Number(dueBucket.quantidade || dueList.length);
+    const dueTotal = Array.isArray(dueBucket)
+      ? dueBucket.reduce((soma, item) => soma + Number(item.amount || 0), 0)
+      : Number(dueBucket.total || 0);
 
+    // "ÚLTIMOS LANÇAMENTOS" SEM ROLAR DE LADO (fase EI).
+    //
+    // `.table td` é nowrap, e uma descrição do Viper (até 220 caracteres)
+    // levava a tabela a 2.074 px. Só cortar o texto não bastou: com descrição
+    // e cliente em 14rem cada, as 8 colunas ainda davam 1.118 px, contra 835 px
+    // de meio painel em 1920 (Chrome headless, app.css de 13/10/2026) — Valor e
+    // Situação continuavam fora da vista. Por isso, duas mudanças de layout:
+    //
+    //   1. a tabela do resumo tem 6 colunas: o cliente/fornecedor vai numa
+    //      segunda linha da descrição, menor (os dois cortados, texto inteiro
+    //      no `title`), e a Data de lançamento saiu — quem precisa dela tem a
+    //      lista completa a um clique, e no resumo o que se usa é o
+    //      Vencimento. Fica em 778 px no pior caso medido ("Transferência",
+    //      R$ 1.234.567,89, "Cancelado");
+    //   2. os dois painéis só ficam lado a lado quando cada um tem pelo menos
+    //      54rem (864 px = 778 da tabela + 46 de respiro e borda + 40 de folga
+    //      para outra fonte). Abaixo disso empilham e a tabela ganha a largura
+    //      inteira. Medido: lado a lado de 1905 px de janela para cima (no
+    //      limite, 820 px visíveis para os 778); 1920 com a barra secundária,
+    //      1680, 1536, 1366, 1280 e 1024 empilham, e a tabela cabe inteira em
+    //      todos. `min(100%, ...)` deixa o celular numa coluna só (lá a tabela
+    //      rola dentro da própria caixa, como toda .table, e a página não).
+    //
+    // Se uma coluna voltar para esta tabela, refaça a conta dos 54rem.
+    //
+    // Em "Próximos vencimentos", a lista leva `minmax(0, 1fr)`: a coluna
+    // implícita da grade é `auto` e não encolhe abaixo da descrição cortada
+    // (22rem) mais o valor. Num celular (500 px, medido) o item ia a 549 px e
+    // a PÁGINA inteira rolava de lado; assim ele cabe e a descrição vira "…".
     content.innerHTML = `
       <div class="finance-actions-row" style="justify-content: space-between; align-items: center;">
         <div class="finance-actions-row" style="margin-bottom: 0;">
@@ -240,7 +310,15 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
           ` : ''
         })}
         ${financeStatCard({ tone: 'cyan', label: 'Previsão', value: financeFormatBRL(data.previsaoFinanceira) })}
-        ${financeStatCard({ tone: 'teal', label: 'NF-e emitidas', value: String(data.totalNfesEmitidas ?? 0) })}
+        ${financeStatCard({
+          tone: 'teal',
+          label: 'NF-e emitidas',
+          // Fase EI: a contagem vem do banco (todas as autorizadas, sem
+          // período — o cartão diz isso). null = a contagem não veio: "—", e
+          // não um 0 que pareceria número de verdade.
+          value: typeof data.totalNfesEmitidas === 'number' ? data.totalNfesEmitidas.toLocaleString('pt-BR') : '—',
+          sub: '<span class="finance-stat-sub-row muted">Autorizadas · todas as datas</span>'
+        })}
         ${financeStatCard({
           tone: 'purple',
           label: 'Movimentações',
@@ -266,18 +344,19 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
         </div>
       </div>
 
-      <div class="row" style="align-items: start;">
+      <div class="row" style="align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(100%, 54rem), 1fr));">
         <div class="panel finance-panel-stripe-due">
           <h3>Próximos vencimentos</h3>
           <div class="finance-due-tabs" role="tablist">
             ${FINANCE_DUE_TABS.map((tab) => `<button type="button" class="finance-pill finance-pill-sm ${dueTab === tab.key ? 'active' : ''}" data-due-tab="${tab.key}">${tab.label}</button>`).join('')}
           </div>
-          <div class="finance-due-list">
+          ${dueQuantidade ? `<p class="muted" style="margin: 10px 0 0;">${dueQuantidade.toLocaleString('pt-BR')} ${dueQuantidade === 1 ? 'título' : 'títulos'} · ${financeFormatBRL(dueTotal)} em aberto</p>` : ''}
+          <div class="finance-due-list" style="grid-template-columns: minmax(0, 1fr);">
             ${dueList.length ? dueList.map((item) => `
-              <div class="finance-due-item finance-clickable-row">
-                <div>
-                  <strong>${escapeHtml(item.description || '-')}</strong>
-                  <span class="muted"> · ${escapeHtml(item.clienteFornecedor || '-')}</span>
+              <div class="finance-due-item finance-clickable-row" data-entry-id="${escapeHtml(item.id || '')}">
+                <div style="min-width: 0; flex: 1;">
+                  <strong class="texto-cortado" title="${escapeHtml(item.description || '')}">${escapeHtml(item.description || '-')}</strong>
+                  <div class="muted texto-cortado" title="${escapeHtml(item.clienteFornecedor || '')}">${escapeHtml(item.clienteFornecedor || '-')}</div>
                   <div class="muted">Vencimento: ${financeFormatDate(item.dueDate)}</div>
                 </div>
                 <div class="finance-due-item-amount">
@@ -287,6 +366,12 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
               </div>
             `).join('') : '<p class="muted">Nenhum vencimento nesse intervalo.</p>'}
           </div>
+          ${dueQuantidade > dueList.length ? `
+            <div class="finance-actions-row" style="margin: 10px 0 0; align-items: center;">
+              <span class="muted">Mostrando os ${dueList.length} que vencem primeiro, de ${dueQuantidade.toLocaleString('pt-BR')}.</span>
+              <button type="button" class="secondary" data-ver-vencimentos>Ver os ${dueQuantidade.toLocaleString('pt-BR')} em Lançamentos</button>
+            </div>
+          ` : ''}
         </div>
 
         <div class="panel finance-panel-stripe-entries">
@@ -296,20 +381,21 @@ window.MavisSubscreenRegistry.finance.dashboard = async function renderFinanceDa
           </div>
           <div class="table-scroll">
             <table class="table">
-              <thead><tr><th>Código</th><th>Data</th><th>Descrição</th><th>Tipo</th><th>Cliente/Fornecedor</th><th>Vencimento</th><th>Valor</th><th>Situação</th></tr></thead>
+              <thead><tr><th>Código</th><th>Descrição · Cliente/Fornecedor</th><th>Tipo</th><th>Vencimento</th><th class="col-valor">Valor</th><th>Situação</th></tr></thead>
               <tbody>
                 ${(data.ultimosLancamentos || []).length ? data.ultimosLancamentos.map((entry) => `
-                  <tr class="cadastro-row-clickable finance-clickable-row">
-                    <td>${escapeHtml(String(entry.id).slice(-8))}</td>
-                    <td>${financeFormatDate(entry.date)}</td>
-                    <td>${escapeHtml(entry.description || '-')}</td>
-                    <td>${FINANCE_TYPE_LABEL[entry.type] || entry.type}</td>
-                    <td>${escapeHtml(entry.clienteFornecedor || '-')}</td>
+                  <tr class="cadastro-row-clickable finance-clickable-row" data-entry-id="${escapeHtml(entry.id || '')}">
+                    <td>${escapeHtml(entry.codigo || '-')}</td>
+                    <td>
+                      <span class="texto-cortado is-curto" title="${escapeHtml(entry.description || '')}">${escapeHtml(entry.description || '-')}</span>
+                      <small class="texto-cortado is-curto muted" title="${escapeHtml(entry.clienteFornecedor || '')}">${escapeHtml(entry.clienteFornecedor || '-')}</small>
+                    </td>
+                    <td>${escapeHtml(FINANCE_TYPE_LABEL[entry.type] || entry.type || '-')}</td>
                     <td>${financeFormatDate(entry.dueDate)}</td>
-                    <td>${financeFormatBRL(entry.amount)}</td>
+                    <td class="col-valor">${financeFormatBRL(entry.amount)}</td>
                     <td>${financeStatusBadge(entry.status)}</td>
                   </tr>
-                `).join('') : '<tr><td colspan="8" class="muted">Nenhum lançamento registrado ainda.</td></tr>'}
+                `).join('') : '<tr><td colspan="6" class="muted">Nenhum lançamento registrado ainda.</td></tr>'}
               </tbody>
             </table>
           </div>

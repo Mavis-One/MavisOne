@@ -39,6 +39,28 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     }
   }
 
+  // Fase EI: "Voltar ao pedido" só para lançamento DAQUELE pedido.
+  //
+  // state.financeReturnTo nasce ao faturar (app.js, mudarStatus) e só era
+  // zerado no clique do próprio botão: "Ver Lançamento" ou sair da tela o
+  // deixavam ali, e uma despesa de luz cadastrada horas depois oferecia voltar
+  // ao pedido antigo, abrindo-o em edição. Conferir o pedido do lançamento
+  // serve aos dois fluxos do faturamento: uma parcela só, ou várias editadas
+  // uma a uma a partir da lista filtrada pelo pedido.
+  const voltaAoPedido = state.financeReturnTo && editEntry && editEntry.referenceId
+    && editEntry.referenceId === state.financeReturnTo.recordId
+    ? state.financeReturnTo
+    : null;
+
+  // Fase EI: a data de HOJE no relógio de quem usa, e não em UTC. O
+  // `toISOString()` dá a data de Greenwich: em SC (UTC-3), das 21h à meia-noite
+  // isso já é amanhã, e a despesa lançada às 22h caía no dia (ou no mês)
+  // seguinte no fluxo de caixa. Mesmo cálculo do hoje() de fiscal/subs/arquivos.js.
+  function hojeLocal() {
+    const agora = new Date();
+    return `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}-${String(agora.getDate()).padStart(2, '0')}`;
+  }
+
   // FASE CD — POR QUAL ESTABELECIMENTO ESTE LANCAMENTO E'.
   //
   // Entra preenchido com o da pessoa, que e' o caso comum e nao pede clique
@@ -142,7 +164,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   function renderForm() {
     const isReceita = formType === 'RECEITA';
     const isTransfer = formType === 'TRANSFERENCIA';
-    const today = new Date().toISOString().slice(0, 10);
+    const today = hojeLocal();
 
     content.innerHTML = `
       <div class="panel">
@@ -286,18 +308,64 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         </div>
         <h3>Lançamento salvo com sucesso</h3>
         <p class="muted">${escapeHtml(entry.description || '')} — ${financeFormatBRL(entry.amountPrevisto)}</p>
-        <div class="finance-actions-row">
-          ${state.financeReturnTo ? '<button type="button" id="financeSuccessBack">Voltar ao pedido</button>' : ''}
-          <button type="button" ${state.financeReturnTo ? 'class="secondary"' : ''} id="financeSuccessView">Ver Lançamento</button>
-          <button type="button" class="secondary" id="financeSuccessNew">Novo Lançamento</button>
-        </div>
+        ${acoesDeSaida()}
       </div>
     `;
+    ligarAcoesDeSaida(entry);
+  }
+
+  // Fase EI: LANÇAMENTO JÁ BAIXADO OU CANCELADO NÃO ABRE O FORMULÁRIO.
+  //
+  // Faturar uma venda à vista gera a parcela já paga, e o app traz a pessoa
+  // direto para cá (app.js, mudarStatus). O formulário abria editável, com o
+  // aviso "você ajusta normalmente por aqui", e o servidor recusava ao salvar:
+  // ele só edita lançamento pendente. Dizer antes, e mostrar a saída, é o que
+  // tira o beco. A baixa se estorna em Lançamentos e, sem baixa, ele volta a
+  // ser editável; cancelado não volta (cancelar é definitivo, com motivo).
+  const SITUACAO_BAIXADA = { pago: 'pago', recebido: 'recebido', parcial: 'com baixa parcial' };
+  function renderSomenteLeitura(entry) {
+    const cancelado = entry.rawStatus === 'cancelado';
+    const situacao = SITUACAO_BAIXADA[entry.status] || 'com baixa registrada';
+    content.innerHTML = `
+      <div class="panel">
+        <div class="cadastro-page-head">
+          <div>
+            <h3>${escapeHtml(window.MavisLancamentoCodigo.rotulo(entry.code, 'Lançamento'))}</h3>
+          </div>
+        </div>
+        <p class="prompt-aviso">
+          ${cancelado
+            ? `<strong>Este lançamento foi cancelado e não pode mais ser editado.</strong>
+              ${entry.cancelReason ? `Motivo: ${escapeHtml(entry.cancelReason)}` : ''}`
+            : `<strong>Este lançamento já está ${escapeHtml(situacao)}.</strong>
+              Só lançamento pendente, sem baixa, pode ser editado. Para mudar algo,
+              abra-o em Ver Lançamento e estorne as baixas; sem baixa, ele volta a
+              ser editável por aqui.`}
+        </p>
+        <p class="muted">${escapeHtml(entry.description || '')} — ${financeFormatBRL(entry.amountPrevisto)}</p>
+        ${acoesDeSaida()}
+      </div>
+    `;
+    ligarAcoesDeSaida(entry);
+  }
+
+  // Os botões de saída, iguais no "salvo com sucesso" e no aviso de lançamento
+  // já baixado (fase EI): os dois terminam no mesmo ponto do fluxo.
+  function acoesDeSaida() {
+    return `
+        <div class="finance-actions-row">
+          ${voltaAoPedido ? '<button type="button" id="financeSuccessBack">Voltar ao pedido</button>' : ''}
+          <button type="button" ${voltaAoPedido ? 'class="secondary"' : ''} id="financeSuccessView">Ver Lançamento</button>
+          <button type="button" class="secondary" id="financeSuccessNew">Novo Lançamento</button>
+        </div>`;
+  }
+
+  function ligarAcoesDeSaida(entry) {
     // Fecha o ciclo do fluxo: quem veio de "Aprovar Pedido" volta para o pedido,
     // que é onde está a próxima etapa (Gerar NF-e). Sem isto o usuário teria que
     // navegar de volta na mão, e é aí que se perde o fio.
     document.getElementById('financeSuccessBack')?.addEventListener('click', async () => {
-      const volta = state.financeReturnTo;
+      const volta = voltaAoPedido;
       state.financeReturnTo = null;
       try {
         const res = await api(`/api/sales/records/${volta.recordId}`);
@@ -315,21 +383,48 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       state.activeSub = 'lancamentos';
       loadModule('finance');
     });
-    document.getElementById('financeSuccessNew')?.addEventListener('click', () => {
-      editEntry = null;
-      formType = 'DESPESA';
-      renderForm();
+    document.getElementById('financeSuccessNew')?.addEventListener('click', (evento) => {
+      // Fase EI: a tela nasce de novo, em vez de redesenhar o formulário com o
+      // estado da edição anterior. `vinculado`, `estabelecimentoAtual`,
+      // `mostrarEstab` e `voltaAoPedido` foram calculados para o lançamento
+      // editado: zerar só `editEntry` deixava `vinculado` verdadeiro, o
+      // formulário lia `editEntry.vinculo` de um nulo e o clique não fazia nada
+      // (TypeError no console). Custa recarregar o meta, o mesmo de abrir a
+      // tela pelo menu. O pedido de origem fica para trás junto.
+      evento.currentTarget.disabled = true;
+      state.financeReturnTo = null;
+      renderFinanceNovoLancamento(ctx);
     });
   }
 
   let inlineAddKind = null;
 
+  // Fase EI: trocar Receita/Despesa/Transferência leva junto o que já foi
+  // digitado. O formulário é redesenhado (conta e cliente mudam de forma entre
+  // os três), e redesenhar a partir de editEntry, nulo num lançamento novo,
+  // devolvia valor, descrição e observação em branco. Conta, plano de contas e
+  // cliente/fornecedor ficam de fora de propósito: mudam de sentido de um tipo
+  // para o outro (a conta de origem da transferência não é a conta da despesa).
+  // O estabelecimento não precisa: o redesenho já parte de estabelecimentoAtual.
+  const CAMPOS_DO_RASCUNHO = ['date', 'dueDate', 'amount', 'description', 'document', 'note'];
+
   function attachFormHandlers() {
     content.querySelectorAll('[data-type]').forEach((btn) => {
       btn.addEventListener('click', () => {
         if (editEntry) return;
+        const formAntes = document.getElementById('financeEntryForm');
+        const rascunho = {};
+        CAMPOS_DO_RASCUNHO.forEach((nome) => {
+          const campo = formAntes && formAntes.elements.namedItem(nome);
+          if (campo) rascunho[nome] = campo.value;
+        });
         formType = btn.dataset.type;
         renderForm();
+        const formDepois = document.getElementById('financeEntryForm');
+        Object.entries(rascunho).forEach(([nome, valor]) => {
+          const campo = formDepois && formDepois.elements.namedItem(nome);
+          if (campo) campo.value = valor;
+        });
       });
     });
 
@@ -357,6 +452,21 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     document.getElementById('financeInlineAddCancel')?.addEventListener('click', () => {
       document.getElementById('financeInlineAddRow')?.classList.add('hidden');
       inlineAddKind = null;
+    });
+
+    // Fase EI: Enter no nome do cadastro rápido cadastra o nome, e não o
+    // lançamento. O campo mora dentro do <form>, e pela regra do HTML o Enter
+    // num campo de texto envia o formulário: a despesa era gravada sem o plano
+    // de contas, e o "Aluguel" digitado nunca era criado.
+    document.getElementById('financeInlineAddInput')?.addEventListener('keydown', (evento) => {
+      if (evento.key === 'Enter' && !evento.isComposing) {
+        evento.preventDefault();
+        document.getElementById('financeInlineAddConfirm')?.click();
+      } else if (evento.key === 'Escape') {
+        evento.preventDefault();
+        evento.stopPropagation();
+        document.getElementById('financeInlineAddCancel')?.click();
+      }
     });
 
     document.getElementById('financeInlineAddConfirm')?.addEventListener('click', async (event) => {
@@ -432,6 +542,22 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       event.preventDefault();
       const submitBtn = event.target.querySelector('button[type="submit"]');
       if (submitBtn?.disabled) return;
+      // Fase EI: nome digitado na busca e não escolhido na lista. O campo de
+      // busca zera o valor escolhido a cada tecla (attachSearchableSelect), e o
+      // texto que fica à vista não vai no envio: o lançamento era gravado sem
+      // cliente/fornecedor com o nome ainda na tela e, na edição, uma letra
+      // apagada sem querer tirava o que já estava gravado. Recusar aqui é algo
+      // que a pessoa consegue corrigir; adivinhar quem ela quis, não.
+      if (!vinculado && formType !== 'TRANSFERENCIA') {
+        const buscaDaParte = document.getElementById('financePartyInput');
+        const parteEscolhida = document.getElementById('financePartyValue');
+        if (buscaDaParte && parteEscolhida && buscaDaParte.value.trim() && !parteEscolhida.value) {
+          const quem = formType === 'RECEITA' ? 'cliente' : 'fornecedor';
+          showToast(`O ${quem} digitado não foi escolhido na lista. Clique numa das opções, ou apague o texto e use o campo "Nome livre (se não cadastrado)".`, 'warning');
+          buscaDaParte.focus();
+          return;
+        }
+      }
       if (submitBtn) submitBtn.disabled = true;
       const formData = new FormData(event.target);
       const payload = vinculado
@@ -455,7 +581,14 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       // formulario que nem perguntou desvincularia o lancamento do
       // estabelecimento dele — a mesma distincao ausente/vazio que o servidor
       // faz para o vendedor e para as telas bloqueadas.
-      if (mostrarEstab) {
+      //
+      // Fase EI: e só quando a pessoa pode mexer nele. Desabilitado, o FormData
+      // o deixa de fora e ia '', que o servidor lê como "o estabelecimento de
+      // quem salva" (estabelecimentoDaOperacao), trocando o do lançamento sem
+      // ninguém pedir. Fora do corpo, o PUT mantém o que o lançamento já tem e
+      // o POST usa o da pessoa: é exatamente o que o campo travado mostrava.
+      const campoEstab = mostrarEstab ? document.getElementById('financeEstabSelect') : null;
+      if (campoEstab && !campoEstab.disabled) {
         payload.estabelecimentoId = formData.get('estabelecimentoId') || '';
       }
       if (formType === 'TRANSFERENCIA') {
@@ -487,5 +620,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     });
   }
 
-  renderForm();
+  // Fase EI: pendente abre o formulário; baixado ou cancelado, o aviso só de
+  // leitura (ver renderSomenteLeitura). `rawStatus` ausente conta como
+  // pendente, que é o que a tela sempre presumiu.
+  if (editEntry && String(editEntry.rawStatus || 'pending') !== 'pending') {
+    renderSomenteLeitura(editEntry);
+  } else {
+    renderForm();
+  }
 };
