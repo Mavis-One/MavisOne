@@ -161,8 +161,9 @@ const lista = (() => {
 check('a lista sai do catálogo (CATALOGO + LEGADOS filtrados por reservaEstoque)', Array.isArray(lista) && lista.length > 0,
   lista ? lista.join(', ') : 'não achei');
 check('nenhum status da lista reserva', (lista || []).every((s) => !salesStatus.reservaEstoque(s)));
-check('quem reserva NÃO está na lista (pedido, pedido-nao-faturado)',
-  !(lista || []).includes('pedido') && !(lista || []).includes('pedido-nao-faturado'));
+// Desde 13/10/2026 NENHUM status reserva (o usuário tirou a reserva do
+// sistema), então a lista de quem não reserva passou a ter o catálogo inteiro.
+check('com a reserva desligada, a lista tem o catálogo inteiro', (lista || []).includes('pedido') && (lista || []).includes('pedido-nao-faturado'));
 check('a consulta compara o valor CRU com a lista',
   /select\(COLUNAS_DE_RESERVA\)\s*\n\s*\.not\('status', 'in', STATUS_QUE_NAO_RESERVAM\)/.test(fonteVendas));
 // Grafias que o JS normaliza continuam vindo do banco, e calcularReservas decide.

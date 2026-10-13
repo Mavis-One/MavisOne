@@ -252,10 +252,15 @@
    *   - cancelado não reserva: deixou de ser promessa;
    *   - quem já baixou não reserva: virou movimento, o saldo já caiu.
    */
-  const reservaEstoque = (status, tipoRegistro) => {
-    const m = meta(status, tipoRegistro);
-    return m.tipo === 'order' && !m.baixaEstoque && !m.cancelado;
-  };
+  //
+  // DESLIGADO EM 13/10/2026, a pedido do usuário: "remova a questão de
+  // reservas dentre o sistema". Nenhum status segura estoque: o "disponível"
+  // em todo lugar (venda, produtos, saída manual) passa a ser o saldo físico,
+  // e só o FATURAMENTO confere estoque (transitionOrderStockEffect). A função
+  // continua existindo, respondendo "não", para quem a chama (lib/reservas.js,
+  // a leitura dos pedidos da reserva) seguir funcionando sem ramo novo — e para
+  // religar ser uma linha, se um dia for pedido.
+  const reservaEstoque = (_status, _tipoRegistro) => false;
 
   /**
    * Opções do <select> da tela, na ordem do catálogo.

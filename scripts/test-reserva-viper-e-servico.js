@@ -30,11 +30,16 @@ const pedidos = [
   { id: 'v1', code: 1, status: 'pedido', createdByName: 'Importação Viper', items: [{ productId: 'mao', quantity: 244 }, { productId: 'pneu', quantity: 3 }] },
   { id: 'm1', code: 2, status: 'pedido', createdByName: 'VENDEDOR', items: [{ productId: 'pneu', quantity: 2 }, { productId: 'mao', quantity: 1 }] }
 ];
+// No mesmo dia o usuário pediu para tirar a reserva do sistema INTEIRO (ver
+// test-reserva-estoque.js): agora nenhum pedido reserva, do Viper ou não. As
+// regras daqui continuam no código (e nos checks abaixo) para o dia em que a
+// reserva for religada.
 const r = reservas.calcularReservas(pedidos, { naoMovimentam: new Set(['mao']) });
-check('pedido importado do Viper não reserva', reservas.reservado(r, 'pneu') === 2, reservas.reservado(r, 'pneu'));
+check('pedido importado do Viper não reserva', reservas.reservado(r, 'pneu') === 0, reservas.reservado(r, 'pneu'));
 check('serviço não reserva', reservas.reservado(r, 'mao') === 0);
-check('sem a lista de serviços, o produto reserva como sempre',
-  reservas.reservado(reservas.calcularReservas(pedidos), 'mao') === 1);
+check('e, desde que a reserva saiu, nenhum pedido reserva',
+  reservas.reservado(reservas.calcularReservas(pedidos), 'mao') === 0 && reservas.reservado(reservas.calcularReservas(pedidos), 'pneu') === 0);
+check('a regra do Viper continua no cálculo', /if \(order\.createdByName === IMPORTADO_DO_VIPER\) continue;/.test(ler('lib/reservas.js')));
 check('a marca do Viper é a mesma dos relatórios', /'Importação Viper'/.test(ler('lib/relatorios/comum.js')) && reservas.IMPORTADO_DO_VIPER === 'Importação Viper');
 const vendas = ler('lib/db/vendas-compras.js');
 check('a leitura das reservas traz quem criou o pedido', /COLUNAS_DE_RESERVA = 'id, code, status, items, created_by_name'/.test(vendas));

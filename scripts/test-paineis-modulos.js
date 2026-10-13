@@ -95,8 +95,9 @@ check('valor em estoque não finge tendência', kpi(estoque, 'estoque-valor').va
 // de aparecer, senão as fatias não fecham com o cartão.
 check('produto sem depósito não some da rosca', estoque.porDeposito.some((f) => f.label === 'Sem depósito' && f.valor === 200));
 check('a rosca fecha com o cartão', estoque.porDeposito.reduce((s, f) => s + f.valor, 0) === kpi(estoque, 'estoque-valor').valor);
-// Reserva não calculada não pode virar "0 reservado".
-check('sem reservas, o cartão diz que não calculou', /reservas não calculadas/.test(kpi(estoque, 'estoque-reservado').detalhe));
+// O cartão "Reservado" saiu em 13/10/2026: o sistema não reserva mais
+// estoque (reservaEstoque em shared/sales_status.js).
+check('o painel de Estoque não tem mais o cartão Reservado', !estoque.kpis.some((k) => k.id === 'estoque-reservado'));
 
 console.log('\n--- Fiscal ---');
 const fiscal = P.painelFiscal({
