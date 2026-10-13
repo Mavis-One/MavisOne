@@ -164,7 +164,9 @@ check('  e salvar pedido NÃO joga fora', !/'\/api\/sales\/'\) esquecerSalesMeta
 
 console.log('\n--- 3. ninguém lê 60 colunas para usar quatro ---');
 const vendasDb = semComentarios(ler('lib/db/vendas-compras.js'));
-check('existe o recorte da reserva', /const COLUNAS_DE_RESERVA = 'id, code, status, items';/.test(vendasDb));
+// created_by_name entrou em 13/10/2026: pedido importado do Viper não reserva
+// (lib/reservas.js). Continua um recorte de cinco colunas, não as ~60.
+check('existe o recorte da reserva', /const COLUNAS_DE_RESERVA = 'id, code, status, items, created_by_name';/.test(vendasDb));
 check('  e é ele que a reserva usa',
   /async function getOrdersParaReservas\(\) \{[\s\S]{0,200}select\(COLUNAS_DE_RESERVA\)/.test(vendasDb));
 // O ponto em que isso pagava: TODA tela de Estoque passa por loadStockContext.

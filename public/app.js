@@ -3619,6 +3619,8 @@ async function loadModule(moduleName) {
             + (reservadoPorProduto.comCor.get(String(p.id)) || 0);
           const livre = Number(p.stockQuantity || 0) - reservado;
           const cabecalho = `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)} · `;
+          // Serviço: sem saldo nenhum no rótulo (13/10/2026).
+          if (p.movimentaEstoque === false) return cabecalho.slice(0, -3);
 
           // COM DEPOSITO ESCOLHIDO, o rotulo fala DELE. E' o saldo que a venda
           // vai consumir e o que a guarda do servidor vai conferir; mostrar o
@@ -3743,7 +3745,9 @@ async function loadModule(moduleName) {
         // saldo da cor, que é sempre maior e sempre tranquilizador demais.
         const saldoDoItem = (item) => {
           const produto = produtoDoItem(item);
-          if (!produto) return null;
+          // Serviço (não movimenta estoque — a mão de obra, 588) não tem saldo:
+          // null tira o item da coluna e do aviso de falta (13/10/2026).
+          if (!produto || produto.movimentaEstoque === false) return null;
           // O DEPOSITO ESCOLHIDO MANDA (fase CK): e' de la' que a mercadoria
           // sai, e e' o saldo de la' que o servidor confere no commit. Isto vale
           // tanto para item com cor quanto sem: a chave do saldo por deposito ja
@@ -4998,7 +5002,7 @@ async function loadModule(moduleName) {
                                       : ''}
                                   </td>
                                   <td class="sales-item-readonly ${faltaSaldo ? 'is-alerta' : ''}"
-                                      title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (saldoDesconhecido ? 'Saldo desta cor ainda não carregado.' : `Disponível para este ${title.toLowerCase()}: ${qtdVisivel(livre)}.${faltaSaldo ? ' O faturamento será recusado até o estoque entrar.' : ''}`)}">
+                                      title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (saldoDesconhecido ? (produto.movimentaEstoque === false ? 'Serviço: não controla estoque.' : 'Saldo desta cor ainda não carregado.') : `Disponível para este ${title.toLowerCase()}: ${qtdVisivel(livre)}.${faltaSaldo ? ' O faturamento será recusado até o estoque entrar.' : ''}`)}">
                                     ${semCadastro || saldoDesconhecido ? '-' : qtdVisivel(livre)}
                                   </td>
                                   <td class="sales-item-readonly" title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : 'Preço de venda cadastrado no Estoque — referência, não é o que será cobrado.'}">

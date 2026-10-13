@@ -281,8 +281,10 @@ check('a busca com filtro carrega as colunas da busca, e relê só a página',
 const estoque = servidor.slice(servidor.indexOf('async function transitionOrderStockEffect'), servidor.indexOf('async function numeroDaNotaDoPedido'));
 check('faturar/cancelar: produtos numa ida, não um por item',
   !/getProductById\(/.test(estoque) && (estoque.match(/db\.getProdutosPorIds\(/g) || []).length === 2);
+// Desde 13/10/2026 em duas linhas: o serviço (movimentaEstoque = false) sai
+// do Map antes; o apagado continua entrando como null.
 check('  e o produto apagado continua no Map (null), como antes',
-  /produtos\.set\(id, achados\.get\(id\) \|\| null\)/.test(estoque));
+  /const achado = achados\.get\(id\) \|\| null;[\s\S]{0,400}produtos\.set\(id, achado\)/.test(estoque));
 
 // ---------------------------------------------------------------------------
 // 6. A página relida não muda sem gravação, e não mente com gravação no meio.

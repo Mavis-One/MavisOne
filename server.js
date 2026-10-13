@@ -2782,7 +2782,12 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
   const achados = await db.getProdutosPorIds([...idsEnvolvidos]);
   const produtos = new Map();
   for (const id of idsEnvolvidos) {
-    produtos.set(id, achados.get(id) || null);
+    const achado = achados.get(id) || null;
+    // PRODUTO QUE NÃO MOVIMENTA ESTOQUE (serviço — hoje a mão de obra, 588;
+    // 13/10/2026) fica FORA do Map: não projeta, não baixa e não estorna. Sem
+    // isto a mão de obra, com saldo 0, recusava o faturamento de todo pedido.
+    if (achado && achado.movimentaEstoque === false) continue;
+    produtos.set(id, achado);
   }
 
   // A projeção é por PRODUTO + COR, não só por produto. Vender 3 pretos com 10
@@ -2865,7 +2870,7 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
       // A releitura continua servindo para saber se o produto ainda existe; o
       // total dele nao e' mais calculado aqui (ver a nota acima).
       const produtoAtual = existentesAgora.get(item.productId);
-      if (!produtoAtual) continue;
+      if (!produtoAtual || produtoAtual.movimentaEstoque === false) continue;
       registrarMovimentoEstoque(data, {
         productId: item.productId, productName: item.name, type: 'venda',
         quantityDelta: -Number(item.quantity || 0), referenceType: 'order', referenceId: record.id,
@@ -6655,7 +6660,7 @@ async function itensSemEstoqueParaFaturar(pedido) {
   const faltando = [];
   for (const { item, quantidade } of precisa.values()) {
     const produto = await db.getProductById(item.productId);
-    if (!produto) continue;
+    if (!produto || produto.movimentaEstoque === false) continue;
     const disponivel = item.classValueId
       ? stockCore.classValueBalance(data, item.productId, item.classValueId)
       : Number(produto.stockQuantity || 0);
@@ -7220,7 +7225,7 @@ async function emitirNfceDoPedido({ orderId, estabelecimentoId }, user) {
     }
     for (const { item, quantidade } of precisa.values()) {
       const produto = await db.getProductById(item.productId);
-      if (!produto) continue;
+      if (!produto || produto.movimentaEstoque === false) continue;
       const disponivel = item.classValueId
         ? stockCore.classValueBalance(data, item.productId, item.classValueId)
         : Number(produto.stockQuantity || 0);
@@ -8130,6 +8135,12 @@ async function sincronizarRazao(data) {
  * medido abrindo Contagens. `db.getDeposits()` é a mesma leitura (e o mesmo
  * cache) que o syncCadastroData fazia para os depósitos.
  */
+/** Os ids dos produtos que NÃO movimentam estoque (serviço; hoje a mão de
+ * obra, 588) — não reservam nem baixam. Ver lib/reservas.js. */
+function idsQueNaoMovimentam(produtos) {
+  return new Set((produtos || []).filter((p) => p && p.movimentaEstoque === false).map((p) => p.id));
+}
+
 async function loadStockContext({ comReservas = false } = {}) {
   const data = loadData();
   const [, , pedidosDaReserva, todos] = await Promise.all([
@@ -8141,7 +8152,7 @@ async function loadStockContext({ comReservas = false } = {}) {
   let reservas = null;
   if (comReservas && pedidosDaReserva) {
     try {
-      reservas = reservasLib.calcularReservas(pedidosDaReserva);
+      reservas = reservasLib.calcularReservas(pedidosDaReserva, { naoMovimentam: idsQueNaoMovimentam(todos) });
     } catch (erroReservas) {
       // Falha ao ler pedidos não pode derrubar a tela de Estoque: sem reservas
       // as colunas saem em branco (null, não zero), e o saldo continua certo.
@@ -8216,7 +8227,7 @@ async function loadStockContextDosProdutos(idsDeProduto, { comSkus = false, comR
   let reservas = null;
   if (comReservas && pedidosDaReserva) {
     try {
-      reservas = reservasLib.calcularReservas(pedidosDaReserva);
+      reservas = reservasLib.calcularReservas(pedidosDaReserva, { naoMovimentam: idsQueNaoMovimentam(produtos) });
     } catch (erroReservas) {
       // Mesma regra do loadStockContext: sem reservas, a coluna sai em branco.
       reservas = null;
@@ -11077,7 +11088,7 @@ async function tratarRequisicao(req, res) {
       // só os pedidos que podem reservar. Ver getOrdersParaReservas — as
       // reservas leem id, code, status e items.
       if (pedidosDaReserva && pedidosDaReserva.erro) throw pedidosDaReserva.erro;
-      const calculadas = reservasLib.calcularReservas(pedidosDaReserva);
+      const calculadas = reservasLib.calcularReservas(pedidosDaReserva, { naoMovimentam: idsQueNaoMovimentam(products) });
       reservas = Object.fromEntries(calculadas.porChave);
     } catch (erroReservas) {
       // Sem reservas a tela cai no comportamento antigo (saldo físico) em vez
