@@ -6,14 +6,15 @@
  * 1. Pedido com produto zerado salva como sempre; a NF-e do pedido é recusada
  *    ANTES de ir à SEFAZ enquanto o saldo não cobrir. Sem isso a nota saía, e
  *    o faturamento que a autorização dispara falhava calado (só auditoria).
- *    Primeiro só para o produto marcado "Permite pedido sem estoque"; no
- *    mesmo dia o usuário pediu para valer para todos.
+ *    Primeiro só para o produto marcado num campo "Permite pedido sem
+ *    estoque"; no mesmo dia o usuário pediu para valer para todos, e o campo,
+ *    que deixou de ter efeito, saiu da tela (também a pedido dele).
  * 2. Produtos (Estoque), busca de produto e itens do pedido: negativo aparece
  *    como 0, e o número reservado não aparece.
  *
- * Provado no banco local: o campo grava e volta pela tela; pedido 16339 com a
- * PLACA DO zerada — marcada, a pré-conferência recusa ("Sem estoque para
- * faturar"); desmarcada, passa, como antes. Dados de teste apagados.
+ * Provado no banco local: pedido 16340 com a PLACA DO zerada — a
+ * pré-conferência recusa ("Sem estoque para faturar") sem transmitir nada.
+ * Dados de teste apagados.
  */
 const fs = require('fs');
 const path = require('path');
@@ -27,17 +28,14 @@ const check = (nome, cond, det) => {
 };
 const ler = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
-console.log('--- 1. o campo no produto ---');
-const marcado = stockCore.buildProductMeta({ vendeSemEstoque: true }, {});
-check('marcar grava', marcado.vendeSemEstoque === true);
-check('desmarcar grava', stockCore.buildProductMeta({ vendeSemEstoque: false }, marcado).vendeSemEstoque === false);
-check('quem não manda o campo (importação, preço) não o apaga', stockCore.buildProductMeta({ minStock: 2 }, marcado).vendeSemEstoque === true);
-check('produto novo nasce desmarcado', stockCore.buildProductMeta({}, {}).vendeSemEstoque === false);
-const serializado = stockCore.serializeProduct({ id: 'p1', name: 'X', stockQuantity: 0 }, { deposits: [], stockMovements: [], productMeta: { p1: marcado } });
-check('a leitura do produto devolve o campo', serializado.vendeSemEstoque === true);
-const tela = ler('public/modules/stock/subs/new_product.js');
-check('a tela tem a caixa', /name="vendeSemEstoque"/.test(tela));
-check('  e manda true/false', /vendeSemEstoque: formData\.get\('vendeSemEstoque'\) === 'on'/.test(tela));
+console.log('--- 1. o campo "Permite pedido sem estoque" saiu ---');
+// Com a trava valendo para todos, uma caixa que não muda nada seria pior que
+// nenhuma (13/10/2026). O que um produto já tenha gravado some na próxima
+// gravação: buildProductMeta só monta os campos que conhece.
+check('a tela não tem mais a caixa', !/vendeSemEstoque/.test(ler('public/modules/stock/subs/new_product.js')));
+check('o meta não grava mais', !('vendeSemEstoque' in stockCore.buildProductMeta({ vendeSemEstoque: true }, { vendeSemEstoque: true })));
+check('a leitura não devolve mais',
+  !('vendeSemEstoque' in stockCore.serializeProduct({ id: 'p1', name: 'X', stockQuantity: 0 }, { deposits: [], stockMovements: [], productMeta: { p1: { vendeSemEstoque: true } } })));
 
 console.log('\n--- 2. a NF-e do pedido confere antes de transmitir ---');
 const servidor = ler('server.js');
