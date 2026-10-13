@@ -88,7 +88,8 @@ check('  o Painel Vendas segue com a conta inteira', /const filtro = querVendedo
 check('tela: botão Filtros com a contagem dos ativos', /id="painelVendedorFiltrosBtn">Filtros\$\{filtrosAtivos/.test(app));
 
 console.log('\n--- 6. a marca leva ao Dashboard ---');
-check('raio e "MO" são um botão só', /<button type="button" class="sidebar-header sidebar-marca" id="marcaDashboardBtn"[\s\S]{0,200}logo-marca logo-sidebar[\s\S]{0,300}brand-short/.test(app));
+// Só o raio desde 13/10/2026: o "MO" saiu a pedido do usuário.
+check('o raio é o botão do Dashboard, sem o "MO"', /<button type="button" class="sidebar-header sidebar-marca" id="marcaDashboardBtn"[^>]*>\s*<span class="logo-marca logo-sidebar" aria-hidden="true"><\/span>\s*<\/button>/.test(app));
 check('  que abre o Dashboard', /marcaDashboard\.onclick = \(\) => \{[\s\S]{0,200}state\.activeModule = 'dashboard';[\s\S]{0,200}loadModule\('dashboard'\);/.test(app));
 check('ícone do Dashboard fora do menu', /\$\{MENU_MODULOS\s*\.filter\(\(module\) => module !== 'dashboard'\)/.test(app));
 

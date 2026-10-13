@@ -133,6 +133,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // tela: seria a nota errada, com os itens de um pedido antigo.
   const doPedido = state.nfeFromOrder || null;
   if (doPedido) delete state.nfeFromOrder;
+  // Fase EF: a categoria de venda do pedido diz a operação (Transferência,
+  // Remessa, Bonificação...). A pessoa ainda pode trocar na tela.
+  if (doPedido && doPedido.tipoOperacao && NFE_FOCUS_TIPO_OPERACAO_OPTIONS.some((o) => o.value === doPedido.tipoOperacao)) {
+    tipoOperacao = doPedido.tipoOperacao;
+  }
   let orderIdOrigem = doPedido ? doPedido.orderId || '' : '';
   // FASE BQ: desconto, frete cobrado e despesas do PEDIDO. Zero na nota
   // avulsa, que não tem pedido por trás. O servidor já sabia recebê-los (o

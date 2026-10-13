@@ -124,6 +124,8 @@ const metasLib = require('./lib/metas');
 const metasDb = require('./lib/db/metas');
 // Fase DD: a filial de cada venda, lida do fim da categoria.
 const filialDaVenda = require('./lib/filial-da-venda');
+// Fase EF: o que a categoria de venda faz (estoque, financeiro, fiscal, venda).
+const categoriaVenda = require('./public/modules/shared/categoria_venda');
 // Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
 const painelPessoal = require('./lib/painel-pessoal-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
@@ -3058,10 +3060,13 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
     // numero de pedido.
     credenciadorasPorId: await credenciadorasDaRequisicao(data)
   });
+  // Fase EF: a categoria financeira (plano de contas) vem da categoria de venda.
+  const categoriaFinanceira = (await regraDaCategoriaDoPedido(record.category)).financialCategoryId || '';
   let quitadas = 0;
   for (const parcela of parcelas) {
     const entry = await db.createFinancialEntry({
       type: 'RECEITA',
+      category: categoriaFinanceira,
       date: record.date,
       dueDate: parcela.dueDate,
       amount: parcela.amount,
@@ -3658,14 +3663,48 @@ async function montarContextoFiscalDoPedido(body, data) {
  * em lote sem gerar as contas a receber ficaria "aprovado" na tela e nada no
  * Financeiro, e ninguém percebe até a cobrança não sair.
  */
+/**
+ * A REGRA DA CATEGORIA DE VENDA DE UM PEDIDO (fase EF). Lê o cadastro a cada
+ * chamada: são poucas linhas, e o pedido não pode faturar com a regra de
+ * ontem. Sem a tabela (migração pendente), sem regra — o status decide, como
+ * sempre decidiu.
+ */
+async function regraDaCategoriaDoPedido(nomeDaCategoria) {
+  let categorias = [];
+  try {
+    categorias = await categoriasVendaDb.listar();
+  } catch (erro) {
+    console.warn('[categorias de venda] regra indisponível, o status decide:', erro.message);
+    categorias = [];
+  }
+  return categoriaVenda.regraDaCategoria(nomeDaCategoria, categorias);
+}
+
+/** Os relatórios em memória (lib/filial-da-venda.js) leem a finalidade daqui. */
+async function recarregarCategoriasDosRelatorios() {
+  try {
+    filialDaVenda.usarCategorias(await categoriasVendaDb.listar());
+  } catch (erro) {
+    console.warn('[categorias de venda] não carregaram para os relatórios:', erro.message);
+  }
+}
+
 async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo, tipoNovo, isOrder, data, user }) {
   // Os dois efeitos são independentes: cada status do catálogo declara se
   // baixa estoque e se gera financeiro, e "Pedido Aprovado Sem Faturamento"
   // é justamente o que faz um sem o outro (transferência, remessa,
   // bonificação). Orçamento nunca faz nenhum dos dois.
   const eraFaturado = Boolean(current.financeApplied);
-  const vaiBaixarEstoque = tipoNovo === 'order' && salesStatus.baixaEstoque(statusNovo);
-  const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.geraFinanceiro(statusNovo);
+  // FASE EF: A CATEGORIA DECIDE NA HORA DE APLICAR. "Transferência entre
+  // filiais" fatura baixando o estoque e sem conta a receber; "Bonificação",
+  // idem. O que JÁ foi aplicado não se desfaz só porque a categoria mudou
+  // depois (current.stockApplied / financeApplied seguram): desfazer estoque
+  // ou cancelar recebível por troca de rótulo seria pior que manter.
+  const regraCategoria = await regraDaCategoriaDoPedido(updated.category || current.category);
+  const vaiBaixarEstoque = tipoNovo === 'order' && salesStatus.baixaEstoque(statusNovo)
+    && (Boolean(current.stockApplied) || regraCategoria.alteraEstoque);
+  const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.geraFinanceiro(statusNovo)
+    && (eraFaturado || regraCategoria.geraFinanceiro);
 
   // FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
   //
@@ -11053,7 +11092,11 @@ async function tratarRequisicao(req, res) {
       // So as ATIVAS: inativar existe para a origem sumir do formulario sem
       // sumir do historico. A lista de manutencao (rota /origins) traz todas.
       salesOrigins: origensAtivas.map((o) => o.name),
-      salesCategories: categoriasAtivas.map((c) => ({ id: c.id, name: c.name })),
+      salesCategories: categoriasAtivas.map((c) => ({
+        id: c.id, name: c.name,
+        // Fase EF: a NF-e gerada do pedido abre com esta operação fiscal.
+        finalidade: c.finalidade, alteraEstoque: c.alteraEstoque, geraFinanceiro: c.geraFinanceiro, operacaoFiscal: c.operacaoFiscal
+      })),
       productCategories: (data.productCategories || []).filter((c) => c.status !== 'inativo'),
       priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type })),
       // Abas Pagamentos e Entrega: formas de pagamento e transportadoras vêm do
@@ -11506,15 +11549,19 @@ async function tratarRequisicao(req, res) {
         // Aprovado Sem Faturamento" baixa estoque e não gera financeiro.
         // Mesma conferência da edição, e pelo mesmo motivo: recusar depois de
         // o estoque ter saído deixaria o pedido gravado e sem recebível.
-        if (type === 'order' && salesStatus.geraFinanceiro(status)) {
+        // Fase EF: a categoria da venda decide se baixa estoque e se gera
+        // financeiro (ver aplicarEfeitosDeStatus).
+        const regraCategoria = await regraDaCategoriaDoPedido(record.category);
+        const geraFinanceiroAgora = type === 'order' && salesStatus.geraFinanceiro(status) && regraCategoria.geraFinanceiro;
+        if (geraFinanceiroAgora) {
           const pagamentosInvalidos = pagamentosCabemNoPedido(record);
           if (pagamentosInvalidos) return sendJson(res, { error: pagamentosInvalidos }, 400);
         }
-        if (type === 'order' && salesStatus.baixaEstoque(status)) {
+        if (type === 'order' && salesStatus.baixaEstoque(status) && regraCategoria.alteraEstoque) {
           await transitionOrderStockEffect(data, { oldItems: [], newItems: items, wasApplied: false, willApply: true, record, user });
           record.stockApplied = true;
         }
-        record.financeApplied = type === 'order' && salesStatus.geraFinanceiro(status);
+        record.financeApplied = geraFinanceiroAgora;
         record = type === 'order' ? await db.createOrder(record) : await db.createQuote(record);
         // As contas a receber vêm DEPOIS de gravar o pedido: elas apontam para
         // o id dele, e um lançamento apontando para pedido que falhou ao salvar
@@ -11828,6 +11875,34 @@ async function tratarRequisicao(req, res) {
     return sendJson(res, { categories: comUso });
   }
 
+  // Fase EF: as listas do formulário da categoria — as categorias financeiras
+  // de receita (as finalidades e operações estão em shared/categoria_venda.js).
+  if (pathname === '/api/sales/categories/meta' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissao' }, 403);
+    }
+    const data = loadData();
+    await syncFinanceCadastroData(data);
+    const financialCategories = (data.financialCategories || [])
+      .filter((c) => !c.type || ['receita', 'ambos'].includes(String(c.type).toLowerCase()))
+      .map((c) => ({ id: c.id, name: c.name }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
+    return sendJson(res, { financialCategories });
+  }
+
+  // A edição da categoria abre pelo id. A rota não existia: o formulário
+  // abria vazio com "não foi possível carregar o registro".
+  if (pathname.startsWith('/api/sales/categories/') && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('sales')) {
+      return sendJson(res, { error: 'Sem permissao' }, 403);
+    }
+    const category = await categoriasVendaDb.obter(decodeURIComponent(pathname.replace('/api/sales/categories/', '')));
+    if (!category) return sendJson(res, { error: 'Categoria nao encontrada' }, 404);
+    return sendJson(res, { category });
+  }
+
   if (pathname === '/api/sales/categories' && req.method === 'POST') {
     try {
       const user = await getCurrentUser(req);
@@ -11836,6 +11911,7 @@ async function tratarRequisicao(req, res) {
       }
       const body = await readBody(req);
       const category = await categoriasVendaDb.criar(body);
+      await recarregarCategoriasDosRelatorios();
       return sendJson(res, { success: true, category });
     } catch (erro) {
       return sendErro(res, erro, 'Erro ao criar a categoria', 400);
@@ -11854,6 +11930,7 @@ async function tratarRequisicao(req, res) {
 
       const body = await readBody(req);
       const category = await categoriasVendaDb.atualizar(id, body);
+      await recarregarCategoriasDosRelatorios();
 
       // RENOMEAR NAO RENOMEIA NOS PEDIDOS, e quem renomeou precisa saber disso
       // na hora. `orders.category` guarda o NOME (ver o cabecalho da migracao),
@@ -11883,6 +11960,7 @@ async function tratarRequisicao(req, res) {
       const id = decodeURIComponent(pathname.replace('/api/sales/categories/', ''));
       const apagou = await categoriasVendaDb.excluir(id);
       if (!apagou) return sendJson(res, { error: 'Categoria nao encontrada' }, 404);
+      await recarregarCategoriasDosRelatorios();
       return sendJson(res, { success: true });
     } catch (erro) {
       return sendErro(res, erro, 'Erro ao excluir', 400);
@@ -19983,6 +20061,8 @@ function startServer(port, retriesLeft) {
     ligarLinhaDeSaude();
     // As alterações das operações fiscais (fase DW) por cima do padrão do código.
     operacoesFiscaisDb.carregar();
+    // A finalidade das categorias de venda, para os relatórios (fase EF).
+    recarregarCategoriasDosRelatorios();
   });
 
   server.once('error', (error) => {

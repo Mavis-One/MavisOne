@@ -21,6 +21,10 @@ window.MavisSubscreenRegistry.sales.sales_categories = window.MavisStock.makeLis
   columns: [
     { label: 'Categoria', render: (item) => window.MavisStock.escape(item.name) },
     { label: 'Código', render: (item) => window.MavisStock.escape(item.code || '-') },
+    // Fase EF: o que a categoria faz no sistema.
+    { label: 'Finalidade', render: (item) => window.MavisStock.escape((window.MavisCategoriaVenda.finalidade(item.finalidade) || { name: 'Venda' }).name) },
+    { label: 'Estoque', render: (item) => (item.alteraEstoque !== false ? window.MavisStock.badge('Altera', 'info') : '<span class="muted">Não altera</span>') },
+    { label: 'Financeiro', render: (item) => (item.geraFinanceiro !== false ? window.MavisStock.badge('Gera', 'success') : '<span class="muted">Não gera</span>') },
     // Quantos pedidos usam. É o que decide se a categoria pode ser excluída ou
     // se deve ser inativada — e o servidor recusa a exclusão de uma em uso,
     // então mostrar o número aqui evita o clique que já nasce recusado.

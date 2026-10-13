@@ -1549,12 +1549,10 @@ function renderApp() {
       <aside class="sidebar">
         <!-- A MARCA É O CAMINHO PARA O DASHBOARD (12/10/2026): raio e "MO"
              viraram um botão só, e o ícone do Dashboard saiu do menu. -->
-        <button type="button" class="sidebar-header sidebar-marca" id="marcaDashboardBtn" title="Dashboard" aria-label="Ir para o Dashboard">
+        <!-- Só o raio (13/10/2026): o "MO" embaixo dele saiu a pedido do
+             usuário. O nome continua no rótulo do botão, para leitor de tela. -->
+        <button type="button" class="sidebar-header sidebar-marca" id="marcaDashboardBtn" title="Dashboard" aria-label="MavisONE — ir para o Dashboard">
           <span class="logo-marca logo-sidebar" aria-hidden="true"></span>
-          <span class="brand">
-            <span class="brand-full"><span class="brand-mavis">Mavis</span><span class="brand-one">ONE</span></span>
-            <span class="brand-short"><span class="brand-mavis">M</span><span class="brand-one">O</span></span>
-          </span>
         </button>
         <div class="nav-list">
           ${MENU_MODULOS
@@ -4489,6 +4487,11 @@ async function loadModule(moduleName) {
             state.nfeFromOrder = {
               orderId: editRecord.id,
               code: editRecord.code,
+              // Fase EF: a operação fiscal da categoria de venda do pedido
+              // ("Transferência entre filiais" -> TRANSFERENCIA). Vazia = Venda.
+              tipoOperacao: window.MavisCategoriaVenda
+                ? window.MavisCategoriaVenda.regraDaCategoria(formState.category, meta.salesCategories || []).operacaoFiscal
+                : '',
               clientSupplierId: formState.clientSupplierId,
               clientName: meta.directory.find((e) => e.id === formState.clientSupplierId)?.name || '',
               items: items.map((item) => ({
