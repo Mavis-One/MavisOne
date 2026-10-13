@@ -17,6 +17,13 @@ window.MavisStock = window.MavisStock || {};
     return Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/\.?0+$/, '');
   };
 
+  // SALDO NA TELA DE PRODUTOS: negativo aparece como 0 (13/10/2026, pedido do
+  // usuário). O número de verdade continua no razão (Movimentações), nos
+  // relatórios de estoque e na conta do faturamento.
+  Stock.qtdVisivel = function qtdVisivel(value) {
+    return Stock.formatQty(Math.max(0, Number(value || 0)));
+  };
+
   Stock.formatDate = function formatDate(value) {
     if (!value) return '-';
     const [y, m, d] = String(value).slice(0, 10).split('-');
@@ -78,12 +85,13 @@ window.MavisStock = window.MavisStock || {};
       .slice()
       .sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0))
       .map((saldo) => {
-        const qtd = Number(saldo.quantity || 0);
-        const estado = qtd < 0 ? 'negativo' : (qtd > 0 ? 'tem-saldo' : 'zerado');
+        // Negativo aparece como zero (13/10/2026) — ver Stock.qtdVisivel.
+        const qtd = Math.max(0, Number(saldo.quantity || 0));
+        const estado = qtd > 0 ? 'tem-saldo' : 'zerado';
         // A participacao saiu da tela e virou `title`: ela era a terceira coluna
         // da tabela antiga e continua sendo util, mas dentro do cartao roubava a
         // atencao do numero que importa.
-        const total = Number(product.stockQuantity || 0);
+        const total = Math.max(0, Number(product.stockQuantity || 0));
         const parte = total > 0 ? ` · ${((qtd / total) * 100).toFixed(1)}% do total` : '';
         return `
           <div class="estoque-card ${estado}" title="${Stock.escape(saldo.depositName)}: ${Stock.formatQty(qtd)}${parte}">
@@ -97,13 +105,13 @@ window.MavisStock = window.MavisStock || {};
 
     // Saldo que existe no cadastro e nunca foi distribuido por movimentacao.
     // Nao e' deposito, entao nao e' verde nem vermelho.
-    if (Number(product.unallocated || 0) !== 0) {
+    if (Number(product.unallocated || 0) > 0) {
       cartoes.push(`
         <div class="estoque-card sem-deposito" title="Saldo que existe no cadastro do produto e ainda nao foi distribuido por movimentacoes.">
           <span class="estoque-card-icone" aria-hidden="true">${Stock.depositoIcon}</span>
           <span class="estoque-card-texto">
             <span class="estoque-card-nome">SEM DEPÓSITO DEFINIDO</span>
-            <span class="estoque-card-qtd">${Stock.formatQty(product.unallocated)}</span>
+            <span class="estoque-card-qtd">${Stock.qtdVisivel(product.unallocated)}</span>
           </span>
         </div>`);
     }
@@ -112,15 +120,7 @@ window.MavisStock = window.MavisStock || {};
       return '<p class="muted">Nenhum depósito cadastrado.</p>';
     }
 
-    const negativos = (product.balances || []).filter((b) => Number(b.quantity || 0) < 0);
-    const aviso = negativos.length
-      ? `<p class="estoque-card-aviso"><strong>${negativos.length} depósito(s) com saldo negativo:</strong> `
-        + `${negativos.map((b) => Stock.escape(b.depositName)).join(', ')}. `
-        + 'Saldo negativo significa que saiu mais do que havia registrado naquele depósito — '
-        + 'confira as movimentações antes de usar este número.</p>'
-      : '';
-
-    return `<div class="estoque-cards">${cartoes.join('')}</div>${aviso}`;
+    return `<div class="estoque-cards">${cartoes.join('')}</div>`;
   };
 
   Stock.emptyRow = function emptyRow(colspan, message) {

@@ -311,7 +311,8 @@ console.log('\n--- §12: o saldo mostrado é o DA COR ---');
 // Mostrar o saldo geral numa linha colorida é sempre um número maior que o
 // real: o item passaria na tela e o faturamento recusaria.
 check('a linha do item mede o saldo da cor', /const registro = classesPorProduto\.get\(item\.productId\);\s*\n\s*if \(!registro\) return null;\s*\n\s*return Number\(registro\.saldos\[item\.classValueId\] \|\| 0\);/.test(appSrc));
-check('sem o dado, não inventa número', /\$\{semCadastro \|\| saldoDesconhecido \? '-' : salesFormatQty\(livre\)\}/.test(appSrc));
+// Desde 13/10/2026 pelo qtdVisivel: negativo aparece como 0 (pedido do usuário).
+check('sem o dado, não inventa número', /\$\{semCadastro \|\| saldoDesconhecido \? '-' : qtdVisivel\(livre\)\}/.test(appSrc));
 check('o alerta de saldo usa a mesma conta', /const livre = disponivelDoItem\(item\);\s*\n\s*return livre !== null && Number\(item\.quantity \|\| 0\) > livre;/.test(appSrc));
 // A rota do produto devolve saldo junto com as classes: duas chamadas fariam a
 // lista abrir sem os números.
@@ -405,13 +406,15 @@ const prodSrc = ler('public/modules/stock/subs/products.js');
 // exata e quebrou quando o trânsito entrou entre eles — o que ele precisa
 // garantir é que a quebra fique no MESMO campo do saldo, embaixo dele, e não em
 // coluna própria.
+// 13/10/2026, pedido do usuário: saldo negativo aparece como 0 e a linha da
+// reserva saiu; o trânsito continua entre o saldo e a quebra.
 check('o saldo mostra a quebra embaixo',
-  /\$\{S\.formatQty\(product\.stockQuantity\)\}[^<]*\$\{quebraPorCor\(product\)\}/.test(prodSrc));
-check('  com a reserva e o trânsito entre os dois',
-  /\$\{reservaDoProduto\(product\)\}\$\{transitoDoProduto\(product\)\}/.test(prodSrc));
-// Esconder o "sem cor" faria a soma das cores não bater com o total exibido.
-check('o saldo sem cor aparece', /if \(quebra\.semClasse !== 0\) partes\.push/.test(prodSrc));
-check('cor zerada não polui a linha', /\.filter\(\(linha\) => linha\.quantity !== 0\)/.test(prodSrc));
+  /\$\{S\.qtdVisivel\(product\.stockQuantity\)\}[^<]*\$\{quebraPorCor\(product\)\}/.test(prodSrc));
+check('  com o trânsito entre os dois, e sem a reserva',
+  /\$\{transitoDoProduto\(product\)\}\$\{quebraPorCor\(product\)\}/.test(prodSrc) && !/reservaDoProduto/.test(prodSrc));
+// Esconder o "sem cor" positivo faria a soma das cores não bater com o total.
+check('o saldo sem cor aparece', /if \(quebra\.semClasse > 0\) partes\.push/.test(prodSrc));
+check('cor zerada ou negativa não aparece', /\.filter\(\(linha\) => linha\.quantity > 0\)/.test(prodSrc));
 
 console.log('\n--- o nome da cor vem do catálogo, uma vez só ---');
 const sharedSrc = ler('public/modules/stock/shared.js');

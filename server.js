@@ -6617,6 +6617,41 @@ function leiturasDaConferencia() {
 // O que muda é pouco e está marcado com `nfce` abaixo — o consumidor é
 // opcional e não pode ser contribuinte, a operação é sempre interna e de
 // venda, e a nota de balcão não leva frete.
+/**
+ * Os itens do pedido marcados "Permite pedido sem estoque" (productMeta.
+ * vendeSemEstoque) cujo saldo não cobre a quantidade — a mesma conta do
+ * faturamento (transitionOrderStockEffect): pela cor quando o item tem cor,
+ * senão pelo saldo do produto, somando as linhas repetidas. Produto não
+ * marcado não entra: para ele nada mudou (decisão do usuário, 13/10/2026).
+ */
+async function itensSemEstoqueParaFaturar(pedido) {
+  const data = loadData();
+  const precisa = new Map();
+  for (const item of pedido.items || []) {
+    if (!item.productId) continue;
+    if (stockCore.productMeta(data, item.productId).vendeSemEstoque !== true) continue;
+    const chave = `${item.productId}|${item.classValueId || ''}`;
+    const atual = precisa.get(chave) || { item, quantidade: 0 };
+    atual.quantidade += Number(item.quantity || 0);
+    precisa.set(chave, atual);
+  }
+  if (!precisa.size) return [];
+  await sincronizarRazao(data);
+  const faltando = [];
+  for (const { item, quantidade } of precisa.values()) {
+    const produto = await db.getProductById(item.productId);
+    if (!produto) continue;
+    const disponivel = item.classValueId
+      ? stockCore.classValueBalance(data, item.productId, item.classValueId)
+      : Number(produto.stockQuantity || 0);
+    if (disponivel < quantidade) {
+      const cor = item.classValueName || item.classValueId;
+      faltando.push({ nome: `${item.name || produto.name}${cor ? ` (${cor})` : ''}`, disponivel: Math.max(0, disponivel), quantidade });
+    }
+  }
+  return faltando;
+}
+
 async function prepararNfeParaTransmitir(body, opcoes = {}) {
   // AS LEITURAS VÊM DE FORA SÓ NO PRÉ-CHECK (leiturasDaConferencia). Os três
   // nomes abaixo SOMBREIAM os do módulo de propósito: o corpo desta função
@@ -6730,6 +6765,22 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
         + 'Cancele a nota existente antes de emitir outra — duas notas para o mesmo pedido são dois documentos na SEFAZ.'
       );
       err.status = 409;
+      throw err;
+    }
+    // PRODUTO QUE ENTRA EM PEDIDO SEM ESTOQUE NÃO SAI EM NOTA SEM ESTOQUE
+    // (13/10/2026). A autorização fatura o pedido, e faturar sem saldo é
+    // recusado — mas DEPOIS de a nota existir na SEFAZ, e a recusa só vai para
+    // a auditoria (faturarPedidoDaNota). Para o produto marcado "Permite pedido
+    // sem estoque", que é justamente o que chega aqui zerado, a conta é feita
+    // antes de transmitir.
+    const pedido = await db.getOrderById(pedidoDaNota);
+    const faltando = pedido ? await itensSemEstoqueParaFaturar(pedido) : [];
+    if (faltando.length) {
+      const err = new Error(
+        `Sem estoque para faturar: ${faltando.map((f) => `"${f.nome}" (disponível ${f.disponivel}, necessário ${f.quantidade})`).join('; ')}. `
+        + 'O pedido continua em aberto; a nota sai quando o estoque entrar.'
+      );
+      err.status = 400;
       throw err;
     }
   }

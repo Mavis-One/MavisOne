@@ -60,35 +60,17 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
    * `semClasse` aparece de propósito: é o saldo de antes do controle por cor,
    * e escondê-lo faria a soma das cores não bater com o total.
    */
-  /**
-   * Reserva: prometido em pedido aberto, ainda no depósito.
-   *
-   * `reserved` vem null quando a rota não calculou — aí a linha não diz nada,
-   * em vez de afirmar "nada reservado", que seria uma informação inventada.
-   * Zero reservado também não vira linha: seria ruído em todo produto parado.
-   */
-  function reservaDoProduto(product) {
-    if (product.reserved === null || product.reserved === undefined) return '';
-    if (Number(product.reserved) === 0) return '';
-    const livre = Number(product.available || 0);
-    return `<div class="stock-reserva" title="Prometido em pedidos abertos que ainda não foram faturados.">`
-      + `${S.formatQty(product.reserved)} reservado · <strong>${S.formatQty(livre)} livre</strong>`
-      + `</div>`;
-  }
 
   /**
    * EM TRÂNSITO: saiu de um depósito e ainda não foi conferida no destino
    * (fase CZ).
    *
-   * Aparece ao lado da reserva porque as duas respondem à mesma pergunta —
-   * "deste saldo, quanto eu posso mesmo vender hoje?" — por motivos diferentes:
-   * a reserva está prometida, o trânsito está no caminhão. O total do produto
-   * inclui as duas, e é justamente isso que torna a linha necessária: sem ela, a
-   * tela mostra 10 unidades e não diz que 4 estão numa estrada entre o CD e a
-   * filial.
+   * O total do produto inclui o que está no caminhão, e é isso que torna a
+   * linha necessária: sem ela, a tela mostra 10 unidades e não diz que 4 estão
+   * numa estrada entre o CD e a filial. (A linha da RESERVA, que ficava ao lado
+   * desta, saiu em 13/10/2026 a pedido do usuário.)
    *
-   * Zero não vira linha, mesma regra da reserva: seria ruído em todo produto
-   * que nunca foi transferido.
+   * Zero não vira linha: seria ruído em todo produto que nunca foi transferido.
    */
   function transitoDoProduto(product) {
     const emTransito = Number(product.inTransit || 0);
@@ -102,9 +84,10 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
     const quebra = product.classBalances;
     if (!quebra) return '';
     const partes = (quebra.valores || [])
-      .filter((linha) => linha.quantity !== 0)
+      // Só as cores com saldo: negativo não aparece (13/10/2026).
+      .filter((linha) => linha.quantity > 0)
       .map((linha) => `${S.corBadge(cores, linha.classValueId)} ${S.formatQty(linha.quantity)}`);
-    if (quebra.semClasse !== 0) partes.push(`<span class="muted">sem cor ${S.formatQty(quebra.semClasse)}</span>`);
+    if (quebra.semClasse > 0) partes.push(`<span class="muted">sem cor ${S.formatQty(quebra.semClasse)}</span>`);
     if (!partes.length) return '';
     return `<div class="stock-quebra-cor">${partes.join(' · ')}</div>`;
   }
@@ -333,7 +316,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
                     <td>${S.formatBRL(product.costPrice)}</td>
                     <td>${S.formatBRL(product.salePrice)}</td>
                     <td>${Number(product.margin || 0).toFixed(1)}%</td>
-                    <td>${S.formatQty(product.stockQuantity)}${reservaDoProduto(product)}${transitoDoProduto(product)}${quebraPorCor(product)}</td>
+                    <td>${S.qtdVisivel(product.stockQuantity)}${transitoDoProduto(product)}${quebraPorCor(product)}</td>
                     <td>${S.situationBadge(product.situation)}</td>
                     <td>${S.statusBadge(product.status)}</td>
                     <td>

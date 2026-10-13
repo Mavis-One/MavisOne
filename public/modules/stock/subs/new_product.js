@@ -254,6 +254,9 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
               <label>Depósito padrão<select name="defaultDepositId">${S.options(meta.deposits, current ? current.defaultDepositId : '', { empty: 'Nenhum' })}</select></label>
               <label>Localização<input name="location" value="${value('location')}" placeholder="Ex.: Corredor 3, prateleira B" /></label>
             </div>
+            <div class="row">
+              <label class="classe-hex-linha"><input type="checkbox" name="vendeSemEstoque" ${current && current.vendeSemEstoque ? 'checked' : ''} /> Permite pedido sem estoque (não fatura sem saldo)</label>
+            </div>
             ${current ? `
               <div class="row">
                 <label>Saldo atual<input value="${S.formatQty(current.stockQuantity)}" disabled /></label>
@@ -409,7 +412,8 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       maxStock: Number(formData.get('maxStock') || 0),
       defaultDepositId: formData.get('defaultDepositId'),
       location: formData.get('location'),
-      notes: formData.get('notes')
+      notes: formData.get('notes'),
+      vendeSemEstoque: formData.get('vendeSemEstoque') === 'on'
     };
     if (!current) {
       payload.stockQuantity = Number(formData.get('stockQuantity') || 0);

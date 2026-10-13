@@ -255,8 +255,11 @@ check('  e a tabela de três colunas não voltou',
 // TRES ESTADOS. Zero quer dizer "nao tem aqui"; negativo quer dizer "o livro
 // esta errado". Pintar os dois iguais esconderia um problema atras de um
 // estado normal.
-check('três estados, e não dois',
-  /const estado = qtd < 0 \? 'negativo' : \(qtd > 0 \? 'tem-saldo' : 'zerado'\);/.test(compartilhadoCodigo));
+// 13/10/2026, pedido do usuário: negativo não aparece mais na tela de
+// produtos — vira zero (Stock.qtdVisivel). O razão continua com o número.
+check('negativo aparece como zero, e não como estado próprio',
+  /const qtd = Math\.max\(0, Number\(saldo\.quantity \|\| 0\)\);/.test(compartilhadoCodigo)
+  && /const estado = qtd > 0 \? 'tem-saldo' : 'zerado';/.test(compartilhadoCodigo));
 for (const classe of ['tem-saldo', 'zerado', 'negativo', 'sem-deposito']) {
   check(`  .estoque-card.${classe.padEnd(13)} tem estilo`,
     new RegExp(`\.estoque-card\.${classe} \{`).test(css));
@@ -282,8 +285,8 @@ check('a ordem é decrescente pelo saldo',
   /\.sort\(\(a, b\) => Number\(b\.quantity \|\| 0\) - Number\(a\.quantity \|\| 0\)\)/.test(compartilhadoCodigo));
 // O negativo cai no fim da ordem decrescente. O aviso e o que impede de
 // depender de varrer o painel inteiro para notar.
-check('  e um aviso conta quantos depósitos estão negativos',
-  /depósito\(s\) com saldo negativo/.test(compartilhado));
+check('  e o aviso de depósitos negativos saiu (13/10/2026)',
+  !/depósito\(s\) com saldo negativo/.test(compartilhado));
 // Nome empilhado sobre o numero: os dois sao <span>, que e inline por padrao.
 // Sem isto saiam lado a lado e o numero deixava de saltar aos olhos.
 check('o nome fica EMPILHADO sobre o número, não ao lado',
@@ -294,7 +297,7 @@ check('o nome fica EMPILHADO sobre o número, não ao lado',
 check('o saldo sem depósito tem cartão próprio, neutro',
   /SEM DEPÓSITO DEFINIDO/.test(compartilhado)
   && /\.estoque-card\.sem-deposito \{[\s\S]{0,120}background: var\(--panel-alt\)/.test(css));
-check('  e só aparece quando existe', /if \(Number\(product\.unallocated \|\| 0\) !== 0\)/.test(compartilhadoCodigo));
+check('  e só aparece quando é positivo', /if \(Number\(product\.unallocated \|\| 0\) > 0\)/.test(compartilhadoCodigo));
 // A segunda frase ("Cadastre um depósito para ver...") saiu em 01/10/2026, na
 // limpeza das descrições; o que importa é o painel não sair vazio.
 check('sem depósito nenhum, o painel diz isso em vez de sair vazio',

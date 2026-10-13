@@ -98,12 +98,15 @@ console.log('\n--- entra nas telas que decidem ---');
 // duas vezes.
 check('o alerta da venda mede o disponível', /const livre = disponivelDoItem\(item\);/.test(appSrc));
 check('a coluna deixou de se chamar Saldo', /<th>Disponível<\/th>/.test(appSrc));
-check('e mostra o físico junto quando há reserva', /de \$\{salesFormatQty\(saldo\)\}<\/span>/.test(appSrc));
+// 13/10/2026, pedido do usuário: a tela não mostra mais número reservado nem
+// negativo — a coluna diz só o disponível, com zero no lugar do negativo. A
+// conta (disponivelDoItem, o alerta) continua descontando a reserva.
+check('mostra só o disponível, sem o "de X" da reserva', !/sales-item-reservado/.test(appSrc) && /qtdVisivel\(livre\)/.test(appSrc));
 check('o meta da venda manda as reservas', /reservas = Object\.fromEntries\(calculadas\.porChave\)/.test(serverSrc));
 // Um pedido já faturado não está na conta de reservas; descontá-lo daria
 // crédito duas vezes pela mesma mercadoria.
 check('só desconta o próprio se o status salvo reservava', /editRecord && SalesStatus\.reservaEstoque\(editRecord\.status\)/.test(appSrc));
-check('a lista de produtos mostra a reserva', /reservaDoProduto\(product\)/.test(ler('public/modules/stock/subs/products.js')));
+check('a lista de produtos não mostra mais a reserva (13/10/2026)', !/reservaDoProduto/.test(ler('public/modules/stock/subs/products.js')));
 check('a saída de estoque avisa', /deste produto estão reservados em pedidos abertos/.test(ler('public/modules/stock/subs/new_movement.js')));
 
 console.log('\n--- null não é zero ---');
@@ -116,7 +119,6 @@ check('e available também', semReserva.available === null);
 const comReserva = stockCore.serializeProduct({ id: 'p1', name: 'X', stockQuantity: 10 }, { deposits: [], stockMovements: [] }, reservas);
 check('com reservas, reserved é o número', comReserva.reserved === 11);
 check('e available desconta', comReserva.available === -1);
-check('a tela não desenha linha quando é null', /if \(product\.reserved === null \|\| product\.reserved === undefined\) return '';/.test(ler('public/modules/stock/subs/products.js')));
 
 console.log('\n--- custo consciente ---');
 // Ler os pedidos é uma consulta a mais. Registrar movimentação não precisa

@@ -66,9 +66,9 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
 
       ${!product ? '<div class="panel"><p class="muted">Cadastre um produto para consultar o status.</p></div>' : `
         <div class="row">
-          <div class="panel"><strong>${S.formatQty(product.stockQuantity)}</strong><p class="muted">Saldo total (${S.escape(product.unit)})</p></div>
+          <div class="panel"><strong>${S.qtdVisivel(product.stockQuantity)}</strong><p class="muted">Saldo total (${S.escape(product.unit)})</p></div>
           <div class="panel"><strong>${S.situationBadge(product.situation)}</strong><p class="muted">Mín. ${S.formatQty(product.minStock)} / Máx. ${S.formatQty(product.maxStock)}</p></div>
-          <div class="panel"><strong>${S.formatBRL(Number(product.stockQuantity) * Number(product.costPrice))}</strong><p class="muted">Valor a custo</p></div>
+          <div class="panel"><strong>${S.formatBRL(Math.max(0, Number(product.stockQuantity)) * Number(product.costPrice))}</strong><p class="muted">Valor a custo</p></div>
           <div class="panel"><strong>${S.statusBadge(product.status)}</strong><p class="muted">${S.escape(product.categoryName || 'Sem categoria')}</p></div>
         </div>
 
@@ -80,7 +80,7 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
                continua, no title de cada cartao. O painel mora em
                stock/shared.js porque nao e so desta tela. -->
           ${S.quantidadesPorEstoque(product)}
-          ${product.unallocated !== 0 ? '<p class="muted" style="margin-top:12px;">"Sem depósito definido" é o saldo que existe no cadastro do produto mas ainda não foi distribuído por movimentações. Registre uma entrada para alocá-lo.</p>' : ''}
+          ${product.unallocated > 0 ? '<p class="muted" style="margin-top:12px;">"Sem depósito definido" é o saldo que existe no cadastro do produto mas ainda não foi distribuído por movimentações. Registre uma entrada para alocá-lo.</p>' : ''}
         </div>
 
         <div class="panel">

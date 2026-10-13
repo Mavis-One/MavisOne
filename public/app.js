@@ -3606,6 +3606,11 @@ async function loadModule(moduleName) {
           }
           return { semCor, comCor };
         })();
+        // SEM NEGATIVO E SEM RESERVA NA TELA (13/10/2026, pedido do usuário):
+        // saldo negativo aparece como 0, e o rótulo diz só o disponível, sem o
+        // "de X" da reserva. O número de verdade continua no razão, nos
+        // relatórios de estoque e na conta do faturamento.
+        const qtdVisivel = (n) => salesFormatQty(Math.max(0, Number(n || 0)));
         const rotuloProduto = (p) => {
           const reservado = Number(reservadoPorProduto.semCor.get(String(p.id)) || 0)
             + (reservadoPorProduto.comCor.get(String(p.id)) || 0);
@@ -3619,22 +3624,16 @@ async function loadModule(moduleName) {
           if (noDeposito !== null) {
             const nome = nomeDoDepositoEscolhido();
             return cabecalho
-              + `${salesFormatQty(noDeposito)} em ${nome}`
+              + `${qtdVisivel(noDeposito)} em ${nome}`
               // O total vai junto, entre parenteses: sem ele, quem ve "0 em
               // Barra" conclui que o produto acabou, quando ele pode ter 10 no
               // galpao esperando uma transferencia.
-              + (Number(p.stockQuantity || 0) !== Number(noDeposito)
-                ? ` (${salesFormatQty(p.stockQuantity)} no total)`
+              + (Math.max(0, Number(p.stockQuantity || 0)) !== Math.max(0, Number(noDeposito))
+                ? ` (${qtdVisivel(p.stockQuantity)} no total)`
                 : '');
           }
 
-          // Quando há reserva o rótulo mostra os dois números: só o disponível
-          // faria parecer que o estoque acabou, e só o saldo esconderia que ele
-          // já está comprometido.
-          return cabecalho
-            + (reservado > 0
-              ? `disponível ${salesFormatQty(livre)} de ${salesFormatQty(p.stockQuantity)}`
-              : `saldo ${salesFormatQty(p.stockQuantity)}`);
+          return cabecalho + `disponível ${qtdVisivel(livre)}`;
         };
         // AS OPÇÕES DOS DOIS CAMPOS DE BUSCA, MONTADAS UMA VEZ (fase DS).
         //
@@ -4996,9 +4995,8 @@ async function loadModule(moduleName) {
                                       : ''}
                                   </td>
                                   <td class="sales-item-readonly ${faltaSaldo ? 'is-alerta' : ''}"
-                                      title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (saldoDesconhecido ? 'Saldo desta cor ainda não carregado.' : `Em estoque: ${salesFormatQty(saldo)}. Reservado em outros pedidos: ${salesFormatQty(reservado)}. Livre para este ${title.toLowerCase()}: ${salesFormatQty(livre)}.${faltaSaldo ? ` Faltam ${salesFormatQty(Number(item.quantity || 0) - livre)} — o faturamento será recusado.` : ''}`)}">
-                                    ${semCadastro || saldoDesconhecido ? '-' : salesFormatQty(livre)}
-                                    ${!semCadastro && reservado > 0 ? `<span class="sales-item-reservado">de ${salesFormatQty(saldo)}</span>` : ''}
+                                      title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (saldoDesconhecido ? 'Saldo desta cor ainda não carregado.' : `Disponível para este ${title.toLowerCase()}: ${qtdVisivel(livre)}.${faltaSaldo ? ' O faturamento será recusado até o estoque entrar.' : ''}`)}">
+                                    ${semCadastro || saldoDesconhecido ? '-' : qtdVisivel(livre)}
                                   </td>
                                   <td class="sales-item-readonly" title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : 'Preço de venda cadastrado no Estoque — referência, não é o que será cobrado.'}">
                                     ${semCadastro ? '-' : salesFormatBRL(produto.salePrice)}
@@ -5027,7 +5025,6 @@ async function loadModule(moduleName) {
                       <p class="sales-itens-alerta">
                         Estoque disponível não cobre ${itensSemSaldo().length === 1 ? '1 produto' : `${itensSemSaldo().length} produtos`}:
                         ${escapeHtml(itensSemSaldo().map((item) => item.name + (item.classValueName ? ` (${item.classValueName})` : '')).join(', '))}.
-                        Parte do estoque já está reservada em outros pedidos.
                       </p>` : ''}
                   </div>
                 </div>

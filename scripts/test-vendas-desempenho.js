@@ -196,7 +196,9 @@ const meta = {
   products: [
     { id: 'p1', name: 'Parafuso', sku: '10087', salePrice: 1234.5, stockQuantity: 10 },
     { id: 'p10', name: 'Porca', sku: '', salePrice: 0.1, stockQuantity: 2.5 },
-    { id: 'p2', name: 'Arruela', sku: 'A', salePrice: 0, stockQuantity: 0 }
+    { id: 'p2', name: 'Arruela', sku: 'A', salePrice: 0, stockQuantity: 0 },
+    // Saldo negativo: aparece como 0 (13/10/2026).
+    { id: 'p3', name: 'Bucha', sku: 'B', salePrice: 1, stockQuantity: -3 }
   ],
   // `p1|` e `p10|...` não podem se misturar; quantidade fracionária na cor.
   reservas: { 'p1|': 1, 'p1|azul': 0.1, 'p10|': 0.2, 'p1|preto': 0.2, 'p10|verde': 1 },
@@ -214,13 +216,16 @@ const rotuloAntigo = (p, deposito) => {
       .reduce((soma, [, q]) => soma + Number(q || 0), 0);
   const livre = Number(p.stockQuantity || 0) - reservado;
   const cabecalho = `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${formatoAntigo(p.salePrice)} · `;
+  // 13/10/2026, pedido do usuário: sem negativo (vira 0) e sem o "de X" da
+  // reserva — o rótulo diz só o disponível.
+  const vis = (n) => qtd(Math.max(0, Number(n || 0)));
   if (deposito) {
     const noDeposito = Number(meta.saldosPorDeposito[`${p.id}|${deposito}|`] || 0);
     const nome = (meta.deposits.find((d) => d.id === deposito) || {}).name || '';
-    return cabecalho + `${qtd(noDeposito)} em ${nome}`
-      + (Number(p.stockQuantity || 0) !== Number(noDeposito) ? ` (${qtd(p.stockQuantity)} no total)` : '');
+    return cabecalho + `${vis(noDeposito)} em ${nome}`
+      + (Math.max(0, Number(p.stockQuantity || 0)) !== Math.max(0, noDeposito) ? ` (${vis(p.stockQuantity)} no total)` : '');
   }
-  return cabecalho + (reservado > 0 ? `disponível ${qtd(livre)} de ${qtd(p.stockQuantity)}` : `saldo ${qtd(p.stockQuantity)}`);
+  return cabecalho + `disponível ${vis(livre)}`;
 };
 for (const deposito of ['', 'dep1']) {
   const formState = { depositId: deposito };
