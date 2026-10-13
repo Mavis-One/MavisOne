@@ -3894,12 +3894,17 @@ async function loadModule(moduleName) {
         // O CABEÇALHO DA IMPRESSÃO É A EMPRESA DO PEDIDO (13/10/2026). Antes
         // era sempre a matriz dos estabelecimentos — em produção, a KACCAU num
         // pedido da SAL INFINITY PLUS. Pela ordem: o estabelecimento fiscal com
-        // o MESMO CNPJ da empresa do pedido; senão a própria empresa
-        // (Cadastros › Empresas); e só o pedido sem empresa cai na matriz, que
-        // vem com o aviso "Dados da matriz" (`unidades`).
+        // o MESMO CNPJ da empresa do pedido (ou, sem empresa, da do depósito);
+        // senão a própria empresa (Cadastros › Empresas); e só o pedido sem
+        // empresa e sem depósito cai na matriz — a SAL INFINITY PLUS, ver
+        // emitenteParaImpressao —, que vem com o aviso "Dados da matriz".
         const emitenteDaImpressao = () => {
           const padrao = meta.emitente || null;
-          const empresa = (meta.companies || []).find((c) => c.id === formState.companyId);
+          // Sem empresa no pedido, a do DEPÓSITO dele (13/10/2026): o 16333
+          // foi gravado sem empresa e saía com a matriz fiscal.
+          const deposito = (meta.deposits || []).find((d) => d.id === formState.depositId);
+          const idDaEmpresa = formState.companyId || (deposito && deposito.companyId) || '';
+          const empresa = (meta.companies || []).find((c) => c.id === idDaEmpresa);
           if (!empresa) return padrao;
           const cnpj = String(empresa.document || '').replace(/\D/g, '');
           const doCnpj = cnpj && ((padrao && padrao.estabelecimentos) || [])

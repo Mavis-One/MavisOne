@@ -1927,7 +1927,12 @@ async function emitenteParaImpressao() {
   });
   const escolhido = ativos.length === 1
     ? ativos[0]
-    : (ativos.find((e) => String(e.tipo || '').toUpperCase() === 'MATRIZ') || ativos[0]);
+    // A SAL INFINITY PLUS MATRIZ primeiro (13/10/2026). "A primeira com tipo
+    // MATRIZ" era a KACCAU em produção — há várias empresas fiscais, cada uma
+    // com a sua matriz, e a KACCAU nem é do MavisONE. Esta é a que sobra para o
+    // pedido SEM empresa e sem depósito; o resto acha a loja na tela.
+    : (ativos.find((e) => String(e.cnpj || '').replace(/\D/g, '') === CNPJ_MATRIZ_DA_MONTAGEM)
+      || ativos.find((e) => String(e.tipo || '').toUpperCase() === 'MATRIZ') || ativos[0]);
   return {
     ...contato(escolhido),
     // Para a tela poder dizer "são vários, este é o da matriz" sem que quem

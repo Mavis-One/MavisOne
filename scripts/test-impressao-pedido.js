@@ -122,10 +122,17 @@ check('ela escolhe campo por campo, sem spread do estabelecimento',
 // recorte de campos, e a tela acha o da empresa do pedido pelo CNPJ.
 check('manda todos os estabelecimentos ativos, pelo mesmo recorte', /estabelecimentos: ativos\.map\(contato\)/.test(emitenteFn));
 const escolhaDaTela = (tela.match(/const emitenteDaImpressao = \(\) => \{[\s\S]*?\n {8}\};/) || [''])[0];
-check('a tela escolhe pela empresa do pedido', /const empresa = \(meta\.companies \|\| \[\]\)\.find\(\(c\) => c\.id === formState\.companyId\);/.test(escolhaDaTela));
+check('a tela escolhe pela empresa do pedido', /const empresa = \(meta\.companies \|\| \[\]\)\.find\(\(c\) => c\.id === idDaEmpresa\);/.test(escolhaDaTela)
+  && /formState\.companyId \|\|/.test(escolhaDaTela));
 check('  o estabelecimento do MESMO CNPJ primeiro', /\.find\(\(e\) => String\(e\.cnpj \|\| ''\)\.replace\(\/\\D\/g, ''\) === cnpj\)/.test(escolhaDaTela));
 check('  senão a própria empresa, e a matriz só sem empresa', /razaoSocial: empresa\.name/.test(escolhaDaTela) && /if \(!empresa\) return padrao;/.test(escolhaDaTela));
 check('A4 e cupom usam a mesma escolha', (tela.match(/const emitente = emitenteDaImpressao\(\);/g) || []).length === 2);
+// Pedido SEM empresa (o 16333 em produção): a do depósito; e, sem os dois, a
+// SAL INFINITY PLUS matriz — não "a primeira MATRIZ", que era a KACCAU.
+check('  sem empresa no pedido, usa a do depósito',
+  /const idDaEmpresa = formState\.companyId \|\| \(deposito && deposito\.companyId\) \|\| '';/.test(escolhaDaTela));
+check('a matriz de reserva é a SAL INFINITY PLUS (CNPJ da matriz), antes de "a primeira MATRIZ"',
+  /ativos\.find\(\(e\) => String\(e\.cnpj \|\| ''\)\.replace\(\/\\D\/g, ''\) === CNPJ_MATRIZ_DA_MONTAGEM\)\s*\|\| ativos\.find\(\(e\) => String\(e\.tipo/.test(emitenteFn));
 check('"Loja:" mostra a filial, não a razão social', /empresa \? rotuloDaEmpresa\(empresa\) : ''/.test(template));
 check('NENHUM campo da Focus sai nele',
   !/focus/i.test(emitenteFn.replace(/^\s*\/\/.*$/gm, '')));
