@@ -4640,6 +4640,8 @@ async function loadModule(moduleName) {
               // A empresa do pedido escolhe o emitente na emissão (13/10/2026):
               // é do emitente que sai o termo, e sem ele a nota não o tinha.
               empresaCnpj: String((meta.companies.find((c) => c.id === formState.companyId) || {}).document || '').replace(/\D/g, ''),
+              // A transportadora do pedido abre a aba Transporte preenchida.
+              carrierId: formState.carrierId || '',
               payments: payments.map((linha) => ({ ...linha })),
               // AS LINHAS DE PAGAMENTO, TRADUZIDAS PARA O GRUPO `pag` (fase BU).
               //

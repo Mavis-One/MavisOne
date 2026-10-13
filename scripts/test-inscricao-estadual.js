@@ -149,7 +149,9 @@ check('  e não sobrou Boolean(...stateRegistration) nela', !/Boolean\([^)]*stat
 check('  o checkbox "Contribuinte de ICMS" nasce do cadastro',
   /name="destContribuinte" \$\{destinatario\.contribuinte \? 'checked' : ''\}/.test(emissaoSrc));
 check('  a IE do cadastro entra só de contribuinte, na carga e na troca de cliente',
-  (emissaoSrc.match(/MavisInscricaoEstadual\.paraNota\(/g) || []).length === 2);
+  // Só os do destinatário: desde 13/10/2026 a aba Transporte também passa a IE
+  // da transportadora por paraNota (`t.stateRegistration`).
+  (emissaoSrc.match(/MavisInscricaoEstadual\.paraNota\((?!t\.stateRegistration)/g) || []).length === 2);
 // Na troca de cliente pelo seletor o checkbox também acompanha — antes ficava
 // como estava. A carga do pedido sozinha já satisfaria uma contagem de 1.
 check('  e na troca de cliente o checkbox acompanha a regra',

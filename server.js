@@ -2060,6 +2060,33 @@ function getMontadoresDirectory(data) {
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
 }
 
+// Pessoa guarda o logradouro em `street`/`streetNumber`; empresa (cnpjs), em
+// `address`/`addressNumber` — e `address` pode já ser o endereço completo da
+// Receita: número e bairro só entram quando ainda não estão nele.
+function enderecoDaTransportadora(entry) {
+  let endereco = String(entry.street || entry.address || '').trim();
+  for (const parte of [entry.streetNumber || entry.addressNumber, entry.neighborhood]) {
+    const p = String(parte || '').trim();
+    if (p && !endereco.toUpperCase().includes(p.toUpperCase())) endereco = endereco ? `${endereco}, ${p}` : p;
+  }
+  return endereco;
+}
+
+/** As transportadoras com os dados do grupo de transporte da NF-e. */
+function transportadorasParaNfe(data) {
+  return [...(data.people || []), ...(data.cnpjs || [])]
+    .filter((entry) => Array.isArray(entry.roles) && entry.roles.includes('Transportadora'))
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      document: entry.document || '',
+      stateRegistration: entry.stateRegistration || '',
+      endereco: enderecoDaTransportadora(entry),
+      city: entry.city || '',
+      state: entry.state || ''
+    }));
+}
+
 // Transportadora pode ser pessoa física (motorista autônomo) ou empresa, por
 // isso varre as duas listas — diferente de vendedor, que só é pessoa.
 function getCarriersDirectory(data) {
@@ -6999,6 +7026,8 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     desconto: body.desconto,
     outrasDespesas: body.outrasDespesas,
     modalidadeFrete: body.modalidadeFrete,
+    // Aba Transporte (13/10/2026): transportadora, veículo e volumes.
+    transporte: body.transporte,
     informacoesAdicionais: body.informacoesAdicionais,
     // Quem manda é o ambiente EFETIVO (já considerando a trava de
     // homologação), não o que está salvo no estabelecimento: é ele que decide
@@ -18188,6 +18217,9 @@ async function tratarRequisicao(req, res) {
         || estabelecimentosQuePodeUsar(user, ehAdministrador).some((id) => id !== (user.estabelecimentoId || '')),
       estabelecimentosLiberados: estabelecimentosQuePodeUsar(user, ehAdministrador),
       directory: diretorioDoMetaFinanceiro(data, pedeDiretorio),
+      // As TRANSPORTADORAS com o que a aba Transporte da emissão preenche
+      // (13/10/2026). Só no diretório da NF-e: as outras telas não as leem.
+      ...(pedeDiretorio === 'nfe' ? { transportadoras: transportadorasParaNfe(data) } : {}),
       // Produtos com a classificação fiscal: é o que permite montar o item da
       // NF-e a partir do cadastro em vez de digitar NCM e origem a cada
       // emissão — digitado à mão, o NCM erra e a regra fiscal não casa.

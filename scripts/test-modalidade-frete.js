@@ -115,8 +115,11 @@ check('e NÃO existe mais modalidadeFrete fixo em 0',
 console.log('\n--- 6. a modalidade não viaja amarrada ao valor do frete ---');
 // Transporte próprio sem cobrança tem vFrete zero e modFrete 3. Enquanto a
 // modalidade morava dentro do `...(frete ? ...)`, esse caso declarava 9.
+// Desde 13/10/2026 a aba Transporte deixa trocar a modalidade: o que o pedido
+// traduziu é o ponto de partida de `modalidadeEscolhida`, não o valor final.
 check('a modalidade sai do seu próprio spread',
-  /\.\.\.\(modalidadeDoFrete === undefined \? \{\} : \{ modalidadeFrete: modalidadeDoFrete \}\)/.test(tela));
+  /\.\.\.\(modalidadeEscolhida === undefined \? \{\} : \{ modalidadeFrete: modalidadeEscolhida \}\)/.test(tela));
+check('  partindo da que o pedido traduziu', /let modalidadeEscolhida = modalidadeDoFrete;/.test(tela));
 check('  e o frete sai sozinho no dele', /\.\.\.\(frete \? \{ frete \} : \{\}\)/.test(tela));
 // Vendas manda o MEIO, não o código já resolvido: mandar o número criaria uma
 // segunda tradução do mesmo de-para.

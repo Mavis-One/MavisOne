@@ -81,5 +81,36 @@ check('a prévia e o envio usam o MESMO corpo', /montarCorpoDaNota\(formData, re
 check('o item leva o que foi editado', /fiscal: \{ \.\.\.item\.fiscal \}/.test(tela));
 check('frete, seguro, desconto e outras editáveis na aba Totais', ['frete', 'seguro', 'desconto', 'outrasDespesas'].every((c) => tela.includes(`data-total-campo="${c}"`)));
 
+console.log('\n--- 6. aba Transporte ---');
+// Nomes conferidos em campos.focusnfe.com.br/nfe/NotaFiscalXML.html (13/10/2026).
+const comTransporte = (transporte, extra = {}) => B.buildNfePayload({
+  estabelecimento: { cnpj: '43792899000135' }, empresa: {},
+  destinatario: { nome: 'A', documento: '12935855990', uf: 'SC' },
+  itens: [{ descricao: 'X', ncm: '87116000', quantidade: 1, valorUnitario: 1000, regraFiscal: REGRA }],
+  naturezaOperacao: 'Venda', pagamentos: [], transporte, ...extra
+});
+const tp = comTransporte({
+  transportador: { documento: '11.222.333/0001-81', nome: '  Transportes   X ', inscricaoEstadual: '251.234.567', endereco: 'Rua A, 10', municipio: 'Joinville', uf: 'sc' },
+  veiculo: { placa: 'abc-1d23', uf: 'sc', rntc: '12345678' },
+  volumes: [{ quantidade: '2', especie: 'CAIXA', pesoBruto: '35.5' }, { especie: '' }]
+}, { modalidadeFrete: 0 });
+check('transportador com CNPJ só dígitos', tp.cnpj_transportador === '11222333000181' && !('cpf_transportador' in tp));
+check('  nome, IE, endereço, município e UF', tp.nome_transportador === 'Transportes X' && tp.inscricao_estadual_transportador === '251234567'
+  && tp.endereco_transportador === 'Rua A, 10' && tp.municipio_transportador === 'Joinville' && tp.uf_transportador === 'SC');
+check('CPF vai no campo de CPF', comTransporte({ transportador: { documento: '129.358.559-90' } }).cpf_transportador === '12935855990');
+check('veículo: placa sem traço, UF e RNTC', tp.veiculo_placa === 'ABC1D23' && tp.veiculo_uf === 'SC' && tp.veiculo_rntc === '12345678');
+check('volumes: linha vazia descartada, números convertidos', tp.volumes.length === 1 && tp.volumes[0].quantidade === 2 && tp.volumes[0].peso_bruto === 35.5);
+check('a modalidade escolhida vai junto', String(tp.modalidade_frete) === '0');
+let placaRuim = null;
+try { comTransporte({ veiculo: { placa: 'AB12' } }); } catch (erro) { placaRuim = erro; }
+check('placa com tamanho errado é recusada antes da SEFAZ', placaRuim && placaRuim.status === 400);
+const semNada = comTransporte(undefined);
+check('sem transporte, nenhum campo do grupo', !Object.keys(semNada).some((k) => /transportador|veiculo_|^volumes$/.test(k)));
+check('o servidor repassa o transporte ao montador', /transporte: body\.transporte,/.test(servidor));
+check('o meta da NF-e traz as transportadoras', /pedeDiretorio === 'nfe' \? \{ transportadoras: transportadorasParaNfe\(data\) \}/.test(servidor));
+check('a tela tem a aba e manda o grupo', /data-tab="transporte"/.test(tela) && /transporteDaNota\(\) \? \{ transporte: transporteDaNota\(\) \}/.test(tela));
+check('a transportadora do pedido abre preenchida', /carrierId: formState\.carrierId \|\| '',/.test(ler('public/app.js'))
+  && /if \(doPedido\.carrierId\) escolherTransportadora\(doPedido\.carrierId\);/.test(tela));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

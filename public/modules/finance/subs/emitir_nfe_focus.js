@@ -164,6 +164,16 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   let outrasDespesas = doPedido ? Number(doPedido.outrasDespesas || 0) : 0;
   // Seguro: o pedido não tem o campo; só a aba Totais o preenche.
   let seguro = 0;
+  // A ABA TRANSPORTE (13/10/2026). Fora do HTML, como o resto: renderForm
+  // redesenha a tela inteira. `modalidadeEscolhida` undefined = o pedido não
+  // respondeu e ninguém escolheu; aí vale o palpite do montador.
+  let modalidadeEscolhida = modalidadeDoFrete;
+  let transportadoraId = '';
+  const transporte = {
+    transportador: { documento: '', nome: '', inscricaoEstadual: '', endereco: '', municipio: '', uf: '' },
+    veiculo: { placa: '', uf: '', rntc: '' },
+    volumes: []
+  };
   // A PRÉVIA DA ABA IMPOSTOS (13/10/2026): o que o servidor montaria, com as
   // regras fiscais e o que foi editado. Ver carregarPrevia.
   let previa = null;
@@ -263,6 +273,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const cnpjDoPedido = String(doPedido.empresaCnpj || '').replace(/\D/g, '');
     const doMesmoCnpj = cnpjDoPedido && estabelecimentos.find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpjDoPedido);
     if (doMesmoCnpj) selectedEstabelecimentoId = doMesmoCnpj.id;
+    // A transportadora do pedido abre a aba Transporte preenchida.
+    if (doPedido.carrierId) escolherTransportadora(doPedido.carrierId);
   }
 
   // O que o botão "Restaurar texto padrão" devolve. Vindo de um pedido, é o
@@ -452,9 +464,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               ? '<button type="button" class="cadastro-tab" data-tab="complemento" role="tab" aria-selected="false"><span>3. Complemento de ICMS</span></button>'
               : `<button type="button" class="cadastro-tab" data-tab="itens" role="tab" aria-selected="false"><span>3. Itens</span></button>
                  <button type="button" class="cadastro-tab" data-tab="impostos" role="tab" aria-selected="false"><span>4. Impostos</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>5. Pagamento</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="totais" role="tab" aria-selected="false"><span>6. Totais</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="observacoes" role="tab" aria-selected="false"><span>7. Observações</span></button>`}
+                 <button type="button" class="cadastro-tab" data-tab="transporte" role="tab" aria-selected="false"><span>5. Transporte</span></button>
+                 <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>6. Pagamento</span></button>
+                 <button type="button" class="cadastro-tab" data-tab="totais" role="tab" aria-selected="false"><span>7. Totais</span></button>
+                 <button type="button" class="cadastro-tab" data-tab="observacoes" role="tab" aria-selected="false"><span>8. Observações</span></button>`}
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="emitente">
@@ -631,10 +644,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             </div>
           </div>
 
-          <!-- Abas 4 e 6 (13/10/2026): desenhadas por renderImpostos e
+          <!-- Abas 4 e 7 (13/10/2026): desenhadas por renderImpostos e
                renderTotais a partir da PRÉVIA do servidor, buscada ao abrir. -->
           <div class="cadastro-tab-panel" data-tab-panel="impostos" hidden>
             <div id="nfeFocusImpostos"></div>
+          </div>
+
+          <div class="cadastro-tab-panel" data-tab-panel="transporte" hidden>
+            <div id="nfeFocusTransporte"></div>
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="totais" hidden>
@@ -994,6 +1011,145 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     });
   }
 
+  // ------------------------------------------------------------ aba Transporte
+  //
+  // Grupo transp da NF-e (13/10/2026): modalidade, transportadora, veículo e
+  // volumes. Nomes da Focus conferidos em campos.focusnfe.com.br; quem os
+  // monta é grupoTransporte, no servidor.
+  const MODALIDADES_FRETE = [
+    [0, '0 — Contratação por conta do remetente (CIF)'],
+    [1, '1 — Contratação por conta do destinatário (FOB)'],
+    [2, '2 — Contratação por conta de terceiros'],
+    [3, '3 — Transporte próprio por conta do remetente'],
+    [4, '4 — Transporte próprio por conta do destinatário'],
+    [9, '9 — Sem ocorrência de transporte']
+  ];
+  const CAMPOS_TRANSPORTADOR = [
+    ['documento', 'CPF/CNPJ'], ['nome', 'Nome / Razão social'], ['inscricaoEstadual', 'Inscrição estadual'],
+    ['endereco', 'Endereço'], ['municipio', 'Município'], ['uf', 'UF']
+  ];
+  const CAMPOS_VOLUME = [
+    ['quantidade', 'Qtd.', 'type="number" step="1" min="0"'], ['especie', 'Espécie', ''], ['marca', 'Marca', ''],
+    ['numero', 'Numeração', ''], ['pesoLiquido', 'Peso líq. (kg)', 'type="number" step="0.001" min="0"'],
+    ['pesoBruto', 'Peso bruto (kg)', 'type="number" step="0.001" min="0"']
+  ];
+
+  // Declarada com `function` de propósito: a carga do pedido a chama antes
+  // desta linha. Só lê `meta` e `transporte`, que já existem lá.
+  function escolherTransportadora(id) {
+    transportadoraId = id || '';
+    const t = (meta.transportadoras || []).find((c) => c.id === id);
+    if (!t) return;
+    Object.assign(transporte.transportador, {
+      documento: t.document || '',
+      nome: t.name || '',
+      inscricaoEstadual: window.MavisInscricaoEstadual.paraNota(t.stateRegistration) || '',
+      endereco: t.endereco || '',
+      municipio: t.city || '',
+      uf: t.state || ''
+    });
+  }
+
+  /** O grupo que vai no corpo, ou null quando nada foi preenchido. */
+  function transporteDaNota() {
+    const preenchidos = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => String(v ?? '').trim()));
+    const tr = preenchidos(transporte.transportador);
+    const ve = preenchidos(transporte.veiculo);
+    const volumes = transporte.volumes.filter((vol) => Object.keys(preenchidos(vol)).length);
+    if (!Object.keys(tr).length && !Object.keys(ve).length && !volumes.length) return null;
+    return {
+      ...(Object.keys(tr).length ? { transportador: tr } : {}),
+      ...(Object.keys(ve).length ? { veiculo: ve } : {}),
+      ...(volumes.length ? { volumes } : {})
+    };
+  }
+
+  function renderTransporte() {
+    const caixa = document.getElementById('nfeFocusTransporte');
+    if (!caixa) return;
+    const modalidade = modalidadeEscolhida === undefined ? (frete > 0 ? 0 : 9) : modalidadeEscolhida;
+    const transportadoras = meta.transportadoras || [];
+    const campo = (rotulo, attrs, valor) => `<label>${rotulo}<input ${attrs} value="${escapeHtml(String(valor ?? ''))}" /></label>`;
+    caixa.innerHTML = `
+      <div class="row">
+        <label>Modalidade do frete
+          <select data-transporte-modalidade>
+            ${MODALIDADES_FRETE.map(([v, rotulo]) => `<option value="${v}" ${v === modalidade ? 'selected' : ''}>${rotulo}</option>`).join('')}
+          </select>
+        </label>
+        <label>Transportadora
+          <select data-transporte-cadastro>
+            <option value="">Preencher manualmente</option>
+            ${transportadoras.map((t) => `<option value="${escapeHtml(t.id)}" ${t.id === transportadoraId ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <div class="cadastro-section">
+        <div class="cadastro-section-header"><h4>Transportador</h4></div>
+        <div class="cadastro-section-body nfe-transporte-campos">
+          ${CAMPOS_TRANSPORTADOR.map(([nome, rotulo]) => campo(rotulo, `data-transportador="${nome}"${nome === 'uf' ? ' maxlength="2"' : ''}`, transporte.transportador[nome])).join('')}
+        </div>
+      </div>
+      <div class="cadastro-section">
+        <div class="cadastro-section-header"><h4>Veículo</h4></div>
+        <div class="cadastro-section-body nfe-transporte-campos">
+          ${campo('Placa', 'data-veiculo="placa" maxlength="8"', transporte.veiculo.placa)}
+          ${campo('UF', 'data-veiculo="uf" maxlength="2"', transporte.veiculo.uf)}
+          ${campo('RNTC (ANTT)', 'data-veiculo="rntc" maxlength="20"', transporte.veiculo.rntc)}
+        </div>
+      </div>
+      <div class="cadastro-section">
+        <div class="cadastro-section-header"><h4>Volumes</h4></div>
+        <div class="cadastro-section-body">
+          <div class="table-scroll">
+            <table class="data-table nfe-volumes">
+              <thead><tr>${CAMPOS_VOLUME.map(([, rotulo]) => `<th>${rotulo}</th>`).join('')}<th></th></tr></thead>
+              <tbody>
+                ${transporte.volumes.map((vol, i) => `<tr>
+                  ${CAMPOS_VOLUME.map(([nome, , attrs]) => `<td><input ${attrs} data-volume-index="${i}" data-volume-campo="${nome}" value="${escapeHtml(String(vol[nome] ?? ''))}" /></td>`).join('')}
+                  <td><button type="button" class="secondary" data-volume-remover="${i}">Remover</button></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div style="margin-top: 8px;"><button type="button" class="secondary" data-volume-adicionar>+ Adicionar volume</button></div>
+        </div>
+      </div>`;
+  }
+
+  function ligarTransporte() {
+    const caixa = document.getElementById('nfeFocusTransporte');
+    if (!caixa) return;
+    caixa.addEventListener('change', (evento) => {
+      const alvo = evento.target;
+      if (alvo.matches('[data-transporte-modalidade]')) modalidadeEscolhida = Number(alvo.value);
+      if (alvo.matches('[data-transporte-cadastro]')) {
+        if (alvo.value) escolherTransportadora(alvo.value);
+        else transportadoraId = '';
+        renderTransporte();
+      }
+    });
+    caixa.addEventListener('input', (evento) => {
+      const alvo = evento.target;
+      if (alvo.dataset.transportador) transporte.transportador[alvo.dataset.transportador] = alvo.value;
+      if (alvo.dataset.veiculo) transporte.veiculo[alvo.dataset.veiculo] = alvo.value;
+      if (alvo.dataset.volumeCampo) {
+        const vol = transporte.volumes[Number(alvo.dataset.volumeIndex)];
+        if (vol) vol[alvo.dataset.volumeCampo] = alvo.value;
+      }
+    });
+    caixa.addEventListener('click', (evento) => {
+      const alvo = evento.target;
+      if (alvo.matches('[data-volume-adicionar]')) {
+        transporte.volumes.push({ quantidade: '', especie: '', marca: '', numero: '', pesoLiquido: '', pesoBruto: '' });
+        renderTransporte();
+      } else if (alvo.dataset.volumeRemover !== undefined) {
+        transporte.volumes.splice(Number(alvo.dataset.volumeRemover), 1);
+        renderTransporte();
+      }
+    });
+  }
+
   // O CORPO DA NOTA, num lugar só (13/10/2026): o envio e a PRÉVIA da aba
   // Impostos mandam exatamente o mesmo — senão a prévia mostraria uma nota e o
   // botão transmitiria outra.
@@ -1071,7 +1227,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // Fora do `...(frete ? ...)` de propósito: transporte próprio sem
       // cobrança tem vFrete zero e modFrete 3, e amarrar a modalidade ao
       // valor era metade do defeito da fase CY.
-      ...(modalidadeDoFrete === undefined ? {} : { modalidadeFrete: modalidadeDoFrete }),
+      ...(modalidadeEscolhida === undefined ? {} : { modalidadeFrete: modalidadeEscolhida }),
+      ...(transporteDaNota() ? { transporte: transporteDaNota() } : {}),
       ...(outrasDespesas ? { outrasDespesas } : {}),
       // Com pedido de origem, o servidor NÃO gera contas a receber: quem
       // gerou foi o pedido, e um segundo recebível pelo mesmo valor só
@@ -1091,6 +1248,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 
   function attachHandlers() {
     ligarImpostosETotais();
+    ligarTransporte();
+    renderTransporte();
     renderImpostos();
     renderTotais();
     // Trocar de aba mexe so no `hidden`: sem redesenhar, o que ja foi digitado
@@ -1107,6 +1266,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // Impostos e Totais mostram o que o servidor montaria AGORA: a prévia é
       // refeita a cada vez que a aba abre (itens e destinatário podem ter mudado).
       if (alvo === 'impostos' || alvo === 'totais') carregarPrevia();
+      // A modalidade sugerida acompanha o frete, que a aba Totais pode ter mudado.
+      if (alvo === 'transporte') renderTransporte();
     };
 
     content.querySelectorAll('.cadastro-tab').forEach((tabBtn) => {

@@ -4828,3 +4828,8 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   .nfe-imposto-grupo { grid-template-columns: 1fr; }
   .nfe-imposto-titulo { padding-top: 0; }
 }
+/* Aba Transporte da emissão de NF-e (13/10/2026). */
+.nfe-transporte-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.nfe-volumes { width: 100%; table-layout: fixed; min-width: 640px; }
+.nfe-volumes th:last-child { width: 100px; }
+.nfe-volumes input { width: 100%; min-width: 0; }
