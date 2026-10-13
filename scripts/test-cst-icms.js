@@ -241,7 +241,9 @@ check('o segundo usa a dele', doisItens[1].icms_aliquota === 12, String(doisIten
 check('e o valor sai de base x % (100 x 12%)', doisItens[1].icms_valor === 12, String(doisItens[1].icms_valor));
 
 const telaEmissaoSrc = ler('public/modules/finance/subs/emitir_nfe_focus.js');
-check('a tela de emissão tem a coluna ICMS %', /data-field="aliquotaIcms"/.test(telaEmissaoSrc));
+// Desde 13/10/2026 o ICMS % por item mora na aba 4. Impostos (data-fiscal-campo),
+// com os demais valores fiscais editáveis.
+check('a tela de emissão deixa digitar o ICMS % por item', /\['aliquotaIcms', 'Alíquota %'\]/.test(telaEmissaoSrc));
 check('e envia o campo no payload', /aliquotaIcms: Number\(item\.aliquotaIcms\)/.test(telaEmissaoSrc));
 // Mandar 0 para "não informado" faria o servidor emitir sem ICMS.
 check('campo vazio NÃO vira zero', /trim\(\) === '' \? \{\} :/.test(telaEmissaoSrc));
@@ -275,8 +277,7 @@ const comEspaco = buildNfePayload({
 }).items[0];
 check('e vai sem espaço em volta', comEspaco.codigo_beneficio_fiscal === 'SC000004', JSON.stringify(comEspaco.codigo_beneficio_fiscal));
 
-check('a tela de emissão tem a coluna cBenef', /data-field="codigoBeneficioFiscal"/.test(telaEmissaoSrc));
-check('com cabeçalho na tabela', /<th[^>]*>cBenef<\/th>/.test(telaEmissaoSrc));
+check('a tela de emissão deixa digitar o cBenef por item (aba Impostos)', /\['codigoBeneficioFiscal', 'cBenef'\]/.test(telaEmissaoSrc));
 check('e envia o campo no payload', /codigoBeneficioFiscal: String\(item\.codigoBeneficioFiscal\)\.trim\(\)/.test(telaEmissaoSrc));
 // String vazia enviada seria lida como "sem benefício" e apagaria o da regra.
 check('em branco não é enviado', /String\(item\.codigoBeneficioFiscal \?\? ''\)\.trim\(\) === ''[\s\S]{0,40}\? \{\}/.test(telaEmissaoSrc));

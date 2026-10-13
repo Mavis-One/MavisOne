@@ -4809,3 +4809,22 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   margin-top: 10px;
   font-size: 13px;
 }
+
+/* ABAS IMPOSTOS E TOTAIS DA EMISSÃO DE NF-e (13/10/2026). Um cartão por item,
+   com os grupos de imposto lado a lado; o campo editado à mão fica marcado,
+   para quem confere saber o que difere da regra fiscal. */
+.nfe-impostos-topo { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
+.nfe-imposto-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+.nfe-imposto-cabeca { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.nfe-imposto-cabeca strong { flex: 1 1 auto; }
+.nfe-imposto-grupo { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; align-items: start; padding: 6px 0; border-top: 1px dashed var(--border); }
+.nfe-imposto-titulo { font-weight: 600; padding-top: 22px; }
+.nfe-imposto-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.nfe-imposto-campos label { font-size: 12px; }
+.nfe-imposto-campos label.is-editado input { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.nfe-totais { max-width: 420px; }
+.nfe-totais th { text-align: left; font-weight: 500; }
+@media (max-width: 640px) {
+  .nfe-imposto-grupo { grid-template-columns: 1fr; }
+  .nfe-imposto-titulo { padding-top: 0; }
+}

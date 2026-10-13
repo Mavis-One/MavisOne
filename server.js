@@ -26,7 +26,9 @@ const crmDb = require('./lib/db/crm');
 const {
   buildNfePayload, buildNfcePayload, conferirLimitesDeTexto, conferirPagamentosDaNota, conferirCartoesDaNota,
   conferirEscalaDosItens,
-  conferirDestinatarioDaNota
+  conferirDestinatarioDaNota,
+  limparEdicaoFiscal,
+  resumoFiscalDaPrevia
 } = require('./lib/nfePayloadBuilder');
 // Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
 const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
@@ -6195,6 +6197,8 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/acervo/zip') return 'xml';
   if (pathname === '/api/fiscal/acervo/buscar-faltantes') return 'xml';
   if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
+  // A prévia é parte de emitir: mesma montagem, sem transmitir (13/10/2026).
+  if (pathname === '/api/fiscal/nfe/previa') return 'emitir';
   if (pathname === '/api/fiscal/nfce/emitir') return 'emitir';
   if (pathname.endsWith('/cancelar')) return 'cancelar';
   if (pathname.endsWith('/cce')) return 'cce';
@@ -6879,6 +6883,15 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
       }
       : bruto;
 
+    // VALORES FISCAIS EDITADOS NA EMISSÃO (13/10/2026, aba Impostos). Só os
+    // campos conhecidos (limparEdicaoFiscal). NCM e origem editados valem já
+    // AQUI, antes de procurar a regra: é por eles que a regra é escolhida, e a
+    // nota não pode sair com o NCM digitado e a tributação do NCM do cadastro.
+    // O resto da edição é aplicado pelo montador (lib/nfePayloadBuilder.js).
+    item.fiscal = limparEdicaoFiscal(bruto.fiscal);
+    if (item.fiscal.ncm) item.ncm = String(item.fiscal.ncm).replace(/\D/g, '');
+    if (item.fiscal.origem !== undefined) item.origem = Number(item.fiscal.origem);
+
     if (!item.ncm) {
       const err = new Error(
         `Item ${index + 1} (${item.descricao || 'sem descrição'}) está sem NCM. ` +
@@ -6901,14 +6914,17 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
       destinatarioContribuinte: nfce ? false : Boolean(destinatario.contribuinte),
       data: dataReferencia
     });
-    if (!regra) {
-      const err = new Error(`Nenhuma regra fiscal encontrada para o item ${index + 1} (NCM ${item.ncm || 'não informado'}). Cadastre uma regra fiscal para esta empresa antes de emitir.`);
+    // Sem regra, mas com CFOP e CST/CSOSN digitados na aba Impostos: a nota
+    // sai pelo que foi digitado (o usuário quer liberdade total, 13/10/2026).
+    const digitouOEssencial = item.fiscal.cfop && (item.fiscal.cstIcms || item.fiscal.csosn);
+    if (!regra && !digitouOEssencial) {
+      const err = new Error(`Nenhuma regra fiscal encontrada para o item ${index + 1} (NCM ${item.ncm || 'não informado'}). Cadastre uma regra fiscal para esta empresa, ou informe CFOP e CST na aba Impostos.`);
       err.status = 400;
       throw err;
     }
     itens.push({
       ...item,
-      regraFiscal: regra,
+      regraFiscal: regra || {},
       // DIFAL só existe em venda interestadual para quem NÃO é contribuinte.
       // Contribuinte recolhe por conta própria; operação interna não tem
       // diferencial nenhum a partilhar. NFC-e é sempre interna.
@@ -7091,6 +7107,21 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
   const nfeExistente = await encontrarNfeIdempotente(estabelecimento.id, payload);
   if (nfeExistente) {
     return nfeExistente;
+  }
+
+  // QUEM MEXEU NOS VALORES FISCAIS (13/10/2026). A aba Impostos deixa editar
+  // tudo o que a regra fiscal preencheu; a nota sai com o editado, e aqui fica
+  // registrado item a item o que foi digitado à mão e por quem. Liberdade
+  // total na emissão não pode apagar o rastro de por que a nota saiu assim.
+  const editados = (Array.isArray(body.itens) ? body.itens : [])
+    .map((it, i) => ({ item: i + 1, campos: limparEdicaoFiscal(it && it.fiscal) }))
+    .filter((x) => Object.keys(x.campos).length);
+  if (editados.length) {
+    await registrarAuditoria({
+      action: 'nfe.valoresFiscaisEditados', targetId: referencia, targetUsername: naturezaOperacao || '',
+      byId: user && user.id, byName: user && user.name,
+      details: { estabelecimentoId: estabelecimento.id, itens: editados }
+    }).catch((erro) => console.warn('Auditoria da edição fiscal falhou:', erro.message));
   }
 
   let nfe = await fiscalDb.createNfeRascunho({
@@ -14201,6 +14232,16 @@ async function tratarRequisicao(req, res) {
         const tipo = ['CCE', 'CANCELAMENTO', 'INUTILIZACAO'].includes(tipoBruto) ? tipoBruto : undefined;
         const eventos = await fiscalDb.getEventosFiscais({ estabelecimentoId, tipo });
         return sendJson(res, { eventos });
+      }
+
+      // A PRÉVIA DA NF-e (13/10/2026, aba Impostos da emissão): a MESMA
+      // montagem da emissão (prepararNfeParaTransmitir, com regras fiscais e
+      // com o que foi editado), sem gravar nem transmitir nada. As mesmas
+      // recusas também: destinatário incompleto, item sem regra, sem estoque.
+      if (pathname === '/api/fiscal/nfe/previa' && req.method === 'POST') {
+        const body = await readBody(req);
+        const { payload } = await prepararNfeParaTransmitir(body);
+        return sendJson(res, resumoFiscalDaPrevia(payload));
       }
 
       if (pathname === '/api/fiscal/nfe/emitir' && req.method === 'POST') {

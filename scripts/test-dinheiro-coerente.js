@@ -135,9 +135,11 @@ check('o pedido leva desconto, frete e despesas para a emissão',
 // freteCobrado já vem zero quando o frete é por conta do emitente: esse não
 // entra no valor da nota.
 check('  usando o cálculo, não remontando do formulário', /const totaisDaNota = computeTotals\(\);/.test(appSrc));
-check('a tela guarda os três valores', /const desconto = doPedido \? Number\(doPedido\.desconto \|\| 0\) : 0;/.test(telaSrc));
+// `let` desde 13/10/2026: a aba Totais deixa editar desconto, frete, seguro e
+// outras despesas; o pedido continua sendo o ponto de partida.
+check('a tela guarda os três valores', /let desconto = doPedido \? Number\(doPedido\.desconto \|\| 0\) : 0;/.test(telaSrc));
 check('  o total exibido passa a ser o da nota',
-  /return Math\.round\(\(totalDosItens\(\) \+ frete \+ outrasDespesas - desconto\) \* 100\) \/ 100;/.test(telaSrc));
+  /return Math\.round\(\(totalDosItens\(\) \+ frete \+ seguro \+ outrasDespesas - desconto\) \* 100\) \/ 100;/.test(telaSrc));
 check('  e o corpo enviado os leva', /\.\.\.\(desconto \? \{ desconto \} : \{\}\),/.test(telaSrc));
 check('  e o frete entre eles', /\.\.\.\(frete \? \{ frete \} : \{\}\),/.test(telaSrc));
 // A MODALIDADE SAIU DAQUI, e de propósito (fase CY). Este check pedia

@@ -92,7 +92,9 @@ const fechaRamoComum = telaSrc.indexOf('<button type="submit" id="nfeFocusSubmit
 const posPainelObs = telaSrc.indexOf('data-tab-panel="observacoes"');
 check('o ramo da nota comum foi encontrado', abreRamoComum > 0 && fechaRamoComum > abreRamoComum);
 check('o painel de observações está dentro dele', posPainelObs > abreRamoComum && posPainelObs < fechaRamoComum);
-check('a aba também', /: `<button[\s\S]{0,600}data-tab="observacoes"/.test(telaSrc));
+// 1200 e não 600 desde 13/10/2026: as abas Impostos e Totais entraram antes
+// de Observações, no mesmo ramo da nota comum.
+check('a aba também', /: `<button[\s\S]{0,1200}data-tab="observacoes"/.test(telaSrc));
 check('o complemento mantém o texto próprio', /informacoesAdicionais: formData\.get\('complementoInformacoes'\)/.test(telaSrc));
 
 console.log('\n--- o campo de chassi escreve na linha CHASSI: ---');

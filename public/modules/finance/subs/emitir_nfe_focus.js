@@ -143,14 +143,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // avulsa, que não tem pedido por trás. O servidor já sabia recebê-los (o
   // montador do payload tem os três campos); era esta tela que não os mandava,
   // e a nota saía pelo valor BRUTO dos itens.
-  const desconto = doPedido ? Number(doPedido.desconto || 0) : 0;
+  // `let` desde 13/10/2026: a aba Totais deixa editar os quatro.
+  let desconto = doPedido ? Number(doPedido.desconto || 0) : 0;
   // AS LINHAS DE PAGAMENTO DO PEDIDO, já traduzidas para tPag lá na tela de
   // Vendas (fase BU). Vazio na nota avulsa, que não tem pedido por trás — lá
   // continua valendo o select de forma única.
   const pagamentosDoPedido = Array.isArray(doPedido && doPedido.pagamentosDaNota)
     ? doPedido.pagamentosDaNota.filter((linha) => Number(linha.valor || 0) > 0)
     : [];
-  const frete = doPedido ? Number(doPedido.frete || 0) : 0;
+  let frete = doPedido ? Number(doPedido.frete || 0) : 0;
   // FASE CY: modFrete responde QUEM CONTRATOU o transporte, e essa resposta está
   // no "Meio de Envio" da aba Entrega do pedido — não no valor do frete. Aqui
   // ia `modalidadeFrete: 0` fixo sempre que havia frete, e o servidor não
@@ -160,7 +161,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // `undefined` quando o meio não responde ("Outro") ou quando é nota avulsa —
   // e aí o palpite do builder (`frete > 0 ? 0 : 9`) volta a valer.
   const modalidadeDoFrete = window.MavisModalidadeFrete.paraNota(doPedido && doPedido.meioDeEnvio);
-  const outrasDespesas = doPedido ? Number(doPedido.outrasDespesas || 0) : 0;
+  let outrasDespesas = doPedido ? Number(doPedido.outrasDespesas || 0) : 0;
+  // Seguro: o pedido não tem o campo; só a aba Totais o preenche.
+  let seguro = 0;
+  // A PRÉVIA DA ABA IMPOSTOS (13/10/2026): o que o servidor montaria, com as
+  // regras fiscais e o que foi editado. Ver carregarPrevia.
+  let previa = null;
+  let previaErro = '';
+  let previaCarregando = false;
 
   // AS TRÊS CARGAS SAEM JUNTAS (fase DS). Eram três idas e voltas em fila —
   // estabelecimentos, depois empresas, depois o meta — e nenhuma depende da
@@ -302,7 +310,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   }
 
   function grandTotal() {
-    return Math.round((totalDosItens() + frete + outrasDespesas - desconto) * 100) / 100;
+    return Math.round((totalDosItens() + frete + seguro + outrasDespesas - desconto) * 100) / 100;
   }
 
   async function loadNotasRecentes() {
@@ -372,17 +380,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         <td><input type="number" step="0.01" min="0" data-field="quantidade" data-index="${index}" value="${item.quantidade}" style="width:80px;" /></td>
         <td><input type="number" step="0.01" min="0" data-field="valorUnitario" data-index="${index}" value="${item.valorUnitario}" style="width:100px;" /></td>
         <td><input data-field="unidadeComercial" data-index="${index}" value="${escapeHtml(item.unidadeComercial)}" style="width:70px;" /></td>
-        <!-- Alíquota POR ITEM. Em branco, vale a da regra fiscal; preenchida,
-             vence. O motor já aceitava (item.aliquotaIcms tem precedência sobre
-             regra.aliquotaIcms), mas a tela não mandava o campo — a capacidade
-             existia e não dava para usar. O valor sai de base x %, calculado no
-             servidor: o cliente nunca manda o imposto pronto. -->
-        <td><input type="number" step="0.01" min="0" max="100" data-field="aliquotaIcms" data-index="${index}" value="${item.aliquotaIcms ?? ''}" placeholder="da regra" style="width:80px;" title="Vazio = usa a alíquota da regra fiscal" /></td>
-        <!-- cBenef POR ITEM, digitado — igual à alíquota. Não há lista para
-             escolher: o código é da tabela da UF e muda por ato normativo,
-             então uma lista nossa nasceria desatualizada. Errar não passa
-             despercebido: a SEFAZ confere e devolve 931. -->
-        <td><input data-field="codigoBeneficioFiscal" data-index="${index}" value="${escapeHtml(item.codigoBeneficioFiscal ?? '')}" maxlength="10" placeholder="da regra" style="width:100px;" title="Código do benefício fiscal (cBenef), da tabela da UF. Vazio = usa o da regra fiscal. Só vale em CST isento (40, 41, 50)." /></td>
+        <!-- ICMS % e cBenef POR ITEM saíram daqui em 13/10/2026: estão na aba
+             4. Impostos, junto com o resto dos valores fiscais editáveis. -->
         <td class="nfe-item-total" data-row-total="${index}">${financeFormatBRL(itemTotal(item))}</td>
         <td><button type="button" class="icon-button" data-remove-item="${index}" title="Remover item" ${itens.length <= 1 ? 'disabled' : ''}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"></path></svg>
@@ -452,8 +451,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             ${ehComplemento()
               ? '<button type="button" class="cadastro-tab" data-tab="complemento" role="tab" aria-selected="false"><span>3. Complemento de ICMS</span></button>'
               : `<button type="button" class="cadastro-tab" data-tab="itens" role="tab" aria-selected="false"><span>3. Itens</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>4. Pagamento</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="observacoes" role="tab" aria-selected="false"><span>5. Observações</span></button>`}
+                 <button type="button" class="cadastro-tab" data-tab="impostos" role="tab" aria-selected="false"><span>4. Impostos</span></button>
+                 <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>5. Pagamento</span></button>
+                 <button type="button" class="cadastro-tab" data-tab="totais" role="tab" aria-selected="false"><span>6. Totais</span></button>
+                 <button type="button" class="cadastro-tab" data-tab="observacoes" role="tab" aria-selected="false"><span>7. Observações</span></button>`}
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="emitente">
@@ -570,7 +571,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <div class="cadastro-tab-panel" data-tab-panel="itens" hidden>
             <div class="table-scroll">
               <table class="table">
-                <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th title="Em branco usa a alíquota da regra fiscal">ICMS %</th><th title="Código do benefício fiscal (cBenef). Em branco usa o da regra fiscal.">cBenef</th><th>Total</th><th></th></tr></thead>
+                <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th>Total</th><th></th></tr></thead>
                 <tbody id="nfeFocusItemsBody">${renderItemsRows()}</tbody>
               </table>
             </div>
@@ -628,6 +629,16 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <label>Número de parcelas<input type="number" name="installmentsCount" min="2" max="60" step="1" value="2" /></label>
               <label>Intervalo entre parcelas (dias)<input type="number" name="installmentIntervalDays" min="1" value="30" /></label>
             </div>
+          </div>
+
+          <!-- Abas 4 e 6 (13/10/2026): desenhadas por renderImpostos e
+               renderTotais a partir da PRÉVIA do servidor, buscada ao abrir. -->
+          <div class="cadastro-tab-panel" data-tab-panel="impostos" hidden>
+            <div id="nfeFocusImpostos"></div>
+          </div>
+
+          <div class="cadastro-tab-panel" data-tab-panel="totais" hidden>
+            <div id="nfeFocusTotais"></div>
           </div>
 
           <div class="cadastro-tab-panel" data-tab-panel="observacoes" hidden>
@@ -808,7 +819,280 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     });
   }
 
+  // ----------------------------------------------------- abas Impostos e Totais
+  //
+  // Pedido do usuário (13/10/2026): ver os impostos de cada item antes de
+  // transmitir e poder EDITAR qualquer valor fiscal, mesmo com as regras
+  // fiscais preenchendo. O que se digita fica em `item.fiscal` e vai no corpo
+  // da nota; o servidor monta a prévia com isso (POST /api/fiscal/nfe/previa)
+  // e a tela mostra o que ele montou — nenhum imposto é calculado aqui.
+  const GRUPOS_FISCAIS = [
+    { titulo: 'Classificação', campos: [['cfop', 'CFOP'], ['ncm', 'NCM'], ['origem', 'Origem'], ['cstIcms', 'CST / CSOSN'], ['codigoBeneficioFiscal', 'cBenef']] },
+    { titulo: 'ICMS', campos: [['baseIcms', 'Base'], ['aliquotaIcms', 'Alíquota %'], ['valorIcms', 'Valor'], ['reducaoBcIcms', 'Redução BC %']] },
+    { titulo: 'ICMS-ST', campos: [['baseIcmsSt', 'Base'], ['aliquotaIcmsSt', 'Alíquota %'], ['valorIcmsSt', 'Valor'], ['mvaSt', 'MVA %']] },
+    { titulo: 'IPI', campos: [['cstIpi', 'CST'], ['baseIpi', 'Base'], ['aliquotaIpi', 'Alíquota %'], ['valorIpi', 'Valor']] },
+    { titulo: 'PIS', campos: [['cstPis', 'CST'], ['basePis', 'Base'], ['aliquotaPis', 'Alíquota %'], ['valorPis', 'Valor']] },
+    { titulo: 'COFINS', campos: [['cstCofins', 'CST'], ['baseCofins', 'Base'], ['aliquotaCofins', 'Alíquota %'], ['valorCofins', 'Valor']] }
+  ];
+  const CAMPOS_DE_TEXTO = ['cfop', 'ncm', 'cstIcms', 'codigoBeneficioFiscal', 'cstIpi', 'cstPis', 'cstCofins'];
+
+  /** O que o campo mostra: o editado, senão o que a prévia montou. */
+  function valorFiscal(item, linha, campo) {
+    const ed = item.fiscal || {};
+    if (campo === 'cstIcms') {
+      if (ed.csosn !== undefined) return ed.csosn;
+      if (ed.cstIcms !== undefined) return ed.cstIcms;
+    } else if (ed[campo] !== undefined) {
+      return ed[campo];
+    }
+    const v = linha ? linha[campo] : null;
+    return v === null || v === undefined ? '' : v;
+  }
+
+  function editado(item, campo) {
+    const ed = item.fiscal || {};
+    return campo === 'cstIcms' ? (ed.cstIcms !== undefined || ed.csosn !== undefined) : ed[campo] !== undefined;
+  }
+
+  function renderImpostos() {
+    const caixa = document.getElementById('nfeFocusImpostos');
+    if (!caixa) return;
+    if (previaCarregando && !previa) { caixa.innerHTML = '<p class="muted">Calculando os impostos…</p>'; return; }
+    const topo = `
+      <div class="nfe-impostos-topo">
+        <button type="button" class="secondary" data-previa-recalcular>Recalcular</button>
+        ${previaCarregando ? '<span class="muted">Calculando…</span>' : ''}
+      </div>`;
+    if (previaErro) {
+      caixa.innerHTML = `${topo}<p class="form-error">${escapeHtml(previaErro)}</p>`;
+      return;
+    }
+    if (!previa) { caixa.innerHTML = topo; return; }
+    caixa.innerHTML = topo + itens.map((item, index) => {
+      const linha = previa.itens[index] || null;
+      const algumEditado = item.fiscal && Object.keys(item.fiscal).length;
+      return `
+        <section class="nfe-imposto-item">
+          <div class="nfe-imposto-cabeca">
+            <strong>Item ${index + 1} — ${escapeHtml(item.descricao || (linha && linha.descricao) || '')}</strong>
+            <span class="muted">${financeFormatBRL(itemTotal(item))}</span>
+            ${algumEditado ? `<button type="button" class="secondary finance-pill-sm" data-fiscal-limpar="${index}">Usar o da regra</button>` : ''}
+          </div>
+          ${GRUPOS_FISCAIS.map((grupo) => `
+            <div class="nfe-imposto-grupo">
+              <span class="nfe-imposto-titulo">${grupo.titulo}</span>
+              <div class="nfe-imposto-campos">
+                ${grupo.campos.map(([campo, rotulo]) => `
+                  <label class="${editado(item, campo) ? 'is-editado' : ''}">${rotulo}
+                    <input data-fiscal-index="${index}" data-fiscal-campo="${campo}"
+                           ${CAMPOS_DE_TEXTO.includes(campo) ? '' : 'type="number" step="0.01"'}
+                           value="${escapeHtml(String(valorFiscal(item, linha, campo)))}" />
+                  </label>`).join('')}
+              </div>
+            </div>`).join('')}
+        </section>`;
+    }).join('');
+  }
+
+  function renderTotais() {
+    const caixa = document.getElementById('nfeFocusTotais');
+    if (!caixa) return;
+    const t = previa && previa.totais;
+    const linha = (rotulo, valor, forte) => `<tr><th>${rotulo}</th><td class="num">${forte ? '<strong>' : ''}${valor === undefined ? '—' : financeFormatBRL(valor)}${forte ? '</strong>' : ''}</td></tr>`;
+    caixa.innerHTML = `
+      <div class="row">
+        <label>Frete (R$)<input type="number" step="0.01" min="0" data-total-campo="frete" value="${frete || ''}" /></label>
+        <label>Seguro (R$)<input type="number" step="0.01" min="0" data-total-campo="seguro" value="${seguro || ''}" /></label>
+        <label>Desconto (R$)<input type="number" step="0.01" min="0" data-total-campo="desconto" value="${desconto || ''}" /></label>
+        <label>Outras despesas (R$)<input type="number" step="0.01" min="0" data-total-campo="outrasDespesas" value="${outrasDespesas || ''}" /></label>
+      </div>
+      <div class="nfe-impostos-topo">
+        <button type="button" class="secondary" data-previa-recalcular>Recalcular</button>
+        ${previaCarregando ? '<span class="muted">Calculando…</span>' : ''}
+      </div>
+      ${previaErro ? `<p class="form-error">${escapeHtml(previaErro)}</p>` : ''}
+      <table class="data-table nfe-totais">
+        <tbody>
+          ${linha('Produtos', t ? t.produtos : undefined)}
+          ${linha('Frete', t ? t.frete : undefined)}
+          ${linha('Seguro', t ? t.seguro : undefined)}
+          ${linha('Desconto', t ? t.desconto : undefined)}
+          ${linha('Outras despesas', t ? t.outrasDespesas : undefined)}
+          ${linha('Base do ICMS', t ? t.baseIcms : undefined)}
+          ${linha('ICMS', t ? t.icms : undefined)}
+          ${linha('Base do ICMS-ST', t ? t.baseIcmsSt : undefined)}
+          ${linha('ICMS-ST', t ? t.icmsSt : undefined)}
+          ${linha('IPI', t ? t.ipi : undefined)}
+          ${linha('PIS', t ? t.pis : undefined)}
+          ${linha('COFINS', t ? t.cofins : undefined)}
+          ${linha('Total da nota', t ? t.total : undefined, true)}
+        </tbody>
+      </table>`;
+  }
+
+  async function carregarPrevia() {
+    const form = document.getElementById('nfeFocusForm');
+    if (!form) return;
+    if (!selectedEstabelecimentoId) {
+      previaErro = 'Escolha o estabelecimento emitente na aba 1.';
+      renderImpostos(); renderTotais();
+      return;
+    }
+    const formData = new FormData(form);
+    const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
+    const referencias = formData.get('tipoOperacao') === 'DEVOLUCAO' && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
+    previaCarregando = true;
+    renderImpostos(); renderTotais();
+    try {
+      previa = await api('/api/fiscal/nfe/previa', { method: 'POST', body: JSON.stringify(montarCorpoDaNota(formData, referencias)) });
+      previaErro = '';
+    } catch (erro) {
+      previaErro = erro.message || 'Não consegui calcular os impostos.';
+    } finally {
+      previaCarregando = false;
+      renderImpostos(); renderTotais();
+    }
+  }
+
+  function ligarImpostosETotais() {
+    const impostos = document.getElementById('nfeFocusImpostos');
+    const totais = document.getElementById('nfeFocusTotais');
+    [impostos, totais].forEach((caixa) => caixa && caixa.addEventListener('click', (evento) => {
+      const botao = evento.target.closest('[data-previa-recalcular], [data-fiscal-limpar]');
+      if (!botao) return;
+      if (botao.dataset.fiscalLimpar !== undefined) itens[Number(botao.dataset.fiscalLimpar)].fiscal = {};
+      carregarPrevia();
+    }));
+    impostos && impostos.addEventListener('change', (evento) => {
+      const campo = evento.target.dataset.fiscalCampo;
+      if (!campo) return;
+      const item = itens[Number(evento.target.dataset.fiscalIndex)];
+      if (!item) return;
+      item.fiscal = item.fiscal || {};
+      const valor = String(evento.target.value || '').trim();
+      if (campo === 'cstIcms') {
+        // Três dígitos é CSOSN (Simples Nacional); dois é CST.
+        delete item.fiscal.cstIcms; delete item.fiscal.csosn;
+        if (valor) item.fiscal[valor.length === 3 ? 'csosn' : 'cstIcms'] = valor;
+      } else if (valor === '') {
+        delete item.fiscal[campo];
+      } else {
+        item.fiscal[campo] = CAMPOS_DE_TEXTO.includes(campo) ? valor : Number(valor);
+      }
+      evento.target.closest('label')?.classList.toggle('is-editado', editado(item, campo));
+    });
+    totais && totais.addEventListener('change', (evento) => {
+      const campo = evento.target.dataset.totalCampo;
+      if (!campo) return;
+      const valor = Math.max(0, Number(evento.target.value || 0));
+      if (campo === 'frete') frete = valor;
+      if (campo === 'seguro') seguro = valor;
+      if (campo === 'desconto') desconto = valor;
+      if (campo === 'outrasDespesas') outrasDespesas = valor;
+      const total = document.getElementById('nfeFocusGrandTotal');
+      if (total) total.textContent = financeFormatBRL(grandTotal());
+    });
+  }
+
+  // O CORPO DA NOTA, num lugar só (13/10/2026): o envio e a PRÉVIA da aba
+  // Impostos mandam exatamente o mesmo — senão a prévia mostraria uma nota e o
+  // botão transmitiria outra.
+  function montarCorpoDaNota(formData, referenciasDevolucao) {
+    return {
+      estabelecimentoId: selectedEstabelecimentoId,
+      tipoOperacao: formData.get('tipoOperacao'),
+      ...(referenciasDevolucao ? { referencias: referenciasDevolucao } : {}),
+      naturezaOperacao: formData.get('naturezaOperacao'),
+      dataEmissao: formData.get('dataEmissao') ? new Date(formData.get('dataEmissao')).toISOString() : undefined,
+      destinatario: {
+        nome: formData.get('destNome'),
+        documento: formData.get('destDocumento'),
+        contribuinte: formData.get('destContribuinte') === 'on',
+        inscricaoEstadual: formData.get('destIe'),
+        cep: (formData.get('destCep') || '').replace(/\D/g, ''),
+        logradouro: formData.get('destLogradouro'),
+        numero: formData.get('destNumero'),
+        complemento: formData.get('destComplemento'),
+        bairro: formData.get('destBairro'),
+        municipio: formData.get('destMunicipio'),
+        uf: formData.get('destUf'),
+        codigoMunicipio: formData.get('destCodigoMunicipio')
+      },
+      itens: itens.map((item) => ({
+        // O servidor relê a classificação fiscal pelo produtoId e ignora o
+        // que veio digitado — o que vai aqui é só o ponto de partida da tela.
+        produtoId: item.produtoId || '',
+        descricao: item.descricao,
+        codigoProduto: item.codigoProduto,
+        ncm: String(item.ncm || '').replace(/\D/g, ''),
+        quantidade: Number(item.quantidade || 0),
+        valorUnitario: Number(item.valorUnitario || 0),
+        unidadeComercial: item.unidadeComercial || 'UN',
+        origem: Number(item.origem || 0),
+        // Só vai quando foi digitada. Mandar 0 para "não informado" faria o
+        // servidor entender alíquota zero e emitir sem ICMS.
+        ...(String(item.aliquotaIcms ?? '').trim() === '' ? {} : { aliquotaIcms: Number(item.aliquotaIcms) }),
+        // Mesma regra: em branco não vai, para o motor cair no da regra
+        // fiscal em vez de receber string vazia como "sem benefício".
+        ...(String(item.codigoBeneficioFiscal ?? '').trim() === ''
+          ? {}
+          : { codigoBeneficioFiscal: String(item.codigoBeneficioFiscal).trim() }),
+        // O que foi editado na aba Impostos (13/10/2026). Vence a regra fiscal
+        // no servidor (lib/nfePayloadBuilder.js, regraComEdicao).
+        ...(item.fiscal && Object.keys(item.fiscal).length ? { fiscal: { ...item.fiscal } } : {})
+      })),
+      // Grupo obrigatório do layout 4.0 — nota sem ele é rejeitada. Uma
+      // parcela única com o total: o parcelamento é condição comercial e
+      // vira contas a receber, não N formas de pagamento na nota.
+      // AS LINHAS DO PEDIDO, quando há pedido. O select de forma única só
+      // vale para a nota avulsa, que não tem pagamentos lançados em lugar
+      // nenhum. Mandar "99 Outros" pelo total de uma venda paga em cartão e
+      // dinheiro fecha o valor e mente sobre o meio de pagamento.
+      // O CARTÃO VAI JUNTO (fase BW): methodId, bandeira, integração e
+      // autorização. O CNPJ da credenciadora NÃO — quem o resolve é o
+      // servidor, pelo methodId, no momento da emissão.
+      pagamentos: pagamentosDoPedido.length
+        ? pagamentosDoPedido.map((linha) => ({
+          forma: linha.forma,
+          valor: linha.valor,
+          methodId: linha.methodId || '',
+          ...(linha.integracao ? {
+            bandeira: linha.bandeira || '',
+            integracao: linha.integracao,
+            autorizacao: linha.autorizacao || ''
+          } : {})
+        }))
+        : [{ forma: formData.get('formaPagamento') || '99', valor: grandTotal() }],
+      // Desconto, frete e despesas do pedido de origem (fase BQ). Sem eles a
+      // nota sai pelo bruto dos itens e diverge da conta a receber.
+      ...(desconto ? { desconto } : {}),
+      ...(seguro ? { seguro } : {}),
+      ...(frete ? { frete } : {}),
+      // Fora do `...(frete ? ...)` de propósito: transporte próprio sem
+      // cobrança tem vFrete zero e modFrete 3, e amarrar a modalidade ao
+      // valor era metade do defeito da fase CY.
+      ...(modalidadeDoFrete === undefined ? {} : { modalidadeFrete: modalidadeDoFrete }),
+      ...(outrasDespesas ? { outrasDespesas } : {}),
+      // Com pedido de origem, o servidor NÃO gera contas a receber: quem
+      // gerou foi o pedido, e um segundo recebível pelo mesmo valor só
+      // apareceria quando a conciliação não fechasse.
+      orderId: orderIdOrigem || undefined,
+      // Sem pedido de origem, é isto que manda o servidor gerar o contas a
+      // receber quando a SEFAZ autorizar.
+      paymentType: formData.get('paymentType') || 'avista',
+      installmentsCount: Number(formData.get('installmentsCount') || 1),
+      installmentIntervalDays: Number(formData.get('installmentIntervalDays') || 30),
+      // Vai para infCpl e sai impresso no DANFE. `observacoes` e não
+      // formData: a aba pode estar fechada na hora do envio, e o valor do
+      // campo já está guardado fora do HTML.
+      informacoesAdicionais: observacoes
+    };
+  }
+
   function attachHandlers() {
+    ligarImpostosETotais();
+    renderImpostos();
+    renderTotais();
     // Trocar de aba mexe so no `hidden`: sem redesenhar, o que ja foi digitado
     // nas outras abas continua no lugar (e no FormData).
     const abrirAba = (alvo) => {
@@ -820,6 +1104,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       content.querySelectorAll('.cadastro-tab-panel').forEach((panel) => {
         panel.hidden = panel.dataset.tabPanel !== alvo;
       });
+      // Impostos e Totais mostram o que o servidor montaria AGORA: a prévia é
+      // refeita a cada vez que a aba abre (itens e destinatário podem ter mudado).
+      if (alvo === 'impostos' || alvo === 'totais') carregarPrevia();
     };
 
     content.querySelectorAll('.cadastro-tab').forEach((tabBtn) => {
@@ -1175,91 +1462,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         referenciasDevolucao = [{ chaveAcesso: chave }];
       }
 
-      const body = {
-        estabelecimentoId: selectedEstabelecimentoId,
-        tipoOperacao: formData.get('tipoOperacao'),
-        ...(referenciasDevolucao ? { referencias: referenciasDevolucao } : {}),
-        naturezaOperacao: formData.get('naturezaOperacao'),
-        dataEmissao: formData.get('dataEmissao') ? new Date(formData.get('dataEmissao')).toISOString() : undefined,
-        destinatario: {
-          nome: formData.get('destNome'),
-          documento: formData.get('destDocumento'),
-          contribuinte: formData.get('destContribuinte') === 'on',
-          inscricaoEstadual: formData.get('destIe'),
-          cep: (formData.get('destCep') || '').replace(/\D/g, ''),
-          logradouro: formData.get('destLogradouro'),
-          numero: formData.get('destNumero'),
-          complemento: formData.get('destComplemento'),
-          bairro: formData.get('destBairro'),
-          municipio: formData.get('destMunicipio'),
-          uf: formData.get('destUf'),
-          codigoMunicipio: formData.get('destCodigoMunicipio')
-        },
-        itens: itens.map((item) => ({
-          // O servidor relê a classificação fiscal pelo produtoId e ignora o
-          // que veio digitado — o que vai aqui é só o ponto de partida da tela.
-          produtoId: item.produtoId || '',
-          descricao: item.descricao,
-          codigoProduto: item.codigoProduto,
-          ncm: String(item.ncm || '').replace(/\D/g, ''),
-          quantidade: Number(item.quantidade || 0),
-          valorUnitario: Number(item.valorUnitario || 0),
-          unidadeComercial: item.unidadeComercial || 'UN',
-          origem: Number(item.origem || 0),
-          // Só vai quando foi digitada. Mandar 0 para "não informado" faria o
-          // servidor entender alíquota zero e emitir sem ICMS.
-          ...(String(item.aliquotaIcms ?? '').trim() === '' ? {} : { aliquotaIcms: Number(item.aliquotaIcms) }),
-          // Mesma regra: em branco não vai, para o motor cair no da regra
-          // fiscal em vez de receber string vazia como "sem benefício".
-          ...(String(item.codigoBeneficioFiscal ?? '').trim() === ''
-            ? {}
-            : { codigoBeneficioFiscal: String(item.codigoBeneficioFiscal).trim() })
-        })),
-        // Grupo obrigatório do layout 4.0 — nota sem ele é rejeitada. Uma
-        // parcela única com o total: o parcelamento é condição comercial e
-        // vira contas a receber, não N formas de pagamento na nota.
-        // AS LINHAS DO PEDIDO, quando há pedido. O select de forma única só
-        // vale para a nota avulsa, que não tem pagamentos lançados em lugar
-        // nenhum. Mandar "99 Outros" pelo total de uma venda paga em cartão e
-        // dinheiro fecha o valor e mente sobre o meio de pagamento.
-        // O CARTÃO VAI JUNTO (fase BW): methodId, bandeira, integração e
-        // autorização. O CNPJ da credenciadora NÃO — quem o resolve é o
-        // servidor, pelo methodId, no momento da emissão.
-        pagamentos: pagamentosDoPedido.length
-          ? pagamentosDoPedido.map((linha) => ({
-            forma: linha.forma,
-            valor: linha.valor,
-            methodId: linha.methodId || '',
-            ...(linha.integracao ? {
-              bandeira: linha.bandeira || '',
-              integracao: linha.integracao,
-              autorizacao: linha.autorizacao || ''
-            } : {})
-          }))
-          : [{ forma: formData.get('formaPagamento') || '99', valor: grandTotal() }],
-        // Desconto, frete e despesas do pedido de origem (fase BQ). Sem eles a
-        // nota sai pelo bruto dos itens e diverge da conta a receber.
-        ...(desconto ? { desconto } : {}),
-        ...(frete ? { frete } : {}),
-        // Fora do `...(frete ? ...)` de propósito: transporte próprio sem
-        // cobrança tem vFrete zero e modFrete 3, e amarrar a modalidade ao
-        // valor era metade do defeito da fase CY.
-        ...(modalidadeDoFrete === undefined ? {} : { modalidadeFrete: modalidadeDoFrete }),
-        ...(outrasDespesas ? { outrasDespesas } : {}),
-        // Com pedido de origem, o servidor NÃO gera contas a receber: quem
-        // gerou foi o pedido, e um segundo recebível pelo mesmo valor só
-        // apareceria quando a conciliação não fechasse.
-        orderId: orderIdOrigem || undefined,
-        // Sem pedido de origem, é isto que manda o servidor gerar o contas a
-        // receber quando a SEFAZ autorizar.
-        paymentType: formData.get('paymentType') || 'avista',
-        installmentsCount: Number(formData.get('installmentsCount') || 1),
-        installmentIntervalDays: Number(formData.get('installmentIntervalDays') || 30),
-        // Vai para infCpl e sai impresso no DANFE. `observacoes` e não
-        // formData: a aba pode estar fechada na hora do envio, e o valor do
-        // campo já está guardado fora do HTML.
-        informacoesAdicionais: observacoes
-      };
+      const body = montarCorpoDaNota(formData, referenciasDevolucao);
 
       try {
         const result = await api('/api/fiscal/nfe/emitir', { method: 'POST', body: JSON.stringify(body) });
