@@ -188,5 +188,22 @@ if (fs.existsSync(zero)) {
   check('o arquivo do zero existe (rode: npm run zero)', false, 'banco/RECRIAR-DO-ZERO.sql não encontrado');
 }
 
-console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
-process.exit(falhas ? 1 : 0);
+// TABELA APAGADA POR UMA MIGRAÇÃO SEGUINTE (13/10/2026). A fase-ed cria
+// pcp_config e a fase-ee a apaga de propósito; o verificador cobrava a tabela
+// da fase-ed e dizia "PENDENTE (1 de 3 faltando)" num banco em dia (visto no
+// VPS no deploy de 13/10). Roda o conferir() de verdade, com sondas falsas.
+(async () => {
+  const { conferir } = require('../lib/migracoes');
+  const estadoDaEd = async (faltam) => {
+    const r = await conferir({ existeTabela: async (t) => !faltam.includes(t), existeColuna: async () => true });
+    return [...r.aplicadas, ...r.pendentes, ...r.naoConferidas].find((m) => m.nome.startsWith('fase-ed')).estado;
+  };
+  console.log('\n--- tabela apagada depois não é cobrada ---');
+  const semConfig = await estadoDaEd(['pcp_config']);
+  check('sem pcp_config (apagada pela fase-ee), a fase-ed está APLICADA', semConfig === 'APLICADA', semConfig);
+  const semBaixas = await estadoDaEd(['pcp_config', 'pcp_baixas']);
+  check('  mas sem pcp_baixas (ninguém apaga) continua PENDENTE', /^PENDENTE/.test(semBaixas), semBaixas);
+
+  console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
+  process.exit(falhas ? 1 : 0);
+})().catch((e) => { console.log('FALHOU', e); process.exit(1); });
