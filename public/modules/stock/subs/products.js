@@ -323,7 +323,11 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
                 : visiveis.map((product) => `
                   <tr>
                     <td>${S.escape(product.name)}</td>
-                    <td>${S.escape(product.sku || '-')}</td>
+                    <td class="produto-codigo">
+                      ${S.escape(product.sku || '-')}
+                      <button type="button" class="icon-button deposito" data-status="${product.id}"
+                              title="Ver estoque por depósito" aria-label="Ver estoque por depósito">${S.depositIcon}</button>
+                    </td>
                     <td>${S.escape(product.categoryName || '-')}</td>
                     <td>${S.escape(product.unit)}</td>
                     <td>${S.formatBRL(product.costPrice)}</td>
@@ -333,7 +337,6 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
                     <td>${S.situationBadge(product.situation)}</td>
                     <td>${S.statusBadge(product.status)}</td>
                     <td>
-                      <button type="button" class="secondary finance-pill-sm" data-status="${product.id}">Status</button>
                       <button type="button" class="icon-button edit" data-edit="${product.id}" title="Editar">${S.editIcon}</button>
                       <button type="button" class="icon-button" data-delete="${product.id}" title="Excluir">${S.trashIcon}</button>
                     </td>

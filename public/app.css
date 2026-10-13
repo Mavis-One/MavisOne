@@ -1359,6 +1359,9 @@ button.success:hover { background: var(--success-hover); }
 
 .icon-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding: 0; border-radius:8px; background: transparent; border: none; cursor: pointer; color: var(--danger); }
 .icon-button.edit { color: var(--primary); }
+.icon-button.deposito { color: var(--muted); width: 28px; height: 28px; vertical-align: middle; margin-left: 4px; }
+.icon-button.deposito:hover { color: var(--primary); }
+.produto-codigo { white-space: nowrap; }
 .table-actions td .icon-button + .icon-button { margin-left: 4px; }
 .icon-button svg { display:block; }
 .icon-button[disabled] { opacity: 0.45; cursor: not-allowed; }
