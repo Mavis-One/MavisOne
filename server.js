@@ -124,6 +124,7 @@ const metasLib = require('./lib/metas');
 const metasDb = require('./lib/db/metas');
 // Fase DD: a filial de cada venda, lida do fim da categoria.
 const filialDaVenda = require('./lib/filial-da-venda');
+const { opcoesDeEmpresa } = require('./lib/rotulo-da-empresa');
 // Fase EF: o que a categoria de venda faz (estoque, financeiro, fiscal, venda).
 const categoriaVenda = require('./public/modules/shared/categoria_venda');
 // Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
@@ -15988,7 +15989,9 @@ async function tratarRequisicao(req, res) {
         // fase AW, e Vendas ja filtra o deposito pela empresa escolhida — mas
         // nao havia CAMPO em tela nenhuma para preencher o vinculo. Dava para
         // gravar so por SQL, e por isso o recurso existia sem existir.
-        companies: (data.companies || []).map((c) => ({ id: c.id, name: c.name })),
+        // Com o nome da FILIAL, não a razão social (igual nas lojas) — ver
+        // lib/rotulo-da-empresa.js.
+        companies: opcoesDeEmpresa(data.companies),
         classes,
         productCategories: data.productCategories,
         movementCategories: data.movementCategories,

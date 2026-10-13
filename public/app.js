@@ -529,7 +529,13 @@ const ORIGENS_VENDA_PADRAO = ['LOJA', 'INDICAÇÃO', 'WHATSAPP', 'INSTAGRAM', 'F
  */
 function rotuloDaEmpresa(empresa) {
   const fantasia = String((empresa && empresa.tradeName) || '').trim();
-  return fantasia || String((empresa && empresa.name) || '');
+  if (fantasia) return fantasia;
+  // Sem fantasia: razão social + cidade + número da filial no CNPJ, como em
+  // lib/rotulo-da-empresa.js — senão as lojas voltam a sair iguais.
+  const nome = String((empresa && empresa.name) || '');
+  const digitos = String((empresa && empresa.document) || '').replace(/D/g, '');
+  const extras = [String((empresa && empresa.city) || '').trim(), digitos.length === 14 ? digitos.slice(8, 12) : ''].filter(Boolean);
+  return extras.length ? `${nome} — ${extras.join(' ')}` : nome;
 }
 
 /**

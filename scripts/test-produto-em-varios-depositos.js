@@ -377,8 +377,10 @@ const telaDeposito = ler('public/modules/stock/subs/new_deposit.js');
 check('o cadastro de deposito tem o campo Filial', /name: 'companyId'/.test(telaDeposito));
 check('  alimentado pela meta do estoque',
   /options: \(meta\) => \(meta && meta\.companies\) \|\| \[\]/.test(telaDeposito));
+// Desde 13/10/2026 com o nome da filial (lib/rotulo-da-empresa.js), não a
+// razão social, que é a mesma nas lojas.
 check('  e a meta do estoque manda as empresas',
-  /companies: \(data\.companies \|\| \[\]\)\.map/.test(servidor));
+  /companies: opcoesDeEmpresa\(data\.companies\)/.test(servidor));
 // Em branco e escolha legitima e e o padrao: um galpao central serve a rede
 // inteira, e obrigar a escolher mentiria sobre ele.
 check('"Todas as filiais" e o padrao', /empty: 'Todas as filiais'/.test(telaDeposito));
