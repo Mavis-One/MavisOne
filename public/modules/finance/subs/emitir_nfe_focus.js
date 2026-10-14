@@ -418,7 +418,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   })}
         </td>
         <td><input data-field="descricao" data-index="${index}" value="${escapeHtml(item.descricao)}" required placeholder="Descrição" style="min-width:160px;" /></td>
-        <td><input data-field="codigoProduto" data-index="${index}" value="${escapeHtml(item.codigoProduto)}" placeholder="Código" style="width:90px;" /></td>
+        <td><input data-field="codigoProduto" data-index="${index}" value="${escapeHtml(item.codigoProduto)}" placeholder="Código" style="width:90px;" ${item.produtoId ? 'readonly tabindex="-1" title="Código do cadastro do produto — não pode ser alterado."' : ''} /></td>
         <td><input data-field="ncm" data-index="${index}" value="${escapeHtml(item.ncm)}" required maxlength="8" inputmode="numeric" placeholder="8 dígitos" style="width:90px;" ${item.produtoId ? 'readonly title="Vem do cadastro do produto — altere em Estoque → Produtos."' : ''} /></td>
         <td><input type="number" step="0.01" min="0" data-field="quantidade" data-index="${index}" value="${item.quantidade}" style="width:80px;" /></td>
         <td><input type="number" step="0.01" min="0" data-field="valorUnitario" data-index="${index}" value="${item.valorUnitario}" style="width:100px;" /></td>

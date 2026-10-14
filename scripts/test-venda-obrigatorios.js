@@ -66,7 +66,7 @@ check('categoria cadastrada: vale o "gera financeiro" dela',
 console.log('\n--- 2. o servidor recusa ---');
 const servidor = ler('server.js');
 check('na criação e na edição, com as categorias cadastradas',
-  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\), total: computeSalesTotals\(items, body\)\.totalAmount \}\);/g) || []).length === 2);
+  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\), total: computeSalesTotals\(items, body\)\.totalAmount, formas: loadData\(\)\.paymentMethods \|\| \[\], tipoRegistro: (?:type|current\.type) \}\);/g) || []).length === 2);
 check('  menos para cancelar um pedido incompleto',
   /const vaiCancelar = salesStatus\.ehCancelado\(/.test(servidor) && /vaiCancelar \? null : vendaObrigatorios\.faltando\(body, /.test(servidor));
 
@@ -76,7 +76,7 @@ const app = ler('public/app.js');
   check(`rótulo "${rotulo}"`, app.includes(`<label>${rotulo}`) || app.includes(`campo-somente-leitura">${rotulo}`));
 });
 check('confere antes de salvar e leva à aba do campo',
-  /window\.MavisVendaObrigatorios\.faltando\(payload, \{ categorias: meta\.salesCategories \|\| \[\], total: computeTotals\(\)\.totalAmount \}\)/.test(app) && /abrirAba\(obrigatorioQueFalta\.aba \|\| 'dados'\)/.test(app));
+  /window\.MavisVendaObrigatorios\.faltando\(payload, \{ categorias: meta\.salesCategories \|\| \[\], total: computeTotals\(\)\.totalAmount, formas: meta\.paymentMethods \|\| \[\], tipoRegistro: recordType \}\)/.test(app) && /abrirAba\(obrigatorioQueFalta\.aba \|\| 'dados'\)/.test(app));
 const html = ler('public/index.html');
 check('o script carrega antes do app.js',
   html.indexOf('shared/venda_obrigatorios.js') > 0 && html.indexOf('shared/venda_obrigatorios.js') < html.indexOf('src="/app.js"'));

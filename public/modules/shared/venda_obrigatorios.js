@@ -24,6 +24,31 @@
   const categoriaVenda = typeof module !== 'undefined' && module.exports
     ? require('./categoria_venda')
     : raiz.MavisCategoriaVenda;
+  // Na tela, forma_pagamento.js e sales_status.js carregam DEPOIS deste
+  // arquivo: por isso são lidos na hora da conferência, não aqui em cima.
+  const formaPagamento = () => (typeof module !== 'undefined' && module.exports
+    ? require('./forma_pagamento')
+    : raiz.MavisFormaPagamento);
+  const salesStatus = () => (typeof module !== 'undefined' && module.exports
+    ? require('./sales_status')
+    : raiz.MavisSalesStatus);
+
+  // NSU/AUTORIZAÇÃO OBRIGATÓRIO NO CARTÃO (14/10/2026, pedido do usuário).
+  // Linha de cartão (crédito ou débito, pelo tipo da forma) com valor e sem
+  // NSU. Orçamento fica de fora: ainda não houve cobrança, não há NSU.
+  // `formas`: o cadastro de formas de pagamento; sem ele, não confere.
+  function cartaoSemNsu(r, formas, tipoRegistro) {
+    if (!Array.isArray(formas) || !formas.length) return -1;
+    const status = salesStatus();
+    if (status && status.tipoDoStatus(status.normalizar(r.status, tipoRegistro)) === 'quote') return -1;
+    const fp = formaPagamento();
+    if (!fp) return -1;
+    return (Array.isArray(r.payments) ? r.payments : []).findIndex((linha) => {
+      if (!linha || Number(linha.amount || 0) <= 0) return false;
+      const forma = formas.find((f) => f && f.id === linha.methodId);
+      return Boolean(forma) && fp.ehCartao(forma.type) && !String(linha.cardAuthorization || '').trim();
+    });
+  }
 
   /**
    * O primeiro campo obrigatório que falta, ou null.
@@ -31,8 +56,11 @@
    * `categorias`: as categorias de venda cadastradas. Com elas, pedido de
    * categoria que não gera financeiro (transferência entre filiais, remessa)
    * não precisa de pagamento (14/10/2026).
+   *
+   * `formas` (cadastro de formas de pagamento) e `tipoRegistro` ('order' |
+   * 'quote'): com eles, cartão sem NSU/Autorização também falta.
    */
-  function faltando(registro, { categorias = [], total } = {}) {
+  function faltando(registro, { categorias = [], total, formas, tipoRegistro } = {}) {
     const r = registro || {};
     for (const def of CAMPOS) {
       if (!String(r[def.campo] == null ? '' : r[def.campo]).trim()) return def;
@@ -63,10 +91,20 @@
         aba: 'pagamentos'
       };
     }
+    const semNsu = cartaoSemNsu(r, formas, tipoRegistro);
+    if (semNsu >= 0) {
+      return {
+        campo: 'payments',
+        rotulo: 'NSU / Autorização',
+        mensagem: `Informe o NSU / Autorização do pagamento em cartão (aba Pagamentos, linha ${semNsu + 1}).`,
+        aba: 'pagamentos',
+        linha: semNsu
+      };
+    }
     return null;
   }
 
-  const api = { CAMPOS, faltando, temPagamento };
+  const api = { CAMPOS, faltando, temPagamento, cartaoSemNsu };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisVendaObrigatorios = api;
 })(typeof window !== 'undefined' ? window : globalThis);

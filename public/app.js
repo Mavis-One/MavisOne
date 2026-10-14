@@ -5089,7 +5089,12 @@ async function loadModule(moduleName) {
                                 return `
                                 <tr>
                                   <td>
-                                    ${escapeHtml(item.name)}${item.sku ? ` <span class="muted">(${escapeHtml(item.sku)})</span>` : ''}
+                                    <!-- Nome editável NO PEDIDO (14/10/2026, pedido do
+                                         usuário): vale para este item e para a NF-e
+                                         dele; o cadastro do produto não muda. O código
+                                         (SKU) continua fixo. 120 = limite do xProd. -->
+                                    <input type="text" class="sales-item-nome" data-index="${index}"
+                                           value="${escapeHtml(item.name)}" title="${escapeHtml(item.name)}" maxlength="120" autocomplete="off" />${item.sku ? ` <span class="muted">(${escapeHtml(item.sku)})</span>` : ''}
                                     ${item.classValueId ? `<span class="sales-item-cor">${escapeHtml(item.classValueName || item.classValueId)}</span>` : ''}
                                   </td>
                                   <td>
@@ -5408,7 +5413,7 @@ async function loadModule(moduleName) {
                                     </label>
                                     <label>NSU / Autorizacao
                                       <input class="sales-payment-auth" data-index="${index}" value="${escapeHtml(linha.cardAuthorization || '')}"
-                                             placeholder="${integrado ? 'Obrigatorio' : 'Opcional'}" />
+                                             placeholder="Obrigatório" />
                                     </label>
                                   </div>
                                   ${faltaAutorizacao ? `<p class="sales-totals-alerta">
@@ -5899,6 +5904,21 @@ async function loadModule(moduleName) {
               renderForm();
             });
           });
+          // Nome do item: guarda a cada tecla, redesenha só ao sair. Vazio volta
+          // ao nome do cadastro — o servidor descarta item sem nome.
+          content.querySelectorAll('.sales-item-nome').forEach((input) => {
+            input.addEventListener('input', () => {
+              items[Number(input.dataset.index)].name = input.value;
+            });
+            input.addEventListener('change', () => {
+              const item = items[Number(input.dataset.index)];
+              const limpo = input.value.replace(/\s+/g, ' ').trim();
+              const produto = produtoDoItem(item);
+              item.name = limpo || (produto && produto.name) || item.name || '';
+              syncFormState();
+              renderForm();
+            });
+          });
           // Chassi: guarda a cada tecla, redesenha só ao sair do campo. Um
           // renderForm() por tecla reconstruiria a linha e tiraria o foco do
           // campo no meio da digitação — é por isso que qtd e valor também usam
@@ -6243,11 +6263,12 @@ async function loadModule(moduleName) {
             // aqui é para dizer qual falta e levar até ele, na aba certa. Sem o
             // atributo `required` de propósito: campo obrigatório numa aba
             // escondida trava o envio sem mensagem nenhuma.
-            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload, { categorias: meta.salesCategories || [], total: computeTotals().totalAmount });
+            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload, { categorias: meta.salesCategories || [], total: computeTotals().totalAmount, formas: meta.paymentMethods || [], tipoRegistro: recordType });
             if (obrigatorioQueFalta) {
               showToast(obrigatorioQueFalta.mensagem, 'warning');
               abrirAba(obrigatorioQueFalta.aba || 'dados');
               if (obrigatorioQueFalta.foco) document.getElementById(obrigatorioQueFalta.foco)?.focus();
+              if (obrigatorioQueFalta.linha !== undefined) content.querySelector(`.sales-payment-auth[data-index="${obrigatorioQueFalta.linha}"]`)?.focus();
               return;
             }
             if (botaoSalvar) botaoSalvar.disabled = true;

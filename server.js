@@ -7555,7 +7555,10 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
       ? {
         ...bruto,
         descricao: bruto.descricao || produto.name,
-        codigoProduto: bruto.codigoProduto || produto.sku || '',
+        // O código do produto vai SEMPRE do cadastro (14/10/2026, pedido do
+        // usuário: "não permita que o código seja alterado"); o do corpo só vale
+        // se o cadastro não tiver SKU.
+        codigoProduto: produto.sku || bruto.codigoProduto || '',
         ncm: produto.ncm || bruto.ncm,
         cest: produto.cest || bruto.cest,
         ean: produto.ean || bruto.ean,
@@ -12776,7 +12779,7 @@ async function tratarRequisicao(req, res) {
         }
         // A categoria decide se o pagamento é obrigatório (transferência não é).
         // A soma dos pagamentos fecha com o total (mesma conta da tela).
-        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount });
+        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: type });
         if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
         const totais = computeSalesTotals(items, body);
         record = {
@@ -13493,7 +13496,7 @@ async function tratarRequisicao(req, res) {
       // tela: o que faltar precisa ser preenchido antes. Menos para CANCELAR —
       // um pedido incompleto tem de poder ser cancelado como está.
       const vaiCancelar = salesStatus.ehCancelado(salesStatus.normalizar(body.status || current.status, undefined));
-      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount });
+      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: current.type });
       if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
       // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
       // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo

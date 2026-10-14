@@ -4300,6 +4300,9 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
+/* Nome do item editável no pedido (14/10/2026). */
+.sales-item-nome { width: 100%; min-width: 220px; }
+.sales-item-nome + .muted { display: block; margin-top: 2px; font-size: 0.8em; }
 .sales-item-chassi-aviso {
   display: block;
   margin-top: 4px;
