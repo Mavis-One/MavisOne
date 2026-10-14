@@ -34,8 +34,15 @@ const item = (extra) => B.buildNfeItemPayload({ ...base, regraFiscal: regra60, f
 console.log('--- 1. o montador ---');
 check('CST 60 deixou de ser recusado', CST.ehSuportado('60'));
 const semCompra = item({});
-check('sem compra com ST: só o CST (o grupo é omitível)',
-  semCompra.icms_situacao_tributaria === '60' && !('icms_base_calculo_retido_st' in semCompra) && !('icms_base_calculo' in semCompra));
+// 14/10/2026: a SEFAZ/SC rejeitou o CST 60 sem o grupo ("Nao informada
+// vBCSTRet, pST, vICMSSubstituto e vICMSSTRet"). Sem dado, vai zerado
+// (decisão do usuário), com os quatro campos.
+check('sem compra com ST: o grupo inteiro, zerado',
+  semCompra.icms_situacao_tributaria === '60' && !('icms_base_calculo' in semCompra)
+  && semCompra.icms_base_calculo_retido_st === 0 && semCompra.icms_aliquota_final === 0
+  && semCompra.icms_valor_substituto === 0 && semCompra.icms_valor_retido_st === 0);
+const soBaseEValor = item({ stRetido: { baseUnitaria: 50, valorUnitario: 3, aliquota: 0, substitutoUnitario: 0 } });
+check('  vICMSSubstituto vai mesmo zero (ia só quando maior que zero)', soBaseEValor.icms_valor_substituto === 0 && soBaseEValor.icms_valor_retido_st === 6);
 const comCompra = item({ stRetido: compra });
 check('com a última compra: valores por unidade × quantidade',
   comCompra.icms_base_calculo_retido_st === 122.2 && comCompra.icms_valor_retido_st === 8.31
