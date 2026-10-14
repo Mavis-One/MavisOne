@@ -205,7 +205,9 @@ window.MavisDocumento = (function () {
       // `codigo_municipio`, que é o código SIAFI/TOM — para Brasília ele vale
       // 9701 e o IBGE vale 5300108. É o IBGE que vai na NF-e; trocar os dois
       // faz a SEFAZ rejeitar a nota por município inválido.
-      codigoMunicipioIbge: String(oficial?.raw?.codigo_municipio_ibge || ''),
+      // O servidor já entrega o IBGE separado do SIAFI, venha de qual fonte vier
+      // (14/10/2026); o raw da BrasilAPI fica de reserva para servidor antigo.
+      codigoMunicipioIbge: String(oficial.codigoMunicipioIbge || oficial?.raw?.codigo_municipio_ibge || ''),
       email: contatoOficial(oficial, ['email'], ['email']),
       telefone: contatoOficial(oficial, ['phone', 'telefone', 'celular'], ['ddd_telefone_1', 'ddd_telefone_2', 'ddd_fax']),
       situacaoCadastral: oficial.situacaoCadastral || '',

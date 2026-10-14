@@ -687,54 +687,142 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
   }
 }
 
-async function fetchCnpjOfficialData(cnpj) {
-  const url = `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`;
-  const response = await fetchWithTimeout(url, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'MavisONE/1.0'
-    }
-  });
+// A CONSULTA DE CNPJ COM RESERVA (14/10/2026). A tela Consulta CNPJ SEFAZ (e
+// a busca de CNPJ dos cadastros e da emissão) dependia só da BrasilAPI, e
+// ela caiu: "Request failed with status code 503", medido. Agora, se ela não
+// responder, tenta a CNPJ.ws pública e depois a ReceitaWS — as três devolvidas
+// no MESMO formato, para quem usa não saber de onde veio (`fonte` diz).
+// CNPJ que a BrasilAPI diz não existir (404) não vai para as reservas.
+// As reservas aceitam poucas consultas por minuto: servem para a queda, não
+// para lote.
+function resultadoDoCnpj(cnpj, campos) {
+  const contatos = [];
+  if (campos.email) contatos.push({ type: 'email', value: campos.email });
+  (campos.telefones || []).filter(Boolean).forEach((value) => contatos.push({ type: 'phone', value }));
+  const endereco = {
+    logradouro: campos.logradouro || '',
+    numero: campos.numero || '',
+    complemento: campos.complemento || '',
+    bairro: campos.bairro || '',
+    cep: sanitizeDigits(campos.cep || ''),
+    cidade: campos.cidade || '',
+    estado: campos.uf || ''
+  };
+  return {
+    cnpj: sanitizeDigits(campos.cnpj || cnpj),
+    razaoSocial: campos.razaoSocial || '',
+    nomeFantasia: campos.nomeFantasia || '',
+    situacaoCadastral: campos.situacaoCadastral || '',
+    endereco,
+    enderecoCompleto: [endereco.logradouro, endereco.numero, endereco.complemento].filter(Boolean).join(', '),
+    cnaePrincipal: campos.cnaePrincipal || '',
+    dataAbertura: campos.dataAbertura || '',
+    codigoMunicipioIbge: campos.codigoMunicipioIbge ? String(campos.codigoMunicipioIbge) : '',
+    contatos,
+    fonte: campos.fonte,
+    raw: campos.raw
+  };
+}
 
+async function cnpjPelaBrasilApi(cnpj) {
+  const response = await fetchWithTimeout(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
+    method: 'GET', headers: { Accept: 'application/json', 'User-Agent': 'MavisONE/1.0' }
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = payload.message || payload.error || 'Não foi possível validar o CNPJ na API externa';
-    const err = new Error(message);
+    const err = new Error(payload.message || payload.error || 'Não foi possível validar o CNPJ na API externa');
     err.status = response.status;
     throw err;
   }
-
-  const contacts = [];
-  if (payload.email) {
-    contacts.push({ type: 'email', value: payload.email });
-  }
-
-  const phoneFields = [payload.ddd_telefone_1, payload.ddd_telefone_2];
-  phoneFields.filter(Boolean).forEach((phone) => {
-    contacts.push({ type: 'phone', value: phone });
-  });
-
-  return {
-    cnpj: sanitizeDigits(payload.cnpj || cnpj),
-    razaoSocial: payload.razao_social || '',
-    nomeFantasia: payload.nome_fantasia || '',
-    situacaoCadastral: payload.descricao_situacao_cadastral || payload.codigo_situacao_cadastral || '',
-    endereco: {
-      logradouro: payload.logradouro || '',
-      numero: payload.numero || '',
-      complemento: payload.complemento || '',
-      bairro: payload.bairro || '',
-      cep: sanitizeDigits(payload.cep || ''),
-      cidade: payload.municipio || '',
-      estado: payload.uf || ''
-    },
-    enderecoCompleto: [payload.logradouro, payload.numero, payload.complemento].filter(Boolean).join(', '),
+  return resultadoDoCnpj(cnpj, {
+    fonte: 'BrasilAPI',
+    cnpj: payload.cnpj,
+    razaoSocial: payload.razao_social,
+    nomeFantasia: payload.nome_fantasia,
+    situacaoCadastral: payload.descricao_situacao_cadastral || payload.codigo_situacao_cadastral,
+    logradouro: payload.logradouro, numero: payload.numero, complemento: payload.complemento,
+    bairro: payload.bairro, cep: payload.cep, cidade: payload.municipio, uf: payload.uf,
+    // SÓ codigo_municipio_ibge: o `codigo_municipio` da BrasilAPI é o SIAFI.
+    codigoMunicipioIbge: payload.codigo_municipio_ibge,
     cnaePrincipal: payload.cnae_fiscal_descricao || (payload.cnae_fiscal ? String(payload.cnae_fiscal) : ''),
-    dataAbertura: payload.data_inicio_atividade || '',
-    contatos: contacts,
+    dataAbertura: payload.data_inicio_atividade,
+    email: payload.email,
+    telefones: [payload.ddd_telefone_1, payload.ddd_telefone_2],
     raw: payload
-  };
+  });
+}
+
+async function cnpjPelaCnpjWs(cnpj) {
+  const response = await fetchWithTimeout(`https://publica.cnpj.ws/cnpj/${cnpj}`, {
+    method: 'GET', headers: { Accept: 'application/json', 'User-Agent': 'MavisONE/1.0' }
+  });
+  const payload = await response.json().catch(() => ({}));
+  const e = payload.estabelecimento || {};
+  if (!response.ok || !payload.razao_social) {
+    const err = new Error(payload.detalhes || payload.titulo || 'CNPJ.ws não respondeu');
+    err.status = response.status || 502;
+    throw err;
+  }
+  const fone = (ddd, numero) => (numero ? `${ddd || ''}${numero}` : '');
+  return resultadoDoCnpj(cnpj, {
+    fonte: 'CNPJ.ws',
+    cnpj: e.cnpj,
+    razaoSocial: payload.razao_social,
+    nomeFantasia: e.nome_fantasia,
+    situacaoCadastral: e.situacao_cadastral,
+    logradouro: [e.tipo_logradouro, e.logradouro].filter(Boolean).join(' '),
+    numero: e.numero, complemento: e.complemento, bairro: e.bairro, cep: e.cep,
+    cidade: e.cidade && e.cidade.nome, uf: e.estado && (e.estado.sigla || e.estado),
+    codigoMunicipioIbge: e.cidade && e.cidade.ibge_id,
+    cnaePrincipal: e.atividade_principal && e.atividade_principal.descricao,
+    dataAbertura: e.data_inicio_atividade,
+    email: e.email,
+    telefones: [fone(e.ddd1, e.telefone1), fone(e.ddd2, e.telefone2)],
+    raw: payload
+  });
+}
+
+async function cnpjPelaReceitaWs(cnpj) {
+  const response = await fetchWithTimeout(`https://receitaws.com.br/v1/cnpj/${cnpj}`, {
+    method: 'GET', headers: { Accept: 'application/json', 'User-Agent': 'MavisONE/1.0' }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.status === 'ERROR' || !payload.nome) {
+    const err = new Error(payload.message || 'ReceitaWS não respondeu');
+    err.status = response.ok ? 404 : (response.status || 502);
+    throw err;
+  }
+  const abertura = String(payload.abertura || '').split('/').reverse().join('-');
+  return resultadoDoCnpj(cnpj, {
+    fonte: 'ReceitaWS',
+    cnpj: payload.cnpj,
+    razaoSocial: payload.nome,
+    nomeFantasia: payload.fantasia,
+    situacaoCadastral: payload.situacao,
+    logradouro: payload.logradouro, numero: payload.numero, complemento: payload.complemento,
+    bairro: payload.bairro, cep: payload.cep, cidade: payload.municipio, uf: payload.uf,
+    cnaePrincipal: Array.isArray(payload.atividade_principal) && payload.atividade_principal[0] ? payload.atividade_principal[0].text : '',
+    dataAbertura: abertura,
+    email: payload.email,
+    telefones: [payload.telefone],
+    raw: payload
+  });
+}
+
+async function fetchCnpjOfficialData(cnpj) {
+  try {
+    return await cnpjPelaBrasilApi(cnpj);
+  } catch (erroBrasilApi) {
+    if (erroBrasilApi.status === 404) throw erroBrasilApi;
+    for (const reserva of [cnpjPelaCnpjWs, cnpjPelaReceitaWs]) {
+      try {
+        return await reserva(cnpj);
+      } catch (_) { /* a próxima */ }
+    }
+    const err = new Error('Os serviços de consulta de CNPJ não estão respondendo agora (BrasilAPI, CNPJ.ws e ReceitaWS). Tente de novo em alguns minutos.');
+    err.status = 503;
+    throw err;
+  }
 }
 
 // O CEP PELA BRASILAPI QUANDO O VIACEP NÃO RESPONDE (14/10/2026). O ViaCEP às
