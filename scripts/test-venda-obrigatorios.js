@@ -47,6 +47,18 @@ check('transferência e remessa (não cadastradas) passam sem pagamento',
   && O.faltando({ ...semPagamento, category: 'TRANSFERÊNCIA / FILIAL 02' }) === null
   && O.faltando({ ...semPagamento, category: 'Remessa' }) === null);
 check('  venda continua exigindo', O.faltando({ ...semPagamento, category: 'VENDA' })?.campo === 'payments');
+// 14/10/2026: os pagamentos fecham com o total do pedido. Provado pela API:
+// pedido de R$ 20,00 com R$ 5,00 em pagamento -> 400 "diferença de R$ 15,00",
+// sem gastar número; na tela, um pagamento só acompanha o total, travado.
+const pagos = (...v) => v.map((amount) => ({ methodId: 'f1', amount }));
+check('a soma dos pagamentos tem de fechar com o total',
+  O.faltando({ ...completo, payments: pagos(5000, 1990) }, { total: 6990 }) === null
+  && /diferença de R\$\s?1\.990,00/.test(O.faltando({ ...completo, payments: pagos(5000) }, { total: 6990 })?.mensagem || ''));
+check('  centavo de arredondamento não conta', O.faltando({ ...completo, payments: pagos(3330.33, 3330.33, 3330.34) }, { total: 9991 }) === null);
+check('  sem o total (quem não sabe), não confere', O.faltando({ ...completo, payments: pagos(1) }) === null);
+check('  tela e servidor passam o total',
+  ler('public/app.js').includes('total: computeTotals().totalAmount') && ler('server.js').includes('total: computeSalesTotals(items, body).totalAmount'));
+check('  um pagamento só acompanha o total', ler('public/app.js').includes('if (payments.length === 1 && Math.abs(Number(payments[0].amount || 0) - totais.totalAmount) >= 0.005) {'));
 check('categoria cadastrada: vale o "gera financeiro" dela',
   O.faltando({ ...semPagamento, category: 'Loja' }, { categorias: [{ name: 'Loja', geraFinanceiro: false }] }) === null
   && O.faltando({ ...semPagamento, category: 'Transfer X' }, { categorias: [{ name: 'Transfer X', geraFinanceiro: true }] })?.campo === 'payments');
@@ -54,7 +66,7 @@ check('categoria cadastrada: vale o "gera financeiro" dela',
 console.log('\n--- 2. o servidor recusa ---');
 const servidor = ler('server.js');
 check('na criação e na edição, com as categorias cadastradas',
-  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\) \}\);/g) || []).length === 2);
+  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\), total: computeSalesTotals\(items, body\)\.totalAmount \}\);/g) || []).length === 2);
 check('  menos para cancelar um pedido incompleto',
   /const vaiCancelar = salesStatus\.ehCancelado\(/.test(servidor) && /vaiCancelar \? null : vendaObrigatorios\.faltando\(body, /.test(servidor));
 
@@ -64,7 +76,7 @@ const app = ler('public/app.js');
   check(`rótulo "${rotulo}"`, app.includes(`<label>${rotulo}`) || app.includes(`campo-somente-leitura">${rotulo}`));
 });
 check('confere antes de salvar e leva à aba do campo',
-  /window\.MavisVendaObrigatorios\.faltando\(payload, \{ categorias: meta\.salesCategories \|\| \[\] \}\)/.test(app) && /abrirAba\(obrigatorioQueFalta\.aba \|\| 'dados'\)/.test(app));
+  /window\.MavisVendaObrigatorios\.faltando\(payload, \{ categorias: meta\.salesCategories \|\| \[\], total: computeTotals\(\)\.totalAmount \}\)/.test(app) && /abrirAba\(obrigatorioQueFalta\.aba \|\| 'dados'\)/.test(app));
 const html = ler('public/index.html');
 check('o script carrega antes do app.js',
   html.indexOf('shared/venda_obrigatorios.js') > 0 && html.indexOf('shared/venda_obrigatorios.js') < html.indexOf('src="/app.js"'));

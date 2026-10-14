@@ -12410,7 +12410,8 @@ async function tratarRequisicao(req, res) {
           return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
         }
         // A categoria decide se o pagamento é obrigatório (transferência não é).
-        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra() });
+        // A soma dos pagamentos fecha com o total (mesma conta da tela).
+        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount });
         if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
         const totais = computeSalesTotals(items, body);
         record = {
@@ -13127,7 +13128,7 @@ async function tratarRequisicao(req, res) {
       // tela: o que faltar precisa ser preenchido antes. Menos para CANCELAR —
       // um pedido incompleto tem de poder ser cancelado como está.
       const vaiCancelar = salesStatus.ehCancelado(salesStatus.normalizar(body.status || current.status, undefined));
-      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra() });
+      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount });
       if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
       // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
       // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo

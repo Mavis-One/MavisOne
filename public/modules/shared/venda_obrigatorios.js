@@ -32,7 +32,7 @@
    * categoria que não gera financeiro (transferência entre filiais, remessa)
    * não precisa de pagamento (14/10/2026).
    */
-  function faltando(registro, { categorias = [] } = {}) {
+  function faltando(registro, { categorias = [], total } = {}) {
     const r = registro || {};
     for (const def of CAMPOS) {
       if (!String(r[def.campo] == null ? '' : r[def.campo]).trim()) return def;
@@ -40,6 +40,21 @@
     const exige = categoriaVenda && typeof categoriaVenda.exigePagamento === 'function'
       ? categoriaVenda.exigePagamento(r.category, categorias)
       : true;
+    // OS PAGAMENTOS FECHAM COM O TOTAL (14/10/2026, pedido do usuário: "vincule
+    // os valores de pagamentos com o valor total do pedido"). Só quando quem
+    // chama sabe o total — a tela e o servidor calculam o mesmo.
+    const somaDosPagamentos = (Array.isArray(r.payments) ? r.payments : [])
+      .reduce((soma, linha) => soma + Number((linha && linha.amount) || 0), 0);
+    if (exige && temPagamento(r.payments) && Number.isFinite(Number(total)) && total !== undefined && total !== null
+      && Math.abs(Math.round(somaDosPagamentos * 100) - Math.round(Number(total) * 100)) >= 1) {
+      const reais = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      return {
+        campo: 'payments',
+        rotulo: 'Pagamentos',
+        mensagem: `A soma dos pagamentos (${reais(somaDosPagamentos)}) tem de fechar com o total do pedido (${reais(total)}): diferença de ${reais(Math.abs(somaDosPagamentos - Number(total)))}.`,
+        aba: 'pagamentos'
+      };
+    }
     if (exige && !temPagamento(r.payments)) {
       return {
         campo: 'payments',
