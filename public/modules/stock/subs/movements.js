@@ -52,6 +52,9 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
     if (event.key === 'Escape') closeDetailModal();
   }
 
+  // O custo da movimentação só para administrador (ver lib/custo-oculto.js).
+  const veCusto = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
+
   function detailItem(label, value) {
     return `<div><span class="muted">${S.escape(label)}</span><strong>${value}</strong></div>`;
   }
@@ -73,8 +76,8 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
             ${detailItem('Depósito', S.escape(movement.depositName || '-'))}
             ${movement.classValueId ? detailItem(cores.get(movement.classValueId)?.className || 'Classe', S.corBadge(cores, movement.classValueId)) : ''}
             ${detailItem('Quantidade', `${movement.type === 'entrada' ? '+' : '-'}${S.formatQty(movement.quantity)}`)}
-            ${detailItem('Custo unitário', S.formatBRL(movement.unitCost))}
-            ${detailItem('Custo total', S.formatBRL(movement.totalCost))}
+            ${veCusto ? detailItem('Custo unitário', S.formatBRL(movement.unitCost)) : ''}
+            ${veCusto ? detailItem('Custo total', S.formatBRL(movement.totalCost)) : ''}
             ${detailItem('Categoria', S.escape(movement.categoryName || '-'))}
             ${detailItem('Documento', S.escape(movement.document || '-'))}
             ${detailItem('Origem', seloDeOrigem(movement))}
@@ -177,10 +180,10 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
         <div class="table-scroll">
           <table class="table table-actions">
             <thead>
-              <tr><th>Código</th><th>Data</th><th>Tipo</th><th>Produto</th><th>Depósito</th><th>Qtd.</th><th>Custo unit.</th><th>Categoria</th><th>Documento</th><th>Origem</th><th>Ações</th></tr>
+              <tr><th>Código</th><th>Data</th><th>Tipo</th><th>Produto</th><th>Depósito</th><th>Qtd.</th>${veCusto ? '<th>Custo unit.</th>' : ''}<th>Categoria</th><th>Documento</th><th>Origem</th><th>Ações</th></tr>
             </thead>
             <tbody>
-              ${movements.length === 0 ? S.emptyRow(11, 'Nenhuma movimentação encontrada.') : movements.map((movement) => `
+              ${movements.length === 0 ? S.emptyRow(veCusto ? 11 : 10, 'Nenhuma movimentação encontrada.') : movements.map((movement) => `
                 <tr data-detail="${movement.id}" title="Ver detalhes da movimentação">
                   <td>${S.escape(movement.code)}</td>
                   <td>${S.formatDate(movement.date)}</td>
@@ -191,7 +194,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
                   <td>${S.escape(movement.productName)}${movement.productSku ? ` <span class="muted">(${S.escape(movement.productSku)})</span>` : ''}${S.corBadge(cores, movement.classValueId)}</td>
                   <td>${S.escape(movement.depositName || '-')}</td>
                   <td>${movement.type === 'entrada' ? '+' : '-'}${S.formatQty(movement.quantity)}</td>
-                  <td>${S.formatBRL(movement.unitCost)}</td>
+                  ${veCusto ? `<td>${S.formatBRL(movement.unitCost)}</td>` : ''}
                   <td>${S.escape(movement.categoryName || '-')}</td>
                   <td>${S.escape(movement.document || '-')}</td>
                   <td>${seloDeOrigem(movement)}</td>

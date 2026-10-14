@@ -58,7 +58,10 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
     }
   }
 
-  const dinheiro = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
+  // O valor pago é o custo: quem não é administrador recebe a ordem sem ele
+  // (ver lib/custo-oculto.js) e só vê o custo do que digitou agora.
+  const veValores = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
+  const dinheiro = (v) => (v === undefined || v === null ? '—' : `R$ ${Number(v || 0).toFixed(2)}`);
   const numeroDoCampo = (id) => Number(document.getElementById(id)?.value || 0);
 
   function recalcular() {
@@ -79,7 +82,7 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
         <td>${escapeHtml(item.name || produtosPorId.get(item.productId)?.name || item.productId)}</td>
         <td>${Number(item.quantity)}</td>
         <td>${dinheiro(item.unitCost)}</td>
-        <td>${dinheiro(item.total)}</td>
+        <td>${item.unitCost === undefined ? '—' : dinheiro(item.total)}</td>
         <td><button type="button" class="secondary" data-remover="${indice}">Remover</button></td>
       </tr>
     `).join('');
@@ -164,15 +167,15 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
             </table>
           </div>
 
-          <div class="row">
+          ${veValores || !editandoId ? `<div class="row">
             <label>Frete<input type="number" id="compraFrete" min="0" step="0.01" value="${Number(calculado.freight).toFixed(2)}" /></label>
             <label>Outras despesas<input type="number" id="compraDespesas" min="0" step="0.01" value="${Number(calculado.otherExpenses).toFixed(2)}" /></label>
             <label>Desconto<input type="number" id="compraDesconto" min="0" step="0.01" value="${Number(calculado.discountAmount).toFixed(2)}" /></label>
-          </div>
-          <p>
+          </div>` : ''}
+          ${veValores ? `<p>
             Itens: <strong>${dinheiro(calculado.itemsTotal)}</strong> &nbsp;·&nbsp;
             Total do documento: <strong id="compraTotal">${dinheiro(calculado.totalAmount)}</strong>
-          </p>
+          </p>` : ''}
 
           <label>Observação<textarea id="compraObs" rows="2">${escapeHtml(documento.note || '')}</textarea></label>
 
@@ -252,9 +255,10 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
         deliveryDate: document.getElementById('compraEntrega')?.value || null,
         note: document.getElementById('compraObs')?.value || '',
         items: documento.items,
-        freight: numeroDoCampo('compraFrete'),
-        otherExpenses: numeroDoCampo('compraDespesas'),
-        discountAmount: numeroDoCampo('compraDesconto')
+        // Sem o campo na tela, não manda nada: o servidor mantém o gravado.
+        freight: document.getElementById('compraFrete') ? numeroDoCampo('compraFrete') : undefined,
+        otherExpenses: document.getElementById('compraDespesas') ? numeroDoCampo('compraDespesas') : undefined,
+        discountAmount: document.getElementById('compraDesconto') ? numeroDoCampo('compraDesconto') : undefined
       };
       try {
         if (editandoId) {

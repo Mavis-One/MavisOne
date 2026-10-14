@@ -1101,6 +1101,7 @@ function sendJson(res, payload, statusCode = 200) {
   // Quem não é administrador não recebe o custo do produto em resposta
   // nenhuma (14/10/2026). A marca é posta no começo de tratarRequisicao.
   if (res.__ocultarCusto && statusCode < 400) payload = custoOculto.semCusto(payload);
+  if (res.__ocultarValorPago && statusCode < 400) payload = custoOculto.semValorPago(payload);
   const corpo = Buffer.from(JSON.stringify(payload), 'utf8');
   const cabecalhos = { 'Content-Type': 'application/json' };
 
@@ -9336,6 +9337,12 @@ async function tratarRequisicao(req, res) {
     const usuarioDaVez = await getCurrentUser(req);
     if (usuarioDaVez && !(await ehAdmin(usuarioDaVez))) {
       res.__ocultarCusto = true;
+      // Em Compras o valor pago é o custo (ver semValorPago), e o XML da nota
+      // do fornecedor traz todos eles.
+      if (pathname.startsWith('/api/purchases')) res.__ocultarValorPago = true;
+      if (pathname.startsWith('/api/purchases/entrada-nfe/') && pathname.endsWith('/xml')) {
+        return sendJson(res, { error: 'O XML da nota traz o valor pago: só administrador.' }, 403);
+      }
       const parteDoResumo = url.searchParams.get('parte') || '';
       if (pathname.startsWith('/api/stock/inventories') || pathname === '/api/reports/estoque/export'
         || (pathname === '/api/reports/overview' && parteDoResumo === 'estoque')) {
@@ -16419,6 +16426,21 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'Esta ordem já deu entrada no estoque. Estorne o recebimento antes de editar.' }, 400);
       }
       const body = await readBody(req);
+      // Quem não é administrador abriu a ordem sem os valores (semValorPago):
+      // o que ele não mandou continua o que estava gravado, e não vira zero.
+      if (res.__ocultarValorPago) {
+        const vazio = (v) => v === undefined || v === null || v === '';
+        const anteriores = Array.isArray(atual.items) ? atual.items : [];
+        body.items = (Array.isArray(body.items) ? body.items : []).map((item) => {
+          if (!vazio(item.unitCost)) return item;
+          const anterior = anteriores.find((a) => a.productId === item.productId
+            && String(a.classValueId || '') === String(item.classValueId || ''));
+          return { ...item, unitCost: anterior ? anterior.unitCost : 0 };
+        });
+        for (const campo of ['freight', 'otherExpenses', 'discountAmount']) {
+          if (vazio(body[campo])) body[campo] = atual[campo];
+        }
+      }
       const documento = await comprasDb.atualizarDocumento(id, montarDocumentoDeCompra(body, data, user));
       return sendJson(res, { success: true, documento });
     } catch (error) {

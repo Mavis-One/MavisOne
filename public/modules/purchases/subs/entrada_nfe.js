@@ -29,6 +29,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
 // cadastrar — em vez de um botão que falha ao ser clicado.
 (function () {
   const moeda = (valor) => Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // O valor pago é o custo: quem não é administrador recebe a nota sem os
+  // valores (ver lib/custo-oculto.js), e as colunas deles somem.
+  const veValores = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
   const numero = (valor, casas = 4) => Number(valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: casas });
   const dataBr = (iso) => {
     const texto = String(iso || '').slice(0, 10);
@@ -145,8 +148,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           </div>
           <div class="entrada-nota-numeros">
             <span class="muted">Emissão</span><strong>${dataBr(n.dataEmissao)}</strong>
-            <span class="muted">Produtos</span><strong>${moeda(n.totais.produtos)}</strong>
-            <span class="muted">Total da nota</span><strong>${moeda(n.totais.nota)}</strong>
+            ${veValores ? `<span class="muted">Produtos</span><strong>${moeda(n.totais.produtos)}</strong>
+            <span class="muted">Total da nota</span><strong>${moeda(n.totais.nota)}</strong>` : ''}
           </div>
         </div>
       `;
@@ -251,8 +254,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                   <th>Descrição na nota</th>
                   <th>NCM / CFOP</th>
                   <th class="entrada-col-num">Qtd</th>
-                  <th class="entrada-col-num">Unitário</th>
-                  <th class="entrada-col-num">Total</th>
+                  ${veValores ? `<th class="entrada-col-num">Unitário</th>
+                  <th class="entrada-col-num">Total</th>` : ''}
                   <th>Produto no estoque</th>
                   <th class="entrada-col-check">Estoque</th>
                 </tr>
@@ -272,8 +275,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                       </td>
                       <td class="muted">${escapeHtml(item.ncm || '—')}<br />${escapeHtml(item.cfop || '—')}</td>
                       <td class="entrada-col-num">${numero(item.quantidade)} ${escapeHtml(item.unidade || '')}</td>
-                      <td class="entrada-col-num">${moeda(item.valorUnitario)}</td>
-                      <td class="entrada-col-num">${moeda(item.valorTotal)}</td>
+                      ${veValores ? `<td class="entrada-col-num">${moeda(item.valorUnitario)}</td>
+                      <td class="entrada-col-num">${moeda(item.valorTotal)}</td>` : ''}
                       <td class="entrada-col-produto">
                         ${renderSearchableSelect({
                           id: `entradaItem${item.numero}`,
@@ -314,13 +317,13 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           ${duplicatas.length ? `
             <div class="table-scroll">
               <table class="table entrada-duplicatas">
-                <thead><tr><th>Parcela</th><th>Vencimento</th><th class="entrada-col-num">Valor</th></tr></thead>
+                <thead><tr><th>Parcela</th><th>Vencimento</th>${veValores ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
                 <tbody>
                   ${duplicatas.map((d) => `
                     <tr>
                       <td>${escapeHtml(d.numero)}</td>
                       <td>${dataBr(d.vencimento)}</td>
-                      <td class="entrada-col-num">${moeda(d.valor)}</td>
+                      ${veValores ? `<td class="entrada-col-num">${moeda(d.valor)}</td>` : ''}
                     </tr>
                   `).join('')}
                 </tbody>
@@ -329,7 +332,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           ` : `
             <p class="muted">
               A nota não traz duplicatas. Se você mandar gerar o financeiro, sai uma parcela
-              única de ${moeda(total)} vencendo na data de emissão.
+              única${veValores ? ` de ${moeda(total)}` : ''} vencendo na data de emissão.
             </p>
           `}
           <label class="entrada-opcao">
@@ -364,7 +367,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
               ${ordens.map((o) => `
                 <option value="${escapeHtml(o.id)}" ${tela.ordemCompraId === o.id ? 'selected' : ''}>
                   Nº ${escapeHtml(String(o.code || '-'))} · ${escapeHtml(String(o.date || '').slice(0, 10))}
-                  · ${o.itens} ${o.itens === 1 ? 'item' : 'itens'} · R$ ${Number(o.totalAmount || 0).toFixed(2)}
+                  · ${o.itens} ${o.itens === 1 ? 'item' : 'itens'}${veValores ? ` · R$ ${Number(o.totalAmount || 0).toFixed(2)}` : ''}
                 </option>
               `).join('')}
             </select>
@@ -416,7 +419,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           <div class="table-scroll">
             <table class="table">
               <thead>
-                <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th><th class="entrada-col-num">Total</th><th>Situação</th><th>XML</th></tr>
+                <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th>${veValores ? '<th class="entrada-col-num">Total</th>' : ''}<th>Situação</th>${veValores ? '<th>XML</th>' : ''}</tr>
               </thead>
               <tbody>
                 ${tela.entradas.map((e) => `
@@ -424,7 +427,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                     <td>${escapeHtml(e.numero)}/${escapeHtml(e.serie)}</td>
                     <td>${escapeHtml(e.emitenteNome)}<br /><span class="muted">${escapeHtml(mascaraDocumento(e.emitenteDocumento))}</span></td>
                     <td>${dataBr(e.dataEmissao)}</td>
-                    <td class="entrada-col-num">${moeda(e.valorTotal)}</td>
+                    ${veValores ? `<td class="entrada-col-num">${moeda(e.valorTotal)}</td>` : ''}
                     <td>
                       <span class="finance-badge ${e.status === 'LANCADA' ? 'finance-badge-success' : 'finance-badge-warning'}">
                         ${e.status === 'LANCADA' ? 'Lançada' : 'A revisar'}
@@ -432,7 +435,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                       ${e.movimentouEstoque ? '<span class="finance-badge finance-badge-muted">estoque</span>' : ''}
                       ${e.gerouFinanceiro ? '<span class="finance-badge finance-badge-muted">financeiro</span>' : ''}
                     </td>
-                    <td><button type="button" class="entrada-link" data-baixar-xml="${escapeHtml(e.id)}">baixar XML</button></td>
+                    ${veValores ? `<td><button type="button" class="entrada-link" data-baixar-xml="${escapeHtml(e.id)}">baixar XML</button></td>` : ''}
                   </tr>
                 `).join('')}
               </tbody>

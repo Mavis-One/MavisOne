@@ -58,6 +58,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
 
       function desenhar(documentos) {
         const atrasadas = documentos.filter(estaAtrasada).length;
+        // O valor pago é o custo: só administrador (ver lib/custo-oculto.js).
+        const veValores = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
         content.innerHTML = `
           <div class="panel">
             <div class="panel-header">
@@ -70,7 +72,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                 <thead>
                   <tr>
                     <th>Nº</th><th>Fornecedor</th><th>Data</th>
-                    <th>Entrega</th><th>Itens</th><th>Total</th><th>Status</th><th>Ações</th>
+                    <th>Entrega</th><th>Itens</th>${veValores ? '<th>Total</th>' : ''}<th>Status</th><th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -82,7 +84,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                       <td>${doc.deliveryDate ? dataBr(doc.deliveryDate) : '<span class="muted">-</span>'}
                           ${estaAtrasada(doc) ? '<span class="finance-badge finance-badge-danger">atrasada</span>' : ''}</td>
                       <td>${doc.items.length}</td>
-                      <td>${dinheiro(doc.totalAmount)}</td>
+                      ${veValores ? `<td>${dinheiro(doc.totalAmount)}</td>` : ''}
                       <td>${badge(doc.status)}</td>
                       <td class="finance-extrato-actions">
                         ${catalogo().proximos(doc.status).map((alvo) => `

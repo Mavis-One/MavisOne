@@ -30,19 +30,21 @@ window.MavisSubscreenRegistry.purchases.purchase_history = async function render
   }
 
   function renderView(purchases) {
+    // O valor pago é o custo: só administrador (ver lib/custo-oculto.js).
+    const veValores = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
     content.innerHTML = `
       <div class="panel">
         <h3>Histórico de Compras</h3>
         <div class="table-scroll">
           <table class="table table-actions">
-            <thead><tr><th>ID</th><th>Fornecedor</th><th>Data</th><th>Total</th><th>Status</th><th>Ações</th></tr></thead>
+            <thead><tr><th>ID</th><th>Fornecedor</th><th>Data</th>${veValores ? '<th>Total</th>' : ''}<th>Status</th><th>Ações</th></tr></thead>
             <tbody>
               ${purchases.length ? purchases.map((purchase) => `
                 <tr>
                   <td>${escapeHtml(purchase.id)}</td>
                   <td>${escapeHtml(purchase.supplier)}</td>
                   <td>${escapeHtml(purchase.date)}</td>
-                  <td>R$ ${Number(purchase.total || 0).toFixed(2)}</td>
+                  ${veValores ? `<td>R$ ${Number(purchase.total || 0).toFixed(2)}</td>` : ''}
                   <td>${purchaseStatusBadge(purchase.status)}</td>
                   <td class="finance-extrato-actions">
                     ${purchase.status === 'pendente' ? `

@@ -26,8 +26,11 @@ window.MavisSubscreenRegistry.purchases.suppliers = async function renderPurchas
   // documentos de compra — e não o cadastro de fornecedores, que vive em
   // Cadastros > Pessoas. Sem essa frase, quem tem 1.225 pessoas jurídicas
   // cadastradas e vê a tela vazia conclui que o cadastro sumiu.
+  // O valor pago é o custo: só administrador (ver lib/custo-oculto.js).
+  const veValores = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
+
   const vazia = `
-    <tr><td colspan="3" class="muted">
+    <tr><td colspan="${veValores ? 3 : 2}" class="muted">
       Nenhuma compra registrada ainda. Para ver ou cadastrar fornecedores,
       use Cadastros &rsaquo; Pessoas.
     </td></tr>
@@ -37,10 +40,10 @@ window.MavisSubscreenRegistry.purchases.suppliers = async function renderPurchas
     <div class="panel">
       <h3>Fornecedores</h3>
       <table class="table">
-        <thead><tr><th>Fornecedor</th><th>Compras</th><th>Total</th></tr></thead>
+        <thead><tr><th>Fornecedor</th><th>Compras</th>${veValores ? '<th>Total</th>' : ''}</tr></thead>
         <tbody>
           ${suppliers.length
-    ? suppliers.map((supplier) => `<tr><td>${escapeHtml(supplier.name)}</td><td>${supplier.purchases}</td><td>R$ ${supplier.total.toFixed(2)}</td></tr>`).join('')
+    ? suppliers.map((supplier) => `<tr><td>${escapeHtml(supplier.name)}</td><td>${supplier.purchases}</td>${veValores ? `<td>R$ ${supplier.total.toFixed(2)}</td>` : ''}</tr>`).join('')
     : vazia}
         </tbody>
       </table>
