@@ -27,10 +27,15 @@ check('o código começa sempre pelo CST', linhas.every((l) => { const m = l.mat
 check('18 CSTs com o nome oficial', (sql.match(/^\s+\('\d{3}', '[^']+'\)/gm) || []).length === 18);
 check('só insere e atualiza: nada sai', !/\bdelete\b/i.test(sql.replace(/--.*$/gm, '')));
 check('a coluna vale_nfe nasce verdadeira para o que já existia', sql.includes('add column if not exists vale_nfe boolean not null default true;'));
-check('a emissão só oferece o que vale para nota',
-  ler('public/modules/finance/subs/emitir_nfe_focus.js').includes('.filter((l) => l.vale_nfe !== false && String(l.codigo).trim().startsWith(prefixo));'));
-check('  e a sugestão das Regras Fiscais também',
-  ler('public/modules/fiscal/subs/regras.js').includes("const linhas = (tabelas.classificacaoTributaria || []).filter((l) => l.vale_nfe !== false);"));
+// 14/10/2026: o usuário pediu "mostre todos" (faltava o 000002, que só vale
+// para NFS-e Via). Todos aparecem; os fora de NF-e/NFC-e vão marcados e por
+// último, e a troca de CST continua escolhendo primeiro um válido para NF-e.
+const emissao = ler('public/modules/finance/subs/emitir_nfe_focus.js');
+check('a emissão mostra todos, os fora de NF-e marcados e por último',
+  emissao.includes(".sort((a, b) => Number(a.vale_nfe === false) - Number(b.vale_nfe === false)")
+  && emissao.includes("const fora = l.vale_nfe === false ? ' (fora de NF-e)' : '';")
+  && !emissao.includes('l.vale_nfe !== false && String(l.codigo)'));
+check('  e as Regras Fiscais também', ler('public/modules/fiscal/subs/regras.js').includes("${l.vale_nfe === false ? ' (fora de NF-e)' : ''}"));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
 process.exit(falhas ? 1 : 0);

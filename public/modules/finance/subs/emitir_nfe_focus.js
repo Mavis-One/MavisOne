@@ -1097,10 +1097,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   function codigosDoClassTrib(cst) {
     const prefixo = String(cst || '').replace(/\D/g, '');
     if (!tabelasFiscais || prefixo.length !== 3) return [];
-    // Só os que valem para NF-e/NFC-e (fase EM): a tabela oficial também tem
-    // os de CT-e, NFS-e e BP-e.
+    // TODOS os do CST (14/10/2026, pedido do usuário: "mostre todos"). Os que a
+    // tabela oficial não libera para NF-e/NFC-e vêm depois e marcados (ver
+    // opcoesDoClassTrib) — a SEFAZ tende a recusá-los numa NF-e.
     return (tabelasFiscais.classificacaoTributaria || [])
-      .filter((l) => l.vale_nfe !== false && String(l.codigo).trim().startsWith(prefixo));
+      .filter((l) => String(l.codigo).trim().startsWith(prefixo))
+      .sort((a, b) => Number(a.vale_nfe === false) - Number(b.vale_nfe === false)
+        || String(a.codigo).localeCompare(String(b.codigo)));
   }
 
   function opcoesDoClassTrib(cst, atual) {
@@ -1110,7 +1113,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const lista = linhas.map((l) => {
       const c = String(l.codigo).trim();
       const desc = String(l.descricao || '').split(' · ').pop();
-      return `<option value="${escapeHtml(c)}" ${c === codigo ? 'selected' : ''}>${escapeHtml(c)} — ${escapeHtml(desc)}</option>`;
+      // Fora de NF-e/NFC-e pela tabela oficial: aparece (pedido do usuário), marcado.
+      const fora = l.vale_nfe === false ? ' (fora de NF-e)' : '';
+      return `<option value="${escapeHtml(c)}" ${c === codigo ? 'selected' : ''}>${escapeHtml(c)} — ${escapeHtml(desc)}${fora}</option>`;
     }).join('');
     const conhecido = linhas.some((l) => String(l.codigo).trim() === codigo);
     return `<option value="" ${codigo ? '' : 'selected'}>—</option>`

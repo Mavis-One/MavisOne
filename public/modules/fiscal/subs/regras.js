@@ -175,10 +175,11 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
      * reduz a lista sozinho. A estrutura do código faz o trabalho.
      */
     function campoClassTrib(dados) {
-      // Só os que valem para NF-e/NFC-e (fase EM, tabela oficial da SVRS).
-      const linhas = (tabelas.classificacaoTributaria || []).filter((l) => l.vale_nfe !== false);
+      // TODOS os códigos (14/10/2026, pedido do usuário); os que a tabela
+      // oficial da SVRS não libera para NF-e/NFC-e vão marcados.
+      const linhas = tabelas.classificacaoTributaria || [];
       const valor = escapeHtml(dados.classTrib || '');
-      const sugestoes = linhas.map((l) => `<option value="${escapeHtml(String(l.codigo).trim())}">${escapeHtml(rotuloCodigo(l))}</option>`).join('');
+      const sugestoes = linhas.map((l) => `<option value="${escapeHtml(String(l.codigo).trim())}">${escapeHtml(rotuloCodigo(l))}${l.vale_nfe === false ? ' (fora de NF-e)' : ''}</option>`).join('');
       return `
         <label>Classificação tributária (cClassTrib)
           <input name="classTrib" list="listaClassTrib" maxlength="6" inputmode="numeric" value="${valor}" placeholder="6 dígitos — ex.: 000001" />
