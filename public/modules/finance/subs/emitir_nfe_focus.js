@@ -1042,8 +1042,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   function codigosDoClassTrib(cst) {
     const prefixo = String(cst || '').replace(/\D/g, '');
     if (!tabelasFiscais || prefixo.length !== 3) return [];
+    // Só os que valem para NF-e/NFC-e (fase EM): a tabela oficial também tem
+    // os de CT-e, NFS-e e BP-e.
     return (tabelasFiscais.classificacaoTributaria || [])
-      .filter((l) => String(l.codigo).trim().startsWith(prefixo));
+      .filter((l) => l.vale_nfe !== false && String(l.codigo).trim().startsWith(prefixo));
   }
 
   function opcoesDoClassTrib(cst, atual) {

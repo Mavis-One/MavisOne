@@ -175,7 +175,8 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
      * reduz a lista sozinho. A estrutura do código faz o trabalho.
      */
     function campoClassTrib(dados) {
-      const linhas = tabelas.classificacaoTributaria || [];
+      // Só os que valem para NF-e/NFC-e (fase EM, tabela oficial da SVRS).
+      const linhas = (tabelas.classificacaoTributaria || []).filter((l) => l.vale_nfe !== false);
       const valor = escapeHtml(dados.classTrib || '');
       const sugestoes = linhas.map((l) => `<option value="${escapeHtml(String(l.codigo).trim())}">${escapeHtml(rotuloCodigo(l))}</option>`).join('');
       return `
