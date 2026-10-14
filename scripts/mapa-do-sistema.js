@@ -320,7 +320,8 @@ if (existe('banco/migrations')) {
 escrever(titulo('6. TESTES'));
 const testes = fs.readdirSync(path.join(RAIZ, 'scripts')).filter((f) => f.startsWith('test-') && f.endsWith('.js')).sort();
 const pkg = JSON.parse(ler('package.json'));
-const noNpmTest = (arquivo) => (pkg.scripts.test || '').includes(arquivo);
+// A lista mora em "test:lista" desde 14/10/2026 (ver scripts/rodar-testes.js).
+const noNpmTest = (arquivo) => ((pkg.scripts['test:lista'] || '') + (pkg.scripts.test || '')).includes(arquivo);
 escrever(`${testes.length} arquivo(s) de teste. Rodam sem banco e sem rede: leem o código-fonte`);
 escrever('e verificam regras puras. "[npm test]" = entra na suíte principal.');
 escrever();
