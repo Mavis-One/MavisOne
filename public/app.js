@@ -6227,7 +6227,7 @@ async function loadModule(moduleName) {
             // aqui é para dizer qual falta e levar até ele, na aba certa. Sem o
             // atributo `required` de propósito: campo obrigatório numa aba
             // escondida trava o envio sem mensagem nenhuma.
-            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload);
+            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload, { categorias: meta.salesCategories || [] });
             if (obrigatorioQueFalta) {
               showToast(obrigatorioQueFalta.mensagem, 'warning');
               abrirAba(obrigatorioQueFalta.aba || 'dados');

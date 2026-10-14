@@ -3839,6 +3839,15 @@ async function regraDaCategoriaDoPedido(nomeDaCategoria) {
   return categoriaVenda.regraDaCategoria(nomeDaCategoria, categorias);
 }
 
+/** As categorias de venda para as regras do pedido; sem o cadastro, lista vazia (o texto decide). */
+async function categoriasDaVendaParaRegra() {
+  try {
+    return await categoriasVendaDb.listar();
+  } catch (erro) {
+    return [];
+  }
+}
+
 /** Os relatórios em memória (lib/filial-da-venda.js) leem a finalidade daqui. */
 async function recarregarCategoriasDosRelatorios() {
   try {
@@ -12239,7 +12248,8 @@ async function tratarRequisicao(req, res) {
         if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
           return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
         }
-        const obrigatorioQueFalta = vendaObrigatorios.faltando(body);
+        // A categoria decide se o pagamento é obrigatório (transferência não é).
+        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra() });
         if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
         const totais = computeSalesTotals(items, body);
         record = {
@@ -12956,7 +12966,7 @@ async function tratarRequisicao(req, res) {
       // tela: o que faltar precisa ser preenchido antes. Menos para CANCELAR —
       // um pedido incompleto tem de poder ser cancelado como está.
       const vaiCancelar = salesStatus.ehCancelado(salesStatus.normalizar(body.status || current.status, undefined));
-      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body);
+      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra() });
       if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
       // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
       // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo

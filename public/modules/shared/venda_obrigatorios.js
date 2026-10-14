@@ -20,13 +20,27 @@
   const temPagamento = (pagamentos) => (Array.isArray(pagamentos) ? pagamentos : [])
     .some((linha) => linha && String(linha.methodId || '').trim() && Number(linha.amount || 0) > 0);
 
-  /** O primeiro campo obrigatório que falta, ou null. */
-  function faltando(registro) {
+  // Quem diz se a categoria exige pagamento (shared/categoria_venda.js).
+  const categoriaVenda = typeof module !== 'undefined' && module.exports
+    ? require('./categoria_venda')
+    : raiz.MavisCategoriaVenda;
+
+  /**
+   * O primeiro campo obrigatório que falta, ou null.
+   *
+   * `categorias`: as categorias de venda cadastradas. Com elas, pedido de
+   * categoria que não gera financeiro (transferência entre filiais, remessa)
+   * não precisa de pagamento (14/10/2026).
+   */
+  function faltando(registro, { categorias = [] } = {}) {
     const r = registro || {};
     for (const def of CAMPOS) {
       if (!String(r[def.campo] == null ? '' : r[def.campo]).trim()) return def;
     }
-    if (!temPagamento(r.payments)) {
+    const exige = categoriaVenda && typeof categoriaVenda.exigePagamento === 'function'
+      ? categoriaVenda.exigePagamento(r.category, categorias)
+      : true;
+    if (exige && !temPagamento(r.payments)) {
       return {
         campo: 'payments',
         rotulo: 'Pagamentos',

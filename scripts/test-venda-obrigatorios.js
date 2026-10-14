@@ -38,11 +38,25 @@ check('  linha de valor zero não conta', O.faltando({ ...completo, payments: [{
 check('  e a mensagem leva à aba Pagamentos', O.faltando({ ...completo, payments: [] })?.aba === 'pagamentos');
 check('a ordem é a da tela: empresa primeiro', O.faltando({})?.campo === 'companyId');
 
+// 14/10/2026: transferência entre filiais não gera financeiro, então não exige
+// pagamento. Provado pela API: VENDA sem pagamento -> 400; "Transferencia entre
+// Filiais" sem pagamento -> salvo (pedido de teste apagado, numeração restaurada).
+const semPagamento = { ...completo, payments: [] };
+check('transferência e remessa (não cadastradas) passam sem pagamento',
+  O.faltando({ ...semPagamento, category: 'Transferencia entre Filiais' }) === null
+  && O.faltando({ ...semPagamento, category: 'TRANSFERÊNCIA / FILIAL 02' }) === null
+  && O.faltando({ ...semPagamento, category: 'Remessa' }) === null);
+check('  venda continua exigindo', O.faltando({ ...semPagamento, category: 'VENDA' })?.campo === 'payments');
+check('categoria cadastrada: vale o "gera financeiro" dela',
+  O.faltando({ ...semPagamento, category: 'Loja' }, { categorias: [{ name: 'Loja', geraFinanceiro: false }] }) === null
+  && O.faltando({ ...semPagamento, category: 'Transfer X' }, { categorias: [{ name: 'Transfer X', geraFinanceiro: true }] })?.campo === 'payments');
+
 console.log('\n--- 2. o servidor recusa ---');
 const servidor = ler('server.js');
-check('na criação e na edição', (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \? null : )?vendaObrigatorios\.faltando\(body\);/g) || []).length === 2);
+check('na criação e na edição, com as categorias cadastradas',
+  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\) \}\);/g) || []).length === 2);
 check('  menos para cancelar um pedido incompleto',
-  /const vaiCancelar = salesStatus\.ehCancelado\(/.test(servidor) && /vaiCancelar \? null : vendaObrigatorios\.faltando\(body\)/.test(servidor));
+  /const vaiCancelar = salesStatus\.ehCancelado\(/.test(servidor) && /vaiCancelar \? null : vendaObrigatorios\.faltando\(body, /.test(servidor));
 
 console.log('\n--- 3. a tela ---');
 const app = ler('public/app.js');
@@ -50,7 +64,7 @@ const app = ler('public/app.js');
   check(`rótulo "${rotulo}"`, app.includes(`<label>${rotulo}`) || app.includes(`campo-somente-leitura">${rotulo}`));
 });
 check('confere antes de salvar e leva à aba do campo',
-  /window\.MavisVendaObrigatorios\.faltando\(payload\)/.test(app) && /abrirAba\(obrigatorioQueFalta\.aba \|\| 'dados'\)/.test(app));
+  /window\.MavisVendaObrigatorios\.faltando\(payload, \{ categorias: meta\.salesCategories \|\| \[\] \}\)/.test(app) && /abrirAba\(obrigatorioQueFalta\.aba \|\| 'dados'\)/.test(app));
 const html = ler('public/index.html');
 check('o script carrega antes do app.js',
   html.indexOf('shared/venda_obrigatorios.js') > 0 && html.indexOf('shared/venda_obrigatorios.js') < html.indexOf('src="/app.js"'));

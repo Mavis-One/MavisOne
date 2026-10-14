@@ -94,7 +94,22 @@
     };
   }
 
-  const api = { FINALIDADES, OPERACOES, finalidade, semFilial, categoriaDoPedido, regraDaCategoria };
+  /**
+   * O pedido desta categoria precisa de forma de pagamento? (14/10/2026)
+   *
+   * Pedido do usuário: "transferência entre filiais não gera financeiro, a
+   * operação não é obrigatória adicionar forma de pagamento". Cadastrada: vale
+   * o "gera financeiro" dela. Não cadastrada: pelo texto, como os relatórios
+   * (lib/filial-da-venda.js) — transferência e remessa não exigem.
+   */
+  function exigePagamento(nome, categorias) {
+    const regra = regraDaCategoria(nome, categorias);
+    if (regra.cadastrada) return regra.geraFinanceiro;
+    const texto = String(nome || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+    return !/transfer|remessa/.test(texto);
+  }
+
+  const api = { FINALIDADES, OPERACOES, finalidade, semFilial, categoriaDoPedido, regraDaCategoria, exigePagamento };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (raiz) raiz.MavisCategoriaVenda = api;
 })(typeof window !== 'undefined' ? window : null);
