@@ -48,7 +48,8 @@ const tela = ler('public/modules/finance/subs/centros_de_custo.js');
 check('a tela cria e edita com nome e empresas', /name="estabelecimentoIds"/.test(tela) && /method: 'PUT'/.test(tela) && /method: 'POST'/.test(tela));
 const novo = ler('public/modules/finance/subs/novo_lancamento.js');
 check('o lançamento mostra os centros da empresa (e os de todas)', /return !ids\.length \|\| !estabelecimentoAtual \|\| ids\.includes\(estabelecimentoAtual\);/.test(novo));
-check('  e refaz a lista ao trocar a empresa', /querySelectorAll\('\.js-cost-center-select'\)\.forEach\(\(select\) => \{\s*const escolhido = select\.value;/.test(novo));
+// 14/10/2026: o centro de custo virou campo de busca (refazerCampoDeBusca).
+check('  e refaz a lista ao trocar a empresa', /refazerCampoDeBusca\('financeCostCenter', aindaVale \? escolhido : ''\);/.test(novo));
 check('o + do lançamento cria ligado à empresa escolhida', /inlineAddKind === 'costCenter' && estabelecimentoAtual \? \{ name, estabelecimentoIds: \[estabelecimentoAtual\] \}/.test(novo));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');

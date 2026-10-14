@@ -220,9 +220,13 @@ function criarTelaDeLancamentos(telaChave) {
           // desenho do painel, e refazer 6.492 rótulos por página virada é o
           // custo que este campo existe para evitar. Mesmo rótulo do <option>
           // que havia aqui: "Nome (código)".
+          // O CPF/CNPJ entra para a busca achar por ele (14/10/2026).
           opcoesDoDiretorio = meta.directory.map((item) => ({
             value: item.id,
-            label: `${item.name}${item.code ? ` (${item.code})` : ''}`
+            label: `${item.name}${item.code ? ` (${item.code})` : ''}`,
+            documento: item.document || '',
+            buscaExtra: item.tradeName || '',
+            detalhe: [item.tradeName, typeof formatarDocumentoParaBusca === 'function' ? formatarDocumentoParaBusca(item.document) : ''].filter(Boolean).join(' · ')
           }));
         })
         .catch(() => {
@@ -638,7 +642,7 @@ function criarTelaDeLancamentos(telaChave) {
               name: 'clientSupplierId',
               options: opcoesDoDiretorio,
               selectedValue: f.clientSupplierId,
-              placeholder: 'Todos — buscar por nome ou código'
+              placeholder: 'Todos — buscar por nome, código ou CPF/CNPJ'
             })}
           </label>
           <label class="cadastro-field">
@@ -746,7 +750,7 @@ function criarTelaDeLancamentos(telaChave) {
         <label class="cadastro-field">
           <span>Busca</span>
           <input id="financeQuickSearch" type="search" name="search" value="${escapeHtml(f.search)}" autocomplete="off"
-            placeholder="Código, descrição, documento, cliente/fornecedor ou valor (ex.: 2.500,00)" />
+            placeholder="Código, descrição, documento, cliente/fornecedor, CPF/CNPJ ou valor (ex.: 2.500,00)" />
         </label>
         ${tipoFixo ? '' : `<label class="cadastro-field">
           <span>Tipo</span>

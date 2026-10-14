@@ -1885,6 +1885,8 @@ function indiceDoCadastro(data) {
     id: record.id,
     kind,
     name: record.name,
+    // Nome fantasia (14/10/2026): o campo de fornecedor do Financeiro busca por ele.
+    tradeName: record.tradeName || '',
     code: record.code,
     document: record.document,
     // O telefone entrou em 30/09/2026 para a impressão do pedido: o modelo que
@@ -4618,6 +4620,11 @@ function filterFinanceEntries(data, query) {
     const valor = listaDeLancamentos.valorDaBusca(search);
     const emCentavos = valor === null ? null : listaDeLancamentos.centavos(valor);
     const codigo = listaDeLancamentos.codigoDaBusca(search);
+    // CPF/CNPJ DA PESSOA (14/10/2026, pedido do usuário). Só número e pontuação,
+    // e 8 dígitos ou mais: menos que isso é valor ou código. Com 8, a raiz do
+    // CNPJ acha todas as filiais da empresa.
+    const digitosDaBusca = /^[\d.\-/\s]+$/.test(search) ? search.replace(/\D/g, '') : '';
+    const documentoBuscado = digitosDaBusca.length >= 8 ? digitosDaBusca : '';
     // O ATALHO EXATO: texto só com ASCII imprimível e sem espaço duplo sai de
     // normalizeText igual a toLowerCase().trim() — não há acento a tirar nem
     // espaço a juntar — e custa metade. São 5 campos × 27 mil linhas por busca.
@@ -4630,6 +4637,7 @@ function filterFinanceEntries(data, query) {
       if (emCentavos !== null && (listaDeLancamentos.centavos(entry.amount) === emCentavos
         || (entry.netAmount != null && listaDeLancamentos.centavos(entry.netAmount) === emCentavos))) return true;
       if (codigo !== null && Number(entry.code) === codigo) return true;
+      if (documentoBuscado && resolveFinanceCounterpartyDocument(entry, data).replace(/\D/g, '').includes(documentoBuscado)) return true;
       const name = resolveFinanceCounterparty(entry, data) || '';
       return [entry.description, entry.id, name, entry.document, lancamentoCodigo.formatar(entry.code)]
         .some((campo) => paraBusca(campo).includes(termo));
@@ -5936,7 +5944,14 @@ function resumirListaDeLancamentos(semSituacao, filtrados, abatidoPorId) {
 function diretorioDoMetaFinanceiro(data, pede) {
   if (pede === '0') return [];
   const diretorio = getCadastroDirectory(data);
-  if (pede === 'resumido') return diretorio.map(({ id, name, code }) => ({ id, name, code }));
+  // O documento entrou no resumido (14/10/2026): os campos de cliente/fornecedor
+  // do Financeiro buscam também por CPF/CNPJ.
+  // E o nome fantasia, só quando existe (560 de 6.496 em 14/10/2026).
+  if (pede === 'resumido') {
+    return diretorio.map(({ id, name, code, document, tradeName }) => (tradeName && tradeName !== name
+      ? { id, name, code, document, tradeName }
+      : { id, name, code, document }));
+  }
   if (pede === 'nfe') {
     return diretorio.map(({ id, name, code, document, city, state, stateRegistration }) => ({
       id, name, code, document, city, state, stateRegistration

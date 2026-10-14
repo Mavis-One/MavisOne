@@ -103,14 +103,21 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   // ("o 6443"), e porque há nomes repetidos entre as 6.492 pessoas — mesmo
   // motivo do SKU no rótulo do produto (ver shared/rotulo_produto.js).
   function opcoesDoDiretorio() {
+    // O CPF/CNPJ entra para a busca achar por ele (14/10/2026) e aparece ao
+    // lado do nome, como na Nova Venda.
     return (meta.directory || []).map((c) => ({
       value: c.id,
-      label: c.code ? `${c.name} (${c.code})` : c.name
+      label: c.code ? `${c.name} (${c.code})` : c.name,
+      documento: c.document || '',
+      // Nome fantasia: acha pelo nome da loja, e aparece ao lado para dizer
+      // por que a opção veio.
+      buscaExtra: c.tradeName || '',
+      detalhe: [c.tradeName, typeof formatarDocumentoParaBusca === 'function' ? formatarDocumentoParaBusca(c.document) : ''].filter(Boolean).join(' · ')
     }));
   }
 
-  function categoryOptions() {
-    return meta.categories.map((c) => `<option value="${c.id}" ${editEntry && editEntry.category === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+  function opcoesDePlano() {
+    return meta.categories.map((c) => ({ value: c.id, label: c.name }));
   }
   // FASE EK (14/10/2026): o centro de custo vale para as empresas que o
   // usuário vinculou a ele (vazio = todas). O campo mostra os da empresa do
@@ -119,10 +126,10 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     const ids = Array.isArray(c.estabelecimentoIds) ? c.estabelecimentoIds : [];
     return !ids.length || !estabelecimentoAtual || ids.includes(estabelecimentoAtual);
   }
-  function costCenterOptions(selecionado = editEntry ? editEntry.costCenter : '') {
+  function opcoesDeCentro(selecionado) {
     return meta.costCenters
       .filter((c) => centroValeAqui(c) || c.id === selecionado)
-      .map((c) => `<option value="${c.id}" ${selecionado === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+      .map((c) => ({ value: c.id, label: c.name }));
   }
   /**
    * As contas que ESTE estabelecimento pode usar (fase CD).
@@ -145,16 +152,63 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     });
   }
 
-  function bankAccountOptions(selectedId) {
+  function opcoesDeConta(selectedId) {
     const lista = contasDisponiveis();
     // A conta JA GRAVADA num lancamento antigo continua na lista mesmo que
-    // hoje nao seja permitida. Tira-la faria o select abrir em branco ao editar
+    // hoje nao seja permitida. Tira-la faria o campo abrir em branco ao editar
     // e o primeiro salvamento apagaria a conta do lancamento sem ninguem pedir.
     const gravada = selectedId && !lista.some((c) => c.id === selectedId)
       ? meta.bankAccounts.find((c) => c.id === selectedId)
       : null;
     const paraMostrar = gravada ? [gravada, ...lista] : lista;
-    return paraMostrar.map((c) => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}${gravada && c.id === gravada.id ? ' (não liberada para este estabelecimento)' : ''}</option>`).join('');
+    return paraMostrar.map((c) => ({
+      value: c.id,
+      label: `${c.name}${gravada && c.id === gravada.id ? ' (não liberada para este estabelecimento)' : ''}`
+    }));
+  }
+
+  // CONTA, PLANO DE CONTAS E CENTRO DE CUSTO SE DIGITAM (14/10/2026, pedido do
+  // usuário): o mesmo campo de busca do cliente/fornecedor, em vez de <select>.
+  // `kind` é o cadastro que o "+" ao lado cria; `opcoes` monta a lista na hora,
+  // porque conta e centro mudam com o estabelecimento.
+  const CAMPOS_DE_BUSCA = {
+    financeSourceAccount: { name: 'sourceBankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta de origem' },
+    financeTargetAccount: { name: 'targetBankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta de destino' },
+    financeBankAccount: { name: 'bankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta bancária' },
+    financeCategory: { name: 'category', kind: 'category', opcoes: opcoesDePlano, rotulo: 'Plano de Contas' },
+    financeCostCenter: { name: 'costCenter', kind: 'costCenter', opcoes: opcoesDeCentro, rotulo: 'Centro de custo' }
+  };
+  const VALOR_GRAVADO = {
+    financeSourceAccount: () => (editEntry ? editEntry.bankAccountId : ''),
+    financeTargetAccount: () => (editEntry ? editEntry.targetBankAccountId : ''),
+    financeBankAccount: () => (editEntry ? editEntry.bankAccountId : ''),
+    financeCategory: () => (editEntry ? editEntry.category : ''),
+    financeCostCenter: () => (editEntry ? editEntry.costCenter : '')
+  };
+
+  function campoDeBusca(id, valor = VALOR_GRAVADO[id]() || '') {
+    const campo = CAMPOS_DE_BUSCA[id];
+    return renderSearchableSelect({
+      id,
+      name: campo.name,
+      options: campo.opcoes(valor),
+      selectedValue: valor,
+      placeholder: 'Digite para buscar...'
+    });
+  }
+
+  /** Redesenha UM campo de busca (lista nova) e o religa, sem tocar no resto do formulário. */
+  function refazerCampoDeBusca(id, valor) {
+    const wrapper = document.getElementById(`${id}Wrapper`);
+    if (!wrapper) return;
+    wrapper.outerHTML = campoDeBusca(id, valor);
+    ligarCampoDeBusca(id, valor);
+  }
+
+  function ligarCampoDeBusca(id, valor) {
+    if (typeof attachSearchableSelect !== 'function') return;
+    const valorAtual = valor !== undefined ? valor : (document.getElementById(`${id}Value`)?.value || '');
+    attachSearchableSelect({ id, options: CAMPOS_DE_BUSCA[id].opcoes(valorAtual) });
   }
 
   function nomeDoEstab(e) {
@@ -232,14 +286,14 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
             <div class="row">
               <label>Conta de origem
                 <div class="finance-inline-select">
-                  <select name="sourceBankAccountId" class="js-bank-account-select" required><option value="">Selecione</option>${bankAccountOptions(editEntry ? editEntry.bankAccountId : '')}</select>
-                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" title="Nova conta bancária">+</button>
+                  ${campoDeBusca('financeSourceAccount')}
+                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" data-inline-alvo="financeSourceAccount" title="Nova conta bancária">+</button>
                 </div>
               </label>
               <label>Conta de destino
                 <div class="finance-inline-select">
-                  <select name="targetBankAccountId" class="js-bank-account-select" required><option value="">Selecione</option>${bankAccountOptions(editEntry ? editEntry.targetBankAccountId : '')}</select>
-                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" title="Nova conta bancária">+</button>
+                  ${campoDeBusca('financeTargetAccount')}
+                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" data-inline-alvo="financeTargetAccount" title="Nova conta bancária">+</button>
                 </div>
               </label>
             </div>
@@ -251,7 +305,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       name: 'clientSupplierId',
       options: opcoesDoDiretorio(),
       selectedValue: (editEntry && editEntry.clientSupplierId) || '',
-      placeholder: 'Buscar por nome ou código...',
+      placeholder: 'Buscar por nome, código ou CPF/CNPJ...',
       // Vinculado a pedido/NF-e: mostra de quem é, não deixa trocar. A
       // travação vem no HTML, não depois — ver renderSearchableSelect.
       readonly: vinculado
@@ -262,20 +316,20 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
             <div class="row">
               <label>Conta bancária
                 <div class="finance-inline-select">
-                  <select name="bankAccountId" class="js-bank-account-select"><option value="">Selecione</option>${bankAccountOptions(editEntry ? editEntry.bankAccountId : '')}</select>
-                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" title="Nova conta bancária">+</button>
+                  ${campoDeBusca('financeBankAccount')}
+                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" data-inline-alvo="financeBankAccount" title="Nova conta bancária">+</button>
                 </div>
               </label>
               <label>Plano de Contas
                 <div class="finance-inline-select">
-                  <select name="category" class="js-category-select"><option value="">Selecione</option>${categoryOptions()}</select>
-                  <button type="button" class="icon-button edit" data-inline-add="category" title="Nova categoria">+</button>
+                  ${campoDeBusca('financeCategory')}
+                  <button type="button" class="icon-button edit" data-inline-add="category" data-inline-alvo="financeCategory" title="Nova categoria">+</button>
                 </div>
               </label>
               <label>Centro de custo
                 <div class="finance-inline-select">
-                  <select name="costCenter" class="js-cost-center-select"><option value="">Selecione</option>${costCenterOptions()}</select>
-                  <button type="button" class="icon-button edit" data-inline-add="costCenter" title="Novo centro de custo">+</button>
+                  ${campoDeBusca('financeCostCenter')}
+                  <button type="button" class="icon-button edit" data-inline-add="costCenter" data-inline-alvo="financeCostCenter" title="Novo centro de custo">+</button>
                 </div>
               </label>
             </div>
@@ -411,6 +465,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   }
 
   let inlineAddKind = null;
+  // O campo de busca cujo "+" foi clicado: o cadastro novo entra escolhido nele.
+  let inlineAddAlvo = null;
 
   // Fase EI: trocar Receita/Despesa/Transferência leva junto o que já foi
   // digitado. O formulário é redesenhado (conta e cliente mudam de forma entre
@@ -451,10 +507,14 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     } else if (typeof attachSearchableSelect === 'function') {
       attachSearchableSelect({ id: 'financeParty', options: opcoesDoDiretorio() });
     }
+    Object.keys(CAMPOS_DE_BUSCA).forEach((id) => {
+      if (document.getElementById(`${id}Wrapper`)) ligarCampoDeBusca(id);
+    });
 
     content.querySelectorAll('[data-inline-add]').forEach((btn) => {
       btn.addEventListener('click', () => {
         inlineAddKind = btn.dataset.inlineAdd;
+        inlineAddAlvo = btn.dataset.inlineAlvo || null;
         const row = document.getElementById('financeInlineAddRow');
         const input = document.getElementById('financeInlineAddInput');
         if (row) row.classList.remove('hidden');
@@ -497,11 +557,6 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         costCenter: '/api/finance/cost-centers',
         bankAccount: '/api/finance/bank-accounts'
       };
-      const selectClassByKind = {
-        category: '.js-category-select',
-        costCenter: '.js-cost-center-select',
-        bankAccount: '.js-bank-account-select'
-      };
       try {
         // O centro criado aqui nasce vinculado à empresa do lançamento (fase EK).
         const corpo = inlineAddKind === 'costCenter' && estabelecimentoAtual ? { name, estabelecimentoIds: [estabelecimentoAtual] } : { name };
@@ -511,12 +566,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         if (inlineAddKind === 'costCenter') meta.costCenters.push(created);
         if (inlineAddKind === 'bankAccount') meta.bankAccounts.push(created);
 
-        content.querySelectorAll(selectClassByKind[inlineAddKind]).forEach((select) => {
-          const option = document.createElement('option');
-          option.value = created.id;
-          option.textContent = created.name;
-          option.selected = true;
-          select.appendChild(option);
+        // O novo entra escolhido no campo do "+" clicado; os outros campos do
+        // mesmo cadastro (origem/destino da transferência) só ganham a opção.
+        Object.keys(CAMPOS_DE_BUSCA).forEach((id) => {
+          if (CAMPOS_DE_BUSCA[id].kind !== inlineAddKind || !document.getElementById(`${id}Wrapper`)) return;
+          const valor = id === inlineAddAlvo ? created.id : (document.getElementById(`${id}Value`)?.value || '');
+          refazerCampoDeBusca(id, valor);
         });
 
         showToast('Cadastrado com sucesso.', 'success');
@@ -538,13 +593,14 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       estabelecimentoAtual = evento.target.value || '';
       const permitidas = contasDisponiveis();
       let perdeuAlguma = null;
-      content.querySelectorAll('.js-bank-account-select').forEach((select) => {
-        const escolhida = select.value;
+      ['financeSourceAccount', 'financeTargetAccount', 'financeBankAccount'].forEach((id) => {
+        if (!document.getElementById(`${id}Wrapper`)) return;
+        const escolhida = document.getElementById(`${id}Value`)?.value || '';
         const aindaVale = !escolhida || permitidas.some((c) => c.id === escolhida);
         if (!aindaVale) {
           perdeuAlguma = (meta.bankAccounts.find((c) => c.id === escolhida) || {}).name || 'A conta escolhida';
         }
-        select.innerHTML = `<option value="">Selecione</option>${bankAccountOptions(aindaVale ? escolhida : '')}`;
+        refazerCampoDeBusca(id, aindaVale ? escolhida : '');
       });
       // Avisa em vez de limpar em silencio: um campo que se esvazia sozinho
       // parece defeito, e a pessoa salvaria sem a conta sem perceber.
@@ -552,12 +608,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         showToast(`${perdeuAlguma} não está liberada para este estabelecimento. Escolha outra conta.`, 'warning');
       }
       // E os centros de custo da empresa nova (fase EK).
-      content.querySelectorAll('.js-cost-center-select').forEach((select) => {
-        const escolhido = select.value;
+      if (document.getElementById('financeCostCenterWrapper')) {
+        const escolhido = document.getElementById('financeCostCenterValue')?.value || '';
         const aindaVale = !escolhido || meta.costCenters.some((c) => c.id === escolhido && centroValeAqui(c));
-        select.innerHTML = `<option value="">Selecione</option>${costCenterOptions(aindaVale ? escolhido : '')}`;
+        refazerCampoDeBusca('financeCostCenter', aindaVale ? escolhido : '');
         if (!aindaVale) showToast('O centro de custo escolhido não é desta empresa. Escolha outro.', 'warning');
-      });
+      }
     });
 
     document.getElementById('financeEntryForm')?.addEventListener('submit', async (event) => {
@@ -577,6 +633,21 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           const quem = formType === 'RECEITA' ? 'cliente' : 'fornecedor';
           showToast(`O ${quem} digitado não foi escolhido na lista. Clique numa das opções, ou apague o texto e use o campo "Nome livre (se não cadastrado)".`, 'warning');
           buscaDaParte.focus();
+          return;
+        }
+      }
+      // O mesmo para conta, plano de contas e centro de custo, que também se
+      // digitam: texto à vista sem item escolhido não vai no envio.
+      for (const id of Object.keys(CAMPOS_DE_BUSCA)) {
+        const busca = document.getElementById(`${id}Input`);
+        const escolhido = document.getElementById(`${id}Value`);
+        if (!busca || !escolhido || escolhido.value) continue;
+        const obrigatorio = id === 'financeSourceAccount' || id === 'financeTargetAccount';
+        if (busca.value.trim() || obrigatorio) {
+          showToast(busca.value.trim()
+            ? `${CAMPOS_DE_BUSCA[id].rotulo}: o texto digitado não foi escolhido na lista. Clique numa das opções.`
+            : `Escolha a ${CAMPOS_DE_BUSCA[id].rotulo.toLowerCase()}.`, 'warning');
+          busca.focus();
           return;
         }
       }

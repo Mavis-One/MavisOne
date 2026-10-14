@@ -2404,7 +2404,9 @@ function indiceDeBuscaDe(options) {
   const guardado = INDICES_DE_BUSCA.get(options);
   if (guardado && guardado.tamanho === options.length) return guardado.indice;
   const indice = options.map((o) => {
-    const busca = textoDeBusca(o.label);
+    // `buscaExtra`: texto que também acha a opção sem aparecer no rótulo, como
+    // o nome fantasia do fornecedor no Financeiro.
+    const busca = textoDeBusca(o.buscaExtra ? `${o.label} ${o.buscaExtra}` : o.label);
     // `documento`: CPF/CNPJ só com dígitos, para quem procura por ele. Fica
     // num campo à parte para "123.456" achar "12345678900" sem que a busca por
     // nome passe a casar com pedaço de número.

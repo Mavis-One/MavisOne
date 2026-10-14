@@ -1964,6 +1964,7 @@ tr[data-detail] { cursor: pointer; }
 /* min-width:0: sem ele o select fica da largura do plano de contas mais
    comprido e empurra o botao "+" para fora da coluna. */
 .finance-inline-select select { flex: 1; min-width: 0; }
+.finance-inline-select .searchable-select { flex: 1; min-width: 0; }
 .finance-inline-add { display: flex; gap: 8px; align-items: center; margin-top: -6px; margin-bottom: 6px; }
 
 /* Fase AY: o campo Documento do lancamento. O numero (LF0042) fica ao lado do
