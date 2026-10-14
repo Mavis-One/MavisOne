@@ -735,7 +735,40 @@ async function fetchCnpjOfficialData(cnpj) {
   };
 }
 
+// O CEP PELA BRASILAPI QUANDO O VIACEP NÃO RESPONDE (14/10/2026). O ViaCEP às
+// vezes recusa ou demora para IP de datacenter (o VPS), e a emissão ficava sem
+// endereço. CEP inexistente não cai aqui: ViaCEP respondeu, e respondeu "não".
+// A BrasilAPI traz o IBGE em `ibge.city` (conferido em 14/10/2026 com 89358230).
 async function fetchCepData(cep) {
+  try {
+    return await fetchCepViaCep(cep);
+  } catch (erro) {
+    if (erro.status === 404) throw erro;
+    const response = await fetchWithTimeout(`https://brasilapi.com.br/api/cep/v1/${cep}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json', 'User-Agent': 'MavisONE/1.0' }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.city) {
+      const err = new Error(response.status === 404 ? 'CEP não encontrado.' : 'Não foi possível consultar o CEP agora. Tente de novo.');
+      err.status = response.status === 404 ? 404 : 502;
+      throw err;
+    }
+    return {
+      zipCode: sanitizeDigits(payload.cep || cep),
+      street: payload.street || '',
+      complement: '',
+      neighborhood: payload.neighborhood || '',
+      city: payload.city || '',
+      state: payload.state || '',
+      ibgeCityCode: String((payload.ibge && payload.ibge.city) || ''),
+      ddd: '',
+      raw: payload
+    };
+  }
+}
+
+async function fetchCepViaCep(cep) {
   const url = `https://viacep.com.br/ws/${cep}/json/`;
   const response = await fetchWithTimeout(url, {
     method: 'GET',
@@ -13411,7 +13444,8 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       // 'sales' entrou aqui junto com o endereço de entrega do Pedido/Orçamento:
       // sem isso, quem só tem acesso a Vendas tomava 403 ao buscar o CEP.
-      if (!user || !['cadastros', 'finance', 'sales'].some((modulo) => user.allowedModules.includes(modulo))) {
+      // 'fiscal' (14/10/2026): a emissão de NF-e também consulta o CEP do destinatário.
+      if (!user || !['cadastros', 'finance', 'sales', 'fiscal'].some((modulo) => user.allowedModules.includes(modulo))) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
 

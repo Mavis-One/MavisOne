@@ -1573,14 +1573,21 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       form.querySelector('[name="destContribuinte"]').checked = window.MavisInscricaoEstadual.ehContribuinte(found.stateRegistration);
     }
 
-    document.getElementById('nfeFocusBuscarCep')?.addEventListener('click', async () => {
+    // O CEP PREENCHE O ENDEREÇO SOZINHO (14/10/2026). Só o botão consultava:
+    // quem trocava o CEP do cadastro por outro (digitado ou colado) ficava com
+    // o endereço antigo na nota. Com 8 dígitos novos, busca e SOBRESCREVE —
+    // aqui o CEP novo é justamente a correção do endereço. O CEP que veio do
+    // cadastro não dispara nada ao abrir a tela.
+    let ultimoCepConsultado = (document.querySelector('#nfeFocusForm [name="destCep"]')?.value || '').replace(/\D/g, '');
+    async function buscarCep({ automatico = false } = {}) {
       const form = document.getElementById('nfeFocusForm');
       const cepInput = form.querySelector('[name="destCep"]');
       const cepDigits = (cepInput.value || '').replace(/\D/g, '');
       if (cepDigits.length !== 8) {
-        showToast('Informe um CEP com 8 dígitos.', 'warning');
+        if (!automatico) showToast('Informe um CEP com 8 dígitos.', 'warning');
         return;
       }
+      ultimoCepConsultado = cepDigits;
       try {
         const res = await api(`/api/cep/${cepDigits}`);
         const addr = res.address;
@@ -1589,10 +1596,18 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         form.querySelector('[name="destMunicipio"]').value = addr.city || '';
         form.querySelector('[name="destUf"]').value = addr.state || '';
         form.querySelector('[name="destCodigoMunicipio"]').value = addr.ibgeCityCode || '';
+        // O número e o complemento ficam com a pessoa: o CEP não os tem.
+        form.querySelector('[name="destNumero"]')?.focus();
         showToast('Endereço encontrado.', 'success');
       } catch (error) {
+        ultimoCepConsultado = '';
         showToast(error.message || 'CEP não encontrado.', 'error');
       }
+    }
+    document.getElementById('nfeFocusBuscarCep')?.addEventListener('click', () => buscarCep());
+    document.querySelector('#nfeFocusForm [name="destCep"]')?.addEventListener('input', (evento) => {
+      const digitos = String(evento.target.value || '').replace(/\D/g, '');
+      if (digitos.length === 8 && digitos !== ultimoCepConsultado) buscarCep({ automatico: true });
     });
 
     attachItemsHandlers();
