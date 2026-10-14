@@ -134,7 +134,10 @@ console.log('\n--- URL compartilhável ---');
 check('a tela escreve os filtros na URL', /function salesEscreverUrl/.test(appSrc));
 check('e lê de volta ao entrar', /function salesLerUrl/.test(appSrc));
 // pushState encheria o histórico e o botão Voltar desfaria filtro por filtro.
-check('usa replaceState, não pushState', /window\.history\.replaceState/.test(appSrc) && !/window\.history\.pushState/.test(appSrc));
+// 14/10/2026: o app passou a empilhar TROCA DE TELA (Voltar do navegador); o
+// filtro da lista continua só substituindo — a regra vale dentro da função.
+const escreverUrl = appSrc.slice(appSrc.indexOf('function salesEscreverUrl'), appSrc.indexOf('function salesLerUrl'));
+check('usa replaceState, não pushState', /window\.history\.replaceState/.test(escreverUrl) && !/window\.history\.pushState/.test(escreverUrl));
 // Ler a URL a cada redesenho desfaria o que a pessoa acabou de mudar.
 check('a URL só é lida na primeira entrada', /if \(!draft\.ordersUrlLida\)/.test(appSrc));
 check('valor padrão não polui o link', /k === 'page' && Number\(v\) === 1/.test(appSrc));

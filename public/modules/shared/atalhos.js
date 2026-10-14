@@ -424,7 +424,7 @@ window.MavisAtalhos = (function () {
           `).join('')}
           ${criar.length && ir.length ? '<div class="atalhos-separador"></div>' : ''}
           ${ir.map((a, i) => `
-            <button type="button" class="atalho-item atalho-item-ir" data-ir="${i}" role="menuitem">${escapeHtml(a.label)}</button>
+            <a class="atalho-item atalho-item-ir" ${window.MavisRotas ? window.MavisRotas.linkDaTela(a.modulo, a.sub) : 'href="#"'} data-ir="${i}" role="menuitem">${escapeHtml(a.label)}</a>
           `).join('')}
         </div>
       </div>

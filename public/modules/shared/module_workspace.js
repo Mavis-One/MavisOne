@@ -1,4 +1,11 @@
 window.MavisModuleRegistry = window.MavisModuleRegistry || {};
+
+// Link de tela (app.js, window.MavisRotas). Fora do app — nos testes — o
+// bloco sai sem href e continua abrindo pelo clique.
+function linkDoBloco(modulo, sub) {
+  return window.MavisRotas ? window.MavisRotas.linkDaTela(modulo, sub) : '';
+}
+
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 
 // ============================================================================
@@ -162,10 +169,10 @@ window.MavisWorkspace = {
             <h4>Mais usadas</h4>
             <div class="workspace-favoritos-lista">
               ${favoritos.map((item) => `
-                <button type="button" class="workspace-atalho" data-open-sub="${escapeHtml(item.key)}">
+                <a class="workspace-atalho" ${linkDoBloco(moduleName, item.key)} data-open-sub="${escapeHtml(item.key)}">
                   <span class="workspace-atalho-icone">${svgDoTipo(item.pendente ? 'pendente' : tipoDaTela(item))}</span>
                   ${escapeHtml(item.label)}
-                </button>
+                </a>
               `).join('')}
             </div>
           </section>
@@ -182,6 +189,10 @@ window.MavisWorkspace = {
                 role="button" tabindex="0"
                 data-open-sub="${escapeHtml(item.key)}"
                 title="${escapeHtml(item.desc || '')}">
+                <!-- O link cobre o bloco inteiro (14/10/2026): é ele que dá
+                     Ctrl+clique e "Abrir link em nova guia". Fica fora da
+                     ordem do Tab — o próprio bloco já recebe o foco. -->
+                <a class="workspace-tile-link" ${linkDoBloco(moduleName, item.key)} tabindex="-1" aria-hidden="true"></a>
                 <span class="workspace-tile-icon">${svgDoTipo(tipo)}</span>
                 <span class="workspace-tile-text">
                   <strong>${escapeHtml(item.label)}${item.pendente ? '<em class="workspace-tag">em preparo</em>' : ''}</strong>

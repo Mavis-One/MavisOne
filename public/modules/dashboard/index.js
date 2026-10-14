@@ -44,6 +44,12 @@ function getDefaultSubKey(moduleKey) {
   return DASHBOARD_DEFAULT_SUB[moduleKey] || null;
 }
 
+// Link de tela (app.js, window.MavisRotas). Fora do app — nos testes — o
+// bloco sai sem href e continua abrindo pelo clique.
+function linkDoFavorito(modulo, sub) {
+  return window.MavisRotas ? window.MavisRotas.linkDaTela(modulo, sub) : '';
+}
+
 function navigateToModule(ctx, moduleKey, subKey) {
   const { state, renderApp, loadModule } = ctx;
   state.activeModule = moduleKey;
@@ -102,13 +108,13 @@ function renderModuleGroup(ctx, module, pinnedSet) {
   return `
     <div class="dashboard-favorite-group">
       <section class="dashboard-module-balloon ${state.activeModule === module.key ? 'active' : ''}">
-        <button type="button" class="dashboard-module-title" data-open-module="${escapeHtml(module.key)}">
+        <a class="dashboard-module-title" ${linkDoFavorito(module.key, getDefaultSubKey(module.key))} data-open-module="${escapeHtml(module.key)}">
           <span class="dashboard-module-avatar">${escapeHtml(getModuleIcon(module.label))}</span>
           <span class="dashboard-module-heading">
             <strong>${escapeHtml(module.label)}</strong>
             <span>${isMainPinned ? 'Módulo fixado' : 'Abas fixadas'}</span>
           </span>
-        </button>
+        </a>
         ${renderPinButton(ctx, mainPinKey, module.label, pinnedSet)}
       </section>
 
@@ -120,9 +126,9 @@ function renderModuleGroup(ctx, module, pinnedSet) {
               const isActive = state.activeModule === module.key && state.activeSub === item.key;
               return `
                 <div class="dashboard-tab-row ${isActive ? 'active' : ''}">
-                  <button type="button" class="dashboard-tab-open" data-open-sub="${escapeHtml(module.key)}::${escapeHtml(item.key)}">
+                  <a class="dashboard-tab-open" ${linkDoFavorito(module.key, item.key)} data-open-sub="${escapeHtml(module.key)}::${escapeHtml(item.key)}">
                     ${escapeHtml(item.label)}
-                  </button>
+                  </a>
                   ${renderPinButton(ctx, pinKey, item.label, pinnedSet)}
                 </div>
               `;

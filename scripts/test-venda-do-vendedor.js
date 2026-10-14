@@ -89,7 +89,8 @@ check('tela: botão Filtros com a contagem dos ativos', /id="painelVendedorFiltr
 
 console.log('\n--- 6. a marca leva ao Dashboard ---');
 // Só o raio desde 13/10/2026: o "MO" saiu a pedido do usuário.
-check('o raio é o botão do Dashboard, sem o "MO"', /<button type="button" class="sidebar-header sidebar-marca" id="marcaDashboardBtn"[^>]*>\s*<span class="logo-marca logo-sidebar" aria-hidden="true"><\/span>\s*<\/button>/.test(app));
+// Desde 14/10/2026 é link (<a>), para abrir o Dashboard em nova guia.
+check('o raio é o botão do Dashboard, sem o "MO"', /<a class="sidebar-header sidebar-marca" id="marcaDashboardBtn" \$\{linkDaTela\('dashboard'\)\}[^>]*>\s*<span class="logo-marca logo-sidebar" aria-hidden="true"><\/span>\s*<\/a>/.test(app));
 check('  que abre o Dashboard', /marcaDashboard\.onclick = \(\) => \{[\s\S]{0,200}state\.activeModule = 'dashboard';[\s\S]{0,200}loadModule\('dashboard'\);/.test(app));
 check('ícone do Dashboard fora do menu', /\$\{MENU_MODULOS\s*\.filter\(\(module\) => module !== 'dashboard'\)/.test(app));
 

@@ -151,6 +151,116 @@ function restoreLastRoute() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// A TELA NO ENDEREÇO (14/10/2026, pedido do usuário: "quero poder utilizar o
+// voltar dos navegadores" e "abrir novas guias diretamente do sistema").
+//
+// A tela aberta vivia só em state.activeModule/activeSub: a URL nunca mudava,
+// então o Voltar do navegador saía do sistema e não havia endereço para levar
+// a outra guia. Agora cada troca de tela grava "#/modulo/tela" no histórico:
+//   - Voltar/Avançar do navegador trocam de tela (popstate, abaixo);
+//   - F5, guia nova e link colado abrem a tela do endereço (a sessão a guia
+//     nova pede às abertas — ver "AS ABAS DO MESMO NAVEGADOR DIVIDEM A SESSÃO");
+//   - menus e blocos são <a href> de verdade (linkDaTela): Ctrl+clique, botão
+//     do meio e "Abrir link em nova guia" funcionam como em qualquer site.
+// Com "#", o servidor não muda: tudo continua sendo a mesma página.
+const PREFIXO_DA_TELA = '#/';
+
+function enderecoDaTela(modulo, sub) {
+  const m = encodeURIComponent(String(modulo || 'dashboard'));
+  return `${window.location.pathname}${PREFIXO_DA_TELA}${m}${sub ? '/' + encodeURIComponent(String(sub)) : ''}`;
+}
+
+/** Atributos de um <a> que abre a tela: href para o navegador, marca para o clique. */
+function linkDaTela(modulo, sub) {
+  return `href="${enderecoDaTela(modulo, sub)}" data-tela-link`;
+}
+
+function telaDoEndereco(hash = window.location.hash) {
+  const texto = String(hash || '');
+  if (!texto.startsWith(PREFIXO_DA_TELA)) return null;
+  const [modulo, sub] = texto.slice(PREFIXO_DA_TELA.length).split('/');
+  if (!modulo) return null;
+  try {
+    return { module: decodeURIComponent(modulo), sub: sub ? decodeURIComponent(sub) : null };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Grava a tela no endereço. Trocar de tela EMPILHA (é o que o Voltar desfaz);
+ * `substituir` só corrige a entrada atual (abertura da página, sem permissão).
+ * Redesenhar a mesma tela não mexe em nada — e mantém o "?filtros" que a
+ * lista de vendas guarda no endereço.
+ */
+function gravarTelaNoEndereco(modulo, sub, { substituir = false } = {}) {
+  const alvo = enderecoDaTela(modulo, sub);
+  const atual = window.location.pathname + window.location.hash;
+  const passo = Number((window.history.state && window.history.state.mavisPasso) || 0);
+  try {
+    if (substituir) {
+      window.history.replaceState({ mavisPasso: passo }, '', alvo === atual ? alvo.replace('#', window.location.search + '#') : alvo);
+    } else if (alvo !== atual) {
+      window.history.pushState({ mavisPasso: passo + 1 }, '', alvo);
+    }
+  } catch (_) {
+    // Navegador recusou (limite de chamadas): a tela abre do mesmo jeito.
+  }
+}
+
+/** Há tela do sistema antes desta no histórico da guia? */
+function temTelaAnteriorNoHistorico() {
+  return Number((window.history.state && window.history.state.mavisPasso) || 0) > 0;
+}
+
+/** A tela do endereço, se ela pode ser aberta por quem entrou. */
+function aplicarTelaDoEndereco() {
+  const doEndereco = telaDoEndereco();
+  if (!doEndereco) return false;
+  // Módulo que não existe (link velho, digitado errado) também cai no
+  // Dashboard: para o administrador, hasModuleAccess diz sim a qualquer nome.
+  const existe = doEndereco.module === 'dashboard' || Object.prototype.hasOwnProperty.call(moduleLabels, doEndereco.module);
+  if (!existe || !hasModuleAccess(doEndereco.module)) {
+    state.activeModule = 'dashboard';
+    state.activeSub = null;
+    return false;
+  }
+  state.activeModule = doEndereco.module;
+  state.activeSub = doEndereco.sub;
+  state.selectedModule = getSecondarySidebarConfig(doEndereco.module) ? doEndereco.module : null;
+  return true;
+}
+
+// Voltar/Avançar do navegador (e endereço digitado à mão): abre a tela do
+// endereço. O endereço já está certo, então loadModule não empilha nada.
+window.addEventListener('popstate', () => {
+  if (!state.user) return;
+  const doEndereco = telaDoEndereco();
+  if (!doEndereco) return;
+  if (doEndereco.module === state.activeModule && (doEndereco.sub || null) === (state.activeSub || null)) return;
+  state.isNavigatingBack = true;
+  if (!aplicarTelaDoEndereco()) gravarTelaNoEndereco(state.activeModule, state.activeSub, { substituir: true });
+  renderApp();
+  loadModule(state.activeModule);
+});
+
+// O clique em link de tela: o simples segue com o handler de sempre do
+// elemento (troca de tela sem recarregar); com Ctrl/Shift/Cmd o navegador abre
+// a guia/janela nova e esta tela fica onde está. Na captura, antes de tudo.
+// O botão do meio não dispara "click" — o navegador já abre a guia sozinho.
+document.addEventListener('click', (evento) => {
+  const link = evento.target.closest && evento.target.closest('a[data-tela-link]');
+  if (!link) return;
+  if (evento.ctrlKey || evento.metaKey || evento.shiftKey || evento.altKey || evento.button !== 0) {
+    evento.stopPropagation();
+    return;
+  }
+  evento.preventDefault();
+}, true);
+
+window.MavisRotas = { enderecoDaTela, linkDaTela, telaDoEndereco };
+
 // Admin pelo campo antigo `role` OU pelo papel novo (user_roles), do mesmo
 // jeito que permissoes.ehAdministrador() decide no servidor. Quem foi promovido
 // só na tela de Papéis e Permissões chega aqui com role='user', e checar apenas
@@ -275,6 +385,7 @@ function trackRouteChange(moduleName, subKey) {
 }
 
 function canGoBack() {
+  if (temTelaAnteriorNoHistorico()) return true;
   const moduleHistory = state.moduleRouteHistory[state.activeModule];
   return Boolean(moduleHistory && moduleHistory.stack.length > 0);
 }
@@ -291,6 +402,13 @@ function syncBackButtonState() {
 }
 
 function goBackToPreviousRoute() {
+  // O Voltar da tela e o do navegador são o mesmo passo (14/10/2026): andar
+  // por fora do histórico deixaria o Voltar do navegador "voltando" para a
+  // tela de onde se acabou de sair.
+  if (temTelaAnteriorNoHistorico()) {
+    window.history.back();
+    return;
+  }
   const moduleHistory = state.moduleRouteHistory[state.activeModule];
   if (!moduleHistory || !moduleHistory.stack.length) return;
 
@@ -694,7 +812,9 @@ function salesEscreverUrl(filtros, extras) {
   const busca = params.toString();
   // replaceState, não pushState: filtrar não é navegar. Empilhar histórico
   // faria o botão Voltar do navegador desfazer filtro por filtro.
-  window.history.replaceState(null, '', busca ? '?' + busca : window.location.pathname);
+  // O "#/sales/..." da tela vai junto (14/10/2026): sem ele, filtrar apagava
+  // a tela do endereço e o F5 voltava ao Dashboard.
+  window.history.replaceState(window.history.state, '', (busca ? '?' + busca : window.location.pathname) + window.location.hash);
 }
 
 function salesLerUrl() {
@@ -1165,8 +1285,15 @@ function renderAuth(error = '') {
       // A abertura começa ANTES de montar a tela e roda por cima: o dashboard
       // carrega atrás dela, então a animação ocupa um tempo que já existia.
       const abertura = animarEntrada();
+      // Guia aberta por um link do sistema cai no login quando não há outra
+      // guia com sessão: entrou, vai à tela do link em vez do Dashboard.
+      if (!aplicarTelaDoEndereco()) {
+        state.activeModule = 'dashboard';
+        state.activeSub = null;
+      }
+      gravarTelaNoEndereco(state.activeModule, state.activeSub, { substituir: true });
       renderApp();
-      await loadModule('dashboard');
+      await loadModule(state.activeModule);
       await abertura;
       // O aviso vem depois — atrás da cortina ninguém o veria.
       showToast('Login realizado com sucesso.', 'success');
@@ -1574,9 +1701,9 @@ function renderApp() {
              viraram um botão só, e o ícone do Dashboard saiu do menu. -->
         <!-- Só o raio (13/10/2026): o "MO" embaixo dele saiu a pedido do
              usuário. O nome continua no rótulo do botão, para leitor de tela. -->
-        <button type="button" class="sidebar-header sidebar-marca" id="marcaDashboardBtn" title="Dashboard" aria-label="MavisONE — ir para o Dashboard">
+        <a class="sidebar-header sidebar-marca" id="marcaDashboardBtn" ${linkDaTela('dashboard')} title="Dashboard" aria-label="MavisONE — ir para o Dashboard">
           <span class="logo-marca logo-sidebar" aria-hidden="true"></span>
-        </button>
+        </a>
         <div class="nav-list">
           ${MENU_MODULOS
             .filter((module) => module !== 'dashboard')
@@ -1584,10 +1711,10 @@ function renderApp() {
             .map((module) => `
               <div class="nav-block">
                 <div class="nav-item-row">
-                  <button type="button" class="nav-item nav-open-item ${state.activeModule === module ? 'active' : ''}" data-module="${module}">
+                  <a class="nav-item nav-open-item ${state.activeModule === module ? 'active' : ''}" ${linkDaTela(module)} data-module="${module}">
                     <span class="icon">${moduleIcons[module] || ''}</span>
                     <span class="text">${moduleLabels[module]}</span>
-                  </button>
+                  </a>
                   <!-- Sem botão de fixar aqui: a barra é só de ícones e nunca
                        abre, então o botão nunca teria onde caber. Fixar módulo
                        mudou para o cabeçalho da Área de Trabalho, que é onde
@@ -1596,7 +1723,7 @@ function renderApp() {
                 <div class="submenu">
                   ${ telasVisiveis(module).map((sub) => `
                     <div class="sub-item-row">
-                      <button type="button" class="sub-item sub-open-item ${state.activeModule === module && state.activeSub === sub.key ? 'active' : ''}" data-module="${module}" data-sub="${sub.key}">${sub.label}</button>
+                      <a class="sub-item sub-open-item ${state.activeModule === module && state.activeSub === sub.key ? 'active' : ''}" ${linkDaTela(module, sub.key)} data-module="${module}" data-sub="${sub.key}">${sub.label}</a>
                     </div>
                   `).join('') }
                 </div>
@@ -2724,6 +2851,7 @@ async function loadModule(moduleName) {
     state.activeSub = null;
     state.selectedModule = null;
     persistLastRoute();
+    gravarTelaNoEndereco('dashboard', null, { substituir: true });
     renderApp();
     const currentContent = document.getElementById('moduleContent');
     if (currentContent) {
@@ -2737,6 +2865,9 @@ async function loadModule(moduleName) {
   syncBackButtonState();
   state.activeModule = moduleName;
   persistLastRoute();
+  gravarTelaNoEndereco(moduleName, state.activeSub);
+  // De novo: o passo novo no histórico é o que habilita o Voltar.
+  syncBackButtonState();
   const content = document.getElementById('moduleContent');
   if (!content) {
     return;
@@ -8836,7 +8967,9 @@ async function abrirSessaoExistente() {
   // aba, então some a cada F5.
   agendarSaidaDaVirada(response.sessaoExpiraEm);
   adotarUsuarioDaSessao(response.user);
-  restoreLastRoute();
+  // O endereço manda (guia nova, link, F5); sem tela nele, a última aberta.
+  if (!aplicarTelaDoEndereco()) restoreLastRoute();
+  gravarTelaNoEndereco(state.activeModule, state.activeSub, { substituir: true });
   const moduleHistory = ensureModuleRouteHistory(state.activeModule);
   moduleHistory.currentRouteKey = getRouteKey(state.activeModule, state.activeSub);
   renderApp();
