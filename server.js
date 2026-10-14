@@ -6852,6 +6852,8 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/inutilizar') return 'inutilizar';
   if (pathname.endsWith('/xml')) return 'xml';
   if (pathname.endsWith('/danfe')) return 'danfe';
+  // Corrigir nota com erro (fase EO): reabre a emissão — é parte de emitir.
+  if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/corrigir')) return 'emitir';
   if (pathname.startsWith('/api/fiscal/nfe/')) return 'visualizar';
 
   return 'configurar';
@@ -7848,6 +7850,131 @@ function explicarErroDaNfce(error) {
   return err;
 }
 
+// O MOTIVO DO ERRO E A CORREÇÃO DA NOTA (fase EO, 14/10/2026, pedido do
+// usuário: "quando uma nota fiscal der erro, mostrar o motivo do erro em pop up
+// e me permita entrar dentro dela pra conseguir editar o que já foi feito").
+//
+// O motivo: a mensagem gravada e, da resposta da Focus, o código da SEFAZ e a
+// lista `erros` (codigo/mensagem — doc consultar_nfe, exemplo "Erro
+// autorização"). Repetições saem.
+function motivosDoErroDaNfe(nfe) {
+  const resposta = (nfe && nfe.respostaFocus) || {};
+  const linhas = [];
+  const incluir = (texto) => {
+    const t = String(texto || '').trim();
+    if (t && !linhas.includes(t)) linhas.push(t);
+  };
+  incluir(nfe && nfe.mensagemSefaz);
+  incluir(resposta.mensagem_sefaz);
+  incluir(resposta.mensagem);
+  (Array.isArray(resposta.erros) ? resposta.erros : []).forEach((e) => {
+    if (e && typeof e === 'object') incluir([e.codigo, e.mensagem].filter(Boolean).join(' — '));
+    else incluir(e);
+  });
+  return {
+    statusSefaz: String(resposta.status_sefaz || ''),
+    motivos: linhas
+  };
+}
+
+// Nota sem estado da tela (emitida antes da fase EO): destinatário e itens
+// voltam do que foi à Focus. Os valores fiscais editados não voltam — a
+// emissão recalcula pela regra fiscal. O NOME vem da coluna, não do payload:
+// em homologação o payload leva o texto fixo da SEFAZ.
+async function estadoDaNotaPeloPayload(nfe) {
+  const p = nfe.payloadEnviado || {};
+  const documento = String(p.cnpj_destinatario || p.cpf_destinatario || nfe.destinatarioDocumento || '').replace(/\D/g, '');
+  const skus = [...new Set((p.items || []).map((it) => String(it.codigo_produto || '').trim()).filter(Boolean))];
+  const porSku = new Map();
+  if (skus.length) {
+    const { rows } = await consultarBanco('select id, sku from products where sku = any($1::text[])', [skus]);
+    rows.forEach((r) => porSku.set(String(r.sku), r.id));
+  }
+  let selectedClienteId = '';
+  if (documento) {
+    const pessoas = await db.getPeople().catch(() => []);
+    const achada = pessoas.find((pe) => String(pe.document || '').replace(/\D/g, '') === documento);
+    if (achada) selectedClienteId = achada.id;
+  }
+  const ie = String(p.inscricao_estadual_destinatario || '');
+  return {
+    versao: 1,
+    selectedEstabelecimentoId: nfe.estabelecimentoId,
+    selectedClienteId,
+    tipoOperacao: nfe.tipoOperacaoFiscal || 'VENDA',
+    itens: (p.items || []).map((it) => ({
+      produtoId: porSku.get(String(it.codigo_produto || '').trim()) || '',
+      descricao: it.descricao || '',
+      codigoProduto: it.codigo_produto || '',
+      ncm: it.codigo_ncm || '',
+      quantidade: Number(it.quantidade_comercial || 0),
+      valorUnitario: Number(it.valor_unitario_comercial || 0),
+      unidadeComercial: it.unidade_comercial || 'UN',
+      origem: Number(it.icms_origem || 0)
+    })),
+    observacoes: String(p.informacoes_adicionais_contribuinte || ''),
+    informacoesEditadas: Boolean(p.informacoes_adicionais_contribuinte),
+    campos: {
+      destNome: nfe.destinatarioNome || p.nome_destinatario || '',
+      destDocumento: documento,
+      destContribuinte: Boolean(ie && ie.toUpperCase() !== 'ISENTO'),
+      destIe: ie,
+      destCep: String(p.cep_destinatario || ''),
+      destLogradouro: p.logradouro_destinatario || '',
+      destNumero: p.numero_destinatario || '',
+      destBairro: p.bairro_destinatario || '',
+      destMunicipio: p.municipio_destinatario || '',
+      destUf: p.uf_destinatario || '',
+      destCodigoMunicipio: String(p.codigo_municipio_destinatario || ''),
+      tipoOperacao: nfe.tipoOperacaoFiscal || 'VENDA'
+    }
+  };
+}
+
+/**
+ * "Corrigir nota": a nota com erro volta como NOTA EM EDIÇÃO (fase EL) — a do
+ * pedido na chave do pedido, a avulsa na de quem corrige — e a emissão a abre
+ * como abre qualquer nota salva. A nota com erro não muda nem some (nunca
+ * excluir documento fiscal); a corrigida sai como uma emissão nova.
+ * Já havendo nota em edição na mesma chave, só substitui com `substituir`.
+ */
+async function corrigirNfeComErro(id, user, { substituir = false } = {}) {
+  const recusar = (mensagem, status = 400) => {
+    const err = new Error(mensagem);
+    err.status = status;
+    throw err;
+  };
+  const nfe = await fiscalDb.getNfeById(id);
+  if (!nfe) recusar('NF-e não encontrada.', 404);
+  if (nfe.status !== 'ERRO') recusar('Só nota com erro pode ser corrigida e reenviada.');
+  const pedidoId = nfe.orderId || '';
+  const chave = rascunhoEmissaoDb.chaveDoRascunho({ pedidoId, userId: user.id });
+  const existente = await rascunhoEmissaoDb.lerRascunho(chave);
+  if (existente && !substituir) {
+    return {
+      jaHaNotaEmEdicao: true,
+      pergunta: pedidoId
+        ? 'Este pedido já tem uma nota em edição. Substituí-la pela nota com erro?'
+        : 'Você já tem uma NF-e avulsa em edição. Substituí-la pela nota com erro?'
+    };
+  }
+  const dados = nfe.estadoDaTela && typeof nfe.estadoDaTela === 'object'
+    ? { ...nfe.estadoDaTela }
+    : await estadoDaNotaPeloPayload(nfe);
+  dados.corrigeNfe = { id: nfe.id, referencia: nfe.referencia };
+  await rascunhoEmissaoDb.salvarRascunho({ chave, pedidoId: pedidoId || null, userId: user.id, userName: user.name, dados });
+  let pedidoCodigo = 0;
+  if (pedidoId) {
+    const pedido = await db.getOrderById(pedidoId).catch(() => null);
+    pedidoCodigo = (pedido && pedido.code) || 0;
+  }
+  await registrarAuditoria({
+    action: 'nfe.corrigirComErro', targetId: nfe.id, targetUsername: nfe.referencia,
+    byId: user.id, byName: user.name, details: { pedidoId, doEstadoDaTela: Boolean(nfe.estadoDaTela) }
+  }).catch(() => {});
+  return { pedidoId, pedidoCodigo, doEstadoDaTela: Boolean(nfe.estadoDaTela) };
+}
+
 // `opcoes.modelo` é decidido pela ROTA, e nunca pelo corpo da requisição: a
 // tela de NF-e não pode virar emissora de NFC-e mandando `modelo: 65`.
 async function emitirNfeFiscal(body, user, opcoes = {}) {
@@ -7903,7 +8030,12 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
     tipoOperacaoFiscal: tipoOperacao,
     valorIcmsComplementar,
     nfeOriginalChave: chaveOriginal,
-    payloadEnviado: payload
+    payloadEnviado: payload,
+    // Fase EO: o que a tela tinha ao emitir. Só objeto, e só da tela: a NFC-e
+    // do pedido (montada no servidor) não manda.
+    estadoDaTela: body.estadoDaTela && typeof body.estadoDaTela === 'object' && !Array.isArray(body.estadoDaTela)
+      ? body.estadoDaTela
+      : null
   });
 
   // O PEDIDO PASSA A SABER QUAL NOTA SAIU DELE.
@@ -15531,6 +15663,15 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { success: true, nfe });
       }
 
+      // CORRIGIR NOTA COM ERRO (fase EO): vira nota em edição e a tela reabre.
+      if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/corrigir') && req.method === 'POST') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', '').replace('/corrigir', ''));
+        const body = await readBody(req);
+        const resultado = await corrigirNfeComErro(id, user, { substituir: body.substituir === true });
+        if (resultado.jaHaNotaEmEdicao) return sendJson(res, { error: resultado.pergunta, jaHaNotaEmEdicao: true }, 409);
+        return sendJson(res, resultado);
+      }
+
       if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/cancelar') && req.method === 'POST') {
         const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', '').replace('/cancelar', ''));
         const body = await readBody(req);
@@ -15628,7 +15769,8 @@ async function tratarRequisicao(req, res) {
             console.error('Falha ao reconsultar NF-e', id, error.message);
           }
         }
-        return sendJson(res, { nfe });
+        // Fase EO: com erro, o motivo já mastigado (mensagem + lista da Focus).
+        return sendJson(res, { nfe, erro: nfe.status === 'ERRO' ? motivosDoErroDaNfe(nfe) : null });
       }
     } catch (error) {
       return sendErro(res, error, 'Erro ao processar dados fiscais', 500);

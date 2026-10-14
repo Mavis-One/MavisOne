@@ -2158,13 +2158,25 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       }
 
       const body = montarCorpoDaNota(formData, referenciasDevolucao);
+      // Fase EO: o estado da tela vai junto e fica na nota. Dando erro, é ele
+      // que "Corrigir nota" (NF-e Emitidas) devolve a esta tela.
+      body.estadoDaTela = estadoDaTela();
 
       try {
         const result = await api('/api/fiscal/nfe/emitir', { method: 'POST', body: JSON.stringify(body) });
         ultimoResultado = result.nfe;
-        showToast(`NF-e ${result.nfe.status === 'AUTORIZADO' ? 'autorizada' : result.nfe.status.toLowerCase()}.`, result.nfe.status === 'ERRO' ? 'error' : 'success');
+        if (result.nfe.status === 'ERRO') {
+          // Recusada na hora: o motivo em popup, e a tela continua como está
+          // para corrigir e emitir de novo.
+          const erro = window.MavisErroNfe ? window.MavisErroNfe.motivosDaNota(result.nfe) : { motivos: [result.nfe.mensagemSefaz] };
+          if (window.MavisErroNfe) window.MavisErroNfe.mostrar({ titulo: 'A SEFAZ recusou a NF-e', motivos: erro.motivos, statusSefaz: erro.statusSefaz, podeCorrigir: false });
+          else showToast(result.nfe.mensagemSefaz || 'NF-e com erro.', 'error');
+        } else {
+          showToast(`NF-e ${result.nfe.status === 'AUTORIZADO' ? 'autorizada' : result.nfe.status.toLowerCase()}.`, 'success');
+        }
       } catch (error) {
-        showToast(error.message || 'Erro ao emitir NF-e.', 'error');
+        if (window.MavisErroNfe) window.MavisErroNfe.mostrar({ titulo: 'A NF-e não foi emitida', motivos: [error.message || 'Erro ao emitir NF-e.'], podeCorrigir: false });
+        else showToast(error.message || 'Erro ao emitir NF-e.', 'error');
       } finally {
         await loadNotasRecentes();
         ultimoResultado = notasRecentes[0] || ultimoResultado;
@@ -2179,10 +2191,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // A NOTA EM EDIÇÃO SALVA (fase EL): volta como estava antes do primeiro
   // desenho — o estado da tela primeiro, os campos do formulário depois.
   let camposDoRascunho = null;
+  // A nota com erro que esta emissão corrige (fase EO), quando veio de lá.
+  let corrigindoNfe = null;
   try {
     const resposta = await api(`/api/fiscal/nfe/rascunho?pedido=${encodeURIComponent(orderIdOrigem || '')}`);
     if (resposta && resposta.rascunho && resposta.rascunho.dados) {
       camposDoRascunho = aplicarEstadoSalvo(resposta.rascunho.dados);
+      corrigindoNfe = resposta.rascunho.dados.corrigeNfe || null;
       rascunhoSalvoEm = resposta.rascunho.atualizadoEm || '';
     }
   } catch (_) {
@@ -2192,7 +2207,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   renderForm();
   if (camposDoRascunho) {
     preencherCamposSalvos(camposDoRascunho);
-    showToast(`Nota em edição recuperada (salva em ${new Date(rascunhoSalvoEm).toLocaleString('pt-BR')}).`, 'info');
+    showToast(corrigindoNfe
+      ? `Corrigindo a NF-e com erro (${corrigindoNfe.referencia || 'sem referência'}). Emitir sai como nota nova; a com erro fica no histórico.`
+      : `Nota em edição recuperada (salva em ${new Date(rascunhoSalvoEm).toLocaleString('pt-BR')}).`, 'info', corrigindoNfe ? 8000 : undefined);
   }
 };
 

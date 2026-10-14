@@ -622,10 +622,61 @@ function criarTelaDeNotasEmitidas(telaChave) {
     loadModule(moduloAtual());
   }
 
-  function irParaVenda(nfe) {
-    state.salesOpenRecordId = nfe.orderId;
-    state.activeSub = 'sales_records';
-    loadModule('sales');
+  // Abre o PEDIDO da nota, como a lista de vendas abre (14/10/2026). Antes
+  // gravava state.salesOpenRecordId, que ninguém lia, numa tela que não
+  // existe ('sales_records'): o botão não levava ao pedido.
+  async function irParaVenda(nfe) {
+    if (!nfe || !nfe.orderId) return;
+    try {
+      const res = await api(`/api/sales/records/${encodeURIComponent(nfe.orderId)}`);
+      state.salesDraft = state.salesDraft || {};
+      state.salesDraft.editRecord = res.record || res;
+      state.salesDraft.novoStatus = '';
+      state.activeModule = 'sales';
+      state.activeSub = 'new_sale';
+      if (typeof renderApp === 'function') renderApp();
+      loadModule('sales');
+    } catch (erro) {
+      showToast(erro.message || 'Não consegui abrir o pedido desta nota.', 'error');
+    }
+  }
+
+  // A NOTA COM ERRO (fase EO, 14/10/2026, pedido do usuário): o motivo em
+  // popup e "Corrigir nota", que reabre a emissão com o que a nota tinha. A
+  // NFC-e de pedido é montada do pedido no servidor: corrige-se no pedido.
+  async function abrirErroDaNota(id) {
+    const naLista = notasDaPagina.find((n) => n.id === id) || {};
+    const nfce = Number(naLista.modelo) === 65;
+    let erro = { motivos: [naLista.mensagemSefaz].filter(Boolean), statusSefaz: '' };
+    try {
+      const res = await api(`/api/fiscal/nfe/${encodeURIComponent(id)}`);
+      erro = res.erro || window.MavisErroNfe.motivosDaNota(res.nfe);
+    } catch (_) {
+      // Sem o detalhe, vale a mensagem que a lista já tem.
+    }
+    const podeCorrigir = nfce ? Boolean(naLista.orderId) : true;
+    const escolha = await window.MavisErroNfe.mostrar({
+      titulo: `${nfce ? 'NFC-e' : 'NF-e'} com erro${naLista.customer ? ` — ${naLista.customer}` : ''}`,
+      motivos: erro.motivos || [],
+      statusSefaz: erro.statusSefaz || '',
+      podeCorrigir,
+      rotuloCorrigir: nfce ? 'Abrir pedido' : 'Corrigir nota'
+    });
+    if (escolha !== 'corrigir') return;
+    if (nfce) { irParaVenda(naLista); return; }
+    try {
+      const r = await window.MavisErroNfe.prepararCorrecao(id, { confirmar: confirmModal });
+      if (!r) return;
+      if (r.pedidoId) state.nfeFromOrder = { orderId: r.pedidoId, code: r.pedidoCodigo || 0 };
+      else delete state.nfeFromOrder;
+      const modulo = moduloAtual();
+      state.activeModule = modulo;
+      state.activeSub = 'emitir_nfe_focus';
+      if (typeof renderApp === 'function') renderApp();
+      loadModule(modulo);
+    } catch (erroDaCorrecao) {
+      showToast(erroDaCorrecao.message || 'Não consegui abrir a nota para correção.', 'error');
+    }
   }
 
   function cabecalhoOrdenavel(campo) {
@@ -775,7 +826,9 @@ function criarTelaDeNotasEmitidas(telaChave) {
                   <td><span class="texto-cortado is-medio" title="${escapeHtml(nfe.customer || '')}">${escapeHtml(nfe.customer || '-')}</span></td>
                   <td>${escapeHtml(nfeFormatDocument(nfe.clientDocument))}</td>
                   <td class="col-valor">${financeFormatBRL(nfe.amount)}</td>
-                  <td>${nfeStatusBadge(nfe.status)}${nfe.origem === 'importada' ? ' <span class="finance-badge finance-badge-muted" title="Emitida no sistema anterior e importada como registro">importada</span>' : ''}</td>
+                  <td>${nfe.status === 'erro' && nfe.origem === 'fiscal'
+                    ? `<button type="button" class="link-button nfe-erro-motivo" data-erro-nfe="${escapeHtml(nfe.id)}" title="Ver o motivo do erro">${nfeStatusBadge(nfe.status)}</button>`
+                    : nfeStatusBadge(nfe.status)}${nfe.origem === 'importada' ? ' <span class="finance-badge finance-badge-muted" title="Emitida no sistema anterior e importada como registro">importada</span>' : ''}</td>
                   <td>${nfe.key
                     ? `<button type="button" class="link-button" data-copiar-chave="${escapeHtml(nfe.key)}" title="${escapeHtml(nfe.key)} (clique para copiar)">…${escapeHtml(String(nfe.key).slice(-8))}</button>`
                     : '<span class="muted">-</span>'}</td>
@@ -910,6 +963,12 @@ function criarTelaDeNotasEmitidas(telaChave) {
       row.addEventListener('click', (event) => {
         // Clicar no checkbox seleciona; clicar no resto da linha abre a nota.
         if (event.target.closest('.nfe-check-col')) return;
+        // Nota com erro abre o motivo, com "Corrigir nota" (fase EO).
+        const daLinha = notasDaPagina.find((n) => n.id === row.dataset.id);
+        if (daLinha && daLinha.status === 'erro' && daLinha.origem === 'fiscal') {
+          abrirErroDaNota(row.dataset.id);
+          return;
+        }
         openNfeModal(row.dataset.id);
       });
     });

@@ -1382,6 +1382,11 @@ button.success:hover { background: var(--success-hover); }
 .btn-primary { background: var(--primary); color: var(--on-primary); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .escolha-modal-campo { display: grid; gap: 6px; margin-top: 14px; }
+/* Motivo da NF-e com erro (fase EO). */
+.erro-nfe-modal { width: min(94%, 600px); text-align: left; }
+.erro-nfe-codigo { margin: 0 0 8px; font-size: 0.85rem; }
+.erro-nfe-motivos { margin: 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.45; max-height: 50vh; overflow: auto; }
+.nfe-erro-motivo { padding: 0; background: none; border: 0; cursor: pointer; }
 
 /* ---- promptModal: pergunta de TEXTO no lugar do window.prompt() ---------
    Só o corpo é novo; .modal-overlay, .modal e .modal-actions vêm de cima. */
