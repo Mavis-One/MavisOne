@@ -192,5 +192,28 @@ check('o banco lê as duas', /aliquotaIbsUf: row\.aliquota_ibs_uf/.test(dbSrc) &
 check('e grava as duas', /aliquota_ibs_uf: numeroOuNulo/.test(dbSrc) && /aliquota_ibs_mun: numeroOuNulo/.test(dbSrc));
 check('a migração explica por que não é um total dividido', /passaria a mentir/.test(migracaoAd));
 
+// 14/10/2026: a SEFAZ rejeitou uma transferência com CST 410: "1021 — Grupo
+// IBS/CBS informado indevidamente". Só os CSTs com IndExigeTrib (tabela da
+// SVRS) levam base, alíquotas e valores; os outros, só CST e cClassTrib.
+console.log('\n--- grupo de tributação só nos CSTs que o exigem ---');
+const { buildNfeItemPayload } = require('../lib/nfePayloadBuilder');
+const itemDoCst = (regraIbs) => buildNfeItemPayload({
+  descricao: 'X', ncm: '87116000', quantidade: 1, valorUnitario: 1000, origem: 0, fiscal: {},
+  regraFiscal: { cfop: '5102', cstIcms: '00', aliquotaIcms: 17, cstPis: '01', aliquotaPis: 0.65, cstCofins: '01', aliquotaCofins: 3,
+    aliquotaIbsUf: 0.1, aliquotaIbsMun: 0, aliquotaCbs: 0.9, ...regraIbs }
+}, 0);
+const nao410 = itemDoCst({ cstIbsCbs: '410', classTrib: '410999' });
+check('CST 410: só CST e cClassTrib, sem base/alíquotas/valores',
+  nao410.ibs_cbs_situacao_tributaria === '410' && nao410.ibs_cbs_classificacao_tributaria === '410999'
+  && !('ibs_cbs_base_calculo' in nao410) && !('ibs_uf_aliquota' in nao410) && !('cbs_valor' in nao410) && !('ibs_valor_total' in nao410));
+const com000 = itemDoCst({ cstIbsCbs: '000', classTrib: '000001' });
+check('CST 000 continua com o grupo inteiro (1000 × 0,1% e 0,9%)',
+  com000.ibs_cbs_base_calculo === 1000 && com000.ibs_uf_valor === 1 && com000.ibs_mun_aliquota === 0 && com000.cbs_valor === 9 && com000.ibs_valor_total === 1);
+let recusa = '';
+try { itemDoCst({ cstIbsCbs: '410', classTrib: '000002' }); } catch (e) { recusa = e.message; }
+check('cClassTrib de outro CST é recusado antes da SEFAZ', /o cClassTrib 000002 não pertence ao CST 410/.test(recusa));
+check('a lista é a dos CSTs com IndExigeTrib',
+  /const CST_IBS_CBS_COM_TRIBUTACAO = \['000', '010', '011', '200', '220', '221', '222', '510', '515', '550', '830'\];/.test(ler('lib/nfePayloadBuilder.js')));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
