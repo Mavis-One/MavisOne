@@ -6878,6 +6878,16 @@ async function desfaturarPedidoDaNota(nfe, user) {
   // Mesmo substituto de faturarPedidoDaNota, e pelo mesmo motivo: o
   // cancelamento tambem pode chegar sem sessao. Ver a nota la.
   const quemDesfatura = user && user.id ? user : { id: '', name: 'Cancelamento da NF-e' };
+  // O número da nota cancelada sai do campo "Número NF-e" do pedido (só se
+  // ainda for ele). Fica no fim, depois do desfaturamento que regrava o pedido.
+  const limparNumero = async () => {
+    if (!nfe.numero) return;
+    try {
+      await db.gravarNotaNoPedido(pedidoId, { numero: '', numeroAtual: String(nfe.numero) });
+    } catch (erro) {
+      console.error('NF-e cancelada, mas nao consegui tirar o numero do pedido', pedidoId, erro.message);
+    }
+  };
   try {
     const dataVendas = loadData();
     // syncFinanceData também: desfaturar CANCELA as parcelas em aberto, e
@@ -6907,6 +6917,22 @@ async function desfaturarPedidoDaNota(nfe, user) {
       byName: quemDesfatura.name,
       details: { erro: erro.message, nfeId: nfe.id || '' }
     });
+  } finally {
+    await limparNumero();
+  }
+}
+
+// O NÚMERO DA NOTA NO PEDIDO (14/10/2026, pedido do usuário): o campo "Número
+// NF-e" (e a data de faturamento) da aba Pagamentos vem sozinho quando a nota
+// é autorizada. Gravado DEPOIS do faturamento, que regrava o pedido inteiro com
+// o paymentInfo que leu antes. Falhar aqui não desfaz nada: só avisa no log.
+async function anotarNumeroDaNotaNoPedido(nfe, pedidoId) {
+  if (!pedidoId || !nfe || !nfe.numero) return;
+  try {
+    const emissao = nfe.dataEmissao instanceof Date ? nfe.dataEmissao.toISOString() : String(nfe.dataEmissao || '');
+    await db.gravarNotaNoPedido(pedidoId, { numero: String(nfe.numero), data: emissao.slice(0, 10) });
+  } catch (erro) {
+    console.error('NF-e autorizada, mas nao consegui gravar o numero no pedido', pedidoId, erro.message);
   }
 }
 
@@ -6948,9 +6974,11 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
       // partir de agora é mentira. Nada de novo a criar; só a descrição a
       // completar. Ver anotarNotaNoFinanceiroDoPedido.
       await anotarNotaNoFinanceiroDoPedido(dataVendas, pedido, nfe.numero);
+      await anotarNumeroDaNotaNoPedido(nfe, pedido.id);
       return;
     }
     await mudarStatusSalesRecord({ id: pedido.id, code: pedido.code }, 'pedido-faturado', dataVendas, quemFatura);
+    await anotarNumeroDaNotaNoPedido(nfe, pedido.id);
   } catch (erro) {
     // A EXCEÇÃO NÃO SOBE, MAS TAMBÉM NÃO SOME.
     //
@@ -6960,6 +6988,8 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
     // nota fica autorizada, o pedido não fatura e ninguém descobre até o
     // cliente não receber a cobrança.
     console.error('NF-e autorizada, mas nao consegui faturar o pedido', pedidoId, erro.message);
+    // A nota existe mesmo sem o faturamento: o número vai para o pedido igual.
+    await anotarNumeroDaNotaNoPedido(nfe, pedidoId);
     await registrarAuditoria({
       action: 'falhaAoFaturarPedidoDaNota',
       targetId: pedidoId,
