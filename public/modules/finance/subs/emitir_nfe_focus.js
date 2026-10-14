@@ -192,6 +192,12 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // Impostos escolher o código em vez de digitar. Sem permissão de ler as
   // tabelas, o campo volta a ser texto.
   let tabelasFiscais = null;
+  // A aba Impostos mostra UM item por vez, em abas (14/10/2026, pedido do
+  // usuário: "os impostos em abas para cada item, assim como as informações da
+  // NF-e"). Este é o item aberto.
+  let abaImpostoDoItem = 0;
+  // E dentro do item, um grupo por vez (ICMS, IPI...), também em abas.
+  let abaGrupoImposto = 'Classificação';
 
   // AS TRÊS CARGAS SAEM JUNTAS (fase DS). Eram três idas e voltas em fila —
   // estabelecimentos, depois empresas, depois o meta — e nenhuma depende da
@@ -1112,7 +1118,22 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       return;
     }
     if (!previa) { caixa.innerHTML = topo; return; }
-    caixa.innerHTML = topo + itens.map((item, index) => {
+    if (abaImpostoDoItem >= itens.length) abaImpostoDoItem = Math.max(0, itens.length - 1);
+    // As abas dos itens: o número, o começo do nome e um ponto quando algo do
+    // item foi editado à mão (o nome inteiro fica no title).
+    const abas = itens.length > 1 ? `
+      <div class="nfe-item-abas" role="tablist">
+        ${itens.map((item, index) => {
+          const nome = String(item.descricao || (previa.itens[index] && previa.itens[index].descricao) || '');
+          const editadoAqui = item.fiscal && Object.keys(item.fiscal).length;
+          return `<button type="button" class="nfe-item-aba ${index === abaImpostoDoItem ? 'active' : ''}" role="tab"
+                    aria-selected="${index === abaImpostoDoItem}" data-imposto-item="${index}" title="${escapeHtml(nome)}">
+                    Item ${index + 1}<span class="nfe-item-aba-nome">${escapeHtml(nome.length > 24 ? nome.slice(0, 24) + '…' : nome)}</span>${editadoAqui ? '<span class="nfe-item-aba-editado" aria-label="editado"></span>' : ''}
+                  </button>`;
+        }).join('')}
+      </div>` : '';
+    caixa.innerHTML = topo + abas + itens.map((item, index) => {
+      if (index !== abaImpostoDoItem) return '';
       const linha = previa.itens[index] || null;
       const algumEditado = item.fiscal && Object.keys(item.fiscal).length;
       return `
@@ -1122,7 +1143,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <span class="muted">${financeFormatBRL(itemTotal(item))}</span>
             ${algumEditado ? `<button type="button" class="secondary finance-pill-sm" data-fiscal-limpar="${index}">Usar o da regra</button>` : ''}
           </div>
-          ${GRUPOS_FISCAIS.filter((grupo) => !grupo.soComStRetido || ['60', '500'].includes(String(valorFiscal(item, linha, 'cstIcms')).trim())).map((grupo) => `
+          ${(() => {
+            const grupos = GRUPOS_FISCAIS.filter((grupo) => !grupo.soComStRetido || ['60', '500'].includes(String(valorFiscal(item, linha, 'cstIcms')).trim()));
+            // Grupo que este item não tem (ICMS-ST retido fora do CST 60): o primeiro.
+            const aberto = grupos.find((g) => g.titulo === abaGrupoImposto) || grupos[0];
+            return `<div class="nfe-grupo-abas" role="tablist">
+              ${grupos.map((g) => `<button type="button" class="nfe-grupo-aba ${g === aberto ? 'active' : ''}" role="tab"
+                aria-selected="${g === aberto}" data-imposto-grupo="${escapeHtml(g.titulo)}">${g.titulo}${g.campos.some(([campo]) => editado(item, campo)) ? '<span class="nfe-item-aba-editado" aria-label="editado"></span>' : ''}</button>`).join('')}
+            </div>` + [aberto].map((grupo) => `
             <div class="nfe-imposto-grupo">
               <span class="nfe-imposto-titulo">${grupo.titulo}</span>
               <div class="nfe-imposto-campos">
@@ -1131,7 +1159,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                     ${campoFiscal(item, linha, index, campo)}
                   </label>`).join('')}
               </div>
-            </div>`).join('')}
+            </div>`).join('');
+          })()}
         </section>`;
     }).join('');
   }
@@ -1207,6 +1236,19 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const impostos = document.getElementById('nfeFocusImpostos');
     const totais = document.getElementById('nfeFocusTotais');
     [impostos, totais].forEach((caixa) => caixa && caixa.addEventListener('click', (evento) => {
+      const abaDoItem = evento.target.closest('[data-imposto-item]');
+      const abaDoGrupo = evento.target.closest('[data-imposto-grupo]');
+      if (abaDoGrupo) {
+        abaGrupoImposto = abaDoGrupo.dataset.impostoGrupo;
+        renderImpostos();
+        return;
+      }
+      if (abaDoItem) {
+        // Trocar de item só redesenha: a prévia já tem todos.
+        abaImpostoDoItem = Number(abaDoItem.dataset.impostoItem) || 0;
+        renderImpostos();
+        return;
+      }
       const botao = evento.target.closest('[data-previa-recalcular], [data-fiscal-limpar]');
       if (!botao) return;
       if (botao.dataset.fiscalLimpar !== undefined) itens[Number(botao.dataset.fiscalLimpar)].fiscal = {};

@@ -45,6 +45,15 @@ check('grupos em faixas alternadas', css.includes('.nfe-imposto-item > .nfe-impo
 check('campo travado mais escuro que o editável',
   css.includes('.nfe-imposto-campos input[readonly] { background: color-mix(in srgb, var(--input-bg) 86%, #000);')
   && css.includes(':root[data-theme="dark"] .nfe-imposto-campos input[readonly] { background: #000; }'));
+// 14/10/2026: um item por vez, em abas (provado no navegador com 2 itens: a
+// aba troca o item, o ponto marca o item editado, a aba principal não muda).
+check('itens em abas na aba Impostos', tela.includes('<div class="nfe-item-abas" role="tablist">')
+  && tela.includes('if (index !== abaImpostoDoItem) return \'\';')
+  && tela.includes("const abaDoItem = evento.target.closest('[data-imposto-item]');"));
+// E os grupos do item (ICMS, IPI...) em abas: só os campos do aberto.
+check('grupos do item em abas', tela.includes('<div class="nfe-grupo-abas" role="tablist">') && tela.includes("const abaDoGrupo = evento.target.closest('[data-imposto-grupo]');")
+  && tela.includes("const aberto = grupos.find((g) => g.titulo === abaGrupoImposto) || grupos[0];"));
+check('  com o visual das abas da nota', css.includes('.nfe-item-aba.active { color: var(--text); font-weight: 700; border-bottom-color: var(--text); }'));
 check('  e o editado continua marcado no escuro', css.includes(':root[data-theme="dark"] .nfe-imposto-campos label.is-editado input,'));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');

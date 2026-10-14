@@ -4931,6 +4931,23 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
    com os grupos de imposto lado a lado; o campo editado à mão fica marcado,
    para quem confere saber o que difere da regra fiscal. */
 .nfe-impostos-topo { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
+/* As abas dos itens na aba Impostos (14/10/2026): o mesmo traço das abas da
+   nota (.cadastro-tab), com o nome curto do item e um ponto quando editado. */
+.nfe-item-abas { display: flex; flex-wrap: wrap; gap: 4px 22px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.nfe-item-aba { display: flex; align-items: center; gap: 6px; padding: 10px 2px 12px; margin-bottom: -1px; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-weight: 600; font-size: 0.94rem; cursor: pointer; }
+.nfe-item-aba:hover { color: var(--text); }
+.nfe-item-aba.active { color: var(--text); font-weight: 700; border-bottom-color: var(--text); }
+.nfe-item-aba-nome { font-weight: 500; font-size: 0.82rem; opacity: 0.8; }
+.nfe-item-aba-editado { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); }
+/* Os grupos do item (ICMS, IPI...) em abas, um nível abaixo das abas dos itens:
+   pílulas, para não se confundirem com elas. */
+.nfe-grupo-abas { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.nfe-grupo-aba { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-weight: 600; font-size: 0.86rem; cursor: pointer; }
+.nfe-grupo-aba:hover { color: var(--text); }
+.nfe-grupo-aba.active { color: var(--text); background: rgba(var(--text-rgb), 0.08); border-color: var(--text); }
+/* Com o grupo na pílula, o título ao lado dos campos seria repetição. */
+.nfe-grupo-abas + .nfe-imposto-grupo { grid-template-columns: minmax(0, 1fr); }
+.nfe-grupo-abas + .nfe-imposto-grupo .nfe-imposto-titulo { display: none; }
 .nfe-imposto-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
 .nfe-imposto-cabeca { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .nfe-imposto-cabeca strong { flex: 1 1 auto; }
