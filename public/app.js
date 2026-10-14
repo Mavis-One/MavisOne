@@ -4940,13 +4940,12 @@ async function loadModule(moduleName) {
           // ação do menu): tipo e título são recalculados antes de montar o HTML.
           derivarTipo();
           const totais = computeTotals();
-          // PAGAMENTO VINCULADO AO TOTAL (14/10/2026, pedido do usuário): com
-          // um pagamento só, o valor dele É o total do pedido e acompanha cada
-          // mudança. Com vários, salvar exige que a soma feche (ver
-          // shared/venda_obrigatorios.js).
-          if (payments.length === 1 && Math.abs(Number(payments[0].amount || 0) - totais.totalAmount) >= 0.005) {
-            payments[0].amount = Math.round(totais.totalAmount * 100) / 100;
-          }
+          // PAGAMENTO E TOTAL TRABALHAM JUNTOS, SEM SINCRONIA (14/10/2026,
+          // pedido do usuário: "o valor do pedido não pode medir o valor da
+          // forma de pagamento"). O total não escreve mais no pagamento nem o
+          // trava: cada um é digitado; salvar exige que a soma feche com o
+          // total (shared/venda_obrigatorios.js), e o + Adicionar Pagamento
+          // sugere o que falta.
           const somaPagamentos = payments.reduce((soma, linha) => soma + Number(linha.amount || 0), 0);
 
           // Aba Impostos: painel só de leitura. Os tributos são apurados na
@@ -5519,7 +5518,7 @@ async function loadModule(moduleName) {
                                   </select>
                                 </td>
                                 <td><input type="date" class="sales-payment-due" data-index="${index}" value="${escapeHtml(linha.dueDate || '')}" /></td>
-                                <td><input type="number" min="0" step="0.01" class="sales-payment-amount" data-index="${index}" value="${Number(linha.amount || 0)}" style="width: 120px;" ${payments.length === 1 ? 'readonly tabindex="-1" title="Com um pagamento só, o valor é o total do pedido."' : ''} /></td>
+                                <td><input type="number" min="0" step="0.01" class="sales-payment-amount" data-index="${index}" value="${Number(linha.amount || 0)}" style="width: 120px;" /></td>
                                 <td><input class="sales-payment-note" data-index="${index}" value="${escapeHtml(linha.note || '')}" /></td>
                                 <td><button type="button" class="icon-button sales-remove-payment" data-index="${index}" title="Remover">×</button></td>
                               </tr>

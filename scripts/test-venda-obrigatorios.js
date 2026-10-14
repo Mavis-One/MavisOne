@@ -58,7 +58,12 @@ check('  centavo de arredondamento não conta', O.faltando({ ...completo, paymen
 check('  sem o total (quem não sabe), não confere', O.faltando({ ...completo, payments: pagos(1) }) === null);
 check('  tela e servidor passam o total',
   ler('public/app.js').includes('total: computeTotals().totalAmount') && ler('server.js').includes('total: computeSalesTotals(items, body).totalAmount'));
-check('  um pagamento só acompanha o total', ler('public/app.js').includes('if (payments.length === 1 && Math.abs(Number(payments[0].amount || 0) - totais.totalAmount) >= 0.005) {'));
+// 14/10/2026, pedido do usuário: "não sincronizá-los". O total não escreve
+// mais no pagamento nem o trava; os dois só precisam fechar ao salvar.
+check('  o total não escreve no pagamento nem o trava',
+  !ler('public/app.js').includes('payments[0].amount = Math.round(totais.totalAmount')
+  && !ler('public/app.js').includes('Com um pagamento só, o valor é o total do pedido.'));
+check('  + Adicionar Pagamento sugere o que falta', ler('public/app.js').includes('const restante = Math.max(0, Math.round((computeTotals().totalAmount - jaLancado) * 100) / 100);'));
 check('categoria cadastrada: vale o "gera financeiro" dela',
   O.faltando({ ...semPagamento, category: 'Loja' }, { categorias: [{ name: 'Loja', geraFinanceiro: false }] }) === null
   && O.faltando({ ...semPagamento, category: 'Transfer X' }, { categorias: [{ name: 'Transfer X', geraFinanceiro: true }] })?.campo === 'payments');
