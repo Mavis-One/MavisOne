@@ -96,7 +96,8 @@ console.log('--- 3. as chaves de endereço do cadastro não são uniformes ---')
 check('existe um leitor único de endereço', /function enderecoDaPessoa\(pessoa\)/.test(src));
 const endereco = src.slice(src.indexOf('function enderecoDaPessoa'), src.indexOf('function montarNfeDoPedido'));
 check('  que aceita street e address', /primeiro\(p\.street, p\.address, p\.logradouro\)/.test(endereco));
-check('  number e addressNumber', /primeiro\(p\.number, p\.addressNumber, p\.numero\)/.test(endereco));
+// 14/10/2026: streetNumber (a chave que o cadastro de pessoa grava) vem primeiro.
+check('  streetNumber, number e addressNumber', /primeiro\(p\.streetNumber, p\.number, p\.addressNumber, p\.numero\)/.test(endereco));
 check('  district e neighborhood', /primeiro\(p\.district, p\.neighborhood, p\.bairro\)/.test(endereco));
 
 console.log('--- 4. o endereço do destinatário passou a ser conferido ---');

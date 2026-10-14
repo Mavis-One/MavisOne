@@ -1571,6 +1571,22 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // não contribuinte, ou sem IE de contribuinte.
       form.querySelector('[name="destIe"]').value = window.MavisInscricaoEstadual.paraNota(found.stateRegistration) || '';
       form.querySelector('[name="destContribuinte"]').checked = window.MavisInscricaoEstadual.ehContribuinte(found.stateRegistration);
+      // O ENDEREÇO DO CADASTRO (14/10/2026): CEP, rua, número, complemento,
+      // bairro e IBGE vêm junto. Destinatário novo troca o endereço inteiro.
+      // Cadastro com CEP e sem rua: a busca do CEP completa o resto.
+      const e = found.endereco || {};
+      const por = (nome, valor) => { const campo = form.querySelector(`[name="${nome}"]`); if (campo) campo.value = valor || ''; };
+      por('destCep', e.cep);
+      por('destLogradouro', e.logradouro);
+      por('destNumero', e.numero);
+      por('destComplemento', e.complemento);
+      por('destBairro', e.bairro);
+      if (e.municipio) por('destMunicipio', e.municipio);
+      if (e.uf) por('destUf', e.uf);
+      por('destCodigoMunicipio', e.codigoMunicipio);
+      const cep = String(e.cep || '').replace(/\D/g, '');
+      if (cep.length === 8 && !e.logradouro) buscarCep({ automatico: true });
+      else ultimoCepConsultado = cep;
     }
 
     // O CEP PREENCHE O ENDEREÇO SOZINHO (14/10/2026). Só o botão consultava:

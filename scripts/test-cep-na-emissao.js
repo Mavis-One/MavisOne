@@ -34,5 +34,20 @@ check('ViaCEP fora do ar: tenta a BrasilAPI (CEP inexistente não)',
   && servidor.includes('https://brasilapi.com.br/api/cep/v1/'));
 check('  e traz o IBGE de lá', servidor.includes("ibgeCityCode: String((payload.ibge && payload.ibge.city) || ''),"));
 
+// O DESTINATÁRIO TRAZ O ENDEREÇO DO CADASTRO (14/10/2026). Escolher a pessoa
+// só preenchia nome, documento, UF, município e IE. Provado no navegador: a
+// KACCAU veio com CEP 89270000, RUA 28 de Agosto, 3015, SALA 1, Amizade,
+// Guaramirim/SC, IBGE 4206504. No banco local, 5.372 cadastros com número e
+// 5.831 com IBGE passaram a chegar (antes, zero: as chaves não eram lidas).
+check('o diretório da emissão leva o endereço do cadastro',
+  servidor.includes('endereco: enderecoDaPessoa(cruPorId.get(id))'));
+check('enderecoDaPessoa lê streetNumber e ibgeCityCode (as chaves do cadastro)',
+  servidor.includes('numero: primeiro(p.streetNumber, p.number, p.addressNumber, p.numero),')
+  && servidor.includes('codigoMunicipio: primeiro(p.ibgeCityCode, p.cityCode, p.codigoMunicipio, p.ibge)'));
+check('escolher o destinatário preenche CEP e endereço',
+  tela.includes("por('destCep', e.cep);") && tela.includes("por('destNumero', e.numero);") && tela.includes("por('destCodigoMunicipio', e.codigoMunicipio);"));
+check('  cadastro com CEP e sem rua completa pela busca do CEP',
+  tela.includes('if (cep.length === 8 && !e.logradouro) buscarCep({ automatico: true });'));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
 process.exit(falhas ? 1 : 0);

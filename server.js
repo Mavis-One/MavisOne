@@ -5998,8 +5998,13 @@ function diretorioDoMetaFinanceiro(data, pede) {
       : { id, name, code, document }));
   }
   if (pede === 'nfe') {
+    // O ENDEREÇO DO CADASTRO (14/10/2026): escolher o destinatário na emissão
+    // não trazia CEP nem rua. Lido pela mesma enderecoDaPessoa da nota do
+    // pedido, do registro inteiro (o diretório só guarda parte do endereço).
+    const cruPorId = new Map((data.people || []).concat(data.cnpjs || []).map((p) => [p.id, p]));
     return diretorio.map(({ id, name, code, document, city, state, stateRegistration }) => ({
-      id, name, code, document, city, state, stateRegistration
+      id, name, code, document, city, state, stateRegistration,
+      endereco: enderecoDaPessoa(cruPorId.get(id))
     }));
   }
   return diretorio;
@@ -7018,13 +7023,16 @@ function enderecoDaPessoa(pessoa) {
   const primeiro = (...valores) => valores.map((v) => String(v || '').trim()).find(Boolean) || '';
   return {
     logradouro: primeiro(p.street, p.address, p.logradouro),
-    numero: primeiro(p.number, p.addressNumber, p.numero),
+    // streetNumber e ibgeCityCode (14/10/2026): são as chaves que o cadastro de
+    // pessoa grava (6.492 de 6.496), e esta função não as lia — a nota saía sem
+    // número e sem o código IBGE do município.
+    numero: primeiro(p.streetNumber, p.number, p.addressNumber, p.numero),
     complemento: primeiro(p.complement, p.addressComplement, p.complemento),
     bairro: primeiro(p.district, p.neighborhood, p.bairro),
     municipio: primeiro(p.city, p.municipio),
     uf: primeiro(p.state, p.uf),
     cep: String(primeiro(p.zipCode, p.cep, p.zip_code)).replace(/\D/g, ''),
-    codigoMunicipio: primeiro(p.cityCode, p.codigoMunicipio, p.ibge)
+    codigoMunicipio: primeiro(p.ibgeCityCode, p.cityCode, p.codigoMunicipio, p.ibge)
   };
 }
 
