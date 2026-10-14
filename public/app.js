@@ -3895,7 +3895,9 @@ async function loadModule(moduleName) {
         let paymentTerm = infoPagamento.paymentTerm === 'aprazo' ? 'aprazo' : 'avista';
         // Aba aberta. Não é campo do registro — é só onde o usuário estava
         // quando a tela foi redesenhada (ao adicionar um produto, por exemplo).
-        let abaAtiva = 'dados';
+        // Depois de salvar, o pedido reabre na aba em que estava (14/10/2026).
+        let abaAtiva = state.salesDraft.abaAoReabrir || 'dados';
+        delete state.salesDraft.abaAoReabrir;
         // Apuração da aba Impostos. Vive aqui e não no `draft` porque é
         // derivada do que está na tela AGORA: guardá-la entre visitas faria a
         // aba mostrar o imposto de uma versão anterior do pedido.
@@ -6293,15 +6295,35 @@ async function loadModule(moduleName) {
             }
             if (botaoSalvar) botaoSalvar.disabled = true;
             try {
+              let salvo;
               if (isEditing) {
-                await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+                salvo = await api(`/api/sales/records/${editRecord.id}`, { method: 'PUT', body: JSON.stringify(payload) });
                 showToast(`${title} atualizado com sucesso.`, 'success');
               } else {
-                await api('/api/sales/records', { method: 'POST', body: JSON.stringify(payload) });
+                salvo = await api('/api/sales/records', { method: 'POST', body: JSON.stringify(payload) });
                 showToast(`${title} salvo com sucesso.`, 'success');
               }
-              state.salesDraft.editRecord = null;
-              state.activeSub = 'orders_quotes';
+              // SALVAR NÃO SAI DO PEDIDO (14/10/2026, pedido do usuário). A tela
+              // voltava para a lista a cada salvamento; agora recarrega o próprio
+              // pedido — relido do servidor, com código, status e totais
+              // gravados — na aba em que a pessoa estava. "Voltar" leva à lista.
+              const gravado = salvo && salvo.record;
+              if (gravado && gravado.id) {
+                let recarregado = gravado;
+                try {
+                  const relido = await api(`/api/sales/records/${encodeURIComponent(gravado.id)}`);
+                  recarregado = relido.record || relido || gravado;
+                } catch (erroAoReler) {
+                  // fica com o que a gravação devolveu
+                }
+                state.salesDraft.editRecord = recarregado;
+                state.salesDraft.novoStatus = '';
+                state.salesDraft.abaAoReabrir = abaAtiva;
+                state.activeSub = 'new_sale';
+              } else {
+                state.salesDraft.editRecord = null;
+                state.activeSub = 'orders_quotes';
+              }
               renderApp();
               loadModule('sales');
             } catch (error) {
