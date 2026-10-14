@@ -61,7 +61,8 @@ console.log('\n--- 3. a tela da venda ---');
 const app = ler('public/app.js');
 check('serviço não tem saldo no item (coluna "-", fora do aviso)', /if \(!produto \|\| produto\.movimentaEstoque === false\) return null;/.test(app));
 check('  e a dica diz por quê', /'Serviço: não controla estoque\.'/.test(app));
-check('a busca não mostra saldo de serviço', /if \(p\.movimentaEstoque === false\) return cabecalho\.slice\(0, -3\);/.test(app));
+// 14/10/2026: a busca é só nome e código para todo produto, serviço incluído.
+check('a busca não mostra saldo de serviço', app.includes("const rotuloProduto = (p) => `${p.name}${p.sku ? ` (${p.sku})` : ''}`;"));
 
 console.log('\n--- 4. a migração ---');
 const sql = ler('banco/migrations/fase-eh-mao-de-obra-sem-estoque.sql');

@@ -72,7 +72,8 @@ check('  cor negativa não aparece', /\.filter\(\(linha\) => linha\.quantity > 0
 const status = ler('public/modules/stock/subs/product_status.js');
 check('tela do produto: saldo total pelo qtdVisivel', /S\.qtdVisivel\(product\.stockQuantity\)/.test(status));
 const app = ler('public/app.js');
-check('venda: a busca diz só o disponível', /return cabecalho \+ `disponível \$\{qtdVisivel\(livre\)\}`;/.test(app));
+// 14/10/2026: a busca passou a ser só nome e código (sem preço e sem saldo).
+check('venda: a busca não mostra saldo', !/disponível \$\{qtdVisivel\(livre\)\}/.test(app));
 check('  a coluna Disponível sem o "de X"', !/sales-item-reservado/.test(app));
 check('  e o aviso sem a frase da reserva', !/Parte do estoque já está reservada em outros pedidos/.test(app));
 

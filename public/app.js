@@ -3606,75 +3606,13 @@ async function loadModule(moduleName) {
           const chave = `${productId}|${deposito}|${classValueId || ''}`;
           return Number((meta.saldosPorDeposito || {})[chave] || 0);
         };
-        const nomeDoDepositoEscolhido = () => {
-          const deposito = String((typeof formState !== 'undefined' ? formState.depositId : '') || '').trim();
-          const achado = (meta.deposits || []).find((d) => d.id === deposito);
-          return achado ? achado.name : '';
-        };
-        // O rótulo da busca já traz preço e saldo — escolher o produto sem ver
-        // que ele está zerado é o erro que a coluna Saldo Estoque só pega
-        // depois de adicionado. Renderização e attach usam o MESMO rótulo,
-        // senão a lista aberta mostra um texto e o campo preenche outro.
-        //
-        // O RESERVADO DE CADA PRODUTO, SOMADO UMA VEZ POR ABERTURA (fase DS).
-        //
-        // Era um `Object.entries(meta.reservas).filter(...)` DENTRO do rótulo:
-        // as ~140 reservas varridas para cada um dos 5.560 produtos, duas vezes
-        // por redesenho do formulário — e o formulário redesenha a cada item,
-        // quantidade, desconto, interruptor. Medido: 690 ms só nisso, por
-        // redesenho. `meta` não muda enquanto a tela está aberta, então a soma
-        // é feita aqui, uma vez.
-        //
-        // A CONTA É A MESMA, NA MESMA ORDEM, até o último bit do número: a chave
-        // sem cor (`id|`) de um lado, e do outro a soma, a partir de zero, das
-        // chaves com cor na ordem de `Object.entries` — exatamente as parcelas e
-        // a ordem do `reduce` antigo. Somar tudo junto daria o mesmo na prática,
-        // mas não por construção com quantidade fracionária. O id é o que vem
-        // antes da PRIMEIRA barra: id de produto não tem `|` (createId não o
-        // produz; 0 no banco em 07/10/2026), e é por isso que a chave usa `|`.
-        const reservadoPorProduto = (() => {
-          const semCor = new Map();
-          const comCor = new Map();
-          for (const [chave, qtd] of Object.entries(meta.reservas || {})) {
-            const barra = chave.indexOf('|');
-            if (barra < 0) continue;
-            const id = chave.slice(0, barra);
-            if (chave === `${id}|`) semCor.set(id, Number(qtd || 0));
-            else comCor.set(id, (comCor.get(id) || 0) + Number(qtd || 0));
-          }
-          return { semCor, comCor };
-        })();
-        // SEM NEGATIVO E SEM RESERVA NA TELA (13/10/2026, pedido do usuário):
-        // saldo negativo aparece como 0, e o rótulo diz só o disponível, sem o
-        // "de X" da reserva. O número de verdade continua no razão, nos
-        // relatórios de estoque e na conta do faturamento.
+        // O RÓTULO DA BUSCA É SÓ NOME E CÓDIGO (14/10/2026, pedido do usuário:
+        // "apenas nome e código de forma clean"). Preço e saldo saíram dele: o
+        // preço entra no item ao escolher, e o saldo aparece na coluna Saldo
+        // Estoque do item. Renderização e attach usam o MESMO rótulo, senão a
+        // lista aberta mostra um texto e o campo preenche outro.
         const qtdVisivel = (n) => salesFormatQty(Math.max(0, Number(n || 0)));
-        const rotuloProduto = (p) => {
-          const reservado = Number(reservadoPorProduto.semCor.get(String(p.id)) || 0)
-            + (reservadoPorProduto.comCor.get(String(p.id)) || 0);
-          const livre = Number(p.stockQuantity || 0) - reservado;
-          const cabecalho = `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${salesFormatBRL(p.salePrice)} · `;
-          // Serviço: sem saldo nenhum no rótulo (13/10/2026).
-          if (p.movimentaEstoque === false) return cabecalho.slice(0, -3);
-
-          // COM DEPOSITO ESCOLHIDO, o rotulo fala DELE. E' o saldo que a venda
-          // vai consumir e o que a guarda do servidor vai conferir; mostrar o
-          // total aqui seria oferecer 15 de um deposito que tem 5.
-          const noDeposito = saldoNoDepositoEscolhido(p.id, '');
-          if (noDeposito !== null) {
-            const nome = nomeDoDepositoEscolhido();
-            return cabecalho
-              + `${qtdVisivel(noDeposito)} em ${nome}`
-              // O total vai junto, entre parenteses: sem ele, quem ve "0 em
-              // Barra" conclui que o produto acabou, quando ele pode ter 10 no
-              // galpao esperando uma transferencia.
-              + (Math.max(0, Number(p.stockQuantity || 0)) !== Math.max(0, Number(noDeposito))
-                ? ` (${qtdVisivel(p.stockQuantity)} no total)`
-                : '');
-          }
-
-          return cabecalho + `disponível ${qtdVisivel(livre)}`;
-        };
+        const rotuloProduto = (p) => `${p.name}${p.sku ? ` (${p.sku})` : ''}`;
         // AS OPÇÕES DOS DOIS CAMPOS DE BUSCA, MONTADAS UMA VEZ (fase DS).
         //
         // `renderForm` redesenha o formulário inteiro a cada mexida, e montava

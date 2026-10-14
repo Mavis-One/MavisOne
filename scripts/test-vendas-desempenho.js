@@ -207,32 +207,15 @@ const meta = {
   deposits: [{ id: 'dep1', name: 'Barra' }],
   directory: [{ id: 'c1', name: 'Cliente A' }]
 };
-// A conta ANTIGA, escrita aqui como referência (era a do app.js até a fase DS).
 const formatoAntigo = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const qtd = (value) => { const n = Number(value || 0); return Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/\.?0+$/, ''); };
-const rotuloAntigo = (p, deposito) => {
-  const reservado = Number((meta.reservas || {})[`${p.id}|`] || 0)
-    + Object.entries(meta.reservas || {})
-      .filter(([chave]) => chave.startsWith(`${p.id}|`) && chave !== `${p.id}|`)
-      .reduce((soma, [, q]) => soma + Number(q || 0), 0);
-  const livre = Number(p.stockQuantity || 0) - reservado;
-  const cabecalho = `${p.name}${p.sku ? ` (${p.sku})` : ''} — ${formatoAntigo(p.salePrice)} · `;
-  // 13/10/2026, pedido do usuário: sem negativo (vira 0) e sem o "de X" da
-  // reserva — o rótulo diz só o disponível.
-  const vis = (n) => qtd(Math.max(0, Number(n || 0)));
-  if (deposito) {
-    const noDeposito = Number(meta.saldosPorDeposito[`${p.id}|${deposito}|`] || 0);
-    const nome = (meta.deposits.find((d) => d.id === deposito) || {}).name || '';
-    return cabecalho + `${vis(noDeposito)} em ${nome}`
-      + (Math.max(0, Number(p.stockQuantity || 0)) !== Math.max(0, noDeposito) ? ` (${vis(p.stockQuantity)} no total)` : '');
-  }
-  return cabecalho + `disponível ${vis(livre)}`;
-};
+// 14/10/2026, pedido do usuário: o rótulo é só nome e código, "de forma
+// clean" — sem preço e sem saldo, com ou sem depósito escolhido.
+const rotuloAntigo = (p) => `${p.name}${p.sku ? ` (${p.sku})` : ''}`;
 for (const deposito of ['', 'dep1']) {
   const formState = { depositId: deposito };
   const nova = fabrica(meta, formState);
   const iguais = meta.products.every((p) => nova.rotuloProduto(p) === rotuloAntigo(p, deposito));
-  check(`depósito ${JSON.stringify(deposito)}: rótulos iguais à conta antiga`, iguais,
+  check(`depósito ${JSON.stringify(deposito)}: rótulo só com nome e código`, iguais,
     meta.products.map((p) => nova.rotuloProduto(p)).join(' | '));
   const primeira = nova.opcoesDeProduto();
   check('  a lista é guardada: o segundo pedido devolve o MESMO array', nova.opcoesDeProduto() === primeira);

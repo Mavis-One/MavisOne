@@ -364,9 +364,10 @@ check('o seletor de produto le o deposito escolhido',
   /const saldoNoDepositoEscolhido = \(productId, classValueId\) =>/.test(app));
 check('  e a linha do item tambem',
   /const noDeposito = saldoNoDepositoEscolhido\(item\.productId, item\.classValueId\);/.test(app));
-// "0 em Barra" sozinho faria concluir que o produto acabou, quando ele pode
-// estar no galpao esperando transferencia.
-check('o rotulo mostra o total entre parenteses', /no total\)/.test(servidorCru) || /no total\)/.test(ler('public/app.js')));
+// 14/10/2026: o rotulo da busca passou a ser so nome e codigo, a pedido do
+// usuario. O saldo do deposito fica na coluna Saldo Estoque do item.
+check('o rotulo da busca e so nome e codigo',
+  ler('public/app.js').includes("const rotuloProduto = (p) => `${p.name}${p.sku ? ` (${p.sku})` : ''}`;"));
 // Sem isto os numeros continuariam os do deposito anterior, com o campo
 // dizendo outro nome.
 check('trocar o deposito redesenha o formulario',
