@@ -4958,3 +4958,8 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .modal-nota .finance-modal-info-grid strong { overflow-wrap: anywhere; }
 .modal-nota .nfe-modal-chave { grid-column: span 2; }
 @media (max-width: 640px) { .modal-nota .nfe-modal-chave { grid-column: auto; } }
+/* Centros de Custo (fase EK): as empresas do centro, em caixas de marcar. */
+.cc-empresas { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 10px 0; }
+.cc-empresas legend { padding: 0 6px; font-weight: 600; }
+.cc-empresa { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.cc-empresa input { width: auto; }

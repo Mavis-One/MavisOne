@@ -2107,6 +2107,23 @@ function enderecoDaTransportadora(entry) {
 }
 
 /** As transportadoras com os dados do grupo de transporte da NF-e. */
+/**
+ * As empresas/filiais de um centro de custo (fase EK): só ids de
+ * estabelecimentos que existem, sem repetir. Vazio = vale para todas.
+ */
+async function estabelecimentosDoCentroDeCusto(ids) {
+  const pedidos = [...new Set((Array.isArray(ids) ? ids : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!pedidos.length) return [];
+  const existentes = new Set((await fiscalDb.getEstabelecimentos()).map((e) => e.id));
+  const desconhecidos = pedidos.filter((id) => !existentes.has(id));
+  if (desconhecidos.length) {
+    const erro = new Error('Empresa não encontrada para o centro de custo.');
+    erro.status = 400;
+    throw erro;
+  }
+  return pedidos;
+}
+
 function transportadorasParaNfe(data) {
   return [...(data.people || []), ...(data.cnpjs || [])]
     .filter((entry) => Array.isArray(entry.roles) && entry.roles.includes('Transportadora'))
@@ -18777,10 +18794,36 @@ async function tratarRequisicao(req, res) {
       if (!name) {
         return sendJson(res, { error: 'Informe o nome do centro de custo' }, 400);
       }
-      const costCenter = await db.createCostCenter({ name });
+      // Fase EK: as empresas/filiais em que o centro vale (vazio = todas).
+      const estabelecimentoIds = await estabelecimentosDoCentroDeCusto(body.estabelecimentoIds);
+      const costCenter = await db.createCostCenter({ name, estabelecimentoIds });
       return sendJson(res, { success: true, costCenter });
     } catch (error) {
       return sendErro(res, error, 'Erro ao criar centro de custo', 400);
+    }
+  }
+
+  // EDITAR O CENTRO DE CUSTO (fase EK): nome e empresas vinculadas. Mudar as
+  // empresas não mexe nos lançamentos que já usam o centro — só no que o campo
+  // oferece daqui para frente.
+  if (/^\/api\/finance\/cost-centers\/[^/]+$/.test(pathname) && req.method === 'PUT') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      const body = await readBody(req);
+      const name = String(body.name || '').trim();
+      if (!name) {
+        return sendJson(res, { error: 'Informe o nome do centro de custo' }, 400);
+      }
+      const estabelecimentoIds = await estabelecimentosDoCentroDeCusto(body.estabelecimentoIds);
+      const costCenter = await db.updateCostCenter(id, { name, estabelecimentoIds });
+      if (!costCenter) return sendJson(res, { error: 'Centro de custo não encontrado' }, 404);
+      return sendJson(res, { success: true, costCenter });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao salvar centro de custo', 400);
     }
   }
 

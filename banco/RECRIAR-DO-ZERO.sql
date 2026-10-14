@@ -122,6 +122,7 @@
 --   85. banco/migrations/fase-eg-inventarios.sql
 --   86. banco/migrations/fase-eh-mao-de-obra-sem-estoque.sql
 --   87. banco/migrations/fase-ej-codigo-do-produto-imutavel.sql
+--   88. banco/migrations/fase-ek-centro-de-custo-por-empresa.sql
 -- ============================================================================
 
 
@@ -9951,4 +9952,30 @@ drop trigger if exists products_sku_imutavel on products;
 create trigger products_sku_imutavel
   before update of sku on products
   for each row execute function products_sku_imutavel();
+
+
+-- ============================================================================
+-- >>> banco/migrations/fase-ek-centro-de-custo-por-empresa.sql
+-- ============================================================================
+
+-- ============================================================================
+-- FASE EK — CENTRO DE CUSTO VINCULADO ÀS EMPRESAS
+-- ============================================================================
+--
+-- Pedido do usuário (14/10/2026): o usuário do Financeiro cria o centro de
+-- custo, dá o nome e vincula as empresas/filiais (estabelecimentos) em que ele
+-- vale. No lançamento, o campo Centro de custo mostra os centros da empresa do
+-- lançamento.
+--
+-- Lista vazia = vale para todas as empresas: é como ficam os centros que já
+-- existiam antes desta fase, e eles continuam aparecendo em todo lançamento.
+-- Uma coluna de array, e não uma tabela de ligação, porque a lista é pequena
+-- (as filiais do grupo) e é sempre lida inteira junto com o centro.
+-- ============================================================================
+
+alter table cost_centers
+  add column if not exists estabelecimento_ids text[] not null default '{}';
+
+comment on column cost_centers.estabelecimento_ids is
+  'Estabelecimentos (empresas/filiais) em que o centro de custo vale. Vazio = todos.';
 

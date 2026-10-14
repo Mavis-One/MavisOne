@@ -2034,6 +2034,8 @@ const moduleSubItems = {
     { key: 'contas_a_receber', label: 'Contas a Receber', desc: 'Receitas a receber, com baixa.' },
     { key: 'lancamentos', label: 'Lançamentos', desc: 'Contas a pagar e a receber, com baixa.' },
     { key: 'novo_lancamento', label: 'Novo Lançamento', desc: 'Registra uma receita ou uma despesa.' },
+    // Fase EK (14/10/2026): o usuário do Financeiro cria e vincula às empresas.
+    { key: 'centros_de_custo', label: 'Centros de Custo', desc: 'Centros de custo e as empresas em que cada um vale.' },
     { key: 'nfe_emitidas', label: 'NF-e Emitidas', desc: 'Notas emitidas, com DANFE e XML.' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e, com pré-visualização antes de enviar.' },
     { key: 'emitir_nfe_focus', label: 'Emitir NF-e (Focus)', desc: 'Emissão pela integração Focus NFe.' },

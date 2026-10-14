@@ -112,8 +112,17 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   function categoryOptions() {
     return meta.categories.map((c) => `<option value="${c.id}" ${editEntry && editEntry.category === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
   }
-  function costCenterOptions() {
-    return meta.costCenters.map((c) => `<option value="${c.id}" ${editEntry && editEntry.costCenter === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+  // FASE EK (14/10/2026): o centro de custo vale para as empresas que o
+  // usuário vinculou a ele (vazio = todas). O campo mostra os da empresa do
+  // lançamento; o já gravado continua aparecendo, mesmo de outra empresa.
+  function centroValeAqui(c) {
+    const ids = Array.isArray(c.estabelecimentoIds) ? c.estabelecimentoIds : [];
+    return !ids.length || !estabelecimentoAtual || ids.includes(estabelecimentoAtual);
+  }
+  function costCenterOptions(selecionado = editEntry ? editEntry.costCenter : '') {
+    return meta.costCenters
+      .filter((c) => centroValeAqui(c) || c.id === selecionado)
+      .map((c) => `<option value="${c.id}" ${selecionado === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
   }
   /**
    * As contas que ESTE estabelecimento pode usar (fase CD).
@@ -494,7 +503,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         bankAccount: '.js-bank-account-select'
       };
       try {
-        const res = await api(endpointByKind[inlineAddKind], { method: 'POST', body: JSON.stringify({ name }) });
+        // O centro criado aqui nasce vinculado à empresa do lançamento (fase EK).
+        const corpo = inlineAddKind === 'costCenter' && estabelecimentoAtual ? { name, estabelecimentoIds: [estabelecimentoAtual] } : { name };
+        const res = await api(endpointByKind[inlineAddKind], { method: 'POST', body: JSON.stringify(corpo) });
         const created = res.category || res.costCenter || res.bankAccount;
         if (inlineAddKind === 'category') meta.categories.push(created);
         if (inlineAddKind === 'costCenter') meta.costCenters.push(created);
@@ -540,6 +551,13 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       if (perdeuAlguma) {
         showToast(`${perdeuAlguma} não está liberada para este estabelecimento. Escolha outra conta.`, 'warning');
       }
+      // E os centros de custo da empresa nova (fase EK).
+      content.querySelectorAll('.js-cost-center-select').forEach((select) => {
+        const escolhido = select.value;
+        const aindaVale = !escolhido || meta.costCenters.some((c) => c.id === escolhido && centroValeAqui(c));
+        select.innerHTML = `<option value="">Selecione</option>${costCenterOptions(aindaVale ? escolhido : '')}`;
+        if (!aindaVale) showToast('O centro de custo escolhido não é desta empresa. Escolha outro.', 'warning');
+      });
     });
 
     document.getElementById('financeEntryForm')?.addEventListener('submit', async (event) => {
