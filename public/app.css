@@ -1384,6 +1384,15 @@ button.success:hover { background: var(--success-hover); }
 .escolha-modal-campo { display: grid; gap: 6px; margin-top: 14px; }
 /* Motivo da NF-e com erro (fase EO). */
 .erro-nfe-modal { width: min(94%, 600px); text-align: left; }
+/* Alteração em massa dos impostos da emissão (14/10/2026). */
+.nfe-massa-modal { width: min(96%, 900px); max-height: 90vh; overflow: auto; text-align: left; }
+.nfe-massa-itens { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px 14px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.nfe-massa-itens legend { padding: 0 6px; font-weight: 600; }
+.nfe-massa-itens label { display: flex; align-items: center; gap: 8px; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nfe-massa-itens .nfe-massa-todos { grid-column: 1 / -1; font-weight: 600; }
+.nfe-massa-modal .nfe-imposto-grupo + .nfe-imposto-grupo { margin-top: 10px; }
+.nfe-massa-modal [data-massa-caixa] { display: block; }
+.nfe-massa-modal [data-massa-caixa] > * { width: 100%; }
 .erro-nfe-codigo { margin: 0 0 8px; font-size: 0.85rem; }
 .erro-nfe-motivos { margin: 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.45; max-height: 50vh; overflow: auto; }
 .nfe-erro-motivo { padding: 0; background: none; border: 0; cursor: pointer; }

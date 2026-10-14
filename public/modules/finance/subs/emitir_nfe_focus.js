@@ -1174,6 +1174,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const topo = `
       <div class="nfe-impostos-topo">
         <button type="button" class="secondary" data-previa-recalcular>Recalcular</button>
+        <button type="button" class="secondary" data-fiscal-massa>Alterar em massa</button>
         ${previaCarregando ? '<span class="muted">Calculando…</span>' : ''}
       </div>`;
     if (previaErro) {
@@ -1295,6 +1296,137 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     }
   }
 
+  /**
+   * Grava UM valor fiscal num item, como a pessoa digitou. Única regra para o
+   * campo do item e para a alteração em massa (14/10/2026): CST com 3 dígitos
+   * é CSOSN; trocar o CST do IBS/CBS leva o cClassTrib junto; vazio volta ao
+   * da regra fiscal.
+   */
+  function gravarCampoFiscal(item, linhaPrevia, campo, bruto) {
+    item.fiscal = item.fiscal || {};
+    const valor = String(bruto === undefined || bruto === null ? '' : bruto).trim();
+    if (campo === 'cstIbsCbs') {
+      // O cClassTrib começa pelo CST: trocar o CST leva o cClassTrib para o
+      // primeiro código dele (se o atual não for daquele CST).
+      const atual = String(valorFiscal(item, linhaPrevia, 'classTrib') || '');
+      const doCst = codigosDoClassTrib(valor);
+      if (valor && doCst.length && !atual.startsWith(valor)) item.fiscal.classTrib = String(doCst[0].codigo).trim();
+      // CST sem código na tabela: o digitado de outro CST não fica valendo.
+      else if (valor && !doCst.length && String(item.fiscal.classTrib || '') && !String(item.fiscal.classTrib).startsWith(valor)) delete item.fiscal.classTrib;
+    }
+    if (campo === 'cstIcms') {
+      // Três dígitos é CSOSN (Simples Nacional); dois é CST.
+      delete item.fiscal.cstIcms; delete item.fiscal.csosn;
+      if (valor) item.fiscal[valor.length === 3 ? 'csosn' : 'cstIcms'] = valor;
+    } else if (valor === '') {
+      delete item.fiscal[campo];
+    } else {
+      item.fiscal[campo] = CAMPOS_DE_TEXTO.includes(campo) ? valor : Number(valor);
+    }
+  }
+
+  // ALTERAÇÃO EM MASSA (14/10/2026, pedido do usuário: "faça um botão para
+  // alteração em massa de dados fiscais e impostos"). Os mesmos campos da aba,
+  // menos base e valor (saem do servidor) e o ST retido (é de cada item, da
+  // nota de entrada). Campo vazio não mexe; só os itens marcados mudam.
+  const GRUPOS_EM_MASSA = GRUPOS_FISCAIS
+    .filter((g) => !g.soComStRetido)
+    .map((g) => ({ titulo: g.titulo, campos: g.campos.filter(([campo]) => !CAMPOS_SO_LEITURA.includes(campo)) }))
+    .filter((g) => g.campos.length);
+
+  function campoEmMassa(campo, cstIbsCbsEscolhido) {
+    if (campo === 'classTrib') {
+      const opcoesClass = cstIbsCbsEscolhido ? opcoesDoClassTrib(cstIbsCbsEscolhido, '') : null;
+      if (opcoesClass) return `<select data-massa-campo="classTrib">${opcoesClass.replace('>—</option>', '>— manter —</option>')}</select>`;
+      return '<input data-massa-campo="classTrib" placeholder="manter" />';
+    }
+    const ehCst = campo === 'cstIcms' || campo in LISTA_DO_CST;
+    const opcoes = ehCst ? opcoesDoCst(campo, '') : null;
+    if (opcoes) return `<select data-massa-campo="${campo}">${opcoes.replace('>—</option>', '>— manter —</option>')}</select>`;
+    return `<input data-massa-campo="${campo}" ${CAMPOS_DE_TEXTO.includes(campo) ? '' : 'type="number" step="0.01"'} placeholder="manter" />`;
+  }
+
+  function abrirAlteracaoEmMassa() {
+    document.getElementById('nfeMassaModal')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'nfeMassaModal';
+    overlay.className = 'modal-overlay';
+    const nomeDoItem = (item, index) => String(item.descricao || (previa && previa.itens[index] && previa.itens[index].descricao) || '');
+    overlay.innerHTML = `
+      <div class="modal nfe-massa-modal" role="dialog" aria-modal="true" aria-labelledby="nfeMassaTitulo">
+        <div class="modal-body">
+          <h4 class="prompt-titulo" id="nfeMassaTitulo">Alterar impostos em massa</h4>
+          <fieldset class="nfe-massa-itens">
+            <legend>Itens</legend>
+            <label class="nfe-massa-todos"><input type="checkbox" data-massa-todos checked /> Todos (${itens.length})</label>
+            ${itens.map((item, index) => `
+              <label><input type="checkbox" data-massa-item="${index}" checked /> Item ${index + 1} — ${escapeHtml(nomeDoItem(item, index))}</label>`).join('')}
+          </fieldset>
+          ${GRUPOS_EM_MASSA.map((g) => `
+            <div class="nfe-imposto-grupo">
+              <span class="nfe-imposto-titulo">${g.titulo}</span>
+              <div class="nfe-imposto-campos">
+                ${g.campos.map(([campo, rotulo]) => `<label>${rotulo}<span data-massa-caixa="${campo}">${campoEmMassa(campo, '')}</span></label>`).join('')}
+              </div>
+            </div>`).join('')}
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-muted" data-massa-acao="cancelar">Cancelar</button>
+          <button type="button" class="btn btn-muted" data-massa-acao="regra">Usar o da regra nos marcados</button>
+          <button type="button" class="btn btn-primary" data-massa-acao="aplicar">Aplicar</button>
+        </div>
+      </div>`;
+    const fechar = () => { overlay.remove(); document.removeEventListener('keydown', aoTeclar); };
+    const aoTeclar = (e) => { if (e.key === 'Escape') fechar(); };
+    document.addEventListener('keydown', aoTeclar);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) fechar(); });
+    const marcados = () => [...overlay.querySelectorAll('[data-massa-item]')].filter((c) => c.checked).map((c) => Number(c.dataset.massaItem));
+    overlay.querySelector('[data-massa-todos]').addEventListener('change', (e) => {
+      overlay.querySelectorAll('[data-massa-item]').forEach((c) => { c.checked = e.target.checked; });
+    });
+    overlay.querySelectorAll('[data-massa-item]').forEach((c) => c.addEventListener('change', () => {
+      const todos = overlay.querySelectorAll('[data-massa-item]');
+      overlay.querySelector('[data-massa-todos]').checked = [...todos].every((x) => x.checked);
+    }));
+    // O cClassTrib segue o CST do IBS/CBS escolhido aqui, como no item.
+    overlay.addEventListener('change', (e) => {
+      if (e.target.dataset.massaCampo !== 'cstIbsCbs') return;
+      const caixa = overlay.querySelector('[data-massa-caixa="classTrib"]');
+      if (caixa) caixa.innerHTML = campoEmMassa('classTrib', String(e.target.value || '').trim());
+    });
+    overlay.querySelector('[data-massa-acao=cancelar]').addEventListener('click', fechar);
+    overlay.querySelector('[data-massa-acao=regra]').addEventListener('click', () => {
+      const lista = marcados();
+      if (!lista.length) { showToast('Marque ao menos um item.', 'warning'); return; }
+      lista.forEach((i) => { if (itens[i]) itens[i].fiscal = {}; });
+      fechar();
+      showToast(`${lista.length} item(ns) voltaram ao que a regra fiscal dá.`, 'success');
+      carregarPrevia();
+    });
+    overlay.querySelector('[data-massa-acao=aplicar]').addEventListener('click', () => {
+      const lista = marcados();
+      if (!lista.length) { showToast('Marque ao menos um item.', 'warning'); return; }
+      // A ordem importa: o CST do IBS/CBS antes do cClassTrib, senão a troca de
+      // CST desfaria o cClassTrib escolhido aqui.
+      const preenchidos = [...overlay.querySelectorAll('[data-massa-campo]')]
+        .map((el) => [el.dataset.massaCampo, String(el.value || '').trim()])
+        .filter(([, v]) => v !== '')
+        .sort(([a], [b]) => (a === 'classTrib') - (b === 'classTrib'));
+      if (!preenchidos.length) { showToast('Preencha ao menos um campo para aplicar.', 'warning'); return; }
+      lista.forEach((i) => {
+        const item = itens[i];
+        if (!item) return;
+        const linha = previa && previa.itens ? previa.itens[i] : null;
+        preenchidos.forEach(([campo, valor]) => gravarCampoFiscal(item, linha, campo, valor));
+      });
+      fechar();
+      showToast(`${preenchidos.length} campo(s) aplicado(s) em ${lista.length} item(ns).`, 'success');
+      carregarPrevia();
+    });
+    document.body.appendChild(overlay);
+    overlay.querySelector('[data-massa-campo]')?.focus();
+  }
+
   function ligarImpostosETotais() {
     const impostos = document.getElementById('nfeFocusImpostos');
     const totais = document.getElementById('nfeFocusTotais');
@@ -1312,6 +1444,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         renderImpostos();
         return;
       }
+      if (evento.target.closest('[data-fiscal-massa]')) {
+        abrirAlteracaoEmMassa();
+        return;
+      }
       const botao = evento.target.closest('[data-previa-recalcular], [data-fiscal-limpar]');
       if (!botao) return;
       if (botao.dataset.fiscalLimpar !== undefined) itens[Number(botao.dataset.fiscalLimpar)].fiscal = {};
@@ -1320,29 +1456,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     impostos && impostos.addEventListener('change', (evento) => {
       const campo = evento.target.dataset.fiscalCampo;
       if (!campo) return;
-      const item = itens[Number(evento.target.dataset.fiscalIndex)];
+      const indice = Number(evento.target.dataset.fiscalIndex);
+      const item = itens[indice];
       if (!item) return;
-      item.fiscal = item.fiscal || {};
-      const valor = String(evento.target.value || '').trim();
-      if (campo === 'cstIbsCbs') {
-        // O cClassTrib começa pelo CST: trocar o CST leva o cClassTrib para o
-        // primeiro código dele (se o atual não for daquele CST).
-        const linhaPrevia = previa && previa.itens ? previa.itens[Number(evento.target.dataset.fiscalIndex)] : null;
-        const atual = String(valorFiscal(item, linhaPrevia, 'classTrib') || '');
-        const doCst = codigosDoClassTrib(valor);
-        if (valor && doCst.length && !atual.startsWith(valor)) item.fiscal.classTrib = String(doCst[0].codigo).trim();
-        // CST sem código na tabela: o digitado de outro CST não fica valendo.
-        else if (valor && !doCst.length && String(item.fiscal.classTrib || '') && !String(item.fiscal.classTrib).startsWith(valor)) delete item.fiscal.classTrib;
-      }
-      if (campo === 'cstIcms') {
-        // Três dígitos é CSOSN (Simples Nacional); dois é CST.
-        delete item.fiscal.cstIcms; delete item.fiscal.csosn;
-        if (valor) item.fiscal[valor.length === 3 ? 'csosn' : 'cstIcms'] = valor;
-      } else if (valor === '') {
-        delete item.fiscal[campo];
-      } else {
-        item.fiscal[campo] = CAMPOS_DE_TEXTO.includes(campo) ? valor : Number(valor);
-      }
+      gravarCampoFiscal(item, previa && previa.itens ? previa.itens[indice] : null, campo, evento.target.value);
       evento.target.closest('label')?.classList.toggle('is-editado', editado(item, campo));
       // Base e valor não se digitam mais: refaz a prévia para mostrar o que o
       // CST ou o percentual novo dão.
