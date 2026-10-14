@@ -67,11 +67,60 @@ check('nome sem o CNPJ de MEI do começo', C.nomeComparavel('49.292.546 Fulána 
 
 console.log('\n--- 4. servidor e script ---');
 const server = semComentarios(ler('server.js'));
-check('rota só para administrador, com simulação', /pathname === '\/api\/finance\/importacao\/viper'[\s\S]{0,200}!\(await ehAdmin\(user\)\)/.test(server) && /gravarContas\(body\.titulos, \{ simular: body\.simular === true, usuario: user \}\)/.test(server));
+check('rota só para administrador, com simulação', /pathname === '\/api\/finance\/importacao\/viper'[\s\S]{0,200}!\(await ehAdmin\(user\)\)/.test(server) && /gravarContas\(body\.titulos, \{\s*simular: body\.simular === true, usuario: user, quitados: body\.quitados\s*\}\)/.test(server));
 check('fica na auditoria', /action: 'financeiro\.importacao\.viper'/.test(server));
 const db = semComentarios(ler('lib/db/contas-importadas.js'));
 check('grava pelo mesmo createFinancialEntry da tela', /financeiro\.createFinancialEntry\(/.test(db));
-check('NÃO dá baixa em nada (título que sumiu do Viper fica como está)', !/updateFinancialEntry|status: 'paid'|'pago'/.test(db));
+// Espelho (14/10/2026): só mexe no que CASOU com uma linha da planilha — o
+// título que sumiu do Viper continua como está.
+check('só apaga baixa PRESUMIDA da carga de 11/09', /for \(const idBaixa of e\.idsPresumidas\) await financeiro\.deleteFinancialPayment\(idBaixa\);/.test(db)
+  && /note like 'Baixa importada do ViperERP \(presumida%'/.test(ler('lib/db/contas-importadas.js')));
+check('baixa pelo mesmo createFinancialPayment da tela', /financeiro\.createFinancialPayment\(/.test(db));
+check('só o que casou com a planilha é tocado', /for \(const t of \[\.\.\.jaExistem, \.\.\.quitadosCasados\]\)/.test(db));
+
+console.log('\n--- 5. o espelho (14/10/2026) ---');
+const comPago = C.lerPlanilha(planilha(C.CABECALHO_RECEBER, [
+  ['SAL INFINITY PLUS COMERCIO LTDA FILIAL 05 (TIMBO)', 'JOSE', 'VEN-1/1', '', '09/10/2026', '09/10/2026', '100', '100', '0', 'Pago', '']
+]), 'RECEITA');
+check('o quitado não entra como novo, mas vem para o espelho', comPago.titulos.length === 0 && comPago.quitados.length === 1 && comPago.quitados[0].aberto === 0);
+const tv = (aberto, quitado = 0) => ({ aberto, quitado });
+const aqui = (emAberto, extra = {}) => ({ amount: 100, status: 'pending', emAberto, temBaixas: false, nBaixas: 0, baixasPresumidas: 0, ...extra });
+check('igual: nada', C.acaoDoEspelho(tv(100), aqui(100)).acao === 'nada');
+const total = C.acaoDoEspelho(tv(0, 100), aqui(100));
+check('quitado no Viper, aberto aqui: baixa total', total.acao === 'baixar' && total.valor === 100 && total.total);
+const parte = C.acaoDoEspelho(tv(60, 40), aqui(100));
+check('quitado em parte no Viper: baixa da diferença', parte.acao === 'baixar' && parte.valor === 40 && !parte.total);
+const mudou = C.acaoDoEspelho(tv(80), aqui(100));
+check('valor mudou no Viper sem quitação: ajusta', mudou.acao === 'ajustar' && mudou.novoValor === 80);
+check('Viper com MAIS em aberto e sem baixa aqui: ajusta para cima', C.acaoDoEspelho(tv(120), aqui(100)).novoValor === 120);
+check('com baixa de gente aqui, só reporta', C.acaoDoEspelho(tv(120), aqui(60, { temBaixas: true, nBaixas: 1 })).acao === 'divergencia');
+check('quitado aqui por baixa REAL e aberto no Viper: só reporta',
+  C.acaoDoEspelho(tv(100), aqui(0, { status: 'paid', temBaixas: true, nBaixas: 1 })).acao === 'divergencia');
+const reabre = C.acaoDoEspelho(tv(100), aqui(0, { status: 'paid', temBaixas: true, nBaixas: 1, baixasPresumidas: 1 }));
+check('quitado aqui SÓ pela baixa presumida da carga: reabre', reabre.acao === 'reabrir' && reabre.depois.acao === 'nada');
+const reabreParte = C.acaoDoEspelho(tv(30, 70), aqui(0, { status: 'paid', temBaixas: true, nBaixas: 1, baixasPresumidas: 1 }));
+check('  e se o Viper quitou uma parte, baixa a parte depois de reabrir',
+  reabreParte.acao === 'reabrir' && reabreParte.depois.acao === 'baixar' && reabreParte.depois.valor === 70);
+check('baixa presumida + baixa real: só reporta',
+  C.acaoDoEspelho(tv(100), aqui(0, { status: 'paid', temBaixas: true, nBaixas: 2, baixasPresumidas: 1 })).acao === 'divergencia');
+const casar = C.criarCasador([{ id: 'a', type: 'RECEITA', document: 'LF1 · VEN-1/1', clientSupplierName: 'JOSE', amount: 100, dueDate: '2026-10-09' }]);
+check('o casador lembra: o mesmo lançamento não casa duas vezes', Boolean(casar(comPago.quitados[0])) && !casar(comPago.quitados[0]));
+// "L 32017" é da THE BLACK e também da VIVA COMÉRCIO no Viper: pelo documento
+// só, a linha de um casava com o lançamento do outro (prova local, 14/10/2026).
+const repetidos = [
+  { tipo: 'DESPESA', documento: 'L 32017', pessoa: 'THE BLACK PARTICIPACOES LTDA', vencimento: '2027-01-25', valorOriginal: 374, aberto: 374 },
+  { tipo: 'DESPESA', documento: 'L 32017', pessoa: 'VIVA COMERCIO LTDA', vencimento: '2026-07-27', valorOriginal: 54.46, aberto: 54.46 }
+];
+const casarRep = C.criarCasador([
+  { id: 'viva', type: 'DESPESA', document: 'LF9 · L 32017', clientSupplierName: 'VIVA COMERCIO LTDA', amount: 54.46, dueDate: '2026-07-27' },
+  { id: 'black', type: 'DESPESA', document: 'LF8 · L 32017', clientSupplierName: 'THE BLACK PARTICIPACOES LTDA', amount: 374, dueDate: '2027-01-25' }
+], repetidos);
+check('documento repetido em pessoas diferentes: cada um casa com o seu',
+  casarRep(repetidos[0]).existenteId === 'black' && casarRep(repetidos[1]).existenteId === 'viva');
+const casarSemPessoa = C.criarCasador([
+  { id: 'x', type: 'DESPESA', document: 'LF9 · L 32017', clientSupplierName: 'OUTRO', amount: 1, dueDate: '2020-01-01' }
+], repetidos);
+check('  e repetido sem pessoa nem vencimento que batam não casa pelo documento', casarSemPessoa(repetidos[0]) === null);
 check('pessoa só liga quando o nome aponta para UMA', /ids\.length === 1 \? ids\[0\] : ''/.test(db));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);

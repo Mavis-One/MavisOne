@@ -13,6 +13,12 @@
 //
 // Exporte do Viper SEM filtro de vencimento (todo o em aberto). KACCAU e
 // Blumenau ficam de fora. O porquê de cada regra: lib/importacao-contas-viper.js.
+//
+// ESPELHO (14/10/2026): o financeiro fica igual à planilha — além dos novos,
+// reabre o que a carga de 11/09 deu como pago por suposição, baixa o que foi
+// quitado no Viper e ajusta valor que mudou lá. Baixa real (de gente, ou a
+// importada como baixa de verdade) não é desfeita: só aparece como divergência
+// no relatório. Rodar duas vezes não muda nada na segunda.
 // As planilhas NÃO entram no repositório.
 'use strict';
 const fs = require('fs');
@@ -40,6 +46,7 @@ async function main() {
     return;
   }
   let titulos = [];
+  let quitados = [];
   const ignorados = [];
   for (const [tipo, arquivo] of arquivos) {
     const r = lerPlanilha(lerXlsx(arquivo), tipo);
@@ -49,6 +56,7 @@ async function main() {
     const motivos = r.ignorados.reduce((m, x) => { m[x.motivo] = (m[x.motivo] || 0) + 1; return m; }, {});
     if (r.ignorados.length) console.log('  fora:', JSON.stringify(motivos));
     titulos = titulos.concat(r.titulos);
+    quitados = quitados.concat(r.quitados || []);
     ignorados.push(...r.ignorados);
   }
 
@@ -72,15 +80,19 @@ async function main() {
   };
   const { token } = await chamar('/api/login', { username: usuario, password: senha });
   const enviar = tem('enviar');
-  const r = await chamar('/api/finance/importacao/viper', { titulos, simular: !enviar }, token);
+  const r = await chamar('/api/finance/importacao/viper', { titulos, quitados, simular: !enviar }, token);
 
   console.log(`\n${enviar ? 'GRAVADO' : 'CONFERÊNCIA (nada gravado)'} em ${base}:`);
-  console.log(`  A PAGAR:   ${r.pagar.novos} novo(s) (${real(r.pagar.valorNovos)}) | ${r.pagar.jaExistiam} já existia(m) no Financeiro`);
-  console.log(`  A RECEBER: ${r.receber.novos} novo(s) (${real(r.receber.valorNovos)}) | ${r.receber.jaExistiam} já existia(m) no Financeiro`);
+  for (const [rotulo, x] of [['A PAGAR:  ', r.pagar], ['A RECEBER:', r.receber]]) {
+    console.log(`  ${rotulo} ${x.novos} novo(s) (${real(x.valorNovos)}) | ${x.jaExistiam} já existia(m) no Financeiro`);
+    // O espelho (14/10/2026): o que muda no que já existe.
+    console.log(`             reabre ${x.reaberturas} com baixa presumida da carga de 11/09 (${real(x.valorReaberto)} em aberto no Viper)`);
+    console.log(`             baixa de ${x.baixas} quitado(s) no Viper (${real(x.valorBaixas)}) | ${x.ajustes} valor(es) ajustado(s) | ${x.divergencias} divergência(s) só reportada(s)`);
+  }
   console.log(`  sem a pessoa no Cadastros (entram só com o nome): ${r.semPessoaNoCadastro}`);
   if (r.semEmpresa.length) console.log(`  empresa sem estabelecimento correspondente: ${r.semEmpresa.join(', ')}`);
   if (enviar) {
-    console.log(`  gravados: ${r.criados}${r.falhas.length ? ` | FALHAS: ${r.falhas.length}` : ''}`);
+    console.log(`  gravados: ${r.criados} novo(s), ${r.reabertos} reaberto(s), ${r.baixados} baixa(s), ${r.ajustados} ajuste(s)${r.falhas.length ? ` | FALHAS: ${r.falhas.length}` : ''}`);
     r.falhas.forEach((f) => console.log(`    ${f.documento}: ${f.motivo}`));
   }
   const relatorio = path.join(path.dirname(path.resolve(arquivos[0][1])), `importacao-contas-relatorio-${Date.now()}.json`);

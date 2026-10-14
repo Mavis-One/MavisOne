@@ -12973,12 +12973,19 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       if (!user || !(await ehAdmin(user))) return sendJson(res, { error: 'Só um administrador importa contas do sistema anterior.' }, 403);
       const body = await readBody(req, 16 * 1024 * 1024);
-      const resultado = await contasImportadasDb.gravarContas(body.titulos, { simular: body.simular === true, usuario: user });
-      if (!resultado.simulado && resultado.criados) {
+      // `quitados` (14/10/2026): os pagos no Viper, para o espelho dar baixa
+      // no que ainda está em aberto aqui.
+      const resultado = await contasImportadasDb.gravarContas(body.titulos, {
+        simular: body.simular === true, usuario: user, quitados: body.quitados
+      });
+      if (!resultado.simulado && (resultado.criados || resultado.baixados || resultado.ajustados)) {
         await registrarAuditoria({
           action: 'financeiro.importacao.viper', targetId: 'financial_entries', targetUsername: String(resultado.criados),
           byId: user.id, byName: user.name,
-          details: { criados: resultado.criados, pagar: resultado.pagar, receber: resultado.receber, falhas: resultado.falhas.length }
+          details: {
+            criados: resultado.criados, baixados: resultado.baixados, ajustados: resultado.ajustados,
+            pagar: resultado.pagar, receber: resultado.receber, falhas: resultado.falhas.length
+          }
         });
       }
       return sendJson(res, { success: true, ...resultado });
