@@ -15,7 +15,10 @@ const NFE_STATUS_META = {
   inutilizada: { label: 'Inutilizada', tone: 'muted' },
   processando: { label: 'Processando', tone: 'warning' },
   rascunho: { label: 'Rascunho', tone: 'muted' },
-  pendente: { label: 'Pendente', tone: 'warning' }
+  pendente: { label: 'Pendente', tone: 'warning' },
+  // A nota salva com "Salvar nota em edição" e ainda não emitida (14/10/2026).
+  // Não está na SEFAZ nem na tabela de notas: vem de /api/fiscal/nfe/rascunhos.
+  'em-edicao': { label: 'Em edição', tone: 'warning' }
 };
 
 function nfeStatusBadge(status) {
@@ -296,10 +299,44 @@ function criarTelaDeNotasEmitidas(telaChave) {
     return params.toString();
   }
 
+  // AS NOTAS EM EDIÇÃO (14/10/2026): pedido do usuário, "crie um estado para
+  // essas notas e deixe elas em notas emitidas". Vêm de outra tabela (não são
+  // documento fiscal), entram no topo da primeira página e respeitam os
+  // filtros que fazem sentido para elas. NFC-e não tem nota em edição.
+  let rascunhos = [];
+  const somenteDigitos = (v) => String(v || '').replace(/\D/g, '');
+  function rascunhosVisiveis() {
+    if (tela.modeloFixo === '65' || page !== 1) return [];
+    if (filters.status && filters.status !== 'em-edicao') return [];
+    if (filters.modelo && filters.modelo !== '55') return [];
+    const termo = String(filters.search || '').trim().toLowerCase();
+    return rascunhos.filter((r) => {
+      const dia = String(r.atualizadoEm || '').slice(0, 10);
+      if (filters.dateFrom && dia < filters.dateFrom) return false;
+      if (filters.dateTo && dia > filters.dateTo) return false;
+      if (filters.valorDe && Number(r.valor) < Number(filters.valorDe)) return false;
+      if (filters.valorAte && Number(r.valor) > Number(filters.valorAte)) return false;
+      if (filters.estabelecimentoId && r.estabelecimentoId !== filters.estabelecimentoId) return false;
+      if (!termo) return true;
+      return String(r.cliente || '').toLowerCase().includes(termo)
+        || (somenteDigitos(termo) && somenteDigitos(r.documento).includes(somenteDigitos(termo)))
+        || String(r.pedidoCodigo || '') === termo;
+    });
+  }
+
   async function load() {
     let result;
     try {
-      result = await api(`/api/finance/nfe?${buildQuery()}`);
+      const [lista, emEdicao] = await Promise.all([
+        filters.status === 'em-edicao'
+          ? Promise.resolve({ nfes: [], total: 0, limit })
+          : api(`/api/finance/nfe?${buildQuery()}`),
+        tela.modeloFixo === '65'
+          ? Promise.resolve({ rascunhos: [] })
+          : api('/api/fiscal/nfe/rascunhos').catch(() => ({ rascunhos: [] }))
+      ]);
+      result = lista;
+      rascunhos = emEdicao.rascunhos || [];
     } catch (error) {
       content.innerHTML = `<div class="panel"><p class="muted">Erro ao carregar NF-e: ${escapeHtml(error.message || 'erro desconhecido')}</p></div>`;
       return;
@@ -626,12 +663,13 @@ function criarTelaDeNotasEmitidas(telaChave) {
     const idsVisiveis = new Set(notasDaPagina.map((n) => n.id));
     [...selecionadas].forEach((id) => { if (!idsVisiveis.has(id)) selecionadas.delete(id); });
     const todasMarcadas = notasDaPagina.length > 0 && notasDaPagina.every((n) => selecionadas.has(n.id));
+    const emEdicaoVisiveis = rascunhosVisiveis();
 
     content.innerHTML = `
       <div class="cadastro-page-head">
         <div>
           <h3>${escapeHtml(tela.titulo)}</h3>
-          <p class="muted">${result.total} ${result.total === 1 ? tela.singular : tela.plural} encontrad${tela.singular === 'cupom' ? 'o' : 'a'}${result.total === 1 ? '' : 's'}${typeof result.valorAutorizado === 'number'
+          <p class="muted">${emEdicaoVisiveis.length ? `<strong>${emEdicaoVisiveis.length} em edição</strong> · ` : ''}${result.total} ${result.total === 1 ? tela.singular : tela.plural} encontrad${tela.singular === 'cupom' ? 'o' : 'a'}${result.total === 1 ? '' : 's'}${typeof result.valorAutorizado === 'number'
             ? ` · Total autorizado: <strong title="Soma das NF-e autorizadas do filtro inteiro, não só desta página">${financeFormatBRL(result.valorAutorizado)}</strong>` : ''}</p>
         </div>
         <div class="cadastro-list-actions">
@@ -701,6 +739,25 @@ function criarTelaDeNotasEmitidas(telaChave) {
               </tr>
             </thead>
             <tbody>
+              ${emEdicaoVisiveis.map((r) => `
+                <tr class="nfe-rascunho-row">
+                  <td class="nfe-check-col"></td>
+                  <td>NF-e</td>
+                  <td><span class="muted">—</span></td>
+                  <td><span class="muted">—</span></td>
+                  <td>${financeFormatDate(String(r.atualizadoEm || '').slice(0, 10))}</td>
+                  <td class="nfe-empresa"><span class="texto-cortado is-curto" title="${escapeHtml(r.empresa || '')}">${escapeHtml(r.empresa || '-')}</span></td>
+                  <td><span class="texto-cortado is-medio" title="${escapeHtml(r.cliente || '')}">${escapeHtml(r.cliente || '-')}</span></td>
+                  <td>${escapeHtml(nfeFormatDocument(r.documento))}</td>
+                  <td class="col-valor">${financeFormatBRL(r.valor)}</td>
+                  <td>${nfeStatusBadge('em-edicao')} <span class="muted" title="Salva por ${escapeHtml(r.salvoPor || '')}">${r.pedidoCodigo ? `pedido ${escapeHtml(String(r.pedidoCodigo))}` : 'avulsa'}</span></td>
+                  <td><span class="muted">—</span></td>
+                  <td><span class="muted">—</span></td>
+                  <td class="finance-extrato-actions">
+                    <button type="button" data-continuar-rascunho="${escapeHtml(r.chave)}">Continuar</button>
+                    <button type="button" class="secondary" data-descartar-rascunho="${escapeHtml(r.chave)}">Descartar</button>
+                  </td>
+                </tr>`).join('')}
               ${result.nfes.length ? result.nfes.map((nfe) => {
                 // Fase EI: Cliente e Empresa vão cortados com "…" e o nome
                 // inteiro na dica (com o nowrap da tabela, razão social longa
@@ -726,7 +783,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
                   <td>${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="secondary" data-quick-cancel="${escapeHtml(nfe.id)}"${bloqueioCancelar ? ` disabled title="${escapeHtml(bloqueioCancelar)}"` : ''}>Cancelar</button>` : ''}</td>
                 </tr>
               `;
-              }).join('') : `<tr><td colspan="13" class="muted">Nenhuma NF-e encontrada.</td></tr>`}
+              }).join('') : (emEdicaoVisiveis.length ? '' : `<tr><td colspan="13" class="muted">Nenhuma NF-e encontrada.</td></tr>`)}
             </tbody>
           </table>
         </div>
@@ -748,6 +805,35 @@ function criarTelaDeNotasEmitidas(telaChave) {
         </div>
       </div>
     `;
+
+    // Continuar: reabre a emissão, que recupera a nota salva (fase EL). A do
+    // pedido entra pelo pedido; a avulsa é a da própria pessoa.
+    content.querySelectorAll('[data-continuar-rascunho]').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        const r = rascunhos.find((x) => x.chave === botao.dataset.continuarRascunho);
+        if (!r) return;
+        if (r.pedidoId) state.nfeFromOrder = { orderId: r.pedidoId, code: r.pedidoCodigo || 0 };
+        const modulo = moduloAtual();
+        state.activeModule = modulo;
+        state.activeSub = 'emitir_nfe_focus';
+        if (typeof renderApp === 'function') renderApp();
+        loadModule(modulo);
+      });
+    });
+    content.querySelectorAll('[data-descartar-rascunho]').forEach((botao) => {
+      botao.addEventListener('click', async () => {
+        const r = rascunhos.find((x) => x.chave === botao.dataset.descartarRascunho);
+        if (!r) return;
+        if (!await confirmModal(`Descartar a nota em edição${r.pedidoCodigo ? ` do pedido ${r.pedidoCodigo}` : ''}? O que foi preenchido nela se perde (nada foi enviado à SEFAZ).`)) return;
+        try {
+          await api(`/api/fiscal/nfe/rascunho?pedido=${encodeURIComponent(r.pedidoId || '')}`, { method: 'DELETE' });
+          showToast('Nota em edição descartada.', 'success');
+          await load();
+        } catch (erro) {
+          showToast(erro.message || 'Não consegui descartar.', 'error');
+        }
+      });
+    });
 
     document.getElementById('nfeNewBtn')?.addEventListener('click', () => {
       state.activeSub = 'nova_nfe_avulsa';

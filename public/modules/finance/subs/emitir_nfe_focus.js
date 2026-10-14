@@ -559,11 +559,54 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       showToast('Nota em edição salva. Ela volta assim quando esta emissão for aberta de novo.', 'success');
       // O "Descartar" aparece sem redesenhar a tela (redesenhar perderia a aba aberta).
       if (primeiraVez && botao && !document.getElementById('nfeFocusDescartarRascunho')) {
-        botao.insertAdjacentHTML('afterend', '<button type="button" class="secondary" id="nfeFocusDescartarRascunho">Descartar nota salva</button>');
+        botao.parentElement.insertAdjacentHTML('afterbegin', '<button type="button" class="secondary" id="nfeFocusDescartarRascunho">Descartar nota salva</button>');
         document.getElementById('nfeFocusDescartarRascunho')?.addEventListener('click', (e) => descartarNotaSalva(e.currentTarget));
       }
     } catch (erro) {
       showToast(erro.message || 'Não consegui salvar a nota em edição.', 'error');
+    } finally {
+      if (botao) botao.disabled = false;
+    }
+  }
+
+  // VISUALIZAR A NF ANTES DE EMITIR (14/10/2026): a DANFE de pré-visualização
+  // da Focus, montada com o que está na tela (a mesma montagem da emissão). Sem
+  // valor fiscal: nada vai à SEFAZ e nenhum número é consumido.
+  async function visualizarNota(botao) {
+    if (botao?.disabled) return;
+    if (!selectedEstabelecimentoId) {
+      showToast('Escolha o estabelecimento emitente na aba 1.', 'warning');
+      return;
+    }
+    const form = document.getElementById('nfeFocusForm');
+    if (!form) return;
+    const formData = new FormData(form);
+    const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
+    const referencias = formData.get('tipoOperacao') === 'DEVOLUCAO' && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
+    // A janela abre já, no clique: aberta depois da resposta, o navegador a
+    // trataria como pop-up e bloquearia.
+    const janela = window.open('', '_blank');
+    if (!janela) {
+      showToast('O navegador bloqueou a janela da pré-visualização. Libere os pop-ups deste site e tente de novo.', 'warning');
+      return;
+    }
+    janela.opener = null;
+    try { janela.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px">Gerando a pré-visualização…</p>'; } catch (_) { /* sem acesso */ }
+    if (botao) botao.disabled = true;
+    try {
+      const resposta = await fetch('/api/fiscal/nfe/danfe-previa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' },
+        body: JSON.stringify(montarCorpoDaNota(formData, referencias))
+      });
+      if (!resposta.ok) {
+        const corpo = await resposta.json().catch(() => ({}));
+        throw new Error(corpo.error || `Não foi possível gerar a pré-visualização (HTTP ${resposta.status}).`);
+      }
+      await window.MavisDanfe.mostrar(janela, await resposta.blob(), 'DANFE (pré-visualização)');
+    } catch (erro) {
+      try { janela.close(); } catch (_) { /* já fechada */ }
+      showToast(erro.message || 'Não foi possível gerar a pré-visualização.', 'error');
     } finally {
       if (botao) botao.disabled = false;
     }
@@ -591,6 +634,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           <div>
             <h3>Emitir NF-e (Focus NFe)</h3>
           </div>
+          ${estabelecimentos.length ? `
+          <!-- 14/10/2026, pedido do usuário: "Salvar" no canto superior direito,
+               verde, e "Visualizar NF" para ver a DANFE antes de emitir. -->
+          <div class="cadastro-list-actions nfe-acoes-topo">
+            ${rascunhoSalvoEm ? '<button type="button" class="secondary" id="nfeFocusDescartarRascunho">Descartar nota salva</button>' : ''}
+            ${ehComplemento() ? '' : '<button type="button" class="secondary" id="nfeFocusVisualizar">Visualizar NF</button>'}
+            <button type="button" id="nfeFocusSalvarRascunho">Salvar nota em edição</button>
+          </div>` : ''}
         </div>
 
         ${!estabelecimentos.length ? `
@@ -825,8 +876,6 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           </div>
           `}
           <div class="nfe-acoes-emissao">
-            <button type="button" class="secondary" id="nfeFocusSalvarRascunho">Salvar nota em edição</button>
-            ${rascunhoSalvoEm ? '<button type="button" class="secondary" id="nfeFocusDescartarRascunho">Descartar nota salva</button>' : ''}
             <button type="submit" id="nfeFocusSubmitBtn">Emitir NF-e</button>
           </div>
         </form>
@@ -1984,6 +2033,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     if (ehComplemento()) atualizarTextoComplemento();
 
     document.getElementById('nfeFocusSalvarRascunho')?.addEventListener('click', (e) => salvarNotaEmEdicao(e.currentTarget));
+    document.getElementById('nfeFocusVisualizar')?.addEventListener('click', (e) => visualizarNota(e.currentTarget));
     document.getElementById('nfeFocusDescartarRascunho')?.addEventListener('click', (e) => descartarNotaSalva(e.currentTarget));
 
     document.getElementById('nfeFocusForm')?.addEventListener('submit', async (event) => {

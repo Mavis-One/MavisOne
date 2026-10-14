@@ -196,7 +196,10 @@ const respostaPadrao = (q) => ({ nfes: LISTA, total: LISTA.length, page: Number(
   const t2 = montarTela(state, (q) => ({ nfes: LISTA.slice(0, 1), total, page: Number(q.get('page')), limit: 30, valorAutorizado: 0, empresas: [] }));
   await t2.pronto;
   await t2.ouvintes['nfeIrParaPagina:submit']({ preventDefault() {}, target: { querySelector: () => ({ value: '4' }) } });
-  check('"Ir para" busca a página pedida', /page=4/.test(t2.chamadas[t2.chamadas.length - 1]), t2.chamadas[t2.chamadas.length - 1]);
+  // 14/10/2026: a tela também pede as notas em edição; o que vale aqui é a
+  // última chamada da LISTA de notas.
+  const ultimaDaLista = () => [...t2.chamadas].reverse().find((c) => String(c).startsWith('/api/finance/nfe')) || '';
+  check('"Ir para" busca a página pedida', /page=4/.test(ultimaDaLista()), ultimaDaLista());
   const antes = t2.chamadas.length;
   total = 31;
   t2.ouvintes['nfeIrParaPagina:submit']({ preventDefault() {}, target: { querySelector: () => ({ value: '4' }) } });
@@ -212,7 +215,7 @@ const respostaPadrao = (q) => ({ nfes: LISTA, total: LISTA.length, page: Number(
 
   t2.ouvintes['nfeFilterForm:submit']({ preventDefault() {}, target: { valores: { search: '043.988', status: 'autorizada', valorDe: '100', valorAte: '2000' } } });
   await new Promise((r) => setImmediate(r));
-  const ultima = t2.chamadas[t2.chamadas.length - 1];
+  const ultima = ultimaDaLista();
   check('Filtrar manda valorDe/valorAte e volta à página 1', /valorDe=100/.test(ultima) && /valorAte=2000/.test(ultima) && /page=1/.test(ultima), ultima);
   check('os filtros ficam no state', state.nfeListaFiltros && state.nfeListaFiltros.valorDe === '100' && state.nfeListaFiltros.search === '043.988');
   const t3 = montarTela(state, respostaPadrao);

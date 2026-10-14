@@ -4981,6 +4981,8 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 /* Salvar nota em edição + Emitir (fase EL): lado a lado, o emitir ocupando o resto. */
 .nfe-acoes-emissao { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
 .nfe-acoes-emissao #nfeFocusSubmitBtn { flex: 1 1 240px; }
+/* Salvar / Visualizar no canto superior direito da emissão (14/10/2026). */
+.nfe-acoes-topo { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .nfe-totais { max-width: 420px; }
 .nfe-totais th { text-align: left; font-weight: 500; }
 @media (max-width: 640px) {

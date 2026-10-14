@@ -6837,6 +6837,9 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/nfe/previa') return 'emitir';
   // A nota em edição salva antes de emitir (fase EL): é parte de emitir.
   if (pathname === '/api/fiscal/nfe/rascunho') return 'emitir';
+  if (pathname === '/api/fiscal/nfe/rascunhos') return 'emitir';
+  // A DANFE de pré-visualização: a mesma montagem da emissão, sem valor fiscal.
+  if (pathname === '/api/fiscal/nfe/danfe-previa') return 'emitir';
   if (pathname === '/api/fiscal/nfce/emitir') return 'emitir';
   if (pathname.endsWith('/cancelar')) return 'cancelar';
   if (pathname.endsWith('/cce')) return 'cce';
@@ -15381,6 +15384,38 @@ async function tratarRequisicao(req, res) {
       // A NOTA EM EDIÇÃO (fase EL, 14/10/2026): "Salvar nota em edição" na
       // tela de emissão grava o estado da tela; ao reabrir a emissão do mesmo
       // pedido (ou a avulsa da mesma pessoa) ela volta. Não é documento fiscal.
+      // AS NOTAS EM EDIÇÃO NA LISTA (14/10/2026): o estado "Em edição" das NF-e
+      // Emitidas. Só o resumo que a linha mostra; o estado inteiro fica no banco.
+      if (pathname === '/api/fiscal/nfe/rascunhos' && req.method === 'GET') {
+        const [lista, estabelecimentos] = await Promise.all([
+          rascunhoEmissaoDb.listarRascunhos(user.id),
+          fiscalDb.getEstabelecimentos().catch(() => [])
+        ]);
+        const nomeDoEstab = new Map(estabelecimentos.map((e) => [e.id, e.nomeFantasia || e.razaoSocial || '']));
+        const n = (v) => Number(v || 0);
+        return sendJson(res, {
+          rascunhos: lista.map((r) => {
+            const d = r.dados || {};
+            const campos = d.campos || {};
+            const itens = Array.isArray(d.itens) ? d.itens : [];
+            const produtos = itens.reduce((s, i) => s + Math.round(n(i.quantidade) * n(i.valorUnitario) * 100) / 100, 0);
+            return {
+              chave: r.chave,
+              pedidoId: r.pedidoId,
+              pedidoCodigo: r.pedidoCodigo,
+              cliente: campos.destNome || '',
+              documento: campos.destDocumento || '',
+              estabelecimentoId: d.selectedEstabelecimentoId || '',
+              empresa: nomeDoEstab.get(d.selectedEstabelecimentoId) || '',
+              valor: Math.round((produtos + n(d.frete) + n(d.outrasDespesas) + n(d.seguro) - n(d.desconto)) * 100) / 100,
+              itens: itens.length,
+              salvoPor: r.userName,
+              atualizadoEm: r.atualizadoEm
+            };
+          })
+        });
+      }
+
       if (pathname === '/api/fiscal/nfe/rascunho') {
         const pedidoId = String(url.searchParams.get('pedido') || '').trim();
         const chave = rascunhoEmissaoDb.chaveDoRascunho({ pedidoId, userId: user.id });
@@ -15411,6 +15446,23 @@ async function tratarRequisicao(req, res) {
         const body = await readBody(req);
         const { payload } = await prepararNfeParaTransmitir(body);
         return sendJson(res, resumoFiscalDaPrevia(payload));
+      }
+
+      // VISUALIZAR A NF ANTES DE EMITIR (14/10/2026, pedido do usuário). A MESMA
+      // montagem da prévia e da emissão (prepararNfeParaTransmitir), mandada à
+      // pré-visualização da Focus, que devolve o PDF de uma DANFE SEM VALOR
+      // FISCAL: nada vai à SEFAZ, nenhum número é consumido, nada é gravado.
+      if (pathname === '/api/fiscal/nfe/danfe-previa' && req.method === 'POST') {
+        const body = await readBody(req);
+        const { payload, estabelecimento } = await prepararNfeParaTransmitir(body);
+        const client = await focusNfe.forEstabelecimento(estabelecimento.id);
+        const pdf = await client.previsualizarDanfe(payload);
+        res.writeHead(200, {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': 'inline; filename="previa-danfe.pdf"',
+          'Cache-Control': 'no-store'
+        });
+        return res.end(pdf);
       }
 
       if (pathname === '/api/fiscal/nfe/emitir' && req.method === 'POST') {
