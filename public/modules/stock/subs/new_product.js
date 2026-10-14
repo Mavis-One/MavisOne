@@ -166,7 +166,11 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
 
           ${painel('precos', `
             <div class="row">
-              <label>Custo<input type="number" step="0.01" min="0" name="costPrice" required value="${current ? Number(current.costPrice || 0) : 0}" /></label>
+              ${/* Custo só para administrador (14/10/2026): o servidor não manda o
+                   número aos demais e guarda o que o produto já tinha ao salvar. */''}
+              ${typeof usuarioEhAdmin === 'function' && usuarioEhAdmin()
+                ? `<label>Custo<input type="number" step="0.01" min="0" name="costPrice" required value="${current ? Number(current.costPrice || 0) : 0}" /></label>`
+                : ''}
               <label>Preço de venda<input type="number" step="0.01" min="0" name="salePrice" required value="${current ? Number(current.salePrice || 0) : 0}" /></label>
             </div>
           `)}

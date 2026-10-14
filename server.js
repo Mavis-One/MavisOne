@@ -92,6 +92,8 @@ const salesStatus = require('./public/modules/shared/sales_status');
 // Empresa, categoria, depósito, vendedor e pagamento obrigatórios no pedido e
 // no orçamento (13/10/2026). A tela confere com o mesmo arquivo.
 const vendaObrigatorios = require('./public/modules/shared/venda_obrigatorios');
+// Custo do produto só para administrador (14/10/2026). Ver lib/custo-oculto.js.
+const custoOculto = require('./lib/custo-oculto');
 // Aba Impostos do pedido. Roda a MESMA montagem tributária da emissão — ver o
 // cabeçalho de lib/calcularTributos.js.
 const { calcularTributos } = require('./lib/calcularTributos');
@@ -1096,6 +1098,9 @@ function etagConfere(pedido, etag) {
 }
 
 function sendJson(res, payload, statusCode = 200) {
+  // Quem não é administrador não recebe o custo do produto em resposta
+  // nenhuma (14/10/2026). A marca é posta no começo de tratarRequisicao.
+  if (res.__ocultarCusto && statusCode < 400) payload = custoOculto.semCusto(payload);
   const corpo = Buffer.from(JSON.stringify(payload), 'utf8');
   const cabecalhos = { 'Content-Type': 'application/json' };
 
@@ -9322,6 +9327,23 @@ async function tratarRequisicao(req, res) {
     return sendJson(res, { error: sessaoUtil.mensagemDoMotivo(motivo), motivo }, 401);
   }
 
+  // O CUSTO DO PRODUTO SÓ PARA ADMINISTRADOR (14/10/2026, pedido urgente do
+  // usuário). Marca a resposta de quem não é administrador: sendJson tira o
+  // custo de tudo o que devolve (lib/custo-oculto.js). E o que é inteiro
+  // calculado pelo custo — inventário, Valor em Estoque e a exportação dele —
+  // fica fechado.
+  if (sessaoRecebida && pathname.startsWith('/api/')) {
+    const usuarioDaVez = await getCurrentUser(req);
+    if (usuarioDaVez && !(await ehAdmin(usuarioDaVez))) {
+      res.__ocultarCusto = true;
+      const parteDoResumo = url.searchParams.get('parte') || '';
+      if (pathname.startsWith('/api/stock/inventories') || pathname === '/api/reports/estoque/export'
+        || (pathname === '/api/reports/overview' && parteDoResumo === 'estoque')) {
+        return sendJson(res, { error: 'Esta tela é calculada pelo custo dos produtos: só administrador.' }, 403);
+      }
+    }
+  }
+
   if (pathname === '/api/login' && req.method === 'POST') {
     try {
       const body = await readBody(req);
@@ -11171,8 +11193,11 @@ async function tratarRequisicao(req, res) {
     const casa = pathname.match(/^\/api\/reports\/catalogo\/([a-z0-9-]+)(\/export)?$/);
     if (casa && req.method === 'GET') {
       try {
-        const { erro, status, resultado } = await executarDoCatalogo(req, casa[1], url.searchParams);
+        const executado = await executarDoCatalogo(req, casa[1], url.searchParams);
+        const { erro, status } = executado;
         if (erro) return sendJson(res, { error: erro }, status);
+        // Sem colunas de custo para quem não é administrador — na tela e no CSV.
+        const resultado = res.__ocultarCusto ? custoOculto.relatorioSemCusto(executado.resultado) : executado.resultado;
         if (casa[2]) {
           // Montado ANTES do cabeçalho: se a montagem falhar, a resposta ainda
           // pode ser um erro, e não um 200 pela metade.
@@ -11254,7 +11279,7 @@ async function tratarRequisicao(req, res) {
           // A definição gravada é conferida de novo: a fonte pode ter perdido
           // um campo desde que o relatório foi salvo.
           const def = relatorioPersonalizado.validarDefinicao(rel);
-          const resultado = await relatorioPersonalizado.executar(def, {
+          const executadoPersonalizado = await relatorioPersonalizado.executar(def, {
             sql: async (texto, parametros) => (await consultarBanco(texto, parametros)).rows,
             de: de && ate && de > ate ? ate : de,
             ate: de && ate && de > ate ? de : ate,
@@ -11262,6 +11287,7 @@ async function tratarRequisicao(req, res) {
             id: rel.id
           });
           await relatoriosPersonalizadosDb.marcarExecucao(rel.id);
+          const resultado = res.__ocultarCusto ? custoOculto.relatorioSemCusto(executadoPersonalizado) : executadoPersonalizado;
           if (casa[3]) {
             const arquivo = motorDeRelatorios.paraCsv(resultado);
             return enviarCsv(res, arquivo, motorDeRelatorios.nomeDoArquivo(resultado));
@@ -11553,7 +11579,7 @@ async function tratarRequisicao(req, res) {
     const granularity = url.searchParams.get('granularity') || 'month';
     const [financeira, estoque] = await Promise.all([
       parte === 'estoque' ? null : baseFinanceiraDosRelatorios(url.searchParams),
-      parte === 'financeiro' ? null : baseDeEstoqueDosRelatorios()
+      parte === 'financeiro' || res.__ocultarCusto ? null : baseDeEstoqueDosRelatorios()
     ]);
 
     const resposta = { granularity };
@@ -16907,9 +16933,12 @@ async function tratarRequisicao(req, res) {
       // e por isso tem de ser A MESMA: as quatro decisões que a tela tomou (vazio
       // no fim nos dois sentidos, urgência da Situação, colação pt-BR, desempate
       // por nome e id) vivem em public/modules/shared/ordem_de_produtos.js.
+      // Ordenar por custo ou margem revelaria o custo pela ordem (14/10/2026):
+      // para quem não é administrador, essas duas viram a ordem por nome.
+      const ordemPedida = url.searchParams.get('sort') || 'name';
       const ordenada = ordemDeProdutos.ordenar(
         list,
-        url.searchParams.get('sort') || 'name',
+        res.__ocultarCusto && ['costPrice', 'margin'].includes(ordemPedida) ? 'name' : ordemPedida,
         url.searchParams.get('dir') === 'desc' ? 'desc' : 'asc'
       );
 
@@ -17081,7 +17110,9 @@ async function tratarRequisicao(req, res) {
         // antigo): o gatilho compara o texto exato.
         sku: skuGravado ? existing.sku : sku,
         stockQuantity: existing ? stockCore.toNumber(existing.stockQuantity) : 0,
-        costPrice: stockCore.toNumber(body.costPrice),
+        // Quem não é administrador não vê o custo (14/10/2026) — e por isso não
+        // o altera: o produto que já existe guarda o custo que tinha.
+        costPrice: res.__ocultarCusto && existing ? stockCore.toNumber(existing.costPrice) : stockCore.toNumber(body.costPrice),
         salePrice: stockCore.toNumber(body.salePrice),
         // Campos fiscais vão para as COLUNAS de products, não para o db.json:
         // a emissão de NF-e lê o Supabase direto e não enxerga o arquivo local.
@@ -18329,7 +18360,8 @@ async function tratarRequisicao(req, res) {
       for (const update of updates) {
         const product = productsById.get(update.productId);
         if (!product) throw stockCore.stockError(`Produto ${update.productId} não encontrado.`, 404);
-        const costPrice = stockCore.toNumber(update.costPrice, product.costPrice);
+        // Custo só o administrador altera (14/10/2026): o comum mexe no preço de venda.
+        const costPrice = res.__ocultarCusto ? stockCore.toNumber(product.costPrice) : stockCore.toNumber(update.costPrice, product.costPrice);
         const salePrice = stockCore.toNumber(update.salePrice, product.salePrice);
         if (costPrice < 0 || salePrice < 0) throw stockCore.stockError('Preços não podem ser negativos.');
         await db.upsertProduct({
@@ -18559,7 +18591,7 @@ async function tratarRequisicao(req, res) {
         name: body.name,
         sku: anterior && String(anterior.sku || '').trim() ? anterior.sku : body.sku,
         stockQuantity: Number(body.stockQuantity || 0),
-        costPrice: Number(body.costPrice || 0),
+        costPrice: res.__ocultarCusto && anterior ? Number(anterior.costPrice || 0) : Number(body.costPrice || 0),
         salePrice: Number(body.salePrice || 0)
       });
       await auditarPrecoDoProduto(user, anterior, product, 'Cadastro do produto');

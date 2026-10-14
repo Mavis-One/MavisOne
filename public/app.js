@@ -2780,7 +2780,8 @@ async function loadModule(moduleName) {
           ${dashboardPermissions.stock ? `<p>Produtos cadastrados: ${data.totalProducts}</p>` : ''}
           ${dashboardPermissions.sales ? `<p>Vendas registradas: ${data.totalSales}</p>` : ''}
           ${dashboardPermissions.purchases ? `<p>Compras registradas: ${data.totalPurchases}</p>` : ''}
-          ${dashboardPermissions.stock ? `<p>Valor em estoque: R$ ${data.stockValue.toFixed(2)}</p>` : ''}
+          ${/* O valor do estoque é a custo: só chega ao administrador (14/10/2026). */''}
+          ${dashboardPermissions.stock && typeof data.stockValue === 'number' ? `<p>Valor em estoque: R$ ${data.stockValue.toFixed(2)}</p>` : ''}
           ${(!dashboardPermissions.stock && !dashboardPermissions.sales && !dashboardPermissions.purchases) ? '<p>Sem informações disponíveis para os módulos liberados.</p>' : ''}
         </div>
       `;

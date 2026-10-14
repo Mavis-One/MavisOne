@@ -134,7 +134,9 @@ check('a tela e o arquivo da Síntese saem da mesma base',
   (servidor.match(/baseFinanceiraDosRelatorios\(url\.searchParams\)/g) || []).length === 2);
 check('a tela e o arquivo do Estoque saem da mesma base',
   (servidor.match(/await baseDeEstoqueDosRelatorios\(\)/g) || []).length === 1
-  && /parte === 'financeiro' \? null : baseDeEstoqueDosRelatorios\(\)/.test(overview));
+  // Desde 14/10/2026 o Valor em Estoque também não é calculado para quem não é
+  // administrador (é todo a custo) — a base continua a mesma da exportação.
+  && /parte === 'financeiro'( \|\| res\.__ocultarCusto)? \? null : baseDeEstoqueDosRelatorios\(\)/.test(overview));
 // A rota de overview não pode ter voltado a montar a série por conta própria.
 check('o overview não recalcula a série', /resposta\.serieFinanceiro = financeira\.serieFinanceiro;/.test(overview),
   'ele repassa a que veio da base');

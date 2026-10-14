@@ -60,6 +60,8 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
     const table = currentTable();
     const isFixed = table && table.type === 'fixo';
     if (!visiveis.length) return S.emptyRow(isFixed ? 7 : 6, 'Nenhum produto encontrado.');
+    // Custo e margem só para administrador (14/10/2026).
+    const veCusto = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
     return visiveis.map((product) => {
       const edit = edits.get(product.id) || {};
       const cost = edit.costPrice ?? product.costPrice;
@@ -69,9 +71,9 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
           <td>${S.escape(product.name)}</td>
           <td>${S.escape(product.sku || '-')}</td>
           <td>${S.formatQty(product.stockQuantity)}</td>
-          <td><input type="number" step="0.01" min="0" data-field="costPrice" data-product="${product.id}" value="${Number(cost).toFixed(2)}" style="max-width:120px;" /></td>
+          ${veCusto ? `<td><input type="number" step="0.01" min="0" data-field="costPrice" data-product="${product.id}" value="${Number(cost).toFixed(2)}" style="max-width:120px;" /></td>` : ''}
           <td><input type="number" step="0.01" min="0" data-field="salePrice" data-product="${product.id}" value="${Number(sale).toFixed(2)}" style="max-width:120px;" /></td>
-          <td data-margin="${product.id}">${marginFor(cost, sale).toFixed(1)}%</td>
+          ${veCusto ? `<td data-margin="${product.id}">${marginFor(cost, sale).toFixed(1)}%</td>` : ''}
           ${isFixed
             ? `<td><input type="number" step="0.01" min="0" data-field="tablePrice" data-product="${product.id}" value="${Number(edit.tablePrice ?? product.tablePrice).toFixed(2)}" style="max-width:120px;" /></td>`
             : (table ? `<td>${S.formatBRL(product.tablePrice)}</td>` : '')}
@@ -138,7 +140,7 @@ window.MavisSubscreenRegistry.stock.price_manager = async function renderPriceMa
           <table class="table">
             <thead>
               <tr>
-                <th>Produto</th><th>SKU</th><th>Saldo</th><th>Custo</th><th>Venda</th><th>Margem</th>
+                <th>Produto</th><th>SKU</th><th>Saldo</th>${typeof usuarioEhAdmin === 'function' && usuarioEhAdmin() ? '<th>Custo</th>' : ''}<th>Venda</th>${typeof usuarioEhAdmin === 'function' && usuarioEhAdmin() ? '<th>Margem</th>' : ''}
                 ${table ? '<th>Preço na tabela</th>' : ''}
               </tr>
             </thead>

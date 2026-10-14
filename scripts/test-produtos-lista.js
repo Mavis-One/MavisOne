@@ -121,7 +121,10 @@ console.log('--- 2. a ordem e da lista inteira, nao da pagina ---');
 const ORDEM = require('../public/modules/shared/ordem_de_produtos');
 
 check('a ordem mora num modulo compartilhado', typeof ORDEM.ordenar === 'function');
-check('  e a tela le as colunas dele', /const COLUNAS_ORDENAVEIS = ORDEM\.COLUNAS;/.test(codigo));
+// Desde 14/10/2026 a tela tira custo e margem para quem não é administrador,
+// mas as colunas continuam saindo do módulo compartilhado.
+check('  e a tela le as colunas dele', /const COLUNAS_ORDENAVEIS = ORDEM\.COLUNAS;/.test(codigo)
+  || codigo.includes('const COLUNAS_ORDENAVEIS = Object.fromEntries(Object.entries(ORDEM.COLUNAS)'));
 check('  e o servidor tambem o usa', /ordemDeProdutos\.ordenar\(/.test(servidor));
 // ESTE e o check que importa. O servidor tem de ORDENAR a selecao inteira e
 // ENTAO fatiar. Fatiando antes, cada pagina se ordenaria sozinha: a pagina 2

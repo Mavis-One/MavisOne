@@ -52,7 +52,7 @@ window.MavisSubscreenRegistry.stock.new_price_table = async function renderNewPr
       <tr>
         <td>${S.escape(product.name)}</td>
         <td>${S.escape(product.sku || '-')}</td>
-        <td>${S.formatBRL(product.costPrice)}</td>
+        ${(typeof usuarioEhAdmin === 'function' && usuarioEhAdmin()) ? `<td>${S.formatBRL(product.costPrice)}</td>` : ''}
         <td><input type="number" step="0.01" min="0" data-price-for="${product.id}" value="${itemPrices.has(product.id) ? itemPrices.get(product.id) : ''}" placeholder="${Number(product.salePrice || 0).toFixed(2)}" style="max-width:140px;" /></td>
       </tr>
     `).join('');
@@ -121,7 +121,7 @@ window.MavisSubscreenRegistry.stock.new_price_table = async function renderNewPr
             ${barraDePaginas('acima')}
             <div class="table-scroll">
               <table class="table">
-                <thead><tr><th>Produto</th><th>SKU</th><th>Custo</th><th>Preço na tabela</th></tr></thead>
+                <thead><tr><th>Produto</th><th>SKU</th>${(typeof usuarioEhAdmin === 'function' && usuarioEhAdmin()) ? '<th>Custo</th>' : ''}<th>Preço na tabela</th></tr></thead>
                 <tbody id="priceItemBody">${daLista ? itemRows(visiveis) : ''}</tbody>
               </table>
             </div>

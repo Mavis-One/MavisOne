@@ -297,8 +297,11 @@ check('o servidor usa o modulo, e nao um sort proprio',
   && /ordemDeProdutos\.ordenar\(/.test(servidor));
 // A tela NAO pode ter as definicoes de volta: duas verdades sobre a ordem e um
 // produto aparecendo em duas paginas.
+// Desde 14/10/2026 a tela tira custo e margem para quem não é administrador,
+// mas as colunas continuam vindo do módulo.
 check('a tela le as colunas do modulo',
-  /const COLUNAS_ORDENAVEIS = ORDEM\.COLUNAS;/.test(telaProdutos));
+  /const COLUNAS_ORDENAVEIS = ORDEM\.COLUNAS;/.test(telaProdutos)
+  || telaProdutos.includes('const COLUNAS_ORDENAVEIS = Object.fromEntries(Object.entries(ORDEM.COLUNAS)'));
 check('  e nao tem collator proprio', !/new Intl\.Collator/.test(telaProdutos),
   'o unico Intl.Collator mora no modulo compartilhado');
 check('  nem tabela de urgencia propria', !/const URGENCIA =/.test(telaProdutos));

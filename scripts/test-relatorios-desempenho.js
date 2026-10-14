@@ -326,7 +326,9 @@ const recortar = (fonte, nome) => {
   check('a Síntese e o Estoque leem pelas cargas enxutas',
     /cargasDosRelatorios\.lancamentosDaSintese\(\)/.test(servidorSemComent) && /cargasDosRelatorios\.produtosDoValorEmEstoque\(\)/.test(servidorSemComent));
   check('  e a função que lia o sistema inteiro não voltou', !/baseDosRelatoriosGerais\(/.test(servidorSemComent));
-  const overview = servidorSemComent.slice(servidorSemComent.indexOf("pathname === '/api/reports/overview'"));
+  // A ROTA, e não a primeira menção: desde 14/10/2026 o bloqueio do custo, no
+  // começo de tratarRequisicao, também cita '/api/reports/overview'.
+  const overview = servidorSemComent.slice(servidorSemComent.indexOf("if (pathname === '/api/reports/overview' && req.method === 'GET')"));
   check('o overview responde por parte', /url\.searchParams\.get\('parte'\)/.test(overview.slice(0, 1500)));
 
   // -------------------------------------------------------------------------

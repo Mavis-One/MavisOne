@@ -46,7 +46,11 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   // paginas e outro em nenhuma. Entao vivem em
   // public/modules/shared/ordem_de_produtos.js, e os dois as leem de la.
   const ORDEM = window.MavisOrdemDeProdutos;
-  const COLUNAS_ORDENAVEIS = ORDEM.COLUNAS;
+  // Custo e margem só para administrador (14/10/2026): o servidor nem manda
+  // esses números para os demais, e a tela tira as colunas.
+  const veCusto = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
+  const COLUNAS_ORDENAVEIS = Object.fromEntries(Object.entries(ORDEM.COLUNAS)
+    .filter(([campo]) => veCusto || !['costPrice', 'margin'].includes(campo)));
 
   // `ordenar()` saiu daqui: quem ordena agora e o servidor, com o mesmo modulo
   // (ver ORDEM acima). A tela so DIZ por qual coluna e em que direcao.
@@ -150,7 +154,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
       <div class="row">
         <div class="panel"><strong>${listados.toLocaleString('pt-BR')}</strong><p class="muted">Produtos listados</p></div>
         <div class="panel"><strong>${S.formatQty(totalUnits)}</strong><p class="muted">Unidades em estoque</p></div>
-        <div class="panel"><strong>${S.formatBRL(totalCost)}</strong><p class="muted">Valor a custo</p></div>
+        ${veCusto ? `<div class="panel"><strong>${S.formatBRL(totalCost)}</strong><p class="muted">Valor a custo</p></div>` : ''}
         <div class="panel"><strong>${alerts}</strong><p class="muted">Zerados ou abaixo do mínimo</p></div>
         <!-- A CONTAGEM E' DA SELECAO, NAO DA PAGINA (fase CT).
              Sem este cartao o filtro de pendencia existia sem ninguem saber
@@ -313,9 +317,9 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
                     </td>
                     <td>${S.escape(product.categoryName || '-')}</td>
                     <td>${S.escape(product.unit)}</td>
-                    <td>${S.formatBRL(product.costPrice)}</td>
+                    ${veCusto ? `<td>${S.formatBRL(product.costPrice)}</td>` : ''}
                     <td>${S.formatBRL(product.salePrice)}</td>
-                    <td>${Number(product.margin || 0).toFixed(1)}%</td>
+                    ${veCusto ? `<td>${Number(product.margin || 0).toFixed(1)}%</td>` : ''}
                     <td>${S.qtdVisivel(product.stockQuantity)}${transitoDoProduto(product)}${quebraPorCor(product)}</td>
                     <td>${S.situationBadge(product.situation)}</td>
                     <td>${S.statusBadge(product.status)}</td>

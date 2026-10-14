@@ -68,7 +68,7 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
         <div class="row">
           <div class="panel"><strong>${S.qtdVisivel(product.stockQuantity)}</strong><p class="muted">Saldo total (${S.escape(product.unit)})</p></div>
           <div class="panel"><strong>${S.situationBadge(product.situation)}</strong><p class="muted">Mín. ${S.formatQty(product.minStock)} / Máx. ${S.formatQty(product.maxStock)}</p></div>
-          <div class="panel"><strong>${S.formatBRL(Math.max(0, Number(product.stockQuantity)) * Number(product.costPrice))}</strong><p class="muted">Valor a custo</p></div>
+          ${(typeof usuarioEhAdmin === 'function' && usuarioEhAdmin()) ? `<div class="panel"><strong>${S.formatBRL(Math.max(0, Number(product.stockQuantity)) * Number(product.costPrice))}</strong><p class="muted">Valor a custo</p></div>` : ''}
           <div class="panel"><strong>${S.statusBadge(product.status)}</strong><p class="muted">${S.escape(product.categoryName || 'Sem categoria')}</p></div>
         </div>
 
@@ -98,12 +98,12 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
           <h3>Histórico de preço</h3>
           <div class="table-scroll">
             <table class="table">
-              <thead><tr><th>Data</th><th>Usuário</th><th>Custo</th><th>Venda</th><th>Origem</th></tr></thead>
+              <thead><tr><th>Data</th><th>Usuário</th>${(typeof usuarioEhAdmin === 'function' && usuarioEhAdmin()) ? '<th>Custo</th>' : ''}<th>Venda</th><th>Origem</th></tr></thead>
               <tbody>${historicoDePreco.map((h) => `
                 <tr>
                   <td>${S.escape(new Date(h.at).toLocaleString('pt-BR'))}</td>
                   <td>${S.escape(h.byName || '-')}</td>
-                  <td>${deParaPreco(h.custo)}</td>
+                  ${(typeof usuarioEhAdmin === 'function' && usuarioEhAdmin()) ? `<td>${deParaPreco(h.custo)}</td>` : ''}
                   <td>${deParaPreco(h.venda)}</td>
                   <td>${S.escape(h.origem || '-')}</td>
                 </tr>`).join('')}</tbody>
