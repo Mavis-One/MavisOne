@@ -89,6 +89,9 @@ const salesTotals = require('./public/modules/shared/sales_totals');
 // status, se o registro é pedido ou orçamento e se baixa estoque / gera
 // financeiro — as três decisões que antes eram `=== 'faturado'` espalhado.
 const salesStatus = require('./public/modules/shared/sales_status');
+// Empresa, categoria, depósito, vendedor e pagamento obrigatórios no pedido e
+// no orçamento (13/10/2026). A tela confere com o mesmo arquivo.
+const vendaObrigatorios = require('./public/modules/shared/venda_obrigatorios');
 // Aba Impostos do pedido. Roda a MESMA montagem tributária da emissão — ver o
 // cabeçalho de lib/calcularTributos.js.
 const { calcularTributos } = require('./lib/calcularTributos');
@@ -12138,6 +12141,8 @@ async function tratarRequisicao(req, res) {
         if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
           return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
         }
+        const obrigatorioQueFalta = vendaObrigatorios.faltando(body);
+        if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
         const totais = computeSalesTotals(items, body);
         record = {
           id: createId(type === 'order' ? 'ord' : 'qte'),
@@ -12849,6 +12854,12 @@ async function tratarRequisicao(req, res) {
       if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
         return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
       }
+      // Vale também para o pedido antigo aberto e salvo (ou aprovado) pela
+      // tela: o que faltar precisa ser preenchido antes. Menos para CANCELAR —
+      // um pedido incompleto tem de poder ser cancelado como está.
+      const vaiCancelar = salesStatus.ehCancelado(salesStatus.normalizar(body.status || current.status, undefined));
+      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body);
+      if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
       // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
       // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo
       // faria a troca ser revertida para o padrão do tipo antigo.

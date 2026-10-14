@@ -4992,7 +4992,7 @@ async function loadModule(moduleName) {
                   <label>Cliente/Fornecedor *
                     ${renderSearchableSelect({ id: 'salesClientSupplier', name: 'clientSupplierId', options: opcoesDeCliente(), selectedValue: formState.clientSupplierId, placeholder: 'Buscar por nome ou CPF/CNPJ...', required: true })}
                   </label>
-                  <label>Empresa
+                  <label>Empresa *
                     ${renderSearchableSelect({ id: 'salesCompany', name: 'companyId', options: meta.companies.map((c) => ({ value: c.id, label: rotuloDaEmpresa(c) })), selectedValue: formState.companyId, placeholder: 'Buscar empresa...' })}
                   </label>
                   <label>Origem da Venda *
@@ -5000,7 +5000,7 @@ async function loadModule(moduleName) {
                       ${opcoesDeOrigemDeVenda(meta, formState.saleOrigin).map((o) => `<option value="${escapeHtml(o.value)}" ${formState.saleOrigin === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
                     </select>
                   </label>
-                  <label>Categoria
+                  <label>Categoria *
                     ${/* Fase AS: categorias de VENDA, cadastro próprio. Antes esta
                          lista vinha de meta.productCategories — o cadastro que havia
                          à mão —, e classificar uma venda como "Parafusos" é usar um
@@ -5018,17 +5018,17 @@ async function loadModule(moduleName) {
                   <label>Tabela de Preços
                     ${renderSearchableSelect({ id: 'salesPriceTable', name: 'priceTable', options: (meta.priceTables || []).map((t) => ({ value: t.name, label: t.name })), selectedValue: formState.priceTable, placeholder: 'Buscar tabela...' })}
                   </label>
-                  <label>Depósito
+                  <label>Depósito *
                     ${/* Fase AW: só os depósitos da loja escolhida (mais os sem loja,
                          que servem a qualquer uma). Ver depositosDaLoja. */''}
                     ${renderSearchableSelect({ id: 'salesDeposit', name: 'depositId', options: depositosDaLoja(meta, formState.companyId, formState.depositId).map((d) => ({ value: d.id, label: d.name })), selectedValue: formState.depositId, placeholder: 'Buscar depósito...' })}
                   </label>
                   ${meuVendedor.travado || deOutroVendedor ? `
-                  <label class="campo-somente-leitura">Vendedor
+                  <label class="campo-somente-leitura">Vendedor *
                     <input value="${escapeHtml((meta.sellers.find((s) => s.id === formState.sellerId) || {}).name || '')}" disabled />
                     <input type="hidden" name="sellerId" value="${escapeHtml(formState.sellerId)}" />
                   </label>` : `
-                  <label>Vendedor
+                  <label>Vendedor *
                     ${renderSearchableSelect({ id: 'salesSeller', name: 'sellerId', options: meta.sellers.map((s) => ({ value: s.id, label: s.name })), selectedValue: formState.sellerId, placeholder: 'Buscar vendedor...' })}
                   </label>`}
                   <label class="campo-somente-leitura" title="Sequencial gerado pelo sistema — não é editável.">Código
@@ -6265,6 +6265,18 @@ async function loadModule(moduleName) {
             // Mesmo construtor usado pelas ações do menu — evita que um campo
             // novo entre num caminho e falte no outro.
             const payload = buildPayload();
+            // EMPRESA, CATEGORIA, DEPÓSITO, VENDEDOR E PAGAMENTO OBRIGATÓRIOS
+            // (13/10/2026). Mesma regra do servidor (shared/venda_obrigatorios.js);
+            // aqui é para dizer qual falta e levar até ele, na aba certa. Sem o
+            // atributo `required` de propósito: campo obrigatório numa aba
+            // escondida trava o envio sem mensagem nenhuma.
+            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload);
+            if (obrigatorioQueFalta) {
+              showToast(obrigatorioQueFalta.mensagem, 'warning');
+              abrirAba(obrigatorioQueFalta.aba || 'dados');
+              if (obrigatorioQueFalta.foco) document.getElementById(obrigatorioQueFalta.foco)?.focus();
+              return;
+            }
             if (botaoSalvar) botaoSalvar.disabled = true;
             try {
               if (isEditing) {
