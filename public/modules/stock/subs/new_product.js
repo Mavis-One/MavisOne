@@ -142,7 +142,12 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
           ${painel('dados', `
             <div class="row">
               <label class="produto-campo-2">Nome<input name="name" required value="${value('name')}" /></label>
-              <label>SKU<input name="sku" required value="${value('sku')}" /></label>
+              ${/* Fase EJ: o código de um produto cadastrado não muda — o banco
+                   recusa. Só leitura (e não desabilitado: ele precisa ir no
+                   envio). Produto sem código ainda recebe o primeiro. */''}
+              ${current && String(current.sku || '').trim()
+                ? `<label class="campo-somente-leitura" title="O código de um produto cadastrado não pode ser alterado.">SKU<input name="sku" readonly value="${value('sku')}" /></label>`
+                : `<label>SKU<input name="sku" required value="${value('sku')}" /></label>`}
               <label>Código de barras (EAN)<input name="ean" value="${value('ean')}" /></label>
             </div>
             <div class="row">

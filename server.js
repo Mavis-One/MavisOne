@@ -17029,6 +17029,12 @@ async function tratarRequisicao(req, res) {
 
       const existing = body.id ? productsById.get(body.id) : null;
       if (body.id && !existing) return sendJson(res, { error: 'Produto não encontrado' }, 404);
+      // O CÓDIGO DO PRODUTO NÃO MUDA (fase EJ, 13/10/2026). O banco recusa do
+      // mesmo jeito (gatilho products_sku_imutavel); aqui é para dizer o porquê.
+      const skuGravado = existing ? String(existing.sku || '').trim() : '';
+      if (skuGravado && skuGravado !== sku) {
+        return sendJson(res, { error: `O código ${skuGravado} deste produto não pode ser alterado.` }, 400);
+      }
 
       // Estoque inicial só vale na criação e vira uma movimentação de entrada,
       // para o saldo do depósito nascer coerente com o saldo total. Valida antes
@@ -17047,7 +17053,9 @@ async function tratarRequisicao(req, res) {
       const product = await db.upsertProduct({
         id: body.id || undefined,
         name,
-        sku,
+        // O gravado, tal como está (até o espaço sobrando de um cadastro
+        // antigo): o gatilho compara o texto exato.
+        sku: skuGravado ? existing.sku : sku,
         stockQuantity: existing ? stockCore.toNumber(existing.stockQuantity) : 0,
         costPrice: stockCore.toNumber(body.costPrice),
         salePrice: stockCore.toNumber(body.salePrice),
@@ -18518,10 +18526,14 @@ async function tratarRequisicao(req, res) {
 
       const body = await readBody(req);
       const anterior = body.id ? await db.getProductById(body.id) : null;
+      // Fase EJ: o código de um produto cadastrado não muda.
+      if (anterior && String(anterior.sku || '').trim() && String(body.sku || '').trim() !== String(anterior.sku).trim()) {
+        return sendJson(res, { error: `O código ${String(anterior.sku).trim()} deste produto não pode ser alterado.` }, 400);
+      }
       const product = await db.upsertProduct({
         id: body.id,
         name: body.name,
-        sku: body.sku,
+        sku: anterior && String(anterior.sku || '').trim() ? anterior.sku : body.sku,
         stockQuantity: Number(body.stockQuantity || 0),
         costPrice: Number(body.costPrice || 0),
         salePrice: Number(body.salePrice || 0)
