@@ -2201,6 +2201,9 @@ const moduleSubItems = {
     // estiveram na tela fiscal. Sobrou um cartão, apontando para onde o dado
     // realmente mora.
     { key: 'fiscal', label: 'Empresa', desc: 'CNPJ, regime, certificado digital, estabelecimentos e regras fiscais.' },
+    // 14/10/2026: a tela completa de Fiscal › Regras Fiscais, também aqui
+    // (settings/subs/regras_fiscais.js delega para ela — uma tela só).
+    { key: 'regras_fiscais', label: 'Regras Fiscais', desc: 'Qual CFOP e qual tributação valem para cada operação, com simulador.' },
     // Fase CD. Fica em Configuracoes, e nao em Cadastros junto das contas,
     // porque a pergunta e' de administracao — quem alcanca o dinheiro de qual
     // unidade —, e nao de cadastro. Quem tem a caixa Cadastros marcada nao
