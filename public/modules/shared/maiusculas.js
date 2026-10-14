@@ -42,6 +42,9 @@ window.MavisMaiusculas = (function () {
       return false;
     }
     if (el.closest('[data-sem-maiuscula], #loginForm')) return false;
+    // Campo de valor (shared/campo_dinheiro.js): virou type="text" para mostrar
+    // "1.234,56", mas é número.
+    if (el.getAttribute('data-dinheiro-ativo') !== null) return false;
     if (el.classList.contains('searchable-select-input') || el.classList.contains('workspace-filter')) return false;
     const pistas = [el.name, el.id, el.getAttribute('autocomplete'), el.getAttribute('placeholder')].filter(Boolean).join(' ');
     return !SENSIVEL.test(pistas);

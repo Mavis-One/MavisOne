@@ -5911,9 +5911,17 @@ async function loadModule(moduleName) {
               renderForm();
             });
           });
+          // O ITEM GUARDA UM `total` PRONTO (vem assim do servidor), e é ele que a
+          // soma dos totais lê (shared/sales_totals.js). Trocar preço ou
+          // quantidade de um item já salvo mudava a linha e deixava o Total da
+          // Venda no valor antigo até salvar (13/10/2026). Refaz junto.
+          const refazTotalDoItem = (item) => {
+            item.total = Math.round(Number(item.quantity || 0) * Number(item.unitPrice || 0) * 100) / 100;
+          };
           content.querySelectorAll('.sales-item-qty').forEach((input) => {
             input.addEventListener('change', () => {
               items[Number(input.dataset.index)].quantity = Math.max(1, Number(input.value || 1));
+              refazTotalDoItem(items[Number(input.dataset.index)]);
               syncFormState();
               renderForm();
             });
@@ -5939,6 +5947,7 @@ async function loadModule(moduleName) {
           content.querySelectorAll('.sales-item-price').forEach((input) => {
             input.addEventListener('change', () => {
               items[Number(input.dataset.index)].unitPrice = Math.max(0, Number(input.value || 0));
+              refazTotalDoItem(items[Number(input.dataset.index)]);
               syncFormState();
               renderForm();
             });
