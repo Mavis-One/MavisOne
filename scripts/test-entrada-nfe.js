@@ -244,7 +244,10 @@ check('a rota de análise existe', rotaAnalisar.length > 0);
 check('  e NÃO grava nada', !/criarEntrada|createFinancialEntry|upsertProduct|saveData/.test(rotaAnalisar));
 check('  exige o módulo Compras', /allowedModules\.includes\('purchases'\)/.test(rotaAnalisar));
 
-const rotaLancar = (servidor.match(/pathname === '\/api\/purchases\/entrada-nfe' && req\.method === 'POST'[\s\S]*?\n  \}\n/) || [''])[0];
+// 14/10/2026: o corpo do lançamento virou lancarEntradaConferida (a entrada
+// manual passa pelo mesmo lugar); a rota só confere o XML e a chama.
+const rotaLancar = (servidor.match(/pathname === '\/api\/purchases\/entrada-nfe' && req\.method === 'POST'[\s\S]*?\n  \}\n/) || [''])[0]
+  + (servidor.match(/async function lancarEntradaConferida\(res, [\s\S]*?\n\}\n/) || [''])[0];
 check('a rota de lançamento existe', rotaLancar.length > 0);
 // O corpo manda DECISÕES; os fatos da nota saem da releitura do XML. Sem isto,
 // o navegador poderia mandar uma nota de 600 com total de 60.000.

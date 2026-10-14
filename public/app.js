@@ -1561,6 +1561,9 @@ function renderApp() {
     // o do Novo Lançamento). Fora do menu: sem um título escolhido não há o que editar.
     : (state.activeModule === 'finance' && activeSubKey === 'edicao_titulo')
       ? 'Edição de Título'
+    // 14/10/2026: a nota de entrada digitada à mão, aberta pelo botão das Notas de Entrada.
+    : (state.activeModule === 'purchases' && activeSubKey === 'entrada_nfe_manual')
+      ? 'Nota de Entrada Manual'
     : ((moduleSubItems[state.activeModule] || []).find((item) => item.key === activeSubKey)?.label || '');
   const showSecondarySidebar = shouldShowSecondarySidebar();
 

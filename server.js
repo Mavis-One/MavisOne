@@ -105,6 +105,7 @@ const anexosDb = require('./lib/db/anexos');
 // analisar uma nota nao pode criar fornecedor nem mexer em estoque sozinha.
 const entradaNfe = require('./lib/entradaNfe');
 const entradaNfeDb = require('./lib/db/entrada-nfe');
+const entradaManual = require('./lib/entrada-manual');
 const rascunhoEmissaoDb = require('./lib/db/rascunho-emissao');
 // Ações em lote da lista. Mesmo arquivo que o navegador carrega: é ele que diz
 // quem é elegível, e a tela e o servidor precisam responder igual.
@@ -9397,14 +9398,375 @@ function traduzirErroDaEntrada(error) {
   return error;
 }
 
+/**
+ * LANÇA UMA NOTA DE ENTRADA JÁ CONFERIDA — o caminho ÚNICO do estoque, do custo,
+ * da ordem de compra e das contas a pagar de uma nota de fornecedor.
+ *
+ * Era o corpo da rota POST /api/purchases/entrada-nfe. Saiu para cá em
+ * 14/10/2026 para a entrada MANUAL (sem XML) passar exatamente pelo mesmo
+ * lugar: um segundo caminho seria um segundo jeito de o estoque entrar.
+ * Responde pela própria `res` (as recusas e o sucesso), como a rota fazia.
+ */
+async function lancarEntradaConferida(res, { conferencia, data, produtos, body, user, xml }) {
+  const nota = conferencia.nota;
+
+  if (conferencia.bloqueios.length) {
+    return sendJson(res, {
+      error: conferencia.bloqueios.map((b) => b.mensagem).join(' '),
+      bloqueios: conferencia.bloqueios
+    }, 409);
+  }
+
+  const decisoes = decisoesDosItens(conferencia, body);
+  const produtosPorId = new Map(produtos.map((p) => [p.id, p]));
+
+  // ---- validação ANTES de gravar qualquer coisa -------------------------
+  // Um item recusado no meio da gravação deixaria a nota lançada pela
+  // metade: estoque de dois itens dentro, do terceiro fora, e nenhum aviso.
+  for (const decisao of decisoes) {
+    const rotulo = `Item ${decisao.item.numero} (${decisao.item.descricao})`;
+    if (decisao.produtoId && !produtosPorId.has(decisao.produtoId)) {
+      return sendJson(res, { error: `${rotulo}: o produto vinculado não existe mais.` }, 400);
+    }
+    if (!decisao.movimentarEstoque) continue;
+    if (!decisao.depositoId) {
+      return sendJson(res, { error: `${rotulo}: escolha o depósito antes de dar entrada no estoque.` }, 400);
+    }
+    let classesDoProduto = [];
+    try {
+      classesDoProduto = await classesDb.classesDoProduto(decisao.produtoId);
+    } catch (erroClasses) {
+      classesDoProduto = [];
+    }
+    try {
+      assertMovementIsPossible(data, produtosPorId, {
+        productId: decisao.produtoId,
+        depositId: decisao.depositoId,
+        type: 'entrada',
+        quantity: decisao.item.quantidade,
+        classValueId: '',
+        classesDoProduto
+      });
+    } catch (erroMovimento) {
+      // O XML não traz cor/voltagem: produto controlado por classe não tem
+      // como entrar direto da nota. Dizer QUAL item trava é o que permite
+      // desmarcar só ele e lançar o resto.
+      //
+      // ÚNICO PONTO QUE NÃO PASSA PELO sendErro (fase CC), e de propósito: a
+      // mensagem é COMPOSTA com o rótulo do item, e o sendErro entrega uma
+      // mensagem só. Aqui é seguro porque `assertMovementIsPossible` é uma
+      // checagem em memória — todo erro que ela lança vem de
+      // `stockCore.stockError`, que já nasce com status e com texto escrito
+      // para a pessoa. Banco nenhum passa por aqui.
+      return sendJson(res, { error: `${rotulo}: ${erroMovimento.message}` }, erroMovimento.status || 400);
+    }
+  }
+
+  // A ORDEM DE COMPRA VINCULADA É CONFERIDA AQUI (fase BH).
+  //
+  // Estava depois do commitStockMovements, e as duas recusas devolviam 400
+  // sem desfazer nada. O que ficava no banco depois de um "A ordem de
+  // compra escolhida nao existe mais": a nota gravada como LANCADA com
+  // movimentouEstoque e gerouFinanceiro em true, o razão lançado, o custo do
+  // produto sobrescrito — e nenhuma conta a pagar, porque o bloco do
+  // financeiro vem depois e nunca era alcançado. O próprio registro dizia
+  // que o financeiro tinha sido gerado, então nenhuma conferência acusava a
+  // falta. E refazer a nota era impossível: o reenvio do mesmo XML bate no
+  // bloqueio de duplicidade por chave.
+  //
+  // A conferência aqui não dispensa a de dentro da transação, mais abaixo:
+  // entre este ponto e o commit a ordem pode mudar. Esta existe para o
+  // caso comum — recusar com o banco ainda intacto e uma mensagem que o
+  // usuário pode agir sobre.
+  let ordemDaNota = null;
+  if (body.purchaseOrderId) {
+    ordemDaNota = await comprasDb.obterDocumento(body.purchaseOrderId);
+    if (!ordemDaNota) {
+      return sendJson(res, { error: 'A ordem de compra escolhida não existe mais.' }, 400);
+    }
+    if (ordemDaNota.stockApplied) {
+      return sendJson(res, {
+        error: `A ordem ${ordemDaNota.code || ordemDaNota.id} já deu entrada no estoque por conta própria. `
+          + 'Estorne o recebimento dela antes de ligar esta nota.'
+      }, 400);
+    }
+  }
+
+  const querFinanceiro = body.gerarFinanceiro !== false;
+  const vaiMovimentar = decisoes.some((d) => d.movimentarEstoque);
+  const status = decisoes.some((d) => !d.produtoId) ? 'REVISAR' : 'LANCADA';
+
+  // ---- a nota --------------------------------------------------------
+  const entrada = await entradaNfeDb.criarEntrada({
+    entrada: {
+      chave: nota.chave,
+      modelo: nota.modelo,
+      serie: nota.serie,
+      numero: nota.numero,
+      dataEmissao: nota.dataEmissao,
+      naturezaOperacao: nota.naturezaOperacao,
+      emitenteDocumento: nota.emitente.documento,
+      emitenteNome: nota.emitente.nome,
+      emitenteIe: nota.emitente.inscricaoEstadual,
+      cadastroId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
+      destinatarioDocumento: nota.destinatario ? nota.destinatario.documento : '',
+      valorProdutos: nota.totais.produtos || 0,
+      valorTotal: nota.totais.nota || 0,
+      status,
+      movimentouEstoque: vaiMovimentar,
+      gerouFinanceiro: querFinanceiro,
+      // Entrada manual (14/10/2026) não tem XML: grava vazio.
+      xml: String(xml || ''),
+      resumo: nota,
+      criadoPor: user.id,
+      criadoPorNome: user.name
+    },
+    itens: decisoes.map((d) => ({
+      numero: d.item.numero,
+      codigo: d.item.codigo,
+      ean: d.item.ean,
+      descricao: d.item.descricao,
+      ncm: d.item.ncm,
+      cfop: d.item.cfop,
+      unidade: d.item.unidade,
+      quantidade: d.item.quantidade,
+      valorUnitario: d.item.valorUnitario,
+      valorTotal: d.item.valorTotal,
+      produtoId: d.produtoId,
+      vinculoOrigem: d.vinculoOrigem,
+      movimentouEstoque: d.movimentarEstoque,
+      imposto: { icms: d.item.icms, ipi: d.item.ipi, pis: d.item.pis, cofins: d.item.cofins }
+    }))
+  });
+
+  // ---- estoque -------------------------------------------------------
+  const movimentados = [];
+  // Fase AP: os movimentos da nota sao juntados e gravados numa transacao
+  // so, no fim. Antes cada um era empurrado no array e o total do produto
+  // era atualizado por fora, num upsert absoluto — nota com 30 itens eram
+  // 30 janelas para o processo morrer com metade do estoque lancado.
+  const movimentosDaNota = [];
+  // { produtoId, custo } de cada item cuja tela pediu para atualizar o
+  // custo. Gravado dentro da transação — ver o bloco no fim do laço.
+  const custosDaNota = [];
+  for (const decisao of decisoes.filter((d) => d.movimentarEstoque)) {
+    const produto = produtosPorId.get(decisao.produtoId);
+    movimentosDaNota.push(buildMovementRecord(data, {
+      type: 'entrada',
+      productId: produto.id,
+      depositId: decisao.depositoId,
+      quantity: decisao.item.quantidade,
+      unitCost: decisao.item.valorUnitario,
+      date: nota.dataEmissao,
+      document: `NF-e ${nota.numero}/${nota.serie}`,
+      note: `Entrada da NF-e ${nota.numero} de ${nota.emitente.nome}`,
+      origin: 'entrada-nfe'
+    }, user));
+    // O total NÃO se mexe aqui: quem soma é a transação do
+    // commitStockMovements, junto com o razão. E não dá para usar
+    // upsertProduct nem "só para o custo" — ele grava a linha inteira, e o
+    // `...produto` levaria de volta o saldo lido ANTES desta nota.
+    //
+    // Custo do produto passa a ser o desta nota quando a tela pediu.
+    // vUnCom é o preço da mercadoria: NÃO inclui frete, IPI nem ST. Custo
+    // de reposição de verdade sai de rateio, e rateio é decisão de quem
+    // apura — não de quem lança a nota.
+    //
+    // AQUI SÓ SE ANOTA O QUE GRAVAR. A gravação foi para dentro da
+    // transação, logo abaixo: escrita aqui, o `catch` que desfaz a nota
+    // inteira (para a chave de acesso não ficar queimada) deixava o custo
+    // de cada item já sobrescrito. Sobrava nenhuma nota, nenhum movimento e
+    // o custo trocado — e nada na tela diz que o custo se mexeu.
+    if (body.atualizarCusto !== false) {
+      custosDaNota.push({ produtoId: produto.id, custo: Number(decisao.item.valorUnitario || 0) });
+    }
+    movimentados.push(produto.name);
+  }
+  // ---- o razão E a marca na ordem, no MESMO instante (fase AQ + BH) -----
+  //
+  // Quem move o estoque e a NOTA, nunca as duas. A ordem e o compromisso; a
+  // nota e a prova de que a mercadoria chegou. Por isso o documento e
+  // marcado como recebido SEM lancar movimento nenhum: o
+  // commitStockMovements ja lancou, com os dados da nota, que sao os que
+  // valem.
+  //
+  // A gravacao de entrada_nfe_id e o que fecha a porta do outro lado:
+  // transicionarDocumentoDeCompra recusa receber uma ordem que ja tem nota.
+  //
+  // FASE BH: A MARCA ENTRA PELO GANCHO `tambemNaTransacao`, como na rota
+  // irma (transicionarDocumentoDeCompra). Antes eram duas escritas soltas:
+  // o razão commitava, e só depois a ordem era lida e marcada. Se a marca
+  // falhasse — erro de banco, ou a ordem tendo sumido no meio — o estoque
+  // ficava lançado com a ordem intacta, e recebê-la depois lançaria a mesma
+  // mercadoria uma segunda vez. Juntas, ou nenhuma das duas.
+  //
+  // O `for update` e a reconferência aqui dentro fecham a janela entre a
+  // validação lá de cima e este commit: duas notas apontando para a mesma
+  // ordem, ao mesmo tempo, esperam uma pela outra e a segunda é recusada.
+  // O GANCHO AGORA TAMBÉM CARREGA O CUSTO (e por isso existe mesmo sem
+  // ordem vinculada). Custo e razão passam a mudar juntos, ou nenhum dos
+  // dois muda — que é a mesma regra que a fase BH aplicou à marca na ordem,
+  // pelo mesmo motivo.
+  //
+  // Continua condicional para não abrir transação à toa: nota em que nenhum
+  // item movimenta estoque, sem ordem e sem custo a gravar, não tem o que
+  // commitar.
+  const precisaDeTransacao = custosDaNota.length > 0 || Boolean(body.purchaseOrderId);
+  try {
+    await commitStockMovements(data, movimentosDaNota, produtosPorId, {
+      tambemNaTransacao: precisaDeTransacao
+        ? async (cliente) => {
+          for (const { produtoId, custo } of custosDaNota) {
+            await razaoEstoque.atualizarCustoDoProduto(cliente, produtoId, custo);
+          }
+          if (!body.purchaseOrderId) return;
+          await comprasDb.travarDocumento(cliente, body.purchaseOrderId);
+          const { rows } = await cliente.query(
+            'select stock_applied from purchase_orders where id = $1', [body.purchaseOrderId]
+          );
+          if (!rows.length) {
+            const erro = new Error('A ordem de compra escolhida não existe mais.');
+            erro.status = 400;
+            throw erro;
+          }
+          if (rows[0].stock_applied) {
+            const erro = new Error(
+              `A ordem ${ordemDaNota.code || body.purchaseOrderId} já deu entrada no estoque por conta própria. `
+              + 'Estorne o recebimento dela antes de ligar esta nota.'
+            );
+            erro.status = 400;
+            throw erro;
+          }
+          await comprasDb.atualizarStatus(body.purchaseOrderId, {
+            status: 'ordem-recebida',
+            type: 'order',
+            // stockApplied fica TRUE mesmo tendo sido a nota a movimentar: a
+            // coluna responde "esta ordem ja virou estoque?", e a resposta e sim.
+            // Fosse false, receber a ordem depois lancaria tudo de novo.
+            stockApplied: true,
+            entradaNfeId: entrada.id
+          }, cliente);
+        }
+        : undefined
+    });
+  } catch (erroDoRazao) {
+    // A NOTA VOLTA A NÃO EXISTIR (fase BH).
+    //
+    // A transação desfez o razão sozinha, mas a nota foi gravada ANTES dela
+    // e sobreviveria — dizendo LANCADA, com movimentouEstoque em true, sem
+    // um movimento sequer. E a chave de acesso é única: a nota ficaria
+    // queimada, impossível de relançar, inclusive por quem quisesse
+    // corrigir. Mesmo raciocínio do desfazer que criarEntrada já faz
+    // quando os itens falham.
+    try {
+      await entradaNfeDb.desfazerEntrada(entrada.id);
+    } catch (erroAoDesfazer) {
+      console.error('Entrada de NF-e falhou e nao consegui desfaze-la', entrada.id, erroAoDesfazer.message);
+    }
+    return sendErro(res, erroDoRazao, 'Erro ao lançar o estoque da nota.', 400);
+  }
+
+  // Relido DEPOIS do commit: dentro da transação atualizarStatus devolve
+  // null de propósito (a linha ainda não está visível para outra conexão).
+  const ordemLigada = body.purchaseOrderId
+    ? await comprasDb.obterDocumento(body.purchaseOrderId)
+    : null;
+
+  // ---- contas a pagar --------------------------------------------------
+  // Nota ligada a uma ordem gera o financeiro DELA, pelas duplicatas do
+  // XML — que e o valor que o fornecedor vai cobrar de fato. A ordem nao
+  // gera o seu: o total dela era estimativa, e duas contas a pagar para a
+  // mesma mercadoria e pior do que uma com o valor errado.
+  const financeiro = [];
+  if (querFinanceiro) {
+    await syncFinanceData(data);
+    // Sem duplicata na nota (à vista, ou emissor que não preencheu cobr),
+    // vira uma parcela só vencendo na emissão — melhor do que sumir com a
+    // dívida porque o XML não detalhou o parcelamento.
+    try {
+      const parcelas = nota.duplicatas.length
+        ? nota.duplicatas
+        : [{ numero: '001', vencimento: nota.dataEmissao, valor: nota.totais.nota || 0 }];
+      for (let i = 0; i < parcelas.length; i += 1) {
+        const parcela = parcelas[i];
+        const lancamento = await db.createFinancialEntry({
+          type: 'purchase',
+          referenceId: entrada.id,
+          date: nota.dataEmissao,
+          dueDate: parcela.vencimento || nota.dataEmissao,
+          description: descricaoLancamento.montar({
+            qual: 'despesa',
+            tipo: 'compra',
+            nota: nota.numero,
+            parcela: i + 1,
+            parcelas: parcelas.length
+          }),
+          amount: Number(parcela.valor || 0),
+          // A chave no campo Documento é o que liga a conta a pagar à nota na
+          // conciliação — nome de fornecedor muda, chave não.
+          document: nota.chave,
+          clientSupplierId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
+          clientSupplierName: nota.emitente.nome,
+          status: 'pending',
+          createdBy: user.id,
+          createdByName: user.name
+        });
+        data.finance.push(lancamento);
+        financeiro.push(lancamento);
+      }
+      saveData(data);
+    } catch (erroDoFinanceiro) {
+      // A MERCADORIA CHEGOU: o estoque NÃO se desfaz aqui — mesmo
+      // raciocínio da rota irmã de recebimento de ordem. Mas a nota parava
+      // de contar a verdade: ficava com gerouFinanceiro em true e sem
+      // conta a pagar nenhuma, e era esse `true` que impedia qualquer
+      // conferência de apontar a falta.
+      console.error('Entrada de NF-e lancada, mas o financeiro falhou', entrada.id, erroDoFinanceiro.message);
+      await entradaNfeDb.atualizarSinalizadores(entrada.id, { gerouFinanceiro: false, status: 'REVISAR' });
+      await registrarAuditoria({
+        action: 'falhaAoGerarFinanceiroDaEntrada',
+        targetId: entrada.id,
+        targetUsername: nota.emitente.nome,
+        byId: user.id,
+        byName: user.name,
+        details: { erro: erroDoFinanceiro.message, chave: nota.chave, parcelasCriadas: financeiro.length }
+      });
+    }
+  }
+
+  await registrarAuditoria({
+    action: 'entrada-nfe-lancada',
+    targetId: entrada.id,
+    targetUsername: nota.emitente.nome,
+    byId: user.id,
+    byName: user.name,
+    details: `NF-e ${nota.numero}/${nota.serie} — chave ${nota.chave} — R$ ${Number(nota.totais.nota || 0).toFixed(2)}`
+  });
+
+  return sendJson(res, {
+    success: true,
+    entrada,
+    estoque: movimentados,
+    financeiro,
+    status
+  });
+}
+
 async function conferirEntradaDeNfe(xml) {
-  const nota = entradaNfe.lerNotaDeEntrada(xml);
-  const data = loadData();
+  return conferirNotaDeEntrada(entradaNfe.lerNotaDeEntrada(xml));
+}
+
+/**
+ * A conferência de uma nota já lida (do XML) ou montada (entrada manual).
+ * `pre` reaproveita o que quem chama já carregou.
+ */
+async function conferirNotaDeEntrada(nota, pre = {}) {
+  const data = pre.data || loadData();
   // O razão vem junto porque quem chama grava a entrada com este mesmo
   // `data`, e assertMovementIsPossible confere saldo por cor em cima dele.
-  await Promise.all([syncCadastroData(data), sincronizarRazao(data)]);
+  if (!pre.data) await Promise.all([syncCadastroData(data), sincronizarRazao(data)]);
 
-  const produtos = await db.getProducts();
+  const produtos = pre.produtos || await db.getProducts();
   const vinculosAnteriores = await entradaNfeDb.vinculosDoFornecedor(nota.emitente.documento);
   const entradaExistente = await entradaNfeDb.buscarPorChave(nota.chave);
   // Estabelecimento é opcional no sistema: sem nenhum cadastrado, as checagens
@@ -16142,6 +16504,64 @@ async function tratarRequisicao(req, res) {
   // Vêm ANTES de /api/purchases porque as rotas de compra casam por prefixo.
   // --------------------------------------------------------------------------
 
+  // A ENTRADA MANUAL (14/10/2026): a nota digitada da DANFE, sem XML. Ver
+  // lib/entrada-manual.js. A consulta do fornecedor pela chave vem antes da
+  // rota genérica /api/purchases/entrada-nfe/<id>, que a trataria como id.
+  if (pathname === '/api/purchases/entrada-nfe/manual/chave' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('purchases')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    const partes = entradaManual.lerChave(url.searchParams.get('chave'));
+    if (partes.erro) return sendJson(res, { erro: partes.erro });
+    const data = loadData();
+    await syncCadastroData(data);
+    const achado = entradaNfe.acharCadastro(getCadastroDirectory(data), partes.documentoEmitente);
+    const jaLancada = await entradaNfeDb.buscarPorChave(partes.chave);
+    return sendJson(res, {
+      ...partes,
+      fornecedor: achado ? { id: achado.id, name: achado.name } : null,
+      jaLancada: Boolean(jaLancada)
+    });
+  }
+
+  if (pathname === '/api/purchases/entrada-nfe/manual' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      const data = loadData();
+      await Promise.all([syncCadastroData(data), sincronizarRazao(data)]);
+      const produtosDoCatalogo = await db.getProducts();
+      const diretorio = getCadastroDirectory(data);
+      const partes = entradaManual.lerChave(body.chave);
+      const fornecedor = body.fornecedorId
+        ? diretorio.find((c) => c.id === body.fornecedorId) || null
+        : (partes.erro ? null : entradaNfe.acharCadastro(diretorio, partes.documentoEmitente));
+      const nota = entradaManual.montarNotaManual(body, {
+        fornecedor,
+        produtosPorId: new Map(produtosDoCatalogo.map((p) => [p.id, p]))
+      });
+      const { conferencia, produtos } = await conferirNotaDeEntrada(nota, { data, produtos: produtosDoCatalogo });
+      // O produto de cada item é o que a pessoa escolheu: nada de palpite.
+      const corpo = {
+        ...body,
+        itens: nota.itens.map((item) => ({
+          numero: item.numero,
+          produtoId: item.produtoIdEscolhido,
+          movimentarEstoque: body.movimentarEstoque !== false,
+          depositoId: body.depositoId || ''
+        }))
+      };
+      return await lancarEntradaConferida(res, { conferencia, data, produtos, body: corpo, user, xml: '' });
+    } catch (error) {
+      const traduzido = traduzirErroDaEntrada(error);
+      return sendErro(res, traduzido, 'Erro ao lançar a entrada manual', 400);
+    }
+  }
+
   if (pathname === '/api/purchases/entrada-nfe/analisar' && req.method === 'POST') {
     try {
       const user = await getCurrentUser(req);
@@ -16214,6 +16634,9 @@ async function tratarRequisicao(req, res) {
       const id = decodeURIComponent(pathname.replace('/api/purchases/entrada-nfe/', '').replace('/xml', ''));
       const registro = await entradaNfeDb.obterXml(id);
       if (!registro) return sendJson(res, { error: 'Entrada não encontrada' }, 404);
+      if (!String(registro.xml || '').trim()) {
+        return sendJson(res, { error: 'Esta nota foi lançada à mão, a partir da DANFE: não há XML dela no sistema.' }, 404);
+      }
       // O XML é o documento fiscal: entregue como arquivo, com o nome que a
       // contabilidade espera (a chave), não como texto solto na tela.
       res.writeHead(200, {
@@ -16256,347 +16679,7 @@ async function tratarRequisicao(req, res) {
 
       // Releitura completa do XML: o que vale são os dados da nota lidos AQUI.
       const { conferencia, data, produtos } = await conferirEntradaDeNfe(body.xml);
-      const nota = conferencia.nota;
-
-      if (conferencia.bloqueios.length) {
-        return sendJson(res, {
-          error: conferencia.bloqueios.map((b) => b.mensagem).join(' '),
-          bloqueios: conferencia.bloqueios
-        }, 409);
-      }
-
-      const decisoes = decisoesDosItens(conferencia, body);
-      const produtosPorId = new Map(produtos.map((p) => [p.id, p]));
-
-      // ---- validação ANTES de gravar qualquer coisa -------------------------
-      // Um item recusado no meio da gravação deixaria a nota lançada pela
-      // metade: estoque de dois itens dentro, do terceiro fora, e nenhum aviso.
-      for (const decisao of decisoes) {
-        const rotulo = `Item ${decisao.item.numero} (${decisao.item.descricao})`;
-        if (decisao.produtoId && !produtosPorId.has(decisao.produtoId)) {
-          return sendJson(res, { error: `${rotulo}: o produto vinculado não existe mais.` }, 400);
-        }
-        if (!decisao.movimentarEstoque) continue;
-        if (!decisao.depositoId) {
-          return sendJson(res, { error: `${rotulo}: escolha o depósito antes de dar entrada no estoque.` }, 400);
-        }
-        let classesDoProduto = [];
-        try {
-          classesDoProduto = await classesDb.classesDoProduto(decisao.produtoId);
-        } catch (erroClasses) {
-          classesDoProduto = [];
-        }
-        try {
-          assertMovementIsPossible(data, produtosPorId, {
-            productId: decisao.produtoId,
-            depositId: decisao.depositoId,
-            type: 'entrada',
-            quantity: decisao.item.quantidade,
-            classValueId: '',
-            classesDoProduto
-          });
-        } catch (erroMovimento) {
-          // O XML não traz cor/voltagem: produto controlado por classe não tem
-          // como entrar direto da nota. Dizer QUAL item trava é o que permite
-          // desmarcar só ele e lançar o resto.
-          //
-          // ÚNICO PONTO QUE NÃO PASSA PELO sendErro (fase CC), e de propósito: a
-          // mensagem é COMPOSTA com o rótulo do item, e o sendErro entrega uma
-          // mensagem só. Aqui é seguro porque `assertMovementIsPossible` é uma
-          // checagem em memória — todo erro que ela lança vem de
-          // `stockCore.stockError`, que já nasce com status e com texto escrito
-          // para a pessoa. Banco nenhum passa por aqui.
-          return sendJson(res, { error: `${rotulo}: ${erroMovimento.message}` }, erroMovimento.status || 400);
-        }
-      }
-
-      // A ORDEM DE COMPRA VINCULADA É CONFERIDA AQUI (fase BH).
-      //
-      // Estava depois do commitStockMovements, e as duas recusas devolviam 400
-      // sem desfazer nada. O que ficava no banco depois de um "A ordem de
-      // compra escolhida nao existe mais": a nota gravada como LANCADA com
-      // movimentouEstoque e gerouFinanceiro em true, o razão lançado, o custo do
-      // produto sobrescrito — e nenhuma conta a pagar, porque o bloco do
-      // financeiro vem depois e nunca era alcançado. O próprio registro dizia
-      // que o financeiro tinha sido gerado, então nenhuma conferência acusava a
-      // falta. E refazer a nota era impossível: o reenvio do mesmo XML bate no
-      // bloqueio de duplicidade por chave.
-      //
-      // A conferência aqui não dispensa a de dentro da transação, mais abaixo:
-      // entre este ponto e o commit a ordem pode mudar. Esta existe para o
-      // caso comum — recusar com o banco ainda intacto e uma mensagem que o
-      // usuário pode agir sobre.
-      let ordemDaNota = null;
-      if (body.purchaseOrderId) {
-        ordemDaNota = await comprasDb.obterDocumento(body.purchaseOrderId);
-        if (!ordemDaNota) {
-          return sendJson(res, { error: 'A ordem de compra escolhida não existe mais.' }, 400);
-        }
-        if (ordemDaNota.stockApplied) {
-          return sendJson(res, {
-            error: `A ordem ${ordemDaNota.code || ordemDaNota.id} já deu entrada no estoque por conta própria. `
-              + 'Estorne o recebimento dela antes de ligar esta nota.'
-          }, 400);
-        }
-      }
-
-      const querFinanceiro = body.gerarFinanceiro !== false;
-      const vaiMovimentar = decisoes.some((d) => d.movimentarEstoque);
-      const status = decisoes.some((d) => !d.produtoId) ? 'REVISAR' : 'LANCADA';
-
-      // ---- a nota --------------------------------------------------------
-      const entrada = await entradaNfeDb.criarEntrada({
-        entrada: {
-          chave: nota.chave,
-          modelo: nota.modelo,
-          serie: nota.serie,
-          numero: nota.numero,
-          dataEmissao: nota.dataEmissao,
-          naturezaOperacao: nota.naturezaOperacao,
-          emitenteDocumento: nota.emitente.documento,
-          emitenteNome: nota.emitente.nome,
-          emitenteIe: nota.emitente.inscricaoEstadual,
-          cadastroId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
-          destinatarioDocumento: nota.destinatario ? nota.destinatario.documento : '',
-          valorProdutos: nota.totais.produtos || 0,
-          valorTotal: nota.totais.nota || 0,
-          status,
-          movimentouEstoque: vaiMovimentar,
-          gerouFinanceiro: querFinanceiro,
-          xml: String(body.xml),
-          resumo: nota,
-          criadoPor: user.id,
-          criadoPorNome: user.name
-        },
-        itens: decisoes.map((d) => ({
-          numero: d.item.numero,
-          codigo: d.item.codigo,
-          ean: d.item.ean,
-          descricao: d.item.descricao,
-          ncm: d.item.ncm,
-          cfop: d.item.cfop,
-          unidade: d.item.unidade,
-          quantidade: d.item.quantidade,
-          valorUnitario: d.item.valorUnitario,
-          valorTotal: d.item.valorTotal,
-          produtoId: d.produtoId,
-          vinculoOrigem: d.vinculoOrigem,
-          movimentouEstoque: d.movimentarEstoque,
-          imposto: { icms: d.item.icms, ipi: d.item.ipi, pis: d.item.pis, cofins: d.item.cofins }
-        }))
-      });
-
-      // ---- estoque -------------------------------------------------------
-      const movimentados = [];
-      // Fase AP: os movimentos da nota sao juntados e gravados numa transacao
-      // so, no fim. Antes cada um era empurrado no array e o total do produto
-      // era atualizado por fora, num upsert absoluto — nota com 30 itens eram
-      // 30 janelas para o processo morrer com metade do estoque lancado.
-      const movimentosDaNota = [];
-      // { produtoId, custo } de cada item cuja tela pediu para atualizar o
-      // custo. Gravado dentro da transação — ver o bloco no fim do laço.
-      const custosDaNota = [];
-      for (const decisao of decisoes.filter((d) => d.movimentarEstoque)) {
-        const produto = produtosPorId.get(decisao.produtoId);
-        movimentosDaNota.push(buildMovementRecord(data, {
-          type: 'entrada',
-          productId: produto.id,
-          depositId: decisao.depositoId,
-          quantity: decisao.item.quantidade,
-          unitCost: decisao.item.valorUnitario,
-          date: nota.dataEmissao,
-          document: `NF-e ${nota.numero}/${nota.serie}`,
-          note: `Entrada da NF-e ${nota.numero} de ${nota.emitente.nome}`,
-          origin: 'entrada-nfe'
-        }, user));
-        // O total NÃO se mexe aqui: quem soma é a transação do
-        // commitStockMovements, junto com o razão. E não dá para usar
-        // upsertProduct nem "só para o custo" — ele grava a linha inteira, e o
-        // `...produto` levaria de volta o saldo lido ANTES desta nota.
-        //
-        // Custo do produto passa a ser o desta nota quando a tela pediu.
-        // vUnCom é o preço da mercadoria: NÃO inclui frete, IPI nem ST. Custo
-        // de reposição de verdade sai de rateio, e rateio é decisão de quem
-        // apura — não de quem lança a nota.
-        //
-        // AQUI SÓ SE ANOTA O QUE GRAVAR. A gravação foi para dentro da
-        // transação, logo abaixo: escrita aqui, o `catch` que desfaz a nota
-        // inteira (para a chave de acesso não ficar queimada) deixava o custo
-        // de cada item já sobrescrito. Sobrava nenhuma nota, nenhum movimento e
-        // o custo trocado — e nada na tela diz que o custo se mexeu.
-        if (body.atualizarCusto !== false) {
-          custosDaNota.push({ produtoId: produto.id, custo: Number(decisao.item.valorUnitario || 0) });
-        }
-        movimentados.push(produto.name);
-      }
-      // ---- o razão E a marca na ordem, no MESMO instante (fase AQ + BH) -----
-      //
-      // Quem move o estoque e a NOTA, nunca as duas. A ordem e o compromisso; a
-      // nota e a prova de que a mercadoria chegou. Por isso o documento e
-      // marcado como recebido SEM lancar movimento nenhum: o
-      // commitStockMovements ja lancou, com os dados da nota, que sao os que
-      // valem.
-      //
-      // A gravacao de entrada_nfe_id e o que fecha a porta do outro lado:
-      // transicionarDocumentoDeCompra recusa receber uma ordem que ja tem nota.
-      //
-      // FASE BH: A MARCA ENTRA PELO GANCHO `tambemNaTransacao`, como na rota
-      // irma (transicionarDocumentoDeCompra). Antes eram duas escritas soltas:
-      // o razão commitava, e só depois a ordem era lida e marcada. Se a marca
-      // falhasse — erro de banco, ou a ordem tendo sumido no meio — o estoque
-      // ficava lançado com a ordem intacta, e recebê-la depois lançaria a mesma
-      // mercadoria uma segunda vez. Juntas, ou nenhuma das duas.
-      //
-      // O `for update` e a reconferência aqui dentro fecham a janela entre a
-      // validação lá de cima e este commit: duas notas apontando para a mesma
-      // ordem, ao mesmo tempo, esperam uma pela outra e a segunda é recusada.
-      // O GANCHO AGORA TAMBÉM CARREGA O CUSTO (e por isso existe mesmo sem
-      // ordem vinculada). Custo e razão passam a mudar juntos, ou nenhum dos
-      // dois muda — que é a mesma regra que a fase BH aplicou à marca na ordem,
-      // pelo mesmo motivo.
-      //
-      // Continua condicional para não abrir transação à toa: nota em que nenhum
-      // item movimenta estoque, sem ordem e sem custo a gravar, não tem o que
-      // commitar.
-      const precisaDeTransacao = custosDaNota.length > 0 || Boolean(body.purchaseOrderId);
-      try {
-        await commitStockMovements(data, movimentosDaNota, produtosPorId, {
-          tambemNaTransacao: precisaDeTransacao
-            ? async (cliente) => {
-              for (const { produtoId, custo } of custosDaNota) {
-                await razaoEstoque.atualizarCustoDoProduto(cliente, produtoId, custo);
-              }
-              if (!body.purchaseOrderId) return;
-              await comprasDb.travarDocumento(cliente, body.purchaseOrderId);
-              const { rows } = await cliente.query(
-                'select stock_applied from purchase_orders where id = $1', [body.purchaseOrderId]
-              );
-              if (!rows.length) {
-                const erro = new Error('A ordem de compra escolhida não existe mais.');
-                erro.status = 400;
-                throw erro;
-              }
-              if (rows[0].stock_applied) {
-                const erro = new Error(
-                  `A ordem ${ordemDaNota.code || body.purchaseOrderId} já deu entrada no estoque por conta própria. `
-                  + 'Estorne o recebimento dela antes de ligar esta nota.'
-                );
-                erro.status = 400;
-                throw erro;
-              }
-              await comprasDb.atualizarStatus(body.purchaseOrderId, {
-                status: 'ordem-recebida',
-                type: 'order',
-                // stockApplied fica TRUE mesmo tendo sido a nota a movimentar: a
-                // coluna responde "esta ordem ja virou estoque?", e a resposta e sim.
-                // Fosse false, receber a ordem depois lancaria tudo de novo.
-                stockApplied: true,
-                entradaNfeId: entrada.id
-              }, cliente);
-            }
-            : undefined
-        });
-      } catch (erroDoRazao) {
-        // A NOTA VOLTA A NÃO EXISTIR (fase BH).
-        //
-        // A transação desfez o razão sozinha, mas a nota foi gravada ANTES dela
-        // e sobreviveria — dizendo LANCADA, com movimentouEstoque em true, sem
-        // um movimento sequer. E a chave de acesso é única: a nota ficaria
-        // queimada, impossível de relançar, inclusive por quem quisesse
-        // corrigir. Mesmo raciocínio do desfazer que criarEntrada já faz
-        // quando os itens falham.
-        try {
-          await entradaNfeDb.desfazerEntrada(entrada.id);
-        } catch (erroAoDesfazer) {
-          console.error('Entrada de NF-e falhou e nao consegui desfaze-la', entrada.id, erroAoDesfazer.message);
-        }
-        return sendErro(res, erroDoRazao, 'Erro ao lançar o estoque da nota.', 400);
-      }
-
-      // Relido DEPOIS do commit: dentro da transação atualizarStatus devolve
-      // null de propósito (a linha ainda não está visível para outra conexão).
-      const ordemLigada = body.purchaseOrderId
-        ? await comprasDb.obterDocumento(body.purchaseOrderId)
-        : null;
-
-      // ---- contas a pagar --------------------------------------------------
-      // Nota ligada a uma ordem gera o financeiro DELA, pelas duplicatas do
-      // XML — que e o valor que o fornecedor vai cobrar de fato. A ordem nao
-      // gera o seu: o total dela era estimativa, e duas contas a pagar para a
-      // mesma mercadoria e pior do que uma com o valor errado.
-      const financeiro = [];
-      if (querFinanceiro) {
-        await syncFinanceData(data);
-        // Sem duplicata na nota (à vista, ou emissor que não preencheu cobr),
-        // vira uma parcela só vencendo na emissão — melhor do que sumir com a
-        // dívida porque o XML não detalhou o parcelamento.
-        try {
-          const parcelas = nota.duplicatas.length
-            ? nota.duplicatas
-            : [{ numero: '001', vencimento: nota.dataEmissao, valor: nota.totais.nota || 0 }];
-          for (let i = 0; i < parcelas.length; i += 1) {
-            const parcela = parcelas[i];
-            const lancamento = await db.createFinancialEntry({
-              type: 'purchase',
-              referenceId: entrada.id,
-              date: nota.dataEmissao,
-              dueDate: parcela.vencimento || nota.dataEmissao,
-              description: descricaoLancamento.montar({
-                qual: 'despesa',
-                tipo: 'compra',
-                nota: nota.numero,
-                parcela: i + 1,
-                parcelas: parcelas.length
-              }),
-              amount: Number(parcela.valor || 0),
-              // A chave no campo Documento é o que liga a conta a pagar à nota na
-              // conciliação — nome de fornecedor muda, chave não.
-              document: nota.chave,
-              clientSupplierId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
-              clientSupplierName: nota.emitente.nome,
-              status: 'pending',
-              createdBy: user.id,
-              createdByName: user.name
-            });
-            data.finance.push(lancamento);
-            financeiro.push(lancamento);
-          }
-          saveData(data);
-        } catch (erroDoFinanceiro) {
-          // A MERCADORIA CHEGOU: o estoque NÃO se desfaz aqui — mesmo
-          // raciocínio da rota irmã de recebimento de ordem. Mas a nota parava
-          // de contar a verdade: ficava com gerouFinanceiro em true e sem
-          // conta a pagar nenhuma, e era esse `true` que impedia qualquer
-          // conferência de apontar a falta.
-          console.error('Entrada de NF-e lancada, mas o financeiro falhou', entrada.id, erroDoFinanceiro.message);
-          await entradaNfeDb.atualizarSinalizadores(entrada.id, { gerouFinanceiro: false, status: 'REVISAR' });
-          await registrarAuditoria({
-            action: 'falhaAoGerarFinanceiroDaEntrada',
-            targetId: entrada.id,
-            targetUsername: nota.emitente.nome,
-            byId: user.id,
-            byName: user.name,
-            details: { erro: erroDoFinanceiro.message, chave: nota.chave, parcelasCriadas: financeiro.length }
-          });
-        }
-      }
-
-      await registrarAuditoria({
-        action: 'entrada-nfe-lancada',
-        targetId: entrada.id,
-        targetUsername: nota.emitente.nome,
-        byId: user.id,
-        byName: user.name,
-        details: `NF-e ${nota.numero}/${nota.serie} — chave ${nota.chave} — R$ ${Number(nota.totais.nota || 0).toFixed(2)}`
-      });
-
-      return sendJson(res, {
-        success: true,
-        entrada,
-        estoque: movimentados,
-        financeiro,
-        status
-      });
+      return await lancarEntradaConferida(res, { conferencia, data, produtos, body, user, xml: body.xml });
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
       return sendErro(res, traduzido, 'Erro ao lançar a entrada', 400);

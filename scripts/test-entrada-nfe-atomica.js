@@ -51,9 +51,11 @@ const check = (nome, cond, det) => {
 };
 
 const src = ler('server.js');
+// 14/10/2026: o lançamento é lancarEntradaConferida (a rota do XML e a da
+// entrada manual chamam a mesma função); é nela que a ordem das coisas vale.
 const rota = src.slice(
-  src.indexOf("if (pathname === '/api/purchases/entrada-nfe' && req.method === 'POST')"),
-  src.indexOf("if (pathname === '/api/purchases/documentos'")
+  src.indexOf('async function lancarEntradaConferida(res, '),
+  src.indexOf('async function conferirEntradaDeNfe(xml)')
 );
 check('achei a rota de entrada de NF-e', rota.length > 500, `${rota.length} caracteres`);
 

@@ -453,7 +453,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       content.innerHTML = `
         <div class="entrada-nfe">
           <section class="panel">
-            <h3>Entrada de NF-e</h3>
+            <div class="panel-header">
+              <h3>Entrada de NF-e</h3>
+              <button type="button" class="secondary" id="entradaManual">Lançar nota sem XML</button>
+            </div>
             <div class="entrada-drop ${tela.analisando ? 'entrada-drop-ocupada' : ''}" id="entradaDrop">
               <input type="file" id="entradaArquivo" accept=".xml,text/xml,application/xml" hidden />
               <p>${tela.analisando ? 'Lendo a nota...' : 'Arraste o XML da NF-e ou <button type="button" class="entrada-link" id="entradaEscolher">escolha o arquivo</button>'}</p>
@@ -482,6 +485,12 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       const zona = document.getElementById('entradaDrop');
       const campo = document.getElementById('entradaArquivo');
       document.getElementById('entradaEscolher')?.addEventListener('click', () => campo?.click());
+      // A nota digitada da DANFE (14/10/2026): tela própria, entrada_nfe_manual.
+      document.getElementById('entradaManual')?.addEventListener('click', () => {
+        state.activeSub = 'entrada_nfe_manual';
+        if (typeof renderApp === 'function') renderApp();
+        ctx.loadModule('purchases');
+      });
       campo?.addEventListener('change', () => {
         if (campo.files && campo.files[0]) analisarArquivo(campo.files[0]);
       });
