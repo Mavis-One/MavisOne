@@ -5742,6 +5742,9 @@ function buildFinanceDashboardSummary(data, query, extras = {}) {
 // As três tabelas pequenas (132 + 0 + 28 linhas, ~3 ms) que dão NOME a
 // categoria, centro de custo e conta. São as mesmas três chamadas de
 // syncFinanceData, sem os lançamentos.
+// Os tipos do plano de contas (financial_categories.type).
+const TIPOS_DO_PLANO = ['receita', 'despesa', 'ambos'];
+
 async function syncFinanceCadastroData(data) {
   const [categories, costCenters, bankAccounts] = await Promise.all([
     db.getFinancialCategories(),
@@ -18886,14 +18889,36 @@ async function tratarRequisicao(req, res) {
       if (!name) {
         return sendJson(res, { error: 'Informe o nome da categoria' }, 400);
       }
-      const category = await db.createFinancialCategory({ name, type: body.type || 'ambos' });
+      const category = await db.createFinancialCategory({ name, type: TIPOS_DO_PLANO.includes(body.type) ? body.type : 'ambos' });
       return sendJson(res, { success: true, category });
     } catch (error) {
       return sendErro(res, error, 'Erro ao criar categoria', 400);
     }
   }
 
-  if (pathname === '/api/finance/cost-centers' && req.method === 'POST') {
+  // EDITAR O PLANO DE CONTAS (14/10/2026): nome e tipo, pela tela Financeiro ›
+  // Plano de Contas. Não há exclusão: os lançamentos apontam para o id.
+  if (/^\/api\/finance\/categories\/[^/]+$/.test(pathname) && req.method === 'PUT') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      const body = await readBody(req);
+      const name = String(body.name || '').trim();
+      if (!name) {
+        return sendJson(res, { error: 'Informe o nome do plano de contas' }, 400);
+      }
+      const category = await db.updateFinancialCategory(id, { name, type: TIPOS_DO_PLANO.includes(body.type) ? body.type : 'ambos' });
+      if (!category) return sendJson(res, { error: 'Plano de contas não encontrado' }, 404);
+      return sendJson(res, { success: true, category });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao salvar o plano de contas', 400);
+    }
+  }
+
+    if (pathname === '/api/finance/cost-centers' && req.method === 'POST') {
     try {
       // Fase DS: sem loadData nem syncFinanceData. A rota só cria um registro
       // e devolve o que o banco gravou; os 27 mil lançamentos que ela lia

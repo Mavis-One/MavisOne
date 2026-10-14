@@ -50,7 +50,10 @@ const novo = ler('public/modules/finance/subs/novo_lancamento.js');
 check('o lançamento mostra os centros da empresa (e os de todas)', /return !ids\.length \|\| !estabelecimentoAtual \|\| ids\.includes\(estabelecimentoAtual\);/.test(novo));
 // 14/10/2026: o centro de custo virou campo de busca (refazerCampoDeBusca).
 check('  e refaz a lista ao trocar a empresa', /refazerCampoDeBusca\('financeCostCenter', aindaVale \? escolhido : ''\);/.test(novo));
-check('o + do lançamento cria ligado à empresa escolhida', /inlineAddKind === 'costCenter' && estabelecimentoAtual \? \{ name, estabelecimentoIds: \[estabelecimentoAtual\] \}/.test(novo));
+// 14/10/2026: o "+" abre a tela de Centros de Custo com a empresa do lançamento marcada.
+check('o + do lançamento abre o novo centro já com a empresa escolhida',
+  novo.includes("if (kind === 'costCenter') state.centroDeCustoNovo = { estabelecimentoIds: estabelecimentoAtual ? [estabelecimentoAtual] : [] };")
+  && tela.includes("editando = { name: '', estabelecimentoIds: state.centroDeCustoNovo.estabelecimentoIds || [] };"));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

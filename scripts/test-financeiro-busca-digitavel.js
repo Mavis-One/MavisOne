@@ -37,8 +37,8 @@ check('nenhum <select> de conta, plano ou centro sobrou',
 check('mesmos nomes no envio (o servidor não muda)',
   /name: 'bankAccountId'/.test(novo) && /name: 'category'/.test(novo) && /name: 'costCenter'/.test(novo)
   && /name: 'sourceBankAccountId'/.test(novo) && /name: 'targetBankAccountId'/.test(novo));
-check('o cadastro rápido entra escolhido no campo do "+" clicado',
-  novo.includes('const valor = id === inlineAddAlvo ? created.id :'));
+check('o cadastro novo volta escolhido no campo do "+" clicado',
+  novo.includes("const valor = id === r.alvo && r.criadoId ? r.criadoId : (r.campos || {})[CAMPOS_DE_BUSCA[id].name] || '';"));
 check('trocar a empresa refaz conta e centro sem redesenhar o formulário',
   novo.includes("refazerCampoDeBusca(id, aindaVale ? escolhida : '');")
   && novo.includes("refazerCampoDeBusca('financeCostCenter', aindaVale ? escolhido : '');"));
@@ -70,6 +70,39 @@ check('o campo de busca acha por texto extra fora do rótulo',
   ler('public/app.js').includes('const busca = textoDeBusca(o.buscaExtra ? `${o.label} ${o.buscaExtra}` : o.label);'));
 check('Novo Lançamento e filtro das listas buscam pelo fantasia',
   novo.includes("buscaExtra: c.tradeName || ''") && lista.includes("buscaExtra: item.tradeName || ''"));
+
+console.log('\n--- 4. o "+" leva à tela de cadastro de verdade (14/10/2026) ---');
+check('cada "+" tem a sua tela', novo.includes("bankAccount: { modulo: 'cadastros', tela: 'nova_conta_bancaria'")
+  && novo.includes("category: { modulo: 'finance', tela: 'plano_de_contas'")
+  && novo.includes("costCenter: { modulo: 'finance', tela: 'centros_de_custo'"));
+check('o lançamento em digitação fica guardado e volta', novo.includes('state.financeRascunhoLancamento = {') && novo.includes('restaurarRascunho();'));
+check('sem o módulo da tela, avisa em vez de levar a uma tela fechada', novo.includes('que não está liberado para você.'));
+const plano = ler('public/modules/finance/subs/plano_de_contas.js');
+const centros = ler('public/modules/finance/subs/centros_de_custo.js');
+const cadastros = ler('public/modules/cadastros/shared.js');
+check('Plano de Contas existe no menu, no módulo e na página',
+  ler('public/app.js').includes("{ key: 'plano_de_contas', label: 'Plano de Contas'")
+  && ler('public/modules/finance/index.js').includes("'plano_de_contas'")
+  && ler('public/index.html').includes('/modules/finance/subs/plano_de_contas.js'));
+check('  e edita nome e tipo pela rota nova', plano.includes("method: 'PUT'") && servidor.includes("if (/^\\/api\\/finance\\/categories\\/[^/]+$/.test(pathname) && req.method === 'PUT') {"));
+check('as três telas devolvem ao lançamento ao salvar o novo',
+  plano.includes("window.MavisRascunhoLancamento.voltar(ctx, criado.id)")
+  && centros.includes("window.MavisRascunhoLancamento.voltar(ctx, criado.id)")
+  && cadastros.includes('if (voltaAoLancamento(criado && criado.id)) return;'));
+
+console.log('\n--- 5. Edição de Título (14/10/2026) ---');
+// Provado no navegador: em Contas a Pagar, abrir o LF27362 e clicar Editar leva
+// a "Financeiro / Edição de Título", com data, vencimento, valor, descrição,
+// documento, fornecedor e plano do título; "Novo Lançamento" segue vazio.
+check('é a mesma tela, com outro nome',
+  novo.includes('window.MavisSubscreenRegistry.finance.edicao_titulo = window.MavisSubscreenRegistry.finance.novo_lancamento;')
+  && ler('public/modules/finance/index.js').includes("'edicao_titulo'")
+  && ler('public/app.js').includes("(state.activeModule === 'finance' && activeSubKey === 'edicao_titulo')\n      ? 'Edição de Título'"));
+check('o Editar do título e o faturamento do pedido abrem a Edição de Título',
+  lista.includes("state.activeSub = 'edicao_titulo';") && ler('public/app.js').includes("state.financeEditEntryId = gerados[0];\n                  state.activeSub = 'edicao_titulo';"));
+check('sem título escolhido ela volta a ser Novo Lançamento',
+  novo.includes("if (state.activeSub === 'edicao_titulo' && !idEmEdicao) {"));
+check('o cabeçalho do formulário diz Edição de Título', novo.includes("rotulo(editEntry.code, 'Edição de Título')"));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
 process.exit(falhas ? 1 : 0);

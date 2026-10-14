@@ -68,7 +68,7 @@ console.log('\n--- 4. o título da tela de edição ---');
 const tela = ler('public/modules/finance/subs/novo_lancamento.js');
 const semComentario = (js) => js.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 const telaLimpa = semComentario(tela);
-check('usa o rótulo compartilhado', /MavisLancamentoCodigo\.rotulo\(editEntry\.code, 'Editar Lançamento'\)/.test(telaLimpa));
+check('usa o rótulo compartilhado', /MavisLancamentoCodigo\.rotulo\(editEntry\.code, 'Edição de Título'\)/.test(telaLimpa));
 // O defeito que originou o pedido.
 check('  e NÃO mostra mais um pedaço do id interno',
   !/String\(editEntry\.id\)\.slice\(-8\)/.test(telaLimpa));

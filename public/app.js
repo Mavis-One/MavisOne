@@ -1557,6 +1557,10 @@ function renderApp() {
       ? 'Depósitos > Edição'
     : (state.activeModule === 'cadastros' && activeSubKey === 'list')
       ? ''
+    // 14/10/2026: o título aberto para alterar tem nome próprio (o formulário é
+    // o do Novo Lançamento). Fora do menu: sem um título escolhido não há o que editar.
+    : (state.activeModule === 'finance' && activeSubKey === 'edicao_titulo')
+      ? 'Edição de Título'
     : ((moduleSubItems[state.activeModule] || []).find((item) => item.key === activeSubKey)?.label || '');
   const showSecondarySidebar = shouldShowSecondarySidebar();
 
@@ -2036,6 +2040,8 @@ const moduleSubItems = {
     { key: 'novo_lancamento', label: 'Novo Lançamento', desc: 'Registra uma receita ou uma despesa.' },
     // Fase EK (14/10/2026): o usuário do Financeiro cria e vincula às empresas.
     { key: 'centros_de_custo', label: 'Centros de Custo', desc: 'Centros de custo e as empresas em que cada um vale.' },
+    // 14/10/2026: o plano de contas ganhou tela (antes só nascia pelo "+").
+    { key: 'plano_de_contas', label: 'Plano de Contas', desc: 'Contas de receita e de despesa usadas nos lançamentos.' },
     { key: 'nfe_emitidas', label: 'NF-e Emitidas', desc: 'Notas emitidas, com DANFE e XML.' },
     { key: 'nova_nfe_avulsa', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e, com pré-visualização antes de enviar.' },
     { key: 'emitir_nfe_focus', label: 'Emitir NF-e (Focus)', desc: 'Emissão pela integração Focus NFe.' },
@@ -4518,7 +4524,7 @@ async function loadModule(moduleName) {
                 state.financeReturnTo = { module: 'sales', sub: 'new_sale', recordId: editRecord.id };
                 if (gerados.length === 1) {
                   state.financeEditEntryId = gerados[0];
-                  state.activeSub = 'novo_lancamento';
+                  state.activeSub = 'edicao_titulo';
                 } else {
                   // Várias parcelas: mostra a lista filtrada pelo pedido em vez
                   // de escolher uma por conta própria.

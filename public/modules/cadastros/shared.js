@@ -803,7 +803,14 @@ window.MavisCadastros = window.MavisCadastros || {};
           });
         });
 
+        // VEIO DO "+" DO LANÇAMENTO (14/10/2026): salvar ou cancelar um cadastro
+        // novo devolve a pessoa ao lançamento, com o cadastro já escolhido lá.
+        const voltaAoLancamento = (criadoId) => !current && window.MavisRascunhoLancamento
+          && window.MavisRascunhoLancamento.espera(state, config.itemKey)
+          && window.MavisRascunhoLancamento.voltar(ctx, criadoId);
+
         document.getElementById('cadastroFormCancel')?.addEventListener('click', () => {
+          if (voltaAoLancamento('')) return;
           state.activeSub = config.listSub;
           loadModule(modulo);
         });
@@ -827,12 +834,15 @@ window.MavisCadastros = window.MavisCadastros || {};
 
           if (submitBtn) submitBtn.disabled = true;
           try {
+            let resposta = null;
             if (current) {
               await api(`${config.endpoint}/${current.id}`, { method: 'PUT', body: JSON.stringify(values) });
             } else {
-              await api(config.endpoint, { method: 'POST', body: JSON.stringify(values) });
+              resposta = await api(config.endpoint, { method: 'POST', body: JSON.stringify(values) });
             }
             showToast(current ? 'Registro atualizado.' : 'Registro criado.', 'success');
+            const criado = resposta && (resposta[config.itemKey] || resposta.item || resposta);
+            if (voltaAoLancamento(criado && criado.id)) return;
             state.activeSub = config.listSub;
             loadModule(modulo);
           } catch (error) {

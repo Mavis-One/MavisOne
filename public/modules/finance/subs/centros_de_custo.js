@@ -6,11 +6,18 @@ window.MavisSubscreenRegistry.finance = window.MavisSubscreenRegistry.finance ||
 // em que ele vale. No lançamento, o campo Centro de custo mostra os centros da
 // empresa do lançamento (e os sem empresa, que valem para todas).
 window.MavisSubscreenRegistry.finance.centros_de_custo = async function renderCentrosDeCusto(ctx) {
-  const { content, api, showToast, escapeHtml } = ctx;
+  const { content, api, showToast, escapeHtml, state } = ctx;
+  // Veio do "+" do lançamento: abre já no formulário de novo, com a empresa
+  // do lançamento marcada, e ao salvar (ou cancelar) volta para ele.
+  const vindoDoLancamento = window.MavisRascunhoLancamento && window.MavisRascunhoLancamento.espera(state, 'costCenter');
 
   let centros = [];
   let estabelecimentos = [];
   let editando = null; // null = fechado; {} = novo; centro = editando
+  if (state.centroDeCustoNovo) {
+    editando = { name: '', estabelecimentoIds: state.centroDeCustoNovo.estabelecimentoIds || [] };
+    state.centroDeCustoNovo = null;
+  }
 
   const nomeDoEstab = (e) => {
     const nome = e.nomeFantasia || e.razaoSocial || 'Sem nome';
@@ -103,6 +110,7 @@ window.MavisSubscreenRegistry.finance.centros_de_custo = async function renderCe
       });
     });
     document.getElementById('ccCancelar')?.addEventListener('click', () => {
+      if (vindoDoLancamento && !editando.id && window.MavisRascunhoLancamento.voltar(ctx, '')) return;
       editando = null;
       desenhar();
     });
@@ -114,12 +122,14 @@ window.MavisSubscreenRegistry.finance.centros_de_custo = async function renderCe
       const dados = new FormData(evento.target);
       const corpo = { name: String(dados.get('name') || '').trim(), estabelecimentoIds: dados.getAll('estabelecimentoIds') };
       try {
+        let criado = null;
         if (editando.id) {
           await api(`/api/finance/cost-centers/${encodeURIComponent(editando.id)}`, { method: 'PUT', body: JSON.stringify(corpo) });
         } else {
-          await api('/api/finance/cost-centers', { method: 'POST', body: JSON.stringify(corpo) });
+          criado = (await api('/api/finance/cost-centers', { method: 'POST', body: JSON.stringify(corpo) })).costCenter;
         }
         showToast('Centro de custo salvo.', 'success');
+        if (criado && vindoDoLancamento && window.MavisRascunhoLancamento.voltar(ctx, criado.id)) return;
         editando = null;
         if (await carregar()) desenhar();
       } catch (erro) {
@@ -129,5 +139,8 @@ window.MavisSubscreenRegistry.finance.centros_de_custo = async function renderCe
     });
   }
 
-  if (await carregar()) desenhar();
+  if (await carregar()) {
+    desenhar();
+    if (editando) document.querySelector('#ccForm [name=name]')?.focus();
+  }
 };

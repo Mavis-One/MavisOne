@@ -69,7 +69,7 @@ check('o PUT, sem o campo, usa o estabelecimento que o lançamento já tem',
 
 console.log('\n--- 2. lançamento já baixado ou cancelado não abre formulário ---');
 check('a tela decide pelo rawStatus antes de desenhar',
-  /if \(editEntry && String\(editEntry\.rawStatus \|\| 'pending'\) !== 'pending'\) \{\s*renderSomenteLeitura\(editEntry\);\s*\} else \{\s*renderForm\(\);\s*\}\s*\};\s*$/.test(tela));
+  /if \(editEntry && String\(editEntry\.rawStatus \|\| 'pending'\) !== 'pending'\) \{\s*renderSomenteLeitura\(editEntry\);\s*\} else \{[\s\S]*?renderForm\(\);\s*restaurarRascunho\(\);\s*\}\s*\};/.test(tela));
 const leitura = tela.slice(tela.indexOf('function renderSomenteLeitura('), tela.indexOf('function acoesDeSaida('));
 check('o aviso só de leitura não tem formulário nem botão de salvar', leitura.length > 200
   && !/<form/.test(leitura) && !/type="submit"/.test(leitura));
@@ -80,7 +80,7 @@ check('o servidor continua recusando editar o que não está pendente',
   /if \(entry\.status !== 'pending'\) \{\s*return sendJson\(res, \{ error: 'Só é possível editar lançamentos ainda pendentes/.test(servidor));
 
 console.log('\n--- 3. "Novo Lançamento" depois de editar um vinculado ---');
-const botaoNovo = tela.slice(tela.indexOf("getElementById('financeSuccessNew')"), tela.indexOf('let inlineAddKind'));
+const botaoNovo = tela.slice(tela.indexOf("getElementById('financeSuccessNew')"), tela.indexOf('const TELA_DE_CADASTRO'));
 check('a tela nasce de novo, com todo o estado recalculado', /renderFinanceNovoLancamento\(ctx\);/.test(botaoNovo));
 check('  e não redesenha o formulário com o estado da edição', !/editEntry = null/.test(botaoNovo) && !/renderForm\(\)/.test(botaoNovo));
 check('  a função tem nome para chamar a si mesma',
@@ -88,8 +88,10 @@ check('  a função tem nome para chamar a si mesma',
 check('  e o pedido de origem fica para trás', /state\.financeReturnTo = null;\s*renderFinanceNovoLancamento/.test(botaoNovo));
 
 console.log('\n--- 4. Enter no cadastro rápido ---');
-check('Enter cadastra o nome, e não envia o lançamento',
-  /getElementById\('financeInlineAddInput'\)\?\.addEventListener\('keydown', \(evento\) => \{\s*if \(evento\.key === 'Enter'[^)]*\) \{\s*evento\.preventDefault\(\);\s*document\.getElementById\('financeInlineAddConfirm'\)\?\.click\(\);/.test(tela));
+// 14/10/2026: o cadastro rápido saiu — o "+" leva à tela de cadastro de verdade
+// (scripts/test-financeiro-busca-digitavel.js). Sem campo de nome no formulário,
+// não há Enter que envie o lançamento por engano.
+check('nenhum campo solto de cadastro dentro do formulário', !tela.includes('financeInlineAddInput'));
 
 console.log('\n--- 5. a data de hoje é a local ---');
 check('nada de toISOString().slice(0, 10) na tela', !/toISOString\(\)\.slice\(0, 10\)/.test(tela));

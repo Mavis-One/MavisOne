@@ -19,6 +19,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   // `resumido`, 548 KB no lugar de 2.818 (169 KB no fio, contra 569).
   const idEmEdicao = state.financeEditEntryId;
   state.financeEditEntryId = null;
+  // EDIÇÃO DE TÍTULO (14/10/2026) é esta mesma tela com outro nome. Sem título
+  // escolhido (F5, "Novo Lançamento" de dentro dela) ela volta a ser a de novo.
+  if (state.activeSub === 'edicao_titulo' && !idEmEdicao) {
+    state.activeSub = 'novo_lancamento';
+    if (typeof renderApp === 'function') renderApp();
+  }
   // Vindo de Contas a Pagar / a Receber, o novo nasce no tipo da tela.
   const tipoSugerido = state.financeNovoTipo;
   state.financeNovoTipo = null;
@@ -246,7 +252,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
                  "Editar Lançamento (sem número)", que faz procurar defeito onde
                  só há registro antigo. Ver shared/lancamento_codigo.js. */''}
             <h3>${editEntry
-              ? escapeHtml(window.MavisLancamentoCodigo.rotulo(editEntry.code, 'Editar Lançamento'))
+              ? escapeHtml(window.MavisLancamentoCodigo.rotulo(editEntry.code, 'Edição de Título'))
               : 'Novo Lançamento'}</h3>
           </div>
         </div>
@@ -351,12 +357,6 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
             <label>Descrição<input name="description" required value="${editEntry ? escapeHtml(editEntry.description || '') : ''}" ${travado('description')} /></label>
           </div>
           <label>Observação<textarea name="note" rows="3">${editEntry ? escapeHtml(editEntry.note || '') : ''}</textarea></label>
-
-          <div id="financeInlineAddRow" class="finance-inline-add hidden">
-            <input type="text" id="financeInlineAddInput" placeholder="Nome" />
-            <button type="button" class="secondary" id="financeInlineAddConfirm">Adicionar</button>
-            <button type="button" class="secondary" id="financeInlineAddCancel">Cancelar</button>
-          </div>
 
           <button type="submit">${editEntry ? 'Salvar alterações' : 'Salvar lançamento'}</button>
         </form>
@@ -464,9 +464,67 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     });
   }
 
-  let inlineAddKind = null;
-  // O campo de busca cujo "+" foi clicado: o cadastro novo entra escolhido nele.
-  let inlineAddAlvo = null;
+  // ONDE CADA "+" CADASTRA: módulo, tela, e o que a tela recebe para já abrir
+  // o formulário de novo preenchido com o que se sabe aqui.
+  const TELA_DE_CADASTRO = {
+    bankAccount: { modulo: 'cadastros', tela: 'nova_conta_bancaria', nome: 'conta bancária' },
+    category: { modulo: 'finance', tela: 'plano_de_contas', nome: 'plano de contas' },
+    costCenter: { modulo: 'finance', tela: 'centros_de_custo', nome: 'centro de custo' }
+  };
+
+  function irParaCadastro(kind, alvo) {
+    const destino = TELA_DE_CADASTRO[kind];
+    if (!destino) return;
+    if (!(state.user?.allowedModules || []).includes(destino.modulo)) {
+      showToast(`Cadastrar ${destino.nome} é do módulo ${destino.modulo === 'cadastros' ? 'Cadastros' : 'Financeiro'}, que não está liberado para você.`, 'warning');
+      return;
+    }
+    const form = document.getElementById('financeEntryForm');
+    const campos = {};
+    [...(form ? form.elements : [])].forEach((el) => {
+      if (el.name && !['submit', 'button'].includes(el.type)) campos[el.name] = el.value;
+    });
+    const rotulos = {};
+    ['financeParty', ...Object.keys(CAMPOS_DE_BUSCA)].forEach((id) => {
+      const busca = document.getElementById(`${id}Input`);
+      if (busca) rotulos[id] = busca.value;
+    });
+    state.financeRascunhoLancamento = {
+      editId: editEntry ? editEntry.id : null, formType, estabelecimentoAtual, campos, rotulos, kind, alvo
+    };
+    if (kind === 'category') state.planoDeContasNovo = { type: formType === 'RECEITA' ? 'receita' : 'despesa' };
+    if (kind === 'costCenter') state.centroDeCustoNovo = { estabelecimentoIds: estabelecimentoAtual ? [estabelecimentoAtual] : [] };
+    if (kind === 'bankAccount') state.cadastroEditBankAccountId = null;
+    state.activeModule = destino.modulo;
+    state.activeSub = destino.tela;
+    if (typeof renderApp === 'function') renderApp();
+    loadModule(destino.modulo);
+  }
+
+  /** Volta o que estava digitado antes do "+", com o cadastro novo escolhido. */
+  function restaurarRascunho() {
+    const r = state.financeRascunhoLancamento;
+    if (!r || (r.editId || null) !== (editEntry ? editEntry.id : null)) return;
+    state.financeRascunhoLancamento = null;
+    const form = document.getElementById('financeEntryForm');
+    if (!form) return;
+    Object.entries(r.campos || {}).forEach(([nome, valor]) => {
+      const campo = form.elements.namedItem(nome);
+      if (campo && campo.type !== 'hidden' && !campo.readOnly && !campo.disabled) campo.value = valor;
+    });
+    Object.keys(CAMPOS_DE_BUSCA).forEach((id) => {
+      if (!document.getElementById(`${id}Wrapper`)) return;
+      const valor = id === r.alvo && r.criadoId ? r.criadoId : (r.campos || {})[CAMPOS_DE_BUSCA[id].name] || '';
+      refazerCampoDeBusca(id, valor);
+    });
+    const parte = document.getElementById('financePartyValue');
+    const parteBusca = document.getElementById('financePartyInput');
+    if (parte && parteBusca && !vinculado) {
+      parte.value = (r.campos || {}).clientSupplierId || '';
+      parteBusca.value = (r.rotulos || {}).financeParty || '';
+    }
+    if (r.criadoId) showToast('Cadastrado e já escolhido no lançamento.', 'success');
+  }
 
   // Fase EI: trocar Receita/Despesa/Transferência leva junto o que já foi
   // digitado. O formulário é redesenhado (conta e cliente mudam de forma entre
@@ -511,77 +569,11 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       if (document.getElementById(`${id}Wrapper`)) ligarCampoDeBusca(id);
     });
 
+    // O "+" LEVA À TELA DE CADASTRO DE VERDADE (14/10/2026, pedido do usuário).
+    // O lançamento em digitação fica guardado (irParaCadastro) e volta
+    // preenchido, com o cadastro novo já escolhido, quando a outra tela salva.
     content.querySelectorAll('[data-inline-add]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        inlineAddKind = btn.dataset.inlineAdd;
-        inlineAddAlvo = btn.dataset.inlineAlvo || null;
-        const row = document.getElementById('financeInlineAddRow');
-        const input = document.getElementById('financeInlineAddInput');
-        if (row) row.classList.remove('hidden');
-        if (input) { input.value = ''; input.focus(); }
-      });
-    });
-
-    document.getElementById('financeInlineAddCancel')?.addEventListener('click', () => {
-      document.getElementById('financeInlineAddRow')?.classList.add('hidden');
-      inlineAddKind = null;
-    });
-
-    // Fase EI: Enter no nome do cadastro rápido cadastra o nome, e não o
-    // lançamento. O campo mora dentro do <form>, e pela regra do HTML o Enter
-    // num campo de texto envia o formulário: a despesa era gravada sem o plano
-    // de contas, e o "Aluguel" digitado nunca era criado.
-    document.getElementById('financeInlineAddInput')?.addEventListener('keydown', (evento) => {
-      if (evento.key === 'Enter' && !evento.isComposing) {
-        evento.preventDefault();
-        document.getElementById('financeInlineAddConfirm')?.click();
-      } else if (evento.key === 'Escape') {
-        evento.preventDefault();
-        evento.stopPropagation();
-        document.getElementById('financeInlineAddCancel')?.click();
-      }
-    });
-
-    document.getElementById('financeInlineAddConfirm')?.addEventListener('click', async (event) => {
-      const confirmBtn = event.target;
-      if (confirmBtn.disabled) return;
-      const input = document.getElementById('financeInlineAddInput');
-      const name = (input?.value || '').trim();
-      if (!name) {
-        showToast('Informe um nome.', 'warning');
-        return;
-      }
-      confirmBtn.disabled = true;
-      const endpointByKind = {
-        category: '/api/finance/categories',
-        costCenter: '/api/finance/cost-centers',
-        bankAccount: '/api/finance/bank-accounts'
-      };
-      try {
-        // O centro criado aqui nasce vinculado à empresa do lançamento (fase EK).
-        const corpo = inlineAddKind === 'costCenter' && estabelecimentoAtual ? { name, estabelecimentoIds: [estabelecimentoAtual] } : { name };
-        const res = await api(endpointByKind[inlineAddKind], { method: 'POST', body: JSON.stringify(corpo) });
-        const created = res.category || res.costCenter || res.bankAccount;
-        if (inlineAddKind === 'category') meta.categories.push(created);
-        if (inlineAddKind === 'costCenter') meta.costCenters.push(created);
-        if (inlineAddKind === 'bankAccount') meta.bankAccounts.push(created);
-
-        // O novo entra escolhido no campo do "+" clicado; os outros campos do
-        // mesmo cadastro (origem/destino da transferência) só ganham a opção.
-        Object.keys(CAMPOS_DE_BUSCA).forEach((id) => {
-          if (CAMPOS_DE_BUSCA[id].kind !== inlineAddKind || !document.getElementById(`${id}Wrapper`)) return;
-          const valor = id === inlineAddAlvo ? created.id : (document.getElementById(`${id}Value`)?.value || '');
-          refazerCampoDeBusca(id, valor);
-        });
-
-        showToast('Cadastrado com sucesso.', 'success');
-        document.getElementById('financeInlineAddRow')?.classList.add('hidden');
-        inlineAddKind = null;
-      } catch (error) {
-        showToast(error.message || 'Erro ao cadastrar.', 'error');
-      } finally {
-        confirmBtn.disabled = false;
-      }
+      btn.addEventListener('click', () => irParaCadastro(btn.dataset.inlineAdd, btn.dataset.inlineAlvo || ''));
     });
 
     // FASE CD — trocar o estabelecimento refaz SO' as listas de conta.
@@ -719,6 +711,37 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   if (editEntry && String(editEntry.rawStatus || 'pending') !== 'pending') {
     renderSomenteLeitura(editEntry);
   } else {
+    const rascunho = state.financeRascunhoLancamento;
+    if (rascunho && (rascunho.editId || null) === (editEntry ? editEntry.id : null)) {
+      if (!editEntry && rascunho.formType) formType = rascunho.formType;
+      if (rascunho.estabelecimentoAtual !== undefined) estabelecimentoAtual = rascunho.estabelecimentoAtual;
+    }
     renderForm();
+    restaurarRascunho();
+  }
+};
+
+// A Edição de Título é este mesmo renderizador (ver o começo da função).
+window.MavisSubscreenRegistry.finance.edicao_titulo = window.MavisSubscreenRegistry.finance.novo_lancamento;
+
+// A VOLTA DO "+" (14/10/2026). As telas de cadastro (Nova Conta Bancária, Plano
+// de Contas, Centros de Custo) perguntam se há um lançamento esperando um
+// cadastro do tipo delas e, ao salvar ou cancelar, devolvem a pessoa a ele.
+window.MavisRascunhoLancamento = {
+  espera(state, kind) {
+    const r = state && state.financeRascunhoLancamento;
+    return Boolean(r && r.kind === kind);
+  },
+  voltar(ctx, criadoId) {
+    const { state, loadModule } = ctx;
+    const r = state.financeRascunhoLancamento;
+    if (!r) return false;
+    r.criadoId = criadoId || '';
+    state.activeModule = 'finance';
+    state.activeSub = r.editId ? 'edicao_titulo' : 'novo_lancamento';
+    state.financeEditEntryId = r.editId || null;
+    if (typeof renderApp === 'function') renderApp();
+    loadModule('finance');
+    return true;
   }
 };

@@ -1539,7 +1539,10 @@ function criarTelaDeLancamentos(telaChave) {
       closeEntryModal();
       state.financeEditEntryId = entry.id;
       state.financeListaDeOrigem = telaChave;
-      state.activeSub = 'novo_lancamento';
+      // 14/10/2026: abre como "Edição de Título", já com os dados dele.
+      state.activeSub = 'edicao_titulo';
+      // Redesenha o topo junto: sem isto a página seguia dizendo "Contas a Pagar".
+      if (typeof renderApp === 'function') renderApp();
       loadModule('finance');
     });
 
