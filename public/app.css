@@ -1394,6 +1394,7 @@ button.success:hover { background: var(--success-hover); }
 .nfe-massa-modal [data-massa-caixa] { display: block; }
 .nfe-massa-modal [data-massa-caixa] > * { width: 100%; }
 .erro-nfe-codigo { margin: 0 0 8px; font-size: 0.85rem; }
+.erro-nfe-modal .erro-nfe-excluir { margin-right: auto; }
 .erro-nfe-motivos { margin: 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.45; max-height: 50vh; overflow: auto; }
 .nfe-erro-motivo { padding: 0; background: none; border: 0; cursor: pointer; }
 

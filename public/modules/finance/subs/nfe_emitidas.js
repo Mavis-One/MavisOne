@@ -692,13 +692,29 @@ function criarTelaDeNotasEmitidas(telaChave) {
       // Sem o detalhe, vale a mensagem que a lista já tem.
     }
     const podeCorrigir = nfce ? Boolean(naLista.orderId) : true;
+    // Excluir: só administrador (o servidor confere o mesmo e consulta a Focus).
+    const podeExcluir = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
     const escolha = await window.MavisErroNfe.mostrar({
+      podeExcluir,
       titulo: `${nfce ? 'NFC-e' : 'NF-e'} com erro${naLista.customer ? ` — ${naLista.customer}` : ''}`,
       motivos: erro.motivos || [],
       statusSefaz: erro.statusSefaz || '',
       podeCorrigir,
       rotuloCorrigir: nfce ? 'Abrir pedido' : 'Corrigir nota'
     });
+    if (escolha === 'excluir') {
+      const rotulo = `${nfce ? 'NFC-e' : 'NF-e'} com erro${naLista.customer ? ` de ${naLista.customer}` : ''}${naLista.amount ? ` (${financeFormatBRL(naLista.amount)})` : ''}`;
+      if (!await confirmModal(`Excluir a ${rotulo}?\n\nEla foi recusada e não vale como documento fiscal. Antes de excluir, o sistema confere na Focus NFe que ela não foi autorizada. A exclusão fica registrada na auditoria.`)) return;
+      try {
+        await api(`/api/fiscal/nfe/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        showToast('NF-e com erro excluída.', 'success');
+        await load();
+      } catch (erroDaExclusao) {
+        showToast(erroDaExclusao.message || 'Não consegui excluir a nota.', 'error', 9000);
+        await load();
+      }
+      return;
+    }
     if (escolha !== 'corrigir') return;
     if (nfce) { irParaVenda(naLista); return; }
     try {

@@ -33,7 +33,7 @@
    * `podeCorrigir` false esconde o botão (ex.: a tela de emissão, onde a nota
    * já está aberta para corrigir).
    */
-  function mostrar({ titulo = 'NF-e com erro', motivos = [], statusSefaz = '', podeCorrigir = true, rotuloCorrigir = 'Corrigir nota' } = {}) {
+  function mostrar({ titulo = 'NF-e com erro', motivos = [], statusSefaz = '', podeCorrigir = true, rotuloCorrigir = 'Corrigir nota', podeExcluir = false } = {}) {
     return new Promise((resolve) => {
       document.getElementById('erroNfeModal')?.remove();
       const overlay = document.createElement('div');
@@ -47,6 +47,7 @@
             <ul class="erro-nfe-motivos"></ul>
           </div>
           <div class="modal-actions">
+            ${podeExcluir ? '<button type="button" class="btn btn-danger erro-nfe-excluir" data-acao="excluir">Excluir nota</button>' : ''}
             <button type="button" class="btn btn-muted" data-acao="fechar">Fechar</button>
             ${podeCorrigir ? '<button type="button" class="btn btn-primary" data-acao="corrigir"></button>' : ''}
           </div>
@@ -72,6 +73,7 @@
       overlay.addEventListener('click', (e) => { if (e.target === overlay) fechar(null); });
       overlay.querySelector('[data-acao=fechar]').addEventListener('click', () => fechar(null));
       overlay.querySelector('[data-acao=corrigir]')?.addEventListener('click', () => fechar('corrigir'));
+      overlay.querySelector('[data-acao=excluir]')?.addEventListener('click', () => fechar('excluir'));
       document.body.appendChild(overlay);
       (overlay.querySelector('[data-acao=corrigir]') || overlay.querySelector('[data-acao=fechar]')).focus();
     });

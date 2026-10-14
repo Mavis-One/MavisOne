@@ -6852,6 +6852,8 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/inutilizar') return 'inutilizar';
   if (pathname.endsWith('/xml')) return 'xml';
   if (pathname.endsWith('/danfe')) return 'danfe';
+  // Excluir NF-e COM ERRO (14/10/2026): só administrador, conferido na rota.
+  if (method === 'DELETE' && /^\/api\/fiscal\/nfe\/[0-9a-f-]{36}$/i.test(pathname)) return 'emitir';
   // Corrigir nota com erro (fase EO): reabre a emissão — é parte de emitir.
   if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/corrigir')) return 'emitir';
   if (pathname.startsWith('/api/fiscal/nfe/')) return 'visualizar';
@@ -7973,6 +7975,64 @@ async function corrigirNfeComErro(id, user, { substituir = false } = {}) {
     byId: user.id, byName: user.name, details: { pedidoId, doEstadoDaTela: Boolean(nfe.estadoDaTela) }
   }).catch(() => {});
   return { pedidoId, pedidoCodigo, doEstadoDaTela: Boolean(nfe.estadoDaTela) };
+}
+
+// EXCLUIR NF-e COM ERRO (14/10/2026, pedido do usuário: "permita o admin
+// excluir nfe's com erro"). A regra de nunca excluir documento fiscal continua
+// valendo para tudo o que a SEFAZ autorizou: nota com erro foi RECUSADA, não
+// existe para o fisco. O risco é a nota estar "Erro" aqui e autorizada lá
+// (falha de rede depois de a Focus receber) — por isso a Focus é consultada
+// antes: lá autorizada/processando/cancelada, o status daqui é corrigido e a
+// exclusão recusada; sem resposta da Focus, também não exclui.
+async function excluirNfeComErro(id, user) {
+  const recusar = (mensagem, status = 400) => {
+    const err = new Error(mensagem);
+    err.status = status;
+    throw err;
+  };
+  if (!(await ehAdmin(user))) recusar('Só um administrador exclui NF-e com erro.', 403);
+  const nfe = await fiscalDb.getNfeById(id);
+  if (!nfe) recusar('NF-e não encontrada.', 404);
+  if (nfe.status !== 'ERRO') recusar('Só NF-e com erro pode ser excluída. Nota autorizada se cancela; em processamento, aguarde o retorno da SEFAZ.');
+
+  if (nfe.referencia && nfe.estabelecimentoId) {
+    let resposta = null;
+    try {
+      const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
+      resposta = String(nfe.modelo) === '65' ? await client.consultarNfce(nfe.referencia) : await client.consultarNfe(nfe.referencia);
+    } catch (erroDaConsulta) {
+      // 404: a Focus nunca recebeu esta nota — pode excluir.
+      if (Number(erroDaConsulta.status) !== 404) {
+        recusar('Não consegui confirmar na Focus NFe que esta nota não foi autorizada. Tente de novo em instantes.', 502);
+      }
+    }
+    const naFocus = String((resposta && resposta.status) || '');
+    if (naFocus && naFocus !== 'erro_autorizacao') {
+      await aplicarRespostaFocusNaNfe(nfe, resposta, user).catch((e) => console.error('Falha ao atualizar a NF-e pela consulta', id, e.message));
+      recusar(`A Focus NFe tem esta nota como "${naFocus}", não como erro. O status aqui foi atualizado; ela não pode ser excluída.`, 409);
+    }
+  }
+
+  const { rows: documentos } = await consultarBanco('select count(*)::int as n from fiscal_documentos where nfe_id = $1', [id]);
+  if (documentos[0] && documentos[0].n > 0) recusar('Esta nota já está na escrituração fiscal (SPED) e não pode ser excluída.', 409);
+
+  await emTransacao(async (cliente) => {
+    // O pedido deixa de apontar para ela: pode emitir outra.
+    await cliente.query('update orders set nfe_id = null where nfe_id = $1', [id]);
+    // Arquivos e eventos saem junto (on delete cascade).
+    await cliente.query("delete from nfe where id = $1 and status = 'ERRO'", [id]);
+  });
+  await registrarAuditoria({
+    action: 'nfe.excluirComErro', targetId: id, targetUsername: nfe.referencia || '',
+    byId: user.id, byName: user.name,
+    details: {
+      referencia: nfe.referencia, modelo: nfe.modelo, serie: nfe.serie, numero: nfe.numero,
+      estabelecimentoId: nfe.estabelecimentoId, orderId: nfe.orderId,
+      destinatario: nfe.destinatarioNome, documento: nfe.destinatarioDocumento,
+      valorTotal: nfe.valorTotal, mensagemSefaz: nfe.mensagemSefaz, criadoEm: nfe.criadoEm
+    }
+  }).catch((e) => console.warn('Auditoria da exclusão de NF-e com erro falhou:', e.message));
+  return { excluida: true };
 }
 
 // `opcoes.modelo` é decidido pela ROTA, e nunca pelo corpo da requisição: a
@@ -15674,6 +15734,12 @@ async function tratarRequisicao(req, res) {
           estabelecimentoId: String(body.estabelecimentoId || '')
         }, user);
         return sendJson(res, { success: true, nfe });
+      }
+
+      // EXCLUIR NF-e COM ERRO (14/10/2026): só administrador.
+      if (req.method === 'DELETE' && /^\/api\/fiscal\/nfe\/[0-9a-f-]{36}$/i.test(pathname)) {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', ''));
+        return sendJson(res, await excluirNfeComErro(id, user));
       }
 
       // CORRIGIR NOTA COM ERRO (fase EO): vira nota em edição e a tela reabre.
