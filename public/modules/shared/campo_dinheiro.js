@@ -201,7 +201,41 @@
     validar(el);
   }
 
+  /**
+   * O texto para EDITAR: sem os ",00" que a saída do campo completa
+   * ("5.000,00" -> "5.000"; "0,00" -> "0"). Centavos de verdade ficam.
+   */
+  function paraEdicao(texto) {
+    return String(texto == null ? '' : texto).replace(/,00$/, '');
+  }
+
   function ligar(doc) {
+    // ENTRAR NO CAMPO SELECIONA O VALOR (14/10/2026). O campo mostra sempre os
+    // centavos ("0,00"), aceita no máximo dois, e o clique deixa o cursor no
+    // fim: cada dígito digitado ali era descartado e o campo parecia travado
+    // (queixa do usuário nos valores dos pagamentos do pedido). Ao entrar, os
+    // ",00" saem e o valor fica selecionado — digitar substitui; a saída do
+    // campo devolve os centavos (focusout, abaixo).
+    doc.addEventListener('focusin', (evento) => {
+      const el = evento.target;
+      if (!el || !el.__dinheiro || el.readOnly || el.disabled) return;
+      const texto = lerTela(el);
+      const editavel = paraEdicao(texto);
+      if (editavel !== texto) escreverTela(el, editavel);
+      try { el.select(); } catch (e) { /* sem seleção */ }
+      // O mouseup do próprio clique desfaria a seleção: ele é ignorado uma vez.
+      el.__selecionarNoClique = true;
+    }, true);
+    doc.addEventListener('mouseup', (evento) => {
+      const el = evento.target;
+      if (!el || !el.__selecionarNoClique) return;
+      el.__selecionarNoClique = false;
+      evento.preventDefault();
+    }, true);
+    doc.addEventListener('keydown', (evento) => {
+      if (evento.target && evento.target.__selecionarNoClique) evento.target.__selecionarNoClique = false;
+    }, true);
+
     // O ponto do teclado numérico (e de quem digita "1500.50") vira a vírgula
     // dos centavos — o ponto de milhar quem põe é o campo. Uma segunda vírgula
     // é ignorada.
@@ -275,7 +309,7 @@
     else ativarTodos(doc);
   }
 
-  const api = { formatarDigitando, paraNumero, formatar, completar, deColagem, textoDoValor, candidato, NAO_E_DINHEIRO, SELETOR };
+  const api = { formatarDigitando, paraNumero, formatar, completar, deColagem, textoDoValor, paraEdicao, candidato, NAO_E_DINHEIRO, SELETOR };
   if (temDom && nativo && typeof document !== 'undefined' && document.documentElement) ligar(document);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisCampoDinheiro = api;

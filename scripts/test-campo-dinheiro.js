@@ -98,5 +98,16 @@ const app = ler('public/app.js');
 check('trocar preço ou quantidade refaz o total do item (Total da Venda na hora)',
   (app.match(/refazTotalDoItem\(items\[Number\(input\.dataset\.index\)\]\);/g) || []).length === 2);
 
+// 14/10/2026: o campo parecia travado. Clicar deixava o cursor depois do
+// ",00" e os dígitos (já há dois centavos) eram descartados. Provado no
+// navegador com clique e teclado reais: ao entrar, "5.990" selecionado;
+// digitar 3000 virou "3.000,00" ao sair; a outra linha aceitou "2990,5".
+console.log('\n--- 7. entrar no campo seleciona o valor ---');
+check('ao entrar, os ",00" saem', D.paraEdicao('5.000,00') === '5.000' && D.paraEdicao('0,00') === '0' && D.paraEdicao('1.500,50') === '1.500,50');
+check('  e o valor fica selecionado (o mouseup do clique não desfaz)', (() => {
+  const fonte = ler('public/modules/shared/campo_dinheiro.js');
+  return /addEventListener\('focusin'/.test(fonte) && fonte.includes('el.select();') && fonte.includes('el.__selecionarNoClique = true;');
+})());
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);
