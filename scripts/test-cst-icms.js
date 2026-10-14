@@ -91,7 +91,9 @@ const stEmCst30 = montar({ cstIcms: '30', cstIcmsSt: '60', mvaSt: 40, aliquotaIc
 check('CST 30 monta ST mesmo sem ICMS próprio', stEmCst30.icms_valor_st > 0, String(stEmCst30.icms_valor_st));
 
 console.log('\n--- CST não implementado é RECUSADO, não emitido pela metade ---');
-['51', '60', '61'].forEach((cst) => {
+// CST 60 saiu desta lista em 14/10/2026: o grupo de ST retido passou a ser
+// montado (ver scripts/test-cst-60-st-retido.js).
+['51', '61'].forEach((cst) => {
   let recusou = false;
   let mensagem = '';
   try { montar({ cstIcms: cst, aliquotaIcms: 17 }); } catch (e) { recusou = true; mensagem = e.message; }

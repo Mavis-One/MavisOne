@@ -138,6 +138,7 @@ const { bancosDasContas } = require('./lib/banco-da-conta');
 const { observacoesDasEmpresas } = require('./lib/observacao-da-empresa');
 // Fase EF: o que a categoria de venda faz (estoque, financeiro, fiscal, venda).
 const categoriaVenda = require('./public/modules/shared/categoria_venda');
+const cstIcms = require('./public/modules/shared/cst_icms');
 // Meu Painel: o mesmo escopo, mas fechado no próprio usuário. Ver o cabeçalho.
 const painelPessoal = require('./lib/painel-pessoal-vendas');
 const fiscalPermissoes = require('./public/modules/shared/fiscal_permissoes');
@@ -7507,6 +7508,14 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
       const err = new Error(`Nenhuma regra fiscal encontrada para o item ${index + 1} (NCM ${item.ncm || 'não informado'}). Cadastre uma regra fiscal para esta empresa, ou informe CFOP e CST na aba Impostos.`);
       err.status = 400;
       throw err;
+    }
+    // CST 60 / CSOSN 500 (14/10/2026): o ST retido sai da última compra do
+    // produto com ST (por unidade). Sem nota de entrada, o montador manda só o
+    // CST, ou o que se digitou na aba Impostos.
+    const cstDaNota = String(item.fiscal.csosn || item.fiscal.cstIcms
+      || (regra && (regra.csosn || regra.cstIcms)) || '').replace(/\D/g, '');
+    if (produto && (cstDaNota === '500' || cstIcms.normalizar(cstDaNota) === '60')) {
+      item.stRetido = await entradaNfeDb.stRetidoDaUltimaEntrada(produto.id).catch(() => null);
     }
     itens.push({
       ...item,

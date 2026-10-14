@@ -37,7 +37,10 @@
     // montado. Marcar como tributada e mandar só base/alíquota produziria uma
     // nota que passa na validação e declara o imposto errado.
     '51': { rotulo: 'Diferimento', icmsProprio: true, reducao: true, st: false, suportado: false, falta: 'grupo de diferimento (vICMSOp, pDif, vICMSDif)' },
-    '60': { rotulo: 'ICMS cobrado anteriormente por substituição tributária', icmsProprio: false, reducao: false, st: false, stRetido: true, suportado: false, falta: 'grupo de ST retido (vBCSTRet, pST, vICMSSTRet)' },
+    // 14/10/2026: emitido. O grupo de ST retido (vBCSTRet, pST, vICMSSubstituto,
+    // vICMSSTRet) sai da última compra do produto ou do que se digitar na aba
+    // Impostos — ver aplicarStRetido em lib/nfePayloadBuilder.js.
+    '60': { rotulo: 'ICMS cobrado anteriormente por substituição tributária', icmsProprio: false, reducao: false, st: false, stRetido: true, suportado: true },
     '61': { rotulo: 'Tributação monofásica sobre combustíveis cobrada anteriormente', icmsProprio: false, reducao: false, st: false, suportado: false, falta: 'grupo monofásico de combustíveis' },
     '70': { rotulo: 'Com redução de base de cálculo e cobrança do ICMS por substituição tributária', icmsProprio: true, reducao: true, st: true, suportado: true },
     '90': { rotulo: 'Outras', icmsProprio: true, reducao: true, st: true, suportado: true }

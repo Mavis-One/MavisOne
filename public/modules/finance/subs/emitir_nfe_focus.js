@@ -861,6 +861,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     { titulo: 'Classificação', campos: [['cfop', 'CFOP'], ['ncm', 'NCM'], ['origem', 'Origem'], ['cstIcms', 'CST / CSOSN'], ['codigoBeneficioFiscal', 'cBenef']] },
     { titulo: 'ICMS', campos: [['baseIcms', 'Base'], ['aliquotaIcms', 'Alíquota %'], ['valorIcms', 'Valor'], ['reducaoBcIcms', 'Redução BC %']] },
     { titulo: 'ICMS-ST', campos: [['baseIcmsSt', 'Base'], ['aliquotaIcmsSt', 'Alíquota %'], ['valorIcmsSt', 'Valor'], ['mvaSt', 'MVA %']] },
+    // CST 60 / CSOSN 500 (14/10/2026): o ST retido na compra. Vem da última
+    // nota de entrada do produto; base e valores aqui são do ITEM e podem ser
+    // digitados (não saem de base × alíquota). Só aparece nesses dois códigos.
+    { titulo: 'ICMS-ST retido', soComStRetido: true, campos: [['baseIcmsStRetido', 'Base retida'], ['aliquotaIcmsStRetido', 'pST %'], ['valorIcmsSubstituto', 'ICMS do substituto'], ['valorIcmsStRetido', 'ICMS-ST retido']] },
     { titulo: 'IPI', campos: [['cstIpi', 'CST'], ['baseIpi', 'Base'], ['aliquotaIpi', 'Alíquota %'], ['valorIpi', 'Valor']] },
     { titulo: 'PIS', campos: [['cstPis', 'CST'], ['basePis', 'Base'], ['aliquotaPis', 'Alíquota %'], ['valorPis', 'Valor']] },
     { titulo: 'COFINS', campos: [['cstCofins', 'CST'], ['baseCofins', 'Base'], ['aliquotaCofins', 'Alíquota %'], ['valorCofins', 'Valor']] },
@@ -961,7 +965,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <span class="muted">${financeFormatBRL(itemTotal(item))}</span>
             ${algumEditado ? `<button type="button" class="secondary finance-pill-sm" data-fiscal-limpar="${index}">Usar o da regra</button>` : ''}
           </div>
-          ${GRUPOS_FISCAIS.map((grupo) => `
+          ${GRUPOS_FISCAIS.filter((grupo) => !grupo.soComStRetido || ['60', '500'].includes(String(valorFiscal(item, linha, 'cstIcms')).trim())).map((grupo) => `
             <div class="nfe-imposto-grupo">
               <span class="nfe-imposto-titulo">${grupo.titulo}</span>
               <div class="nfe-imposto-campos">
