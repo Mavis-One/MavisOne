@@ -19195,7 +19195,16 @@ async function tratarRequisicao(req, res) {
       const interest = Number(body.interest || 0);
       const fine = Number(body.fine || 0);
       const discount = Number(body.discount || 0);
-      if (!(amount > 0)) {
+      // O VALOR PAGO É O VALOR DO TÍTULO (14/10/2026) — regra do campo Valor,
+      // sem botão (pedido do usuário). Vale para o título lançado no
+      // Financeiro (água, luz, despesas à mão); o de pedido ou de NF-e tem o
+      // valor da venda e segue a baixa de sempre (paga menos = parcial).
+      const ajustarValor = !(entry.referenceId || entry.nfeId);
+      // Valor ZERO: é o título parcial cuja sobra não será paga (R$ 98 pagos
+      // de R$ 120) — ele passa a valer o que já foi pago e fecha, sem baixa
+      // nova.
+      const soEncerrar = ajustarValor && amount === 0;
+      if (!(amount > 0) && !soEncerrar) {
         return sendJson(res, { error: 'Informe um valor de pagamento maior que zero' }, 400);
       }
       if (interest < 0 || fine < 0 || discount < 0) {
@@ -19206,11 +19215,42 @@ async function tratarRequisicao(req, res) {
       const dueBeforeThisPayment = financeEntryEffectiveDue(entry, existingPayments);
       const paidBeforeThisPayment = financeEntryPaidTotal(existingPayments);
       const maxAllowedAmount = (dueBeforeThisPayment - paidBeforeThisPayment) + interest + fine - discount;
-      if (amount > maxAllowedAmount + 0.01) {
-        return sendJson(res, { error: `Valor do pagamento (${amount.toFixed(2)}) é maior que o saldo em aberto (${Math.max(0, maxAllowedAmount).toFixed(2)}).` }, 400);
+
+      // AJUSTAR O VALOR DO TÍTULO AO PAGAMENTO. Água e luz entram como
+      // PREVISÃO (R$ 120) e a conta chega com outro valor. Baixar R$ 98
+      // deixava R$ 22 "a pagar" que ninguém vai pagar, e pagar R$ 135 era
+      // recusado. Agora o valor do título passa a ser o que esta baixa fecha,
+      // e ele fica pago, sem sobra.
+      let valorAnterior = null;
+      if (ajustarValor) {
+        const ajustesAnteriores = sumBy(existingPayments, 'interest') + sumBy(existingPayments, 'fine') - sumBy(existingPayments, 'discount');
+        const novoValor = Math.round((paidBeforeThisPayment + amount - ajustesAnteriores - (interest + fine - discount)) * 100) / 100;
+        if (!(novoValor > 0)) {
+          return sendJson(res, {
+            error: soEncerrar
+              ? 'Este título ainda não tem baixa: informe o valor pago.'
+              : 'Com este pagamento o valor do título ficaria zerado ou negativo. Confira o valor, os juros e o desconto.'
+          }, 400);
+        }
+        // Pagou exatamente o previsto: nada a ajustar nem a anotar.
+        if (Math.abs(novoValor - Number(entry.amount || 0)) > 0.005) {
+          valorAnterior = Number(entry.amount || 0);
+          entry.amount = novoValor;
+          await db.updateFinancialEntry(entry.id, {
+            amount: novoValor,
+            note: [entry.note, `Valor ajustado na baixa de ${valorAnterior.toFixed(2).replace('.', ',')} para ${novoValor.toFixed(2).replace('.', ',')} por ${user.name}`].filter(Boolean).join(' | ')
+          });
+        }
+      } else if (amount > maxAllowedAmount + 0.01) {
+        return sendJson(res, {
+          error: `Valor do pagamento (${amount.toFixed(2)}) é maior que o saldo em aberto (${Math.max(0, maxAllowedAmount).toFixed(2)}). `
+            + 'O valor deste título vem do pedido ou da NF-e.'
+        }, 400);
       }
 
-      const payment = await db.createFinancialPayment({
+      // Só encerrar (valor zero com ajuste): nenhuma baixa nova — o valor do
+      // título já desceu ao que foi pago, e o status recalculado fecha.
+      const payment = soEncerrar ? null : await db.createFinancialPayment({
         entryId: entry.id,
         amount,
         date: body.date || new Date().toISOString().slice(0, 10),
@@ -19224,11 +19264,14 @@ async function tratarRequisicao(req, res) {
       });
       // A baixa entra na lista em memória ANTES de recalcular o status: é ela
       // que decide se o lançamento virou parcial ou pago.
-      data.financialPayments.push(payment);
+      if (payment) data.financialPayments.push(payment);
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
       await db.updateFinancialEntry(entry.id, { status: entry.status });
-      await addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount } });
+      await addFinanceAuditLog(data, {
+        action: 'baixarLancamento', entry, byId: user.id, byName: user.name,
+        details: { paymentId: payment ? payment.id : '', amount, ...(valorAnterior !== null ? { valorAjustadoDe: valorAnterior, valorAjustadoPara: entry.amount } : {}) }
+      });
       saveData(data);
       return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
     } catch (error) {
