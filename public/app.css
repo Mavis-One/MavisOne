@@ -4934,14 +4934,36 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .nfe-imposto-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
 .nfe-imposto-cabeca { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .nfe-imposto-cabeca strong { flex: 1 1 auto; }
-.nfe-imposto-grupo { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; align-items: start; padding: 6px 0; border-top: 1px dashed var(--border); }
+.nfe-imposto-grupo { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; align-items: start; padding: 8px 10px; border-radius: 8px; }
+/* Faixas alternadas (14/10/2026, pedido do usuário): um grupo no fundo do
+   painel, o seguinte um tom acima — cinza-claro no tema claro, um degrau mais
+   claro no escuro. O primeiro filho é o cabeçalho do item, por isso "even". */
+.nfe-imposto-item > .nfe-imposto-grupo:nth-child(even) { background: rgba(var(--text-rgb), 0.05); }
 .nfe-imposto-titulo { font-weight: 600; padding-top: 22px; }
 .nfe-imposto-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
 .nfe-imposto-campos label { font-size: 12px; }
 .nfe-imposto-campos label.is-editado input,
-.nfe-imposto-campos label.is-editado select { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.nfe-imposto-campos label.is-editado select { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, var(--input-bg)); }
+/* A LISTA ABERTA DO SELECT (14/10/2026). O navegador desenha as opções com o
+   fundo do select: com o fundo semitransparente do "editado", a lista saía
+   creme com o texto claro do tema escuro — ilegível. Fundo opaco acima, e as
+   opções com as cores do tema, aqui. */
+.nfe-imposto-campos select option,
+.nfe-imposto-campos select optgroup { background: var(--panel); color: var(--text); }
 .nfe-imposto-campos select { width: 100%; }
-.nfe-imposto-campos input[readonly] { background: var(--surface-muted, transparent); color: var(--muted); cursor: default; }
+/* O que não se altera fica mais escuro que o campo editável, nos dois temas:
+   o fundo do campo misturado com preto. */
+.nfe-imposto-campos input[readonly] { background: color-mix(in srgb, var(--input-bg) 86%, #000); color: var(--muted); cursor: not-allowed; border-style: dashed; }
+/* No escuro o campo já é quase preto: lá o editável sobe um tom e o travado
+   desce ao preto, senão a diferença não aparece. */
+:root[data-theme="dark"] .nfe-imposto-campos input:not([readonly]),
+:root[data-theme="dark"] .nfe-imposto-campos select { background: var(--panel-alt-hover); }
+:root[data-theme="dark"] .nfe-imposto-campos input[readonly] { background: #000; }
+:root[data-theme="dark"] .nfe-imposto-campos label.is-editado input,
+:root[data-theme="dark"] .nfe-imposto-campos label.is-editado select { background: color-mix(in srgb, var(--warning) 14%, var(--panel-alt-hover)); }
+/* Salvar nota em edição + Emitir (fase EL): lado a lado, o emitir ocupando o resto. */
+.nfe-acoes-emissao { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
+.nfe-acoes-emissao #nfeFocusSubmitBtn { flex: 1 1 240px; }
 .nfe-totais { max-width: 420px; }
 .nfe-totais th { text-align: left; font-weight: 500; }
 @media (max-width: 640px) {

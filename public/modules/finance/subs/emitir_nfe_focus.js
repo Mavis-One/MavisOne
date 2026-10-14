@@ -258,6 +258,18 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // que decide indicador_ie e, com ele, se a operação tem DIFAL. Regra única
     // em shared/inscricao_estadual.js, a mesma do servidor.
     destinatario.contribuinte = window.MavisInscricaoEstadual.ehContribuinte(cliente?.stateRegistration);
+    // O ENDEREÇO DO CADASTRO (14/10/2026): a nota do pedido abria sem CEP, rua,
+    // número e bairro — os campos nem recebiam valor. Vem do diretório da
+    // emissão (enderecoDaPessoa no servidor).
+    const end = (cliente && cliente.endereco) || {};
+    destinatario.cep = end.cep || '';
+    destinatario.logradouro = end.logradouro || '';
+    destinatario.numero = end.numero || '';
+    destinatario.complemento = end.complemento || '';
+    destinatario.bairro = end.bairro || '';
+    if (end.municipio) destinatario.municipio = end.municipio;
+    if (end.uf) destinatario.uf = end.uf;
+    destinatario.codigoMunicipio = end.codigoMunicipio || '';
     if (Array.isArray(doPedido.items) && doPedido.items.length) {
       itens = doPedido.items.map((item) => ({
         produtoId: item.produtoId || item.productId || '',
@@ -456,6 +468,115 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     `;
   }
 
+  // ---------------------------------------------------- nota em edição (fase EL)
+  //
+  // "Salvar nota em edição" (pedido do usuário, 14/10/2026): o estado da tela
+  // vai para o servidor e volta ao reabrir a emissão do mesmo pedido (ou a
+  // avulsa da mesma pessoa). Emitida e aceita, o servidor o apaga.
+  let rascunhoSalvoEm = '';
+
+  function camposDoFormulario() {
+    const form = document.getElementById('nfeFocusForm');
+    const campos = {};
+    [...(form ? form.elements : [])].forEach((el) => {
+      if (!el.name || ['submit', 'button', 'file'].includes(el.type)) return;
+      if (el.type === 'checkbox') campos[el.name] = el.checked;
+      else if (el.type === 'radio') { if (el.checked) campos[el.name] = el.value; }
+      else campos[el.name] = el.value;
+    });
+    return campos;
+  }
+
+  function estadoDaTela() {
+    return {
+      versao: 1,
+      campos: camposDoFormulario(),
+      selectedEstabelecimentoId, selectedClienteId, tipoOperacao,
+      itens, complemento, informacoesEditadas, notaDoPedido, observacoes,
+      desconto, frete, outrasDespesas, seguro,
+      modalidadeEscolhida: modalidadeEscolhida === undefined ? null : modalidadeEscolhida,
+      transportadoraId, transporte, cobrancaEditada, cobranca
+    };
+  }
+
+  /** Põe o estado salvo nas variáveis da tela; devolve os campos do formulário. */
+  function aplicarEstadoSalvo(d) {
+    if (!d || typeof d !== 'object') return null;
+    if (d.selectedEstabelecimentoId) selectedEstabelecimentoId = d.selectedEstabelecimentoId;
+    if (d.selectedClienteId !== undefined) selectedClienteId = d.selectedClienteId;
+    if (d.tipoOperacao) tipoOperacao = d.tipoOperacao;
+    if (Array.isArray(d.itens) && d.itens.length) itens = d.itens;
+    if (d.complemento) Object.assign(complemento, d.complemento);
+    informacoesEditadas = Boolean(d.informacoesEditadas);
+    if (typeof d.notaDoPedido === 'string') notaDoPedido = d.notaDoPedido;
+    if (typeof d.observacoes === 'string') observacoes = d.observacoes;
+    if (d.desconto !== undefined) desconto = Number(d.desconto || 0);
+    if (d.frete !== undefined) frete = Number(d.frete || 0);
+    if (d.outrasDespesas !== undefined) outrasDespesas = Number(d.outrasDespesas || 0);
+    if (d.seguro !== undefined) seguro = Number(d.seguro || 0);
+    if (d.modalidadeEscolhida !== undefined) modalidadeEscolhida = d.modalidadeEscolhida === null ? undefined : d.modalidadeEscolhida;
+    if (d.transportadoraId !== undefined) transportadoraId = d.transportadoraId;
+    if (d.transporte) {
+      Object.assign(transporte.transportador, d.transporte.transportador || {});
+      Object.assign(transporte.veiculo, d.transporte.veiculo || {});
+      transporte.volumes = Array.isArray(d.transporte.volumes) ? d.transporte.volumes : [];
+    }
+    cobrancaEditada = Boolean(d.cobrancaEditada);
+    if (d.cobranca) {
+      Object.assign(cobranca, d.cobranca);
+      cobranca.duplicatas = Array.isArray(d.cobranca.duplicatas) ? d.cobranca.duplicatas : [];
+    }
+    return d.campos || {};
+  }
+
+  function preencherCamposSalvos(campos) {
+    const form = document.getElementById('nfeFocusForm');
+    if (!form) return;
+    Object.entries(campos || {}).forEach(([nome, valor]) => {
+      form.querySelectorAll(`[name="${CSS.escape(nome)}"]`).forEach((el) => {
+        if (el.type === 'checkbox') el.checked = Boolean(valor);
+        else if (el.type === 'radio') el.checked = el.value === valor;
+        else el.value = valor;
+      });
+    });
+  }
+
+  async function salvarNotaEmEdicao(botao) {
+    if (botao?.disabled) return;
+    if (botao) botao.disabled = true;
+    try {
+      const resposta = await api(`/api/fiscal/nfe/rascunho?pedido=${encodeURIComponent(orderIdOrigem || '')}`, {
+        method: 'PUT', body: JSON.stringify({ dados: estadoDaTela() })
+      });
+      const primeiraVez = !rascunhoSalvoEm;
+      rascunhoSalvoEm = (resposta.rascunho && resposta.rascunho.atualizadoEm) || new Date().toISOString();
+      showToast('Nota em edição salva. Ela volta assim quando esta emissão for aberta de novo.', 'success');
+      // O "Descartar" aparece sem redesenhar a tela (redesenhar perderia a aba aberta).
+      if (primeiraVez && botao && !document.getElementById('nfeFocusDescartarRascunho')) {
+        botao.insertAdjacentHTML('afterend', '<button type="button" class="secondary" id="nfeFocusDescartarRascunho">Descartar nota salva</button>');
+        document.getElementById('nfeFocusDescartarRascunho')?.addEventListener('click', (e) => descartarNotaSalva(e.currentTarget));
+      }
+    } catch (erro) {
+      showToast(erro.message || 'Não consegui salvar a nota em edição.', 'error');
+    } finally {
+      if (botao) botao.disabled = false;
+    }
+  }
+
+  async function descartarNotaSalva(botao) {
+    if (botao?.disabled) return;
+    if (botao) botao.disabled = true;
+    try {
+      await api(`/api/fiscal/nfe/rascunho?pedido=${encodeURIComponent(orderIdOrigem || '')}`, { method: 'DELETE' });
+      rascunhoSalvoEm = '';
+      botao?.remove();
+      showToast('Nota salva descartada. O que está na tela continua aqui até você sair.', 'success');
+    } catch (erro) {
+      if (botao) botao.disabled = false;
+      showToast(erro.message || 'Não consegui descartar a nota salva.', 'error');
+    }
+  }
+
   function renderForm() {
     const today = new Date().toISOString().slice(0, 10);
     content.innerHTML = `
@@ -525,20 +646,20 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             </div>
             <label>Inscrição estadual (se contribuinte)<input name="destIe" value="${escapeHtml(destinatario.inscricaoEstadual)}" /></label>
             <div class="row">
-              <label>CEP<input name="destCep" id="nfeFocusCep" maxlength="9" placeholder="00000-000" /></label>
+              <label>CEP<input name="destCep" id="nfeFocusCep" maxlength="9" placeholder="00000-000" value="${escapeHtml(destinatario.cep)}" /></label>
               <div style="align-self:end;"><button type="button" class="secondary" id="nfeFocusBuscarCep">Buscar CEP</button></div>
             </div>
             <div class="row">
-              <label>Logradouro<input name="destLogradouro" required /></label>
-              <label>Número<input name="destNumero" required /></label>
-              <label>Complemento<input name="destComplemento" /></label>
+              <label>Logradouro<input name="destLogradouro" required value="${escapeHtml(destinatario.logradouro)}" /></label>
+              <label>Número<input name="destNumero" required value="${escapeHtml(destinatario.numero)}" /></label>
+              <label>Complemento<input name="destComplemento" value="${escapeHtml(destinatario.complemento)}" /></label>
             </div>
             <div class="row">
-              <label>Bairro<input name="destBairro" required /></label>
-              <label>Município<input name="destMunicipio" required /></label>
-              <label>UF<input name="destUf" maxlength="2" required /></label>
+              <label>Bairro<input name="destBairro" required value="${escapeHtml(destinatario.bairro)}" /></label>
+              <label>Município<input name="destMunicipio" required value="${escapeHtml(destinatario.municipio)}" /></label>
+              <label>UF<input name="destUf" maxlength="2" required value="${escapeHtml(destinatario.uf)}" /></label>
             </div>
-            <input type="hidden" name="destCodigoMunicipio" />
+            <input type="hidden" name="destCodigoMunicipio" value="${escapeHtml(destinatario.codigoMunicipio)}" />
           </div>
 
           ${ehComplemento() ? `
@@ -697,7 +818,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <p class="muted" id="nfeFocusObsPendentes"></p>
           </div>
           `}
-          <button type="submit" id="nfeFocusSubmitBtn">Emitir NF-e</button>
+          <div class="nfe-acoes-emissao">
+            <button type="button" class="secondary" id="nfeFocusSalvarRascunho">Salvar nota em edição</button>
+            ${rascunhoSalvoEm ? '<button type="button" class="secondary" id="nfeFocusDescartarRascunho">Descartar nota salva</button>' : ''}
+            <button type="submit" id="nfeFocusSubmitBtn">Emitir NF-e</button>
+          </div>
         </form>
         `}
       </div>
@@ -910,8 +1035,38 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       + grupos;
   }
 
+  // cClassTrib NA LISTA DO CST (14/10/2026, como no Viper): o código começa
+  // pelo CST do IBS/CBS, então a lista mostra só os daquele CST, com a
+  // descrição. A tabela do sistema é parcial: CST sem nenhum código nela deixa
+  // o campo digitável, para a emissão não travar por falta de carga.
+  function codigosDoClassTrib(cst) {
+    const prefixo = String(cst || '').replace(/\D/g, '');
+    if (!tabelasFiscais || prefixo.length !== 3) return [];
+    return (tabelasFiscais.classificacaoTributaria || [])
+      .filter((l) => String(l.codigo).trim().startsWith(prefixo));
+  }
+
+  function opcoesDoClassTrib(cst, atual) {
+    const linhas = codigosDoClassTrib(cst);
+    if (!linhas.length) return null;
+    const codigo = String(atual || '').trim();
+    const lista = linhas.map((l) => {
+      const c = String(l.codigo).trim();
+      const desc = String(l.descricao || '').split(' · ').pop();
+      return `<option value="${escapeHtml(c)}" ${c === codigo ? 'selected' : ''}>${escapeHtml(c)} — ${escapeHtml(desc)}</option>`;
+    }).join('');
+    const conhecido = linhas.some((l) => String(l.codigo).trim() === codigo);
+    return `<option value="" ${codigo ? '' : 'selected'}>—</option>`
+      + (codigo && !conhecido ? `<option value="${escapeHtml(codigo)}" selected>${escapeHtml(codigo)}</option>` : '')
+      + lista;
+  }
+
   function campoFiscal(item, linha, index, campo) {
     const valor = String(valorFiscal(item, linha, campo));
+    if (campo === 'classTrib') {
+      const opcoesClass = opcoesDoClassTrib(valorFiscal(item, linha, 'cstIbsCbs'), valor);
+      if (opcoesClass) return `<select data-fiscal-index="${index}" data-fiscal-campo="classTrib">${opcoesClass}</select>`;
+    }
     const ehCst = campo === 'cstIcms' || campo in LISTA_DO_CST;
     const opcoes = ehCst ? opcoesDoCst(campo, valor) : null;
     if (opcoes) {
@@ -1062,6 +1217,16 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       if (!item) return;
       item.fiscal = item.fiscal || {};
       const valor = String(evento.target.value || '').trim();
+      if (campo === 'cstIbsCbs') {
+        // O cClassTrib começa pelo CST: trocar o CST leva o cClassTrib para o
+        // primeiro código dele (se o atual não for daquele CST).
+        const linhaPrevia = previa && previa.itens ? previa.itens[Number(evento.target.dataset.fiscalIndex)] : null;
+        const atual = String(valorFiscal(item, linhaPrevia, 'classTrib') || '');
+        const doCst = codigosDoClassTrib(valor);
+        if (valor && doCst.length && !atual.startsWith(valor)) item.fiscal.classTrib = String(doCst[0].codigo).trim();
+        // CST sem código na tabela: o digitado de outro CST não fica valendo.
+        else if (valor && !doCst.length && String(item.fiscal.classTrib || '') && !String(item.fiscal.classTrib).startsWith(valor)) delete item.fiscal.classTrib;
+      }
       if (campo === 'cstIcms') {
         // Três dígitos é CSOSN (Simples Nacional); dois é CST.
         delete item.fiscal.cstIcms; delete item.fiscal.csosn;
@@ -1629,6 +1794,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       const digitos = String(evento.target.value || '').replace(/\D/g, '');
       if (digitos.length === 8 && digitos !== ultimoCepConsultado) buscarCep({ automatico: true });
     });
+    // Cadastro com CEP e sem rua (nota vinda do pedido): a busca completa.
+    if (ultimoCepConsultado.length === 8 && !String(document.querySelector('#nfeFocusForm [name="destLogradouro"]')?.value || '').trim()) {
+      buscarCep({ automatico: true });
+    }
 
     attachItemsHandlers();
 
@@ -1770,6 +1939,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     });
     if (ehComplemento()) atualizarTextoComplemento();
 
+    document.getElementById('nfeFocusSalvarRascunho')?.addEventListener('click', (e) => salvarNotaEmEdicao(e.currentTarget));
+    document.getElementById('nfeFocusDescartarRascunho')?.addEventListener('click', (e) => descartarNotaSalva(e.currentTarget));
+
     document.getElementById('nfeFocusForm')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!selectedEstabelecimentoId) {
@@ -1896,8 +2068,24 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 
   // Emitente já escolhido pela empresa do pedido: as últimas notas dele
   // aparecem de saída, como apareceriam se a pessoa o escolhesse na mão.
+  // A NOTA EM EDIÇÃO SALVA (fase EL): volta como estava antes do primeiro
+  // desenho — o estado da tela primeiro, os campos do formulário depois.
+  let camposDoRascunho = null;
+  try {
+    const resposta = await api(`/api/fiscal/nfe/rascunho?pedido=${encodeURIComponent(orderIdOrigem || '')}`);
+    if (resposta && resposta.rascunho && resposta.rascunho.dados) {
+      camposDoRascunho = aplicarEstadoSalvo(resposta.rascunho.dados);
+      rascunhoSalvoEm = resposta.rascunho.atualizadoEm || '';
+    }
+  } catch (_) {
+    // Sem permissão ou sem a tabela ainda: a tela abre como sempre abriu.
+  }
   if (selectedEstabelecimentoId) await loadNotasRecentes();
   renderForm();
+  if (camposDoRascunho) {
+    preencherCamposSalvos(camposDoRascunho);
+    showToast(`Nota em edição recuperada (salva em ${new Date(rascunhoSalvoEm).toLocaleString('pt-BR')}).`, 'info');
+  }
 };
 
 // "Nova NF-e Avulsa" É ESTA TELA.

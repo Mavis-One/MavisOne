@@ -39,6 +39,13 @@ check('  e nenhum percentual travado', !/'aliquota|'reducao|'mva/.test(bloco));
 check('mudar CST ou percentual refaz a prévia sozinho',
   /evento\.target\.closest\('label'\)\?\.classList\.toggle\('is-editado', editado\(item, campo\)\);\s*\/\/[^\n]*\n[^\n]*\n\s*carregarPrevia\(\);/.test(tela));
 check('a lista editada fica marcada como o campo editado', css.includes('.nfe-imposto-campos label.is-editado select'));
+// 14/10/2026: faixas alternadas e campo que não se altera mais escuro, nos dois
+// temas (conferido no navegador: claro branco x 86% cinza; escuro #18242f x preto).
+check('grupos em faixas alternadas', css.includes('.nfe-imposto-item > .nfe-imposto-grupo:nth-child(even) { background: rgba(var(--text-rgb), 0.05); }'));
+check('campo travado mais escuro que o editável',
+  css.includes('.nfe-imposto-campos input[readonly] { background: color-mix(in srgb, var(--input-bg) 86%, #000);')
+  && css.includes(':root[data-theme="dark"] .nfe-imposto-campos input[readonly] { background: #000; }'));
+check('  e o editado continua marcado no escuro', css.includes(':root[data-theme="dark"] .nfe-imposto-campos label.is-editado input,'));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
 process.exit(falhas ? 1 : 0);

@@ -105,6 +105,7 @@ const anexosDb = require('./lib/db/anexos');
 // analisar uma nota nao pode criar fornecedor nem mexer em estoque sozinha.
 const entradaNfe = require('./lib/entradaNfe');
 const entradaNfeDb = require('./lib/db/entrada-nfe');
+const rascunhoEmissaoDb = require('./lib/db/rascunho-emissao');
 // Ações em lote da lista. Mesmo arquivo que o navegador carrega: é ele que diz
 // quem é elegível, e a tela e o servidor precisam responder igual.
 const salesBulk = require('./public/modules/shared/sales_bulk_actions');
@@ -6725,6 +6726,8 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
   // A prévia é parte de emitir: mesma montagem, sem transmitir (13/10/2026).
   if (pathname === '/api/fiscal/nfe/previa') return 'emitir';
+  // A nota em edição salva antes de emitir (fase EL): é parte de emitir.
+  if (pathname === '/api/fiscal/nfe/rascunho') return 'emitir';
   if (pathname === '/api/fiscal/nfce/emitir') return 'emitir';
   if (pathname.endsWith('/cancelar')) return 'cancelar';
   if (pathname.endsWith('/cce')) return 'cce';
@@ -14904,6 +14907,31 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { eventos });
       }
 
+      // A NOTA EM EDIÇÃO (fase EL, 14/10/2026): "Salvar nota em edição" na
+      // tela de emissão grava o estado da tela; ao reabrir a emissão do mesmo
+      // pedido (ou a avulsa da mesma pessoa) ela volta. Não é documento fiscal.
+      if (pathname === '/api/fiscal/nfe/rascunho') {
+        const pedidoId = String(url.searchParams.get('pedido') || '').trim();
+        const chave = rascunhoEmissaoDb.chaveDoRascunho({ pedidoId, userId: user.id });
+        if (req.method === 'GET') {
+          return sendJson(res, { rascunho: await rascunhoEmissaoDb.lerRascunho(chave) });
+        }
+        if (req.method === 'PUT') {
+          const body = await readBody(req);
+          if (!body || typeof body.dados !== 'object' || Array.isArray(body.dados)) {
+            return sendJson(res, { error: 'Nada para salvar.' }, 400);
+          }
+          const rascunho = await rascunhoEmissaoDb.salvarRascunho({
+            chave, pedidoId, userId: user.id, userName: user.name, dados: body.dados
+          });
+          return sendJson(res, { success: true, rascunho });
+        }
+        if (req.method === 'DELETE') {
+          await rascunhoEmissaoDb.apagarRascunho(chave);
+          return sendJson(res, { success: true });
+        }
+      }
+
       // A PRÉVIA DA NF-e (13/10/2026, aba Impostos da emissão): a MESMA
       // montagem da emissão (prepararNfeParaTransmitir, com regras fiscais e
       // com o que foi editado), sem gravar nem transmitir nada. As mesmas
@@ -14917,6 +14945,12 @@ async function tratarRequisicao(req, res) {
       if (pathname === '/api/fiscal/nfe/emitir' && req.method === 'POST') {
         const body = await readBody(req);
         const nfe = await emitirNfeFiscal(body, user);
+        // Aceita (autorizada ou em processamento), a nota em edição salva (fase
+        // EL) não tem mais o que guardar. Rejeitada na hora, fica: é ela que se
+        // corrige para mandar de novo.
+        if (['AUTORIZADO', 'PROCESSANDO'].includes(String(nfe && nfe.status || '').toUpperCase())) {
+          await rascunhoEmissaoDb.apagarRascunho(rascunhoEmissaoDb.chaveDoRascunho({ pedidoId: String(body.orderId || ''), userId: user.id })).catch(() => {});
+        }
         return sendJson(res, { success: true, nfe });
       }
 
