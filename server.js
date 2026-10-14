@@ -3317,6 +3317,9 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
       // cancelamento acima encontra o que desfazer.
       referenceId: record.id,
       bankAccountId: parcela.bankAccountId || '',
+      // A forma da parcela do pedido vira a forma do título (fase EN).
+      paymentMethodId: parcela.methodId || '',
+      paymentMethodName: parcela.methodId ? ((formasPorId.get(parcela.methodId) || {}).name || '') : '',
       status: parcela.quitaNaHora ? 'paid' : 'pending',
       // A TAXA DA MAQUININHA E QUEM PROCESSA (fase BX). `amount` continua
       // sendo o bruto; isto e o que a conciliacao precisa para casar o
@@ -4703,6 +4706,8 @@ function serializeFinanceEntry(entry, data, baixasDoLancamento) {
     //
     // NULO e "nao se aplica" (nao e cartao, ou e anterior a esta fase); zero
     // seria "taxa zero contratada". A tela mostra uma coisa e nao a outra.
+    paymentMethodId: entry.paymentMethodId || '',
+    paymentMethodName: entry.paymentMethodName || '',
     cardAcquirerId: entry.cardAcquirerId || '',
     cardAcquirerName: entry.cardAcquirerName || '',
     cardBrand: entry.cardBrand || '',
@@ -5834,6 +5839,21 @@ function buildFinanceDashboardSummary(data, query, extras = {}) {
 // syncFinanceData, sem os lançamentos.
 // Os tipos do plano de contas (financial_categories.type).
 const TIPOS_DO_PLANO = ['receita', 'despesa', 'ambos'];
+
+// A FORMA DE PAGAMENTO DO TÍTULO (fase EN, 14/10/2026): o id do cadastro de
+// Formas de Pagamento (db.json) e o nome junto. Id que não existe no cadastro
+// é recusado, em vez de gravado sem nome.
+function formaDoTitulo(data, id) {
+  const chave = String(id || '').trim();
+  if (!chave) return { paymentMethodId: '', paymentMethodName: '' };
+  const forma = (data.paymentMethods || []).find((f) => f.id === chave);
+  if (!forma) {
+    const erro = new Error('Forma de pagamento não encontrada no cadastro.');
+    erro.status = 400;
+    throw erro;
+  }
+  return { paymentMethodId: forma.id, paymentMethodName: forma.name || '' };
+}
 
 async function syncFinanceCadastroData(data) {
   const [categories, costCenters, bankAccounts] = await Promise.all([
@@ -19012,6 +19032,11 @@ async function tratarRequisicao(req, res) {
         .filter((e) => e.ativo !== false)
         .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia })),
       contasPorEstabelecimento: vinculosMeta,
+      // As formas de pagamento para o campo do título (fase EN). Só as ativas:
+      // o título que já tem uma inativa a mostra pelo nome que guardou.
+      formasDePagamento: (data.paymentMethods || [])
+        .filter((f) => f.status !== 'inativo')
+        .map((f) => ({ id: f.id, name: f.name })),
       estabelecimentoDoUsuario: user.estabelecimentoId || '',
       // Fase DR: "pode trocar" passou a ser "tem mais de um para escolher", e a
       // lista diz quais (null = todos). A lista de estabelecimentos continua
@@ -19483,6 +19508,7 @@ async function tratarRequisicao(req, res) {
         estabelecimentoId: escolha.id,
         clientSupplierId: body.clientSupplierId || '',
         clientSupplierName: body.clientSupplierName || '',
+        ...formaDoTitulo(data, body.paymentMethodId),
         referenceId: '',
         status: 'pending',
         createdBy: user.id,
@@ -19904,6 +19930,8 @@ async function tratarRequisicao(req, res) {
         if (body.costCenter !== undefined) entry.costCenter = body.costCenter;
         if (body.bankAccountId !== undefined) entry.bankAccountId = body.bankAccountId;
         if (body.targetBankAccountId !== undefined) entry.targetBankAccountId = body.targetBankAccountId;
+        // A forma de pagamento também é do Financeiro (fase EN).
+        if (body.paymentMethodId !== undefined) Object.assign(entry, formaDoTitulo(data, body.paymentMethodId));
         // Fase CD: o que `estabelecimentoDaOperacao` decidiu, e nao o que veio
         // no corpo — quem nao pode trocar ja' foi recusado la' em cima.
         entry.estabelecimentoId = escolhaPut.id;
@@ -19937,6 +19965,7 @@ async function tratarRequisicao(req, res) {
       if (body.targetBankAccountId !== undefined) entry.targetBankAccountId = body.targetBankAccountId;
       if (body.clientSupplierId !== undefined) entry.clientSupplierId = body.clientSupplierId;
       if (body.clientSupplierName !== undefined) entry.clientSupplierName = body.clientSupplierName;
+      if (body.paymentMethodId !== undefined) Object.assign(entry, formaDoTitulo(data, body.paymentMethodId));
       entry.estabelecimentoId = escolhaPut.id;
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();

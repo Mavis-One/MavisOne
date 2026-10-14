@@ -136,11 +136,13 @@ const FINANCE_LISTA_COLUNAS = [
   },
   { chave: 'costCenter', rotulo: 'Centro de custo', ordem: 'costCenter', valor: (e, f) => f.cortado(e.costCenterName, 'is-curto') },
   { chave: 'bankAccount', rotulo: 'Conta bancária', ordem: 'bankAccount', valor: (e, f) => f.cortado(e.bankAccountName, 'is-curto') },
+  // Fase EN (14/10/2026): a forma de pagamento do título.
+  { chave: 'paymentMethod', rotulo: 'Forma de pagamento', valor: (e, f) => f.cortado(e.paymentMethodName, 'is-curto') },
   { chave: 'createdByName', rotulo: 'Lançado por', valor: (e, f) => f.cortado(e.createdByName, 'is-curto') }
 ];
 
 // Para quem nunca escolheu: as colunas que a tela tinha antes do seletor.
-const FINANCE_COLUNAS_PADRAO = ['codigo', 'date', 'dueDate', 'description', 'type', 'category', 'clienteFornecedor', 'amountPrevisto', 'amountRealizado', 'status', 'document'];
+const FINANCE_COLUNAS_PADRAO = ['codigo', 'date', 'dueDate', 'description', 'type', 'category', 'clienteFornecedor', 'paymentMethod', 'amountPrevisto', 'amountRealizado', 'status', 'document'];
 
 const financeFiltrosVazios = () => ({
   search: '', type: '', status: '', periodo: '', clientSupplierId: '', category: '', costCenter: '', bankAccountId: '',
@@ -1383,6 +1385,7 @@ function criarTelaDeLancamentos(telaChave) {
           <div><span class="muted">${isReceita ? 'Cliente' : 'Fornecedor'}</span><strong>${escapeHtml(entry.clienteFornecedor || '-')}</strong></div>
           <div><span class="muted">Categoria</span><strong>${escapeHtml(entry.categoryName || '-')}</strong></div>
           <div><span class="muted">Centro de custo</span><strong>${escapeHtml(entry.costCenterName || '-')}</strong></div>
+          <div><span class="muted">Forma de pagamento</span><strong>${escapeHtml(entry.paymentMethodName || '-')}</strong></div>
           <div><span class="muted">Conta bancária</span><strong>${escapeHtml(entry.bankAccountName || '-')}</strong></div>
           <div><span class="muted">Documento</span><strong>${escapeHtml(entry.document || '-')}</strong></div>
           <div><span class="muted">Valor previsto</span><strong>${financeFormatBRL(entry.amountPrevisto)}</strong></div>

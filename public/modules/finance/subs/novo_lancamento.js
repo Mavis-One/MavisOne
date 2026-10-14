@@ -132,6 +132,16 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     const ids = Array.isArray(c.estabelecimentoIds) ? c.estabelecimentoIds : [];
     return !ids.length || !estabelecimentoAtual || ids.includes(estabelecimentoAtual);
   }
+  // A forma de pagamento do título (fase EN): as ativas do cadastro, e a que
+  // o título já tem mesmo que tenha sido inativada (pelo nome que ele guardou).
+  function opcoesDeForma(selecionado) {
+    const lista = (meta.formasDePagamento || []).map((f) => ({ value: f.id, label: f.name }));
+    if (selecionado && !lista.some((o) => o.value === selecionado)) {
+      lista.unshift({ value: selecionado, label: (editEntry && editEntry.paymentMethodName) || selecionado });
+    }
+    return lista;
+  }
+
   function opcoesDeCentro(selecionado) {
     return meta.costCenters
       .filter((c) => centroValeAqui(c) || c.id === selecionado)
@@ -182,14 +192,16 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     financeTargetAccount: { name: 'targetBankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta de destino' },
     financeBankAccount: { name: 'bankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta bancária' },
     financeCategory: { name: 'category', kind: 'category', opcoes: opcoesDePlano, rotulo: 'Plano de Contas' },
-    financeCostCenter: { name: 'costCenter', kind: 'costCenter', opcoes: opcoesDeCentro, rotulo: 'Centro de custo' }
+    financeCostCenter: { name: 'costCenter', kind: 'costCenter', opcoes: opcoesDeCentro, rotulo: 'Centro de custo' },
+    financePaymentMethod: { name: 'paymentMethodId', kind: 'paymentMethod', opcoes: opcoesDeForma, rotulo: 'Forma de pagamento' }
   };
   const VALOR_GRAVADO = {
     financeSourceAccount: () => (editEntry ? editEntry.bankAccountId : ''),
     financeTargetAccount: () => (editEntry ? editEntry.targetBankAccountId : ''),
     financeBankAccount: () => (editEntry ? editEntry.bankAccountId : ''),
     financeCategory: () => (editEntry ? editEntry.category : ''),
-    financeCostCenter: () => (editEntry ? editEntry.costCenter : '')
+    financeCostCenter: () => (editEntry ? editEntry.costCenter : ''),
+    financePaymentMethod: () => (editEntry ? editEntry.paymentMethodId : '')
   };
 
   function campoDeBusca(id, valor = VALOR_GRAVADO[id]() || '') {
@@ -339,6 +351,14 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
                 </div>
               </label>
             </div>
+            <div class="row">
+              <label>Forma de pagamento
+                <div class="finance-inline-select">
+                  ${campoDeBusca('financePaymentMethod')}
+                  <button type="button" class="icon-button edit" data-inline-add="paymentMethod" data-inline-alvo="financePaymentMethod" title="Nova forma de pagamento">+</button>
+                </div>
+              </label>
+            </div>
           `}
 
           <div class="row">
@@ -469,7 +489,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   const TELA_DE_CADASTRO = {
     bankAccount: { modulo: 'cadastros', tela: 'nova_conta_bancaria', nome: 'conta bancária' },
     category: { modulo: 'finance', tela: 'plano_de_contas', nome: 'plano de contas' },
-    costCenter: { modulo: 'finance', tela: 'centros_de_custo', nome: 'centro de custo' }
+    costCenter: { modulo: 'finance', tela: 'centros_de_custo', nome: 'centro de custo' },
+    paymentMethod: { modulo: 'cadastros', tela: 'nova_forma_pagamento', nome: 'forma de pagamento' }
   };
 
   function irParaCadastro(kind, alvo) {
@@ -495,6 +516,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     if (kind === 'category') state.planoDeContasNovo = { type: formType === 'RECEITA' ? 'receita' : 'despesa' };
     if (kind === 'costCenter') state.centroDeCustoNovo = { estabelecimentoIds: estabelecimentoAtual ? [estabelecimentoAtual] : [] };
     if (kind === 'bankAccount') state.cadastroEditBankAccountId = null;
+    if (kind === 'paymentMethod') state.cadastroEditPaymentMethodId = null;
     state.activeModule = destino.modulo;
     state.activeSub = destino.tela;
     if (typeof renderApp === 'function') renderApp();
@@ -683,6 +705,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         payload.bankAccountId = formData.get('bankAccountId') || '';
         payload.category = formData.get('category') || '';
         payload.costCenter = formData.get('costCenter') || '';
+        payload.paymentMethodId = formData.get('paymentMethodId') || '';
         if (!vinculado) {
           payload.clientSupplierId = formData.get('clientSupplierId') || '';
           payload.clientSupplierName = formData.get('clientSupplierName') || '';
