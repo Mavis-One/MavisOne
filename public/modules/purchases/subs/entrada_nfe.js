@@ -83,7 +83,11 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
   }
 
   window.MavisSubscreenRegistry.purchases.entrada_nfe = async function renderEntradaNfe(ctx) {
-    const { content, api, showToast, escapeHtml, confirmModal } = ctx;
+    const { content, api, showToast, escapeHtml, confirmModal, state } = ctx;
+    // Veio do "Dar entrada" das Notas emitidas contra CNPJ (14/10/2026): abre
+    // com o XML daquela nota e, ao lançar, liga a entrada a ela.
+    const doDfe = state && state.entradaNfeDoDfe ? state.entradaNfeDoDfe : null;
+    if (state) state.entradaNfeDoDfe = null;
 
     // Estado da tela. Vive aqui e não em `state` porque nada disto sobrevive a
     // sair da tela: uma conferência pela metade não é dado do sistema.
@@ -726,6 +730,17 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         if (resposta.estoque?.length) partes.push(`${resposta.estoque.length} ${resposta.estoque.length === 1 ? 'item entrou' : 'itens entraram'} no estoque`);
         if (resposta.financeiro?.length) partes.push(`${resposta.financeiro.length} ${resposta.financeiro.length === 1 ? 'conta a pagar criada' : 'contas a pagar criadas'}`);
         showToast(`${partes.join(' · ')}.`, 'success');
+        // A nota recebida (DF-e) fica ligada a esta entrada: a lista de Notas
+        // contra CNPJ passa a mostrar "lançada" e para de oferecer a entrada.
+        if (tela.dfeId) {
+          const entradaId = (resposta.entrada && resposta.entrada.id) || resposta.id;
+          try {
+            await api(`/api/fiscal/dfe/${encodeURIComponent(tela.dfeId)}/entrada`, { method: 'POST', body: JSON.stringify({ entradaId }) });
+          } catch (erroLigar) {
+            showToast(`Entrada lançada, mas não consegui marcá-la na lista de Notas contra CNPJ: ${erroLigar.message || ''}`, 'warning');
+          }
+          tela.dfeId = null;
+        }
         tela.xml = '';
         tela.conferencia = null;
         tela.escolhas.clear();
@@ -740,5 +755,18 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
 
     await carregarEntradas();
     desenhar();
+    if (doDfe && doDfe.dfeId) {
+      try {
+        tela.analisando = true;
+        desenhar();
+        const { xml } = await api(`/api/fiscal/dfe/${encodeURIComponent(doDfe.dfeId)}/xml`);
+        await analisarXml(xml);
+        tela.dfeId = doDfe.dfeId;
+      } catch (erro) {
+        tela.analisando = false;
+        desenhar();
+        showToast(erro.message || 'Não consegui abrir o XML desta nota.', 'error');
+      }
+    }
   };
 })();

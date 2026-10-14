@@ -160,13 +160,15 @@ const tela = ler('public/modules/fiscal/subs/notas_contra_cnpj.js');
 // Um segundo caminho no servidor seria um segundo lugar para o estoque entrar
 // diferente — e as duas telas concordariam entre si por acidente, não por
 // construção.
-check('lança pela rota de entrada que já existia', /'\/api\/purchases\/entrada-nfe'/.test(tela));
-// Sem `itens`, o servidor vincula pela sugestão que ele mesmo calculou.
-check('  e não manda itens, para o servidor reconhecê-los', !/itens:/.test(tela));
-check('  pede financeiro junto', /gerarFinanceiro: true/.test(tela));
-// Manifestação não se desfaz: se o lançamento falhar, o usuário precisa saber
-// que a primeira metade valeu.
-check('  falha no lançamento avisa que a manifestação valeu', /a manifestação valeu/.test(tela));
+// 14/10/2026: o lançamento deixou de ser automático. "Dar entrada" abre a
+// PRÓPRIA tela de Notas de Entrada com o XML (conferência de itens, depósito e
+// financeiro), e é ela que lança — pela rota de sempre. Ver
+// scripts/test-dar-entrada-do-dfe.js.
+check('não lança por conta própria: abre a tela de entrada', !/'\/api\/purchases\/entrada-nfe'/.test(tela) && /state\.activeSub = 'entrada_nfe';/.test(tela));
+const telaEntrada = ler('public/modules/purchases/subs/entrada_nfe.js');
+check('  e a tela de entrada lança pela rota que já existia', /api\('\/api\/purchases\/entrada-nfe', \{/.test(telaEntrada));
+// Manifestação não se desfaz: a manifestação e a entrada são passos separados.
+check('  manifestar avisa que o evento não se desfaz', /Isto é um evento fiscal e não se desfaz\./.test(tela));
 
 console.log('\n--- a busca e a manifestação usam o token do estabelecimento DE VERDADE (12/10/2026) ---');
 // O defeito: as rotas passavam o objeto devolvido por forEstabelecimento (um

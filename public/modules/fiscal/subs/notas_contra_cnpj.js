@@ -2,21 +2,17 @@
 //
 // O que a SEFAZ tem contra os nossos CNPJs, e o que fazemos a respeito.
 //
-// A TELA ENCADEIA TRÊS PASSOS quando a manifestação é "Confirmação da operação":
-// manifestar → lançar a entrada → ligar as duas. São três requisições, e isso é
-// deliberado, não preguiça:
+// MANIFESTAR E DAR ENTRADA SÃO DOIS PASSOS, E DOIS BOTÕES (14/10/2026). Pedido
+// do usuário: o "Manifestar" abre uma janela por cima da lista (antes o
+// formulário nascia no fim da página, abaixo de dezenas de notas, e o clique
+// parecia não fazer nada); e, manifestada a Ciência ou a Confirmação, aparece
+// "Dar entrada", que abre Compras › Entrada de NF-e com o XML desta nota para
+// conferir itens, depósito e contas a pagar antes de lançar. Antes, a
+// Confirmação lançava a entrada sozinha, sem conferência.
 //
-//   A manifestação acontece na SEFAZ e NÃO SE DESFAZ. Se o lançamento falhar
-//   depois dela, o estado "manifestada, ainda não lançada" é real — não é um
-//   defeito desta tela. Fingir que os dois são uma operação só exigiria poder
-//   desfazer um evento fiscal, e não se pode.
-//
-//   O lançamento usa a MESMA rota que a tela de Notas de Entrada usa quando uma
-//   pessoa lança à mão. Um segundo caminho no servidor seria um segundo lugar
-//   para o estoque entrar diferente.
-//
-// Quando o passo 2 falha, a nota fica na lista marcada como manifestada e sem
-// entrada, com o botão de lançar disponível. Nada se perde; só não terminou.
+// A manifestação acontece na SEFAZ e NÃO SE DESFAZ; o lançamento usa a MESMA
+// rota da tela de Notas de Entrada, e ao lançar a nota fica ligada à entrada
+// (/api/fiscal/dfe/:id/entrada), que é o que muda a coluna para "lançada".
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {};
 
@@ -30,7 +26,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
 
   let dados = { documentos: [], empresas: [], ponteiros: {}, focusConfigurado: false };
 
-  const dinheiro = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
+  const dinheiro = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
   // Data e hora no formato do print, sem depender de fuso: o que vem do banco
   // já é o instante certo, e passá-lo por toLocaleString num navegador em outro
@@ -135,12 +131,23 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     return `<span class="finance-badge finance-badge-${evento.tom}">Sim</span>`;
   }
 
+  // Ciência e Confirmação liberam o XML: dá para dar entrada. As outras duas
+  // dizem que a nota não é nossa ou não aconteceu — não se lança.
+  const podeDarEntrada = (doc) => Boolean(doc.manifestacaoCodigo) && catalogo.liberaXml(doc.manifestacaoCodigo) && !doc.entradaId;
+
   function colunaEntrada(doc) {
     if (doc.entradaId) return '<span class="finance-badge finance-badge-success">lançada</span>';
-    const evento = catalogo.obter(doc.manifestacaoCodigo);
-    if (doc.manifestacaoCodigo && !evento.geraEntrada) return '<span class="muted">não se aplica</span>';
-    if (doc.manifestacaoCodigo && evento.geraEntrada) {
-      return `<button type="button" class="secondary" data-lancar="${escapeHtml(doc.id)}">Lançar entrada</button>`;
+    if (podeDarEntrada(doc)) return '<span class="finance-badge finance-badge-warning">pendente</span>';
+    if (doc.manifestacaoCodigo) return '<span class="muted">não se aplica</span>';
+    return '<span class="muted">-</span>';
+  }
+
+  function acoesDaNota(doc) {
+    if (!doc.manifestacaoCodigo) {
+      return `<button type="button" class="secondary" data-manifestar="${escapeHtml(doc.id)}">Manifestar</button>`;
+    }
+    if (podeDarEntrada(doc)) {
+      return `<button type="button" data-dar-entrada="${escapeHtml(doc.id)}">Dar entrada</button>`;
     }
     return '<span class="muted">-</span>';
   }
@@ -179,11 +186,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
                       ? `${escapeHtml(doc.manifestacaoCodigo)} - ${escapeHtml(catalogo.rotulo(doc.manifestacaoCodigo))}`
                       : '<span class="muted">-</span>'}</td>
                   <td>${colunaEntrada(doc)}</td>
-                  <td class="finance-extrato-actions">
-                    ${doc.manifestacaoCodigo
-                      ? '<span class="muted">-</span>'
-                      : `<button type="button" class="secondary" data-manifestar="${escapeHtml(doc.id)}">Manifestar</button>`}
-                  </td>
+                  <td class="finance-extrato-actions">${acoesDaNota(doc)}</td>
                 </tr>
               `).join('') : '<tr><td colspan="11" class="muted">Nenhuma nota buscada ainda. Use “Buscar documentos na SEFAZ”.</td></tr>'}
             </tbody>
@@ -203,8 +206,9 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     const escolhido = catalogo.obter(tela.manifestando.tipo);
     const exigeJustificativa = escolhido.value === 'desconhecimento' || escolhido.value === 'nao-realizada';
     return `
-      <section class="panel">
-        <h4>Manifestar o documento selecionado</h4>
+      <div class="modal-overlay" id="dfeManifestacaoModal">
+      <section class="modal modal-lg">
+        <h3>Manifestar o documento selecionado</h3>
         <p class="muted">
           ${escapeHtml(doc.emitenteNome || '')} · ${dinheiro(doc.valorTotal)}<br />
           <code>${escapeHtml(doc.chave)}</code>
@@ -224,13 +228,14 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
           <label>Justificativa (a SEFAZ exige, mínimo 15 caracteres)
             <textarea id="dfeJustificativa" rows="2">${escapeHtml(tela.manifestando.justificativa || '')}</textarea>
           </label>` : ''}
-        <div class="row">
+        <div class="modal-actions">
+          <button type="button" class="secondary" id="dfeCancelarManifestacao">Cancelar</button>
           <button type="button" id="dfeConfirmarManifestacao" ${tela.ocupado ? 'disabled' : ''}>
             ${tela.ocupado ? 'Enviando à SEFAZ…' : 'Manifestar'}
           </button>
-          <button type="button" class="secondary" id="dfeCancelarManifestacao">Cancelar</button>
         </div>
       </section>
+      </div>
     `;
   }
 
@@ -248,9 +253,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
       showToast('Escolha o tipo de manifestação.', 'warning');
       return;
     }
-    const aviso = evento.geraEntrada
-      ? `Confirmar a operação diz à SEFAZ que a mercadoria chegou, e o sistema vai lançar a nota como entrada — com estoque e contas a pagar. Manifestação não se desfaz. Continuar?`
-      : `Manifestar "${evento.label}"? Isto é um evento fiscal e não se desfaz.`;
+    const aviso = `Manifestar "${evento.label}"? Isto é um evento fiscal e não se desfaz.`;
     if (!await confirmModal(aviso)) return;
 
     try {
@@ -260,15 +263,13 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         method: 'POST',
         body: JSON.stringify({ tipo: tela.manifestando.tipo, justificativa: tela.manifestando.justificativa || '' })
       });
-      showToast(`Manifestada como "${evento.label}".`, 'success');
       tela.manifestando = null;
-
-      if (resposta.geraEntrada) {
-        if (!resposta.temXml) {
-          showToast('A SEFAZ ainda não liberou o XML desta nota. Use “Lançar entrada” quando ele chegar.', 'warning');
-        } else {
-          await lancarEntrada(doc.id);
-        }
+      // A entrada agora é um botão na lista ("Dar entrada"), com conferência.
+      showToast(catalogo.liberaXml(evento.value)
+        ? `Manifestada como "${evento.label}". Use “Dar entrada” na lista para lançar a nota.`
+        : `Manifestada como "${evento.label}".`, 'success');
+      if (catalogo.liberaXml(evento.value) && !resposta.temXml) {
+        showToast('A SEFAZ ainda não liberou o XML completo desta nota; o “Dar entrada” funciona quando ele chegar.', 'warning');
       }
     } catch (erro) {
       showToast(erro.message || 'Erro ao manifestar.', 'error');
@@ -279,42 +280,21 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   }
 
   /**
-   * Lança a nota como entrada, pela MESMA rota que a tela de Notas de Entrada
-   * usa. Não manda `itens`: sem eles, o servidor vincula cada item pela
-   * sugestão que ele mesmo calculou (GTIN, código do fornecedor, descrição) —
-   * que é exatamente o "reconhecer os itens" pedido. Item que ele não
-   * reconhecer fica sem produto e a entrada nasce "a revisar", sem mexer no
-   * estoque daquele item. É o comportamento certo: inventar produto a partir de
-   * uma nota de terceiro encheria o cadastro de duplicatas.
+   * "Dar entrada": abre Compras › Entrada de NF-e com o XML desta nota, para
+   * conferir itens, depósito e contas a pagar antes de lançar. Ao lançar, a
+   * tela de entrada liga a entrada a este documento (ver entrada_nfe.js).
    */
-  async function lancarEntrada(documentoId) {
-    try {
-      tela.ocupado = true;
-      const { xml } = await api(`/api/fiscal/dfe/${encodeURIComponent(documentoId)}/xml`);
-      const entrada = await api('/api/purchases/entrada-nfe', {
-        method: 'POST',
-        body: JSON.stringify({
-          xml,
-          gerarFinanceiro: true,
-          atualizarCusto: true,
-          depositoId: tela.depositoId || ''
-        })
-      });
-      await api(`/api/fiscal/dfe/${encodeURIComponent(documentoId)}/entrada`, {
-        method: 'POST',
-        body: JSON.stringify({ entradaId: entrada.entrada?.id || entrada.id })
-      });
-      const partes = ['Entrada lançada'];
-      if (entrada.estoque?.length) partes.push(`${entrada.estoque.length} ${entrada.estoque.length === 1 ? 'item entrou' : 'itens entraram'} no estoque`);
-      if (entrada.financeiro?.length) partes.push(`${entrada.financeiro.length} ${entrada.financeiro.length === 1 ? 'conta a pagar criada' : 'contas a pagar criadas'}`);
-      showToast(`${partes.join(' · ')}.`, 'success');
-    } catch (erro) {
-      // A manifestação já aconteceu e vale. Só o lançamento falhou, e ele se
-      // repete pelo botão da lista — por isso o erro diz isso em voz alta.
-      showToast(`${erro.message || 'Erro ao lançar a entrada'} — a manifestação valeu; use “Lançar entrada” na lista para tentar de novo.`, 'error');
-    } finally {
-      tela.ocupado = false;
+  function darEntrada(documentoId) {
+    if (!(state.user?.allowedModules || []).includes('purchases')) {
+      showToast('Dar entrada é do módulo Compras, que não está liberado para você.', 'warning');
+      return;
     }
+    const doc = dados.documentos.find((d) => d.id === documentoId);
+    state.entradaNfeDoDfe = { dfeId: documentoId, chave: doc ? doc.chave : '' };
+    state.activeModule = 'purchases';
+    state.activeSub = 'entrada_nfe';
+    if (typeof renderApp === 'function') renderApp();
+    ctx.loadModule('purchases');
   }
 
   // ----------------------------------------------------------------- eventos
@@ -374,11 +354,12 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
       desenhar();
     });
 
-    document.querySelectorAll('[data-lancar]').forEach((botao) => {
-      botao.addEventListener('click', async () => {
-        await lancarEntrada(botao.dataset.lancar);
-        await carregar();
-      });
+    document.querySelectorAll('[data-dar-entrada]').forEach((botao) => {
+      botao.addEventListener('click', () => darEntrada(botao.dataset.darEntrada));
+    });
+    // Fora da janela fecha (Cancelar também).
+    document.getElementById('dfeManifestacaoModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'dfeManifestacaoModal' && !tela.ocupado) { tela.manifestando = null; desenhar(); }
     });
   }
 
