@@ -114,7 +114,12 @@ const emitirFocusSrc = ler('public/modules/finance/subs/emitir_nfe_focus.js');
 const fontesFinance = nfeEmitidasSrc + emitirFocusSrc;
 ['nfe_emitidas', 'nova_nfe_avulsa', 'emitir_nfe_focus'].forEach((k) => {
   check(`espelho declara fiscal.${k}`, espelhoSrc.includes(`fiscal.${k}`));
-  const registradoEmFinance = new RegExp(`MavisSubscreenRegistry\\.finance\\.${k}\\s*=`).test(fontesFinance);
+  // Desde 14/10/2026 nfe_emitidas é registrada pela fábrica que também gera
+  // NFC-e Emitidas: `nfe_emitidas: { titulo: ...` na tabela das telas e o
+  // registro por chave logo abaixo dela.
+  const pelaFabrica = new RegExp(`\\b${k}: \\{ titulo:`).test(fontesFinance)
+    && /window\.MavisSubscreenRegistry\.finance\[telaChave\] = criarTelaDeNotasEmitidas\(telaChave\);/.test(fontesFinance);
+  const registradoEmFinance = new RegExp(`MavisSubscreenRegistry\\.finance\\.${k}\\s*=`).test(fontesFinance) || pelaFabrica;
   check(`finance ainda registra ${k}`, registradoEmFinance, registradoEmFinance ? '' : 'O ESPELHO FICARIA VAZIO');
 });
 check('o espelho resolve na chamada, não na carga',
@@ -143,10 +148,12 @@ console.log('\n--- Vendas mostra a MESMA lista, não uma paralela ---');
 // eram invisíveis. E nada avisava: cabeçalho, tabela e contagem pareciam
 // certos, então quem conferisse faturamento por Vendas concluiria que as notas
 // não saíram.
-const blocoVendasNfes = appSrc.slice(appSrc.indexOf("if (sub === 'nfes')"), appSrc.indexOf("if (sub === 'new_nfe')"));
+// Desde 14/10/2026 o mesmo bloco serve NF-e e NFC-e Emitidas ('nfces').
+const blocoVendasNfes = appSrc.slice(appSrc.indexOf("if (sub === 'nfes'"), appSrc.indexOf("if (sub === 'new_nfe')"));
 check('o bloco de Vendas foi encontrado', blocoVendasNfes.length > 100, `${blocoVendasNfes.length} caracteres`);
 check('Vendas delega para a tela do Financeiro',
-  /MavisSubscreenRegistry\?\.finance\?\.nfe_emitidas/.test(blocoVendasNfes));
+  /MavisSubscreenRegistry\?\.finance\?\.nfe_emitidas/.test(blocoVendasNfes)
+  || (/MavisSubscreenRegistry\?\.finance\?\.\[chaveDaTela\]/.test(blocoVendasNfes) && /'nfce_emitidas' : 'nfe_emitidas'/.test(blocoVendasNfes)));
 // A consulta paralela é o que fazia a lista divergir — não pode voltar.
 check('e não consulta mais a lista paralela', !/view=nfes/.test(blocoVendasNfes));
 check('nem monta tabela própria de NF-e', !/<thead>[\s\S]{0,200}Número/.test(blocoVendasNfes));

@@ -1949,6 +1949,9 @@ const moduleSubItems = {
     { key: 'sales_origins', label: 'Origens de Venda', desc: 'Por onde a venda chegou: balcão, televendas, e-commerce, indicação.' },
     { key: 'new_sales_origin', label: 'Nova Origem de Venda', desc: 'Cria uma origem de venda.' },
     { key: 'nfes', label: 'NF-e Emitidas', desc: 'Notas já emitidas, com DANFE, XML e cancelamento.' },
+    // 14/10/2026: o registro de todos os cupons — a lista de NF-e Emitidas só
+    // com o modelo 65 (finance/subs/nfe_emitidas.js, tela nfce_emitidas).
+    { key: 'nfces', label: 'NFC-e Emitidas', desc: 'Cupons emitidos, com DANFCe, XML e cancelamento.' },
     { key: 'new_nfe', label: 'Nova NF-e Avulsa', desc: 'Emite uma NF-e sem partir de um pedido.' },
     // Meu Painel vem antes dos outros dois de propósito: é a única das três
     // telas de painel que qualquer vendedor abre para si. As outras duas são de
@@ -6338,12 +6341,14 @@ async function loadModule(moduleName) {
       // Agora delega, como o Fiscal já fazia (modules/fiscal/subs/nfe_espelho.js):
       // uma tela só, um lugar para corrigir. A resolução é na hora da chamada,
       // não na carga, para a falta virar mensagem em vez de tela em branco.
-      if (sub === 'nfes') {
-        const tela = window.MavisSubscreenRegistry?.finance?.nfe_emitidas;
+      if (sub === 'nfes' || sub === 'nfces') {
+        // NFC-e Emitidas (14/10/2026): a mesma tela, com o modelo fixo em 65.
+        const chaveDaTela = sub === 'nfces' ? 'nfce_emitidas' : 'nfe_emitidas';
+        const tela = window.MavisSubscreenRegistry?.finance?.[chaveDaTela];
         if (typeof tela !== 'function') {
           content.innerHTML = `
             <div class="panel">
-              <h3>NF-e Emitidas</h3>
+              <h3>${sub === 'nfces' ? 'NFC-e Emitidas' : 'NF-e Emitidas'}</h3>
               <p class="muted">Esta tela é a mesma do Financeiro e não está carregada agora.</p>
               <p class="muted">Verifique se <code>modules/finance/subs/nfe_emitidas.js</code>
               continua listado no <code>index.html</code>.</p>

@@ -219,7 +219,21 @@ async function nfePrint(nfe, layout = 'completo') {
   win.print();
 }
 
-window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanceNfeEmitidas(ctx) {
+// DUAS TELAS, UMA LISTA (14/10/2026). Pedido do usuário: "faça uma tela de
+// NFC-e emitidas, para registro de todos os cupons que foram emitidos, com o
+// botão de ações em cima igual ao das NF-e emitidas, no módulo de Vendas".
+// "NFC-e Emitidas" é esta mesma lista com o modelo fixo em 65: mesmas ações
+// (DANFCe, XML, cancelar, consultar), filtros e página guardados à parte.
+// Sem "+ Nova": a NFC-e sai do pedido (Mais Ações › Emitir NFC-e).
+const NOTAS_EMITIDAS_TELAS = {
+  nfe_emitidas: { titulo: 'NF-e Emitidas', modeloFixo: '', estado: 'nfeLista', singular: 'nota', plural: 'notas', novo: true },
+  nfce_emitidas: { titulo: 'NFC-e Emitidas', modeloFixo: '65', estado: 'nfceLista', singular: 'cupom', plural: 'cupons', novo: false }
+};
+
+function criarTelaDeNotasEmitidas(telaChave) {
+  const tela = NOTAS_EMITIDAS_TELAS[telaChave];
+  const estado = (sufixo) => tela.estado + sufixo;
+  return async function renderFinanceNfeEmitidas(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml, confirmModal } = ctx;
 
   // Esta tela é espelhada: aparece no Financeiro e no Fiscal. A navegação entre
@@ -237,7 +251,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   // conhecidas e só texto, para um state velho não injetar parâmetro na busca.
   const FILTROS_VAZIOS = { search: '', status: '', dateFrom: '', dateTo: '', estabelecimentoId: '', modelo: '', valorDe: '', valorAte: '' };
   const filters = { ...FILTROS_VAZIOS };
-  const filtrosSalvos = state.nfeListaFiltros || {};
+  const filtrosSalvos = state[estado('Filtros')] || {};
   Object.keys(FILTROS_VAZIOS).forEach((chave) => {
     if (typeof filtrosSalvos[chave] === 'string') filters[chave] = filtrosSalvos[chave];
   });
@@ -245,10 +259,10 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   // Notas por página: de 30 a 250 (pedido do usuário, 11/10/2026). Guardado no
   // state para sobreviver a sair e voltar à tela; o servidor também limita.
   const POR_PAGINA = [30, 50, 100, 150, 200, 250];
-  let limit = POR_PAGINA.includes(state.nfeListaPorPagina) ? state.nfeListaPorPagina : 30;
+  let limit = POR_PAGINA.includes(state[estado('PorPagina')]) ? state[estado('PorPagina')] : 30;
   // A ordem: clicar no cabeçalho ordena; clicar de novo inverte. O servidor
   // compara o número COMO número (ordenarNfes em server.js).
-  const ordem = state.nfeListaOrdem || { campo: 'data', direcao: 'desc' };
+  const ordem = state[estado('Ordem')] || { campo: 'data', direcao: 'desc' };
   const COLUNAS_ORDENAVEIS = { numero: 'Número', data: 'Data', empresa: 'Empresa', cliente: 'Cliente', valor: 'Valor', status: 'Status' };
 
   // Seleção guardada por id (não por índice) para sobreviver a refiltragem;
@@ -278,6 +292,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   function buildQuery() {
     const params = new URLSearchParams({ page: String(page), limit: String(limit), sort: ordem.campo, dir: ordem.direcao });
     Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    if (tela.modeloFixo) params.set('modelo', tela.modeloFixo);
     return params.toString();
   }
 
@@ -355,6 +370,8 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   function actionsContext() {
     const lista = notasDaPagina.filter((nfe) => selecionadas.has(nfe.id));
     return {
+      // Na tela de NFC-e Emitidas, o painel fala em cupom e DANFCe.
+      nomeDoDocumento: tela.modeloFixo === '65' ? 'NFC-e' : 'NF-e',
       selecionadas: lista,
       nfe: lista.length === 1 ? lista[0] : null,
       apiFiscalConfigurada,
@@ -613,12 +630,12 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
     content.innerHTML = `
       <div class="cadastro-page-head">
         <div>
-          <h3>NF-e Emitidas</h3>
-          <p class="muted">${result.total} nota${result.total === 1 ? '' : 's'} encontrada${result.total === 1 ? '' : 's'}${typeof result.valorAutorizado === 'number'
+          <h3>${escapeHtml(tela.titulo)}</h3>
+          <p class="muted">${result.total} ${result.total === 1 ? tela.singular : tela.plural} encontrad${tela.singular === 'cupom' ? 'o' : 'a'}${result.total === 1 ? '' : 's'}${typeof result.valorAutorizado === 'number'
             ? ` · Total autorizado: <strong title="Soma das NF-e autorizadas do filtro inteiro, não só desta página">${financeFormatBRL(result.valorAutorizado)}</strong>` : ''}</p>
         </div>
         <div class="cadastro-list-actions">
-          <button type="button" id="nfeNewBtn">+ Nova NF-e</button>
+          ${tela.novo ? '<button type="button" id="nfeNewBtn">+ Nova NF-e</button>' : ''}
         </div>
       </div>
 
@@ -634,14 +651,14 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
             ${Object.entries(NFE_STATUS_META).map(([value, meta]) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${meta.label}</option>`).join('')}
           </select>
         </label>
-        <label class="cadastro-field">
+        ${tela.modeloFixo ? '' : `<label class="cadastro-field">
           <span>Modelo</span>
           <select name="modelo">
             <option value="">Todos</option>
             <option value="55" ${filters.modelo === '55' ? 'selected' : ''}>NF-e</option>
             <option value="65" ${filters.modelo === '65' ? 'selected' : ''}>NFC-e</option>
           </select>
-        </label>
+        </label>`}
         <label class="cadastro-field">
           <span>Data inicial</span>
           <input type="date" name="dateFrom" value="${escapeHtml(filters.dateFrom)}" />
@@ -748,14 +765,14 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       filters.modelo = formData.get('modelo') || '';
       filters.valorDe = formData.get('valorDe') || '';
       filters.valorAte = formData.get('valorAte') || '';
-      state.nfeListaFiltros = { ...filters };
+      state[estado('Filtros')] = { ...filters };
       page = 1;
       load();
     });
 
     document.getElementById('nfeFilterClear')?.addEventListener('click', () => {
       Object.assign(filters, FILTROS_VAZIOS);
-      state.nfeListaFiltros = { ...filters };
+      state[estado('Filtros')] = { ...filters };
       page = 1;
       load();
     });
@@ -788,7 +805,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
         // a mais recente primeiro, como a lista sempre abriu).
         if (campo === ordem.campo) ordem.direcao = ordem.direcao === 'asc' ? 'desc' : 'asc';
         else { ordem.campo = campo; ordem.direcao = campo === 'data' ? 'desc' : 'asc'; }
-        state.nfeListaOrdem = { ...ordem };
+        state[estado('Ordem')] = { ...ordem };
         page = 1;
         load();
       });
@@ -798,7 +815,7 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
       const n = Number(event.target.value);
       if (!POR_PAGINA.includes(n)) return;
       limit = n;
-      state.nfeListaPorPagina = n;
+      state[estado('PorPagina')] = n;
       page = 1;
       load();
     });
@@ -1080,4 +1097,9 @@ window.MavisSubscreenRegistry.finance.nfe_emitidas = async function renderFinanc
   }
 
   await load();
-};
+  };
+}
+
+Object.keys(NOTAS_EMITIDAS_TELAS).forEach((telaChave) => {
+  window.MavisSubscreenRegistry.finance[telaChave] = criarTelaDeNotasEmitidas(telaChave);
+});

@@ -219,6 +219,13 @@ window.MavisNfeActions = (function () {
     return null;
   }
 
+  // Os textos na tela de NFC-e Emitidas (14/10/2026): as ações são as mesmas,
+  // mas lá o documento é cupom — "Cancelar NFC-e", "Baixar DANFCe".
+  function rotulo(texto, ctx) {
+    if (ctx.nomeDoDocumento !== 'NFC-e') return texto;
+    return String(texto).replace(/\bNF-e\b/g, 'NFC-e').replace(/\bDANFE\b/g, 'DANFCe');
+  }
+
   function render(container, ctx) {
     const n = ctx.selecionadas.length;
     if (n === 0) {
@@ -233,15 +240,17 @@ window.MavisNfeActions = (function () {
       const classes = ['nfe-action', action.tone ? `nfe-action-${action.tone}` : '', motivo ? 'is-disabled' : ''].filter(Boolean).join(' ');
       return `
         <button type="button" class="${classes}" data-action="${action.id}"
-                ${motivo ? 'disabled' : ''} title="${ctx.escapeHtml(motivo || action.label)}">
+                ${motivo ? 'disabled' : ''} title="${ctx.escapeHtml(rotulo(motivo || action.label, ctx))}">
           <span class="nfe-action-icon">${action.icon}</span>
-          <span class="nfe-action-label">${ctx.escapeHtml(action.label)}</span>
+          <span class="nfe-action-label">${ctx.escapeHtml(rotulo(action.label, ctx))}</span>
         </button>`;
     }).join('');
 
     container.innerHTML = `
       <div class="nfe-actions-head">
-        <strong>${n} NF-e selecionada${n === 1 ? '' : 's'}</strong>
+        <strong>${ctx.nomeDoDocumento === 'NFC-e'
+          ? `${n} cupo${n === 1 ? 'm selecionado' : 'ns selecionados'}`
+          : `${n} NF-e selecionada${n === 1 ? '' : 's'}`}</strong>
         <span class="muted">${n === 1 ? 'Ações de nota única disponíveis' : 'Apenas ações em lote disponíveis'}</span>
       </div>
       <div class="nfe-actions-grid">${botoes}</div>
