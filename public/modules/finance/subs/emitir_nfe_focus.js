@@ -188,6 +188,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   let previa = null;
   let previaErro = '';
   let previaCarregando = false;
+  // As listas de CST/CSOSN das Regras Fiscais (/api/fiscal/tabelas), para a aba
+  // Impostos escolher o código em vez de digitar. Sem permissão de ler as
+  // tabelas, o campo volta a ser texto.
+  let tabelasFiscais = null;
 
   // AS TRÊS CARGAS SAEM JUNTAS (fase DS). Eram três idas e voltas em fila —
   // estabelecimentos, depois empresas, depois o meta — e nenhuma depende da
@@ -865,7 +869,55 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     { titulo: 'IBS/CBS', campos: [['cstIbsCbs', 'CST'], ['classTrib', 'cClassTrib'], ['aliquotaIbsUf', 'IBS UF %'], ['aliquotaIbsMun', 'IBS Mun. %'], ['aliquotaCbs', 'CBS %'], ['valorIbs', 'IBS (valor)'], ['valorCbs', 'CBS (valor)']] }
   ];
   const CAMPOS_DE_TEXTO = ['cfop', 'ncm', 'cstIcms', 'codigoBeneficioFiscal', 'cstIpi', 'cstPis', 'cstCofins', 'cstIbsCbs', 'classTrib'];
-  const CAMPOS_SO_LEITURA = ['valorIbs', 'valorCbs'];
+  // Pedido do usuário (14/10/2026): os CST se ESCOLHEM na lista, e nos grupos
+  // de imposto só o percentual se digita. Base e valor saem do servidor (base
+  // do item × alíquota), já com o que a regra fiscal carregou.
+  const CAMPOS_SO_LEITURA = [
+    'baseIcms', 'valorIcms', 'baseIcmsSt', 'valorIcmsSt', 'baseIpi', 'valorIpi',
+    'basePis', 'valorPis', 'baseCofins', 'valorCofins', 'valorIbs', 'valorCbs'
+  ];
+  const LISTA_DO_CST = { cstIpi: 'cstIpi', cstPis: 'cstPisCofins', cstCofins: 'cstPisCofins', cstIbsCbs: 'cstIbsCbs' };
+
+  /** As opções do CST, com o código atual garantido mesmo fora da tabela. */
+  function opcoesDoCst(campo, atual) {
+    if (!tabelasFiscais) return null;
+    const codigo = String(atual || '').trim();
+    const opcoes = (linhas) => (linhas || []).map((l) => {
+      const c = String(l.codigo).trim();
+      const desc = String(l.descricao || '').split(' · ').pop();
+      return `<option value="${escapeHtml(c)}" ${c === codigo ? 'selected' : ''}>${escapeHtml(c)} — ${escapeHtml(desc)}</option>`;
+    }).join('');
+    let grupos;
+    if (campo === 'cstIcms') {
+      // Três dígitos é CSOSN (Simples Nacional), dois é CST: a lista segue o
+      // regime do que a regra fiscal carregou. Sem código ainda, as duas.
+      const csosn = `<optgroup label="CSOSN (Simples Nacional)">${opcoes(tabelasFiscais.csosn)}</optgroup>`;
+      const cst = `<optgroup label="CST (Regime Normal)">${opcoes(tabelasFiscais.cstIcms)}</optgroup>`;
+      grupos = codigo.length === 3 ? csosn : codigo.length === 2 ? cst : csosn + cst;
+      if (!(tabelasFiscais.csosn || []).length && !(tabelasFiscais.cstIcms || []).length) return null;
+    } else {
+      const linhas = tabelasFiscais[LISTA_DO_CST[campo]] || [];
+      if (!linhas.length) return null;
+      grupos = opcoes(linhas);
+    }
+    const conhecido = new RegExp(`value="${codigo.replace(/[^0-9A-Za-z]/g, '')}"`).test(grupos);
+    return `<option value="" ${codigo ? '' : 'selected'}>—</option>`
+      + (codigo && !conhecido ? `<option value="${escapeHtml(codigo)}" selected>${escapeHtml(codigo)}</option>` : '')
+      + grupos;
+  }
+
+  function campoFiscal(item, linha, index, campo) {
+    const valor = String(valorFiscal(item, linha, campo));
+    const ehCst = campo === 'cstIcms' || campo in LISTA_DO_CST;
+    const opcoes = ehCst ? opcoesDoCst(campo, valor) : null;
+    if (opcoes) {
+      return `<select data-fiscal-index="${index}" data-fiscal-campo="${campo}">${opcoes}</select>`;
+    }
+    return `<input data-fiscal-index="${index}" data-fiscal-campo="${campo}"
+                   ${CAMPOS_DE_TEXTO.includes(campo) ? '' : 'type="number" step="0.01"'}
+                   ${CAMPOS_SO_LEITURA.includes(campo) ? 'readonly tabindex="-1"' : ''}
+                   value="${escapeHtml(valor)}" />`;
+  }
 
   /** O que o campo mostra: o editado, senão o que a prévia montou. */
   function valorFiscal(item, linha, campo) {
@@ -915,10 +967,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <div class="nfe-imposto-campos">
                 ${grupo.campos.map(([campo, rotulo]) => `
                   <label class="${editado(item, campo) ? 'is-editado' : ''}">${rotulo}
-                    <input data-fiscal-index="${index}" data-fiscal-campo="${campo}"
-                           ${CAMPOS_DE_TEXTO.includes(campo) ? '' : 'type="number" step="0.01"'}
-                           ${CAMPOS_SO_LEITURA.includes(campo) ? 'readonly' : ''}
-                           value="${escapeHtml(String(valorFiscal(item, linha, campo)))}" />
+                    ${campoFiscal(item, linha, index, campo)}
                   </label>`).join('')}
               </div>
             </div>`).join('')}
@@ -978,7 +1027,12 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     previaCarregando = true;
     renderImpostos(); renderTotais();
     try {
-      previa = await api('/api/fiscal/nfe/previa', { method: 'POST', body: JSON.stringify(montarCorpoDaNota(formData, referencias)) });
+      const [resposta, tabelas] = await Promise.all([
+        api('/api/fiscal/nfe/previa', { method: 'POST', body: JSON.stringify(montarCorpoDaNota(formData, referencias)) }),
+        tabelasFiscais ? tabelasFiscais : api('/api/fiscal/tabelas').catch(() => null)
+      ]);
+      previa = resposta;
+      if (tabelas && tabelas.disponivel !== false) tabelasFiscais = tabelas;
       previaErro = '';
     } catch (erro) {
       previaErro = erro.message || 'Não consegui calcular os impostos.';
@@ -1014,6 +1068,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         item.fiscal[campo] = CAMPOS_DE_TEXTO.includes(campo) ? valor : Number(valor);
       }
       evento.target.closest('label')?.classList.toggle('is-editado', editado(item, campo));
+      // Base e valor não se digitam mais: refaz a prévia para mostrar o que o
+      // CST ou o percentual novo dão.
+      carregarPrevia();
     });
     totais && totais.addEventListener('change', (evento) => {
       const campo = evento.target.dataset.totalCampo;

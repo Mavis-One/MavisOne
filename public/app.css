@@ -4937,7 +4937,10 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .nfe-imposto-titulo { font-weight: 600; padding-top: 22px; }
 .nfe-imposto-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
 .nfe-imposto-campos label { font-size: 12px; }
-.nfe-imposto-campos label.is-editado input { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.nfe-imposto-campos label.is-editado input,
+.nfe-imposto-campos label.is-editado select { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.nfe-imposto-campos select { width: 100%; }
+.nfe-imposto-campos input[readonly] { background: var(--surface-muted, transparent); color: var(--muted); cursor: default; }
 .nfe-totais { max-width: 420px; }
 .nfe-totais th { text-align: left; font-weight: 500; }
 @media (max-width: 640px) {
