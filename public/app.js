@@ -648,7 +648,9 @@ function adotarUsuarioDaSessao(user) {
   // a SELEÇÃO. Sair e entrar com outro usuário na mesma aba não recarrega a
   // página — e quem entrasse herdaria os selecionados de quem saiu, com o
   // botão Baixar valendo para eles. Todo login passa por aqui.
-  state.financeLista = null;
+  state.financeListas = null;
+  state.financeListaDeOrigem = null;
+  state.financeNovoTipo = null;
   state.financeFilters = null;
   state.financeOpenEntryId = null;
   state.financeListaInstancia = null;
@@ -2023,6 +2025,10 @@ const moduleSubItems = {
   // ABA: Financeiro
   finance: [
     { key: 'dashboard', label: 'Dashboard', desc: 'Receitas, despesas e saldo do período.' },
+    // Contas a Pagar e a Receber (14/10/2026): a mesma lista de Lançamentos
+    // com o tipo fixo. Lançamentos continua como a visão geral (transferências).
+    { key: 'contas_a_pagar', label: 'Contas a Pagar', desc: 'Despesas a pagar, com baixa.' },
+    { key: 'contas_a_receber', label: 'Contas a Receber', desc: 'Receitas a receber, com baixa.' },
     { key: 'lancamentos', label: 'Lançamentos', desc: 'Contas a pagar e a receber, com baixa.' },
     { key: 'novo_lancamento', label: 'Novo Lançamento', desc: 'Registra uma receita ou uma despesa.' },
     { key: 'nfe_emitidas', label: 'NF-e Emitidas', desc: 'Notas emitidas, com DANFE e XML.' },

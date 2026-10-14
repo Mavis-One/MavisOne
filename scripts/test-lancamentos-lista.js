@@ -154,7 +154,9 @@ check('Descrição e Documento ordenam pelo que a coluna mostra',
 check('a descrição tem teto de 1.000 caracteres ao gravar', /String\(description\)\.length > 1000/.test(servidor));
 const app = ler('public/app.js');
 const adotar = app.slice(app.indexOf('function adotarUsuarioDaSessao('), app.indexOf('function adotarUsuarioDaSessao(') + 900);
-check('o login zera o estado da lista (seleção de quem saiu não passa para quem entra)', /state\.financeLista = null;/.test(adotar));
+// `financeListas` (plural) desde 14/10/2026: uma por tela — Lançamentos,
+// Contas a Pagar e Contas a Receber.
+check('o login zera o estado da lista (seleção de quem saiu não passa para quem entra)', /state\.financeListas = null;/.test(adotar));
 check('a tela não reenvia lote com outro no ar', /if \(loteEmAndamento\) return;/.test(tela) && /const fechar = \(\) => \{ if \(!loteEmAndamento\) overlay\.remove\(\); \};/.test(tela));
 check('o modal do lote soma o que a PRÉVIA do servidor diz', /previaDoLote\('baixar', ids\)/.test(tela) && /previa: true/.test(tela));
 check('a busca do servidor reconhece valor e código pelo módulo compartilhado',

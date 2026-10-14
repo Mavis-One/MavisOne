@@ -147,7 +147,21 @@ const financeFiltrosVazios = () => ({
   dateFrom: '', dateTo: '', dueFrom: '', dueTo: '', amountMin: '', amountMax: ''
 });
 
-window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinanceLancamentos(ctx) {
+// TRÊS TELAS, UMA LISTA (14/10/2026). Pedido do usuário: separar em duas
+// telas os lançamentos, contas a pagar e contas a receber. "Contas a Pagar" e
+// "Contas a Receber" são esta mesma lista com o tipo fixo (despesa / receita),
+// cada uma com o seu estado (filtros, página, seleção). "Lançamentos" continua
+// como a visão geral — é a única que mostra as transferências entre contas.
+const FINANCE_TELAS_DE_LANCAMENTOS = {
+  lancamentos: { titulo: 'Lançamentos', tipoFixo: '', novo: 'Novo Lançamento' },
+  contas_a_pagar: { titulo: 'Contas a Pagar', tipoFixo: 'despesa', novo: 'Nova Conta a Pagar' },
+  contas_a_receber: { titulo: 'Contas a Receber', tipoFixo: 'receita', novo: 'Nova Conta a Receber' }
+};
+
+function criarTelaDeLancamentos(telaChave) {
+  const tela = FINANCE_TELAS_DE_LANCAMENTOS[telaChave];
+  const tipoFixo = tela.tipoFixo;
+  return async function renderFinanceLancamentos(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml, confirmModal } = ctx;
   const Lista = window.MavisListaDeLancamentos;
 
@@ -158,7 +172,8 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
   // e voltar — recomeçava na página 1, sem filtro, sem a ordem escolhida.
   // Seleção, filtros, página e ordem agora sobrevivem à navegação da sessão.
   const preferencia = (state.preferences && state.preferences.finance_lancamentos) || {};
-  const lista = state.financeLista || (state.financeLista = {
+  state.financeListas = state.financeListas || {};
+  const lista = state.financeListas[telaChave] || (state.financeListas[telaChave] = {
     filtros: financeFiltrosVazios(),
     page: 1,
     limit: FINANCE_POR_PAGINA.includes(preferencia.limit) ? preferencia.limit : 15,
@@ -265,7 +280,10 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
       params.set('limit', String(porPagina()));
     }
     ['search', 'type', 'status', 'clientSupplierId', 'category', 'costCenter', 'bankAccountId', 'dateFrom', 'dateTo', 'amountMin', 'amountMax']
-      .forEach((chave) => { if (f[chave]) params.set(chave, f[chave]); });
+      .forEach((campo) => { if (f[campo]) params.set(campo, f[campo]); });
+    // Contas a Pagar / a Receber: o tipo vai sempre, e não é um filtro que a
+    // pessoa limpa (não entra em `lista.filtros`).
+    if (tipoFixo) params.set('type', tipoFixo);
     // Atalho de vencimento vira datas agora; "Personalizado" usa as digitadas.
     const atalho = financePeriodoDeVencimento(f.periodo);
     const dueFrom = atalho ? atalho.dueFrom : f.dueFrom;
@@ -301,7 +319,7 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
   const idParaAbrir = state.financeOpenEntryId;
   state.financeOpenEntryId = null;
   const telaAtiva = () => state.financeListaInstancia === instancia
-    && state.activeModule === 'finance' && state.activeSub === 'lancamentos';
+    && state.activeModule === 'finance' && state.activeSub === telaChave;
 
   async function load() {
     if (!telaAtiva()) return;
@@ -535,6 +553,22 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
     const t = resumo && resumo.totais;
     if (!t || !t.quantidade) return '';
     const saldo = Number(t.receitas || 0) - Number(t.despesas || 0);
+    // Contas a Pagar / a Receber: só os totais do lado da tela — "Receitas
+    // previstas R$ 0,00" e um saldo negativo numa tela só de despesas confundem.
+    if (tipoFixo === 'despesa') {
+      return `
+      <div class="finance-totais" aria-label="Totais do filtro, todas as páginas">
+        <div><span>Despesas previstas</span><strong class="is-despesa">${brl(t.despesas)}</strong></div>
+        <div><span>A pagar em aberto</span><strong>${brl(t.aPagar)}</strong></div>
+      </div>`;
+    }
+    if (tipoFixo === 'receita') {
+      return `
+      <div class="finance-totais" aria-label="Totais do filtro, todas as páginas">
+        <div><span>Receitas previstas</span><strong class="is-receita">${brl(t.receitas)}</strong></div>
+        <div><span>A receber em aberto</span><strong>${brl(t.aReceber)}</strong></div>
+      </div>`;
+    }
     return `
       <div class="finance-totais" aria-label="Totais do filtro, todas as páginas">
         <div><span>Receitas previstas</span><strong class="is-receita">${brl(t.receitas)}</strong></div>
@@ -695,11 +729,11 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
     content.innerHTML = `
       <div class="cadastro-page-head">
         <div>
-          <h3>Lançamentos</h3>
+          <h3>${escapeHtml(tela.titulo)}</h3>
           <p class="muted">${numero(total)} lançamento${total === 1 ? '' : 's'} encontrado${total === 1 ? '' : 's'}</p>
         </div>
         <div class="cadastro-list-actions">
-          <button type="button" id="financeNewEntryBtn">+ Novo Lançamento</button>
+          <button type="button" id="financeNewEntryBtn">+ ${escapeHtml(tela.novo)}</button>
           <button type="button" class="secondary" id="financeExportarBtn" title="Baixa um CSV com todos os lançamentos do filtro, de todas as páginas, na ordem da tela">Exportar CSV</button>
           <button type="button" class="secondary" id="financeColunasBtn" aria-expanded="${Boolean(lista.showColunas)}" title="Escolher colunas visíveis">Colunas</button>
           <button type="button" class="secondary" id="financeFilterToggleBtn" aria-expanded="${Boolean(lista.showAdvanced)}">${lista.showAdvanced ? 'Ocultar filtros' : 'Busca avançada'}</button>
@@ -714,13 +748,13 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
           <input id="financeQuickSearch" type="search" name="search" value="${escapeHtml(f.search)}" autocomplete="off"
             placeholder="Código, descrição, documento, cliente/fornecedor ou valor (ex.: 2.500,00)" />
         </label>
-        <label class="cadastro-field">
+        ${tipoFixo ? '' : `<label class="cadastro-field">
           <span>Tipo</span>
           <select id="financeTipoRapido">
             <option value="">Todos</option>
             ${FINANCE_ENTRY_TYPE_OPTIONS.map((opt) => `<option value="${opt.value}" ${f.type === opt.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
           </select>
-        </label>
+        </label>`}
         <label class="cadastro-field">
           <span>Vencimento</span>
           <select id="financeVencimentoRapido">
@@ -806,11 +840,14 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
   function ligarCabecalhoEBusca() {
     document.getElementById('financeNewEntryBtn')?.addEventListener('click', () => {
       state.financeEditEntryId = null;
+      // O novo nasce no tipo da tela e, salvo, volta para ela.
+      state.financeNovoTipo = tipoFixo ? tipoFixo.toUpperCase() : null;
+      state.financeListaDeOrigem = telaChave;
       state.activeSub = 'novo_lancamento';
       loadModule('finance');
     });
     document.getElementById('financeExportarBtn')?.addEventListener('click', () => {
-      baixarCsv(`/api/finance/entries/exportar?${consulta({ paginado: false }).toString()}`, 'lancamentos.csv');
+      baixarCsv(`/api/finance/entries/exportar?${consulta({ paginado: false }).toString()}`, `${telaChave.replace(/_/g, '-')}.csv`);
     });
     document.getElementById('financeColunasBtn')?.addEventListener('click', () => {
       lista.showColunas = !lista.showColunas;
@@ -1497,6 +1534,7 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
     document.getElementById('financeModalEdit')?.addEventListener('click', () => {
       closeEntryModal();
       state.financeEditEntryId = entry.id;
+      state.financeListaDeOrigem = telaChave;
       state.activeSub = 'novo_lancamento';
       loadModule('finance');
     });
@@ -1518,4 +1556,9 @@ window.MavisSubscreenRegistry.finance.lancamentos = async function renderFinance
   // O lançamento pedido por outra tela (dashboard, extrato, NF-e) — lido e
   // apagado no começo desta função, e aberto só se ela ainda é a da vez.
   if (idParaAbrir && telaAtiva()) openEntryModal(idParaAbrir);
-};
+  };
+}
+
+Object.keys(FINANCE_TELAS_DE_LANCAMENTOS).forEach((telaChave) => {
+  window.MavisSubscreenRegistry.finance[telaChave] = criarTelaDeLancamentos(telaChave);
+});

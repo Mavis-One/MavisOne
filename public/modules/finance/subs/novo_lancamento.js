@@ -19,6 +19,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   // `resumido`, 548 KB no lugar de 2.818 (169 KB no fio, contra 569).
   const idEmEdicao = state.financeEditEntryId;
   state.financeEditEntryId = null;
+  // Vindo de Contas a Pagar / a Receber, o novo nasce no tipo da tela.
+  const tipoSugerido = state.financeNovoTipo;
+  state.financeNovoTipo = null;
   const [respostaMeta, respostaEdicao] = await Promise.allSettled([
     api('/api/finance/meta?produtos=0&diretorio=resumido'),
     idEmEdicao ? api(`/api/finance/entries/${idEmEdicao}`) : Promise.resolve(null)
@@ -78,7 +81,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     && (meta.estabelecimentos || []).length > 0
     && (podeTrocarEstab || estabelecimentoAtual);
 
-  let formType = editEntry ? String(editEntry.type).toUpperCase() : 'DESPESA';
+  let formType = editEntry ? String(editEntry.type).toUpperCase() : (tipoSugerido || 'DESPESA');
   // Vinculado a pedido/NF-e: dá para editar, mas só o que a origem não possui.
   // Travar na tela é o que evita o beco sem saída — antes o formulário aceitava
   // tudo e o servidor recusava depois de preenchido.
@@ -380,7 +383,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
 
     document.getElementById('financeSuccessView')?.addEventListener('click', () => {
       state.financeOpenEntryId = entry.id;
-      state.activeSub = 'lancamentos';
+      // Volta para a lista de onde veio (Contas a Pagar, a Receber ou Lançamentos).
+      state.activeSub = state.financeListaDeOrigem || 'lancamentos';
       loadModule('finance');
     });
     document.getElementById('financeSuccessNew')?.addEventListener('click', (evento) => {
