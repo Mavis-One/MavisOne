@@ -4856,7 +4856,19 @@ async function loadModule(moduleName) {
               return;
             }
             const total = Number(editRecord.totalAmount || editRecord.amount || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-            const estabelecimentoId = await escolhaModal({
+            // A NFC-e SAI DA EMPRESA DO PEDIDO (14/10/2026, pedido do usuário):
+            // sem perguntar a loja. O servidor confere o mesmo. Pedido sem
+            // empresa (antigo) continua escolhendo.
+            const empresaDoPedido = meta.companies.find((c) => c.id === (editRecord.companyId || formState.companyId));
+            const cnpjDoPedido = String((empresaDoPedido && empresaDoPedido.document) || '').replace(/\D/g, '');
+            const lojaDoPedido = cnpjDoPedido ? lojas.find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpjDoPedido) : null;
+            if (cnpjDoPedido && !lojaDoPedido) {
+              showToast(`A empresa do pedido (${empresaDoPedido.tradeName || empresaDoPedido.name}, CNPJ ${cnpjDoPedido}) não está habilitada para NFC-e. Marque "Emite NFC-e" no estabelecimento dela, em Configurações › Empresa.`, 'error', 9000);
+              return;
+            }
+            const estabelecimentoId = lojaDoPedido
+              ? (await confirmModal(`Emitir NFC-e do pedido ${editRecord.code} (${total}) por ${lojaDoPedido.nomeFantasia || lojaDoPedido.razaoSocial} — ${lojaDoPedido.cnpj}?\n\nA nota sai do pedido como está salvo. Autorizada, o pedido é faturado: o estoque baixa e a conta a receber é criada.`) ? lojaDoPedido.id : '')
+              : await escolhaModal({
               mensagem: `Emitir NFC-e do pedido ${editRecord.code} (${total})?\n\nA nota sai do pedido como está salvo. Autorizada, o pedido é faturado: o estoque baixa e a conta a receber é criada.`,
               opcoes: lojas.map((e) => ({ valor: e.id, rotulo: `${e.nomeFantasia || e.razaoSocial} — ${e.cnpj}` })),
               rotuloEscolha: 'Estabelecimento',

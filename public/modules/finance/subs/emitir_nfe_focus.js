@@ -52,6 +52,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 
   let estabelecimentos = [];
   let selectedEstabelecimentoId = '';
+  // Emitente travado pela empresa do pedido (14/10/2026); vazio = livre.
+  let emitenteDoPedido = '';
   let meta = { directory: [] };
   let selectedClienteId = '';
   let itens = [{ produtoId: '', descricao: '', codigoProduto: '', ncm: '', quantidade: 1, valorUnitario: 0, unidadeComercial: 'UN', origem: 0 }];
@@ -304,6 +306,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const cnpjDoPedido = String(doPedido.empresaCnpj || '').replace(/\D/g, '');
     const doMesmoCnpj = cnpjDoPedido && estabelecimentos.find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpjDoPedido);
     if (doMesmoCnpj) selectedEstabelecimentoId = doMesmoCnpj.id;
+    // 14/10/2026, pedido do usuário: a nota do pedido sai da empresa do pedido
+    // — o emitente fica travado nela (o servidor recusa outro). Empresa sem
+    // estabelecimento emissor: avisa já, em vez de só na hora de emitir.
+    emitenteDoPedido = doMesmoCnpj ? doMesmoCnpj.id : '';
+    if (cnpjDoPedido && !doMesmoCnpj) {
+      showToast(`A empresa do pedido (CNPJ ${cnpjDoPedido}) não está cadastrada como estabelecimento emissor de NF-e (Configurações › Empresa).`, 'error', 9000);
+    }
     // A transportadora do pedido abre a aba Transporte preenchida.
     if (doPedido.carrierId) escolherTransportadora(doPedido.carrierId);
   }
@@ -508,7 +517,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   /** Põe o estado salvo nas variáveis da tela; devolve os campos do formulário. */
   function aplicarEstadoSalvo(d) {
     if (!d || typeof d !== 'object') return null;
-    if (d.selectedEstabelecimentoId) selectedEstabelecimentoId = d.selectedEstabelecimentoId;
+    if (d.selectedEstabelecimentoId) selectedEstabelecimentoId = emitenteDoPedido || d.selectedEstabelecimentoId;
     if (d.selectedClienteId !== undefined) selectedClienteId = d.selectedClienteId;
     if (d.tipoOperacao) tipoOperacao = d.tipoOperacao;
     if (Array.isArray(d.itens) && d.itens.length) itens = d.itens;
@@ -664,7 +673,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           <div class="cadastro-tab-panel" data-tab-panel="emitente">
             <div class="row">
               <label>Estabelecimento emitente
-                <select id="nfeFocusEstabSelect" required>
+                <select id="nfeFocusEstabSelect" required ${emitenteDoPedido ? 'disabled title="Empresa do pedido — para emitir por outra, troque a empresa no pedido."' : ''}>
                   <option value="">Selecione</option>
                   ${estabelecimentos.map((e) => `<option value="${e.id}" ${e.id === selectedEstabelecimentoId ? 'selected' : ''}>${escapeHtml(e.nomeFantasia || e.razaoSocial)} — ${escapeHtml(fiscalFormatCnpjSimples(e.cnpj))}</option>`).join('')}
                 </select>

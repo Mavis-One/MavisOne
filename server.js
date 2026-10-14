@@ -7392,6 +7392,27 @@ async function itensSemEstoqueParaFaturar(pedido) {
   return faltando;
 }
 
+// A NOTA DO PEDIDO SAI DA EMPRESA DO PEDIDO (14/10/2026, pedido do usuário:
+// "ao apertar em emitir NF-e ou NFC-e a função deve reconhecer qual a empresa
+// já selecionada no pedido e emitir a partir dela"). Empresa do pedido e
+// estabelecimento emissor se encontram pelo CNPJ. Pedido antigo, sem empresa
+// (ou empresa sem CNPJ), não tem o que conferir: segue a escolha da tela.
+async function empresaEmitenteDoPedido(pedidoOuId, data) {
+  let pedido = pedidoOuId && typeof pedidoOuId === 'object' ? pedidoOuId : null;
+  const base = data || loadData();
+  if (!pedido && pedidoOuId) {
+    await syncSalesDataDosIds(base, [pedidoOuId]);
+    pedido = (base.orders || []).find((p) => p.id === pedidoOuId) || null;
+  }
+  if (!pedido || !pedido.companyId) return { pedido, empresa: null, cnpj: '' };
+  const empresa = (base.companies || []).find((c) => c.id === pedido.companyId) || null;
+  return { pedido, empresa, cnpj: String((empresa && empresa.document) || '').replace(/\D/g, '') };
+}
+
+function rotuloDaEmpresaDoPedido(empresa, cnpj) {
+  return `${(empresa && (empresa.tradeName || empresa.name)) || 'empresa do pedido'} (CNPJ ${cnpj})`;
+}
+
 async function prepararNfeParaTransmitir(body, opcoes = {}) {
   // AS LEITURAS VÊM DE FORA SÓ NO PRÉ-CHECK (leiturasDaConferencia). Os três
   // nomes abaixo SOMBREIAM os do módulo de propósito: o corpo desta função
@@ -7411,6 +7432,15 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
       : 'Este estabelecimento não está habilitado para emitir NF-e.');
     err.status = 400;
     throw err;
+  }
+
+  if (body.orderId && !opcoes.leituras) {
+    const doPedido = await empresaEmitenteDoPedido(String(body.orderId));
+    if (doPedido.cnpj && doPedido.cnpj !== String(estabelecimento.cnpj || '').replace(/\D/g, '')) {
+      const err = new Error(`A nota deste pedido sai da empresa do pedido: ${rotuloDaEmpresaDoPedido(doPedido.empresa, doPedido.cnpj)}. Para emitir por outra, troque a empresa no pedido.`);
+      err.status = 400;
+      throw err;
+    }
   }
 
   const empresa = await fiscalDb.getEmpresaById(estabelecimento.empresaId);
@@ -7952,7 +7982,8 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
  * baixado e nasce a conta a receber (aplicarRespostaFocusNaNfe). Rejeitada,
  * o pedido fica como estava e pode tentar de novo.
  */
-async function emitirNfceDoPedido({ orderId, estabelecimentoId }, user) {
+async function emitirNfceDoPedido({ orderId, estabelecimentoId: escolhido }, user) {
+  let estabelecimentoId = escolhido;
   const data = loadData();
   await Promise.all([syncSalesData(data), syncCadastroData(data)]);
   const pedido = (data.orders || []).find((p) => p.id === orderId);
@@ -7965,6 +7996,15 @@ async function emitirNfceDoPedido({ orderId, estabelecimentoId }, user) {
   if (salesStatus.ehCancelado(pedido.status)) recusar('Pedido cancelado não emite NFC-e.');
   if (filialDaVenda.ehMovimentacaoInterna(pedido.category)) {
     recusar('Transferência e remessa não são venda a consumidor: saem em NF-e.');
+  }
+  // A loja é a da empresa do pedido (14/10/2026). Sem empresa no pedido
+  // (antigo), vale a escolhida na tela, como antes.
+  const doPedido = await empresaEmitenteDoPedido(pedido, data);
+  if (doPedido.cnpj) {
+    const lojas = await fiscalDb.getEstabelecimentos();
+    const daEmpresa = lojas.find((e) => String(e.cnpj || '').replace(/\D/g, '') === doPedido.cnpj);
+    if (!daEmpresa) recusar(`A empresa do pedido, ${rotuloDaEmpresaDoPedido(doPedido.empresa, doPedido.cnpj)}, não está cadastrada como estabelecimento emissor (Configurações › Empresa).`);
+    estabelecimentoId = daEmpresa.id;
   }
   if (!estabelecimentoId) recusar('Escolha o estabelecimento que vai emitir a NFC-e.');
   // A loja primeiro: é a recusa que diz o que fazer (marcar "Emite NFC-e"),
