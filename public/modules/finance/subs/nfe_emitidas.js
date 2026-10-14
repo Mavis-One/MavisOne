@@ -1020,14 +1020,17 @@ function criarTelaDeNotasEmitidas(telaChave) {
     const bloqueioCancelar = nfe.status === 'autorizada' && nfe.origem !== 'importada'
       ? motivoParaNaoCancelar({ ...(naLista || {}), ...nfe })
       : '';
+    // Cupom é NFC-e no título e no botão (14/10/2026): "NF-e 5748" num cupom
+    // confundia quem conferia.
+    const nomeDoDocumento = Number(nfe.modelo || (naLista && naLista.modelo)) === 65 ? 'NFC-e' : 'NF-e';
     const overlay = document.createElement('div');
     overlay.id = 'nfeModal';
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-      <div class="modal modal-lg">
+      <div class="modal modal-lg modal-nota">
         <div class="finance-modal-head">
           <div>
-            <h3>NF-e ${escapeHtml(nfe.number)} / Série ${escapeHtml(nfe.series)}</h3>
+            <h3>${nomeDoDocumento} ${escapeHtml(nfe.number)} / Série ${escapeHtml(nfe.series)}</h3>
             <p class="muted">${escapeHtml(nfe.customer)} ${nfeStatusBadge(nfe.status)}</p>
           </div>
           <button type="button" class="icon-button" id="nfeModalClose" title="Fechar">
@@ -1041,7 +1044,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
           <div><span class="muted">Endereço</span><strong>${escapeHtml(nfe.clientAddress || '-')}</strong></div>
           <div><span class="muted">Cidade/UF</span><strong>${escapeHtml(nfe.clientCity || '-')} ${nfe.clientState ? '/ ' + escapeHtml(nfe.clientState) : ''}</strong></div>
           <div><span class="muted">Inscrição estadual</span><strong>${escapeHtml(nfe.clientStateRegistration || '-')}</strong></div>
-          <div><span class="muted">Chave de acesso</span><strong>${escapeHtml(nfe.key || '-')}</strong></div>
+          <div class="nfe-modal-chave"><span class="muted">Chave de acesso</span><strong>${escapeHtml(nfe.key || '-')}</strong></div>
           <div><span class="muted">Valor total</span><strong>${financeFormatBRL(nfe.amount)}</strong></div>
           <div><span class="muted">Forma de pagamento</span><strong>${escapeHtml(nfe.paymentLabel || (nfe.paymentType === 'parcelado' ? `Parcelado (${nfe.installmentsCount}x)` : 'À vista'))}</strong></div>
         </div>
@@ -1075,7 +1078,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
         ${bloqueioCancelar ? `<p class="muted">${escapeHtml(bloqueioCancelar)}</p>` : ''}
         <div class="finance-modal-actions">
           <button type="button" class="secondary" id="nfeModalPrint">Imprimir</button>
-          ${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="btn-danger" id="nfeModalCancel"${bloqueioCancelar ? ` disabled title="${escapeHtml(bloqueioCancelar)}"` : ''}>Cancelar NF-e</button>` : ''}
+          ${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="btn-danger" id="nfeModalCancel"${bloqueioCancelar ? ` disabled title="${escapeHtml(bloqueioCancelar)}"` : ''}>Cancelar ${nomeDoDocumento}</button>` : ''}
         </div>
       </div>
     `;

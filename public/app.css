@@ -4951,3 +4951,10 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .nfe-volumes input { width: 100%; min-width: 0; }
 .nfe-duplicatas { max-width: 560px; }
 .nfe-duplicatas input { width: 100%; min-width: 0; }
+/* O modal da NF-e/NFC-e (14/10/2026): com 720px a chave de acesso e a tabela
+   de itens passavam da borda, e conferir os dados pedia rolar para o lado ou
+   mudar o zoom. Mais largo, e a chave quebra linha em vez de empurrar. */
+.modal-nota { width: min(96%, 1100px); max-height: 92vh; }
+.modal-nota .finance-modal-info-grid strong { overflow-wrap: anywhere; }
+.modal-nota .nfe-modal-chave { grid-column: span 2; }
+@media (max-width: 640px) { .modal-nota .nfe-modal-chave { grid-column: auto; } }
