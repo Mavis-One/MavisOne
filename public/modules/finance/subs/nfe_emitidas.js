@@ -625,6 +625,43 @@ function criarTelaDeNotasEmitidas(telaChave) {
   // Abre o PEDIDO da nota, como a lista de vendas abre (14/10/2026). Antes
   // gravava state.salesOpenRecordId, que ninguém lia, numa tela que não
   // existe ('sales_records'): o botão não levava ao pedido.
+  // O RESULTADO DA EMISSÃO (14/10/2026): a emissão vem para cá logo depois de
+  // emitir. Autorizada: aviso com o número. Erro: o motivo em popup, com
+  // "Corrigir nota". Processando: a lista acompanha (a consulta da nota
+  // reconsulta a Focus) por até ~1 minuto e mostra o desfecho.
+  async function mostrarResultadoDaEmissao(resultado) {
+    const avisar = (nota) => {
+      const status = String(nota.status || '').toUpperCase();
+      if (status === 'AUTORIZADO') {
+        showToast(`NF-e${nota.numero ? ` nº ${nota.numero}` : ''} autorizada.`, 'success', 7000);
+        return true;
+      }
+      if (status === 'ERRO' || status === 'DENEGADO') {
+        abrirErroDaNota(nota.id);
+        return true;
+      }
+      return false;
+    };
+    if (avisar(resultado)) return;
+    showToast('NF-e enviada. A SEFAZ está processando — o resultado aparece aqui.', 'info', 7000);
+    for (let tentativa = 0; tentativa < 12; tentativa += 1) {
+      await new Promise((r) => setTimeout(r, 5000));
+      // Saiu da tela: para de acompanhar.
+      if (state.activeSub !== telaChave) return;
+      try {
+        const res = await api(`/api/fiscal/nfe/${encodeURIComponent(resultado.id)}`);
+        const nota = res.nfe || {};
+        if (String(nota.status || '').toUpperCase() === 'PROCESSANDO') continue;
+        await load();
+        avisar(nota);
+        return;
+      } catch (_) {
+        // Falha de rede numa tentativa não encerra o acompanhamento.
+      }
+    }
+    showToast('A SEFAZ ainda não respondeu. Use "Consultar status" na nota para atualizar.', 'warning', 8000);
+  }
+
   async function irParaVenda(nfe) {
     if (!nfe || !nfe.orderId) return;
     try {
@@ -1245,6 +1282,12 @@ function criarTelaDeNotasEmitidas(telaChave) {
   }
 
   await load();
+  // Veio da emissão (14/10/2026): mostra o resultado da nota que acabou de sair.
+  if (state.nfeAposEmissao && state.nfeAposEmissao.id) {
+    const resultado = state.nfeAposEmissao;
+    delete state.nfeAposEmissao;
+    mostrarResultadoDaEmissao(resultado);
+  }
   };
 }
 

@@ -8098,6 +8098,9 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
       mensagemSefaz: error.message,
       respostaFocus: error.payload || null
     });
+    // A nota existe (ERRO): a rota a devolve, e a tela leva a NF-e Emitidas
+    // com o motivo aberto (14/10/2026).
+    error.nfeId = nfe.id;
     throw error;
   }
 }
@@ -15642,7 +15645,17 @@ async function tratarRequisicao(req, res) {
 
       if (pathname === '/api/fiscal/nfe/emitir' && req.method === 'POST') {
         const body = await readBody(req);
-        const nfe = await emitirNfeFiscal(body, user);
+        let nfe;
+        try {
+          nfe = await emitirNfeFiscal(body, user);
+        } catch (erroDaEmissao) {
+          // Falhou DEPOIS de gravar a nota (Focus recusou, rede): a resposta é
+          // a própria nota, com status ERRO e o motivo gravado nela. Falha
+          // ANTES (montagem, validação) não tem nota: segue como erro.
+          const gravada = erroDaEmissao.nfeId ? await fiscalDb.getNfeById(erroDaEmissao.nfeId).catch(() => null) : null;
+          if (!gravada) throw erroDaEmissao;
+          return sendJson(res, { success: false, nfe: gravada });
+        }
         // Aceita (autorizada ou em processamento), a nota em edição salva (fase
         // EL) não tem mais o que guardar. Rejeitada na hora, fica: é ela que se
         // corrige para mandar de novo.

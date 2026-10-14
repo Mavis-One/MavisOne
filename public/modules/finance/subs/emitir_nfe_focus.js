@@ -2279,27 +2279,32 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // que "Corrigir nota" (NF-e Emitidas) devolve a esta tela.
       body.estadoDaTela = estadoDaTela();
 
+      // EMITIU, VAI PARA NF-e EMITIDAS (14/10/2026, pedido do usuário: "a
+      // página recarrega já nas NF-e emitidas e já mostra erro ou aprovação").
+      // A lista mostra o resultado (autorizada, motivo do erro com "Corrigir
+      // nota", ou acompanha o processamento). Só fica aqui o que não virou nota
+      // (recusa da montagem, antes de ir à Focus): o motivo em popup.
+      let notaEmitida = null;
       try {
         const result = await api('/api/fiscal/nfe/emitir', { method: 'POST', body: JSON.stringify(body) });
-        ultimoResultado = result.nfe;
-        if (result.nfe.status === 'ERRO') {
-          // Recusada na hora: o motivo em popup, e a tela continua como está
-          // para corrigir e emitir de novo.
-          const erro = window.MavisErroNfe ? window.MavisErroNfe.motivosDaNota(result.nfe) : { motivos: [result.nfe.mensagemSefaz] };
-          if (window.MavisErroNfe) window.MavisErroNfe.mostrar({ titulo: 'A SEFAZ recusou a NF-e', motivos: erro.motivos, statusSefaz: erro.statusSefaz, podeCorrigir: false });
-          else showToast(result.nfe.mensagemSefaz || 'NF-e com erro.', 'error');
-        } else {
-          showToast(`NF-e ${result.nfe.status === 'AUTORIZADO' ? 'autorizada' : result.nfe.status.toLowerCase()}.`, 'success');
-        }
+        notaEmitida = result.nfe || null;
+        ultimoResultado = notaEmitida;
       } catch (error) {
         if (window.MavisErroNfe) window.MavisErroNfe.mostrar({ titulo: 'A NF-e não foi emitida', motivos: [error.message || 'Erro ao emitir NF-e.'], podeCorrigir: false });
         else showToast(error.message || 'Erro ao emitir NF-e.', 'error');
-      } finally {
-        await loadNotasRecentes();
-        ultimoResultado = notasRecentes[0] || ultimoResultado;
-        renderForm();
-        if (submitBtn) submitBtn.disabled = false;
       }
+      if (notaEmitida && notaEmitida.id) {
+        state.nfeAposEmissao = { id: notaEmitida.id, status: notaEmitida.status, numero: notaEmitida.numero || '' };
+        state.activeSub = 'nfe_emitidas';
+        if (typeof renderApp === 'function') renderApp();
+        loadModule(state.activeModule);
+        return;
+      }
+      // Não virou nota: a tela continua, para corrigir.
+      await loadNotasRecentes();
+      ultimoResultado = notasRecentes[0] || ultimoResultado;
+      renderForm();
+      if (submitBtn) submitBtn.disabled = false;
     });
   }
 

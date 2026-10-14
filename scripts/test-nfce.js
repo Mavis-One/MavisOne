@@ -101,7 +101,9 @@ console.log('\n--- 5. o cliente da Focus fala com /nfce ---');
   const emitir = servidor.slice(servidor.indexOf('async function emitirNfeFiscal'), servidor.indexOf('async function emitirNfceDoPedido'));
   const doPedido = servidor.slice(servidor.indexOf('async function emitirNfceDoPedido'), servidor.indexOf('// Usado tanto pela resposta síncrona da emissão'));
   check('a rota existe e pede a permissão de emitir', /pathname === '\/api\/fiscal\/nfce\/emitir'\) return 'emitir'/.test(servidor) && /pathname === '\/api\/fiscal\/nfce\/emitir' && req\.method === 'POST'/.test(servidor));
-  check('o modelo vem da ROTA: a rota de NF-e não passa modelo', /const nfe = await emitirNfeFiscal\(body, user\);/.test(servidor));
+  // 14/10/2026: a rota passou a guardar a nota em `let nfe` (devolve a nota
+  // gravada quando a Focus recusa); a chamada continua sem modelo.
+  check('o modelo vem da ROTA: a rota de NF-e não passa modelo', /nfe = await emitirNfeFiscal\(body, user\);/.test(servidor));
   check('a NFC-e sai do pedido salvo, com modelo 65', /emitirNfeFiscal\(montarNfeDoPedido\(pedido, estabelecimentoId, data\), user, \{ modelo: 65 \}\)/.test(doPedido));
   check('transferência e remessa são recusadas', /ehMovimentacaoInterna\(pedido\.category\)/.test(doPedido));
   // A autorização fatura o pedido, e faturar recusa estoque insuficiente: sem

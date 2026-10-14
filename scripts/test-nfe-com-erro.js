@@ -52,7 +52,9 @@ const m = motivosDaNota({
 check('mensagem + lista da Focus, sem repetir', m.motivos.length === 2 && m.motivos[1] === '598 — Total difere' && m.statusSefaz === '598');
 check('o detalhe da nota devolve o motivo', servidor.includes("return sendJson(res, { nfe, erro: nfe.status === 'ERRO' ? motivosDoErroDaNfe(nfe) : null });"));
 check('a lista abre o popup pelo "Erro" e pela linha', lista.includes('data-erro-nfe="${escapeHtml(nfe.id)}"') && lista.includes('abrirErroDaNota(row.dataset.id);'));
-check('a emissão mostra o motivo quando a SEFAZ recusa na hora', emissao.includes("titulo: 'A SEFAZ recusou a NF-e'"));
+// 14/10/2026: recusada na hora, a emissão vai para NF-e Emitidas, que abre o
+// motivo (scripts/test-apos-emitir.js); na tela fica só o que não virou nota.
+check('a emissão mostra o motivo do que não virou nota', emissao.includes("titulo: 'A NF-e não foi emitida'"));
 check('o script carrega na página', html.includes('<script src="/modules/shared/erro_nfe.js"></script>'));
 
 console.log('\n--- a correção ---');
