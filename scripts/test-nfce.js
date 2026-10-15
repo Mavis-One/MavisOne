@@ -109,8 +109,10 @@ console.log('\n--- 5. o cliente da Focus fala com /nfce ---');
   // A autorização fatura o pedido, e faturar recusa estoque insuficiente: sem
   // conferir ANTES, a nota sairia e o pedido ficaria sem faturar.
   const doPedidoInteiro = servidor.slice(servidor.indexOf('async function emitirNfceDoPedido'), servidor.indexOf('async function emitirNfceDoPedido') + 4000);
+  // Desde 15/10/2026 pela MESMA trava da NF-e (itensSemEstoqueParaFaturar),
+  // que confere também o depósito do pedido.
   check('o estoque é conferido ANTES de transmitir',
-    /if \(!salesStatus\.baixaEstoque\(pedido\.status\)\)[\s\S]{0,1600}Estoque insuficiente[\s\S]{0,600}return emitirNfeFiscal\(/.test(doPedidoInteiro));
+    /const faltando = await itensSemEstoqueParaFaturar\(pedido\);\s*if \(faltando\.length\) \{\s*recusar\(`Sem estoque para faturar:[\s\S]{0,600}return emitirNfeFiscal\(/.test(doPedidoInteiro));
   check('o estabelecimento precisa ter "Emite NFC-e"', /nfce \? estabelecimento\.emiteNfce : estabelecimento\.emiteNfe/.test(preparar));
   check('contribuinte é recusado (vai em NF-e)', /if \(nfce\) \{[\s\S]{0,400}destinatario\.contribuinte/.test(preparar));
   check('frete, seguro e despesa acessória são recusados', /nfce && \(Number\(body\.frete/.test(preparar));

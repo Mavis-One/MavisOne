@@ -7662,15 +7662,70 @@ async function itensSemEstoqueParaFaturar(pedido) {
   if (!precisa.size) return [];
   await sincronizarRazao(data);
   const faltando = [];
+  const cobertos = [];
   for (const { item, quantidade } of precisa.values()) {
     const produto = await db.getProductById(item.productId);
     if (!produto || produto.movimentaEstoque === false) continue;
     const disponivel = item.classValueId
       ? stockCore.classValueBalance(data, item.productId, item.classValueId)
       : Number(produto.stockQuantity || 0);
+    const cor = item.classValueName || item.classValueId;
+    const nome = `${item.name || produto.name}${cor ? ` (${cor})` : ''}`;
     if (disponivel < quantidade) {
-      const cor = item.classValueName || item.classValueId;
-      faltando.push({ nome: `${item.name || produto.name}${cor ? ` (${cor})` : ''}`, disponivel: Math.max(0, disponivel), quantidade });
+      faltando.push({ nome, disponivel: Math.max(0, disponivel), quantidade });
+    } else {
+      cobertos.push({ item, quantidade, nome, nomeDoProduto: item.name || produto.name });
+    }
+  }
+
+  // E O DEPÓSITO DO PEDIDO (15/10/2026). A conta acima é a do saldo do
+  // PRODUTO; a baixa do faturamento sai do depósito do pedido, e a guarda do
+  // razão (descarregarMovimentosPendentes) recusa depósito negativo. Produto
+  // com saldo em outra loja e zero na do pedido passava aqui, a nota era
+  // autorizada e o faturamento recusado depois: "estoque em 0, nota emitida,
+  // pedido nunca faturado". Mesmas chaves da guarda: o depósito inteiro e, com
+  // cor, a cor no depósito. Pedido sem depósito baixa do "não alocado".
+  if (cobertos.length) {
+    const cliente = { query: consultarBanco };
+    const deposito = String(pedido.depositId || '').trim();
+    if (deposito) {
+      const precisaNoDeposito = new Map();
+      const somar = (chave, quantidade, nome) => {
+        const atual = precisaNoDeposito.get(chave) || { quantidade: 0, nome };
+        atual.quantidade += quantidade;
+        precisaNoDeposito.set(chave, atual);
+      };
+      for (const { item, quantidade, nome, nomeDoProduto } of cobertos) {
+        somar(`${item.productId}|${deposito}|`, quantidade, nomeDoProduto);
+        if (item.classValueId) somar(`${item.productId}|${deposito}|${item.classValueId}`, quantidade, nome);
+      }
+      const pares = [...precisaNoDeposito.keys()].map((chave) => {
+        const [produtoId, depositoId, classValueId] = chave.split('|');
+        return { produtoId, depositoId, classValueId };
+      });
+      const saldos = await razaoEstoque.saldosPorDeposito(cliente, pares);
+      const nomeDoDeposito = await consultarBanco('select name from deposits where id = $1', [deposito])
+        .then((r) => (r.rows[0] && r.rows[0].name) || '').catch(() => '');
+      const jaFaltando = new Set();
+      for (const [chave, { quantidade, nome }] of precisaNoDeposito.entries()) {
+        const saldo = saldos.get(chave) || 0;
+        const produtoId = chave.split('|')[0];
+        if (saldo >= quantidade || jaFaltando.has(produtoId)) continue;
+        jaFaltando.add(produtoId);
+        faltando.push({ nome: `${nome} em ${nomeDoDeposito || 'depósito do pedido'}`, disponivel: Math.max(0, saldo), quantidade });
+      }
+    } else {
+      const porProduto = new Map();
+      for (const { item, quantidade, nomeDoProduto } of cobertos) {
+        const atual = porProduto.get(item.productId) || { quantidade: 0, nome: nomeDoProduto };
+        atual.quantidade += quantidade;
+        porProduto.set(item.productId, atual);
+      }
+      for (const [produtoId, { quantidade, nome }] of porProduto.entries()) {
+        const naoAlocado = await razaoEstoque.naoAlocadoDoProduto(cliente, produtoId);
+        if (naoAlocado >= quantidade) continue;
+        faltando.push({ nome: `${nome} fora de depósito (o pedido não tem depósito)`, disponivel: Math.max(0, naoAlocado), quantidade });
+      }
     }
   }
   return faltando;
@@ -8540,28 +8595,14 @@ async function emitirNfceDoPedido({ orderId, estabelecimentoId: escolhido }, use
   // é a mesma do faturamento: por cor quando o item tem cor, senão o saldo do
   // produto. Pedido que já baixou estoque (aprovado sem faturamento) não baixa
   // de novo.
-  if (!salesStatus.baixaEstoque(pedido.status)) {
-    await sincronizarRazao(data);
-    const precisa = new Map();
-    for (const item of pedido.items || []) {
-      if (!item.productId) continue;
-      const chave = `${item.productId}|${item.classValueId || ''}`;
-      const atual = precisa.get(chave) || { item, quantidade: 0 };
-      atual.quantidade += Number(item.quantity || 0);
-      precisa.set(chave, atual);
-    }
-    for (const { item, quantidade } of precisa.values()) {
-      const produto = await db.getProductById(item.productId);
-      if (!produto || produto.movimentaEstoque === false) continue;
-      const disponivel = item.classValueId
-        ? stockCore.classValueBalance(data, item.productId, item.classValueId)
-        : Number(produto.stockQuantity || 0);
-      if (disponivel < quantidade) {
-        const cor = item.classValueName || item.classValueId;
-        recusar(`Estoque insuficiente para "${item.name || produto.name}"${cor ? ` (${cor})` : ''}: disponível ${disponivel}, necessário ${quantidade}. `
-          + 'A NFC-e fatura o pedido quando é autorizada, e o faturamento baixa o estoque — dê entrada no estoque antes de emitir.');
-      }
-    }
+  //
+  // A conta é a MESMA da NF-e (itensSemEstoqueParaFaturar, 15/10/2026): esta
+  // cópia olhava só o saldo do produto, e o faturamento tira do depósito do
+  // pedido — saldo em outra loja deixava a NFC-e sair com o depósito zerado.
+  const faltando = await itensSemEstoqueParaFaturar(pedido);
+  if (faltando.length) {
+    recusar(`Sem estoque para faturar: ${faltando.map((f) => `"${f.nome}" (disponível ${f.disponivel}, necessário ${f.quantidade})`).join('; ')}. `
+      + 'A NFC-e fatura o pedido quando é autorizada, e o faturamento baixa o estoque — dê entrada no estoque antes de emitir.');
   }
 
   return emitirNfeFiscal(montarNfeDoPedido(pedido, estabelecimentoId, data), user, { modelo: 65 });

@@ -55,7 +55,8 @@ check('  e da baixa', /if \(!produtoAtual \|\| produtoAtual\.movimentaEstoque ==
 const trava = (servidor.match(/async function itensSemEstoqueParaFaturar\(pedido\) \{[\s\S]*?\n\}/) || [''])[0];
 check('a trava da NF-e pula serviço', /if \(!produto \|\| produto\.movimentaEstoque === false\) continue;/.test(trava));
 const nfce = servidor.slice(servidor.indexOf('// O ESTOQUE ANTES DA NOTA. Autorizada, a NFC-e'), servidor.indexOf('return emitirNfeFiscal(montarNfeDoPedido(pedido, estabelecimentoId, data), user, { modelo: 65 });'));
-check('  e a da NFC-e também', /if \(!produto \|\| produto\.movimentaEstoque === false\) continue;/.test(nfce));
+// Desde 15/10/2026 a NFC-e usa a mesma trava da NF-e (que pula serviço).
+check('  e a da NFC-e também (é a mesma trava)', nfce.includes('await itensSemEstoqueParaFaturar(pedido)'));
 
 console.log('\n--- 3. a tela da venda ---');
 const app = ler('public/app.js');
