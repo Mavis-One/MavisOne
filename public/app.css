@@ -2082,6 +2082,14 @@ tr[data-detail] { cursor: pointer; }
 /* Busca única dos Cadastros, na tela inicial (15/10/2026). */
 .cadastro-busca-rapida { display: flex; gap: 8px; margin: 4px 0 14px; }
 .cadastro-busca-rapida input { flex: 1; min-width: 0; }
+/* Notas contra CNPJ: pesquisa, filtros e De/Para (15/10/2026). */
+.dfe-pesquisa { margin-top: 14px; }
+.dfe-filtros { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 14px; align-items: end; margin: 0 0 14px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.dfe-filtros label { display: grid; gap: 6px; }
+.dfe-filtros-acoes { display: flex; gap: 8px; }
+.dfe-contagem { margin: 0 0 10px; }
+.dfe-parte strong { display: block; font-weight: 600; }
+.dfe-parte .muted { display: block; font-size: 0.8rem; }
 /* A chave inteira na lista (15/10/2026): os 44 dígitos em blocos de 4, como na
    DANFE, em fonte de largura fixa e duas linhas (6 + 5 blocos). Numa linha só
    ela passava a tabela da tela em notebook (1440 px). O clique copia sem espaços. */

@@ -206,7 +206,18 @@ check('o nome da filial (fantasia) vem antes da razão social, na lista e no que
   && srvDfe.includes("empresaNome: destino.nomeFantasia || destino.razaoSocial || '',")
   && srvDfe.includes("const nomeEmpresa = estabelecimento.nomeFantasia || estabelecimento.razaoSocial || '';"));
 check('  as notas já gravadas mostram o nome atual da filial pelo CNPJ',
-  tela.includes('<td>${escapeHtml(nomeDaFilial(doc))}</td>') && tela.includes('return (daLista && daLista.nome) || doc.empresaNome || cnpjFormatado(doc.cnpjDestinatario);'));
+  tela.includes('<strong>${escapeHtml(nomeDaFilial(doc))}</strong>') && tela.includes('return (daLista && daLista.nome) || doc.empresaNome || cnpjFormatado(doc.cnpjDestinatario);'));
+
+// 15/10/2026, pedido do usuário: pesquisa, botão de filtros (data, nome,
+// empresa) e de quem é a nota e para quem vai. Provado na tela (529 notas):
+// nome do emitente 7, CNPJ com pontuação 7, número 1, chave 1, data 10/10 9,
+// + nome "heraldo" 7, Limpar 529.
+check('campo de pesquisa e botão Filtros acima da lista', tela.includes('<form id="dfePesquisa" class="cadastro-busca-rapida dfe-pesquisa" role="search">')
+  && tela.includes('id="dfeFiltrosBtn"'));
+check('  filtros: data inicial e final, nome do emitente, empresa', ['name="de"', 'name="ate"', 'name="nome"', 'name="empresa"'].every((n) => tela.includes(n)));
+check('  CNPJ, chave e número com ou sem pontuação; o número sai da chave', tela.includes('return c.length === 44 ? String(Number(c.slice(25, 34))) : \'\';')
+  && tela.includes("const qDigitos = /^[\\d.\\-/\\s]+$/.test(texto) ? soDigitos(texto) : '';"));
+check('colunas De (emitente) e Para (destinatário), com nome e CNPJ', tela.includes('<th>De (emitente)</th><th>Para (destinatário)</th><th>Nº</th>'));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

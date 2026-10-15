@@ -23,6 +23,12 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   const tela = state.dfe = state.dfe || {
     cnpjFiltro: '', busca: null, manifestando: null, ocupado: false
   };
+  // PESQUISA E FILTROS DA LISTA (15/10/2026, pedido do usuário: "um campo de
+  // pesquisa e botão de filtros aqui também: data, nome, empresa"). A lista
+  // inteira já está na tela (/api/fiscal/dfe), então filtrar é na hora.
+  tela.pesquisa = tela.pesquisa || '';
+  tela.filtros = tela.filtros || { de: '', ate: '', nome: '', empresa: '' };
+  tela.filtrosAbertos = Boolean(tela.filtrosAbertos);
 
   let dados = { documentos: [], empresas: [], ponteiros: {}, focusConfigurado: false };
 
@@ -54,6 +60,62 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     const daLista = (dados.empresas || []).find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpj);
     return (daLista && daLista.nome) || doc.empresaNome || cnpjFormatado(doc.cnpjDestinatario);
   };
+
+  const soDigitos = (v) => String(v || '').replace(/\D/g, '');
+  const semAcento = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  // O número da nota está na chave: posições 26 a 34 (nNF).
+  const numeroDaNota = (chave) => {
+    const c = soDigitos(chave);
+    return c.length === 44 ? String(Number(c.slice(25, 34))) : '';
+  };
+
+  function docsFiltrados() {
+    const f = tela.filtros;
+    const texto = String(tela.pesquisa || '').trim();
+    const q = semAcento(texto);
+    // CNPJ, chave e número com ou sem pontuação.
+    const qDigitos = /^[\d.\-/\s]+$/.test(texto) ? soDigitos(texto) : '';
+    return (dados.documentos || []).filter((doc) => {
+      const dia = String(doc.dataEmissao || '').slice(0, 10);
+      if (f.de && dia && dia < f.de) return false;
+      if (f.ate && dia && dia > f.ate) return false;
+      if (f.empresa && soDigitos(doc.cnpjDestinatario) !== f.empresa) return false;
+      if (f.nome && !semAcento(doc.emitenteNome).includes(semAcento(f.nome))) return false;
+      if (!q) return true;
+      if ([doc.emitenteNome, nomeDaFilial(doc)].some((t) => semAcento(t).includes(q))) return true;
+      if (!qDigitos) return false;
+      if (numeroDaNota(doc.chave) === String(Number(qDigitos))) return true;
+      return qDigitos.length >= 3 && [doc.emitenteDocumento, doc.chave, doc.cnpjDestinatario].some((v) => soDigitos(v).includes(qDigitos));
+    });
+  }
+
+  function blocoPesquisa(total, achadas) {
+    const f = tela.filtros;
+    const filtrando = Boolean(String(tela.pesquisa || '').trim() || f.de || f.ate || f.nome || f.empresa);
+    return `
+      <form id="dfePesquisa" class="cadastro-busca-rapida dfe-pesquisa" role="search">
+        <input id="dfePesquisaTexto" value="${escapeHtml(tela.pesquisa)}" placeholder="Emitente, CNPJ, número ou chave" aria-label="Pesquisar notas por emitente, CNPJ, número ou chave" autocomplete="off" />
+        <button type="submit">Buscar</button>
+        <button type="button" class="secondary" id="dfeFiltrosBtn" aria-expanded="${tela.filtrosAbertos}">Filtros</button>
+      </form>
+      ${tela.filtrosAbertos ? `
+        <form id="dfeFiltros" class="dfe-filtros">
+          <label>Data inicial<input type="date" name="de" value="${escapeHtml(f.de)}" /></label>
+          <label>Data final<input type="date" name="ate" value="${escapeHtml(f.ate)}" /></label>
+          <label>Nome do emitente<input name="nome" value="${escapeHtml(f.nome)}" autocomplete="off" /></label>
+          <label>Empresa (destinatária)
+            <select name="empresa">
+              <option value="">Todas</option>
+              ${(dados.empresas || []).map((e) => `<option value="${escapeHtml(soDigitos(e.cnpj))}" ${f.empresa === soDigitos(e.cnpj) ? 'selected' : ''}>${escapeHtml(e.nome)} — ${cnpjFormatado(e.cnpj)}</option>`).join('')}
+            </select>
+          </label>
+          <div class="dfe-filtros-acoes">
+            <button type="submit">Filtrar</button>
+            <button type="button" class="secondary" id="dfeLimparFiltros">Limpar</button>
+          </div>
+        </form>` : ''}
+      ${filtrando ? `<p class="muted dfe-contagem">${achadas.toLocaleString('pt-BR')} de ${total.toLocaleString('pt-BR')} notas</p>` : ''}`;
+  }
 
   async function carregar() {
     try {
@@ -162,7 +224,8 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   }
 
   function desenhar() {
-    const docs = dados.documentos;
+    const docs = docsFiltrados();
+    const total = (dados.documentos || []).length;
     content.innerHTML = `
       <div class="panel">
         <div class="panel-header">
@@ -171,11 +234,13 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         </div>
         ${avisoDeToken()}
         ${blocoBusca()}
+        ${blocoPesquisa(total, docs.length)}
         <div class="table-scroll">
           <table class="table table-actions">
             <thead>
               <tr>
-                <th>Empresa</th><th>CNPJ Emissor</th><th>Nome Emissor</th>
+                <!-- De quem é a nota e para quem vai (15/10/2026, pedido do usuário). -->
+                <th>De (emitente)</th><th>Para (destinatário)</th><th>Nº</th>
                 <th>Chave de Acesso</th><th>Data</th><th>Valor</th><th>NSU</th>
                 <th>Manifestado</th><th>Tipo Manifestação</th><th>Entrada</th><th>Ações</th>
               </tr>
@@ -183,9 +248,9 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
             <tbody>
               ${docs.length ? docs.map((doc) => `
                 <tr>
-                  <td>${escapeHtml(nomeDaFilial(doc))}</td>
-                  <td>${cnpjFormatado(doc.emitenteDocumento)}</td>
-                  <td>${escapeHtml(doc.emitenteNome || '-')}</td>
+                  <td class="dfe-parte"><strong>${escapeHtml(doc.emitenteNome || '-')}</strong><span class="muted">${cnpjFormatado(doc.emitenteDocumento)}</span></td>
+                  <td class="dfe-parte"><strong>${escapeHtml(nomeDaFilial(doc))}</strong><span class="muted">${cnpjFormatado(doc.cnpjDestinatario)}</span></td>
+                  <td>${escapeHtml(numeroDaNota(doc.chave) || '-')}</td>
                   <td><code>${escapeHtml(doc.chave)}</code></td>
                   <td>${dataHora(doc.dataEmissao)}</td>
                   <td>${dinheiro(doc.valorTotal)}</td>
@@ -197,7 +262,9 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
                   <td>${colunaEntrada(doc)}</td>
                   <td class="finance-extrato-actions">${acoesDaNota(doc)}</td>
                 </tr>
-              `).join('') : '<tr><td colspan="11" class="muted">Nenhuma nota buscada ainda. Use “Buscar documentos na SEFAZ”.</td></tr>'}
+              `).join('') : (total
+                ? '<tr><td colspan="12" class="muted">Nenhuma nota com essa pesquisa ou filtros.</td></tr>'
+                : '<tr><td colspan="12" class="muted">Nenhuma nota buscada ainda. Use “Buscar documentos na SEFAZ”.</td></tr>')}
             </tbody>
           </table>
         </div>
@@ -308,6 +375,31 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
 
   // ----------------------------------------------------------------- eventos
   function ligarEventos() {
+    document.getElementById('dfePesquisa')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      tela.pesquisa = String(document.getElementById('dfePesquisaTexto')?.value || '').trim();
+      desenhar();
+    });
+    document.getElementById('dfeFiltrosBtn')?.addEventListener('click', () => {
+      tela.pesquisa = String(document.getElementById('dfePesquisaTexto')?.value || '').trim();
+      tela.filtrosAbertos = !tela.filtrosAbertos;
+      desenhar();
+    });
+    document.getElementById('dfeFiltros')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.currentTarget);
+      tela.filtros = {
+        de: String(fd.get('de') || ''), ate: String(fd.get('ate') || ''),
+        nome: String(fd.get('nome') || '').trim(), empresa: String(fd.get('empresa') || '')
+      };
+      tela.pesquisa = String(document.getElementById('dfePesquisaTexto')?.value || '').trim();
+      desenhar();
+    });
+    document.getElementById('dfeLimparFiltros')?.addEventListener('click', () => {
+      tela.filtros = { de: '', ate: '', nome: '', empresa: '' };
+      tela.pesquisa = '';
+      desenhar();
+    });
     document.getElementById('dfeAbrirBusca')?.addEventListener('click', () => {
       tela.busca = tela.busca || { modo: 'ultimo-nsu', empresaId: dados.empresas[0]?.id || '' };
       desenhar();
