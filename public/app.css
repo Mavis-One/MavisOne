@@ -4338,8 +4338,20 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .painel-tipo-grafico:hover { color: var(--text); border-color: var(--primary); }
 .painel-tipo-grafico.active { color: var(--primary); border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--panel-alt)); }
 .painel-pizza .painel-rosca-legenda { flex: 0 1 420px; }
+/* REDIMENSIONA PELO TIPO (15/10/2026, pedido do usuário: "redimensione a tela
+   e os gráficos conforme eu escolho a modelagem, deixe eles visíveis"): a pizza
+   cresce, e a grade mostra todos os períodos, sem rolagem dentro do painel. */
+.painel-pizza .painel-rosca-svg { width: 230px; height: 230px; }
+/* As datas do eixo, fora do desenho (ver eixoX em painel.js). */
+.painel-grafico-area { min-width: 480px; }
+.painel-eixo-x { position: relative; height: 22px; margin-top: 6px; font-size: 0.78rem; color: var(--muted); }
+.painel-eixo-x span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.painel-eixo-x-bordas span:first-child { transform: none; }
+.painel-eixo-x-bordas span:last-child { transform: translateX(-100%); }
+/* A linha não muda de espessura quando o desenho estica. */
+.finance-chart-svg polyline, .finance-chart-svg line { vector-effect: non-scaling-stroke; }
 .finance-chart-legend[hidden] { display: none; }
-.painel-grade { max-height: 260px; overflow: auto; }
+.painel-grade { overflow-x: auto; }
 .painel-serie-receita { fill: var(--success); stroke: var(--success); background: var(--success); }
 .painel-serie-despesa { fill: var(--danger); stroke: var(--danger); background: var(--danger); }
 .painel-serie-saldo { fill: var(--primary); stroke: var(--primary); background: var(--primary); }

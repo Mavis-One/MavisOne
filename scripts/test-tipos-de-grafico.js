@@ -71,5 +71,27 @@ check('  a escolha fica nas preferências e redesenha sem buscar de novo',
   dash.includes("salvarPreferencia('dashboard_graficos', novos)") && /data-grafico-tipo[\s\S]{0,600}reusar: 'tudo'/.test(dash));
 check('  legenda das linhas some na pizza e na grade', dash.includes("comLegenda(tipoVendas) ? '' : 'hidden'") && ler('public/app.css').includes('.finance-chart-legend[hidden] { display: none; }'));
 
+// 15/10/2026, pedido do usuário: "redimensione a tela e os gráficos conforme eu
+// escolho a modelagem, deixe eles visíveis e as datas em um padrão de
+// visualização normal". Provado no navegador (1860 px): datas "nov/2025 …
+// out/2026" fora do desenho, sem texto esticado; a grade com os 12 meses e o
+// total, sem rolagem; a pizza com 230 px.
+console.log('\n--- tamanho pelo tipo e datas legíveis ---');
+const linhaHtml = P.graficoLinha(serieFin, esc);
+const colunasHtml = P.graficoColunas(serieFin, esc);
+check('as datas saem do desenho (o SVG estica e esticava o texto)',
+  !/<text /.test(linhaHtml) && !/<text /.test(colunasHtml)
+  && /class="painel-eixo-x[^"]*"[\s\S]*>09\/26<\/span>/.test(linhaHtml) && /class="painel-eixo-x[^"]*"[\s\S]*>10\/26<\/span>/.test(colunasHtml));
+check('  na posição de cada ponto (linhas: 0% e 100%; colunas: centro de cada grupo)',
+  linhaHtml.includes('left:0.000%') && linhaHtml.includes('left:100.000%') && colunasHtml.includes('left:25.000%') && colunasHtml.includes('left:75.000%'));
+check('  com muitos pontos, no máximo 14 datas (30 pontos: uma a cada 3 = 10)', (P.graficoLinha(Array.from({ length: 30 }, (_, i) => ({ label: `d${i}`, receitas: 1 })), esc).match(/<span style="left:/g) || []).length === 10);
+const cssGraficos = ler('public/app.css');
+check('a grade mostra todos os períodos (sem a rolagem de 260 px)', cssGraficos.includes('.painel-grade { overflow-x: auto; }') && !cssGraficos.includes('.painel-grade { max-height: 260px'));
+check('a pizza cresce', cssGraficos.includes('.painel-pizza .painel-rosca-svg { width: 230px; height: 230px; }'));
+const srvGraficos = ler('server.js');
+check('datas no padrão: diário "15/10", mensal "nov/2025"',
+  srvGraficos.includes('buckets.push({ label: `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`, from: s, to: s });')
+  && srvGraficos.includes('buckets.push({ label: `${MESES_ABREVIADOS[d.getMonth()]}/${d.getFullYear()}`,'));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
 process.exit(falhas ? 1 : 0);

@@ -135,11 +135,26 @@ window.MavisPainel = (function () {
    * diferentes. A única adição é `formato`: o tooltip formatava sempre em reais,
    * e um gráfico de "OPs concluídas" mostrava "R$ 12,00" ao passar o mouse.
    */
+  // AS DATAS FORA DO DESENHO (15/10/2026, pedido do usuário: "deixe eles
+  // visíveis e as datas em um padrão de visualização normal"). O SVG estica
+  // para a largura do painel (preserveAspectRatio="none"), e o texto dentro
+  // dele esticava junto — "1 1 / 2 5" no painel largo. As datas vão numa faixa
+  // HTML embaixo, na posição de cada ponto, com a fonte da tela. Com muitos
+  // pontos, uma sim e outras não, para não encavalar.
+  function eixoX(series, posicao, escapeHtml = esc, { bordas = false } = {}) {
+    const passo = series.length > 14 ? Math.ceil(series.length / 14) : 1;
+    return `<div class="painel-eixo-x ${bordas ? 'painel-eixo-x-bordas' : ''}" aria-hidden="true">${series
+      .map((s, i) => (i % passo ? '' : `<span style="left:${posicao(i).toFixed(3)}%">${escapeHtml(s.label)}</span>`))
+      .join('')}</div>`;
+  }
+
   function graficoLinha(series, escapeHtml = esc, lines, { formato = 'moeda' } = {}) {
-    const width = 760;
+    // Mais largo que antes (760): estica menos no painel largo, e as bolinhas
+    // dos pontos ficam menos ovais.
+    const width = 1000;
     const height = 220;
     const paddingTop = 16;
-    const paddingBottom = 26;
+    const paddingBottom = 8;
     const chartHeight = height - paddingTop - paddingBottom;
     const n = Math.max(series.length, 1);
     const step = n > 1 ? width / (n - 1) : width;
@@ -176,18 +191,15 @@ window.MavisPainel = (function () {
 
     const linesData = activeLines.map((line) => ({ ...line, points: pointsFor(line.key) }));
 
-    const labels = series.map((s, i) => {
-      const x = n > 1 ? i * step : width / 2;
-      return `<text x="${x.toFixed(1)}" y="${height - 6}" text-anchor="middle" class="finance-chart-label">${escapeHtml(s.label)}</text>`;
-    }).join('');
-
     return `
-      <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de tendência por período">
-        <line x1="0" y1="${baseY}" x2="${width}" y2="${baseY}" class="finance-chart-axis"></line>
-        ${linesData.map((line) => trechos(line.points).map((t) => `<polyline points="${linePath(t)}" class="${line.cssClass}"></polyline>`).join('')).join('')}
-        ${linesData.map((line) => dots(line.points, line.cssClass, line.key, line.rotulo)).join('')}
-        ${labels}
-      </svg>
+      <div class="painel-grafico-area">
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de tendência por período">
+          <line x1="0" y1="${baseY}" x2="${width}" y2="${baseY}" class="finance-chart-axis"></line>
+          ${linesData.map((line) => trechos(line.points).map((t) => `<polyline points="${linePath(t)}" class="${line.cssClass}"></polyline>`).join('')).join('')}
+          ${linesData.map((line) => dots(line.points, line.cssClass, line.key, line.rotulo)).join('')}
+        </svg>
+        ${eixoX(series, (i) => (n > 1 ? ((i * step) / width) * 100 : 50), escapeHtml, { bordas: n > 1 })}
+      </div>
     `;
   }
 
@@ -301,10 +313,10 @@ window.MavisPainel = (function () {
 
   function graficoColunas(series, escapeHtml = esc, lines, { formato = 'moeda' } = {}) {
     const linhas = (lines || LINHAS_PADRAO).filter((l) => l.key !== 'meta');
-    const width = 760;
+    const width = 1000;
     const height = 220;
     const topo = 12;
-    const rodape = 26;
+    const rodape = 6;
     const valores = series.flatMap((s) => linhas.map((l) => Number(s[l.key]) || 0));
     const maior = Math.max(0, ...valores);
     const menor = Math.min(0, ...valores);
@@ -324,13 +336,14 @@ window.MavisPainel = (function () {
         return `<rect x="${(inicio + j * larguraColuna).toFixed(1)}" y="${y.toFixed(1)}" width="${(larguraColuna - 1).toFixed(1)}" height="${h.toFixed(1)}" rx="2" class="painel-coluna ${corDaSerie(l)}"><title>${escapeHtml(s.label)} · ${escapeHtml(l.rotulo || l.key)}: ${valorCheio(v, formato)}</title></rect>`;
       }).join('');
     }).join('');
-    const rotulos = series.map((s, i) => `<text x="${(i * grupo + grupo / 2).toFixed(1)}" y="${height - 6}" text-anchor="middle" class="finance-chart-label">${escapeHtml(s.label)}</text>`).join('');
     return `
-      <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de colunas por período">
-        <line x1="0" y1="${zero.toFixed(1)}" x2="${width}" y2="${zero.toFixed(1)}" class="finance-chart-axis"></line>
-        ${colunas}
-        ${rotulos}
-      </svg>`;
+      <div class="painel-grafico-area">
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de colunas por período">
+          <line x1="0" y1="${zero.toFixed(1)}" x2="${width}" y2="${zero.toFixed(1)}" class="finance-chart-axis"></line>
+          ${colunas}
+        </svg>
+        ${eixoX(series, (i) => ((i * grupo + grupo / 2) / width) * 100, escapeHtml)}
+      </div>`;
   }
 
   function graficoPizza(series, escapeHtml = esc, lines, { formato = 'moeda', vazio = 'Sem dados no período.' } = {}) {

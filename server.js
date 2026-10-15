@@ -5731,7 +5731,13 @@ async function syncOpenFinanceConnection(connectionId, autor) {
 // Janela de datas por granularidade — compartilhada entre o gráfico do Financeiro
 // e o gráfico de Vendas do Dashboard Geral, pra manter os dois com o mesmo recorte
 // de tempo/rótulos ao trocar "Diário/Semanal/Mensal/Anual".
+// O RÓTULO DE CADA PERÍODO NO PADRÃO DE LEITURA (15/10/2026, pedido do usuário:
+// "as datas em um padrão de visualização normal"). Eram "10-15" no diário
+// (mês-dia, com hífen) e "11/25" no mensal (lido como dia 11). Agora: diário
+// "15/10", semanal "13/10" (a segunda-feira), mensal "nov/2025", anual "2026".
 function buildPeriodBuckets(granularity) {
+  // Dentro da função: ela é copiada sozinha pelos testes (test-lista-de-lancamentos).
+  const MESES_ABREVIADOS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const today = getTodayLocal();
   const buckets = [];
 
@@ -5740,7 +5746,7 @@ function buildPeriodBuckets(granularity) {
       const d = new Date(today);
       d.setDate(today.getDate() - i);
       const s = toDateStr(d);
-      buckets.push({ label: s.slice(5), from: s, to: s });
+      buckets.push({ label: `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`, from: s, to: s });
     }
   } else if (granularity === 'week') {
     const day = today.getDay();
@@ -5764,7 +5770,7 @@ function buildPeriodBuckets(granularity) {
       const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
       const first = new Date(d.getFullYear(), d.getMonth(), 1);
       const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-      buckets.push({ label: `${pad2(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`, from: toDateStr(first), to: toDateStr(last) });
+      buckets.push({ label: `${MESES_ABREVIADOS[d.getMonth()]}/${d.getFullYear()}`, from: toDateStr(first), to: toDateStr(last) });
     }
   }
 
