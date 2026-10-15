@@ -61,6 +61,20 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     ? state.financeReturnTo
     : null;
 
+  // OS TÍTULOS DE UMA ENTRADA DE NF-e, UM APÓS O OUTRO (15/10/2026, pedido do
+  // usuário: a Edição de Título "como parte do processo de lançamento" da
+  // nota). A entrada (purchases/subs/entrada_nfe.js) deixa a fila em
+  // state.financeFilaDaEntrada e abre o primeiro; salvar abre o seguinte, e o
+  // último oferece a volta para a tela de onde a nota veio. Título que não é da
+  // fila (aberto depois, por outro caminho) encerra a fila.
+  const filaDaEntrada = state.financeFilaDaEntrada && editEntry
+    && state.financeFilaDaEntrada.ids.includes(editEntry.id)
+    ? state.financeFilaDaEntrada
+    : null;
+  if (!filaDaEntrada) state.financeFilaDaEntrada = null;
+  const posicaoNaFila = filaDaEntrada ? filaDaEntrada.ids.indexOf(editEntry.id) : -1;
+  const proximoDaFila = filaDaEntrada ? filaDaEntrada.ids[posicaoNaFila + 1] || null : null;
+
   // Fase EI: a data de HOJE no relógio de quem usa, e não em UTC. O
   // `toISOString()` dá a data de Greenwich: em SC (UTC-3), das 21h à meia-noite
   // isso já é amanhã, e a despesa lançada às 22h caía no dia (ou no mês)
@@ -268,7 +282,11 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
               : 'Novo Lançamento'}</h3>
           </div>
         </div>
-        ${vinculado ? `
+        ${filaDaEntrada ? `
+          <p class="prompt-aviso">
+            <strong>Entrada da ${escapeHtml(filaDaEntrada.nota)} · título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length}.</strong>
+            Valor, data, descrição e fornecedor vêm da nota.
+          </p>` : vinculado ? `
           <p class="prompt-aviso">
             <strong>Lançamento gerado ${editEntry.vinculo === 'nfe' ? 'por uma NF-e' : 'por um pedido'}.</strong>
             Valor, data, descrição e cliente vêm de lá e aparecem travados aqui —
@@ -460,15 +478,45 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   // Os botões de saída, iguais no "salvo com sucesso" e no aviso de lançamento
   // já baixado (fase EI): os dois terminam no mesmo ponto do fluxo.
   function acoesDeSaida() {
+    // Na fila da entrada, o caminho principal é seguir (próximo título ou a
+    // volta à tela da nota); Ver e Novo ficam como alternativa.
+    const daFila = filaDaEntrada
+      ? (proximoDaFila
+        ? `<button type="button" id="financeFilaProximo">Próximo título (${posicaoNaFila + 2} de ${filaDaEntrada.ids.length})</button>`
+        : `<button type="button" id="financeFilaVolta">${escapeHtml(filaDaEntrada.volta.rotulo)}</button>`)
+      : '';
+    const principal = Boolean(voltaAoPedido || filaDaEntrada);
     return `
         <div class="finance-actions-row">
+          ${daFila}
           ${voltaAoPedido ? '<button type="button" id="financeSuccessBack">Voltar ao pedido</button>' : ''}
-          <button type="button" ${voltaAoPedido ? 'class="secondary"' : ''} id="financeSuccessView">Ver Lançamento</button>
+          <button type="button" ${principal ? 'class="secondary"' : ''} id="financeSuccessView">Ver Lançamento</button>
           <button type="button" class="secondary" id="financeSuccessNew">Novo Lançamento</button>
         </div>`;
   }
 
+  function abrirProximoDaFila() {
+    state.financeEditEntryId = proximoDaFila;
+    state.activeSub = 'edicao_titulo';
+    renderFinanceNovoLancamento(ctx);
+  }
+
+  function voltarDaFila() {
+    const volta = filaDaEntrada.volta;
+    state.financeFilaDaEntrada = null;
+    state.activeModule = volta.module;
+    state.activeSub = volta.sub;
+    if (typeof renderApp === 'function') renderApp();
+    loadModule(volta.module);
+  }
+
   function ligarAcoesDeSaida(entry) {
+    document.getElementById('financeFilaProximo')?.addEventListener('click', (evento) => {
+      evento.currentTarget.disabled = true;
+      abrirProximoDaFila();
+    });
+    document.getElementById('financeFilaVolta')?.addEventListener('click', voltarDaFila);
+
     // Fecha o ciclo do fluxo: quem veio de "Aprovar Pedido" volta para o pedido,
     // que é onde está a próxima etapa (Gerar NF-e). Sem isto o usuário teria que
     // navegar de volta na mão, e é aí que se perde o fio.
@@ -859,6 +907,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           result = await api('/api/finance/entries', { method: 'POST', body: JSON.stringify(payload) });
         }
         const quantas = Array.isArray(result.entries) ? result.entries.length : 1;
+        // Na fila da entrada, salvar já abre o título seguinte.
+        if (filaDaEntrada && proximoDaFila) {
+          showToast(`Título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length} salvo.`, 'success');
+          abrirProximoDaFila();
+          return;
+        }
         showToast(editEntry ? 'Lançamento atualizado com sucesso.'
           : (quantas > 1 ? `${quantas} parcelas lançadas.` : 'Lançamento criado com sucesso.'), 'success');
         renderSuccess(result.entry, result.entries);

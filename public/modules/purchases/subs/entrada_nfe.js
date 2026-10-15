@@ -746,6 +746,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         if (resposta.estoque?.length) partes.push(`${resposta.estoque.length} ${resposta.estoque.length === 1 ? 'item entrou' : 'itens entraram'} no estoque`);
         if (resposta.financeiro?.length) partes.push(`${resposta.financeiro.length} ${resposta.financeiro.length === 1 ? 'conta a pagar criada' : 'contas a pagar criadas'}`);
         showToast(`${partes.join(' · ')}.`, 'success');
+        const veioDoDfe = Boolean(tela.dfeId);
+        const numeroDaNota = tela.conferencia && tela.conferencia.nota ? tela.conferencia.nota.numero : '';
         // A nota recebida (DF-e) fica ligada a esta entrada: a lista de Notas
         // contra CNPJ passa a mostrar "lançada" e para de oferecer a entrada.
         if (tela.dfeId) {
@@ -760,6 +762,30 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         tela.xml = '';
         tela.conferencia = null;
         tela.escolhas.clear();
+        // A EDIÇÃO DE TÍTULO FAZ PARTE DO LANÇAMENTO (15/10/2026, pedido do
+        // usuário: "o lançamento pela tela notas contra o CNPJ deve abrir como
+        // parte do processo de lançamento a tela de edição de títulos para
+        // conseguirmos alterar a forma como vamos lançar financeiramente").
+        // Abre o primeiro título que a nota gerou; salvar passa ao seguinte, e
+        // o último volta para a tela de onde a nota veio. Ver
+        // state.financeFilaDaEntrada em finance/subs/novo_lancamento.js.
+        const titulos = (resposta.financeiro || []).map((l) => l && l.id).filter(Boolean);
+        if (titulos.length && (state.user?.allowedModules || []).includes('finance')) {
+          state.financeFilaDaEntrada = {
+            ids: titulos,
+            nota: numeroDaNota ? `NF-e ${numeroDaNota}` : 'nota',
+            volta: veioDoDfe
+              ? { module: 'fiscal', sub: 'notas_contra_cnpj', rotulo: 'Voltar às Notas contra CNPJ' }
+              : { module: 'purchases', sub: 'entrada_nfe', rotulo: 'Voltar às Notas de Entrada' }
+          };
+          state.financeEditEntryId = titulos[0];
+          state.financeListaDeOrigem = 'contas_a_pagar';
+          state.activeModule = 'finance';
+          state.activeSub = 'edicao_titulo';
+          if (typeof renderApp === 'function') renderApp();
+          ctx.loadModule('finance');
+          return;
+        }
         await carregarEntradas();
         desenhar();
       } catch (erro) {

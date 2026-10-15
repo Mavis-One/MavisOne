@@ -10382,6 +10382,14 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
     // vira uma parcela só vencendo na emissão — melhor do que sumir com a
     // dívida porque o XML não detalhou o parcelamento.
     try {
+      // DE QUAL ESTABELECIMENTO É A CONTA A PAGAR (15/10/2026): o do CNPJ que
+      // recebeu a nota. Sem isto o título nascia sem estabelecimento, e a
+      // Edição de Título — que agora abre logo depois da entrada — mostrava
+      // "Nenhum".
+      const docDestino = entradaNfe.digitos(nota.destinatario && nota.destinatario.documento);
+      const estabDestino = docDestino
+        ? (await fiscalDb.getEstabelecimentos().catch(() => [])).find((e) => entradaNfe.digitos(e.cnpj) === docDestino)
+        : null;
       const parcelas = nota.duplicatas.length
         ? nota.duplicatas
         : [{ numero: '001', vencimento: nota.dataEmissao, valor: nota.totais.nota || 0 }];
@@ -10405,6 +10413,7 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
           document: nota.chave,
           clientSupplierId: conferencia.fornecedor.cadastro ? conferencia.fornecedor.cadastro.id : '',
           clientSupplierName: nota.emitente.nome,
+          estabelecimentoId: estabDestino ? estabDestino.id : '',
           status: 'pending',
           createdBy: user.id,
           createdByName: user.name
@@ -10438,7 +10447,9 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
     targetUsername: nota.emitente.nome,
     byId: user.id,
     byName: user.name,
-    details: `NF-e ${nota.numero}/${nota.serie} — chave ${nota.chave} — R$ ${Number(nota.totais.nota || 0).toFixed(2)}`
+    // Objeto, e não texto (15/10/2026): a coluna é jsonb, o banco recusava o
+    // texto solto e toda entrada caía no db.json como "pendente de sincronia".
+    details: { nota: `${nota.numero}/${nota.serie}`, chave: nota.chave, valor: Number(Number(nota.totais.nota || 0).toFixed(2)) }
   });
 
   return sendJson(res, {
