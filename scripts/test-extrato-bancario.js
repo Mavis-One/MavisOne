@@ -167,9 +167,14 @@ check('coluna Conciliação cortada também', /class="finance-clickable-row text
 check('valor à direita (col-valor) no th e no td', /cabecalhoOrdenavel\('valor', 'col-valor'\)/.test(tela) && /<td class="col-valor /.test(tela));
 check('página que deixou de existir volta para a última',
   /const ultimaPagina = Math\.max\(1, Math\.ceil\(result\.total \/ limit\)\);\s*if \(page > ultimaPagina\) \{\s*page = ultimaPagina;\s*return load\(\);/.test(tela));
+// Desde 15/10/2026 pela rota das sugestões, que já sabe o tipo pela
+// movimentação, só oferece título em aberto e aplica empresa e conta (ver
+// test-arquivos-do-extrato.js).
 check('busca manual pede o tipo da movimentação, só os em aberto, e 50 por vez',
-  /const tipoDoLancamento = tx\.type === 'entrada' \? 'receita' : 'despesa';/.test(tela)
-  && /\/api\/finance\/entries\?search=\$\{encodeURIComponent\(term\)\}&type=\$\{tipoDoLancamento\}&status=pendente,vencido,parcial&limit=50/.test(tela));
+  /const res = await sugestoes\(term\);/.test(tela)
+  && /const tipoProcurado = tx\.type === 'entrada' \? 'receita' : 'despesa';/.test(src)
+  && /\['pending', 'parcial'\]\.includes\(String\(entry\.status \|\| ''\)\.toLowerCase\(\)\)/.test(src)
+  && /limite: busca \? 50 : 8/.test(src));
 check('  e a janela recebe a movimentação inteira', /openConciliarModal\(tx\)/.test(tela) && /async function openConciliarModal\(tx\)/.test(tela));
 check('a lista manda ?sort= e ?dir=', /sort: ordem\.campo, dir: ordem\.direcao/.test(tela));
 const colunasDaTela = /const COLUNAS_ORDENAVEIS = \{([^}]*)\}/.exec(tela);

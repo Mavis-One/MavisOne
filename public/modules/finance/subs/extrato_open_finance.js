@@ -30,7 +30,10 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
   const { content, api, showToast, state, loadModule, escapeHtml, confirmModal } = ctx;
 
   let meta = { bankAccounts: [] };
-  const filters = { bankAccountId: '', status: '', type: '', search: '', dateFrom: '', dateTo: '', amountMin: '', amountMax: '' };
+  const filters = { bankAccountId: '', importacao: '', status: '', type: '', search: '', dateFrom: '', dateTo: '', amountMin: '', amountMax: '' };
+  // OS ARQUIVOS IMPORTADOS (15/10/2026): vêm com cada página do extrato, cada
+  // um com quanto sobra a conciliar. Ver importacoesDoExtrato no servidor.
+  let importacoes = [];
   let page = 1;
   // ITENS POR PÁGINA (fase EI). Eram 15 fixos: conferir o extrato de um mês
   // inteiro era clicar em Próxima dez vezes. O servidor aceita até 100
@@ -160,6 +163,84 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       </th>`;
   }
 
+  function nomeDoArquivo(imp) {
+    return imp.arquivo || `${imp.origem === 'csv' ? 'CSV' : 'OFX'} sem nome`;
+  }
+
+  function dataHora(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '-';
+    return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function opcoesDeArquivo() {
+    return importacoes.map((imp) => `<option value="${escapeHtml(imp.id)}" ${filters.importacao === imp.id ? 'selected' : ''}>${escapeHtml(`${nomeDoArquivo(imp)} · ${imp.bankAccountName || '-'} · ${dataHora(imp.importadoEm)}`)}</option>`).join('');
+  }
+
+  // Um arquivo por linha, os com pendência primeiro; com conta no filtro, só
+  // os dela.
+  function painelDeArquivos() {
+    const doFiltro = importacoes
+      .filter((imp) => !filters.bankAccountId || imp.bankAccountId === filters.bankAccountId)
+      .sort((a, b) => (b.naoConciliado > 0) - (a.naoConciliado > 0));
+    if (!doFiltro.length) return '';
+    const aberto = state.extratoArquivosAberto !== false;
+    return `
+      <details class="panel extrato-arquivos" id="extratoArquivos" ${aberto ? 'open' : ''}>
+        <summary><strong>Arquivos importados</strong> <span class="muted">(${doFiltro.length})</span></summary>
+        <div class="table-scroll">
+          <table class="table table-actions">
+            <thead><tr>
+              <th>Arquivo</th><th>Conta</th><th>Período</th><th>Importado em</th>
+              <th class="col-valor">Não conciliadas</th><th class="col-valor">Conciliadas</th><th class="col-valor">Ignoradas</th><th>Ações</th>
+            </tr></thead>
+            <tbody>
+              ${doFiltro.map((imp) => {
+                const ativo = filters.importacao === imp.id;
+                const limpaveis = imp.naoConciliado + imp.ignorado;
+                return `
+                  <tr class="${ativo ? 'is-selecionada' : ''}">
+                    <td><span class="texto-cortado" title="${escapeHtml(nomeDoArquivo(imp))}">${escapeHtml(nomeDoArquivo(imp))}</span></td>
+                    <td>${escapeHtml(imp.bankAccountName || '-')}</td>
+                    <td>${escapeHtml(financeFormatDate(imp.de))}${imp.ate && imp.ate !== imp.de ? ` a ${escapeHtml(financeFormatDate(imp.ate))}` : ''}</td>
+                    <td>${escapeHtml(dataHora(imp.importadoEm))}</td>
+                    <td class="col-valor">${imp.naoConciliado}</td>
+                    <td class="col-valor">${imp.conciliado}</td>
+                    <td class="col-valor">${imp.ignorado}</td>
+                    <td class="finance-extrato-actions">
+                      <button type="button" class="secondary" data-arquivo-ver="${escapeHtml(imp.id)}">${ativo ? 'Ver todos' : 'Ver'}</button>
+                      <button type="button" class="secondary" data-arquivo-limpar="${escapeHtml(imp.id)}" ${limpaveis ? '' : 'disabled'}>Limpar</button>
+                    </td>
+                  </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </details>`;
+  }
+
+  async function limparArquivo(id) {
+    const imp = importacoes.find((item) => item.id === id);
+    if (!imp) return;
+    const confirmed = await confirmModal(
+      `Limpar o arquivo ${nomeDoArquivo(imp)} (${imp.bankAccountName || 'sem conta'})? `
+      + `Saem ${imp.naoConciliado} não conciliada(s)`
+      + (imp.ignorado ? ` e ${imp.ignorado} ignorada(s)` : '')
+      + (imp.conciliado ? `; as ${imp.conciliado} conciliada(s) ficam` : '')
+      + '.'
+    );
+    if (!confirmed) return;
+    try {
+      const resultado = await api(`/api/finance/bank-transactions/importacoes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      showToast(`${resultado.removidas} movimentação(ões) removida(s) do extrato.`, 'success');
+      if (filters.importacao === id && !resultado.mantidas) filters.importacao = '';
+      page = 1;
+      load();
+    } catch (error) {
+      showToast(error.message || 'Erro ao limpar o arquivo.', 'error');
+    }
+  }
+
   function linhaDaTransacao(tx) {
     const marcada = selecionadas.has(tx.id);
     const sync = tx.source === 'open_finance';
@@ -196,6 +277,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     const summary = result.summary || { naoConciliado: 0, conciliado: 0, ignorado: 0 };
     const valores = summary.valores || {};
     transacoesDaPagina = result.transactions || [];
+    importacoes = result.importacoes || [];
     // O que saiu da página (filtro, ordem, página nova) sai da seleção.
     const idsVisiveis = new Set(transacoesDaPagina.map((tx) => tx.id));
     [...selecionadas].forEach((id) => { if (!idsVisiveis.has(id)) selecionadas.delete(id); });
@@ -227,6 +309,10 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
           <label class="cadastro-field">
             <span>Conta bancária</span>
             <select name="bankAccountId"><option value="">Todas</option>${bankAccountOptions(filters.bankAccountId)}</select>
+          </label>
+          <label class="cadastro-field">
+            <span>Arquivo importado</span>
+            <select name="importacao"><option value="">Todos</option>${opcoesDeArquivo()}</select>
           </label>
           <label class="cadastro-field">
             <span>Status</span>
@@ -269,6 +355,8 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
           <button type="button" class="secondary" id="extratoFilterClearBtn">Limpar filtros</button>
         </div>
       </form>
+
+      ${painelDeArquivos()}
 
       <div class="panel">
         <div id="extratoLote" class="sales-lote-barra hidden" role="region" aria-label="Ações nas movimentações selecionadas"></div>
@@ -407,6 +495,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       event.preventDefault();
       const formData = new FormData(event.target);
       filters.bankAccountId = formData.get('bankAccountId') || '';
+      filters.importacao = formData.get('importacao') || '';
       filters.status = formData.get('status') || '';
       filters.type = formData.get('type') || '';
       filters.search = formData.get('search') || '';
@@ -421,6 +510,21 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       Object.keys(filters).forEach((key) => { filters[key] = ''; });
       page = 1;
       load();
+    });
+
+    document.getElementById('extratoArquivos')?.addEventListener('toggle', (event) => {
+      state.extratoArquivosAberto = event.target.open;
+    });
+    content.querySelectorAll('[data-arquivo-ver]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.arquivoVer;
+        filters.importacao = filters.importacao === id ? '' : id;
+        page = 1;
+        load();
+      });
+    });
+    content.querySelectorAll('[data-arquivo-limpar]').forEach((btn) => {
+      btn.addEventListener('click', () => limparArquivo(btn.dataset.arquivoLimpar));
     });
 
     document.getElementById('extratoPrevPage')?.addEventListener('click', () => { if (page > 1) { page -= 1; load(); } });
@@ -606,12 +710,17 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     // deixa reimportar o arquivo sem duplicar. CSV escolhido como arquivo cai
     // no campo de texto, como se tivesse sido colado.
     let linhasDoOfx = null;
+    // O nome do arquivo vai junto (15/10/2026): é por ele que a tela separa e
+    // limpa o que cada arquivo trouxe. CSV colado vai sem nome.
+    let nomeDoArquivoEscolhido = '';
     const resumo = document.getElementById('extratoImportResumo');
     document.getElementById('extratoImportArquivo')?.addEventListener('change', async (event) => {
       linhasDoOfx = null;
+      nomeDoArquivoEscolhido = '';
       resumo.hidden = true;
       const arquivo = event.target.files && event.target.files[0];
       if (!arquivo) return;
+      nomeDoArquivoEscolhido = arquivo.name;
       try {
         const bytes = new Uint8Array(await arquivo.arrayBuffer());
         const texto = window.MavisOfx.decodificar(bytes);
@@ -640,8 +749,8 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       const formData = new FormData(event.target);
       try {
         const corpo = linhasDoOfx
-          ? { bankAccountId: formData.get('bankAccountId'), rows: linhasDoOfx, origem: 'ofx' }
-          : { bankAccountId: formData.get('bankAccountId'), text: formData.get('csvText') };
+          ? { bankAccountId: formData.get('bankAccountId'), rows: linhasDoOfx, origem: 'ofx', arquivo: nomeDoArquivoEscolhido }
+          : { bankAccountId: formData.get('bankAccountId'), text: formData.get('csvText'), arquivo: nomeDoArquivoEscolhido };
         const result = await api('/api/finance/bank-transactions/import', {
           method: 'POST',
           body: JSON.stringify(corpo)
@@ -657,6 +766,11 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
           result.count === 0 && result.repetidas ? 'info' : 'success'
         );
         closeExtratoModal();
+        // A lista abre no arquivo que acabou de entrar.
+        if (result.importacaoId) {
+          filters.importacao = result.importacaoId;
+          page = 1;
+        }
         load();
       } catch (error) {
         showToast(error.message || 'Erro ao importar CSV.', 'error');
@@ -665,16 +779,71 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     });
   }
 
+  function cnpjFormatado(doc) {
+    const d = String(doc || '');
+    if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+    if (d.length === 8) return d.replace(/(\d{2})(\d{3})(\d{3})/, '$1.$2.$3');
+    return d;
+  }
+
   async function openConciliarModal(tx) {
     const txId = tx.id;
-    let matches = [];
+    // EMPRESA E CONTA (15/10/2026, pedido do usuário: "um filtro para empresa e
+    // contas bancárias para conseguir diferir de qual título se trata de qual
+    // empresa em qual conta"). O servidor filtra ANTES de escolher as melhores
+    // sugestões, e a busca manual vai pela mesma rota, com os mesmos filtros.
+    // A rota já sabe o tipo pela movimentação (entrada = receita, saída =
+    // despesa) e só oferece título em aberto.
+    const filtro = { empresa: '', conta: '' };
+    const sugestoes = (busca = '') => {
+      const params = new URLSearchParams();
+      if (filtro.empresa) params.set('empresa', filtro.empresa);
+      if (filtro.conta) params.set('conta', filtro.conta);
+      if (busca) params.set('busca', busca);
+      const q = params.toString();
+      return api(`/api/finance/bank-transactions/${encodeURIComponent(txId)}/matches${q ? `?${q}` : ''}`);
+    };
+    let primeira;
     try {
-      const res = await api(`/api/finance/bank-transactions/${txId}/matches`);
-      matches = res.matches || [];
+      primeira = await sugestoes();
     } catch (error) {
       showToast(error.message || 'Erro ao buscar possíveis correspondências.', 'error');
       return;
     }
+    const empresas = primeira.empresas || [];
+    const contas = primeira.contas || [];
+
+    // UM ENVIO POR VEZ (fase EI). A rota leva mais de um segundo e nada na
+    // tela mostrava isso: o segundo clique em "Conciliar com este" (ou num
+    // outro título) gravava uma SEGUNDA baixa para a mesma movimentação. A
+    // trava fica no escopo da janela e por isso vale também para os botões
+    // desenhados depois (filtro, busca manual). O servidor tem a dele
+    // (conciliacoesEmAndamento); esta evita até o pedido.
+    let enviando = false;
+
+    const empresaDoTitulo = (m) => {
+      if (!m.empresaNome && !m.empresaCnpj) return '-';
+      const cnpj = cnpjFormatado(m.empresaCnpj);
+      return m.empresaNome && cnpj ? `${m.empresaNome} · ${cnpj}` : (m.empresaNome || cnpj);
+    };
+    const itemDoTitulo = (m) => `
+      <div class="finance-due-item">
+        <div>
+          <strong>${escapeHtml(m.description)}</strong> ${matchScoreBadge(m.matchScore)}
+          <div class="muted">${escapeHtml(m.clienteFornecedor || '-')} · Vencimento: ${escapeHtml(financeFormatDate(m.dueDate))}</div>
+          <div class="muted">Empresa: ${escapeHtml(empresaDoTitulo(m))} · Conta: ${escapeHtml(m.bankAccountName || '-')}</div>
+        </div>
+        <div class="finance-due-item-amount">
+          ${financeFormatBRL(m.remaining)}
+          <button type="button" class="secondary" data-match-entry="${escapeHtml(m.id)}" ${enviando ? 'disabled' : ''}>Conciliar com este</button>
+        </div>
+      </div>`;
+    const opcaoDeEmpresa = (op) => {
+      if (op.valor === '-') return `Sem empresa (${op.quantidade})`;
+      const cnpj = cnpjFormatado(op.cnpj);
+      return `${op.rotulo}${cnpj && cnpj !== op.rotulo ? ` · ${cnpj}` : ''} (${op.quantidade})`;
+    };
+    const opcaoDeConta = (op) => (op.valor === '-' ? `Sem conta (${op.quantidade})` : `${op.rotulo} (${op.quantidade})`);
 
     closeExtratoModal();
     const overlay = document.createElement('div');
@@ -684,20 +853,21 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       <div class="modal modal-lg">
         <h3>Conciliar movimentação</h3>
         <p class="muted">${escapeHtml(financeFormatDate(tx.date))} · ${tx.type === 'entrada' ? 'Entrada' : 'Saída'} de ${escapeHtml(financeFormatBRL(tx.amount))} · ${escapeHtml(tx.description)}</p>
-        <div class="finance-due-list" id="extratoMatchesList">
-          ${matches.length ? matches.map((m) => `
-            <div class="finance-due-item">
-              <div>
-                <strong>${escapeHtml(m.description)}</strong> ${matchScoreBadge(m.matchScore)}
-                <div class="muted">${escapeHtml(m.clienteFornecedor || '-')} · Vencimento: ${escapeHtml(financeFormatDate(m.dueDate))}</div>
-              </div>
-              <div class="finance-due-item-amount">
-                ${financeFormatBRL(m.remaining)}
-                <button type="button" class="secondary" data-match-entry="${escapeHtml(m.id)}">Conciliar com este</button>
-              </div>
-            </div>
-          `).join('') : '<p class="muted">Nenhuma correspondência automática encontrada.</p>'}
+        <div class="row extrato-conciliar-filtros">
+          <label>Empresa
+            <select id="extratoConciliarEmpresa">
+              <option value="">Todas</option>
+              ${empresas.map((op) => `<option value="${escapeHtml(op.valor)}">${escapeHtml(opcaoDeEmpresa(op))}</option>`).join('')}
+            </select>
+          </label>
+          <label>Conta bancária
+            <select id="extratoConciliarConta">
+              <option value="">Todas</option>
+              ${contas.map((op) => `<option value="${escapeHtml(op.valor)}">${escapeHtml(opcaoDeConta(op))}</option>`).join('')}
+            </select>
+          </label>
         </div>
+        <div class="finance-due-list" id="extratoMatchesList"></div>
 
         <h4 style="margin-top:16px;">Buscar manualmente</h4>
         <div class="row">
@@ -714,13 +884,6 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     overlay.addEventListener('click', (event) => { if (event.target === overlay) closeExtratoModal(); });
     document.getElementById('extratoConciliarCancel')?.addEventListener('click', closeExtratoModal);
 
-    // UM ENVIO POR VEZ (fase EI). A rota leva mais de um segundo e nada na
-    // tela mostrava isso: o segundo clique em "Conciliar com este" (ou num
-    // outro título) gravava uma SEGUNDA baixa para a mesma movimentação. A
-    // trava fica no escopo da janela e por isso vale também para os botões da
-    // busca manual, desenhados depois. O servidor tem a dele
-    // (conciliacoesEmAndamento); esta evita até o pedido.
-    let enviando = false;
     const botoesDeConciliar = (desligar) => {
       overlay.querySelectorAll('[data-match-entry]').forEach((b) => { b.disabled = desligar; });
     };
@@ -741,54 +904,64 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       }
     }
 
-    overlay.querySelectorAll('[data-match-entry]').forEach((btn) => {
-      btn.addEventListener('click', () => doConciliar(btn.dataset.matchEntry));
-    });
+    const desenhar = (container, lista, vazio) => {
+      if (!container) return;
+      container.innerHTML = lista.length ? lista.map(itemDoTitulo).join('') : `<p class="muted">${vazio}</p>`;
+      container.querySelectorAll('[data-match-entry]').forEach((btn) => {
+        btn.addEventListener('click', () => doConciliar(btn.dataset.matchEntry));
+      });
+    };
+    const desenharSugestoes = (lista) => desenhar(document.getElementById('extratoMatchesList'), lista, 'Nenhuma correspondência automática encontrada.');
+    desenharSugestoes(primeira.matches || []);
 
-    // A BUSCA MANUAL PEDE SÓ O QUE PODE SER CONCILIADO (fase EI). Pedia 8
-    // lançamentos de qualquer tipo e situação e filtrava os pendentes depois:
-    // com os 8 primeiros já pagos, a lista saía vazia e o título em aberto
-    // existia; e uma despesa oferecida para uma entrada só dava erro ao
-    // clicar. Agora vai o tipo da movimentação (entrada = receita, saída =
-    // despesa) e 50 por busca — e só os em aberto, pelo filtro de várias
-    // situações da lista de Lançamentos (fase EI): antes, 50 pagos podiam
-    // ocupar a resposta inteira e esconder o pendente procurado. O filtro aqui
-    // embaixo fica como rede, para resposta de servidor antigo. A busca também
-    // acha pelo valor ("1.234,56") e pelo código (LF0042).
-    const tipoDoLancamento = tx.type === 'entrada' ? 'receita' : 'despesa';
+    // Cada pedido ganha um número; resposta atrasada (troca rápida de filtro)
+    // não sobrescreve a mais nova.
+    let pedidoDasSugestoes = 0;
+    let pedidoDaBusca = 0;
+    const termoDaBusca = () => String(document.getElementById('extratoManualSearch')?.value || '').trim();
+
+    async function buscarManual() {
+      const term = termoDaBusca();
+      const container = document.getElementById('extratoManualResults');
+      const este = ++pedidoDaBusca;
+      if (!term) {
+        if (container) container.innerHTML = '';
+        return;
+      }
+      try {
+        const res = await sugestoes(term);
+        if (este !== pedidoDaBusca) return;
+        desenhar(document.getElementById('extratoManualResults'), res.matches || [], 'Nenhum lançamento pendente encontrado.');
+      } catch (error) {
+        showToast(error.message || 'Erro ao buscar lançamentos.', 'error');
+      }
+    }
+
+    async function aplicarFiltro() {
+      filtro.empresa = document.getElementById('extratoConciliarEmpresa')?.value || '';
+      filtro.conta = document.getElementById('extratoConciliarConta')?.value || '';
+      const este = ++pedidoDasSugestoes;
+      try {
+        const res = await sugestoes();
+        if (este !== pedidoDasSugestoes) return;
+        desenharSugestoes(res.matches || []);
+      } catch (error) {
+        showToast(error.message || 'Erro ao buscar possíveis correspondências.', 'error');
+      }
+      buscarManual();
+    }
+    document.getElementById('extratoConciliarEmpresa')?.addEventListener('change', aplicarFiltro);
+    document.getElementById('extratoConciliarConta')?.addEventListener('change', aplicarFiltro);
+
+    // A BUSCA MANUAL PEDE SÓ O QUE PODE SER CONCILIADO (fase EI): o tipo da
+    // movimentação e só os em aberto, 50 por busca. Desde 15/10/2026 pela rota
+    // das sugestões, que aplica empresa e conta e lê o texto como a busca de
+    // Lançamentos (descrição, cliente/fornecedor, valor "1.234,56", código
+    // LF0042, CPF/CNPJ).
     let searchTimeout = null;
-    document.getElementById('extratoManualSearch')?.addEventListener('input', (event) => {
+    document.getElementById('extratoManualSearch')?.addEventListener('input', () => {
       clearTimeout(searchTimeout);
-      const term = event.target.value.trim();
-      searchTimeout = setTimeout(async () => {
-        if (!term) {
-          document.getElementById('extratoManualResults').innerHTML = '';
-          return;
-        }
-        try {
-          const res = await api(`/api/finance/entries?search=${encodeURIComponent(term)}&type=${tipoDoLancamento}&status=pendente,vencido,parcial&limit=50`);
-          const container = document.getElementById('extratoManualResults');
-          if (!container) return;
-          const pendentes = res.entries.filter((e) => e.rawStatus === 'pending' || e.rawStatus === 'parcial');
-          container.innerHTML = pendentes.length ? pendentes.map((e) => `
-            <div class="finance-due-item">
-              <div>
-                <strong>${escapeHtml(e.description)}</strong>
-                <div class="muted">${escapeHtml(e.clienteFornecedor || '-')} · Vencimento: ${escapeHtml(financeFormatDate(e.dueDate))}</div>
-              </div>
-              <div class="finance-due-item-amount">
-                ${financeFormatBRL(e.emAberto != null ? e.emAberto : e.amountPrevisto - e.amountRealizado)}
-                <button type="button" class="secondary" data-match-entry="${escapeHtml(e.id)}" ${enviando ? 'disabled' : ''}>Conciliar com este</button>
-              </div>
-            </div>
-          `).join('') : '<p class="muted">Nenhum lançamento pendente encontrado.</p>';
-          container.querySelectorAll('[data-match-entry]').forEach((btn) => {
-            btn.addEventListener('click', () => doConciliar(btn.dataset.matchEntry));
-          });
-        } catch (error) {
-          showToast(error.message || 'Erro ao buscar lançamentos.', 'error');
-        }
-      }, 300);
+      searchTimeout = setTimeout(buscarManual, 300);
     });
   }
 

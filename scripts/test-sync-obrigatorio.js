@@ -362,6 +362,9 @@ const PARCIAIS = {
     '/api/finance/entries/lote POST',
     '/api/finance/bank-transactions GET',
     '/api/finance/bank-transactions POST',
+    // 15/10/2026: a resposta da importação também serializa as transações
+    // novas (nenhuma conciliada) — lista vazia, sem ida ao banco.
+    '/api/finance/bank-transactions/import POST',
     '/api/finance/bank-transactions/:id/conciliar POST',
     '/api/finance/bank-transactions/:id/desconciliar POST'
   ],

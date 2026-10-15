@@ -5461,6 +5461,14 @@ function filterBankTransactions(data, query) {
   const bankAccountId = query.get('bankAccountId');
   if (bankAccountId) list = list.filter((tx) => tx.bankAccountId === bankAccountId);
 
+  // O arquivo importado de onde a movimentação veio (15/10/2026). Ver
+  // extratoBancario.importacoesDoExtrato.
+  const importacao = query.get('importacao');
+  if (importacao) {
+    const { porTransacao } = extratoBancario.importacoesDoExtrato(data.bankTransactions);
+    list = list.filter((tx) => porTransacao.get(tx.id) === importacao);
+  }
+
   const status = query.get('status');
   if (status) list = list.filter((tx) => tx.status === status);
 
@@ -5570,7 +5578,10 @@ function descontoDaTaxaDoCartao(entry, baixasAnteriores, valorDaTransacao) {
   return Math.round(taxa * 100) / 100;
 }
 
-function findBankTransactionMatches(tx, data) {
+// `filtro` e `limite` (15/10/2026): a janela de conciliar filtra por empresa,
+// conta e busca ANTES de escolher as melhores — filtrar as 8 já escolhidas
+// esconderia o título da empresa certa que ficou em 9º.
+function findBankTransactionMatches(tx, data, { filtro = null, limite = 8 } = {}) {
   const wantedType = tx.type === 'entrada' ? 'receita' : 'despesa';
   const txDate = parseDateOnly(tx.date);
   // Contraparte vinda de uma sincronização Open Finance de verdade
@@ -5586,6 +5597,7 @@ function findBankTransactionMatches(tx, data) {
       const status = String(entry.status || '').toLowerCase();
       return status === 'pending' || status === 'parcial';
     })
+    .filter((entry) => !filtro || filtro(entry))
     .map((entry) => {
       const payments = getFinanceEntryPayments(data, entry.id);
       const due = financeEntryEffectiveDue(entry, payments);
@@ -5602,7 +5614,7 @@ function findBankTransactionMatches(tx, data) {
       return { entry, remaining, amountDiff, daysDiff, documentMatch, nameMatch };
     })
     .sort((a, b) => (a.amountDiff - b.amountDiff) || (a.daysDiff - b.daysDiff))
-    .slice(0, 8);
+    .slice(0, limite);
 
   return candidates.map(({ entry, remaining, amountDiff, daysDiff, documentMatch, nameMatch }) => ({
     id: entry.id,
@@ -21415,7 +21427,10 @@ async function tratarRequisicao(req, res) {
       const semStatus = new URLSearchParams(url.searchParams);
       semStatus.delete('status');
       const summary = extratoBancario.resumoDoExtrato(filterBankTransactions(data, semStatus));
-      return sendJson(res, { transactions: pageItems, total: filtered.length, page, limit, summary });
+      // Os arquivos importados, cada um com o que sobra a conciliar (15/10/2026).
+      const importacoes = extratoBancario.importacoesDoExtrato(data.bankTransactions).lista
+        .map((imp) => ({ ...imp, bankAccountName: resolveById(data.bankAccounts, imp.bankAccountId) }));
+      return sendJson(res, { transactions: pageItems, total: filtered.length, page, limit, summary, importacoes });
     } catch (error) {
       return sendErro(res, error, 'Erro ao listar extrato', 500);
     }
@@ -21468,7 +21483,14 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const data = loadData();
-      const body = await readBody(req);
+      // Como na movimentação manual (fase DS): as transações novas nascem sem
+      // lançamento conciliado, e a resposta só precisa do nome da conta. Sem
+      // isto a resposta saía com a conta vazia.
+      const [body] = await Promise.all([
+        readBody(req),
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [])
+      ]);
       const bankAccountId = body.bankAccountId || '';
       if (!bankAccountId) {
         return sendJson(res, { error: 'Selecione a conta bancária de destino da importação' }, 400);
@@ -21515,6 +21537,11 @@ async function tratarRequisicao(req, res) {
         else semFitid.add(chaveDaTransacao(tx));
       });
 
+      // DE QUAL ARQUIVO (15/10/2026): toda linha desta importação leva o mesmo
+      // id e o nome do arquivo, para a tela separar e limpar por arquivo.
+      const importacaoId = createId('imp');
+      const arquivo = String(body.arquivo || '').trim().slice(0, 200);
+
       const created = [];
       let skipped = 0;
       let repetidas = 0;
@@ -21541,6 +21568,8 @@ async function tratarRequisicao(req, res) {
         const fitid = origemOfx ? String(row.fitid || '').trim().slice(0, 200) : '';
         const tx = buildBankTransaction({ bankAccountId, date, description, amount, type }, user, origemOfx ? 'ofx' : 'csv');
         if (fitid) tx.providerTransactionId = fitid;
+        tx.importacaoId = importacaoId;
+        tx.arquivo = arquivo;
         const chave = chaveDaTransacao(tx);
         // Os Sets recebem a chave junto: duas linhas iguais DENTRO do mesmo
         // arquivo também são uma só (no OFX, o mesmo FITID).
@@ -21566,10 +21595,57 @@ async function tratarRequisicao(req, res) {
         // A tela precisa poder dizer "N importadas, M já existiam": só o
         // número de importadas faria a segunda importação parecer ter falhado.
         repetidas,
+        importacaoId: created.length ? importacaoId : '',
         transactions: created.map((tx) => serializeBankTransaction(tx, data))
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao importar extrato', 400);
+    }
+  }
+
+  // LIMPAR UM ARQUIVO IMPORTADO (15/10/2026, pedido do usuário: "botão para
+  // limpar a área de títulos a serem conciliados por cada arquivo importado").
+  // Tira do extrato as movimentações desse arquivo que não têm baixa (não
+  // conciliadas e ignoradas); as conciliadas ficam. Sem elas, o mesmo arquivo
+  // pode ser importado de novo (na conta certa, por exemplo). DELETE: o portão
+  // cobra finance.excluir, como toda exclusão do Financeiro.
+  if (pathname.startsWith('/api/finance/bank-transactions/importacoes/') && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      // A conciliação lê o db.json, espera o banco e grava a cópia dela inteira
+      // no fim: no meio de uma, o que fosse limpo aqui voltaria.
+      if (conciliacoesEmAndamento.size) {
+        return sendJson(res, { error: 'Há uma conciliação em andamento. Aguarde alguns segundos e limpe de novo.' }, 409);
+      }
+      const id = decodeURIComponent(pathname.slice('/api/finance/bank-transactions/importacoes/'.length));
+      const data = loadData();
+      const { porTransacao, lista } = extratoBancario.importacoesDoExtrato(data.bankTransactions);
+      const importacao = lista.find((imp) => imp.id === id);
+      if (!importacao) {
+        return sendJson(res, { error: 'Arquivo importado não encontrado.' }, 404);
+      }
+      const sai = new Set(data.bankTransactions
+        .filter((tx) => porTransacao.get(tx.id) === id && extratoBancario.SITUACOES_QUE_O_LIMPAR_TIRA.includes(tx.status))
+        .map((tx) => tx.id));
+      if (!sai.size) {
+        return sendJson(res, { error: 'Este arquivo não tem movimentação a limpar: as que restam estão conciliadas.' }, 400);
+      }
+      data.bankTransactions = data.bankTransactions.filter((tx) => !sai.has(tx.id));
+      saveData(data);
+      await registrarAuditoria({
+        action: 'limparArquivoDoExtrato',
+        targetId: id,
+        targetUsername: `Arquivo ${importacao.arquivo || 'sem nome'} · ${resolveById(await db.getBankAccounts().catch(() => []), importacao.bankAccountId) || 'sem conta'}`,
+        byId: user.id,
+        byName: user.name,
+        details: { removidas: sai.size, conciliadasMantidas: importacao.conciliado, arquivo: importacao.arquivo, bankAccountId: importacao.bankAccountId }
+      });
+      return sendJson(res, { success: true, removidas: sai.size, mantidas: importacao.conciliado });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao limpar o arquivo importado', 400);
     }
   }
 
@@ -21597,9 +21673,65 @@ async function tratarRequisicao(req, res) {
     await Promise.all([
       syncCadastroData(data),
       syncPurchasesData(data),
+      syncFinanceCadastroData(data),
       syncLancamentosEmAberto(data)
     ]);
-    return sendJson(res, { matches: findBankTransactionMatches(tx, data) });
+    // EMPRESA E CONTA DE CADA TÍTULO, E O FILTRO DOS DOIS (15/10/2026, pedido
+    // do usuário: "um filtro para empresa e contas bancárias para conseguir
+    // diferir de qual título se trata de qual empresa em qual conta"). A
+    // empresa sai de empresasDosTitulos, como na lista de Lançamentos. As
+    // opções são as que os títulos candidatos têm, com quantos de cada; "-"
+    // escolhe os sem empresa (ou sem conta). A busca manual vem por aqui
+    // também (?busca=), com a mesma leitura da busca de Lançamentos, para
+    // respeitar os dois filtros.
+    const SEM = '-';
+    const tipoProcurado = tx.type === 'entrada' ? 'receita' : 'despesa';
+    const candidatos = data.finance.filter((entry) => classifyFinanceEntry(entry) === tipoProcurado
+      && ['pending', 'parcial'].includes(String(entry.status || '').toLowerCase()));
+    const empresaDe = await empresasDosTitulos(candidatos, data);
+    const chaveDaEmpresa = (entry) => {
+      const emp = empresaDe.get(entry.id);
+      return emp ? (emp.cnpj || emp.nome) : '';
+    };
+    const empresaPedida = String(url.searchParams.get('empresa') || '');
+    const contaPedida = String(url.searchParams.get('conta') || '');
+    const busca = String(url.searchParams.get('busca') || '').trim();
+    const achados = busca
+      ? new Set(filterFinanceEntries({ ...data, finance: candidatos }, new URLSearchParams({ search: busca })).map((entry) => entry.id))
+      : null;
+    const filtro = (entry) => (!empresaPedida || chaveDaEmpresa(entry) === (empresaPedida === SEM ? '' : empresaPedida))
+      && (!contaPedida || String(entry.bankAccountId || '') === (contaPedida === SEM ? '' : contaPedida))
+      && (!achados || achados.has(entry.id));
+    const porId = new Map(candidatos.map((entry) => [entry.id, entry]));
+    const matches = findBankTransactionMatches(tx, data, { filtro, limite: busca ? 50 : 8 }).map((m) => {
+      const entry = porId.get(m.id) || {};
+      const emp = empresaDe.get(m.id);
+      return {
+        ...m,
+        empresaNome: emp ? emp.nome : '',
+        empresaCnpj: emp ? emp.cnpj : '',
+        bankAccountName: resolveById(data.bankAccounts, entry.bankAccountId)
+      };
+    });
+    // Uma opção por chave, com o rótulo do primeiro título que a tem; as sem
+    // empresa (ou conta) por último.
+    const opcoes = (chaveDe, opcaoDe) => {
+      const mapa = new Map();
+      candidatos.forEach((entry) => {
+        const chave = chaveDe(entry) || SEM;
+        if (!mapa.has(chave)) mapa.set(chave, { rotulo: '', cnpj: '', ...(chave === SEM ? {} : opcaoDe(entry)), valor: chave, quantidade: 0 });
+        mapa.get(chave).quantidade += 1;
+      });
+      return [...mapa.values()].sort((a, b) => (a.valor === SEM) - (b.valor === SEM)
+        || a.rotulo.localeCompare(b.rotulo, 'pt-BR', { sensitivity: 'base' }));
+    };
+    const empresas = opcoes(chaveDaEmpresa, (entry) => {
+      const emp = empresaDe.get(entry.id);
+      return { rotulo: emp.nome || emp.cnpj, cnpj: emp.cnpj };
+    });
+    const contas = opcoes((entry) => String(entry.bankAccountId || ''),
+      (entry) => ({ rotulo: resolveById(data.bankAccounts, entry.bankAccountId) || String(entry.bankAccountId) }));
+    return sendJson(res, { matches, empresas, contas });
   }
 
   if (/^\/api\/finance\/bank-transactions\/[^/]+\/conciliar$/.test(pathname) && req.method === 'POST') {

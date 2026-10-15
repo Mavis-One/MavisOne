@@ -18,7 +18,8 @@ const ACCESS_AUDIT_ACTION_LABELS = {
   cancelarNfeFiscal: 'Cancelamento de NF-e (Focus)',
   emitirCartaCorrecaoFiscal: 'Carta de Correção (Focus)',
   inutilizarNumeracaoFiscal: 'Inutilização de numeração (Focus)',
-  conciliarTransacao: 'Conciliação de extrato bancário'
+  conciliarTransacao: 'Conciliação de extrato bancário',
+  limparArquivoDoExtrato: 'Limpeza de arquivo importado do extrato'
 };
 
 // Auditoria de Acesso — quem fez o quê, e o que foi barrado.

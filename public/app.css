@@ -5140,3 +5140,12 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .cc-empresas legend { padding: 0 6px; font-weight: 600; }
 .cc-empresa { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .cc-empresa input { width: auto; }
+
+/* Conciliação Bancária: os arquivos importados (15/10/2026). Recolhível; a
+   lista não cresce sem fim com meses de extratos. */
+.extrato-arquivos > summary { cursor: pointer; padding: 2px 0; }
+.extrato-arquivos[open] > summary { margin-bottom: 10px; }
+.extrato-arquivos .table-scroll { max-height: 340px; overflow-y: auto; }
+.extrato-arquivos .finance-extrato-actions { flex-wrap: nowrap; }
+/* A janela de conciliar: empresa e conta lado a lado, acima das sugestões. */
+.extrato-conciliar-filtros { gap: 12px; margin-top: 8px; }
