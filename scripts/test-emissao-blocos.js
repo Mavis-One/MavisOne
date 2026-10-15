@@ -46,6 +46,10 @@ check('os nove blocos com título (o de complemento só na nota complementar)', 
 ]));
 check('nenhuma aba sobrou', !/cadastro-tab|data-tab-panel|data-tab=/.test(src));
 check('nenhum bloco nasce escondido', !/class="nfe-bloco"[^>]*hidden/.test(src));
+// 15/10/2026, pedido do usuário: claro e escuro alternados, "assim como nas
+// tabelas" — escolhido bloco a bloco, no tom das linhas pares das tabelas.
+check('os blocos alternam claro e escuro (o tom das linhas pares das tabelas)',
+  /\.nfe-em-blocos > \.nfe-bloco:nth-of-type\(even\) \{\s*background: linear-gradient\(rgba\(var\(--text-rgb\), 0\.07\), rgba\(var\(--text-rgb\), 0\.07\)\), var\(--panel\);/.test(css));
 check('os blocos têm o visual dos do cadastro de produto', /\.nfe-bloco \{\s*display: grid; gap: 14px;\s*padding: 16px 18px;\s*border: 1px solid var\(--border\);\s*border-radius: 14px;/.test(css));
 
 console.log('\n--- as tags do formulário fecham certo ---');

@@ -5125,6 +5125,13 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   min-width: 0;
 }
 .nfe-bloco-titulo { margin: 0; font-size: 1rem; }
+/* Claro e escuro alternados, bloco a bloco (15/10/2026, pedido do usuário:
+   "cada campo de uma cor sequencial escalando entre claro e escuro, assim como
+   nas tabelas"; escolhido "bloco a bloco"). O mesmo tom das linhas pares das
+   tabelas, por cima da cor do painel: vale nos dois temas. */
+.nfe-em-blocos > .nfe-bloco:nth-of-type(even) {
+  background: linear-gradient(rgba(var(--text-rgb), 0.07), rgba(var(--text-rgb), 0.07)), var(--panel);
+}
 .nfe-totais { max-width: 420px; }
 .nfe-totais th { text-align: left; font-weight: 500; }
 @media (max-width: 640px) {
