@@ -2079,6 +2079,9 @@ tr[data-detail] { cursor: pointer; }
 .nfe-filtros > .nfe-filtro-busca { flex: 2 1 200px; }
 .nfe-filtro-acao { flex: 0 0 auto; display: flex; }
 .nfe-empresa { white-space: nowrap; }
+/* Busca única dos Cadastros, na tela inicial (15/10/2026). */
+.cadastro-busca-rapida { display: flex; gap: 8px; margin: 4px 0 14px; }
+.cadastro-busca-rapida input { flex: 1; min-width: 0; }
 /* A chave inteira na lista (15/10/2026): os 44 dígitos em blocos de 4, como na
    DANFE, em fonte de largura fixa e duas linhas (6 + 5 blocos). Numa linha só
    ela passava a tabela da tela em notebook (1440 px). O clique copia sem espaços. */

@@ -7636,13 +7636,20 @@ async function loadModule(moduleName) {
               </div>
             </div>
 
+            <!-- UM CAMPO SÓ PARA ACHAR O CADASTRO (15/10/2026, pedido do usuário):
+                 nome, nome fantasia e CPF/CNPJ eram três campos dentro de Filtros
+                 ("Nome / Nome fantasia", "CNPJ/CPF" e "Busca"). Este é o "Busca"
+                 de antes, sempre à vista; CPF/CNPJ com ou sem pontuação. Os
+                 filtros do painel continuam valendo junto. -->
+            <form id="cadastroBuscaRapida" class="cadastro-busca-rapida" role="search">
+              <input name="query" id="cadastroBuscaInput" value="${escapeHtml(listFilters.query)}"
+                     placeholder="Nome, nome fantasia, CPF ou CNPJ" aria-label="Buscar cadastro por nome, nome fantasia, CPF ou CNPJ" autocomplete="off" />
+              <button type="submit">Buscar</button>
+            </form>
+
             ${listFilters.show ? `
               <form id="cadastroFilterForm" class="cadastro-filter-panel">
                 <div class="cadastro-filter-grid-5">
-                  <label class="cadastro-field">
-                    <span>Nome / Nome fantasia</span>
-                    <input name="nameFantasy" value="${escapeHtml(listFilters.nameFantasy)}" />
-                  </label>
                   <label class="cadastro-field">
                     <span>Razao social</span>
                     <input name="corporateName" value="${escapeHtml(listFilters.corporateName)}" />
@@ -7663,10 +7670,6 @@ async function loadModule(moduleName) {
                     </select>
                   </label>
 
-                  <label class="cadastro-field">
-                    <span>CNPJ/CPF</span>
-                    <input name="document" value="${escapeHtml(listFilters.document)}" />
-                  </label>
                   <label class="cadastro-field">
                     <span>Cidade</span>
                     <input name="city" value="${escapeHtml(listFilters.city)}" />
@@ -7731,10 +7734,6 @@ async function loadModule(moduleName) {
                   <label><input type="checkbox" name="onlyInactive" ${listFilters.onlyInactive ? 'checked' : ''} /> Somente inativos</label>
                 </div>
 
-                <label class="cadastro-field cadastro-field-full">
-                  <span>Busca</span>
-                  <input name="query" value="${escapeHtml(listFilters.query)}" placeholder="Nome, documento, e-mail ou telefone" />
-                </label>
                 <div class="cadastro-filter-actions">
                   <button type="submit" id="cadastroFilterApplyBtn">Buscar</button>
                   <button type="button" class="secondary" id="cadastroFilterClearBtn">Limpar filtros</button>
@@ -7851,13 +7850,16 @@ async function loadModule(moduleName) {
             show: true,
             type: String(data.get('type') || 'all'),
             status: String(data.get('status') || 'all'),
-            query: String(data.get('query') || '').trim(),
-            nameFantasy: String(data.get('nameFantasy') || '').trim(),
+            // A busca mora no campo da tela inicial (15/10/2026); nome e
+            // documento do painel saíram — zerados, para um valor guardado de
+            // antes não filtrar escondido.
+            query: String(document.getElementById('cadastroBuscaInput')?.value || '').trim(),
+            nameFantasy: '',
             corporateName: String(data.get('corporateName') || '').trim(),
             uniqueCode: String(data.get('uniqueCode') || '').trim(),
             email: String(data.get('email') || '').trim(),
             categoryRole: String(data.get('categoryRole') || 'all'),
-            document: String(data.get('document') || '').trim(),
+            document: '',
             city: String(data.get('city') || '').trim(),
             zipCode: String(data.get('zipCode') || '').trim(),
             uf: String(data.get('uf') || '').trim(),
@@ -7900,6 +7902,26 @@ async function loadModule(moduleName) {
       cadastroFilterForm?.addEventListener('submit', (event) => {
         event.preventDefault();
         applyUnifiedFilters();
+      });
+
+      // O campo único (15/10/2026): com o painel aberto, Buscar leva os filtros
+      // dele junto; fechado, só troca a busca e mantém o resto como estava.
+      document.getElementById('cadastroBuscaRapida')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        if (cadastroFilterForm) { applyUnifiedFilters(); return; }
+        state.cadastroDraft = {
+          ...state.cadastroDraft,
+          listFilters: {
+            ...listFilters,
+            query: String(document.getElementById('cadastroBuscaInput')?.value || '').trim(),
+            nameFantasy: '',
+            document: '',
+            pagina: 1
+          }
+        };
+        state.activeSub = 'list';
+        renderApp();
+        loadModule('cadastros');
       });
 
       document.getElementById('cadastroFilterClearBtn')?.addEventListener('click', () => {

@@ -203,6 +203,12 @@
    */
   function filtrar(merged, listFilters, limites, memo) {
     const query = normalize(listFilters.query).trim();
+    // CPF/CNPJ (ou telefone) digitado com pontuação — "53.812.831/0001-24" — não
+    // casava com o documento, guardado só com dígitos (15/10/2026: a busca da
+    // tela inicial virou o campo único de nome e CPF/CNPJ). Busca feita só de
+    // dígitos e pontuação compara também os dígitos; 3 no mínimo, para "1"
+    // não trazer meio cadastro.
+    const digitosDaBusca = /^[\d.\-/\s()]+$/.test(String(listFilters.query || '').trim()) ? sanitizeDigits(listFilters.query) : '';
     const includesText = (fieldValue, filterValue) => normalize(fieldValue).includes(normalize(filterValue).trim());
     const roleVisibleMap = PAPEIS_EXIBIDOS.map(([chave, role]) => ({ role, enabled: listFilters[chave] }));
     const inicio = limites && limites.inicio ? new Date(limites.inicio) : null;
@@ -272,7 +278,8 @@
       }
 
       if (!query) return true;
-      return textoDeBusca(row).some((field) => field.includes(query));
+      if (textoDeBusca(row).some((field) => field.includes(query))) return true;
+      return digitosDaBusca.length >= 3 && [row.document, row.phone].some((v) => sanitizeDigits(v).includes(digitosDaBusca));
     });
 
     // O memo vive no processo do servidor (um só, PM2) e é chaveado pelo id:
