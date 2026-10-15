@@ -916,6 +916,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         showToast(editEntry ? 'Lançamento atualizado com sucesso.'
           : (quantas > 1 ? `${quantas} parcelas lançadas.` : 'Lançamento criado com sucesso.'), 'success');
         renderSuccess(result.entry, result.entries);
+        // O ÚLTIMO TÍTULO DA ENTRADA FECHA O LANÇAMENTO (15/10/2026, pedido do
+        // usuário): o resumo da entrada abre sozinho; ao fechá-lo, fica a volta
+        // à tela de onde a nota veio.
+        if (filaDaEntrada && filaDaEntrada.entradaId && window.MavisResumoEntrada) {
+          window.MavisResumoEntrada.abrir({ api, showToast, entradaId: filaDaEntrada.entradaId });
+        }
       } catch (error) {
         showToast(error.message || 'Erro ao salvar lançamento.', 'error');
         if (submitBtn) submitBtn.disabled = false;

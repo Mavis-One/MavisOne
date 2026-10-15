@@ -43,12 +43,41 @@ check('o movimento da entrada passa a guardar o id dela',
 
 console.log('\n--- a tela ---');
 check('nota lançada ganha "Ver entrada"', /if \(doc\.entradaId\) \{\s*botoes\.push\(`<button type="button" class="secondary" data-ver-entrada=/.test(tela));
-check('  que pede o resumo da entrada daquela nota', /api\(`\/api\/purchases\/entrada-nfe\/\$\{encodeURIComponent\(doc\.entradaId\)\}\/resumo`\)/.test(tela));
-check('  mostra manifestação e situação na SEFAZ (confirmação ou cancelamento)',
-  /linha\('Manifestação',/.test(tela) && /Cancelada pelo emitente/.test(tela));
-check('  depósito, itens, totais e contas a pagar',
-  /linha\('Depósito',/.test(tela) && /<h4>Itens<\/h4>/.test(tela) && /Total da nota/.test(tela) && /<h4>Contas a pagar<\/h4>/.test(tela));
+check('  que abre a janela compartilhada com a entrada daquela nota', /await window\.MavisResumoEntrada\.abrir\(\{ api, showToast, entradaId: doc\.entradaId \}\);/.test(tela));
 check('  sem o módulo Compras, avisa em vez de falhar', /O resumo da entrada é do módulo Compras/.test(tela));
+
+// 15/10/2026, segundo pedido: o resumo também em Notas de Entrada e abrindo
+// sozinho no fim do lançamento. A janela virou shared/resumo_entrada.js.
+console.log('\n--- a janela (shared/resumo_entrada.js) ---');
+const R = require('../public/modules/shared/resumo_entrada.js');
+const base = {
+  entrada: { numero: '42292', serie: '1', chave: '4'.repeat(44), dataEmissao: '2026-10-14', naturezaOperacao: 'Venda', emitenteNome: 'POSTO', emitenteDocumento: '07063295000941',
+    destinatarioNome: 'MATRIZ', destinatarioDocumento: '43792899000135', valorProdutos: 251.5, valorTotal: 251.5, status: 'LANCADA', gerouFinanceiro: true, criadoPorNome: 'Ana', criadoEm: '2026-10-15T15:00:00Z' },
+  itens: [{ numero: 1, descricao: 'Diesel', unidade: 'L', quantidade: 32.705, valorUnitario: 7.69, valorTotal: 251.5, produto: { nome: 'DIESEL', codigo: '100635' }, movimentouEstoque: true }],
+  depositos: [{ nome: 'Depósito Matriz', quantidade: 32.705 }],
+  titulos: [{ codigo: 'LF1', vencimento: '2026-11-14', valor: 251.5, status: 'pending' }],
+  recebida: { manifestacaoCodigo: '210200', situacao: 'cancelada' },
+  comValores: true
+};
+const comValores = R.desenhar(base);
+const semValores = R.desenhar({ ...base, comValores: false, entrada: { ...base.entrada, valorProdutos: null, valorTotal: null } });
+check('mostra manifestação e situação na SEFAZ (confirmação ou cancelamento)', /210200 - /.test(comValores) && /Cancelada pelo emitente/.test(comValores));
+check('depósito, itens, totais e contas a pagar', /Depósito Matriz \(32\.705\)/.test(comValores) && /DIESEL \(100635\)/.test(comValores)
+  && /Total da nota/.test(comValores) && /LF1/.test(comValores));
+check('sem valores (quem não é administrador): sem Unitário, Total e Valor', !/Unitário|Total da nota|<th class="col-valor">Valor<\/th>|R\$/.test(semValores) && /LF1/.test(semValores));
+check('o servidor manda os valores só a administrador', /resumoDaEntrada\(id, \{ comValores: await ehAdmin\(user\) \}\)/.test(server)
+  && /valorTotal: comValores \? entrada\.valorTotal : null,/.test(server) && /valor: comValores \? Number\(t\.amount \|\| 0\) : null,/.test(server));
+check('  e a manifestação e a situação da nota recebida', /from nfe_distribuicao\s*where entrada_id = \$1 or chave = \$2/.test(server));
+check('a janela é carregada na página', fs.readFileSync(path.join(__dirname, '..', 'public/index.html'), 'utf8').includes('/modules/shared/resumo_entrada.js'));
+
+console.log('\n--- onde mais ela abre ---');
+const entradaTela = ler('public/modules/purchases/subs/entrada_nfe.js');
+check('Notas de Entrada: "ver resumo" em cada linha de Últimas entradas', /data-resumo-entrada="\$\{escapeHtml\(e\.id\)\}">ver resumo<\/button>/.test(entradaTela)
+  && /window\.MavisResumoEntrada\.abrir\(\{ api, showToast, entradaId: botao\.dataset\.resumoEntrada \}\)/.test(entradaTela));
+check('fim do lançamento sem contas a pagar: abre logo depois de lançar', /desenhar\(\);\s*if \(window\.MavisResumoEntrada && idDaEntrada\) window\.MavisResumoEntrada\.abrir\(\{ api, showToast, entradaId: idDaEntrada \}\);/.test(entradaTela));
+check('  com contas a pagar: a fila leva a entrada', /entradaId: idDaEntrada,/.test(entradaTela));
+const titulo = ler('public/modules/finance/subs/novo_lancamento.js');
+check('  e o último título salvo abre o resumo', /renderSuccess\(result\.entry, result\.entries\);\s*if \(filaDaEntrada && filaDaEntrada\.entradaId && window\.MavisResumoEntrada\) \{\s*window\.MavisResumoEntrada\.abrir\(\{ api, showToast, entradaId: filaDaEntrada\.entradaId \}\);/.test(titulo));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
 process.exit(falhas ? 1 : 0);

@@ -4881,12 +4881,20 @@ async function addFinanceAuditLog(_data, { action, entry, byId, byName, details 
 // de antes só têm o documento "NF-e n/s", a origem 'entrada-nfe' e a data da
 // nota — com os produtos da nota, é o que separa duas notas de mesmo número
 // de fornecedores diferentes.
-async function resumoDaEntrada(id) {
+//
+// SEM OS VALORES para quem não é administrador (`comValores` false): a tela de
+// Notas de Entrada já os esconde dessa pessoa; aqui eles nem saem da API.
+//
+// A MANIFESTAÇÃO E A SITUAÇÃO vêm junto (15/10/2026): o resumo passou a abrir
+// também em Notas de Entrada e no fim do lançamento, onde a lista de Notas
+// contra CNPJ não está à mão. Da nota recebida ligada à entrada, ou da mesma
+// chave; entrada de XML arrastado sem nota recebida fica sem (null).
+async function resumoDaEntrada(id, { comValores = true } = {}) {
   const entrada = await entradaNfeDb.obterEntrada(id);
   if (!entrada) return null;
   const idsProdutos = [...new Set(entrada.itens.map((i) => i.produtoId).filter(Boolean))];
   const soDigitosLocal = (v) => String(v || '').replace(/\D/g, '');
-  const [produtos, depositos, titulos, estabelecimentos] = await Promise.all([
+  const [produtos, depositos, titulos, estabelecimentos, recebida] = await Promise.all([
     idsProdutos.length
       ? consultarBanco('select id, name, sku from products where id = any($1::text[])', [idsProdutos]).then((r) => r.rows).catch(() => [])
       : [],
@@ -4904,7 +4912,13 @@ async function resumoDaEntrada(id) {
       'select id, code, due_date, amount, status from financial_entries where reference_id = $1 order by due_date, code',
       [id]
     ).then((r) => r.rows).catch(() => []),
-    fiscalDb.getEstabelecimentos().catch(() => [])
+    fiscalDb.getEstabelecimentos().catch(() => []),
+    consultarBanco(
+      `select manifestacao_codigo, resumo->>'situacao' as situacao from nfe_distribuicao
+        where entrada_id = $1 or chave = $2
+        order by (entrada_id = $1) desc nulls last limit 1`,
+      [id, entrada.chave]
+    ).then((r) => r.rows[0] || null).catch(() => null)
   ]);
   const produtoPorId = new Map(produtos.map((p) => [p.id, p]));
   const destino = estabelecimentos.find((e) => soDigitosLocal(e.cnpj) === soDigitosLocal(entrada.destinatarioDocumento));
@@ -4921,8 +4935,8 @@ async function resumoDaEntrada(id) {
       emitenteDocumento: entrada.emitenteDocumento,
       destinatarioDocumento: entrada.destinatarioDocumento,
       destinatarioNome: destino ? (destino.nomeFantasia || destino.razaoSocial || '') : '',
-      valorProdutos: entrada.valorProdutos,
-      valorTotal: entrada.valorTotal,
+      valorProdutos: comValores ? entrada.valorProdutos : null,
+      valorTotal: comValores ? entrada.valorTotal : null,
       status: entrada.status,
       movimentouEstoque: entrada.movimentouEstoque,
       gerouFinanceiro: entrada.gerouFinanceiro,
@@ -4937,18 +4951,20 @@ async function resumoDaEntrada(id) {
         codigo: item.codigo,
         unidade: item.unidade,
         quantidade: item.quantidade,
-        valorUnitario: item.valorUnitario,
-        valorTotal: item.valorTotal,
+        valorUnitario: comValores ? item.valorUnitario : null,
+        valorTotal: comValores ? item.valorTotal : null,
         produto: produto ? { id: produto.id, nome: produto.name, codigo: produto.sku || '' } : null,
         movimentouEstoque: item.movimentouEstoque
       };
     }),
+    recebida: recebida ? { manifestacaoCodigo: recebida.manifestacao_codigo || '', situacao: recebida.situacao || 'autorizada' } : null,
+    comValores,
     depositos: depositos.map((d) => ({ nome: d.nome, quantidade: Number(d.quantidade || 0) })),
     titulos: titulos.map((t) => ({
       id: t.id,
       codigo: lancamentoCodigo.formatar(t.code),
       vencimento: dia(t.due_date),
-      valor: Number(t.amount || 0),
+      valor: comValores ? Number(t.amount || 0) : null,
       status: t.status
     }))
   };
@@ -17628,7 +17644,7 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
       const id = decodeURIComponent(pathname.replace('/api/purchases/entrada-nfe/', '').replace(/\/resumo$/, ''));
-      const resumo = await resumoDaEntrada(id);
+      const resumo = await resumoDaEntrada(id, { comValores: await ehAdmin(user) });
       if (!resumo) return sendJson(res, { error: 'Entrada não encontrada' }, 404);
       return sendJson(res, resumo);
     } catch (error) {

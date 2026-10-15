@@ -423,7 +423,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           <div class="table-scroll">
             <table class="table">
               <thead>
-                <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th>${veValores ? '<th class="entrada-col-num">Total</th>' : ''}<th>Situação</th>${veValores ? '<th>XML</th>' : ''}</tr>
+                <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th>${veValores ? '<th class="entrada-col-num">Total</th>' : ''}<th>Situação</th><th>Resumo</th>${veValores ? '<th>XML</th>' : ''}</tr>
               </thead>
               <tbody>
                 ${tela.entradas.map((e) => `
@@ -439,6 +439,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                       ${e.movimentouEstoque ? '<span class="finance-badge finance-badge-muted">estoque</span>' : ''}
                       ${e.gerouFinanceiro ? '<span class="finance-badge finance-badge-muted">financeiro</span>' : ''}
                     </td>
+                    <td><button type="button" class="entrada-link" data-resumo-entrada="${escapeHtml(e.id)}">ver resumo</button></td>
                     ${veValores ? `<td><button type="button" class="entrada-link" data-baixar-xml="${escapeHtml(e.id)}">baixar XML</button></td>` : ''}
                   </tr>
                 `).join('')}
@@ -511,6 +512,17 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
 
       content.querySelectorAll('[data-baixar-xml]').forEach((botao) => {
         botao.addEventListener('click', () => baixarXml(botao.dataset.baixarXml));
+      });
+      // O resumo da entrada (15/10/2026): a mesma janela das Notas contra CNPJ.
+      content.querySelectorAll('[data-resumo-entrada]').forEach((botao) => {
+        botao.addEventListener('click', async () => {
+          botao.disabled = true;
+          try {
+            await window.MavisResumoEntrada.abrir({ api, showToast, entradaId: botao.dataset.resumoEntrada });
+          } finally {
+            botao.disabled = false;
+          }
+        });
       });
 
       if (!tela.conferencia) return;
@@ -750,11 +762,12 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         if (resposta.financeiro?.length) partes.push(`${resposta.financeiro.length} ${resposta.financeiro.length === 1 ? 'conta a pagar criada' : 'contas a pagar criadas'}`);
         showToast(`${partes.join(' · ')}.`, 'success');
         const veioDoDfe = Boolean(tela.dfeId);
+        const idDaEntrada = (resposta.entrada && resposta.entrada.id) || resposta.id;
         const numeroDaNota = tela.conferencia && tela.conferencia.nota ? tela.conferencia.nota.numero : '';
         // A nota recebida (DF-e) fica ligada a esta entrada: a lista de Notas
         // contra CNPJ passa a mostrar "lançada" e para de oferecer a entrada.
         if (tela.dfeId) {
-          const entradaId = (resposta.entrada && resposta.entrada.id) || resposta.id;
+          const entradaId = idDaEntrada;
           try {
             await api(`/api/fiscal/dfe/${encodeURIComponent(tela.dfeId)}/entrada`, { method: 'POST', body: JSON.stringify({ entradaId }) });
           } catch (erroLigar) {
@@ -777,6 +790,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           state.financeFilaDaEntrada = {
             ids: titulos,
             nota: numeroDaNota ? `NF-e ${numeroDaNota}` : 'nota',
+            // O resumo abre sozinho depois do último título (novo_lancamento.js).
+            entradaId: idDaEntrada,
             volta: veioDoDfe
               ? { module: 'fiscal', sub: 'notas_contra_cnpj', rotulo: 'Voltar às Notas contra CNPJ' }
               : { module: 'purchases', sub: 'entrada_nfe', rotulo: 'Voltar às Notas de Entrada' }
@@ -791,6 +806,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         }
         await carregarEntradas();
         desenhar();
+        // O RESUMO NO FIM DO LANÇAMENTO (15/10/2026, pedido do usuário). Sem
+        // contas a pagar, o fim é aqui; com elas, depois do último título.
+        if (window.MavisResumoEntrada && idDaEntrada) window.MavisResumoEntrada.abrir({ api, showToast, entradaId: idDaEntrada });
       } catch (erro) {
         showToast(erro.message || 'Não consegui lançar a entrada.', 'error');
       } finally {

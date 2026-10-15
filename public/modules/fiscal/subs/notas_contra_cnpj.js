@@ -453,27 +453,12 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   }
 
   /**
-   * "Dar entrada": abre Compras › Entrada de NF-e com o XML desta nota, para
-   * conferir itens, depósito e contas a pagar antes de lançar. Ao lançar, a
-   * tela de entrada liga a entrada a este documento (ver entrada_nfe.js).
-   */
-  /**
    * O RESUMO DA ENTRADA (15/10/2026, pedido do usuário: "um botão após dar
    * entrada nas NF como forma de visualizar um resumo do que foi realizado na
-   * entrada (itens, valores, depósito, confirmação ou cancelamento)"). A nota,
-   * a manifestação e a situação na SEFAZ vêm desta lista; itens, depósito e
-   * contas a pagar, do servidor (resumoDaEntrada).
+   * entrada (itens, valores, depósito, confirmação ou cancelamento)"). A janela
+   * é a de shared/resumo_entrada.js, a mesma de Notas de Entrada e do fim do
+   * lançamento.
    */
-  const moeda = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  const diaBr = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : '-'; };
-  const documentoBr = (v) => {
-    const d = String(v || '').replace(/\D/g, '');
-    if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
-    if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
-    return d;
-  };
-  const SITUACAO_DO_TITULO = { paid: 'Pago', parcial: 'Parcial', cancelado: 'Cancelado' };
-
   async function verEntrada(documentoId, botao) {
     if (!(state.user?.allowedModules || []).includes('purchases')) {
       showToast('O resumo da entrada é do módulo Compras, que não está liberado para você.', 'warning');
@@ -482,92 +467,18 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     const doc = dados.documentos.find((d) => d.id === documentoId);
     if (!doc || !doc.entradaId) return;
     if (botao) botao.disabled = true;
-    let r;
     try {
-      r = await api(`/api/purchases/entrada-nfe/${encodeURIComponent(doc.entradaId)}/resumo`);
-    } catch (erro) {
-      showToast(erro.message || 'Não consegui abrir o resumo da entrada.', 'error');
-      return;
+      await window.MavisResumoEntrada.abrir({ api, showToast, entradaId: doc.entradaId });
     } finally {
       if (botao) botao.disabled = false;
     }
-    const e = r.entrada;
-    const hoje = new Date().toISOString().slice(0, 10);
-    const situacaoDoTitulo = (t) => SITUACAO_DO_TITULO[t.status] || (t.vencimento < hoje ? 'Vencido' : 'Em aberto');
-    const lancadaEm = e.criadoEm ? new Date(e.criadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
-    const linha = (rotulo, valor) => `<div class="dfe-resumo-linha"><span class="muted">${rotulo}</span><strong>${valor}</strong></div>`;
-    document.getElementById('dfeResumoModal')?.remove();
-    const overlay = document.createElement('div');
-    overlay.id = 'dfeResumoModal';
-    overlay.className = 'modal-overlay';
-    overlay.innerHTML = `
-      <div class="modal modal-lg dfe-resumo" role="dialog" aria-modal="true" aria-labelledby="dfeResumoTitulo">
-        <h3 id="dfeResumoTitulo">Entrada da NF-e ${escapeHtml(e.numero)}/${escapeHtml(e.serie)}</h3>
-        <div class="dfe-resumo-grade">
-          ${linha('Emitente', `${escapeHtml(e.emitenteNome)} · ${escapeHtml(documentoBr(e.emitenteDocumento))}`)}
-          ${linha('Recebida por', `${escapeHtml(e.destinatarioNome || '-')} · ${escapeHtml(documentoBr(e.destinatarioDocumento))}`)}
-          ${linha('Emissão', escapeHtml(diaBr(e.dataEmissao)))}
-          ${linha('Natureza', escapeHtml(e.naturezaOperacao || '-'))}
-          ${linha('Manifestação', doc.manifestacaoCodigo ? `${escapeHtml(doc.manifestacaoCodigo)} - ${escapeHtml(catalogo.rotulo(doc.manifestacaoCodigo))}` : 'Sem manifestação')}
-          ${linha('Situação na SEFAZ', String(doc.situacao || 'autorizada') === 'cancelada' ? '<span class="finance-negative">Cancelada pelo emitente</span>' : 'Autorizada')}
-          ${linha('Lançada', `${escapeHtml(lancadaEm)}${e.criadoPorNome ? ` por ${escapeHtml(e.criadoPorNome)}` : ''}`)}
-          ${linha('Entrada', e.status === 'REVISAR' ? '<span class="finance-negative">A revisar (item sem produto)</span>' : 'Completa')}
-          ${linha('Depósito', r.depositos.length
-            ? r.depositos.map((d) => `${escapeHtml(d.nome)} (${escapeHtml(String(d.quantidade))})`).join(', ')
-            : 'Não movimentou estoque')}
-          ${linha('Chave', `<span class="dfe-resumo-chave">${escapeHtml(e.chave)}</span>`)}
-        </div>
-
-        <h4>Itens</h4>
-        <div class="table-scroll">
-          <table class="table">
-            <thead><tr><th>#</th><th>Descrição na nota</th><th>Produto no estoque</th><th class="col-valor">Qtd</th><th class="col-valor">Unitário</th><th class="col-valor">Total</th><th>Estoque</th></tr></thead>
-            <tbody>
-              ${r.itens.map((i) => `<tr>
-                <td>${escapeHtml(String(i.numero))}</td>
-                <td>${escapeHtml(i.descricao)}</td>
-                <td>${i.produto ? `${escapeHtml(i.produto.nome)}${i.produto.codigo ? ` (${escapeHtml(i.produto.codigo)})` : ''}` : '<span class="finance-negative">sem produto</span>'}</td>
-                <td class="col-valor">${escapeHtml(String(i.quantidade))} ${escapeHtml(i.unidade || '')}</td>
-                <td class="col-valor">${moeda(i.valorUnitario)}</td>
-                <td class="col-valor">${moeda(i.valorTotal)}</td>
-                <td>${i.movimentouEstoque ? 'Entrou' : '<span class="muted">Não entrou</span>'}</td>
-              </tr>`).join('')}
-            </tbody>
-            <tfoot>
-              <tr><th colspan="5">Produtos</th><th class="col-valor">${moeda(e.valorProdutos)}</th><th></th></tr>
-              <tr><th colspan="5">Total da nota</th><th class="col-valor">${moeda(e.valorTotal)}</th><th></th></tr>
-            </tfoot>
-          </table>
-        </div>
-
-        <h4>Contas a pagar</h4>
-        ${r.titulos.length ? `
-        <div class="table-scroll">
-          <table class="table">
-            <thead><tr><th>Código</th><th>Vencimento</th><th class="col-valor">Valor</th><th>Situação</th></tr></thead>
-            <tbody>
-              ${r.titulos.map((t) => `<tr>
-                <td>${escapeHtml(t.codigo || '-')}</td>
-                <td>${escapeHtml(diaBr(t.vencimento))}</td>
-                <td class="col-valor">${moeda(t.valor)}</td>
-                <td>${escapeHtml(situacaoDoTitulo(t))}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>` : `<p class="muted">${e.gerouFinanceiro ? 'Nenhuma conta a pagar encontrada.' : 'Sem contas a pagar.'}</p>`}
-
-        <div class="modal-actions">
-          <button type="button" class="btn-muted" id="dfeResumoFechar">Fechar</button>
-        </div>
-      </div>`;
-    const fechar = () => { overlay.remove(); document.removeEventListener('keydown', aoTeclar); };
-    const aoTeclar = (ev) => { if (ev.key === 'Escape') fechar(); };
-    document.addEventListener('keydown', aoTeclar);
-    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) fechar(); });
-    document.body.appendChild(overlay);
-    document.getElementById('dfeResumoFechar')?.addEventListener('click', fechar);
   }
 
+  /**
+   * "Dar entrada": abre Compras › Entrada de NF-e com o XML desta nota, para
+   * conferir itens, depósito e contas a pagar antes de lançar. Ao lançar, a
+   * tela de entrada liga a entrada a este documento (ver entrada_nfe.js).
+   */
   function darEntrada(documentoId) {
     if (!(state.user?.allowedModules || []).includes('purchases')) {
       showToast('Dar entrada é do módulo Compras, que não está liberado para você.', 'warning');
