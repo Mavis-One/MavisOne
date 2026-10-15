@@ -1055,7 +1055,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // da nota; o servidor monta a prévia com isso (POST /api/fiscal/nfe/previa)
   // e a tela mostra o que ele montou — nenhum imposto é calculado aqui.
   const GRUPOS_FISCAIS = [
-    { titulo: 'Classificação', campos: [['cfop', 'CFOP'], ['ncm', 'NCM'], ['origem', 'Origem'], ['cstIcms', 'CST / CSOSN'], ['codigoBeneficioFiscal', 'cBenef']] },
+    // CEST ao lado do NCM (15/10/2026, pedido do usuário): vem do cadastro do
+    // produto pela prévia e pode ser digitado aqui, como o NCM.
+    { titulo: 'Classificação', campos: [['cfop', 'CFOP'], ['ncm', 'NCM'], ['cest', 'CEST'], ['origem', 'Origem'], ['cstIcms', 'CST / CSOSN'], ['codigoBeneficioFiscal', 'cBenef']] },
     { titulo: 'ICMS', campos: [['baseIcms', 'Base'], ['aliquotaIcms', 'Alíquota %'], ['valorIcms', 'Valor'], ['reducaoBcIcms', 'Redução BC %']] },
     { titulo: 'ICMS-ST', campos: [['baseIcmsSt', 'Base'], ['aliquotaIcmsSt', 'Alíquota %'], ['valorIcmsSt', 'Valor'], ['mvaSt', 'MVA %']] },
     // CST 60 / CSOSN 500 (14/10/2026): o ST retido na compra. Vem da última
@@ -1069,7 +1071,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // item) vezes a alíquota, e é a alíquota que se edita.
     { titulo: 'IBS/CBS', campos: [['cstIbsCbs', 'CST'], ['classTrib', 'cClassTrib'], ['aliquotaIbsUf', 'IBS UF %'], ['aliquotaIbsMun', 'IBS Mun. %'], ['aliquotaCbs', 'CBS %'], ['valorIbs', 'IBS (valor)'], ['valorCbs', 'CBS (valor)']] }
   ];
-  const CAMPOS_DE_TEXTO = ['cfop', 'ncm', 'cstIcms', 'codigoBeneficioFiscal', 'cstIpi', 'cstPis', 'cstCofins', 'cstIbsCbs', 'classTrib'];
+  const CAMPOS_DE_TEXTO = ['cfop', 'ncm', 'cest', 'cstIcms', 'codigoBeneficioFiscal', 'cstIpi', 'cstPis', 'cstCofins', 'cstIbsCbs', 'classTrib'];
   // Pedido do usuário (14/10/2026): os CST se ESCOLHEM na lista, e nos grupos
   // de imposto só o percentual se digita. Base e valor saem do servidor (base
   // do item × alíquota), já com o que a regra fiscal carregou.

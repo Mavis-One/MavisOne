@@ -7991,6 +7991,13 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     // O resto da edição é aplicado pelo montador (lib/nfePayloadBuilder.js).
     item.fiscal = limparEdicaoFiscal(bruto.fiscal);
     if (item.fiscal.ncm) item.ncm = String(item.fiscal.ncm).replace(/\D/g, '');
+    // CEST digitado na aba Impostos (15/10/2026) vale como o NCM digitado.
+    if (item.fiscal.cest) item.cest = String(item.fiscal.cest).replace(/\D/g, '');
+    if (item.cest && String(item.cest).replace(/\D/g, '').length !== 7) {
+      const err = new Error(`Item ${index + 1} (${item.descricao || 'sem descrição'}): o CEST tem 7 dígitos (informado: ${item.cest}).`);
+      err.status = 400;
+      throw err;
+    }
     if (item.fiscal.origem !== undefined) item.origem = Number(item.fiscal.origem);
 
     if (!item.ncm) {
