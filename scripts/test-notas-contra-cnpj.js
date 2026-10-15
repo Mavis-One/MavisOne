@@ -217,7 +217,30 @@ check('campo de pesquisa e botão Filtros acima da lista', tela.includes('<form 
 check('  filtros: data inicial e final, nome do emitente, empresa', ['name="de"', 'name="ate"', 'name="nome"', 'name="empresa"'].every((n) => tela.includes(n)));
 check('  CNPJ, chave e número com ou sem pontuação; o número sai da chave', tela.includes('return c.length === 44 ? String(Number(c.slice(25, 34))) : \'\';')
   && tela.includes("const qDigitos = /^[\\d.\\-/\\s]+$/.test(texto) ? soDigitos(texto) : '';"));
-check('colunas De (emitente) e Para (destinatário), com nome e CNPJ', tela.includes('<th>De (emitente)</th><th>Para (destinatário)</th><th>Nº</th>'));
+// Desde 15/10/2026 os títulos ordenam (tituloOrdenavel).
+check('colunas De (emitente) e Para (destinatário), com nome e CNPJ',
+  tela.includes("emitente: { rotulo: 'De (emitente)'") && tela.includes("destinatario: { rotulo: 'Para (destinatário)'")
+  && tela.includes("${tituloOrdenavel('emitente')}${tituloOrdenavel('destinatario')}${tituloOrdenavel('numero')}"));
+
+// ORDENAR E FILTRAR PARA ORGANIZAR (15/10/2026, pedido do usuário: "eu pedi um
+// botão de ordenação e filtro para organizar, e também uma opção 'Atualizar
+// todas as empresas'"). Provado no navegador com as 540 notas da matriz:
+// "Maior valor" põe a de R$ 988.211,27 primeiro; clicar em Data inverte;
+// Manifestação = Ciência dá 109 de 540; não manifestadas + canceladas, 13.
+console.log('\n--- ordenar, filtrar e atualizar todas ---');
+check('seletor "Ordenar" ao lado de Filtros, começando pelas mais recentes',
+  tela.includes('<select id="dfeOrdem">') && tela.includes("tela.ordem = tela.ordem || { campo: 'data', direcao: 'desc' };"));
+check('  com as ordens de uso diário', ["'data:desc'", "'valor:desc'", "'emitente:asc'", "'manifestacao:asc'"].every((o) => tela.includes(o)));
+check('o título da coluna ordena (mesma coluna inverte, outra começa crescente)',
+  /tela\.ordem = tela\.ordem\.campo === campo\s*\? \{ campo, direcao: tela\.ordem\.direcao === 'asc' \? 'desc' : 'asc' \}\s*: \{ campo, direcao: 'asc' \};/.test(tela));
+check('  empate sai pela data, das recentes para as antigas', /if \(cmp\) return cmp \* sinal;\s*return String\(b\.dataEmissao/.test(tela));
+check('filtros de manifestação (inclusive "não manifestadas") e de situação',
+  tela.includes('<option value="nao"') && /if \(f\.manifestacao === 'nao' && doc\.manifestacaoCodigo\) return false;/.test(tela)
+  && /if \(f\.situacao && String\(doc\.situacao \|\| 'autorizada'\) !== f\.situacao\) return false;/.test(tela));
+check('  a situação vem do resumo da Focus', ler('lib/db/dfe.js').includes("situacao: String((row.resumo && row.resumo.situacao) || ''),"));
+check('"Atualizar todas as empresas" à vista no topo, ao lado da busca na SEFAZ',
+  /<div class="dfe-acoes-topo">\s*<button type="button" class="secondary" id="dfeAtualizarTodas"/.test(tela)
+  && (tela.match(/id="dfeAtualizarTodas"/g) || []).length === 1);
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

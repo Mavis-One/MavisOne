@@ -2090,6 +2090,10 @@ tr[data-detail] { cursor: pointer; }
 .dfe-contagem { margin: 0 0 10px; }
 .dfe-parte strong { display: block; font-weight: 600; }
 .dfe-parte .muted { display: block; font-size: 0.8rem; }
+/* Ordenar e "Atualizar todas as empresas" (15/10/2026). */
+.dfe-acoes-topo { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.dfe-ordem { display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
+.dfe-ordem select { min-width: 210px; }
 /* Empresa do título nas listas do Financeiro (15/10/2026). */
 .fin-empresa { display: inline-flex; flex-direction: column; line-height: 1.25; }
 .fin-empresa .muted { font-size: 0.78rem; }

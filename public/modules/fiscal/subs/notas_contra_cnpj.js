@@ -27,8 +27,14 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   // pesquisa e botão de filtros aqui também: data, nome, empresa"). A lista
   // inteira já está na tela (/api/fiscal/dfe), então filtrar é na hora.
   tela.pesquisa = tela.pesquisa || '';
-  tela.filtros = tela.filtros || { de: '', ate: '', nome: '', empresa: '' };
+  // + manifestação e situação (15/10/2026, pedido do usuário: "botão de
+  // ordenação e filtro para organizar").
+  const FILTROS_VAZIOS = { de: '', ate: '', nome: '', empresa: '', manifestacao: '', situacao: '' };
+  tela.filtros = { ...FILTROS_VAZIOS, ...(tela.filtros || {}) };
   tela.filtrosAbertos = Boolean(tela.filtrosAbertos);
+  // A ORDEM DA LISTA: pelo seletor "Ordenar" ou clicando no título da coluna
+  // (o mesmo clique da lista de produtos). Começa pelas mais recentes.
+  tela.ordem = tela.ordem || { campo: 'data', direcao: 'desc' };
 
   let dados = { documentos: [], empresas: [], ponteiros: {}, focusConfigurado: false };
 
@@ -81,6 +87,9 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
       if (f.ate && dia && dia > f.ate) return false;
       if (f.empresa && soDigitos(doc.cnpjDestinatario) !== f.empresa) return false;
       if (f.nome && !semAcento(doc.emitenteNome).includes(semAcento(f.nome))) return false;
+      if (f.manifestacao === 'nao' && doc.manifestacaoCodigo) return false;
+      if (f.manifestacao && f.manifestacao !== 'nao' && doc.manifestacaoCodigo !== f.manifestacao) return false;
+      if (f.situacao && String(doc.situacao || 'autorizada') !== f.situacao) return false;
       if (!q) return true;
       if ([doc.emitenteNome, nomeDaFilial(doc)].some((t) => semAcento(t).includes(q))) return true;
       if (!qDigitos) return false;
@@ -89,14 +98,66 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     });
   }
 
+  // AS ORDENS: o rótulo da coluna e o valor que se compara. Empate sai pela
+  // data, das mais recentes para as antigas.
+  const MANIFESTACAO_PESO = { '': 0, 210210: 1, 210200: 2, 210240: 3, 210220: 4 };
+  const ORDENAVEIS = {
+    emitente: { rotulo: 'De (emitente)', valor: (d) => semAcento(d.emitenteNome) },
+    destinatario: { rotulo: 'Para (destinatário)', valor: (d) => semAcento(nomeDaFilial(d)) },
+    numero: { rotulo: 'Nº', valor: (d) => Number(numeroDaNota(d.chave) || 0) },
+    data: { rotulo: 'Data', valor: (d) => String(d.dataEmissao || '') },
+    valor: { rotulo: 'Valor', valor: (d) => Number(d.valorTotal || 0) },
+    nsu: { rotulo: 'NSU', valor: (d) => Number(d.nsu || 0) },
+    manifestacao: { rotulo: 'Manifestado', valor: (d) => MANIFESTACAO_PESO[d.manifestacaoCodigo || ''] ?? 9 }
+  };
+  // O seletor "Ordenar" (as combinações de uso diário, num clique).
+  const ORDENS_DO_SELETOR = [
+    { valor: 'data:desc', rotulo: 'Mais recentes' },
+    { valor: 'data:asc', rotulo: 'Mais antigas' },
+    { valor: 'valor:desc', rotulo: 'Maior valor' },
+    { valor: 'valor:asc', rotulo: 'Menor valor' },
+    { valor: 'emitente:asc', rotulo: 'Emitente (A–Z)' },
+    { valor: 'destinatario:asc', rotulo: 'Empresa (A–Z)' },
+    { valor: 'numero:desc', rotulo: 'Número da nota' },
+    { valor: 'manifestacao:asc', rotulo: 'Não manifestadas primeiro' }
+  ];
+  function docsOrdenados(docs) {
+    const def = ORDENAVEIS[tela.ordem.campo] || ORDENAVEIS.data;
+    const sinal = tela.ordem.direcao === 'asc' ? 1 : -1;
+    return docs.slice().sort((a, b) => {
+      const va = def.valor(a);
+      const vb = def.valor(b);
+      const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'pt-BR');
+      if (cmp) return cmp * sinal;
+      return String(b.dataEmissao || '').localeCompare(String(a.dataEmissao || ''));
+    });
+  }
+  function tituloOrdenavel(campo) {
+    const def = ORDENAVEIS[campo];
+    const ativa = tela.ordem.campo === campo;
+    const seta = ativa ? (tela.ordem.direcao === 'asc' ? '▲' : '▼') : '';
+    const proxima = ativa && tela.ordem.direcao === 'asc' ? 'decrescente' : 'crescente';
+    return `<th aria-sort="${ativa ? (tela.ordem.direcao === 'asc' ? 'ascending' : 'descending') : 'none'}">
+      <button type="button" class="lista-ordenar ${ativa ? 'is-ativa' : ''}" data-dfe-ordenar="${campo}" title="Ordenar por ${escapeHtml(def.rotulo)} em ordem ${proxima}">
+        <span>${escapeHtml(def.rotulo)}</span><span class="lista-ordenar-seta" aria-hidden="true">${seta}</span>
+      </button></th>`;
+  }
+
   function blocoPesquisa(total, achadas) {
     const f = tela.filtros;
-    const filtrando = Boolean(String(tela.pesquisa || '').trim() || f.de || f.ate || f.nome || f.empresa);
+    const filtrando = Boolean(String(tela.pesquisa || '').trim() || f.de || f.ate || f.nome || f.empresa || f.manifestacao || f.situacao);
+    const ordemAtual = `${tela.ordem.campo}:${tela.ordem.direcao}`;
     return `
       <form id="dfePesquisa" class="cadastro-busca-rapida dfe-pesquisa" role="search">
         <input id="dfePesquisaTexto" value="${escapeHtml(tela.pesquisa)}" placeholder="Emitente, CNPJ, número ou chave" aria-label="Pesquisar notas por emitente, CNPJ, número ou chave" autocomplete="off" />
         <button type="submit">Buscar</button>
         <button type="button" class="secondary" id="dfeFiltrosBtn" aria-expanded="${tela.filtrosAbertos}">Filtros</button>
+        <label class="dfe-ordem">Ordenar
+          <select id="dfeOrdem">
+            ${ORDENS_DO_SELETOR.some((o) => o.valor === ordemAtual) ? '' : `<option value="${escapeHtml(ordemAtual)}" selected>${escapeHtml((ORDENAVEIS[tela.ordem.campo] || {}).rotulo || '')} ${tela.ordem.direcao === 'asc' ? '▲' : '▼'}</option>`}
+            ${ORDENS_DO_SELETOR.map((o) => `<option value="${o.valor}" ${o.valor === ordemAtual ? 'selected' : ''}>${escapeHtml(o.rotulo)}</option>`).join('')}
+          </select>
+        </label>
       </form>
       ${tela.filtrosAbertos ? `
         <form id="dfeFiltros" class="dfe-filtros">
@@ -107,6 +168,20 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
             <select name="empresa">
               <option value="">Todas</option>
               ${(dados.empresas || []).map((e) => `<option value="${escapeHtml(soDigitos(e.cnpj))}" ${f.empresa === soDigitos(e.cnpj) ? 'selected' : ''}>${escapeHtml(e.nome)} — ${cnpjFormatado(e.cnpj)}</option>`).join('')}
+            </select>
+          </label>
+          <label>Manifestação
+            <select name="manifestacao">
+              <option value="">Todas</option>
+              <option value="nao" ${f.manifestacao === 'nao' ? 'selected' : ''}>Não manifestadas</option>
+              ${catalogo.CATALOGO.map((m) => `<option value="${m.codigo}" ${f.manifestacao === m.codigo ? 'selected' : ''}>${escapeHtml(m.label)}</option>`).join('')}
+            </select>
+          </label>
+          <label>Situação
+            <select name="situacao">
+              <option value="">Todas</option>
+              <option value="autorizada" ${f.situacao === 'autorizada' ? 'selected' : ''}>Autorizada</option>
+              <option value="cancelada" ${f.situacao === 'cancelada' ? 'selected' : ''}>Cancelada</option>
             </select>
           </label>
           <div class="dfe-filtros-acoes">
@@ -173,7 +248,6 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         ${blocoPonteiro()}
         <div class="row">
           <button type="button" id="dfeBuscar" ${tela.ocupado ? 'disabled' : ''}>${tela.ocupado && !tela.todas ? 'Consultando a SEFAZ…' : 'Buscar'}</button>
-          <button type="button" class="secondary" id="dfeAtualizarTodas" ${tela.ocupado ? 'disabled' : ''}>${tela.todas ? `Atualizando ${tela.todas.feitas + 1} de ${tela.todas.total}…` : 'Atualizar todas as empresas'}</button>
           <button type="button" class="secondary" id="dfeFecharBusca">Fechar</button>
         </div>
       </section>
@@ -226,13 +300,16 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   }
 
   function desenhar() {
-    const docs = docsFiltrados();
+    const docs = docsOrdenados(docsFiltrados());
     const total = (dados.documentos || []).length;
     content.innerHTML = `
       <div class="panel">
         <div class="panel-header">
           <h3>Notas emitidas contra CNPJ</h3>
-          <button type="button" id="dfeAbrirBusca">Buscar documentos na SEFAZ</button>
+          <div class="dfe-acoes-topo">
+            <button type="button" class="secondary" id="dfeAtualizarTodas" ${tela.ocupado ? 'disabled' : ''}>${tela.todas ? `Atualizando ${tela.todas.feitas + 1} de ${tela.todas.total}…` : 'Atualizar todas as empresas'}</button>
+            <button type="button" id="dfeAbrirBusca">Buscar documentos na SEFAZ</button>
+          </div>
         </div>
         ${avisoDeToken()}
         ${blocoBusca()}
@@ -242,9 +319,9 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
             <thead>
               <tr>
                 <!-- De quem é a nota e para quem vai (15/10/2026, pedido do usuário). -->
-                <th>De (emitente)</th><th>Para (destinatário)</th><th>Nº</th>
-                <th>Chave de Acesso</th><th>Data</th><th>Valor</th><th>NSU</th>
-                <th>Manifestado</th><th>Tipo Manifestação</th><th>Entrada</th><th>Ações</th>
+                ${tituloOrdenavel('emitente')}${tituloOrdenavel('destinatario')}${tituloOrdenavel('numero')}
+                <th>Chave de Acesso</th>${tituloOrdenavel('data')}${tituloOrdenavel('valor')}${tituloOrdenavel('nsu')}
+                ${tituloOrdenavel('manifestacao')}<th>Tipo Manifestação</th><th>Entrada</th><th>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -392,15 +469,33 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
       const fd = new FormData(e.currentTarget);
       tela.filtros = {
         de: String(fd.get('de') || ''), ate: String(fd.get('ate') || ''),
-        nome: String(fd.get('nome') || '').trim(), empresa: String(fd.get('empresa') || '')
+        nome: String(fd.get('nome') || '').trim(), empresa: String(fd.get('empresa') || ''),
+        manifestacao: String(fd.get('manifestacao') || ''), situacao: String(fd.get('situacao') || '')
       };
       tela.pesquisa = String(document.getElementById('dfePesquisaTexto')?.value || '').trim();
       desenhar();
     });
     document.getElementById('dfeLimparFiltros')?.addEventListener('click', () => {
-      tela.filtros = { de: '', ate: '', nome: '', empresa: '' };
+      tela.filtros = { ...FILTROS_VAZIOS };
       tela.pesquisa = '';
       desenhar();
+    });
+    // ORDENAR: o seletor e o clique no título (mesma coluna inverte; outra
+    // começa crescente, como na lista de produtos).
+    document.getElementById('dfeOrdem')?.addEventListener('change', (e) => {
+      const [campo, direcao] = String(e.target.value || 'data:desc').split(':');
+      tela.ordem = { campo, direcao };
+      tela.pesquisa = String(document.getElementById('dfePesquisaTexto')?.value || '').trim();
+      desenhar();
+    });
+    content.querySelectorAll('[data-dfe-ordenar]').forEach((botao) => {
+      botao.addEventListener('click', () => {
+        const campo = botao.dataset.dfeOrdenar;
+        tela.ordem = tela.ordem.campo === campo
+          ? { campo, direcao: tela.ordem.direcao === 'asc' ? 'desc' : 'asc' }
+          : { campo, direcao: 'asc' };
+        desenhar();
+      });
     });
     document.getElementById('dfeAbrirBusca')?.addEventListener('click', () => {
       tela.busca = tela.busca || { modo: 'ultimo-nsu', empresaId: dados.empresas[0]?.id || '' };
