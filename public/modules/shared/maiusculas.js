@@ -1,4 +1,5 @@
-// TUDO O QUE O USUÁRIO DIGITA OU INCLUI FICA EM MAIÚSCULA (12/10/2026).
+// TUDO O QUE O USUÁRIO DIGITA OU INCLUI FICA EM MAIÚSCULA (12/10/2026), SEM
+// ACENTO E SEM CARACTERE ESPECIAL (15/10/2026 — ver padronizar, abaixo).
 //
 // Pedido do usuário: "todas as informações que os usuários cadastrarem fiquem
 // em letra maiúscula ... independente do caps lock ... em todo o sistema".
@@ -29,7 +30,10 @@ window.MavisMaiusculas = (function () {
   // Nome, id, autocomplete ou placeholder que dizem "isto não é texto livre".
   // `url` e `link` em qualquer posição (logoUrl, mapLink): endereço da web tem
   // diferença entre maiúscula e minúscula, e o link do mapa quebraria.
-  const SENSIVEL = /senha|password|passw|e-?mail|token|csc|secret|segredo|url|link|maps|http|www|site|webhook|usuario|username|login|apikey|api_key|certificado|\bpix\b|chave_?pix|instagram|busca|buscar|search|filtro|filtrar|filter|pesquis/i;
+  // `pix` em qualquer posição (pixKey: a chave pode ser e-mail ou aleatória, com
+  // @ e hífen) e `csv` (o texto colado de uma importação precisa das vírgulas e
+  // aspas) — 15/10/2026, junto do bloqueio de caractere especial.
+  const SENSIVEL = /senha|password|passw|e-?mail|token|csc|secret|segredo|url|link|maps|http|www|site|webhook|usuario|username|login|apikey|api_key|certificado|pix|csv|instagram|busca|buscar|search|filtro|filtrar|filter|pesquis/i;
 
   function elegivel(el) {
     if (!el || el.disabled || el.readOnly) return false;
@@ -50,18 +54,38 @@ window.MavisMaiusculas = (function () {
     return !SENSIVEL.test(pistas);
   }
 
-  /** Converte o valor sem pular o cursor (maiúscula não muda o tamanho em pt-BR). */
+  // SEM ACENTO E SEM CARACTERE ESPECIAL (15/10/2026, pedido do usuário:
+  // "gostaria de deixar padronizado as fontes do sistema, bloqueie qualquer
+  // tipo de acento ou de caractere especial"). O acento sai e a letra fica
+  // (Á→A, Ç→C, Ã→A); o resto que não é letra, número ou espaço é tirado,
+  // MENOS esta pontuação, sem a qual o texto do cadastro e da nota quebra:
+  //   . , - /  endereço e razão social ("AV. BRASIL, 1.200 - SALA 3", "S/N",
+  //            "S/A", "LTDA.");
+  //   ( ) : ;  a observação da NF-e ("GARANTIA: 90 DIAS");
+  //   |        o separador das observações da NF-e (DANFE em uma folha).
+  // Quebra de linha fica: observação tem parágrafo.
+  const FORA_DO_PADRAO = /[^A-Z0-9 .,\-/():;|\n\r]/g;
+  function padronizar(valor) {
+    return String(valor)
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLocaleUpperCase('pt-BR')
+      .replace(FORA_DO_PADRAO, '');
+  }
+
+  /** Converte o valor sem pular o cursor (ele anda o que saiu antes dele). */
   function converter(el) {
     const valor = el.value;
-    const maiusculo = valor.toLocaleUpperCase('pt-BR');
-    if (maiusculo === valor) return false;
+    const padrao = padronizar(valor);
+    if (padrao === valor) return false;
     let inicio = null;
     let fim = null;
     try { inicio = el.selectionStart; fim = el.selectionEnd; } catch (e) { /* tipo sem seleção */ }
-    el.value = maiusculo;
+    el.value = padrao;
     const focado = typeof document !== 'undefined' && document.activeElement === el;
-    if (typeof inicio === 'number' && focado && maiusculo.length === valor.length) {
-      try { el.setSelectionRange(inicio, fim); } catch (e) { /* idem */ }
+    if (typeof inicio === 'number' && focado) {
+      const novoInicio = padronizar(valor.slice(0, inicio)).length;
+      const novoFim = typeof fim === 'number' ? padronizar(valor.slice(0, fim)).length : novoInicio;
+      try { el.setSelectionRange(novoInicio, novoFim); } catch (e) { /* idem */ }
     }
     return true;
   }
@@ -98,7 +122,7 @@ window.MavisMaiusculas = (function () {
     }, true);
   }
 
-  const api = { elegivel, converter, converterTodos, ligar, SENSIVEL };
+  const api = { elegivel, converter, converterTodos, ligar, padronizar, SENSIVEL };
   if (typeof document !== 'undefined') ligar(document);
   return api;
 })();

@@ -40,7 +40,26 @@ check('  textarea de observações', M.elegivel(campo({ tag: 'TEXTAREA', name: '
 check('  campo sem type (texto por padrão)', M.elegivel(campo({ type: '', name: 'nome' })));
 const c = campo({ name: 'name', valor: 'joão da silva ção' });
 M.converter(c);
-check('converte com acento, no padrão pt-BR', c.value === 'JOÃO DA SILVA ÇÃO', c.value);
+// 15/10/2026, pedido do usuário: "bloqueie qualquer tipo de acento ou de
+// caractere especial" — o acento sai e a letra fica.
+check('converte sem acento: Ã→A, Ç→C', c.value === 'JOAO DA SILVA CAO', c.value);
+check('caractere especial sai: @ # $ % & * ! ? º ª ° " \' _ = + [ ] { } < > ~ ^',
+  M.padronizar('m&m @#$%*!?º ª° "d\'avila" _=+[]{}<>~^') === 'MM   DAVILA ', JSON.stringify(M.padronizar('m&m @#$%*!?º ª° "d\'avila" _=+[]{}<>~^')));
+check('  a pontuação de endereço, razão social e observação da NF-e fica',
+  M.padronizar('Av. Brasil, 1.200 - sala 3 (fundos) S/N; garantia: 90 dias | cor: azul') === 'AV. BRASIL, 1.200 - SALA 3 (FUNDOS) S/N; GARANTIA: 90 DIAS | COR: AZUL');
+check('  e a quebra de linha da observação', M.padronizar('linha 1\nlinha 2') === 'LINHA 1\nLINHA 2');
+{
+  // O cursor anda o que saiu antes dele: "aç|ão" com o cursor depois do ç.
+  global.document = { activeElement: null };
+  const el = campo({ name: 'name', valor: 'a@ção' });
+  let posicao = null;
+  el.selectionStart = 3; el.selectionEnd = 3;
+  el.setSelectionRange = (i, f) => { posicao = [i, f]; };
+  document.activeElement = el;
+  M.converter(el);
+  check('  sem pular o cursor quando caractere sai', el.value === 'ACAO' && JSON.stringify(posicao) === '[2,2]', `${el.value} ${JSON.stringify(posicao)}`);
+  delete global.document;
+}
 
 console.log('\n--- 2. o que NÃO vira (e quebraria se virasse) ---');
 const fora = [
@@ -63,6 +82,10 @@ const fora = [
   ['número', campo({ type: 'number', name: 'qtd' })],
   ['data', campo({ type: 'date', name: 'data' })],
   ['saída explícita data-sem-maiuscula', campo({ name: 'nome', dentroDe: ['[data-sem-maiuscula]'] })],
+  // 15/10/2026: com o bloqueio de caractere especial, a chave PIX (e-mail,
+  // aleatória com hífen) e o texto da importação CSV não podem passar.
+  ['chave PIX (pixKey)', campo({ name: 'pixKey' })],
+  ['texto colado de importação CSV', campo({ tag: 'TEXTAREA', name: 'csvText' })],
   ['somente leitura', campo({ name: 'nome', readOnly: true })]
 ];
 for (const [rotulo, el] of fora) check(`  ${rotulo}`, !M.elegivel(el));
@@ -72,7 +95,7 @@ const src = fs.readFileSync(path.join(RAIZ, 'public/modules/shared/maiusculas.js
 check('converte ao digitar, mas não no meio de um acento (composição)', /if \(evento\.isComposing\) return;/.test(src) && /'compositionend'/.test(src));
 check('converte antes de salvar: submit e clique na fase de CAPTURA', /addEventListener\('submit', [^\n]*, true\)/.test(src) && /addEventListener\('click', [\s\S]{0,300}\}, true\);/.test(src));
 check('e ao sair do campo (blur, captura)', /addEventListener\('blur', [\s\S]{0,120}\}, true\);/.test(src));
-check('preserva o cursor', /setSelectionRange\(inicio, fim\)/.test(src));
+check('preserva o cursor', /setSelectionRange\(novoInicio, novoFim\)/.test(src));
 const html = fs.readFileSync(path.join(RAIZ, 'public/index.html'), 'utf8');
 const posModulo = html.indexOf('/modules/shared/maiusculas.js');
 check('carregado em todas as telas, antes do app.js', posModulo > 0 && posModulo < html.indexOf('src="/app.js'));
