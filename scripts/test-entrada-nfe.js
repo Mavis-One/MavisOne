@@ -213,7 +213,10 @@ const minhaPropria = entrada.montarConferencia({
   nota, diretorio: [], produtos: [],
   documentosProprios: ['11222333000181']
 });
-check('nota emitida por mim mesmo é BLOQUEIO', minhaPropria.bloqueios.some((b) => b.chave === 'emitente-proprio'));
+// 15/10/2026, pedido do usuário ("retire esse bloqueio"): nota emitida por você
+// é AVISO, não bloqueio.
+check('nota emitida por mim mesmo é AVISO, não bloqueio', !minhaPropria.bloqueios.some((b) => b.chave === 'emitente-proprio')
+  && minhaPropria.avisos.some((a) => a.chave === 'emitente-proprio'));
 
 const outroDestinatario = entrada.montarConferencia({
   nota, diretorio: [], produtos: [],
@@ -323,8 +326,12 @@ console.log('\n--- nota de uma filial para outra ---');
   check('matriz -> filial (mesma raiz): entra, como transferência', !bloqueado(transf) && transf.transferencia === true && transf.avisos.some((a) => a.chave === 'transferencia'));
   const grupo = conferir('43792899000135', '46877837000114');
   check('Plus -> Electric (raízes diferentes): entra como compra', !bloqueado(grupo) && grupo.transferencia === false);
-  check('nota própria para cliente continua barrada', bloqueado(conferir('43792899000135', '07000399961')));
-  check('mesmo CNPJ nos dois lados continua barrado', bloqueado(conferir('43792899000135', '43792899000135')));
+  // 15/10/2026, segunda parte: nenhuma nota própria é barrada; vira aviso.
+  const avisado = (c) => c.avisos.some((a) => a.chave === 'emitente-proprio');
+  const paraCliente = conferir('43792899000135', '07000399961');
+  check('nota própria para cliente entra, com aviso (não é mais bloqueio)', !bloqueado(paraCliente) && avisado(paraCliente) && paraCliente.transferencia === false);
+  const mesmoCnpj = conferir('43792899000135', '43792899000135');
+  check('mesmo CNPJ nos dois lados entra, com aviso', !bloqueado(mesmoCnpj) && avisado(mesmoCnpj));
   check('fornecedor -> nós segue normal', !bloqueado(conferir('05824631000149', '43792899000135')));
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   check('transferência não gera contas a pagar (servidor)', srv.includes('const querFinanceiro = body.gerarFinanceiro !== false && !conferencia.transferencia;'));
