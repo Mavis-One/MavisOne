@@ -49,15 +49,27 @@
     {
       id: 'aprovar', icone: 'check', grupo: 'Fluxo de venda', label: 'Aprovar', tone: 'success',
       // Aprovar significa coisas diferentes conforme o documento: orçamento
-      // vira "Orçamento Aprovado", pedido vai para "Faturado". Uma ação só, com
-      // o destino decidido por registro — separar em duas obrigaria a pessoa a
-      // selecionar duas vezes.
-      destino: (r) => (ehPedido(r) ? 'pedido-faturado' : 'orcamento-aprovado'),
-      confirma: 'Aprovar os selecionados? Pedidos serão faturados: o estoque baixa e as contas a receber são geradas.',
+      // vira "Orçamento Aprovado", pedido vai para "Pré-Faturado". Uma ação só,
+      // com o destino decidido por registro — separar em duas obrigaria a
+      // pessoa a selecionar duas vezes.
+      //
+      // PRÉ-FATURADO, COMO O "APROVAR PEDIDO" DE DENTRO DO PEDIDO (15/10/2026,
+      // pedido do usuário: "verifique o motivo das mais ações dentro dos
+      // pedidos e orçamentos não estarem funcionando"). Aqui o pedido ia direto
+      // para "Faturado", e faturar sem nota é recusado (fase AV): o Aprovar da
+      // lista não aprovava pedido nenhum. Quem fatura é a autorização da nota.
+      destino: (r) => (ehPedido(r) ? 'pedido-pre-faturado' : 'orcamento-aprovado'),
+      confirma: 'Aprovar os selecionados? Orçamentos passam a Aprovado; pedidos a Pré-Faturado, e em seguida se gera a NF-e ou a NFC-e de cada um (a autorização da nota baixa o estoque e gera as contas a receber).',
       elegivel: (r) => {
-        const destino = ehPedido(r) ? 'pedido-faturado' : 'orcamento-aprovado';
-        if (S.normalizar(r.status) === destino) return 'Já está nesse estado.';
-        if (!S.podeTransicionar(r.status, destino)) return S.motivoDaRecusa(r.status, destino);
+        if (ehPedido(r)) {
+          if (S.geraFinanceiro(r.status)) return 'Este pedido já está faturado.';
+          if (S.ehCancelado(r.status)) return 'Pedido cancelado não pode ser aprovado.';
+          if (S.normalizar(r.status) === 'pedido-pre-faturado') return 'Já está aprovado — gere a NF-e ou a NFC-e.';
+          if (!S.podeTransicionar(r.status, 'pedido-pre-faturado')) return S.motivoDaRecusa(r.status, 'pedido-pre-faturado');
+          return true;
+        }
+        if (S.normalizar(r.status) === 'orcamento-aprovado') return 'Já está nesse estado.';
+        if (!S.podeTransicionar(r.status, 'orcamento-aprovado')) return S.motivoDaRecusa(r.status, 'orcamento-aprovado');
         return true;
       }
     },
@@ -111,35 +123,62 @@
         return true;
       }
     },
-    { id: 'editar', icone: 'edit', grupo: 'Registro', label: 'Editar', elegivel: EM_BREVE('Edição em lote') },
-    { id: 'observacoes', icone: 'comment', grupo: 'Registro', label: 'Observações', elegivel: EM_BREVE('Observação em lote') },
+    // AS AÇÕES DE UM REGISTRO SÓ (15/10/2026). `noPedido` é a ação do "Mais
+    // Ações" de dentro do pedido (sales_record_actions.js): com um selecionado,
+    // a lista abre o pedido e roda ali a ação dele — mesma regra, mesmo
+    // caminho. Antes estas apareciam aqui como "ainda não existe", embora
+    // existissem dentro do pedido. Com mais de um selecionado, `soUm` as
+    // desliga dizendo por quê (ver avaliar).
+    { id: 'editar', icone: 'edit', grupo: 'Registro', label: 'Editar', noPedido: '', soUm: true, elegivel: () => true },
+    { id: 'observacoes', icone: 'comment', grupo: 'Registro', label: 'Observações', noPedido: 'observacoes', soUm: true, elegivel: () => true },
 
     // --- Fiscal ---------------------------------------------------------------
     {
-      // Emissão em lote não entra enquanto a emissão de UMA nota depender de
-      // escolha de estabelecimento, operação fiscal e conferência de item a
-      // item. Nota fiscal errada não se apaga: cancela-se, e cancelamento tem
-      // prazo de 24 h.
-      id: 'nfe', icone: 'file', grupo: 'Fiscal', label: 'NF-e',
-      elegivel: () => 'Emissão em lote não existe: cada nota exige escolher estabelecimento e operação fiscal. Emita pelo pedido.'
+      // Emissão em LOTE não existe: cada nota exige escolher estabelecimento e
+      // operação fiscal, e nota errada não se apaga (cancela-se, em 24 h). Uma
+      // por vez, sim — a de dentro do pedido.
+      id: 'nfe', icone: 'file', grupo: 'Fiscal', label: 'NF-e', noPedido: 'gerar_nfe', soUm: true,
+      elegivel: (r) => {
+        if (!ehPedido(r)) return 'Só pedido gera NF-e — aprove o orçamento primeiro.';
+        if (S.ehCancelado(r.status)) return 'Pedido cancelado não emite NF-e.';
+        if (S.normalizar(r.status) !== 'pedido-pre-faturado' && !S.baixaEstoque(r.status)) return 'Aprove o pedido antes de emitir a nota.';
+        return true;
+      }
     },
-    // NFC-e sai uma por pedido, pela tela dele: escolher a loja e imprimir o
-    // DANFCe de cada uma não cabe num lote.
-    { id: 'nfce', icone: 'barcode', grupo: 'Fiscal', label: 'NFC-e / CF-e', elegivel: () => 'Emita pelo pedido: abra o pedido e use Mais Ações › Emitir NFC-e.' },
+    {
+      id: 'nfce', icone: 'barcode', grupo: 'Fiscal', label: 'NFC-e / CF-e', noPedido: 'emitir_nfce', soUm: true,
+      elegivel: (r) => {
+        if (!ehPedido(r)) return 'Só pedido emite NFC-e — aprove o orçamento primeiro.';
+        if (S.ehCancelado(r.status)) return 'Pedido cancelado não emite NFC-e.';
+        if (S.normalizar(r.status) !== 'pedido-pre-faturado' && !S.baixaEstoque(r.status)) return 'Aprove o pedido antes de emitir a nota.';
+        return true;
+      }
+    },
     { id: 'nfse', icone: 'tool', grupo: 'Fiscal', label: 'NFS-e', elegivel: EM_BREVE('NFS-e') },
     { id: 'cte', icone: 'truck', grupo: 'Fiscal', label: 'CT-e', elegivel: EM_BREVE('CT-e') },
 
     // --- Documentos -----------------------------------------------------------
-    { id: 'imprimir', icone: 'printer', grupo: 'Documentos', label: 'Imprimir', elegivel: IMPRESSAO_EM_BREVE },
-    { id: 'impressao_direta', icone: 'printer', grupo: 'Documentos', label: 'Impressão Direta', elegivel: IMPRESSAO_EM_BREVE },
-    { id: 'baixar', icone: 'download', grupo: 'Documentos', label: 'Baixar', elegivel: IMPRESSAO_EM_BREVE },
+    // Um por vez, pela tela do pedido (o documento é montado a partir dela).
+    // Em lote continua dependendo de extrair o construtor do documento.
+    { id: 'imprimir', icone: 'printer', grupo: 'Documentos', label: 'Imprimir', noPedido: 'imprimir', soUm: true, elegivel: () => true },
+    { id: 'impressao_direta', icone: 'printer', grupo: 'Documentos', label: 'Impressão Direta', noPedido: 'impressao_direta', soUm: true, elegivel: () => true },
+    { id: 'baixar', icone: 'download', grupo: 'Documentos', label: 'Baixar', noPedido: 'baixar', soUm: true, elegivel: () => true },
     { id: 'email', icone: 'mail', grupo: 'Documentos', label: 'Enviar por E-mail', elegivel: EM_BREVE('Envio por e-mail') },
     { id: 'etiqueta', icone: 'tag', grupo: 'Documentos', label: 'Imprimir Etiqueta de Expedição', elegivel: EM_BREVE('Etiqueta de expedição') },
 
     // --- Expedição e Produção -------------------------------------------------
     { id: 'ordem_expedicao', icone: 'truck', grupo: 'Expedição', label: 'Gerar Ordem de Expedição', elegivel: EM_BREVE('Ordem de expedição') },
     { id: 'ver_expedicao', icone: 'list', grupo: 'Expedição', label: 'Ver Ordens de Expedição', elegivel: EM_BREVE('Ordem de expedição') },
-    { id: 'op_individual', icone: 'factory', grupo: 'Produção', label: 'Gerar Ordens de Produção Individual', elegivel: EM_BREVE('Ordem de produção a partir do pedido') },
+    {
+      // Uma OP por item com ficha técnica — o "Gerar Ordem de Produção" de
+      // dentro do pedido. As agrupadas (por venda, por produto) não existem.
+      id: 'op_individual', icone: 'factory', grupo: 'Produção', label: 'Gerar Ordens de Produção Individual', noPedido: 'ordem_producao', soUm: true,
+      elegivel: (r) => {
+        if (!ehPedido(r)) return 'Só pedido gera ordem de produção — aprove o orçamento primeiro.';
+        if (S.ehCancelado(r.status)) return 'Pedido cancelado não gera produção.';
+        return true;
+      }
+    },
     { id: 'op_por_venda', icone: 'factory', grupo: 'Produção', label: 'Gerar Ordens de Produção Agrupado por Venda', elegivel: EM_BREVE('Ordem de produção a partir do pedido') },
     { id: 'op_por_produto', icone: 'factory', grupo: 'Produção', label: 'Gerar Ordens de Produção Agrupado por Produto', elegivel: EM_BREVE('Ordem de produção a partir do pedido') }
   ];
@@ -154,6 +193,11 @@
     if (!acao) return { acao: null, elegiveis: [], ignorados: [] };
     const elegiveis = [];
     const ignorados = [];
+    // A ação que abre o pedido age sobre UM registro (ver `noPedido`).
+    if (acao.soUm && (registros || []).length > 1) {
+      (registros || []).forEach((registro) => ignorados.push({ registro, motivo: 'Esta ação abre o pedido: selecione um registro só.' }));
+      return { acao, elegiveis, ignorados };
+    }
     (registros || []).forEach((registro) => {
       const veredito = acao.elegivel(registro);
       if (veredito === true) elegiveis.push(registro);

@@ -3636,6 +3636,17 @@ async function loadModule(moduleName) {
             const { elegiveis, ignorados } = window.MavisSalesBulkActions.avaliar(acaoId, selecionados);
             if (!elegiveis.length) return;
 
+            // AÇÃO DE UM REGISTRO SÓ (15/10/2026): abre o pedido e roda lá a
+            // ação do "Mais Ações" dele (Editar, Observações, NF-e, NFC-e,
+            // Imprimir, Baixar, Ordem de Produção). Ver `noPedido` no catálogo.
+            if (acao.noPedido !== undefined) {
+              draft.selecionados = [];
+              draft.showLoteMenu = false;
+              state.salesDraft.acaoAoAbrir = acao.noPedido;
+              abrirRegistroDaLista(elegiveis[0].id);
+              return;
+            }
+
             // Imprimir/Baixar rodam na tela: o documento é montado aqui, não no
             // servidor. Mandar ao servidor seria pedir para ele redesenhar o
             // que a tela já tem.
@@ -5953,6 +5964,21 @@ async function loadModule(moduleName) {
             if (salvar) {
               salvar.disabled = true;
               salvar.title = 'Este pedido/orçamento é de outro vendedor.';
+            }
+          }
+
+          // A AÇÃO ESCOLHIDA NA LISTA (15/10/2026): o "Mais Ações" da lista
+          // abriu este pedido para rodar uma ação dele. Roda uma vez, pela
+          // mesma regra do menu daqui; sem poder, diz o motivo.
+          const acaoDaLista = state.salesDraft.acaoAoAbrir;
+          if (acaoDaLista !== undefined && acaoDaLista !== null) {
+            state.salesDraft.acaoAoAbrir = null;
+            const acaoDoPedido = window.MavisSalesRecordActions.CATALOG.find((a) => a.id === acaoDaLista);
+            if (acaoDoPedido) {
+              const contexto = salesRecordActionsContext();
+              const pode = typeof acaoDoPedido.enabled === 'function' ? acaoDoPedido.enabled(contexto) : true;
+              if (pode === true) setTimeout(() => acaoDoPedido.run(contexto), 0);
+              else showToast(String(pode), 'warning');
             }
           }
 

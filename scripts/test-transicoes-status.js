@@ -150,7 +150,9 @@ const orcamento = { id: '3', type: 'quote', status: 'orcamento', code: 3 };
 const comNota = { id: '4', type: 'order', status: 'pedido', nfeId: 'nfe-1', code: 4 };
 
 const aprovar = B.avaliar('aprovar', [faturado, pedido, orcamento]);
-check('aprovar: já faturado é ignorado', aprovar.elegiveis.length === 2 && /Já está nesse estado/.test(aprovar.ignorados[0].motivo));
+// Desde 15/10/2026 o Aprovar da lista leva o pedido a Pré-Faturado, como o de
+// dentro do pedido (ver test-mais-acoes-da-lista.js).
+check('aprovar: já faturado é ignorado', aprovar.elegiveis.length === 2 && /já está faturado/.test(aprovar.ignorados[0].motivo));
 const excluir = B.avaliar('excluir', [faturado, pedido, comNota]);
 // Faturado tem estoque baixado e financeiro gerado; sumir com o registro
 // deixaria os dois sem origem.
