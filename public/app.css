@@ -5159,3 +5159,14 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .extrato-arquivos .finance-extrato-actions { flex-wrap: nowrap; }
 /* A janela de conciliar: empresa e conta lado a lado, acima das sugestões. */
 .extrato-conciliar-filtros { gap: 12px; margin-top: 8px; }
+
+/* Notas contra CNPJ: o resumo da entrada lançada (15/10/2026). */
+.dfe-resumo h4 { margin: 18px 0 8px; }
+.dfe-resumo-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 24px; margin-top: 8px; }
+.dfe-resumo-linha { display: grid; gap: 2px; min-width: 0; }
+.dfe-resumo-linha strong { font-weight: 600; overflow-wrap: anywhere; }
+.dfe-resumo-chave { font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; }
+/* A janela mais larga e as descrições quebrando linha: com as sete colunas
+   dos itens, a tabela passava da janela e ganhava rolagem lateral. */
+.modal.dfe-resumo { width: min(1100px, 96vw); max-width: min(1100px, 96vw); }
+.dfe-resumo .table td { white-space: normal; }

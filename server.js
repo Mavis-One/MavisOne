@@ -4869,6 +4869,91 @@ async function addFinanceAuditLog(_data, { action, entry, byId, byName, details 
 //   2. a Focus de novo (GET /nfes_recebidas/{chave}), que pode ter recebido o
 //      XML completo depois da manifestação.
 // Null quando nenhuma das duas tem.
+// O RESUMO DE UMA ENTRADA LANÇADA (15/10/2026, pedido do usuário: "um botão
+// após dar entrada nas NF como forma de visualizar um resumo do que foi
+// realizado na entrada (itens, valores, depósito, confirmação ou
+// cancelamento)"). A entrada e os itens, com o produto vinculado; o depósito,
+// dos movimentos de estoque dela; o estabelecimento que recebeu; e as contas a
+// pagar que ela gerou. Manifestação e situação da nota a tela já tem (vêm da
+// lista de Notas contra CNPJ).
+//
+// O DEPÓSITO: desde hoje o movimento leva o id da entrada (reference_id). Os
+// de antes só têm o documento "NF-e n/s", a origem 'entrada-nfe' e a data da
+// nota — com os produtos da nota, é o que separa duas notas de mesmo número
+// de fornecedores diferentes.
+async function resumoDaEntrada(id) {
+  const entrada = await entradaNfeDb.obterEntrada(id);
+  if (!entrada) return null;
+  const idsProdutos = [...new Set(entrada.itens.map((i) => i.produtoId).filter(Boolean))];
+  const soDigitosLocal = (v) => String(v || '').replace(/\D/g, '');
+  const [produtos, depositos, titulos, estabelecimentos] = await Promise.all([
+    idsProdutos.length
+      ? consultarBanco('select id, name, sku from products where id = any($1::text[])', [idsProdutos]).then((r) => r.rows).catch(() => [])
+      : [],
+    consultarBanco(
+      `select d.name as nome, sum(m.quantity)::float as quantidade
+         from stock_movements m join deposits d on d.id = m.deposit_id
+        where m.type = 'entrada'
+          and (m.reference_id = $1
+               or (m.reference_id = '' and m.origin = 'entrada-nfe' and m.document = $2
+                   and m.product_id = any($3::text[]) and m.date = $4::date))
+        group by d.name order by d.name`,
+      [id, `NF-e ${entrada.numero}/${entrada.serie}`, idsProdutos, entrada.dataEmissao || null]
+    ).then((r) => r.rows).catch(() => []),
+    consultarBanco(
+      'select id, code, due_date, amount, status from financial_entries where reference_id = $1 order by due_date, code',
+      [id]
+    ).then((r) => r.rows).catch(() => []),
+    fiscalDb.getEstabelecimentos().catch(() => [])
+  ]);
+  const produtoPorId = new Map(produtos.map((p) => [p.id, p]));
+  const destino = estabelecimentos.find((e) => soDigitosLocal(e.cnpj) === soDigitosLocal(entrada.destinatarioDocumento));
+  const dia = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v || '').slice(0, 10));
+  return {
+    entrada: {
+      id: entrada.id,
+      chave: entrada.chave,
+      numero: entrada.numero,
+      serie: entrada.serie,
+      dataEmissao: dia(entrada.dataEmissao),
+      naturezaOperacao: entrada.naturezaOperacao,
+      emitenteNome: entrada.emitenteNome,
+      emitenteDocumento: entrada.emitenteDocumento,
+      destinatarioDocumento: entrada.destinatarioDocumento,
+      destinatarioNome: destino ? (destino.nomeFantasia || destino.razaoSocial || '') : '',
+      valorProdutos: entrada.valorProdutos,
+      valorTotal: entrada.valorTotal,
+      status: entrada.status,
+      movimentouEstoque: entrada.movimentouEstoque,
+      gerouFinanceiro: entrada.gerouFinanceiro,
+      criadoPorNome: entrada.criadoPorNome,
+      criadoEm: entrada.criadoEm
+    },
+    itens: entrada.itens.map((item) => {
+      const produto = produtoPorId.get(item.produtoId);
+      return {
+        numero: item.numero,
+        descricao: item.descricao,
+        codigo: item.codigo,
+        unidade: item.unidade,
+        quantidade: item.quantidade,
+        valorUnitario: item.valorUnitario,
+        valorTotal: item.valorTotal,
+        produto: produto ? { id: produto.id, nome: produto.name, codigo: produto.sku || '' } : null,
+        movimentouEstoque: item.movimentouEstoque
+      };
+    }),
+    depositos: depositos.map((d) => ({ nome: d.nome, quantidade: Number(d.quantidade || 0) })),
+    titulos: titulos.map((t) => ({
+      id: t.id,
+      codigo: lancamentoCodigo.formatar(t.code),
+      vencimento: dia(t.due_date),
+      valor: Number(t.amount || 0),
+      status: t.status
+    }))
+  };
+}
+
 async function xmlDaNotaRecebida(documento) {
   const chave = String((documento && documento.chave) || '').replace(/\D/g, '');
   if (chave.length !== 44) return null;
@@ -10258,7 +10343,11 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
       date: nota.dataEmissao,
       document: `NF-e ${nota.numero}/${nota.serie}`,
       note: `Entrada da NF-e ${nota.numero} de ${nota.emitente.nome}`,
-      origin: 'entrada-nfe'
+      origin: 'entrada-nfe',
+      // De qual entrada (15/10/2026): o resumo da entrada acha o depósito por
+      // aqui. As de antes só têm o documento "NF-e n/s" — ver resumoDaEntrada.
+      referenceType: 'entrada-nfe',
+      referenceId: entrada.id
     }, user));
     // O total NÃO se mexe aqui: quem soma é a transação do
     // commitStockMovements, junto com o razão. E não dá para usar
@@ -17440,6 +17529,24 @@ async function tratarRequisicao(req, res) {
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
       return sendErro(res, traduzido, 'Erro ao listar entradas', 400);
+    }
+  }
+
+  // O resumo de uma entrada lançada (15/10/2026) — ver resumoDaEntrada. Antes
+  // da rota genérica /api/purchases/entrada-nfe/:id, que também é GET.
+  if (pathname.startsWith('/api/purchases/entrada-nfe/') && pathname.endsWith('/resumo') && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/purchases/entrada-nfe/', '').replace(/\/resumo$/, ''));
+      const resumo = await resumoDaEntrada(id);
+      if (!resumo) return sendJson(res, { error: 'Entrada não encontrada' }, 404);
+      return sendJson(res, resumo);
+    } catch (error) {
+      const traduzido = traduzirErroDaEntrada(error);
+      return sendErro(res, traduzido, 'Erro ao abrir o resumo da entrada', 400);
     }
   }
 
