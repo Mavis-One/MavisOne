@@ -306,5 +306,30 @@ check('  e o rótulo vale na lista e no detalhe',
   /<td>\$\{seloDeOrigem\(movement\)\}<\/td>/.test(movimentacoes) &&
   /detailItem\('Origem', seloDeOrigem\(movement\)\)/.test(movimentacoes));
 
+// 15/10/2026: a transferência entre filiais era barrada como "nota própria"
+// ("Esta nota foi emitida por você, não por um fornecedor"). Só é nota própria
+// a que não é para outro estabelecimento nosso.
+console.log('\n--- nota de uma filial para outra ---');
+{
+  const E = require('../lib/entradaNfe');
+  const proprios = ['43792899000135', '43792899001107', '46877837000114'];
+  const conferir = (emit, dest) => E.montarConferencia({
+    nota: { chave: '4'.repeat(44), itens: [{ numero: 1, descricao: 'X', quantidade: 1, valorUnitario: 1, valorTotal: 1 }],
+      emitente: { documento: emit, nome: 'EMIT' }, destinatario: { documento: dest, nome: 'DEST' } },
+    documentosProprios: proprios
+  });
+  const bloqueado = (c) => c.bloqueios.some((b) => b.chave === 'emitente-proprio');
+  const transf = conferir('43792899000135', '43792899001107');
+  check('matriz -> filial (mesma raiz): entra, como transferência', !bloqueado(transf) && transf.transferencia === true && transf.avisos.some((a) => a.chave === 'transferencia'));
+  const grupo = conferir('43792899000135', '46877837000114');
+  check('Plus -> Electric (raízes diferentes): entra como compra', !bloqueado(grupo) && grupo.transferencia === false);
+  check('nota própria para cliente continua barrada', bloqueado(conferir('43792899000135', '07000399961')));
+  check('mesmo CNPJ nos dois lados continua barrado', bloqueado(conferir('43792899000135', '43792899000135')));
+  check('fornecedor -> nós segue normal', !bloqueado(conferir('05824631000149', '43792899000135')));
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  check('transferência não gera contas a pagar (servidor)', srv.includes('const querFinanceiro = body.gerarFinanceiro !== false && !conferencia.transferencia;'));
+  check('  e a tela já vem com o financeiro desligado', fs.readFileSync(path.join(__dirname, '..', 'public/modules/purchases/subs/entrada_nfe.js'), 'utf8').includes('if (resposta.transferencia) tela.gerarFinanceiro = false;'));
+}
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

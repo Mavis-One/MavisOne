@@ -9972,7 +9972,9 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
     }
   }
 
-  const querFinanceiro = body.gerarFinanceiro !== false;
+  // Transferência entre filiais da mesma empresa não tem conta a pagar: é a
+  // mesma pessoa jurídica (montarConferencia, 15/10/2026).
+  const querFinanceiro = body.gerarFinanceiro !== false && !conferencia.transferencia;
   const vaiMovimentar = decisoes.some((d) => d.movimentarEstoque);
   const status = decisoes.some((d) => !d.produtoId) ? 'REVISAR' : 'LANCADA';
 

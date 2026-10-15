@@ -340,7 +340,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             </p>
           `}
           <label class="entrada-opcao">
-            <input type="checkbox" id="entradaGerarFinanceiro" ${tela.gerarFinanceiro ? 'checked' : ''} />
+            <input type="checkbox" id="entradaGerarFinanceiro" ${tela.gerarFinanceiro ? 'checked' : ''} ${tela.conferencia && tela.conferencia.transferencia ? 'disabled' : ''} />
             <span>Gerar contas a pagar a partir desta nota</span>
           </label>
         </section>
@@ -633,7 +633,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         body: JSON.stringify({ xml })
       });
       tela.xml = xml;
-      tela.conferencia = { nota: resposta.nota, fornecedor: resposta.fornecedor, itens: resposta.itens, bloqueios: resposta.bloqueios, avisos: resposta.avisos };
+      tela.conferencia = { nota: resposta.nota, fornecedor: resposta.fornecedor, itens: resposta.itens, bloqueios: resposta.bloqueios, avisos: resposta.avisos, transferencia: Boolean(resposta.transferencia) };
+      // Transferência entre filiais não gera contas a pagar (15/10/2026).
+      if (resposta.transferencia) tela.gerarFinanceiro = false;
       tela.produtos = resposta.produtos || [];
       tela.depositos = resposta.depositos || [];
       tela.permissoes = resposta.permissoes || {};
