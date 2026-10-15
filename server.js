@@ -12996,7 +12996,9 @@ async function tratarRequisicao(req, res) {
       // (quem decide de verdade é o servidor; ver lib/venda-do-vendedor.js).
       meuVendedor: {
         sellerId: String(user.sellerId || '').trim(),
-        travado: Boolean(vendaDoVendedor.vendedorTravado(escopoDoUsuario))
+        travado: Boolean(vendaDoVendedor.vendedorTravado(escopoDoUsuario)),
+        // Fase EQ: a tela abre a venda de um colega para edição (e não só leitura).
+        podeAlterarDeOutros: vendaDoVendedor.podeAlterarDeOutros(escopoDoUsuario)
       },
       deposits: data.deposits,
       // SÓ id E name (fase DS), como na lista de Vendas (fase CJ). O formulário
@@ -14210,7 +14212,8 @@ async function tratarRequisicao(req, res) {
         clientSupplierId: body.clientSupplierId || '',
         clientSupplierName: body.clientSupplierName || '',
         companyId: body.companyId || '',
-        sellerId: vendaDoVendedor.vendedorAoGravar(escopoDoUsuario, body.sellerId),
+        // A venda de um colega (fase EQ) continua dele.
+        sellerId: vendaDoVendedor.vendedorAoGravar(escopoDoUsuario, body.sellerId, current.sellerId),
         depositId: body.depositId || '',
         date: body.date || current.date,
         dueDate: body.dueDate || '',
@@ -22061,6 +22064,8 @@ async function tratarRequisicao(req, res) {
           // alguém desvincularia a pessoa do estabelecimento dela.
           estabelecimentoId: entry.estabelecimentoId || '',
           podeTrocarEstabelecimento: entry.podeTrocarEstabelecimento === true,
+          // Fase EQ, pelo mesmo motivo.
+          podeAlterarVendasDeOutros: entry.podeAlterarVendasDeOutros === true,
           // Fase DR: a ficha abre com o que já está gravado, pelo mesmo motivo.
           estabelecimentosLiberados: entry.estabelecimentosLiberados || [],
           active: entry.active !== false
@@ -22123,6 +22128,8 @@ async function tratarRequisicao(req, res) {
           // filtrado, que e' o comportamento de antes desta fase.
           estabelecimentoId: String(body.payload.estabelecimentoId || '').trim(),
           podeTrocarEstabelecimento: body.payload.podeTrocarEstabelecimento === true,
+          // Fase EQ: vendedor que pode mexer nas vendas dos colegas.
+          podeAlterarVendasDeOutros: body.payload.podeAlterarVendasDeOutros === true,
           estabelecimentosLiberados: await sanitizarEstabelecimentosLiberados(
             body.payload.estabelecimentosLiberados, body.payload.estabelecimentoId
           ),
@@ -22500,6 +22507,9 @@ async function tratarRequisicao(req, res) {
           ? undefined : String(body.estabelecimentoId || '').trim(),
         podeTrocarEstabelecimento: body.podeTrocarEstabelecimento === undefined
           ? undefined : body.podeTrocarEstabelecimento === true,
+        // Fase EQ, a mesma distinção: ausente não mexe.
+        podeAlterarVendasDeOutros: body.podeAlterarVendasDeOutros === undefined
+          ? undefined : body.podeAlterarVendasDeOutros === true,
         // Fase DR. O principal que vale para tirá-lo da lista é o que está
         // sendo gravado agora, e não o de antes.
         estabelecimentosLiberados: body.estabelecimentosLiberados === undefined

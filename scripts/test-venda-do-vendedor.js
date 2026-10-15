@@ -49,7 +49,9 @@ const server = semComentarios(fs.readFileSync(path.join(RAIZ, 'server.js'), 'utf
 check('criar: vendedor sai da regra', /sellerId: vendaDoVendedor\.vendedorAoGravar\(escopoDoUsuario, body\.sellerId\),\s*depositId: body\.depositId \|\| '',\s*date: body\.date \|\| new Date/.test(server));
 check('editar: recusa venda de outro (403) antes de ler o corpo',
   /if \(!vendaDoVendedor\.podeMexerNaVenda\(escopoDoUsuario, current\.sellerId\)\) \{\s*return sendJson\(res, \{ error: vendaDoVendedor\.MOTIVO_DE_OUTRO_VENDEDOR \}, 403\);\s*\}\s*const body = await readBody\(req\);/.test(server));
-check('editar: vendedor sai da regra', /sellerId: vendaDoVendedor\.vendedorAoGravar\(escopoDoUsuario, body\.sellerId\),\s*depositId: body\.depositId \|\| '',\s*date: body\.date \|\| current\.date/.test(server));
+// (desde 15/10/2026 com o vendedor da venda: quem pode mexer na do colega não a
+// toma para si — ver test-vendas-de-outros-vendedores.js)
+check('editar: vendedor sai da regra', /sellerId: vendaDoVendedor\.vendedorAoGravar\(escopoDoUsuario, body\.sellerId, current\.sellerId\),\s*depositId: body\.depositId \|\| '',\s*date: body\.date \|\| current\.date/.test(server));
 check('excluir: a função que exclui confere', /async function excluirSalesRecord\(id, data, user, escopo = null\)[\s\S]{0,400}if \(escopo && !vendaDoVendedor\.podeMexerNaVenda\(escopo, record\.sellerId\)\)/.test(server));
 check('  e a rota passa o escopo', /await excluirSalesRecord\(id, data, user, escopoLib\.escopoDeVendas\(user/.test(server));
 check('lote: venda de outro vira "não feito" com o motivo', /else if \(!vendaDoVendedor\.podeMexerNaVenda\(escopoDoUsuario, registro\.sellerId\)\) \{\s*falhas\.push\(\{ code: registro\.code, motivo: vendaDoVendedor\.MOTIVO_DE_OUTRO_VENDEDOR \}\);/.test(server));

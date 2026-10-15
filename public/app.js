@@ -3810,9 +3810,13 @@ async function loadModule(moduleName) {
         // Venda nova já nasce com o vendedor do usuário logado; o vendedor
         // comum (`travado`) não troca o vendedor e só lê o pedido de colega.
         const meuVendedor = meta.meuVendedor || { sellerId: '', travado: false };
-        const deOutroVendedor = Boolean(isEditing && meuVendedor.travado
+        // Venda de um colega. Só leitura, a não ser que o usuário tenha a chave
+        // "Pode alterar vendas de outros vendedores" (fase EQ) — e mesmo então
+        // a venda continua do colega (o vendedor não troca).
+        const vendaDeColega = Boolean(isEditing && meuVendedor.travado
           && editRecord.sellerId && editRecord.sellerId !== meuVendedor.sellerId);
-        const vendedorInicial = deOutroVendedor
+        const deOutroVendedor = vendaDeColega && meuVendedor.podeAlterarDeOutros !== true;
+        const vendedorInicial = vendaDeColega
           ? editRecord.sellerId
           : (meuVendedor.travado
             ? meuVendedor.sellerId

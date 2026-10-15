@@ -178,6 +178,14 @@ async function renderSettingsUserForm(ctx, mode) {
                 ${vendedores.map((v) => `<option value="${escapeHtml(v.id)}" ${v.id === editUser?.sellerId ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}
               </select>`)}
           </div>
+          <!-- FASE EQ (15/10/2026, pedido do usuário): quando um vendedor pode
+               mexer nas vendas de outro. Desligada, ele só altera as vendas
+               dele (lib/venda-do-vendedor.js); ligada, altera, exclui e anexa
+               nas dos colegas, e a venda continua sendo de quem a fez. Vale
+               para quem tem vendedor vinculado e não é administrador (o
+               administrador já mexe em todas). É permissão, então a cópia leva. -->
+          ${chave(`<input type="checkbox" name="podeAlterarVendasDeOutros" ${(editUser || modelo)?.podeAlterarVendasDeOutros === true ? 'checked' : ''} />`,
+            'Pode alterar vendas de outros vendedores')}
 
           ${chave(`<input type="checkbox" name="active" ${editUser?.active === false ? '' : 'checked'} ${ehOProprio ? 'disabled' : ''} />`, 'Ativo')}
 
@@ -486,6 +494,7 @@ async function renderSettingsUserForm(ctx, mode) {
       sellerId: formData.get('sellerId') || '',
       estabelecimentoId: principal,
       podeTrocarEstabelecimento: todasAsEmpresas,
+      podeAlterarVendasDeOutros: formData.get('podeAlterarVendasDeOutros') === 'on',
       estabelecimentosLiberados: [...liberados].filter((id) => id !== principal),
       blockedSubs: telasBloqueadas,
       // O próprio usuário vem com a chave travada (e o disabled some do
