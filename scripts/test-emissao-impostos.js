@@ -76,10 +76,11 @@ check('NCM e origem editados escolhem a regra', /item\.fiscal = limparEdicaoFisc
 check('sem regra, CFOP e CST digitados bastam', /const digitouOEssencial = item\.fiscal\.cfop && \(item\.fiscal\.cstIcms \|\| item\.fiscal\.csosn\);/.test(servidor));
 check('a edição fica na auditoria', /action: 'nfe\.valoresFiscaisEditados'/.test(servidor));
 const tela = ler('public/modules/finance/subs/emitir_nfe_focus.js');
-check('abas Impostos e Totais', /data-tab="impostos"/.test(tela) && /data-tab="totais"/.test(tela));
+// Blocos desde 15/10/2026 (eram abas): a página da emissão é uma só.
+check('blocos Impostos e Totais', /data-bloco="impostos"/.test(tela) && /data-bloco="totais"/.test(tela));
 check('a prévia e o envio usam o MESMO corpo', /montarCorpoDaNota\(formData, referencias\)/.test(tela) && /const body = montarCorpoDaNota\(formData, referenciasDevolucao\);/.test(tela));
 check('o item leva o que foi editado', /fiscal: \{ \.\.\.item\.fiscal \}/.test(tela));
-check('frete, seguro, desconto e outras editáveis na aba Totais', ['frete', 'seguro', 'desconto', 'outrasDespesas'].every((c) => tela.includes(`data-total-campo="${c}"`)));
+check('frete, seguro, desconto e outras editáveis no bloco Totais', ['frete', 'seguro', 'desconto', 'outrasDespesas'].every((c) => tela.includes(`data-total-campo="${c}"`)));
 
 console.log('\n--- 6. aba Transporte ---');
 // Nomes conferidos em campos.focusnfe.com.br/nfe/NotaFiscalXML.html (13/10/2026).
@@ -108,7 +109,7 @@ const semNada = comTransporte(undefined);
 check('sem transporte, nenhum campo do grupo', !Object.keys(semNada).some((k) => /transportador|veiculo_|^volumes$/.test(k)));
 check('o servidor repassa o transporte ao montador', /transporte: body\.transporte,/.test(servidor));
 check('o meta da NF-e traz as transportadoras', /pedeDiretorio === 'nfe' \? \{ transportadoras: transportadorasParaNfe\(data\) \}/.test(servidor));
-check('a tela tem a aba e manda o grupo', /data-tab="transporte"/.test(tela) && /transporteDaNota\(\) \? \{ transporte: transporteDaNota\(\) \}/.test(tela));
+check('a tela tem o bloco e manda o grupo', /data-bloco="transporte"/.test(tela) && /transporteDaNota\(\) \? \{ transporte: transporteDaNota\(\) \}/.test(tela));
 check('a transportadora do pedido abre preenchida', /carrierId: formState\.carrierId \|\| '',/.test(ler('public/app.js'))
   && /if \(doPedido\.carrierId\) escolherTransportadora\(doPedido\.carrierId\);/.test(tela));
 

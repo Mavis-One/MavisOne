@@ -111,7 +111,7 @@ check('a tela envia pagamentos',
   /pagamentos: pagamentosDoPedido\.length/.test(focusSrc));
 check('  e a avulsa continua usando o select de forma única',
   /: \[\{ forma: formData\.get\('formaPagamento'\) \|\| '99', valor: grandTotal\(\) \}\],/.test(focusSrc));
-check('tem aba de pagamento', /data-tab="pagamento"/.test(focusSrc));
+check('tem bloco de pagamento (era aba até 15/10/2026)', /data-bloco="pagamento"/.test(focusSrc));
 check('formas oficiais declaradas', /const NFE_FORMAS_PAGAMENTO/.test(focusSrc));
 // Códigos que o builder aceita; qualquer outro vira '99' sem ninguém saber.
 const builderSrc = ler('lib/nfePayloadBuilder.js');

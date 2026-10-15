@@ -5110,11 +5110,21 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 :root[data-theme="dark"] .nfe-imposto-campos input[readonly] { background: #000; }
 :root[data-theme="dark"] .nfe-imposto-campos label.is-editado input,
 :root[data-theme="dark"] .nfe-imposto-campos label.is-editado select { background: color-mix(in srgb, var(--warning) 14%, var(--panel-alt-hover)); }
-/* Salvar nota em edição + Emitir (fase EL): lado a lado, o emitir ocupando o resto. */
-.nfe-acoes-emissao { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
-.nfe-acoes-emissao #nfeFocusSubmitBtn { flex: 1 1 240px; }
-/* Salvar / Visualizar no canto superior direito da emissão (14/10/2026). */
+/* Salvar / Visualizar / Emitir no canto superior direito da emissão (14 e 15/10/2026):
+   o Emitir saiu do rodapé do formulário e é o único da tela. */
 .nfe-acoes-topo { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+/* A emissão em uma página só, em blocos (15/10/2026), no visual dos blocos do
+   cadastro de produto: um cartão por assunto, um embaixo do outro. */
+.nfe-em-blocos { display: grid; gap: 16px; }
+.nfe-bloco {
+  display: grid; gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  min-width: 0;
+}
+.nfe-bloco-titulo { margin: 0; font-size: 1rem; }
 .nfe-totais { max-width: 420px; }
 .nfe-totais th { text-align: left; font-weight: 500; }
 @media (max-width: 640px) {

@@ -189,6 +189,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // regras fiscais e o que foi editado. Ver carregarPrevia.
   let previa = null;
   let previaErro = '';
+  // O que falta para a prévia sair (emitente, item, destinatário): aviso
+  // discreto, não erro. Ver carregarPrevia.
+  let previaAguardando = '';
   let previaCarregando = false;
   // As listas de CST/CSOSN das Regras Fiscais (/api/fiscal/tabelas), para a aba
   // Impostos escolher o código em vez de digitar. Sem permissão de ler as
@@ -440,8 +443,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         <td><input type="number" step="0.01" min="0" data-field="quantidade" data-index="${index}" value="${item.quantidade}" style="width:80px;" /></td>
         <td><input type="number" step="0.01" min="0" data-field="valorUnitario" data-index="${index}" value="${item.valorUnitario}" style="width:100px;" /></td>
         <td><input data-field="unidadeComercial" data-index="${index}" value="${escapeHtml(item.unidadeComercial)}" style="width:70px;" /></td>
-        <!-- ICMS % e cBenef POR ITEM saíram daqui em 13/10/2026: estão na aba
-             4. Impostos, junto com o resto dos valores fiscais editáveis. -->
+        <!-- ICMS % e cBenef POR ITEM saíram daqui em 13/10/2026: estão no bloco
+             Impostos, junto com o resto dos valores fiscais editáveis. -->
         <td class="nfe-item-total" data-row-total="${index}">${financeFormatBRL(itemTotal(item))}</td>
         <td><button type="button" class="icon-button" data-remove-item="${index}" title="Remover item" ${itens.length <= 1 ? 'disabled' : ''}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"></path></svg>
@@ -592,7 +595,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   async function visualizarNota(botao) {
     if (botao?.disabled) return;
     if (!selectedEstabelecimentoId) {
-      showToast('Escolha o estabelecimento emitente na aba 1.', 'warning');
+      showToast('Escolha o estabelecimento emitente no bloco Emitente.', 'warning');
       return;
     }
     const form = document.getElementById('nfeFocusForm');
@@ -653,32 +656,30 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           </div>
           ${estabelecimentos.length ? `
           <!-- 14/10/2026, pedido do usuário: "Salvar" no canto superior direito,
-               verde, e "Visualizar NF" para ver a DANFE antes de emitir. -->
+               verde, e "Visualizar NF" para ver a DANFE antes de emitir.
+               15/10/2026: "retire o botão emitir NF de todas as abas e deixe
+               apenas um geral no canto superior direito" — fora do <form>, ligado
+               a ele pelo atributo form (o envio e a validação são os mesmos). -->
           <div class="cadastro-list-actions nfe-acoes-topo">
             ${rascunhoSalvoEm ? '<button type="button" class="secondary" id="nfeFocusDescartarRascunho">Descartar nota salva</button>' : ''}
             ${ehComplemento() ? '' : '<button type="button" class="secondary" id="nfeFocusVisualizar">Visualizar NF</button>'}
             <button type="button" id="nfeFocusSalvarRascunho">Salvar nota em edição</button>
+            <button type="submit" form="nfeFocusForm" id="nfeFocusSubmitBtn">Emitir NF-e</button>
           </div>` : ''}
         </div>
 
         ${!estabelecimentos.length ? `
           <p class="form-error">Nenhum estabelecimento habilitado para emitir NF-e. Cadastre um em Configurações → Integrações → Empresas e estabelecimentos.</p>
         ` : `
-        <form id="nfeFocusForm" class="form-grid">
-          <div class="cadastro-tabs" role="tablist">
-            <button type="button" class="cadastro-tab active" data-tab="emitente" role="tab" aria-selected="true"><span>1. Emitente</span></button>
-            <button type="button" class="cadastro-tab" data-tab="destinatario" role="tab" aria-selected="false"><span>2. Destinatário</span></button>
-            ${ehComplemento()
-              ? '<button type="button" class="cadastro-tab" data-tab="complemento" role="tab" aria-selected="false"><span>3. Complemento de ICMS</span></button>'
-              : `<button type="button" class="cadastro-tab" data-tab="itens" role="tab" aria-selected="false"><span>3. Itens</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="impostos" role="tab" aria-selected="false"><span>4. Impostos</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="transporte" role="tab" aria-selected="false"><span>5. Transporte</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="pagamento" role="tab" aria-selected="false"><span>6. Pagamento</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="totais" role="tab" aria-selected="false"><span>7. Totais</span></button>
-                 <button type="button" class="cadastro-tab" data-tab="observacoes" role="tab" aria-selected="false"><span>8. Observações</span></button>`}
-          </div>
-
-          <div class="cadastro-tab-panel" data-tab-panel="emitente">
+        <!-- UMA PÁGINA SÓ, EM BLOCOS (15/10/2026, pedido do usuário: "faça a
+             mesma coisa que você fez com a edição de produtos na tela de emissão
+             de NF"). Eram oito abas; agora os blocos vêm um embaixo do outro, na
+             ordem delas, e Impostos, Totais, Transporte e Pagamento se refazem
+             sozinhos quando itens, destinatário ou totais mudam (ver
+             agendarBlocosDependentes). -->
+        <form id="nfeFocusForm" class="form-grid nfe-em-blocos">
+          <section class="nfe-bloco" data-bloco="emitente">
+            <h4 class="nfe-bloco-titulo">Emitente</h4>
             <div class="row">
               <label>Estabelecimento emitente
                 <select id="nfeFocusEstabSelect" required ${emitenteDoPedido ? 'disabled title="Empresa do pedido — para emitir por outra, troque a empresa no pedido."' : ''}>
@@ -698,9 +699,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             </label>` : ''}
             <label>Natureza da operação<input name="naturezaOperacao" required value="${escapeHtml((NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).natureza || (NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).label || '')}" /></label>
             <label>Data de emissão<input type="date" name="dataEmissao" required value="${today}" /></label>
-          </div>
+          </section>
 
-          <div class="cadastro-tab-panel" data-tab-panel="destinatario" hidden>
+          <section class="nfe-bloco" data-bloco="destinatario">
+            <h4 class="nfe-bloco-titulo">Destinatário</h4>
             <label>Buscar cliente cadastrado
               ${/* Um campo só no lugar do par "busca + <select>" (fase DS). Abre
                    vazio a cada desenho, como o <select> abria em "Nenhum": os
@@ -734,10 +736,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <label>UF<input name="destUf" maxlength="2" required value="${escapeHtml(destinatario.uf)}" /></label>
             </div>
             <input type="hidden" name="destCodigoMunicipio" value="${escapeHtml(destinatario.codigoMunicipio)}" />
-          </div>
+          </section>
 
           ${ehComplemento() ? `
-          <div class="cadastro-tab-panel" data-tab-panel="complemento" hidden>
+          <section class="nfe-bloco" data-bloco="complemento">
+            <h4 class="nfe-bloco-titulo">Complemento de ICMS</h4>
             <div class="cadastro-section">
               <div class="cadastro-section-header"><h4>NF-e original</h4></div>
               <div class="cadastro-section-body">
@@ -777,19 +780,19 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                 </label>
               </div>
             </div>
-          </div>
+          </section>
           ` : ''}
 
           ${ehComplemento() ? '' : `
-            <!-- Painel da aba "3. Itens". A ABERTURA dele havia sumido, e o
-                 estrago ia muito alem de uma aba sem conteudo: a tag de
-                 fechamento la embaixo ficava sem par e fechava o div.panel
-                 ANTES da hora. Efeito medido em 17/08/2026: os paineis
-                 "4. Pagamento" e "5. Observacoes" caiam para FORA do form, e
-                 o FormData nao enxergava mais nem a forma de pagamento nem as
-                 observacoes — a nota saia com o padrao sem ninguem pedir. E a
-                 tabela de itens ficava visivel em TODAS as abas. -->
-            <div class="cadastro-tab-panel" data-tab-panel="itens" hidden>
+            <!-- Bloco Itens. Quando era aba, a ABERTURA do painel dela sumiu, e
+                 a tag de fechamento la embaixo ficou sem par e fechou o
+                 div.panel ANTES da hora. Efeito medido em 17/08/2026: Pagamento
+                 e Observacoes caiam para FORA do form, e o FormData nao
+                 enxergava mais nem a forma de pagamento nem as observacoes — a
+                 nota saia com o padrao sem ninguem pedir. As tags de cada bloco
+                 seguem conferidas (scripts/test-emissao-blocos.js). -->
+            <section class="nfe-bloco" data-bloco="itens">
+            <h4 class="nfe-bloco-titulo">Itens</h4>
             <div class="table-scroll">
               <table class="table">
                 <thead><tr><th>Produto</th><th>Descrição</th><th>Código</th><th>NCM</th><th>Qtd.</th><th>Valor unit.</th><th>Unid.</th><th>Total</th><th></th></tr></thead>
@@ -798,9 +801,23 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             </div>
             <div style="margin: 10px 0;"><button type="button" class="secondary" id="nfeFocusAddItemBtn">+ Adicionar item</button></div>
             <p class="finance-negative" style="font-size: 1.1rem;">Valor total: <strong id="nfeFocusGrandTotal">${financeFormatBRL(grandTotal())}</strong></p>
-          </div>
+          </section>
 
-          <div class="cadastro-tab-panel" data-tab-panel="pagamento" hidden>
+          <!-- Impostos e Totais (13/10/2026): desenhados por renderImpostos e
+               renderTotais a partir da PRÉVIA do servidor, refeita quando a nota
+               muda (agendarBlocosDependentes). -->
+          <section class="nfe-bloco" data-bloco="impostos">
+            <h4 class="nfe-bloco-titulo">Impostos</h4>
+            <div id="nfeFocusImpostos"></div>
+          </section>
+
+          <section class="nfe-bloco" data-bloco="transporte">
+            <h4 class="nfe-bloco-titulo">Transporte</h4>
+            <div id="nfeFocusTransporte"></div>
+          </section>
+
+          <section class="nfe-bloco" data-bloco="pagamento">
+            <h4 class="nfe-bloco-titulo">Pagamento</h4>
             ${pagamentosDoPedido.length ? `
             <div class="cadastro-section">
               <div class="cadastro-section-header"><h4>Pagamentos da venda</h4></div>
@@ -851,23 +868,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <label>Intervalo entre parcelas (dias)<input type="number" name="installmentIntervalDays" min="1" value="30" /></label>
             </div>
             <div id="nfeFocusCobranca"></div>
-          </div>
+          </section>
 
-          <!-- Abas 4 e 7 (13/10/2026): desenhadas por renderImpostos e
-               renderTotais a partir da PRÉVIA do servidor, buscada ao abrir. -->
-          <div class="cadastro-tab-panel" data-tab-panel="impostos" hidden>
-            <div id="nfeFocusImpostos"></div>
-          </div>
-
-          <div class="cadastro-tab-panel" data-tab-panel="transporte" hidden>
-            <div id="nfeFocusTransporte"></div>
-          </div>
-
-          <div class="cadastro-tab-panel" data-tab-panel="totais" hidden>
+          <section class="nfe-bloco" data-bloco="totais">
+            <h4 class="nfe-bloco-titulo">Totais</h4>
             <div id="nfeFocusTotais"></div>
-          </div>
+          </section>
 
-          <div class="cadastro-tab-panel" data-tab-panel="observacoes" hidden>
+          <section class="nfe-bloco" data-bloco="observacoes">
+            <h4 class="nfe-bloco-titulo">Observações</h4>
             <!-- Campo dedicado para o chassi: é o único dado da ficha que muda
                  a cada nota, e procurá-lo no meio de vinte linhas de texto a
                  cada emissão é onde o erro de digitação aparece. O que se
@@ -890,11 +899,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
               <button type="button" class="secondary finance-pill-sm" id="nfeFocusObsRestaurar">Restaurar texto padrão</button>
             </div>
             <p class="muted" id="nfeFocusObsPendentes"></p>
-          </div>
+          </section>
           `}
-          <div class="nfe-acoes-emissao">
-            <button type="submit" id="nfeFocusSubmitBtn">Emitir NF-e</button>
-          </div>
         </form>
         `}
       </div>
@@ -957,6 +963,23 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   function refreshGrandTotal() {
     const el = document.getElementById('nfeFocusGrandTotal');
     if (el) el.textContent = financeFormatBRL(grandTotal());
+    agendarBlocosDependentes();
+  }
+
+  // OS BLOCOS QUE DEPENDEM DO RESTO (15/10/2026, página em blocos). Em abas,
+  // Impostos e Totais refaziam a prévia ao abrir, Transporte a modalidade e
+  // Pagamento as duplicatas. À vista o tempo todo, eles se refazem quando
+  // itens, destinatário ou totais mudam — com uma espera curta, para digitar
+  // uma quantidade não pedir uma prévia ao servidor a cada tecla.
+  let esperaDosDependentes = null;
+  function agendarBlocosDependentes() {
+    clearTimeout(esperaDosDependentes);
+    esperaDosDependentes = setTimeout(() => {
+      if (!document.getElementById('nfeFocusForm') || ehComplemento()) return;
+      carregarPrevia();
+      renderTransporte();
+      atualizarCobrancaSugerida();
+    }, 700);
   }
 
   function attachItemsHandlers() {
@@ -1057,8 +1080,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   const GRUPOS_FISCAIS = [
     // CEST ao lado do NCM (15/10/2026, pedido do usuário): vem do cadastro do
     // produto pela prévia e pode ser digitado aqui, como o NCM.
-    { titulo: 'Classificação', campos: [['cfop', 'CFOP'], ['ncm', 'NCM'], ['cest', 'CEST'], ['origem', 'Origem'], ['cstIcms', 'CST / CSOSN'], ['codigoBeneficioFiscal', 'cBenef']] },
-    { titulo: 'ICMS', campos: [['baseIcms', 'Base'], ['aliquotaIcms', 'Alíquota %'], ['valorIcms', 'Valor'], ['reducaoBcIcms', 'Redução BC %']] },
+    { titulo: 'Classificação', campos: [['cfop', 'CFOP'], ['ncm', 'NCM'], ['cest', 'CEST'], ['origem', 'Origem'], ['codigoBeneficioFiscal', 'cBenef']] },
+    // O CST / CSOSN mora no ICMS (15/10/2026, pedido do usuário: "coloque o
+    // cst da primeira tela na aba do ICMS"), primeiro, como o CST de IPI, PIS
+    // e COFINS nos grupos deles.
+    { titulo: 'ICMS', campos: [['cstIcms', 'CST / CSOSN'], ['baseIcms', 'Base'], ['aliquotaIcms', 'Alíquota %'], ['valorIcms', 'Valor'], ['reducaoBcIcms', 'Redução BC %']] },
     { titulo: 'ICMS-ST', campos: [['baseIcmsSt', 'Base'], ['aliquotaIcmsSt', 'Alíquota %'], ['valorIcmsSt', 'Valor'], ['mvaSt', 'MVA %']] },
     // CST 60 / CSOSN 500 (14/10/2026): o ST retido na compra. Vem da última
     // nota de entrada do produto; base e valores aqui são do ITEM e podem ser
@@ -1177,9 +1203,52 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     return campo === 'cstIcms' ? (ed.cstIcms !== undefined || ed.csosn !== undefined) : ed[campo] !== undefined;
   }
 
+  // OS BLOCOS SE REDESENHAM SOZINHOS (15/10/2026, página em blocos) e, com o
+  // cursor dentro de um deles, quem digitava perdia o campo. Guarda qual era —
+  // pelos atributos data-*, name e id, que identificam o campo — e o devolve,
+  // com a posição do cursor, depois do redesenho. O campo novo vale quando
+  // TODOS os atributos dele estão no antigo: marcas que outro código põe
+  // depois de o campo aparecer (data-dinheiro-ativo, dos campos de dinheiro)
+  // só o antigo tem, e não podem impedir o reencontro.
+  function guardarFoco(caixa) {
+    const atributosDoCampo = (el) => [...el.attributes]
+      .filter((a) => a.name.startsWith('data-') || a.name === 'name' || a.name === 'id')
+      .map((a) => [a.name, a.value]);
+    const ativo = document.activeElement;
+    if (!ativo || !caixa || !caixa.contains(ativo) || !/^(INPUT|SELECT|TEXTAREA)$/.test(ativo.tagName)) return () => {};
+    const doAntigo = new Map(atributosDoCampo(ativo));
+    if (!doAntigo.size) return () => {};
+    const ehOMesmo = (el) => {
+      const doNovo = atributosDoCampo(el);
+      return el.tagName === ativo.tagName && doNovo.length > 0
+        && doNovo.every(([nome, valor]) => doAntigo.get(nome) === valor);
+    };
+    let inicio = null;
+    let fim = null;
+    try { inicio = ativo.selectionStart; fim = ativo.selectionEnd; } catch (_) { /* campo sem seleção */ }
+    return () => {
+      if (caixa.contains(document.activeElement)) return;
+      const alvo = [...caixa.querySelectorAll('input, select, textarea')].find(ehOMesmo);
+      if (!alvo) return;
+      alvo.focus();
+      if (inicio !== null && inicio !== undefined) {
+        try { alvo.setSelectionRange(inicio, fim); } catch (_) { /* number e select não têm */ }
+      }
+    };
+  }
+
   function renderImpostos() {
     const caixa = document.getElementById('nfeFocusImpostos');
     if (!caixa) return;
+    const devolverFoco = guardarFoco(caixa);
+    try {
+      desenharImpostos(caixa);
+    } finally {
+      devolverFoco();
+    }
+  }
+
+  function desenharImpostos(caixa) {
     if (previaCarregando && !previa) { caixa.innerHTML = '<p class="muted">Calculando os impostos…</p>'; return; }
     const topo = `
       <div class="nfe-impostos-topo">
@@ -1187,6 +1256,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         <button type="button" class="secondary" data-fiscal-massa>Alterar em massa</button>
         ${previaCarregando ? '<span class="muted">Calculando…</span>' : ''}
       </div>`;
+    if (previaAguardando) {
+      caixa.innerHTML = `${topo}<p class="muted">${escapeHtml(previaAguardando)}</p>`;
+      return;
+    }
     if (previaErro) {
       caixa.innerHTML = `${topo}<p class="form-error">${escapeHtml(previaErro)}</p>`;
       return;
@@ -1242,6 +1315,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   function renderTotais() {
     const caixa = document.getElementById('nfeFocusTotais');
     if (!caixa) return;
+    const devolverFoco = guardarFoco(caixa);
     const t = previa && previa.totais;
     const linha = (rotulo, valor, forte) => `<tr><th>${rotulo}</th><td class="num">${forte ? '<strong>' : ''}${valor === undefined ? '—' : financeFormatBRL(valor)}${forte ? '</strong>' : ''}</td></tr>`;
     caixa.innerHTML = `
@@ -1255,6 +1329,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         <button type="button" class="secondary" data-previa-recalcular>Recalcular</button>
         ${previaCarregando ? '<span class="muted">Calculando…</span>' : ''}
       </div>
+      ${previaAguardando ? `<p class="muted">${escapeHtml(previaAguardando)}</p>` : ''}
       ${previaErro ? `<p class="form-error">${escapeHtml(previaErro)}</p>` : ''}
       <table class="data-table nfe-totais">
         <tbody>
@@ -1275,16 +1350,37 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           ${linha('Total da nota', t ? t.total : undefined, true)}
         </tbody>
       </table>`;
+    devolverFoco();
   }
 
+  // Cada pedido de prévia ganha um número: com os blocos se refazendo sozinhos,
+  // a resposta de um pedido antigo não sobrescreve a de um mais novo.
+  let pedidoDePrevia = 0;
   async function carregarPrevia() {
     const form = document.getElementById('nfeFocusForm');
     if (!form) return;
-    if (!selectedEstabelecimentoId) {
-      previaErro = 'Escolha o estabelecimento emitente na aba 1.';
+    const este = ++pedidoDePrevia;
+    // NOTA AINDA INCOMPLETA não é erro (15/10/2026): com os blocos à vista, a
+    // falta do emitente, do item ou do destinatário aparecia em vermelho numa
+    // nota recém-aberta. Sem eles o servidor nem calcula; o bloco diz o que
+    // falta, discreto, e a prévia sai quando chegarem.
+    const destino = new FormData(form);
+    const falta = !selectedEstabelecimentoId
+      ? 'Escolha o emitente para calcular os impostos.'
+      : (!itens.some((item) => Number(item.quantidade) > 0 && Number(item.valorUnitario) > 0)
+        ? 'Inclua um item com quantidade e valor para calcular os impostos.'
+        : (['destNome', 'destDocumento', 'destUf'].some((campo) => !String(destino.get(campo) || '').trim())
+          ? 'Preencha nome, documento e UF do destinatário para calcular os impostos.'
+          : ''));
+    if (falta) {
+      previa = null;
+      previaErro = '';
+      previaAguardando = falta;
+      previaCarregando = false;
       renderImpostos(); renderTotais();
       return;
     }
+    previaAguardando = '';
     const formData = new FormData(form);
     const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
     const referencias = formData.get('tipoOperacao') === 'DEVOLUCAO' && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
@@ -1295,14 +1391,18 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         api('/api/fiscal/nfe/previa', { method: 'POST', body: JSON.stringify(montarCorpoDaNota(formData, referencias)) }),
         tabelasFiscais ? tabelasFiscais : api('/api/fiscal/tabelas').catch(() => null)
       ]);
+      if (este !== pedidoDePrevia) return;
       previa = resposta;
       if (tabelas && tabelas.disponivel !== false) tabelasFiscais = tabelas;
       previaErro = '';
     } catch (erro) {
+      if (este !== pedidoDePrevia) return;
       previaErro = erro.message || 'Não consegui calcular os impostos.';
     } finally {
-      previaCarregando = false;
-      renderImpostos(); renderTotais();
+      if (este === pedidoDePrevia) {
+        previaCarregando = false;
+        renderImpostos(); renderTotais();
+      }
     }
   }
 
@@ -1483,8 +1583,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       if (campo === 'seguro') seguro = valor;
       if (campo === 'desconto') desconto = valor;
       if (campo === 'outrasDespesas') outrasDespesas = valor;
-      const total = document.getElementById('nfeFocusGrandTotal');
-      if (total) total.textContent = financeFormatBRL(grandTotal());
+      // Atualiza o total à vista e refaz prévia, modalidade do frete e
+      // duplicatas (os blocos estão todos na página).
+      refreshGrandTotal();
     });
   }
 
@@ -1544,6 +1645,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   function renderTransporte() {
     const caixa = document.getElementById('nfeFocusTransporte');
     if (!caixa) return;
+    const devolverFoco = guardarFoco(caixa);
     const modalidade = modalidadeEscolhida === undefined ? (frete > 0 ? 0 : 9) : modalidadeEscolhida;
     const transportadoras = meta.transportadoras || [];
     const campo = (rotulo, attrs, valor) => `<label>${rotulo}<input ${attrs} value="${escapeHtml(String(valor ?? ''))}" /></label>`;
@@ -1592,6 +1694,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           <div style="margin-top: 8px;"><button type="button" class="secondary" data-volume-adicionar>+ Adicionar volume</button></div>
         </div>
       </div>`;
+    devolverFoco();
   }
 
   function ligarTransporte() {
@@ -1693,6 +1796,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   function renderCobranca() {
     const caixa = document.getElementById('nfeFocusCobranca');
     if (!caixa) return;
+    const devolverFoco = guardarFoco(caixa);
     const liquido = somaDasDuplicatas();
     const descontoFatura = Number(cobranca.valorDesconto || 0);
     caixa.innerHTML = `
@@ -1725,6 +1829,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           ${liquido > grandTotal() + 0.01 ? `<p class="form-error">As duplicatas somam ${financeFormatBRL(liquido)} e a nota tem ${financeFormatBRL(grandTotal())}.</p>` : ''}
         </div>
       </div>`;
+    devolverFoco();
   }
 
   function ligarCobranca() {
@@ -1869,68 +1974,46 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     atualizarCobrancaSugerida();
     renderImpostos();
     renderTotais();
-    // Trocar de aba mexe so no `hidden`: sem redesenhar, o que ja foi digitado
-    // nas outras abas continua no lugar (e no FormData).
-    const abrirAba = (alvo) => {
-      content.querySelectorAll('.cadastro-tab').forEach((btn) => {
-        const ativa = btn.dataset.tab === alvo;
-        btn.classList.toggle('active', ativa);
-        btn.setAttribute('aria-selected', String(ativa));
-      });
-      content.querySelectorAll('.cadastro-tab-panel').forEach((panel) => {
-        panel.hidden = panel.dataset.tabPanel !== alvo;
-      });
-      // Impostos e Totais mostram o que o servidor montaria AGORA: a prévia é
-      // refeita a cada vez que a aba abre (itens e destinatário podem ter mudado).
-      if (alvo === 'impostos' || alvo === 'totais') carregarPrevia();
-      // A modalidade sugerida acompanha o frete, que a aba Totais pode ter mudado.
-      if (alvo === 'transporte') renderTransporte();
-      // E as duplicatas sugeridas, o total da nota.
-      if (alvo === 'pagamento') atualizarCobrancaSugerida();
-    };
-
-    content.querySelectorAll('.cadastro-tab').forEach((tabBtn) => {
-      tabBtn.addEventListener('click', () => abrirAba(tabBtn.dataset.tab));
-    });
+    // Com os blocos todos à vista, a prévia sai já no desenho (era ao abrir a
+    // aba Impostos ou Totais). Depois, agendarBlocosDependentes a refaz.
+    if (!ehComplemento()) carregarPrevia();
+    // Destinatário (UF, contribuinte, IE) muda o imposto: refaz os dependentes.
+    content.querySelector('[data-bloco="destinatario"]')?.addEventListener('change', agendarBlocosDependentes);
 
     // O BOTAO DE EMITIR MORRIA EM SILENCIO.
     //
-    // Sete campos obrigatorios (nome, documento e o endereco do destinatario)
-    // vivem na aba 2, que nasce escondida. O navegador recusa o envio por causa
-    // deles, mas nao consegue mostrar a mensagem em cima de um campo invisivel:
-    // nao ha bolha, nao ha aviso, nao ha erro no console. Medido em 17/08/2026,
-    // com o emitente ja escolhido: clicar em "Emitir NF-e" nao produzia NADA.
+    // Quando a tela era em abas, sete campos obrigatorios (nome, documento e o
+    // endereco do destinatario) viviam numa aba escondida, e o navegador nao
+    // conseguia mostrar a mensagem em campo invisivel: clicar em "Emitir NF-e"
+    // nao produzia NADA (medido em 17/08/2026). Em blocos o campo esta na
+    // pagina, mas o botao fica no topo e o campo pode estar longe dele.
     //
     // O evento `invalid` dispara para cada campo reprovado, na fase de captura,
-    // ANTES de o navegador escolher de qual reclamar — abrir a aba aqui devolve
-    // o campo a tela a tempo de a mensagem nativa aparecer sobre ele.
+    // ANTES de o navegador escolher de qual reclamar: aqui o bloco do campo vem
+    // para a tela a tempo de a mensagem nativa aparecer sobre ele.
     let jaAbriuAbaInvalida = false;
     document.getElementById('nfeFocusForm')?.addEventListener('invalid', (evento) => {
-      // So o primeiro interessa: e dele que o navegador vai reclamar. Os demais
-      // do mesmo lote so trocariam a aba de novo, escondendo justamente o campo
-      // que esta prestes a receber a mensagem.
+      // So o primeiro interessa: e dele que o navegador vai reclamar.
       if (jaAbriuAbaInvalida) return;
       jaAbriuAbaInvalida = true;
       // O lote inteiro e sincrono; voltar ao laco de eventos rearma para a
       // proxima tentativa de emitir.
       setTimeout(() => { jaAbriuAbaInvalida = false; }, 0);
-      const painel = evento.target.closest('.cadastro-tab-panel');
-      if (painel && painel.hidden) abrirAba(painel.dataset.tabPanel);
+      const bloco = evento.target.closest('.nfe-bloco');
+      bloco?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 
       // E AVISA, sempre. A bolha nativa nem sempre aparece: os campos da tabela
       // de itens sao identificados por data-field e nao tem atributo name, e o
       // Chrome desiste deles com "An invalid form control with name='' is not
-      // focusable" — no console, onde ninguem olha. Um toast dizendo a aba
+      // focusable" — no console, onde ninguem olha. Um toast dizendo o bloco
       // fecha o buraco, porque quem clicou em Emitir precisa saber por que a
       // nota nao saiu.
-      const aba = painel
-        ? content.querySelector(`.cadastro-tab[data-tab="${painel.dataset.tabPanel}"] span`)?.textContent
-        : null;
+      const aba = bloco ? bloco.querySelector('.nfe-bloco-titulo')?.textContent : null;
       showToast(aba
         ? `Falta preencher em "${aba}" para emitir.`
         : 'Há campos obrigatórios em branco.', 'error');
-      // Focar depois de a aba abrir: e o que da ao navegador a chance de
-      // desenhar a mensagem em cima do campo certo.
+      // Focar depois de rolar: e o que da ao navegador a chance de desenhar a
+      // mensagem em cima do campo certo.
       if (typeof evento.target.focus === 'function') {
         setTimeout(() => { try { evento.target.focus(); } catch (_) { /* ignora */ } }, 0);
       }
@@ -2345,19 +2428,17 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   }
   // CADASTROU EM OUTRA ABA, APARECE AQUI (15/10/2026, ver modules/shared/
   // dados_ao_vivo.js): destinatário, produto e transportadora vêm de novo, e a
-  // tela volta como estava — pelo mesmo caminho da nota em edição salva, na
-  // mesma aba e no mesmo ponto da rolagem.
+  // tela volta como estava — pelo mesmo caminho da nota em edição salva, no
+  // mesmo ponto da rolagem (desde 15/10/2026 é uma página só, sem aba a voltar).
   window.MavisDados?.aoMudar(async () => {
     const novo = await api('/api/finance/meta?diretorio=nfe&produtos=nfe');
     if (!document.getElementById('nfeFocusForm')) return;
-    const aba = content.querySelector('.cadastro-tab.active')?.dataset.tab || '';
     const rolagem = window.scrollY;
     const campos = aplicarEstadoSalvo(estadoDaTela());
     meta = novo;
     montarOpcoes();
     renderForm();
     preencherCamposSalvos(campos);
-    if (aba) content.querySelector(`.cadastro-tab[data-tab="${aba}"]`)?.click();
     window.scrollTo(0, rolagem);
   });
 };

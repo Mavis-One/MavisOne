@@ -232,7 +232,8 @@ check('a operação está na lista', /value: 'COMPLEMENTO_ICMS', label: 'Complem
 // Esconder por CSS deixaria campos `required` invisíveis travando o submit
 // sem dizer onde.
 check('itens e pagamento somem do DOM', /\$\{ehComplemento\(\) \? '' : `/.test(telaSrc));
-check('aba própria do complemento', /data-tab="complemento"/.test(telaSrc));
+// Desde 15/10/2026 a emissão é uma página só, em blocos (era aba).
+check('bloco próprio do complemento', /data-bloco="complemento"/.test(telaSrc));
 check('pede a chave da original', /name="complementoChave"/.test(telaSrc));
 check('pede base, alíquota e valor', /name="complementoBase"/.test(telaSrc) && /name="complementoAliquota"/.test(telaSrc) && /name="complementoValor"/.test(telaSrc));
 check('informações complementares obrigatórias', /name="complementoInformacoes"[\s\S]{0,80}required/.test(telaSrc));

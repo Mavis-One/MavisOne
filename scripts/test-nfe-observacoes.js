@@ -69,7 +69,7 @@ check('a tela barra o envio antes de transmitir', /if \(observacoes\.length > or
 check('e diz quanto cabia', /cabem \$\{orcamentoObs\}/.test(telaSrc));
 
 console.log('\n--- a tela ---');
-check('há uma aba de Observações', /data-tab="observacoes"/.test(telaSrc));
+check('há um bloco de Observações (era aba até 15/10/2026)', /data-bloco="observacoes"/.test(telaSrc));
 check('com o campo dentro', /name="observacoesAdicionais"/.test(telaSrc));
 check('nascendo com o texto padrão', /let observacoes = TextoPadrao \? TextoPadrao\.PADRAO : '';/.test(telaSrc));
 // renderForm() redesenha o formulário inteiro a cada troca de aba: sem guardar
@@ -84,17 +84,16 @@ console.log('\n--- a complementar NÃO leva este texto ---');
 // Complementar de ICMS não vende equipamento: ela referencia outra nota e
 // destaca imposto. Ficha técnica e garantia ali seriam ruído — e a aba de
 // Observações nem existe nesse fluxo (ver ehComplemento()).
-// A aba e o painel ficam dentro do ramo "não é complemento" do template. Se
-// escorregarem para fora, a nota complementar ganha uma ficha técnica que não
-// tem nada a ver com ela.
+// O bloco fica dentro do ramo "não é complemento" do template. Se escorregar
+// para fora, a nota complementar ganha uma ficha técnica que não tem nada a
+// ver com ela. (Era aba e painel até 15/10/2026; o ramo fecha no </form>, que
+// é onde ficava o botão Emitir antes de ir para o topo.)
 const abreRamoComum = telaSrc.indexOf("${ehComplemento() ? '' : `");
-const fechaRamoComum = telaSrc.indexOf('<button type="submit" id="nfeFocusSubmitBtn">');
-const posPainelObs = telaSrc.indexOf('data-tab-panel="observacoes"');
+const fechaRamoComum = telaSrc.indexOf('</form>', abreRamoComum);
+const posPainelObs = telaSrc.indexOf('data-bloco="observacoes"');
 check('o ramo da nota comum foi encontrado', abreRamoComum > 0 && fechaRamoComum > abreRamoComum);
-check('o painel de observações está dentro dele', posPainelObs > abreRamoComum && posPainelObs < fechaRamoComum);
-// 1200 e não 600 desde 13/10/2026: as abas Impostos e Totais entraram antes
-// de Observações, no mesmo ramo da nota comum.
-check('a aba também', /: `<button[\s\S]{0,1200}data-tab="observacoes"/.test(telaSrc));
+check('o bloco de observações está dentro dele', posPainelObs > abreRamoComum && posPainelObs < fechaRamoComum);
+check('com o título do bloco', /data-bloco="observacoes">\s*<h4 class="nfe-bloco-titulo">Observações<\/h4>/.test(telaSrc));
 check('o complemento mantém o texto próprio', /informacoesAdicionais: formData\.get\('complementoInformacoes'\)/.test(telaSrc));
 
 console.log('\n--- o campo de chassi escreve na linha CHASSI: ---');
