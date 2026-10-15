@@ -4832,6 +4832,89 @@ async function addFinanceAuditLog(_data, { action, entry, byId, byName, details 
   });
 }
 
+// DE QUAL EMPRESA É O TÍTULO (15/10/2026, pedido do usuário: "está faltando
+// referente a qual empresa se trata aquele título ... coloque o CNPJ e/ou o
+// nome da empresa"). Quase nenhum título tem o estabelecimento gravado (no
+// banco local, 333 de 16.990 receitas e 0 de 10.855 despesas), então a empresa
+// sai do que houver, nesta ordem:
+//   1. o estabelecimento do título;
+//   2. o da NF-e de origem;
+//   3. a empresa do pedido de origem;
+//   4. o estabelecimento ligado à conta bancária;
+//   5. o NOME da conta bancária ("ITAU PLUS", "SICOOB KACCAU"): no grupo, cada
+//      conta leva o nome da empresa. Vale a palavra da razão social que só UMA
+//      empresa tem (PLUS, ELECTRIC, KACCAU, BLUMENAU) — tirada dos cadastros,
+//      sem lista fixa. Empresa com várias filiais (Plus) sai pela razão social
+//      e a raiz do CNPJ; com um CNPJ só, sai com ele.
+// Só para a página que a lista mostra.
+async function empresasDosTitulos(entries, data) {
+  const soDigitosLocal = (v) => String(v || '').replace(/\D/g, '');
+  const resultado = new Map();
+  if (!entries.length) return resultado;
+  const estabelecimentos = await fiscalDb.getEstabelecimentos().catch(() => []);
+  const companhias = Array.isArray(data.companies) ? data.companies : [];
+  const doEstab = (e) => (e ? { nome: e.nomeFantasia || e.razaoSocial || '', cnpj: soDigitosLocal(e.cnpj) } : null);
+  const estabPorId = new Map(estabelecimentos.map((e) => [String(e.id), e]));
+  const estabPorCnpj = new Map(estabelecimentos.map((e) => [soDigitosLocal(e.cnpj), e]));
+  const daCompanhia = (c) => {
+    if (!c) return null;
+    const doc = soDigitosLocal(c.document);
+    return doEstab(estabPorCnpj.get(doc)) || { nome: c.tradeName || c.name || '', cnpj: doc };
+  };
+
+  const ids = (campo) => [...new Set(entries.map((e) => String(e[campo] || '')).filter(Boolean))];
+  const [nfes, pedidos, contasLigadas] = await Promise.all([
+    ids('nfeId').length ? consultarBanco('select id::text as id, estabelecimento_id from nfe where id::text = any($1::text[])', [ids('nfeId')]).then((r) => r.rows).catch(() => []) : [],
+    ids('referenceId').length ? consultarBanco('select id, company_id from orders where id = any($1::text[])', [ids('referenceId')]).then((r) => r.rows).catch(() => []) : [],
+    consultarBanco('select bank_account_id, estabelecimento_id from conta_estabelecimento').then((r) => r.rows).catch(() => [])
+  ]);
+  const estabDaNfe = new Map(nfes.map((n) => [String(n.id), n.estabelecimento_id]));
+  const companhiaDoPedido = new Map(pedidos.map((p) => [String(p.id), p.company_id]));
+  const estabDaConta = new Map();
+  contasLigadas.forEach((l) => { if (!estabDaConta.has(String(l.bank_account_id))) estabDaConta.set(String(l.bank_account_id), l.estabelecimento_id); });
+  (data.bankAccounts || []).forEach((b) => { if (b.estabelecimentoId && !estabDaConta.has(String(b.id))) estabDaConta.set(String(b.id), b.estabelecimentoId); });
+
+  // A palavra que só uma empresa (raiz de CNPJ) tem na razão social.
+  const palavras = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length >= 4);
+  const razoes = [
+    ...estabelecimentos.map((e) => ({ raiz: soDigitosLocal(e.cnpj).slice(0, 8), razao: e.razaoSocial || '' })),
+    ...companhias.map((c) => ({ raiz: soDigitosLocal(c.document).slice(0, 8), razao: c.name || '' }))
+  ].filter((r) => r.raiz.length === 8 && r.razao);
+  const raizesDaPalavra = new Map();
+  razoes.forEach((r) => palavras(r.razao).forEach((w) => {
+    if (!raizesDaPalavra.has(w)) raizesDaPalavra.set(w, new Set());
+    raizesDaPalavra.get(w).add(r.raiz);
+  }));
+  const empresaDaRaiz = (raiz) => {
+    const cnpjs = new Set([
+      ...estabelecimentos.filter((e) => soDigitosLocal(e.cnpj).startsWith(raiz)).map((e) => soDigitosLocal(e.cnpj)),
+      ...companhias.filter((c) => soDigitosLocal(c.document).startsWith(raiz)).map((c) => soDigitosLocal(c.document))
+    ].filter((c) => c.length === 14));
+    if (cnpjs.size === 1) {
+      const unico = [...cnpjs][0];
+      return doEstab(estabPorCnpj.get(unico)) || daCompanhia(companhias.find((c) => soDigitosLocal(c.document) === unico));
+    }
+    const razao = (razoes.find((r) => r.raiz === raiz) || {}).razao || '';
+    return { nome: razao, cnpj: raiz };
+  };
+  const pelaConta = (contaId) => {
+    const conta = (data.bankAccounts || []).find((b) => String(b.id) === String(contaId));
+    if (!conta) return null;
+    const unica = palavras(conta.name).map((w) => raizesDaPalavra.get(w)).find((r) => r && r.size === 1);
+    return unica ? empresaDaRaiz([...unica][0]) : null;
+  };
+
+  entries.forEach((e) => {
+    const empresa = doEstab(estabPorId.get(String(e.estabelecimentoId || '')))
+      || doEstab(estabPorId.get(String(estabDaNfe.get(String(e.nfeId || '')) || '')))
+      || daCompanhia(companhias.find((c) => c.id === companhiaDoPedido.get(String(e.referenceId || ''))))
+      || doEstab(estabPorId.get(String(estabDaConta.get(String(e.bankAccountId || '')) || '')))
+      || pelaConta(e.bankAccountId);
+    if (empresa && (empresa.nome || empresa.cnpj)) resultado.set(e.id, empresa);
+  });
+  return resultado;
+}
+
 // `baixasDoLancamento` (fase EI) é para quem serializa MUITOS de uma vez: sem
 // ele, cada chamada filtra a lista inteira de baixas — 27 mil lançamentos ×
 // 25 mil baixas na exportação sem filtro eram ~700 milhões de comparações, 10 a
@@ -19827,7 +19910,11 @@ async function tratarRequisicao(req, res) {
       const abatidoPorId = new Map();
       baixasDosParciais.forEach((p) => abatidoPorId.set(p.entryId, (abatidoPorId.get(p.entryId) || 0)
         + Number(p.amount || 0) + Number(p.discount || 0) - Number(p.interest || 0) - Number(p.fine || 0)));
-      const pageEntries = data.finance.map((entry) => serializeFinanceEntry(entry, data));
+      const empresasDaPagina = await empresasDosTitulos(data.finance, data);
+      const pageEntries = data.finance.map((entry) => {
+        const empresa = empresasDaPagina.get(entry.id);
+        return { ...serializeFinanceEntry(entry, data), empresaNome: empresa ? empresa.nome : '', empresaCnpj: empresa ? empresa.cnpj : '' };
+      });
       return sendJson(res, {
         entries: pageEntries,
         total: filtered.length,

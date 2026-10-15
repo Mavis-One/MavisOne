@@ -2090,6 +2090,9 @@ tr[data-detail] { cursor: pointer; }
 .dfe-contagem { margin: 0 0 10px; }
 .dfe-parte strong { display: block; font-weight: 600; }
 .dfe-parte .muted { display: block; font-size: 0.8rem; }
+/* Empresa do título nas listas do Financeiro (15/10/2026). */
+.fin-empresa { display: inline-flex; flex-direction: column; line-height: 1.25; }
+.fin-empresa .muted { font-size: 0.78rem; }
 /* A chave inteira na lista (15/10/2026): os 44 dígitos em blocos de 4, como na
    DANFE, em fonte de largura fixa e duas linhas (6 + 5 blocos). Numa linha só
    ela passava a tabela da tela em notebook (1440 px). O clique copia sem espaços. */

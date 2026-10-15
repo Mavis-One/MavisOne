@@ -109,6 +109,21 @@ const FINANCE_LISTA_COLUNAS = [
   { chave: 'type', rotulo: 'Tipo', ordem: 'type', valor: (e, f) => FINANCE_TYPE_LABEL[e.type] || f.esc(e.type || '-') },
   { chave: 'category', rotulo: 'Categoria', ordem: 'category', valor: (e, f) => f.cortado(e.categoryName, 'is-curto') },
   { chave: 'clienteFornecedor', rotulo: 'Cliente/Fornecedor', ordem: 'clienteFornecedor', valor: (e, f) => f.cortado(e.clienteFornecedor, 'is-medio') },
+  // De qual empresa é o título (15/10/2026): nome e CNPJ (ou a raiz, quando a
+  // empresa tem várias filiais e o título não diz qual). Ver
+  // empresasDosTitulos no servidor.
+  {
+    chave: 'empresa',
+    rotulo: 'Empresa',
+    valor: (e, f) => {
+      if (!e.empresaNome && !e.empresaCnpj) return '-';
+      const doc = String(e.empresaCnpj || '');
+      const cnpj = doc.length === 14
+        ? doc.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
+        : (doc.length === 8 ? doc.replace(/(\d{2})(\d{3})(\d{3})/, '$1.$2.$3') : doc);
+      return `<span class="fin-empresa">${f.cortado(e.empresaNome || cnpj, 'is-curto', `${e.empresaNome || ''} ${cnpj}`.trim())}${e.empresaNome && cnpj ? `<span class="muted">${f.esc(cnpj)}</span>` : ''}</span>`;
+    }
+  },
   { chave: 'amountPrevisto', rotulo: 'Valor previsto', ordem: 'amount', dinheiro: true, valor: (e) => financeFormatBRL(e.amountPrevisto) },
   { chave: 'amountRealizado', rotulo: 'Valor realizado', dinheiro: true, valor: (e) => financeFormatBRL(e.amountRealizado) },
   { chave: 'emAberto', rotulo: 'Em aberto', dinheiro: true, valor: (e) => financeFormatBRL(financeEmAberto(e)) },
@@ -142,7 +157,11 @@ const FINANCE_LISTA_COLUNAS = [
 ];
 
 // Para quem nunca escolheu: as colunas que a tela tinha antes do seletor.
-const FINANCE_COLUNAS_PADRAO = ['codigo', 'date', 'dueDate', 'description', 'type', 'category', 'clienteFornecedor', 'paymentMethod', 'amountPrevisto', 'amountRealizado', 'status', 'document'];
+const FINANCE_COLUNAS_PADRAO = ['codigo', 'date', 'dueDate', 'description', 'type', 'category', 'clienteFornecedor', 'empresa', 'paymentMethod', 'amountPrevisto', 'amountRealizado', 'status', 'document'];
+// Colunas que entraram depois de o seletor existir: aparecem também para quem
+// já tinha escolhido as suas, uma vez — se a pessoa tirar, fica tirada
+// (`conhecidas` guarda o que ela já viu no seletor).
+const FINANCE_COLUNAS_NOVAS = ['empresa'];
 
 const financeFiltrosVazios = () => ({
   search: '', type: '', status: '', periodo: '', clientSupplierId: '', category: '', costCenter: '', bankAccountId: '',
@@ -265,8 +284,13 @@ function criarTelaDeLancamentos(telaChave) {
       ? state.preferences.finance_lancamentos.colunas
       : null;
     const validas = Array.isArray(salvas) ? salvas.filter((c) => FINANCE_LISTA_COLUNAS.some((col) => col.chave === c)) : [];
-    const escolhidas = validas.length ? validas : FINANCE_COLUNAS_PADRAO;
-    return FINANCE_LISTA_COLUNAS.filter((col) => col.fixa || escolhidas.includes(col.chave));
+    const conhecidas = (state.preferences && state.preferences.finance_lancamentos && state.preferences.finance_lancamentos.conhecidas) || [];
+    const escolhidas = validas.length
+      ? validas.concat(FINANCE_COLUNAS_NOVAS.filter((c) => !conhecidas.includes(c)))
+      : FINANCE_COLUNAS_PADRAO;
+    // Em Contas a Pagar e a Receber o tipo é um só: a coluna repetiria
+    // "Despesa"/"Receita" em todas as linhas (15/10/2026).
+    return FINANCE_LISTA_COLUNAS.filter((col) => (col.fixa || escolhidas.includes(col.chave)) && !(tipoFixo && col.chave === 'type'));
   }
 
   function salvarPreferenciaDaLista(mudanca) {
@@ -869,7 +893,7 @@ function criarTelaDeLancamentos(telaChave) {
           return;
         }
         // Na ORDEM do catálogo, não na de clique: é ela que desenha a tabela.
-        salvarPreferenciaDaLista({ colunas: FINANCE_LISTA_COLUNAS.map((c) => c.chave).filter((c) => escolhidas.includes(c)) });
+        salvarPreferenciaDaLista({ colunas: FINANCE_LISTA_COLUNAS.map((c) => c.chave).filter((c) => escolhidas.includes(c)), conhecidas: FINANCE_LISTA_COLUNAS.map((c) => c.chave) });
         redesenhar();
       });
     });
