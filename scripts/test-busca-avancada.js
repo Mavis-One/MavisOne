@@ -36,7 +36,8 @@ const catalogo = appSrc.slice(appSrc.indexOf('const SALES_FILTROS = ['), appSrc.
 const chaves = [...catalogo.matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
 check('o catálogo existe', chaves.length > 0, `${chaves.length} filtros`);
 // Os campos do briefing que têm dado por trás, mais os que a tela já tinha.
-['search', 'type', 'status', 'companyId', 'sellerId', 'clientSupplierId',
+// Sem clientSupplierId desde 15/10/2026 (ver test-busca-por-documento-nas-vendas.js).
+['search', 'type', 'status', 'companyId', 'sellerId',
   'nfeNumero', 'customerPoCode', 'carrierId', 'clientStatus', 'category',
   'saleOrigin', 'clientContact', 'valorDe', 'valorAte',
   'periodo', 'dateField', 'dateFrom', 'dateTo'].forEach((c) => {

@@ -3652,11 +3652,16 @@ function serializeSalesRecord(record, data) {
   const totalAmount = typeof record.totalAmount === 'number' ? record.totalAmount : Number(record.amount || itemsTotal || 0);
 
   let customerName = record.clientSupplierName || record.customer || '';
+  // O CPF/CNPJ do cliente, para a busca geral da lista (15/10/2026).
+  let customerDocument = '';
   if (record.clientSupplierId) {
     // Pelo índice, e não remontando o diretório de 6.492 cadastros aqui dentro
     // — esta função roda uma vez por pedido (ver indiceDoCadastro).
     const found = acharNoCadastro(data, record.clientSupplierId);
-    if (found) customerName = found.name;
+    if (found) {
+      customerName = found.name;
+      customerDocument = String(found.document || '').replace(/\D/g, '');
+    }
   }
 
   return {
@@ -3667,6 +3672,7 @@ function serializeSalesRecord(record, data) {
     dueDate: record.dueDate || '',
     clientSupplierId: record.clientSupplierId || '',
     customer: customerName || '-',
+    customerDocument,
     companyId: record.companyId || '',
     companyName: resolveById(data.companies, record.companyId),
     sellerId: record.sellerId || '',
@@ -3974,9 +3980,18 @@ function filterSalesRecords(registros, query) {
     result = result.filter((r) => String(ler(r) || '') === alvo);
   };
 
+  // A BUSCA GERAL ACHA TAMBÉM PELO CPF/CNPJ DO CLIENTE (15/10/2026, pedido do
+  // usuário: "apague a busca por clientes/fornecedor dos filtros avançados e
+  // permita buscar no campo de busca geral por cpf/cnpj"). Só número e
+  // pontuação, e 8 dígitos ou mais: menos que isso é o código do pedido. Com
+  // 8, a raiz do CNPJ acha todas as filiais — a mesma regra da busca de
+  // Lançamentos.
   const search = texto(query.get('search'));
   if (search) {
-    result = result.filter((r) => contem(r.code, search) || contem(r.customer, search) || contem(r.id, search));
+    const digitosDaBusca = /^[\d.\-/\s]+$/.test(search) ? search.replace(/\D/g, '') : '';
+    const documentoBuscado = digitosDaBusca.length >= 8 ? digitosDaBusca : '';
+    result = result.filter((r) => contem(r.code, search) || contem(r.customer, search) || contem(r.id, search)
+      || (documentoBuscado && String(r.customerDocument || '').includes(documentoBuscado)));
   }
 
   // O status do registro já sai normalizado do serializer; o do filtro vem do

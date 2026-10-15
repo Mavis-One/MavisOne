@@ -678,8 +678,11 @@ function opcoesDeOrigemDeVenda(meta, valorAtual) {
   return opcoes;
 }
 
+// Sem 'clientSupplierId' desde 15/10/2026: o filtro Cliente/Fornecedor saiu da
+// Busca Avançada (o cliente se acha na busca geral, pelo nome ou CPF/CNPJ), e
+// um valor antigo dele ficaria valendo sem campo nenhum na tela.
 const SALES_FILTROS = [
-  'search', 'type', 'status', 'companyId', 'sellerId', 'clientSupplierId',
+  'search', 'type', 'status', 'companyId', 'sellerId',
   'nfeNumero', 'customerPoCode', 'carrierId', 'clientStatus', 'category',
   'saleOrigin', 'clientContact', 'valorDe', 'valorAte',
   'periodo', 'dateField', 'dateFrom', 'dateTo'
@@ -3247,7 +3250,7 @@ async function loadModule(moduleName) {
           <form id="salesQuickSearchForm" class="row" style="margin-bottom: 12px;">
             <label class="cadastro-field" style="grid-column: span 3;">
               <span>Busca</span>
-              <input id="salesQuickSearch" name="search" value="${escapeHtml(filters.search)}" placeholder="Código ou cliente" />
+              <input id="salesQuickSearch" name="search" value="${escapeHtml(filters.search)}" placeholder="Código, cliente ou CPF/CNPJ" />
             </label>
             <div style="align-self: end;"><button type="submit" class="secondary">Buscar</button></div>
           </form>
@@ -3278,13 +3281,9 @@ async function loadModule(moduleName) {
                         ${SalesStatus.CATALOGO.map((item) => `<option value="${item.value}" ${filters.status === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
                       </select>
                     </label>
-                    <label class="cadastro-field">
-                      <span>Cliente/Fornecedor</span>
-                      <select name="clientSupplierId">
-                        <option value="">Todos</option>
-                        ${meta.directory.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.clientSupplierId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-                      </select>
-                    </label>
+                    <!-- Cliente/Fornecedor saiu daqui (15/10/2026, pedido do
+                         usuário): o cliente se acha na Busca geral, pelo nome
+                         ou pelo CPF/CNPJ. -->
                     <label class="cadastro-field">
                       <span>Empresa</span>
                       <select name="companyId">
