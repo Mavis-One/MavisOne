@@ -158,8 +158,9 @@ check('a lista NF-e Emitidas inclui as importadas, sem derrubar se faltar', /imp
   && /fiscais\.concat\(manuais, importadas\)/.test(server));
 const tela = ler('public/modules/finance/subs/nfe_emitidas.js');
 const acoes = ler('public/modules/finance/nfe_actions.js');
-check('a tela não oferece Cancelar para importada (linha e ficha)',
-  /nfe\.status === 'autorizada' && nfe\.origem !== 'importada' \? `<button type="button" class="secondary" data-quick-cancel/.test(tela)
+// 15/10/2026: a linha não tem mais botão Cancelar (a coluna Ações saiu).
+check('a tela não oferece Cancelar para importada (ficha; a linha não tem mais o botão)',
+  !/data-quick-cancel/.test(tela)
   && /nfe\.status === 'autorizada' && nfe\.origem !== 'importada' \? `<button type="button" class="btn-danger" id="nfeModalCancel"/.test(tela));
 check('  e cancelNfe recusa importada mesmo se chamado', /if \(nota && nota\.origem === 'importada'\) \{/.test(tela));
 check('o painel de ações trava tudo para importada', /ctx\.selecionadas\.some\(\(nota\) => nota\.origem === 'importada'\)\) return 'NF-e importada/.test(acoes));

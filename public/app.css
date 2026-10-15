@@ -2079,6 +2079,11 @@ tr[data-detail] { cursor: pointer; }
 .nfe-filtros > .nfe-filtro-busca { flex: 2 1 200px; }
 .nfe-filtro-acao { flex: 0 0 auto; display: flex; }
 .nfe-empresa { white-space: nowrap; }
+/* A chave inteira na lista (15/10/2026): os 44 dígitos em blocos de 4, como na
+   DANFE, em fonte de largura fixa e duas linhas (6 + 5 blocos). Numa linha só
+   ela passava a tabela da tela em notebook (1440 px). O clique copia sem espaços. */
+.nfe-chave { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.74rem; line-height: 1.35; white-space: nowrap; text-align: left; letter-spacing: 0; }
+.nfe-rascunho-acoes { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .nfe-por-pagina { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-left: 12px; }
 .nfe-por-pagina select { width: auto; }
 tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transparent); }

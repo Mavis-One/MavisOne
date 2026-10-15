@@ -152,31 +152,25 @@ const respostaPadrao = (q) => ({ nfes: LISTA, total: LISTA.length, page: Number(
   await t.pronto;
   const html = t.content.innerHTML;
   const linha = (id) => (html.split('<tr class="cadastro-row-clickable').find((l) => l.includes(`data-id="${id}"`)) || '');
-  const botaoCancelar = (id) => (linha(id).match(/<button type="button" class="secondary" data-quick-cancel[^>]*>/) || [''])[0];
-
-  check('NF-e autorizada há 48 h: Cancelar desligado, com o motivo', /disabled title="O prazo de 24 horas/.test(botaoCancelar('f-velha')), botaoCancelar('f-velha').slice(0, 120));
-  check('  e a dica aponta o extemporâneo', /Cancelamento Extemporâneo de NF-e/.test(botaoCancelar('f-velha')));
-  check('NF-e autorizada há 1 h: Cancelar ligado', botaoCancelar('f-nova') !== '' && !/disabled/.test(botaoCancelar('f-nova')), botaoCancelar('f-nova'));
-  check('NFC-e de 1 h atrás (prazo de 30 min): desligado, sem falar em extemporâneo',
-    /disabled title="O prazo de 30 minutos/.test(botaoCancelar('nfce-hora')) && !/Extemporâneo/.test(botaoCancelar('nfce-hora')));
-  check('registro manual: ligado (não tem prazo da SEFAZ)', botaoCancelar('man-1') !== '' && !/disabled/.test(botaoCancelar('man-1')));
-  check('importada: sem botão', botaoCancelar('imp-1') === '');
-
-  check('a chave vai resumida (8 últimos) e inteira na dica, com cópia',
-    linha('f-velha').includes(`data-copiar-chave="${CHAVE}"`) && linha('f-velha').includes(`…${CHAVE.slice(-8)}</button>`)
-    && !linha('f-velha').includes(`>${CHAVE}<`));
+  // 15/10/2026, pedido do usuário: sem as colunas "Lançamento financeiro" e
+  // "Ações", e a chave inteira. Cancelar continua no painel de ações e na ficha,
+  // com a mesma regra de prazo (motivoParaNaoCancelar).
+  check('a linha não tem mais o botão Cancelar nem a contagem de parcelas',
+    !/data-quick-cancel/.test(html) && !/parcelas? pagas?/.test(linha('f-velha')) && !/Lançamento financeiro<\/th>/.test(html) && !/<th>Ações<\/th>/.test(html));
+  // Em blocos de 4, duas linhas (6 + 5 blocos), como na DANFE; a cópia leva sem espaços.
+  const emBlocos = (t) => t.replace(/(\d{4})(?=\d)/g, '$1 ');
+  check('a chave vai inteira (em blocos, duas linhas), com cópia sem espaços',
+    linha('f-velha').includes(`data-copiar-chave="${CHAVE}"`)
+    && linha('f-velha').includes(`>${emBlocos(CHAVE.slice(0, 24))}<br>${emBlocos(CHAVE.slice(24))}</button>`));
   check('cliente e empresa cortados, com o nome inteiro na dica',
     /<span class="texto-cortado is-medio" title="COMERCIO DE MOTOS ELETRICAS DO VALE DO ITAPOCU LTDA">/.test(linha('f-velha'))
     && /<span class="texto-cortado is-curto" title="LOJA CENTRO">/.test(linha('f-velha')));
   check('valor alinhado à direita (célula e cabeçalho)', /<td class="col-valor">R\$ 1500\.00<\/td>/.test(linha('f-velha')) && /<th class="col-valor" aria-sort/.test(html));
   check('documento fora do formato é escapado', linha('f-nova').includes('&lt;b&gt;x&lt;/b&gt;') && !linha('f-nova').includes('<b>x</b>'));
-  // "1/2 parcelas paga": a concordância é com o número de pagas, como já era.
-  check('parcela cancelada fora da conta: 1/2, não 1/3', /1\/2 parcelas paga\b/.test(linha('f-velha')), (linha('f-velha').match(/\d\/\d parcelas? pagas?/) || ['nada'])[0]);
-  check('todas canceladas: diz isso, em vez de 0/1', /1 parcela cancelada/.test(linha('man-1')));
   check('o total autorizado do filtro aparece no cabeçalho', /Total autorizado: <strong[^>]*>R\$ 1525\.00<\/strong>/.test(html));
   check('busca anuncia CPF/CNPJ, e há Valor de / Valor até', html.includes('placeholder="Número, cliente, CPF/CNPJ ou chave"')
     && /name="valorDe" type="number" step="0\.01" min="0"/.test(html) && /name="valorAte" type="number" step="0\.01" min="0"/.test(html));
-  check('as 13 colunas continuam (colspan da linha vazia)', /colspan="13"/.test(ler('public/modules/finance/subs/nfe_emitidas.js')));
+  check('as 11 colunas (colspan da linha vazia)', /colspan="11"/.test(ler('public/modules/finance/subs/nfe_emitidas.js')));
 
   // O modal da nota fiscal: condição de pagamento e parcelas da lista.
   const clique = t.ouvintes['linha-f-velha:click'];

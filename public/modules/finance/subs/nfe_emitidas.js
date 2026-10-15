@@ -27,6 +27,15 @@ function nfeStatusBadge(status) {
   return `<span class="finance-badge finance-badge-${meta.tone}">${escapeHtml(meta.label)}</span>`;
 }
 
+// A chave inteira na lista (15/10/2026, pedido do usuário): os 44 dígitos em
+// blocos de 4, como na DANFE, em duas linhas fixas (6 + 5 blocos). Numa linha
+// só a tabela passava da tela; a cópia (data-copiar-chave) leva sem espaços.
+function chaveEmBlocos(chave) {
+  const digitos = String(chave || '');
+  const blocos = (texto) => escapeHtml(texto.replace(/(\d{4})(?=\d)/g, '$1 '));
+  return digitos.length > 24 ? `${blocos(digitos.slice(0, 24))}<br>${blocos(digitos.slice(24))}` : blocos(digitos);
+}
+
 function nfeFormatDocument(value) {
   const digits = String(value || '').replace(/\D/g, '');
   if (digits.length === 11) {
@@ -343,18 +352,6 @@ function criarTelaDeNotasEmitidas(telaChave) {
     }
     renderView(result);
     vigiarProcessando();
-  }
-
-  // Parcela cancelada não entra na conta (fase EI): depois de cancelar a nota,
-  // "1/3 parcelas pagas" dizia que faltavam duas que ninguém vai receber.
-  const PARCELA_CANCELADA = ['cancelado', 'cancelled', 'canceled'];
-  function financialSummary(nfe) {
-    const todas = nfe.financialEntries || [];
-    if (!todas.length) return '-';
-    const vivas = todas.filter((e) => !PARCELA_CANCELADA.includes(String(e.status || '').toLowerCase()));
-    if (!vivas.length) return `<span class="muted">${todas.length} parcela${todas.length === 1 ? '' : 's'} cancelada${todas.length === 1 ? '' : 's'}</span>`;
-    const paid = vivas.filter((e) => e.status === 'pago' || e.status === 'recebido').length;
-    return `${paid}/${vivas.length} parcela${vivas.length === 1 ? '' : 's'} paga${paid === 1 ? '' : 's'}`;
   }
 
   // O botão Cancelar da linha e o do modal seguem a MESMA regra do painel de
@@ -868,7 +865,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
             <thead>
               <tr>
                 <th class="nfe-check-col"><input type="checkbox" id="nfeSelectAll" ${todasMarcadas ? 'checked' : ''} title="Selecionar todas desta página" /></th>
-                <th>Modelo</th>${cabecalhoOrdenavel('numero')}<th>Série</th>${cabecalhoOrdenavel('data')}${cabecalhoOrdenavel('empresa')}${cabecalhoOrdenavel('cliente')}<th>CPF/CNPJ</th>${cabecalhoOrdenavel('valor')}${cabecalhoOrdenavel('status')}<th>Chave</th><th>Lançamento financeiro</th><th>Ações</th>
+                <th>Modelo</th>${cabecalhoOrdenavel('numero')}<th>Série</th>${cabecalhoOrdenavel('data')}${cabecalhoOrdenavel('empresa')}${cabecalhoOrdenavel('cliente')}<th>CPF/CNPJ</th>${cabecalhoOrdenavel('valor')}${cabecalhoOrdenavel('status')}<th>Chave</th>
               </tr>
             </thead>
             <tbody>
@@ -884,19 +881,23 @@ function criarTelaDeNotasEmitidas(telaChave) {
                   <td>${escapeHtml(nfeFormatDocument(r.documento))}</td>
                   <td class="col-valor">${financeFormatBRL(r.valor)}</td>
                   <td>${nfeStatusBadge('em-edicao')} <span class="muted" title="Salva por ${escapeHtml(r.salvoPor || '')}">${r.pedidoCodigo ? `pedido ${escapeHtml(String(r.pedidoCodigo))}` : 'avulsa'}</span></td>
-                  <td><span class="muted">—</span></td>
-                  <td><span class="muted">—</span></td>
-                  <td class="finance-extrato-actions">
-                    <button type="button" data-continuar-rascunho="${escapeHtml(r.chave)}">Continuar</button>
-                    <button type="button" class="secondary" data-descartar-rascunho="${escapeHtml(r.chave)}">Descartar</button>
+                  <!-- Sem a coluna Ações (15/10/2026), Continuar e Descartar ficam
+                       na célula da Chave, que a nota em edição ainda não tem — no
+                       Status alargariam a coluna de todas as linhas. -->
+                  <td>
+                    <span class="nfe-rascunho-acoes">
+                      <button type="button" class="finance-pill finance-pill-sm" data-continuar-rascunho="${escapeHtml(r.chave)}">Continuar</button>
+                      <button type="button" class="secondary finance-pill-sm" data-descartar-rascunho="${escapeHtml(r.chave)}">Descartar</button>
+                    </span>
                   </td>
                 </tr>`).join('')}
               ${result.nfes.length ? result.nfes.map((nfe) => {
                 // Fase EI: Cliente e Empresa vão cortados com "…" e o nome
                 // inteiro na dica (com o nowrap da tabela, razão social longa
-                // empurrava Valor e Status para fora da tela), e o Cancelar
-                // segue a regra de prazo do painel (motivoParaNaoCancelar).
-                const bloqueioCancelar = nfe.status === 'autorizada' && nfe.origem !== 'importada' ? motivoParaNaoCancelar(nfe) : '';
+                // empurrava Valor e Status para fora da tela).
+                // 15/10/2026, pedido do usuário: sem as colunas "Lançamento
+                // financeiro" e "Ações" — cancelar fica no painel de ações (nota
+                // marcada) e na ficha da nota, com a mesma regra de prazo.
                 return `
                 <tr class="cadastro-row-clickable finance-entry-row ${selecionadas.has(nfe.id) ? 'is-selected' : ''}" data-id="${escapeHtml(nfe.id)}">
                   <td class="nfe-check-col"><input type="checkbox" data-select="${escapeHtml(nfe.id)}" ${selecionadas.has(nfe.id) ? 'checked' : ''} /></td>
@@ -911,14 +912,13 @@ function criarTelaDeNotasEmitidas(telaChave) {
                   <td>${nfe.status === 'erro' && nfe.origem === 'fiscal'
                     ? `<button type="button" class="link-button nfe-erro-motivo" data-erro-nfe="${escapeHtml(nfe.id)}" title="Ver o motivo do erro">${nfeStatusBadge(nfe.status)}</button>`
                     : nfeStatusBadge(nfe.status)}${nfe.origem === 'importada' ? ' <span class="finance-badge finance-badge-muted" title="Emitida no sistema anterior e importada como registro">importada</span>' : ''}</td>
+                  <!-- A chave inteira (15/10/2026, pedido do usuário); o clique copia. -->
                   <td>${nfe.key
-                    ? `<button type="button" class="link-button" data-copiar-chave="${escapeHtml(nfe.key)}" title="${escapeHtml(nfe.key)} (clique para copiar)">…${escapeHtml(String(nfe.key).slice(-8))}</button>`
+                    ? `<button type="button" class="link-button nfe-chave" data-copiar-chave="${escapeHtml(nfe.key)}" title="Clique para copiar">${chaveEmBlocos(nfe.key)}</button>`
                     : '<span class="muted">-</span>'}</td>
-                  <td>${financialSummary(nfe)}</td>
-                  <td>${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="secondary" data-quick-cancel="${escapeHtml(nfe.id)}"${bloqueioCancelar ? ` disabled title="${escapeHtml(bloqueioCancelar)}"` : ''}>Cancelar</button>` : ''}</td>
                 </tr>
               `;
-              }).join('') : (emEdicaoVisiveis.length ? '' : `<tr><td colspan="13" class="muted">Nenhuma NF-e encontrada.</td></tr>`)}
+              }).join('') : (emEdicaoVisiveis.length ? '' : `<tr><td colspan="11" class="muted">Nenhuma NF-e encontrada.</td></tr>`)}
             </tbody>
           </table>
         </div>
@@ -1087,12 +1087,6 @@ function criarTelaDeNotasEmitidas(telaChave) {
     });
 
     renderActionsPanel();
-    content.querySelectorAll('[data-quick-cancel]').forEach((btn) => {
-      btn.addEventListener('click', async (event) => {
-        event.stopPropagation();
-        await cancelNfe(btn.dataset.quickCancel);
-      });
-    });
 
     document.getElementById('nfePrevPage')?.addEventListener('click', () => { if (page > 1) { page -= 1; load(); } });
     document.getElementById('nfeNextPage')?.addEventListener('click', () => {

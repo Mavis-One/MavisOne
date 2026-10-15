@@ -70,7 +70,8 @@ check('cabeçalhos ordenáveis (número, data, empresa, cliente, valor, status)'
 // Fase EI: o nome vai cortado com "…" e inteiro na dica (texto-cortado).
 check('coluna Empresa nas linhas', /<td class="nfe-empresa"><span class="texto-cortado is-curto" title="\$\{escapeHtml\(nfe\.empresa \|\| ''\)\}">\$\{escapeHtml\(nfe\.empresa \|\| '-'\)\}<\/span><\/td>/.test(tela));
 check('a ordem e o tamanho de página vão na consulta', /sort: ordem\.campo, dir: ordem\.direcao/.test(tela));
-check('o colspan da linha vazia acompanha as 13 colunas', /colspan="13"/.test(tela));
+// 15/10/2026: sem "Lançamento financeiro" e "Ações" (pedido do usuário): 11.
+check('o colspan da linha vazia acompanha as 11 colunas', /colspan="11"/.test(tela));
 check('coluna e filtro de modelo (NF-e / NFC-e)',
   tela.includes("Number(nfe.modelo) === 65 ? 'NFC-e' : 'NF-e'") && tela.includes('<select name="modelo">')
   && server.includes("if (modelo === '55' || modelo === '65') list = list.filter((nfe) => String(nfe.modelo || 55) === modelo);"));
