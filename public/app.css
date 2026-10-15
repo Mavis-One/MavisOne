@@ -4277,6 +4277,30 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .painel-rosca-3 { stroke: #f59e0b; background: #f59e0b; }
 .painel-rosca-4 { stroke: #ef4444; background: #ef4444; }
 .painel-rosca-5 { stroke: #64748b; background: #64748b; }
+/* Tipos de gráfico (15/10/2026): a opção lateral e as cores de cada série nos
+   desenhos que pintam área — as mesmas das linhas, nos dois temas. */
+.painel-grafico-com-tipos { display: flex; gap: 12px; align-items: stretch; }
+.painel-grafico-com-tipos > .finance-chart-wrap { flex: 1; min-width: 0; }
+.painel-tipos-grafico { display: flex; flex-direction: column; gap: 6px; }
+.painel-tipo-grafico { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 8px; min-width: 64px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-alt); color: var(--muted); font-size: 0.72rem; cursor: pointer; }
+.painel-tipo-grafico:hover { color: var(--text); border-color: var(--primary); }
+.painel-tipo-grafico.active { color: var(--primary); border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--panel-alt)); }
+.painel-pizza .painel-rosca-legenda { flex: 0 1 420px; }
+.finance-chart-legend[hidden] { display: none; }
+.painel-grade { max-height: 260px; overflow: auto; }
+.painel-serie-receita { fill: var(--success); stroke: var(--success); background: var(--success); }
+.painel-serie-despesa { fill: var(--danger); stroke: var(--danger); background: var(--danger); }
+.painel-serie-saldo { fill: var(--primary); stroke: var(--primary); background: var(--primary); }
+.painel-serie-blue { fill: #2563eb; stroke: #2563eb; background: #2563eb; }
+.painel-serie-purple { fill: #8b5cf6; stroke: #8b5cf6; background: #8b5cf6; }
+.painel-pizza-fatia { fill: none; }
+:root[data-theme="dark"] .painel-serie-saldo { fill: var(--neon-ciano); stroke: var(--neon-ciano); background: var(--neon-ciano); }
+:root[data-theme="dark"] .painel-serie-blue { fill: var(--neon-azul); stroke: var(--neon-azul); background: var(--neon-azul); }
+:root[data-theme="dark"] .painel-serie-purple { fill: var(--neon-roxo); stroke: var(--neon-roxo); background: var(--neon-roxo); }
+@media (max-width: 720px) {
+  .painel-grafico-com-tipos { flex-direction: column; }
+  .painel-tipos-grafico { flex-direction: row; flex-wrap: wrap; }
+}
 
 /* --- Ranking -------------------------------------------------------------- */
 .painel-ranking { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; counter-reset: pos; }

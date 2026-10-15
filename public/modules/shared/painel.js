@@ -275,6 +275,139 @@ window.MavisPainel = (function () {
     `;
   }
 
+  // ---------------------------------------------------------------------------
+  // OS TIPOS DE GRÁFICO (15/10/2026, pedido do usuário: "uma opção lateral para
+  // alterar os tipos de gráficos: grade, pizza, prédios"). As mesmas séries do
+  // gráfico de linha, desenhadas de outro jeito:
+  //   linhas  — o de sempre (graficoLinha);
+  //   colunas — os "prédios": uma coluna por série em cada período;
+  //   pizza   — o total do período, repartido entre as séries;
+  //   grade   — a tabela com os números de cada período e o total.
+  // A cor de cada série é a da linha dela (pela classe da linha), nos dois temas.
+  const TIPOS_DE_GRAFICO = [
+    { valor: 'linhas', rotulo: 'Linhas', icone: '<polyline points="3,17 9,11 13,14 21,6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>' },
+    { valor: 'colunas', rotulo: 'Colunas', icone: '<rect x="4" y="11" width="4" height="9" fill="currentColor"></rect><rect x="10" y="5" width="4" height="15" fill="currentColor"></rect><rect x="16" y="8" width="4" height="12" fill="currentColor"></rect>' },
+    { valor: 'pizza', rotulo: 'Pizza', icone: '<path d="M12 3a9 9 0 1 0 9 9h-9z" fill="currentColor"></path><path d="M14 2.2A9 9 0 0 1 21.8 10H14z" fill="currentColor" opacity="0.55"></path>' },
+    { valor: 'grade', rotulo: 'Grade', icone: '<rect x="3" y="4" width="18" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"></rect><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="2"></line><line x1="3" y1="15" x2="21" y2="15" stroke="currentColor" stroke-width="2"></line><line x1="10" y1="4" x2="10" y2="20" stroke="currentColor" stroke-width="2"></line>' }
+  ];
+  const tipoValido = (tipo) => (TIPOS_DE_GRAFICO.some((t) => t.valor === tipo) ? tipo : 'linhas');
+  const LINHAS_PADRAO = [
+    { key: 'receitas', cssClass: 'finance-chart-line-receita', rotulo: 'Receitas' },
+    { key: 'despesas', cssClass: 'finance-chart-line-despesa', rotulo: 'Despesas' },
+    { key: 'saldo', cssClass: 'finance-chart-line-saldo', rotulo: 'Saldo', semPizza: true }
+  ];
+  // finance-chart-line-receita -> painel-serie-receita (preenchimento da mesma cor).
+  const corDaSerie = (line) => `painel-serie-${String(line.cssClass || '').replace('finance-chart-line-', '') || 'azul'}`;
+
+  function graficoColunas(series, escapeHtml = esc, lines, { formato = 'moeda' } = {}) {
+    const linhas = (lines || LINHAS_PADRAO).filter((l) => l.key !== 'meta');
+    const width = 760;
+    const height = 220;
+    const topo = 12;
+    const rodape = 26;
+    const valores = series.flatMap((s) => linhas.map((l) => Number(s[l.key]) || 0));
+    const maior = Math.max(0, ...valores);
+    const menor = Math.min(0, ...valores);
+    const faixa = (maior - menor) || 1;
+    const alturaUtil = height - topo - rodape;
+    const yDe = (v) => topo + ((maior - v) / faixa) * alturaUtil;
+    const zero = yDe(0);
+    const n = Math.max(series.length, 1);
+    const grupo = width / n;
+    const larguraColuna = Math.max(3, Math.min(22, (grupo * 0.78) / linhas.length));
+    const colunas = series.map((s, i) => {
+      const inicio = i * grupo + (grupo - larguraColuna * linhas.length) / 2;
+      return linhas.map((l, j) => {
+        const v = Number(s[l.key]) || 0;
+        const y = Math.min(yDe(v), zero);
+        const h = Math.max(1, Math.abs(yDe(v) - zero));
+        return `<rect x="${(inicio + j * larguraColuna).toFixed(1)}" y="${y.toFixed(1)}" width="${(larguraColuna - 1).toFixed(1)}" height="${h.toFixed(1)}" rx="2" class="painel-coluna ${corDaSerie(l)}"><title>${escapeHtml(s.label)} · ${escapeHtml(l.rotulo || l.key)}: ${valorCheio(v, formato)}</title></rect>`;
+      }).join('');
+    }).join('');
+    const rotulos = series.map((s, i) => `<text x="${(i * grupo + grupo / 2).toFixed(1)}" y="${height - 6}" text-anchor="middle" class="finance-chart-label">${escapeHtml(s.label)}</text>`).join('');
+    return `
+      <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" class="finance-chart-svg" role="img" aria-label="Gráfico de colunas por período">
+        <line x1="0" y1="${zero.toFixed(1)}" x2="${width}" y2="${zero.toFixed(1)}" class="finance-chart-axis"></line>
+        ${colunas}
+        ${rotulos}
+      </svg>`;
+  }
+
+  function graficoPizza(series, escapeHtml = esc, lines, { formato = 'moeda', vazio = 'Sem dados no período.' } = {}) {
+    // Só séries que somam um total: saldo (pode ser negativo) e meta ficam fora.
+    // `pizzaMenos`: a série que já está dentro desta (Pedidos contém o
+    // Faturado) — na pizza entra só a diferença, senão o valor conta duas vezes.
+    const linhas = (lines || LINHAS_PADRAO).filter((l) => l.key !== 'meta' && !l.semPizza);
+    const parte = (s, l) => (Number(s[l.key]) || 0) - (l.pizzaMenos ? (Number(s[l.pizzaMenos]) || 0) : 0);
+    const fatias = linhas.map((l) => ({ line: { ...l, rotulo: l.rotuloPizza || l.rotulo }, valor: series.reduce((t, s) => t + parte(s, l), 0) })).filter((f) => f.valor > 0);
+    const total = fatias.reduce((t, f) => t + f.valor, 0);
+    if (!total) return `<p class="painel-vazio">${escapeHtml(vazio)}</p>`;
+    // Pizza cheia: o traço tem o dobro do raio, então cobre do centro à borda.
+    const raio = 40;
+    const circunferencia = 2 * Math.PI * raio;
+    let acumulado = 0;
+    const arcos = fatias.map((f) => {
+      const traco = (f.valor / total) * circunferencia;
+      const arco = `<circle cx="80" cy="80" r="${raio}" fill="none" stroke-width="80" class="painel-pizza-fatia ${corDaSerie(f.line)}"
+        stroke-dasharray="${traco.toFixed(2)} ${(circunferencia - traco).toFixed(2)}" stroke-dashoffset="${(-acumulado).toFixed(2)}"
+        transform="rotate(-90 80 80)"><title>${escapeHtml(f.line.rotulo || f.line.key)}: ${valorCheio(f.valor, formato)}</title></circle>`;
+      acumulado += traco;
+      return arco;
+    }).join('');
+    return `
+      <div class="painel-rosca painel-pizza">
+        <svg viewBox="0 0 160 160" class="painel-rosca-svg" role="img" aria-label="Total do período por série">${arcos}</svg>
+        <ul class="painel-rosca-legenda">
+          ${fatias.map((f) => `
+            <li>
+              <i class="painel-rosca-marca ${corDaSerie(f.line)}"></i>
+              <span class="painel-rosca-nome">${escapeHtml(f.line.rotulo || f.line.key)}</span>
+              <span class="painel-rosca-valor">${valorCheio(f.valor, formato)}</span>
+              <span class="painel-rosca-pct">${((f.valor / total) * 100).toFixed(0)}%</span>
+            </li>`).join('')}
+        </ul>
+      </div>`;
+  }
+
+  function graficoGrade(series, escapeHtml = esc, lines, { formato = 'moeda' } = {}) {
+    const linhas = lines || LINHAS_PADRAO;
+    const temValor = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+    const total = (l) => series.reduce((t, s) => t + (temValor(s[l.key]) ? Number(s[l.key]) : 0), 0);
+    return `
+      <div class="table-scroll painel-grade">
+        <table class="table">
+          <thead><tr><th>Período</th>${linhas.map((l) => `<th class="col-valor">${escapeHtml(l.rotulo || l.key)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${series.map((s) => `<tr><td>${escapeHtml(s.label)}</td>${linhas.map((l) => `<td class="col-valor">${temValor(s[l.key]) ? valorCheio(s[l.key], formato) : '-'}</td>`).join('')}</tr>`).join('')}
+          </tbody>
+          <tfoot><tr><th>Total</th>${linhas.map((l) => `<th class="col-valor">${valorCheio(total(l), formato)}</th>`).join('')}</tr></tfoot>
+        </table>
+      </div>`;
+  }
+
+  /** O gráfico do tipo pedido, com as mesmas séries. */
+  function grafico(tipo, series, escapeHtml = esc, lines, opcoes = {}) {
+    const t = tipoValido(tipo);
+    if (t === 'colunas') return graficoColunas(series, escapeHtml, lines, opcoes);
+    if (t === 'pizza') return graficoPizza(series, escapeHtml, lines, opcoes);
+    if (t === 'grade') return graficoGrade(series, escapeHtml, lines, opcoes);
+    return graficoLinha(series, escapeHtml, lines, opcoes);
+  }
+
+  /** A opção lateral: um botão por tipo. `id` diz de qual gráfico é. */
+  function seletorTipoGrafico(id, atual, escapeHtml = esc) {
+    const t = tipoValido(atual);
+    return `
+      <div class="painel-tipos-grafico" role="group" aria-label="Tipo de gráfico">
+        ${TIPOS_DE_GRAFICO.map((tipo) => `
+          <button type="button" class="painel-tipo-grafico ${tipo.valor === t ? 'active' : ''}" data-grafico-tipo="${escapeHtml(id)}:${tipo.valor}"
+            aria-pressed="${tipo.valor === t}" title="${tipo.rotulo}">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">${tipo.icone}</svg>
+            <span>${tipo.rotulo}</span>
+          </button>`).join('')}
+      </div>`;
+  }
+
   /**
    * Ranking — os N maiores, com o número ao lado.
    *
@@ -428,6 +561,12 @@ window.MavisPainel = (function () {
     graficoBarras,
     graficoRosca,
     ranking,
+    grafico,
+    graficoColunas,
+    graficoPizza,
+    graficoGrade,
+    seletorTipoGrafico,
+    TIPOS_DE_GRAFICO,
     bloco,
     seletorPeriodo,
     ligarPeriodo,

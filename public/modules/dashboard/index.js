@@ -475,6 +475,22 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx, opcoe
     </form>
   ` : '';
 
+  // O TIPO DE CADA GRÁFICO (15/10/2026): linhas, colunas, pizza ou grade, à
+  // escolha de cada um — fica nas preferências da pessoa.
+  const P = window.MavisPainel;
+  const tiposEscolhidos = (state.preferences && state.preferences.dashboard_graficos) || {};
+  const tipoVendas = tiposEscolhidos.vendas || 'linhas';
+  const tipoFinanceiro = tiposEscolhidos.financeiro || 'linhas';
+  const comLegenda = (tipo) => tipo === 'linhas' || tipo === 'colunas';
+  const linhasVendas = [
+    { key: 'faturado', cssClass: 'finance-chart-line-receita', rotulo: 'Faturado' },
+    // "Pedidos" é todo pedido não cancelado, faturados inclusive: na pizza
+    // vira só a parte ainda não faturada.
+    { key: 'pedidos', cssClass: 'finance-chart-line-blue', rotulo: 'Pedidos', pizzaMenos: 'faturado', rotuloPizza: 'Pedidos a faturar' },
+    { key: 'orcamentos', cssClass: 'finance-chart-line-purple', rotulo: 'Orçamentos' },
+    ...(temMeta ? [{ key: 'meta', cssClass: 'finance-chart-line-meta', rotulo: 'Meta' }] : [])
+  ];
+
   const salesChartPanel = charts.permissions?.sales ? `
     <section class="panel finance-panel-stripe-chart">
       <div class="dashboard-fluxo-topo">
@@ -485,7 +501,7 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx, opcoe
         </div>
       </div>
       ${formMeta}
-      <div class="finance-chart-legend">
+      <div class="finance-chart-legend" ${comLegenda(tipoVendas) ? '' : 'hidden'}>
         <!-- Cor por classe, não por style inline: inline vence o CSS, e a
              legenda ficava presa no azul/roxo do tema claro enquanto a linha
              do gráfico acendia no escuro. -->
@@ -502,13 +518,9 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx, opcoe
              gráfico faria procurar o que não existe. -->
         ${temMeta ? '<span><i class="finance-legend-meta"></i> Meta</span>' : ''}
       </div>
-      <div class="finance-chart-wrap">
-        ${financeBuildChartSvg(serieVendas, escapeHtml, [
-          { key: 'faturado', cssClass: 'finance-chart-line-receita', rotulo: 'Faturado' },
-          { key: 'pedidos', cssClass: 'finance-chart-line-blue', rotulo: 'Pedidos' },
-          { key: 'orcamentos', cssClass: 'finance-chart-line-purple', rotulo: 'Orçamentos' },
-          ...(temMeta ? [{ key: 'meta', cssClass: 'finance-chart-line-meta', rotulo: 'Meta' }] : [])
-        ])}
+      <div class="painel-grafico-com-tipos">
+        <div class="finance-chart-wrap">${P.grafico(tipoVendas, serieVendas, escapeHtml, linhasVendas)}</div>
+        ${P.seletorTipoGrafico('vendas', tipoVendas, escapeHtml)}
       </div>
     </section>
   ` : '';
@@ -516,13 +528,14 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx, opcoe
   const financeChartPanel = charts.permissions?.finance ? `
     <section class="panel finance-panel-stripe-chart">
       <h3>Fluxo Financeiro</h3>
-      <div class="finance-chart-legend">
+      <div class="finance-chart-legend" ${comLegenda(tipoFinanceiro) ? '' : 'hidden'}>
         <span><i class="finance-legend-dot finance-legend-receita"></i> Receitas</span>
         <span><i class="finance-legend-dot finance-legend-despesa"></i> Despesas</span>
         <span><i class="finance-legend-line"></i> Saldo</span>
       </div>
-      <div class="finance-chart-wrap">
-        ${financeBuildChartSvg(charts.financeChartSeries || [], escapeHtml)}
+      <div class="painel-grafico-com-tipos">
+        <div class="finance-chart-wrap">${P.grafico(tipoFinanceiro, charts.financeChartSeries || [], escapeHtml)}</div>
+        ${P.seletorTipoGrafico('financeiro', tipoFinanceiro, escapeHtml)}
       </div>
     </section>
   ` : '';
@@ -657,6 +670,18 @@ window.MavisModuleRegistry.dashboard = async function renderDashboard(ctx, opcoe
   content.querySelectorAll('[data-dashboard-aba]').forEach((button) => {
     button.addEventListener('click', () => {
       state.dashboardAba = button.dataset.dashboardAba;
+      window.MavisModuleRegistry.dashboard(ctx, { reusar: 'tudo' });
+    });
+  });
+
+  // Trocar o tipo do gráfico só redesenha com o que já chegou (15/10/2026).
+  content.querySelectorAll('[data-grafico-tipo]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const [qual, tipo] = String(button.dataset.graficoTipo || '').split(':');
+      const atuais = (state.preferences && state.preferences.dashboard_graficos) || {};
+      const novos = { ...atuais, [qual]: tipo };
+      if (typeof salvarPreferencia === 'function') salvarPreferencia('dashboard_graficos', novos);
+      else state.preferences = { ...(state.preferences || {}), dashboard_graficos: novos };
       window.MavisModuleRegistry.dashboard(ctx, { reusar: 'tudo' });
     });
   });

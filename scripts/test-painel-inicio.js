@@ -282,6 +282,7 @@ function secao4() {
     moduleLabels: { dashboard: 'Início', sales: 'Vendas', finance: 'Financeiro' },
     moduleSubItems: {}, telasVisiveis: () => [], favoriteIconSvg: () => '',
     financeBuildChartSvg: () => '<svg></svg>', getDashboardPinLabel: (k) => k,
+    MavisPainel: { grafico: () => '<svg></svg>', seletorTipoGrafico: () => '' },
     getDashboardPinSet: () => new Set(estadoTela.user.dashboardPins),
     buscarAtencao: async ({ forcar = false } = {}) => { chamadas.push(`sino(forcar=${forcar})`); return { itens: [], total: 0 }; },
     document: { createElement: () => { const molde = { set innerHTML(v) { molde.firstElementChild = { html: v, replaceWith() {}, querySelectorAll: () => [] }; } }; return molde; } }
