@@ -34,6 +34,10 @@ check('  a fila guarda os títulos, a nota e a volta (Notas contra CNPJ ou Notas
   && /\{ module: 'fiscal', sub: 'notas_contra_cnpj', rotulo: 'Voltar às Notas contra CNPJ' \}/.test(entrada)
   && /\{ module: 'purchases', sub: 'entrada_nfe', rotulo: 'Voltar às Notas de Entrada' \}/.test(entrada));
 check('  e abre o primeiro como Edição de Título', /state\.financeEditEntryId = titulos\[0\];[\s\S]{0,120}state\.activeSub = 'edicao_titulo';[\s\S]{0,80}ctx\.loadModule\('finance'\);\s*return;/.test(entrada));
+// Uma transferência desligava o "Gerar contas a pagar" e ele seguia desligado
+// nas notas seguintes: sem conta a pagar, a Edição de Título não abria.
+check('cada nota analisada volta a gerar contas a pagar (menos transferência)', /tela\.gerarFinanceiro = !resposta\.transferencia;/.test(entrada)
+  && !/if \(resposta\.transferencia\) tela\.gerarFinanceiro = false;/.test(entrada));
 check('  a marca na nota recebida acontece antes de sair da tela', entrada.indexOf("/api/fiscal/dfe/${encodeURIComponent(tela.dfeId)}/entrada") < entrada.indexOf('state.financeFilaDaEntrada = {'));
 
 console.log('\n--- a Edição de Título segue a fila ---');

@@ -635,7 +635,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       tela.xml = xml;
       tela.conferencia = { nota: resposta.nota, fornecedor: resposta.fornecedor, itens: resposta.itens, bloqueios: resposta.bloqueios, avisos: resposta.avisos, transferencia: Boolean(resposta.transferencia) };
       // Transferência entre filiais não gera contas a pagar (15/10/2026).
-      if (resposta.transferencia) tela.gerarFinanceiro = false;
+      // A CADA NOTA (15/10/2026): marcado, menos na transferência. Desligado
+      // numa nota, o "Gerar contas a pagar" seguia desligado nas seguintes, e
+      // sem conta a pagar a Edição de Título não abria depois de lançar.
+      tela.gerarFinanceiro = !resposta.transferencia;
       tela.produtos = resposta.produtos || [];
       tela.depositos = resposta.depositos || [];
       tela.permissoes = resposta.permissoes || {};

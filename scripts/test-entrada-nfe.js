@@ -335,7 +335,9 @@ console.log('\n--- nota de uma filial para outra ---');
   check('fornecedor -> nós segue normal', !bloqueado(conferir('05824631000149', '43792899000135')));
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   check('transferência não gera contas a pagar (servidor)', srv.includes('const querFinanceiro = body.gerarFinanceiro !== false && !conferencia.transferencia;'));
-  check('  e a tela já vem com o financeiro desligado', fs.readFileSync(path.join(__dirname, '..', 'public/modules/purchases/subs/entrada_nfe.js'), 'utf8').includes('if (resposta.transferencia) tela.gerarFinanceiro = false;'));
+  // Desde 15/10/2026 a cada nota: desligado na transferência e LIGADO nas
+  // outras (antes seguia desligado na nota seguinte). Ver test-titulos-da-entrada.
+  check('  e a tela já vem com o financeiro desligado', fs.readFileSync(path.join(__dirname, '..', 'public/modules/purchases/subs/entrada_nfe.js'), 'utf8').includes('tela.gerarFinanceiro = !resposta.transferencia;'));
 }
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
