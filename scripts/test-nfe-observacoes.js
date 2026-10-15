@@ -287,5 +287,25 @@ check('  nas duas rotas, criar e editar',
 check('e a textarea da regra mostra o limite',
   /name="observacaoFisco"[^>]*maxlength="500"/.test(ler('public/modules/fiscal/subs/regras.js')));
 
+// 15/10/2026, pedido do usuário: o PDF não pode repartir em duas folhas por
+// causa dos dados adicionais. O quadro da DANFE é da Focus, de tamanho fixo
+// (11 linhas na pré-visualização); o texto padrão tinha 19 linhas e abria a
+// folha 2. Provado na pré-visualização da Focus: antes 2 folhas, depois 1, com
+// o texto inteiro em 8 linhas.
+console.log('\n--- texto corrido na DANFE ---');
+const fichaCheia = T.ficha({ chassi: '352222655002126', modelo: 'RUNNER', cor: 'PRETA' });
+const corrido = T.paraDanfe(`${fichaCheia}\n\n${T.RODAPE}`);
+check('cada bloco vira uma linha corrida; a linha em branco separa os blocos', corrido.split('\n').length === 2, corrido.split('\n').length);
+check('  a ficha: "FABRICANTE: MAVIS | CHASSI: 352222655002126 | ..."',
+  corrido.startsWith('FABRICANTE: MAVIS | CHASSI: 352222655002126 | ANO DE FABRICACAO: 2026 | CATEGORIA: AUTOPROPELIDO | MODELO: RUNNER | ANO: 2026 | COR: PRETA\n'));
+check('  frase com ponto e título com dois-pontos emendam com espaço',
+  corrido.includes('ASSISTÊNCIA. O FRETE') && corrido.includes('CUIDADOS DOS PNEUS: CALIBRE OS PNEUS'));
+check('  campo vazio da ficha continua separado ("CHASSI: | ANO ...")', T.paraDanfe(T.PADRAO).includes('CHASSI: | ANO DE FABRICACAO: 2026'));
+check('  nada do conteúdo sai (só as quebras viram separador)',
+  corrido.replace(/ \| /g, ' ').replace(/\s+/g, ' ') === `${fichaCheia}\n\n${T.RODAPE}`.replace(/\s+/g, ' '));
+check('  passou do limite: vai o original (a SEFAZ recusaria)', T.paraDanfe('A\nB\nC', 3) === 'A\nB\nC' && T.paraDanfe('A\nB', 10) === 'A | B');
+check('NF-e e NFC-e mandam o texto corrido, dentro do orçamento do rodapé',
+  (ler('lib/nfePayloadBuilder.js').match(/textoNfe\.paraDanfe\(informacoesAdicionais, textoNfe\.orcamentoDoRodape\(/g) || []).length === 2);
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

@@ -249,9 +249,40 @@ ${RODAPE}`;
     return Math.max(0, LIMITE_INFCPL - reserva);
   }
 
+  /**
+   * O TEXTO COMO VAI À DANFE (15/10/2026, pedido do usuário: "aumente o campo
+   * de dados adicionais para ... o pdf não se reparta em duas partes").
+   *
+   * O quadro "Dados adicionais" da DANFE é da Focus, de tamanho fixo (a
+   * configuração da empresa na Focus só escolhe logo, orientação e colunas): na
+   * pré-visualização ele comportou 11 linhas, e o texto padrão tem 19 — uma
+   * informação por linha, quase todas com menos da metade da largura. O resto ia
+   * para uma segunda folha. Aqui as linhas de cada bloco viram texto corrido
+   * ("FABRICANTE: MAVIS | CHASSI: ..."), e só a linha em branco continua
+   * separando blocos. Nada do conteúdo sai.
+   *
+   * Frase terminada em ponto, ou título com dois-pontos seguido de texto
+   * ("CUIDADOS COM A BATERIA: UTILIZE..."), emenda com espaço; o resto com
+   * " | " — inclusive campo vazio da ficha ("CHASSI: | ANO DE FABRICACAO:
+   * 2026"), para o ano não parecer o chassi. Se o texto corrido passar do
+   * limite (cada quebra vira até 3 caracteres), vai o original — a SEFAZ
+   * recusaria a nota inteira.
+   */
+  function paraDanfe(texto, limite = LIMITE_INFCPL) {
+    const original = String(texto || '');
+    const emenda = (antes, linha) => (/\.$/.test(antes) || (/:$/.test(antes) && !linha.includes(':')) ? ' ' : ' | ');
+    const blocos = original.replace(/\r\n?/g, '\n').split(/\n[ \t]*\n+/);
+    const corrido = blocos
+      .map((bloco) => bloco.split('\n').map((linha) => linha.trim()).filter(Boolean)
+        .reduce((junto, linha) => (junto ? junto + emenda(junto, linha) + linha : linha), ''))
+      .filter(Boolean)
+      .join('\n');
+    return corrido.length <= limite ? corrido : original;
+  }
+
   const api = {
     PADRAO, FICHA, RODAPE, LIMITE_INFCPL, LIMITE_INFADPROD, CAMPOS_A_PREENCHER,
-    SEPARADOR_RODAPE,
+    SEPARADOR_RODAPE, paraDanfe,
     ficha, montar, comChassi, chassiDoTexto, ehTextoPadrao, camposVazios, padraoDaEmpresa, observacaoAoTrocarEmpresa,
     excedeLimite, excedeLimiteDoItem, avisoDeHomologacao, orcamentoDoRodape
   };
