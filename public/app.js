@@ -591,8 +591,23 @@ window.saveDashboardPins = saveDashboardPins;
 // catalogo morria com "salesFormatDate is not defined" e a tabela nao
 // desenhava. Recebendo por parametro, a dependencia fica declarada e o
 // catalogo continua num lugar so.
+// O BOTÃO DA NOTA AO LADO DO CÓDIGO (15/10/2026, pedido do usuário: "um botão
+// ao lado dos números de pedidos referente às NF geradas por eles, que leve a
+// uma página viewer pdf com possibilidade para download"). Só com nota do
+// Fiscal autorizada ou cancelada — antes da autorização não há DANFE. Abre a
+// página de shared/abrir_danfe.js (abrirNota).
+function botaoDaNotaDoPedido(r) {
+  const situacao = String(r.nfeStatus || '').toUpperCase();
+  if (!r.nfeId || !['AUTORIZADO', 'CANCELADO'].includes(situacao)) return '';
+  const tipo = Number(r.nfeModelo) === 65 ? 'NFC-e' : 'NF-e';
+  const rotulo = `${tipo}${r.nfeNumero ? ` ${r.nfeNumero}` : ''}${situacao === 'CANCELADO' ? ' (cancelada)' : ''}`;
+  return ` <button type="button" class="sales-ver-nota${situacao === 'CANCELADO' ? ' is-cancelada' : ''}" data-ver-nota="${escapeHtml(r.nfeId)}"
+    data-nota-rotulo="${escapeHtml(rotulo)}" data-nota-modelo="${Number(r.nfeModelo) === 65 ? 65 : 55}" data-nota-numero="${escapeHtml(String(r.nfeNumero || ''))}"
+    title="Ver a ${escapeHtml(rotulo)}" aria-label="Ver a ${escapeHtml(rotulo)}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="13" y2="17"></line></svg></button>`;
+}
+
 const SALES_COLUNAS = [
-  { chave: 'code', rotulo: 'Código', ordenavel: true, fixa: true, valor: (r) => escapeHtml(String(r.code)) },
+  { chave: 'code', rotulo: 'Código', ordenavel: true, fixa: true, valor: (r) => escapeHtml(String(r.code)) + botaoDaNotaDoPedido(r) },
   { chave: 'type', rotulo: 'Tipo', ordenavel: false, valor: (r) => (r.type === 'quote' ? 'Orçamento' : 'Pedido') },
   { chave: 'date', rotulo: 'Data', ordenavel: true, valor: (r, f) => f.data(r.date) },
   { chave: 'updatedAt', rotulo: 'Data de Alteração', ordenavel: true, valor: (r, f) => (r.updatedAt ? f.data(String(r.updatedAt).slice(0, 10)) : '-') },
@@ -3754,6 +3769,20 @@ async function loadModule(moduleName) {
         };
         document.querySelectorAll('.sales-edit-record').forEach((btn) => {
           btn.addEventListener('click', () => abrirRegistroDaLista(btn.dataset.id));
+        });
+        // O botão da nota ao lado do código: abre a página da DANFE, com Baixar.
+        document.querySelectorAll('[data-ver-nota]').forEach((botao) => {
+          botao.addEventListener('click', (evento) => {
+            evento.stopPropagation();
+            const nfce = botao.dataset.notaModelo === '65';
+            const numero = botao.dataset.notaNumero || '';
+            window.MavisDanfe.abrirNota({
+              nfeId: botao.dataset.verNota,
+              titulo: `${nfce ? 'DANFCe' : 'DANFE'} — ${botao.dataset.notaRotulo}`,
+              nomeDoArquivo: `${nfce ? 'DANFCe-NFCe' : 'DANFE-NFe'}${numero ? `-${numero}` : ''}`,
+              token: getSessionToken()
+            }).catch((erro) => showToast(erro.message || 'Não foi possível abrir a nota.', 'warning'));
+          });
         });
         // DUPLO CLIQUE NA LINHA ABRE O PEDIDO (13/10/2026, pedido do usuário) —
         // o mesmo que o lápis. Menos na caixa de seleção e nos botões da

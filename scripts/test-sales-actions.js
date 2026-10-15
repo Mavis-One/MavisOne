@@ -97,7 +97,7 @@ check('  e a nota manual (sem situação) também', /já tem NF-e/.test(motivo('
 const fonte = (rel) => fs.readFileSync(path.join(raiz, rel), 'utf8');
 check('o pedido leva a situação da nota para a tela', /nfeStatus: \(\(\) => \{/.test(fonte('server.js'))
   && /nfeStatus: editRecord\?\.nfeStatus \|\| '',/.test(fonte('public/app.js')));
-check('  e a consulta das notas traz a situação', /select id, numero, status from nfe/.test(fonte('lib/db/vendas-compras.js')));
+check('  e a consulta das notas traz a situação', /select id, numero, status(, modelo)? from nfe/.test(fonte('lib/db/vendas-compras.js')));
 
 console.log('\n--- pedido CANCELADO ---');
 const cancelado = ctx({ recordType: 'order', isEditing: true, status: 'pedido-cancelado' });

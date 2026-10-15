@@ -3769,6 +3769,14 @@ function serializeSalesRecord(record, data) {
       const fiscal = indiceDasNotas(data).fiscais.get(record.nfeId);
       return fiscal ? String(fiscal.status || '').toUpperCase() : '';
     })(),
+    // O MODELO da nota (15/10/2026): 55 é NF-e, 65 é NFC-e — o botão ao lado
+    // do código, na lista, abre a DANFE e diz qual das duas. 0 = sem nota do
+    // Fiscal (manual ou nenhuma).
+    nfeModelo: (() => {
+      if (!record.nfeId) return 0;
+      const fiscal = indiceDasNotas(data).fiscais.get(record.nfeId);
+      return fiscal ? Number(fiscal.modelo || 55) : 0;
+    })(),
     // Data de envio: mora dentro do grupo de entrega, e a lista precisa dela
     // achatada para poder ordenar e mostrar como coluna.
     dataEnvio: salesDelivery(record).shippingDate || '',
@@ -10771,6 +10779,12 @@ const CSP = [
   "font-src 'self'",
   "connect-src 'self'",
   "object-src 'none'",
+  // A página que mostra a DANFE com o botão de baixar (15/10/2026, ver
+  // shared/abrir_danfe.js) embute o PDF por um endereço blob: que o próprio
+  // sistema cria. Sem isto, frame-src cairia no default-src e o PDF não
+  // apareceria. Só o PDF vai por aqui: o DANFCe (HTML da Focus) continua num
+  // iframe sandbox sem script.
+  "frame-src 'self' blob:",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'"

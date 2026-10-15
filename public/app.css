@@ -5177,3 +5177,13 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
    dos itens, a tabela passava da janela e ganhava rolagem lateral. */
 .modal.dfe-resumo { width: min(1100px, 96vw); max-width: min(1100px, 96vw); }
 .dfe-resumo .table td { white-space: normal; }
+
+/* Pedidos e Orçamentos: o botão da nota ao lado do código (15/10/2026). */
+.table .sales-ver-nota {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; min-height: 0; margin-left: 6px; padding: 0;
+  vertical-align: middle; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--success); border: 1px solid var(--border);
+}
+.table .sales-ver-nota:hover { background: rgba(var(--text-rgb), 0.08); }
+.table .sales-ver-nota.is-cancelada { color: var(--muted); }
