@@ -134,7 +134,8 @@ check('a rota de manifestação existe', rotaManifestar.length > 0);
 // uma nota que a Receita continua esperando.
 check('  a SEFAZ vem ANTES do banco',
   rotaManifestar.indexOf('focusNfe.manifestarNfe') < rotaManifestar.indexOf('dfeDb.registrarManifestacao'));
-check('  nota já manifestada é recusada', /ja foi manifestada/.test(rotaManifestar));
+// (desde 15/10/2026 com acento, e conferida na SEFAZ — ver test-manifestar-uma-vez.js)
+check('  nota já manifestada é recusada', /j[aá] foi manifestada/.test(rotaManifestar));
 // Manifestar com o certificado de outro CNPJ é erro que a SEFAZ devolve como
 // código numérico — melhor recusar aqui, com o motivo escrito.
 check('  as credenciais vêm do CNPJ do próprio documento',
@@ -178,12 +179,14 @@ const srvSemComent = ler('server.js');
 check('nenhuma rota passa o cliente do estabelecimento como credencial',
   !/\}, await focusNfe\.forEstabelecimento\(/.test(srvSemComent));
 check('busca e manifestação saem do cliente do estabelecimento',
-  (srvSemComent.match(/await \(await focusNfe\.forEstabelecimento\(estabelecimento\.id\)\)\.(distribuicaoDfe|manifestarNfe)\(/g) || []).length === 3);
+  (srvSemComent.match(/await \(await focusNfe\.forEstabelecimento\(estabelecimento\.id\)\)\.distribuicaoDfe\(/g) || []).length === 2
+  // A manifestação, desde 15/10/2026, pelo `cliente` (que também consulta a nota antes).
+  && /const cliente = await focusNfe\.forEstabelecimento\(estabelecimento\.id\);[\s\S]{0,4000}await cliente\.manifestarNfe\(/.test(srvSemComent));
 const focusLib = ler('lib/focusnfe.js');
 check('o cliente do estabelecimento tem a busca e a manifestação ligadas ao token',
   /distribuicaoDfe: \(args\) => distribuicaoDfe\(args, creds\)/.test(focusLib) && /manifestarNfe: \(args\) => manifestarNfe\(args, creds\)/.test(focusLib));
 check('  e a manifestação continua ANTES de registrar (a ordem que a rota garante)',
-  rotaManifestar.indexOf('.manifestarNfe(') > 0 && rotaManifestar.indexOf('.manifestarNfe(') < rotaManifestar.indexOf('dfeDb.registrarManifestacao'));
+  rotaManifestar.indexOf('.manifestarNfe(') > 0 && rotaManifestar.indexOf('.manifestarNfe(') < rotaManifestar.indexOf('dfeDb.registrarManifestacao(id, {'));
 
 console.log('\n--- o aviso de token olha o token DE CADA ESTABELECIMENTO (12/10/2026) ---');
 // A busca usa focusNfe.forEstabelecimento (o token do estabelecimento). A tela

@@ -15263,22 +15263,67 @@ async function tratarRequisicao(req, res) {
           if (!manifestacao.CATALOGO.some((m) => m.value === evento.value)) {
             return sendJson(res, { error: 'Escolha o tipo de manifestacao.' }, 400);
           }
-          if (documento.manifestacaoCodigo) {
+          // NOTA JÁ MANIFESTADA NÃO SE MANIFESTA DE NOVO, E QUEM DIZ É A SEFAZ
+          // (15/10/2026, pedido do usuário). Antes de mandar, a nota é consultada
+          // (pela Focus): a manifestação feita no Viper, no portal ou pela ciência
+          // automática entra aqui (registrarManifestacaoDaSefaz) e vale para as
+          // regras abaixo. Sem resposta da consulta, seguem as regras com o que
+          // já se sabe — e a própria SEFAZ recusa a duplicidade (573, abaixo).
+          const cliente = await focusNfe.forEstabelecimento(estabelecimento.id);
+          const FINAIS = ['210200', '210220', '210240'];
+          const atualizarPelaSefaz = async () => {
+            try {
+              const naSefaz = await cliente.consultarRecebida({ chave: documento.chave });
+              if (naSefaz && naSefaz.manifestacao) {
+                await dfeDb.registrarManifestacaoDaSefaz(id, naSefaz.manifestacao, documento.manifestacaoCodigo);
+              }
+            } catch (erroConsulta) { /* segue com o que já se sabe */ }
+            return dfeDb.obterDocumento(id);
+          };
+          const atual = await atualizarPelaSefaz();
+          const codigoAtual = (atual && atual.manifestacaoCodigo) || '';
+          if (FINAIS.includes(codigoAtual)) {
             return sendJson(res, {
-              error: `Esta nota ja foi manifestada como "${manifestacao.rotulo(documento.manifestacaoCodigo)}". `
-                + 'Manifestacao e evento fiscal: para mudar, o caminho e a SEFAZ, nao esta tela.'
-            }, 400);
+              error: `Esta nota já foi manifestada na SEFAZ como "${manifestacao.rotulo(codigoAtual)}". `
+                + 'Uma nota com manifestação definitiva não pode ser manifestada de novo.',
+              documento: atual
+            }, 409);
+          }
+          // Ciência é provisória: depois dela vem a definitiva (o caminho normal).
+          // Ciência de novo é duplicidade.
+          if (codigoAtual === '210210' && evento.codigo === '210210') {
+            return sendJson(res, {
+              error: 'Esta nota já tem Ciência da operação na SEFAZ. O próximo passo é a manifestação definitiva: '
+                + 'confirmação, desconhecimento ou operação não realizada.',
+              documento: atual
+            }, 409);
           }
 
           // A SEFAZ PRIMEIRO, o banco depois. Gravar antes e depois falhar deixaria
           // a tela dizendo "manifestada" sobre uma nota que a Receita continua
           // esperando — e o usuario nao tentaria de novo.
-          const resposta = await (await focusNfe.forEstabelecimento(estabelecimento.id)).manifestarNfe({
+          const resposta = await cliente.manifestarNfe({
             chave: documento.chave,
             codigo: evento.codigo,
             justificativa: body.justificativa,
             cnpj: documento.cnpjDestinatario
           });
+          // A RECUSA DA SEFAZ VEM COM HTTP 200 (doc da Focus): status "erro" e o
+          // código dela (573 = duplicidade de evento). Antes, qualquer 200 era
+          // gravado como manifestado — inclusive a recusa.
+          const aceita = ['evento_registrado', 'aceita'].includes(String(resposta && resposta.status || ''))
+            || ['135', '136'].includes(String(resposta && resposta.status_sefaz || ''));
+          if (!aceita) {
+            const duplicidade = String(resposta && resposta.status_sefaz || '') === '573';
+            const depois = duplicidade ? await atualizarPelaSefaz() : atual;
+            return sendJson(res, {
+              error: duplicidade
+                ? `A SEFAZ recusou: esta nota já tem este evento (duplicidade).${depois && depois.manifestacaoCodigo ? ` Situação na SEFAZ: ${manifestacao.rotulo(depois.manifestacaoCodigo)}.` : ''}`
+                : `A SEFAZ recusou a manifestação: ${(resposta && (resposta.mensagem_sefaz || resposta.mensagem || resposta.status)) || 'sem motivo informado'}.`,
+              documento: depois,
+              sefaz: resposta
+            }, 409);
+          }
 
           const atualizado = await dfeDb.registrarManifestacao(id, {
             codigo: evento.codigo, usuarioId: user?.id, usuarioNome: user?.name

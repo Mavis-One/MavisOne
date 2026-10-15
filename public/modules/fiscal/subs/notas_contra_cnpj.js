@@ -289,14 +289,21 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     return '<span class="muted">-</span>';
   }
 
+  // MANIFESTAR SÓ O QUE AINDA SE PODE (15/10/2026): sem manifestação, ou com
+  // ciência (provisória — falta a definitiva). Manifestação definitiva não se
+  // repete; o servidor ainda confere na SEFAZ antes de mandar.
+  const SO_CIENCIA = '210210';
+  const podeManifestar = (doc) => !doc.manifestacaoCodigo || doc.manifestacaoCodigo === SO_CIENCIA;
+
   function acoesDaNota(doc) {
-    if (!doc.manifestacaoCodigo) {
-      return `<button type="button" class="secondary" data-manifestar="${escapeHtml(doc.id)}">Manifestar</button>`;
+    const botoes = [];
+    if (podeManifestar(doc)) {
+      botoes.push(`<button type="button" class="secondary" data-manifestar="${escapeHtml(doc.id)}">Manifestar</button>`);
     }
     if (podeDarEntrada(doc)) {
-      return `<button type="button" data-dar-entrada="${escapeHtml(doc.id)}">Dar entrada</button>`;
+      botoes.push(`<button type="button" data-dar-entrada="${escapeHtml(doc.id)}">Dar entrada</button>`);
     }
-    return '<span class="muted">-</span>';
+    return botoes.length ? botoes.join(' ') : '<span class="muted">-</span>';
   }
 
   function desenhar() {
@@ -372,7 +379,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
           <label>Tipo de manifestação
             <select id="dfeTipoManifestacao">
               <option value="">— escolha —</option>
-              ${catalogo.CATALOGO.map((m) => `
+              ${catalogo.CATALOGO.filter((m) => !(doc.manifestacaoCodigo === SO_CIENCIA && m.codigo === SO_CIENCIA)).map((m) => `
                 <option value="${m.value}" ${tela.manifestando.tipo === m.value ? 'selected' : ''}>${escapeHtml(m.label)}</option>
               `).join('')}
             </select>
@@ -431,6 +438,13 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     } finally {
       tela.ocupado = false;
       await carregar();
+      // A SEFAZ disse que ela já está manifestada (o servidor atualizou a
+      // nota): a janela fecha, porque não há mais o que mandar.
+      const depois = tela.manifestando && dados.documentos.find((d) => d.id === tela.manifestando.id);
+      if (depois && !podeManifestar(depois)) {
+        tela.manifestando = null;
+        desenhar();
+      }
     }
   }
 
