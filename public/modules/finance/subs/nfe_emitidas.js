@@ -342,6 +342,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
       return;
     }
     renderView(result);
+    vigiarProcessando();
   }
 
   // Parcela cancelada não entra na conta (fase EI): depois de cancelar a nota,
@@ -622,46 +623,74 @@ function criarTelaDeNotasEmitidas(telaChave) {
     loadModule(moduloAtual());
   }
 
+  // O desfecho de uma nota: autorizada vira aviso com o número; erro (ou
+  // denegada) abre o motivo em popup, com "Corrigir nota". Outro status não
+  // avisa nada (devolve false).
+  function avisarDesfecho(nota) {
+    const status = String(nota.status || '').toLowerCase();
+    if (status === 'autorizado' || status === 'autorizada') {
+      showToast(`NF-e${nota.numero ? ` nº ${nota.numero}` : ''} autorizada.`, 'success', 7000);
+      return true;
+    }
+    if (['erro', 'denegado', 'denegada'].includes(status)) {
+      abrirErroDaNota(nota.id);
+      return true;
+    }
+    return false;
+  }
+
+  // O RESULTADO DA EMISSÃO (14/10/2026): a emissão vem para cá logo depois de
+  // emitir. Autorizada ou com erro, avisa na hora; em processamento, quem
+  // avisa é o acompanhamento abaixo, quando o status mudar.
+  function mostrarResultadoDaEmissao(resultado) {
+    avisarDesfecho(resultado);
+  }
+
+  // ACOMPANHAR AS NOTAS EM PROCESSAMENTO (14/10/2026, pedido do usuário: "faça
+  // o teste de mudança de status a cada 0,3s e informe apenas quando houver").
+  // A tela pergunta ao NOSSO servidor a cada 0,3 s (só banco, ver
+  // /api/fiscal/nfe/status); é ele que vai à Focus, no máximo a cada 5 s por
+  // nota — a Focus conta cada consulta na cota e recomenda o webhook (doc
+  // "cuidados na emissão de documentos assíncronos"). Só avisa quando muda;
+  // para sozinho quando nenhuma nota da página está processando ou a tela sai.
+  const VIGIA_INTERVALO_MS = 300;
+  let vigia = null;
+  let vigiaOcupado = false;
+  function pararVigia() {
+    if (vigia) clearInterval(vigia);
+    vigia = null;
+    vigiaOcupado = false;
+  }
+  function vigiarProcessando() {
+    pararVigia();
+    const pendentes = new Set(notasDaPagina
+      .filter((n) => n.origem === 'fiscal' && n.status === 'processando')
+      .map((n) => n.id));
+    if (!pendentes.size) return;
+    const moduloDaTela = state.activeModule;
+    vigia = setInterval(async () => {
+      if (state.activeSub !== telaChave || state.activeModule !== moduloDaTela || !content.isConnected) { pararVigia(); return; }
+      if (vigiaOcupado) return;
+      vigiaOcupado = true;
+      try {
+        const res = await api(`/api/fiscal/nfe/status?ids=${encodeURIComponent([...pendentes].join(','))}`);
+        const mudaram = (res.notas || []).filter((n) => pendentes.has(n.id) && n.status !== 'processando');
+        if (!mudaram.length) return;
+        mudaram.forEach((n) => pendentes.delete(n.id));
+        pararVigia();
+        await load();
+        mudaram.forEach((n) => avisarDesfecho(n));
+      } catch (_) {
+        // Falha de rede num ciclo não encerra o acompanhamento.
+      } finally {
+        vigiaOcupado = false;
+      }
+    }, VIGIA_INTERVALO_MS);
+  }
+
   // Abre o PEDIDO da nota, como a lista de vendas abre (14/10/2026). Antes
   // gravava state.salesOpenRecordId, que ninguém lia, numa tela que não
   // existe ('sales_records'): o botão não levava ao pedido.
-  // O RESULTADO DA EMISSÃO (14/10/2026): a emissão vem para cá logo depois de
-  // emitir. Autorizada: aviso com o número. Erro: o motivo em popup, com
-  // "Corrigir nota". Processando: a lista acompanha (a consulta da nota
-  // reconsulta a Focus) por até ~1 minuto e mostra o desfecho.
-  async function mostrarResultadoDaEmissao(resultado) {
-    const avisar = (nota) => {
-      const status = String(nota.status || '').toUpperCase();
-      if (status === 'AUTORIZADO') {
-        showToast(`NF-e${nota.numero ? ` nº ${nota.numero}` : ''} autorizada.`, 'success', 7000);
-        return true;
-      }
-      if (status === 'ERRO' || status === 'DENEGADO') {
-        abrirErroDaNota(nota.id);
-        return true;
-      }
-      return false;
-    };
-    if (avisar(resultado)) return;
-    showToast('NF-e enviada. A SEFAZ está processando — o resultado aparece aqui.', 'info', 7000);
-    for (let tentativa = 0; tentativa < 12; tentativa += 1) {
-      await new Promise((r) => setTimeout(r, 5000));
-      // Saiu da tela: para de acompanhar.
-      if (state.activeSub !== telaChave) return;
-      try {
-        const res = await api(`/api/fiscal/nfe/${encodeURIComponent(resultado.id)}`);
-        const nota = res.nfe || {};
-        if (String(nota.status || '').toUpperCase() === 'PROCESSANDO') continue;
-        await load();
-        avisar(nota);
-        return;
-      } catch (_) {
-        // Falha de rede numa tentativa não encerra o acompanhamento.
-      }
-    }
-    showToast('A SEFAZ ainda não respondeu. Use "Consultar status" na nota para atualizar.', 'warning', 8000);
-  }
-
   async function irParaVenda(nfe) {
     if (!nfe || !nfe.orderId) return;
     try {

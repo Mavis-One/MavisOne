@@ -7977,6 +7977,48 @@ async function corrigirNfeComErro(id, user, { substituir = false } = {}) {
   return { pedidoId, pedidoCodigo, doEstadoDaTela: Boolean(nfe.estadoDaTela) };
 }
 
+// O STATUS DAS NOTAS, PARA A TELA ACOMPANHAR (14/10/2026). A lista pergunta a
+// cada 0,3 s; a resposta é só do banco. As que estão PROCESSANDO são
+// reconsultadas na Focus em segundo plano, no máximo a cada 5 s por nota — a
+// Focus conta cada consulta na cota de requisições. O webhook continua
+// atualizando sozinho; isto cobre quando ele não chega.
+const CONSULTA_FOCUS_INTERVALO_MS = 5000;
+const ultimaConsultaFocus = new Map();
+const consultasEmCurso = new Set();
+
+async function reconsultarNfeNaFocus(id, user) {
+  if (consultasEmCurso.has(id)) return;
+  consultasEmCurso.add(id);
+  try {
+    const nfe = await fiscalDb.getNfeById(id);
+    if (!nfe || nfe.status !== 'PROCESSANDO' || !nfe.referencia || !nfe.estabelecimentoId) return;
+    const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
+    const resposta = String(nfe.modelo) === '65'
+      ? await client.consultarNfce(nfe.referencia)
+      : await client.consultarNfe(nfe.referencia);
+    await aplicarRespostaFocusNaNfe(nfe, resposta, user);
+  } finally {
+    consultasEmCurso.delete(id);
+  }
+}
+
+async function statusDasNfes(ids, user) {
+  const lista = [...new Set(ids.map((i) => String(i).trim()))]
+    .filter((i) => /^[0-9a-f-]{36}$/i.test(i))
+    .slice(0, 50);
+  if (!lista.length) return [];
+  const { rows } = await consultarBanco(
+    'select id, status, numero, serie, referencia, estabelecimento_id from nfe where id = any($1::uuid[])', [lista]);
+  const agora = Date.now();
+  rows.forEach((r) => {
+    if (r.status !== 'PROCESSANDO' || !r.referencia || !r.estabelecimento_id) return;
+    if (agora - (ultimaConsultaFocus.get(r.id) || 0) < CONSULTA_FOCUS_INTERVALO_MS) return;
+    ultimaConsultaFocus.set(r.id, agora);
+    reconsultarNfeNaFocus(r.id, user).catch((e) => console.error('Falha ao reconsultar NF-e', r.id, e.message));
+  });
+  return rows.map((r) => ({ id: r.id, status: normalizeNfeStatus(r.status), numero: r.numero || '', serie: r.serie || '' }));
+}
+
 // EXCLUIR NF-e COM ERRO (14/10/2026, pedido do usuário: "permita o admin
 // excluir nfe's com erro"). A regra de nunca excluir documento fiscal continua
 // valendo para tudo o que a SEFAZ autorizou: nota com erro foi RECUSADA, não
@@ -15734,6 +15776,13 @@ async function tratarRequisicao(req, res) {
           estabelecimentoId: String(body.estabelecimentoId || '')
         }, user);
         return sendJson(res, { success: true, nfe });
+      }
+
+      // O status das notas para a lista acompanhar (14/10/2026). Antes da rota
+      // genérica GET /api/fiscal/nfe/:id, que leria "status" como um id.
+      if (pathname === '/api/fiscal/nfe/status' && req.method === 'GET') {
+        const ids = String(url.searchParams.get('ids') || '').split(',');
+        return sendJson(res, { notas: await statusDasNfes(ids, user) });
       }
 
       // EXCLUIR NF-e COM ERRO (14/10/2026): só administrador.
