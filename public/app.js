@@ -8364,18 +8364,37 @@ async function loadModule(moduleName) {
       const peopleDocumentInput = document.getElementById('peopleDocumentInput');
       const peopleTypeSelect = document.querySelector('#peopleRegisterForm select[name="type"]');
       const peopleLookupBtn = document.getElementById('peopleLookupBtn');
-      bindDocumentMask(peopleDocumentInput, () => peopleTypeSelect?.value || 'pessoa-fisica');
+      // O TIPO DE PESSOA SEGUE O DOCUMENTO (15/10/2026, pedido do usuário: "o
+      // botão tipo de pessoa deve reconhecer automaticamente"). Até 11 dígitos é
+      // CPF (física), mais que isso é CNPJ (jurídica). A máscara segue os
+      // dígitos, e não o select: com "Pessoa física" escolhida ela cortava o
+      // documento em 11 e um CNPJ nem cabia no campo.
+      const tipoPeloDocumento = () => {
+        const n = sanitizeDigits(peopleDocumentInput?.value || '').length;
+        if (!n) return '';
+        return n > 11 ? 'pessoa-juridica' : 'pessoa-fisica';
+      };
+      const alinharTipoAoDocumento = () => {
+        const tipo = tipoPeloDocumento();
+        if (tipo && peopleTypeSelect && peopleTypeSelect.value !== tipo) peopleTypeSelect.value = tipo;
+      };
+      bindDocumentMask(peopleDocumentInput, () => '');
 
       const refreshPeopleLookupButton = () => {
         if (!peopleLookupBtn || !peopleDocumentInput) return;
         peopleLookupBtn.disabled = sanitizeDigits(peopleDocumentInput.value).length !== 14;
       };
 
-      peopleDocumentInput?.addEventListener('input', refreshPeopleLookupButton);
+      peopleDocumentInput?.addEventListener('input', () => {
+        alinharTipoAoDocumento();
+        refreshPeopleLookupButton();
+      });
+      alinharTipoAoDocumento();
       refreshPeopleLookupButton();
 
+      // Escolher à mão só vale sem documento: um CPF não é pessoa jurídica.
       peopleTypeSelect?.addEventListener('change', () => {
-        peopleDocumentInput.value = maskDocumentValue(peopleDocumentInput.value, peopleTypeSelect.value);
+        alinharTipoAoDocumento();
         refreshPeopleLookupButton();
       });
 
