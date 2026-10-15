@@ -4859,6 +4859,46 @@ async function addFinanceAuditLog(_data, { action, entry, byId, byName, details 
   });
 }
 
+// O XML COMPLETO DE UMA NOTA RECEBIDA, buscado na hora do "Dar entrada"
+// (15/10/2026). Duas fontes, nesta ordem:
+//   1. a NOTA É NOSSA (transferência entre filiais, emitida pelo MavisONE): o
+//      XML autorizado já está guardado em NF-e Emitidas (nfe_arquivos). É o
+//      mesmo documento, e não depende de a SEFAZ distribuí-lo ao destinatário —
+//      a 3111 (Matriz -> Pomerode) estava confirmada e a Focus só tinha o
+//      resumo (nfe_completa false);
+//   2. a Focus de novo (GET /nfes_recebidas/{chave}), que pode ter recebido o
+//      XML completo depois da manifestação.
+// Null quando nenhuma das duas tem.
+async function xmlDaNotaRecebida(documento) {
+  const chave = String((documento && documento.chave) || '').replace(/\D/g, '');
+  if (chave.length !== 44) return null;
+  try {
+    const { rows } = await consultarBanco(
+      `select a.conteudo from nfe n
+         join nfe_arquivos a on a.nfe_id = n.id and a.tipo = 'xml'
+        where n.chave_acesso = $1 and upper(n.status) = 'AUTORIZADO'
+        order by a.baixado_em desc nulls last limit 1`,
+      [chave]
+    );
+    const conteudo = rows[0] && rows[0].conteudo;
+    // bytea chega como texto "\x3c3f..." (o mesmo de mapNfeArquivoRow).
+    const xml = !conteudo ? ''
+      : (Buffer.isBuffer(conteudo) ? conteudo : Buffer.from(String(conteudo).replace(/^\\x/, ''), 'hex')).toString('utf8');
+    if (xml.trim().startsWith('<')) return xml;
+  } catch (erroPropria) { /* segue para a Focus */ }
+  try {
+    const cnpj = String(documento.cnpjDestinatario || '').replace(/\D/g, '');
+    const estabelecimento = (await fiscalDb.getEstabelecimentos())
+      .find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpj);
+    if (!estabelecimento) return null;
+    const resposta = await (await focusNfe.forEstabelecimento(estabelecimento.id)).distribuicaoDfe({ cnpj, modo: 'chave', chave });
+    const achado = (resposta.documentos || []).find((d) => d.chave === chave && d.xml);
+    return achado ? achado.xml : null;
+  } catch (erroFocus) {
+    return null;
+  }
+}
+
 // DE QUAL EMPRESA É O TÍTULO (15/10/2026, pedido do usuário: "está faltando
 // referente a qual empresa se trata aquele título ... coloque o CNPJ e/ou o
 // nome da empresa"). Quase nenhum título tem o estabelecimento gravado (no
@@ -15371,10 +15411,26 @@ async function tratarRequisicao(req, res) {
 
       if (pathname.startsWith('/api/fiscal/dfe/') && pathname.endsWith('/xml') && req.method === 'GET') {
         const id = decodeURIComponent(pathname.slice('/api/fiscal/dfe/'.length, -('/xml'.length)));
-        const xml = await dfeDb.obterXml(id);
+        let xml = await dfeDb.obterXml(id);
+        // O XML QUE AINDA NÃO ESTÁ AQUI (15/10/2026, pedido do usuário: "já
+        // manifestei, simplesmente o XML ainda não carrega para mim dar
+        // entrada"). Ele só era buscado na hora de manifestar; se a SEFAZ ainda
+        // não o tinha entregue, ninguém buscava de novo. Agora o "Dar entrada"
+        // busca na hora (xmlDaNotaRecebida) e guarda o que achar.
+        let documento = null;
+        if (!xml) {
+          documento = await dfeDb.obterDocumento(id);
+          if (documento) {
+            xml = await xmlDaNotaRecebida(documento);
+            if (xml) await dfeDb.guardarXml(id, xml);
+          }
+        }
         if (!xml) {
           return sendJson(res, {
-            error: 'O XML completo desta nota ainda nao foi liberado. Manifeste ciencia ou confirmacao para a SEFAZ libera-lo.'
+            error: documento && documento.manifestacaoCodigo
+              ? 'Esta nota já está manifestada, mas a SEFAZ ainda não entregou o XML completo dela (só o resumo). '
+                + 'Costuma chegar em alguns minutos: tente "Dar entrada" de novo mais tarde.'
+              : 'O XML completo desta nota ainda não foi liberado. Manifeste ciência ou confirmação para a SEFAZ liberá-lo.'
           }, 404);
         }
         return sendJson(res, { xml });

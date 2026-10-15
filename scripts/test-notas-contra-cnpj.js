@@ -179,7 +179,9 @@ const srvSemComent = ler('server.js');
 check('nenhuma rota passa o cliente do estabelecimento como credencial',
   !/\}, await focusNfe\.forEstabelecimento\(/.test(srvSemComent));
 check('busca e manifestação saem do cliente do estabelecimento',
-  (srvSemComent.match(/await \(await focusNfe\.forEstabelecimento\(estabelecimento\.id\)\)\.distribuicaoDfe\(/g) || []).length === 2
+  // 3 desde 15/10/2026: a busca, o XML depois de manifestar e o XML na hora
+  // do "Dar entrada" (xmlDaNotaRecebida).
+  (srvSemComent.match(/await \(await focusNfe\.forEstabelecimento\(estabelecimento\.id\)\)\.distribuicaoDfe\(/g) || []).length === 3
   // A manifestação, desde 15/10/2026, pelo `cliente` (que também consulta a nota antes).
   && /const cliente = await focusNfe\.forEstabelecimento\(estabelecimento\.id\);[\s\S]{0,4000}await cliente\.manifestarNfe\(/.test(srvSemComent));
 const focusLib = ler('lib/focusnfe.js');
