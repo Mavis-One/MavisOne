@@ -394,9 +394,12 @@ window.MavisAtalhos = (function () {
         const resposta = await api(atalho.endpoint, { method: 'POST', body: JSON.stringify(payload) });
         showToast(atalho.sucesso(resposta), 'success');
         fechar();
-        // NÃO redesenha a tela de trás: o ponto do atalho é não perder o que
-        // estava sendo preenchido. Quem precisa do registro novo num select
-        // reabre aquele campo — as listas de apoio são buscadas a cada abertura.
+        // A TELA DE TRÁS GANHA O REGISTRO NOVO SEM PERDER O QUE ESTAVA SENDO
+        // PREENCHIDO (15/10/2026): a mesma atualização de quando se cadastra em
+        // outra aba (modules/shared/dados_ao_vivo.js). Tela com atualização
+        // própria (pedido, NF-e) refaz as listas com o preenchido no lugar;
+        // formulário sem ela e já digitado fica como está.
+        window.MavisDados?.mudouAqui();
       } catch (erro) {
         erroEl.hidden = false;
         erroEl.textContent = erro.message || 'Não foi possível cadastrar.';

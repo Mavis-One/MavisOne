@@ -157,7 +157,10 @@ check('mexer no cadastro joga as listas fora',
   /if \(String\(path\)\.startsWith\('\/api\/cadastros\/'\)\) esquecerSalesMeta\(\);/.test(app));
 // Num lugar só, como o sino: são sete telas que gravam cadastro.
 const esquecimentos = (app.match(/esquecerSalesMeta\(\)/g) || []).length;
-check('  num lugar só (a função e a chamada)', esquecimentos === 2, `${esquecimentos} ocorrência(s)`);
+// A terceira (15/10/2026) é a gravação feita em OUTRA aba ou computador
+// (esquecerListasDeApoio, ver modules/shared/dados_ao_vivo.js).
+check('  num lugar só (a função, a chamada e o aviso de outra aba)', esquecimentos === 3
+  && /function esquecerListasDeApoio\(\) \{\s*esquecerSalesMeta\(\);/.test(app), `${esquecimentos} ocorrência(s)`);
 // Salvar um PEDIDO não muda a lista de clientes: jogar 435 KB fora a cada
 // pedido salvo desfaria o que o cache existe para fazer.
 check('  e salvar pedido NÃO joga fora', !/'\/api\/sales\/'\) esquecerSalesMeta/.test(app));

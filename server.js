@@ -1010,6 +1010,26 @@ const GRAVACAO_REPETIDA_JANELA_MS = 3000;
 const LIMITE_CORPO_DA_GUARDA = 16 * 1024 * 1024;
 const gravacoesNoServidor = new Map();
 
+// A VERSÃO DOS DADOS (15/10/2026, pedido do usuário: "estou com uma tela aberta
+// em uma NF, preciso abrir uma nova para cadastrar um vendedor porém depois de
+// cadastrar o mesmo ainda não aparece até eu atualizar a página, deixe uma
+// verificação automática e deixe isso padronizado no sistema inteiro").
+//
+// Um número que sobe a cada gravação que deu certo. A aba que volta a ficar
+// visível pergunta por ele (GET /api/dados/versao) e, se subiu, atualiza a
+// tela — é o que pega a gravação feita em OUTRO computador. Entre abas do mesmo
+// navegador o aviso é na hora (modules/shared/dados_ao_vivo.js). Começa no
+// relógio para nunca andar para trás num reinício do processo. Em memória
+// porque o processo é um só (ecosystem.config.js).
+let versaoDosDados = Date.now();
+// Gravação que não muda o que as telas listam: entrar e sair, preferência de
+// tela, a nota em edição (salva sozinha), prévias, simulações, exportações e
+// conferências. Contá-las faria as outras abas se redesenharem à toa.
+const GRAVACAO_SEM_MUDANCA = /^\/api\/(login|logout|sessao|preferencias|dados)(\/|$)|\/rascunho(\/|$)|\/(previa|danfe-previa|simular|exportar|export|conferir)(\/|$)|^\/api\/sales\/tributos|^\/api\/crm\/test/;
+function gravacaoMudaDados(pathname) {
+  return !GRAVACAO_SEM_MUDANCA.test(String(pathname || ''));
+}
+
 function lerCorpoBruto(req, limiteBytes) {
   return new Promise((resolve, reject) => {
     const partes = [];
@@ -1404,6 +1424,13 @@ function sendJson(res, payload, statusCode = 200) {
   // A guarda de gravação repetida guarda o que a primeira respondeu, para
   // devolver igual à repetida (ver guardaDeGravacaoRepetida).
   if (typeof res.__capturarJson === 'function') res.__capturarJson(payload, statusCode);
+  // Gravou (ver versaoDosDados): a versão sobe e vai no cabeçalho, para a aba
+  // que gravou não tomar a própria gravação por novidade.
+  if (res.__mudaDados && statusCode < 400 && !res.headersSent) {
+    res.__mudaDados = false;
+    versaoDosDados += 1;
+    res.setHeader('X-Versao-Dados', String(versaoDosDados));
+  }
   // Quem não é administrador não recebe o custo do produto em resposta
   // nenhuma (14/10/2026). A marca é posta no começo de tratarRequisicao.
   if (res.__ocultarCusto && statusCode < 400) payload = custoOculto.semCusto(payload);
@@ -10540,6 +10567,8 @@ async function tratarRequisicao(req, res) {
   // Ver guardaDeGravacaoRepetida (15/10/2026).
   if (sessaoRecebida && pathname.startsWith('/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     if (await guardaDeGravacaoRepetida(req, res, url)) return;
+    // A repetida (acima) devolve a resposta da primeira e não conta de novo.
+    res.__mudaDados = gravacaoMudaDados(pathname);
   }
 
   if (pathname === '/api/login' && req.method === 'POST') {
@@ -10711,6 +10740,13 @@ async function tratarRequisicao(req, res) {
   //
   // Grava preservando as outras telas — o lib/db/auth faz o merge. Mandar o
   // objeto inteiro do cliente deixaria uma tela apagar a preferencia de outra.
+  // Ver versaoDosDados.
+  if (pathname === '/api/dados/versao' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user) return sendJson(res, { error: 'Não autenticado' }, 401);
+    return sendJson(res, { versao: versaoDosDados });
+  }
+
   if (pathname === '/api/preferencias') {
     try {
       const user = await getCurrentUser(req);

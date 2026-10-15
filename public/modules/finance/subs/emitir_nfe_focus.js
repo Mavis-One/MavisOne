@@ -395,8 +395,20 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // O "Nenhum (preencher manualmente abaixo)" do <select> não vira opção:
   // escolhê-lo não mexia em campo nenhum (o ouvinte saía sem achar cadastro), e
   // é o que o campo vazio já diz.
-  const opcoesDoCliente = (meta.directory || [])
-    .map((c) => ({ value: c.id, label: `${c.name}${c.document ? ` (${c.document})` : ''}` }));
+  // `let` e montadas por função: o cadastro feito em outra aba refaz as listas
+  // com a tela aberta (ver o aoMudar no fim da tela).
+  let opcoesDoCliente = [];
+  let opcoesDeProduto = [];
+  let opcoesDeProdutoComAvulso = [];
+  function montarOpcoes() {
+    opcoesDoCliente = (meta.directory || [])
+      .map((c) => ({ value: c.id, label: `${c.name}${c.document ? ` (${c.document})` : ''}` }));
+    opcoesDeProduto = (meta.produtos || []).map((p) => ({
+      value: p.id,
+      label: `${p.name}${p.sku ? ` (${p.sku})` : ''}${p.ncm ? '' : ' — SEM NCM'}`
+    }));
+    opcoesDeProdutoComAvulso = [ITEM_AVULSO].concat(opcoesDeProduto);
+  }
 
   // Um produto cadastrado traz a própria classificação fiscal. Escolher pela
   // lista preenche a linha e trava NCM e origem: são atributos da mercadoria,
@@ -408,11 +420,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // com o placeholder dizendo o que é) e DENTRO da lista que se busca: quem
   // digita "avulso" acha a opção e volta a linha para item avulso.
   const ITEM_AVULSO = { value: '', label: 'Item avulso' };
-  const opcoesDeProduto = (meta.produtos || []).map((p) => ({
-    value: p.id,
-    label: `${p.name}${p.sku ? ` (${p.sku})` : ''}${p.ncm ? '' : ' — SEM NCM'}`
-  }));
-  const opcoesDeProdutoComAvulso = [ITEM_AVULSO].concat(opcoesDeProduto);
+  montarOpcoes();
 
   function renderItemsRows() {
     return itens.map((item, index) => `
@@ -2333,6 +2341,23 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       ? `Corrigindo a NF-e com erro (${corrigindoNfe.referencia || 'sem referência'}). Emitir sai como nota nova; a com erro fica no histórico.`
       : `Nota em edição recuperada (salva em ${new Date(rascunhoSalvoEm).toLocaleString('pt-BR')}).`, 'info', corrigindoNfe ? 8000 : undefined);
   }
+  // CADASTROU EM OUTRA ABA, APARECE AQUI (15/10/2026, ver modules/shared/
+  // dados_ao_vivo.js): destinatário, produto e transportadora vêm de novo, e a
+  // tela volta como estava — pelo mesmo caminho da nota em edição salva, na
+  // mesma aba e no mesmo ponto da rolagem.
+  window.MavisDados?.aoMudar(async () => {
+    const novo = await api('/api/finance/meta?diretorio=nfe&produtos=nfe');
+    if (!document.getElementById('nfeFocusForm')) return;
+    const aba = content.querySelector('.cadastro-tab.active')?.dataset.tab || '';
+    const rolagem = window.scrollY;
+    const campos = aplicarEstadoSalvo(estadoDaTela());
+    meta = novo;
+    montarOpcoes();
+    renderForm();
+    preencherCamposSalvos(campos);
+    if (aba) content.querySelector(`.cadastro-tab[data-tab="${aba}"]`)?.click();
+    window.scrollTo(0, rolagem);
+  });
 };
 
 // "Nova NF-e Avulsa" É ESTA TELA.

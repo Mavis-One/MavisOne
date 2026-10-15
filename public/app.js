@@ -970,6 +970,9 @@ async function apiDireto(path, options = {}, jaRepetiu = false) {
     // atalhos, a entrada de NF-e): `api` é o único caminho até o servidor, e
     // cada um dos outros lugares seria mais um para alguém esquecer.
     if (String(path).startsWith('/api/cadastros/')) esquecerSalesMeta();
+    // E AS OUTRAS ABAS FICAM SABENDO (15/10/2026): ver modules/shared/
+    // dados_ao_vivo.js. O cabeçalho só vem quando o servidor contou a gravação.
+    window.MavisDados?.gravou(path, response.headers.get('X-Versao-Dados'));
   }
   return data;
 }
@@ -1449,6 +1452,25 @@ function esquecerSalesMeta() {
   salesMetaEmCache = null;
   salesMetaBuscadaEm = 0;
 }
+
+// DADOS AO VIVO (15/10/2026): gravou em outra aba ou outro computador, as
+// listas guardadas desta aba envelheceram — as do filtro de vendas, o catálogo
+// dos relatórios (que durava a sessão inteira) e o sino. A tela aberta é
+// atualizada por modules/shared/dados_ao_vivo.js.
+function esquecerListasDeApoio() {
+  esquecerSalesMeta();
+  state.relatoriosCatalogo = null;
+  atencaoBuscadaEm = 0;
+  atencaoGeracao += 1;
+}
+
+window.MavisDados?.configurar({
+  logado: () => Boolean(state.user),
+  rotaAtual: () => `${state.activeModule || ''}/${state.activeSub || ''}`,
+  redesenhar: () => loadModule(state.activeModule),
+  esquecerListas: esquecerListasDeApoio,
+  buscarVersao: () => apiDireto('/api/dados/versao')
+});
 
 const SEVERIDADE_ROTULO = { alta: 'Crítico', media: 'Atenção', baixa: 'Observar' };
 
@@ -2931,6 +2953,8 @@ async function loadModule(moduleName) {
 
   trackRouteChange(moduleName, state.activeSub);
   syncBackButtonState();
+  // Tela nova: nada digitado nela ainda (ver dados_ao_vivo.js).
+  window.MavisDados?.telaNova();
   state.activeModule = moduleName;
   persistLastRoute();
   gravarTelaNoEndereco(moduleName, state.activeSub);
@@ -6523,6 +6547,19 @@ async function loadModule(moduleName) {
         };
 
         renderForm();
+        // CADASTROU EM OUTRA ABA, APARECE AQUI (15/10/2026, ver modules/shared/
+        // dados_ao_vivo.js): as listas do pedido (cliente, vendedor, produto,
+        // empresa, depósito...) vêm de novo e o formulário é redesenhado com o
+        // que já estava preenchido — o mesmo caminho do redesenho de sempre.
+        window.MavisDados?.aoMudar(async () => {
+          const novo = await api('/api/sales/meta');
+          if (!document.getElementById('salesRecordForm')) return;
+          syncFormState();
+          Object.assign(meta, novo);
+          opcoesDeProdutoGuardadas = { deposito: null, lista: null };
+          opcoesDeClienteGuardadas = null;
+          renderForm();
+        });
         // Pedido aberto para edição já vem com itens coloridos, e o saldo de
         // cada cor só existe no servidor. Busca depois do primeiro render para
         // a tela não ficar em branco esperando a rede, e redesenha quando
