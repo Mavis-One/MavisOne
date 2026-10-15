@@ -191,7 +191,9 @@ check('achei o bloco do rótulo e os formatadores', ini > 0 && fim > ini && iniF
 // formatarDocumentoParaBusca é global no app.js (a lista de clientes mostra o
 // CPF/CNPJ ao lado do nome — ver test-busca-cliente-e-origens.js).
 const fmtDocumento = app.slice(app.indexOf('function formatarDocumentoParaBusca'), app.indexOf('function textoDeBusca'));
-const fabrica = new Function('meta', 'formState',
+// `items` (15/10/2026): os itens do pedido aberto, que continuam na busca
+// mesmo com "Pode vender" desligado (fase EP). Aqui, pedido novo: vazio.
+const fabrica = new Function('meta', 'formState', 'items',
   `${fmtDocumento}\n${app.slice(iniFmt, fimFmt)}\n${app.slice(ini, fim)}\nreturn { rotuloProduto, opcoesDeProduto, opcoesDeCliente, salesFormatBRL };`);
 const meta = {
   products: [
@@ -213,7 +215,7 @@ const formatoAntigo = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'cu
 const rotuloAntigo = (p) => `${p.name}${p.sku ? ` (${p.sku})` : ''}`;
 for (const deposito of ['', 'dep1']) {
   const formState = { depositId: deposito };
-  const nova = fabrica(meta, formState);
+  const nova = fabrica(meta, formState, []);
   const iguais = meta.products.every((p) => nova.rotuloProduto(p) === rotuloAntigo(p, deposito));
   check(`depósito ${JSON.stringify(deposito)}: rótulo só com nome e código`, iguais,
     meta.products.map((p) => nova.rotuloProduto(p)).join(' | '));
@@ -225,7 +227,7 @@ for (const deposito of ['', 'dep1']) {
 }
 const valores = [0, 0.1, 1234.5, -7.25, 1e6, '12.3', null];
 check('o formatador reaproveitado escreve o mesmo texto do toLocaleString',
-  valores.every((v) => fabrica(meta, {}).salesFormatBRL(v) === formatoAntigo(v)));
+  valores.every((v) => fabrica(meta, {}, []).salesFormatBRL(v) === formatoAntigo(v)));
 check('rotuloProduto não varre as reservas por produto', !/Object\.entries\(meta\.reservas/.test(app.slice(app.indexOf('const rotuloProduto = (p)'), fim)));
 
 // ---------------------------------------------------------------------------

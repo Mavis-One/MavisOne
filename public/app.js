@@ -3872,12 +3872,18 @@ async function loadModule(moduleName) {
         // O MESMO array no render e no attach, de propósito: é também a chave do
         // índice de busca (ver indiceDeBuscaDe), que assim é montado uma vez.
         let opcoesDeProdutoGuardadas = { deposito: null, lista: null };
+        // "Pode vender" desligado no cadastro (fase EP, 15/10/2026): o produto
+        // sai da busca. Os que este pedido JÁ tem continuam na lista — sem eles
+        // a linha do item abriria sem o nome do produto.
+        const produtosJaNoPedido = new Set(items.map((item) => item.productId).filter(Boolean));
         const opcoesDeProduto = () => {
           const deposito = String((typeof formState !== 'undefined' ? formState.depositId : '') || '').trim();
           if (opcoesDeProdutoGuardadas.lista && opcoesDeProdutoGuardadas.deposito === deposito) {
             return opcoesDeProdutoGuardadas.lista;
           }
-          const lista = meta.products.map((p) => ({ value: p.id, label: rotuloProduto(p), product: p }));
+          const lista = meta.products
+            .filter((p) => p.podeVender !== false || produtosJaNoPedido.has(p.id))
+            .map((p) => ({ value: p.id, label: rotuloProduto(p), product: p }));
           opcoesDeProdutoGuardadas = { deposito, lista };
           return lista;
         };

@@ -17,6 +17,26 @@ const ORIGENS_MERCADORIA = [
   { value: '8', label: '8 — Nacional, conteúdo de importação > 70%' }
 ];
 
+// Unidades oferecidas na busca do campo "Un". Outra qualquer continua podendo
+// ser digitada: a lista é sugestão, não trava.
+const UNIDADES_DO_PRODUTO = ['UN', 'PC', 'CX', 'KG', 'G', 'MT', 'M2', 'M3', 'LT', 'ML', 'PAR', 'JG', 'KIT', 'CJ', 'CT', 'DZ', 'FD', 'PCT', 'RL', 'SC', 'TB', 'GL'];
+
+// O CADASTRO DE PRODUTO EM BLOCOS (15/10/2026). Pedido do usuário, com o print
+// de outro sistema: uma página só, com tudo à vista, no lugar das cinco abas
+// (Dados, Preços, Fiscal, Estoque, Classes):
+//   1. identificação — código, código do fabricante, código de barras,
+//      unidade, descrição, serviço e ativo;
+//   2. grupo e marca (buscar ou criar), controla estoque, pode vender e
+//      matéria-prima;
+//   3. dados fiscais — NCM (conferido na tabela oficial), CEST (os do NCM),
+//      origem e tipo de tributação (grupo tributário); o resto do fiscal só
+//      no visual completo;
+//   4. preços e estoque — custo, margem (as setas calculam o preço pela margem
+//      ou a margem pelo preço), à vista, a prazo, mínimo, estoque atual e
+//      mínimo;
+//   5. cores (classes) e observações, no visual completo.
+// "Vender sem estoque" do print NÃO entra: desde 13/10/2026 nenhum produto
+// fatura sem saldo (só o serviço, que não controla estoque).
 window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduct(ctx) {
   const { content, api, showToast, state, loadModule, confirmModal } = ctx;
   const S = window.MavisStock;
@@ -37,6 +57,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
   }
 
   const value = (key, fallback = '') => S.escape(current ? current[key] ?? fallback : fallback);
+  const ehAdmin = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
 
   // CLASSES (COR e, no futuro, VOLTAGEM/TAMANHO).
   //
@@ -64,9 +85,6 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
   const usaValor = (classId, valorId) => classesDoProduto
     .find((c) => c.classId === classId)?.valores.some((v) => v.id === valorId) || false;
 
-  // Conteúdo da aba Classes. Sem o invólucro .cadastro-section que existia
-  // antes: a aba já é a seção, e repetir o título "Classes" logo abaixo da aba
-  // "Classes" seria eco.
   function blocoClasses() {
     if (!current) {
       return '<p class="muted">Salve o produto primeiro.</p>';
@@ -104,181 +122,202 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       </div>`;
   }
 
-  // Abas iguais às do cadastro de Pessoas (.cadastro-tab): mesmas classes, mesmo
-  // par data-tab/data-tab-panel, mesmo chevron. Dois cadastros com abas de
-  // desenhos diferentes na mesma tela seriam lidos como telas de sistemas
-  // diferentes.
-  const ABAS = [
-    { id: 'dados', label: 'Dados' },
-    { id: 'precos', label: 'Preços' },
-    { id: 'fiscal', label: 'Fiscal' },
-    { id: 'estoque', label: 'Estoque' },
-    { id: 'classes', label: 'Classes' }
-  ];
-  const CHEVRON_ABA = '<svg class="cadastro-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-  // Onde o usuário está, não um campo do produto. Começa sempre em Dados.
-  let abaAtiva = 'dados';
-  const painel = (id, corpo) =>
-    `<div class="cadastro-tab-panel" data-tab-panel="${id}" ${abaAtiva === id ? '' : 'hidden'}>${corpo}</div>`;
+  // VISUAL RESUMIDO OU COMPLETO, como no print: o resumido mostra o que se
+  // preenche em todo produto; o completo, também o fiscal de exceção (IPI,
+  // escala), o estoque de depósito, as cores e as observações. A escolha é de
+  // cada usuário e fica nas preferências. Os campos escondidos continuam no
+  // formulário (só `hidden`): salvar no resumido não apaga o que não aparece.
+  const preferencia = (state.preferences && state.preferences.produto_cadastro) || {};
+  let resumida = preferencia.resumida === true;
+  const completo = (corpo) => `<div class="produto-completo" ${resumida ? 'hidden' : ''}>${corpo}</div>`;
+
+  // Grupo do produto = a categoria. Digitado: o nome existente é escolhido; um
+  // nome novo é criado pelo servidor ao salvar (categoryName).
+  const categorias = (meta.productCategories || []).filter((c) => c.status !== 'inativo');
+  const nomeDaCategoria = current && current.categoryId
+    ? ((meta.productCategories || []).find((c) => c.id === current.categoryId) || {}).name || ''
+    : '';
+  const chave = (name, rotulo, ligado, extra = '') => `
+    <label class="produto-chave">
+      <span>${rotulo}</span>
+      <input type="checkbox" name="${name}" ${ligado ? 'checked' : ''} ${extra} />
+    </label>`;
+  const precoOuVazio = (v) => (v === null || v === undefined || v === '' ? '' : Number(v));
+  const servico = Boolean(current && current.movimentaEstoque === false);
 
   content.innerHTML = `
     <div class="produto-form-wrap">
       <div class="panel">
         ${S.pageHead(current ? 'Editar Produto' : 'Novo Produto')}
 
-        <form id="stockProductForm" class="form-grid">
-          <div class="cadastro-tabs" role="tablist" aria-label="Seções do cadastro de produto">
-            ${ABAS.map((aba) => `
-              <button type="button" class="cadastro-tab ${abaAtiva === aba.id ? 'active' : ''}" role="tab"
-                      aria-selected="${abaAtiva === aba.id}" data-tab="${aba.id}">
-                <span>${aba.label}</span>${CHEVRON_ABA}
-              </button>
-            `).join('')}
-          </div>
-          <!-- As abas fechadas ficam ocultas, não fora do DOM: assim continuam
-               entrando no FormData na hora de salvar (campo com display:none é
-               enviado; só o desabilitado fica de fora) e trocar de aba não
-               precisa redesenhar o formulário nem perder o que foi digitado. -->
-          ${painel('dados', `
-            <div class="row">
-              <label class="produto-campo-2">Nome<input name="name" required value="${value('name')}" /></label>
-              ${/* Fase EJ: o código de um produto cadastrado não muda — o banco
-                   recusa. Só leitura (e não desabilitado: ele precisa ir no
-                   envio). Produto sem código ainda recebe o primeiro. */''}
-              ${current && String(current.sku || '').trim()
-                ? `<label class="campo-somente-leitura" title="O código de um produto cadastrado não pode ser alterado.">SKU<input name="sku" readonly value="${value('sku')}" /></label>`
-                : `<label>SKU<input name="sku" required value="${value('sku')}" /></label>`}
-              <label>Código de barras (EAN)<input name="ean" value="${value('ean')}" /></label>
-            </div>
-            <div class="row">
-              <label>Categoria<select name="categoryId">${S.options(meta.productCategories, current ? current.categoryId : '', { empty: 'Sem categoria' })}</select></label>
-              <label>Unidade<input name="unit" value="${value('unit', 'UN')}" /></label>
-              <label>Marca<input name="brand" value="${value('brand')}" /></label>
-              <label>Status
-                <select name="status">
-                  <option value="ativo" ${!current || current.status === 'ativo' ? 'selected' : ''}>Ativo</option>
-                  <option value="inativo" ${current && current.status === 'inativo' ? 'selected' : ''}>Inativo</option>
-                </select>
+        <form id="stockProductForm" class="form-grid produto-em-blocos">
+          <datalist id="produtoUnidades">${UNIDADES_DO_PRODUTO.map((u) => `<option value="${u}"></option>`).join('')}</datalist>
+          <datalist id="produtoGrupos">${categorias.map((c) => `<option value="${S.escape(c.name)}"></option>`).join('')}</datalist>
+          <datalist id="produtoMarcas">${(meta.marcas || []).map((m) => `<option value="${S.escape(m)}"></option>`).join('')}</datalist>
+          <datalist id="produtoCests"></datalist>
+
+          <section class="produto-bloco produto-bloco-identificacao">
+            <button type="button" class="produto-visual" id="produtoVisual" aria-pressed="${resumida}" title="Alternar entre o visual resumido e o completo">
+              <span>Visual</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              <em>${resumida ? 'Resumida' : 'Completa'}</em>
+            </button>
+            ${/* Fase EJ: o código de um produto cadastrado não muda — o banco
+                 recusa. Só leitura (e não desabilitado: ele precisa ir no
+                 envio). Produto sem código ainda recebe o primeiro. */''}
+            ${current && String(current.sku || '').trim()
+              ? `<label class="campo-somente-leitura produto-codigo" title="O código de um produto cadastrado não pode ser alterado.">Código*<input name="sku" readonly value="${value('sku')}" /></label>`
+              : `<label class="produto-codigo">Código*<input name="sku" required value="${value('sku')}" /></label>`}
+            <label class="produto-codigo">C.Fabricante<input name="codigoFabricante" value="${value('codigoFabricante')}" placeholder="C.Fabricante" /></label>
+            <label class="produto-codigo">C.Barras<input name="ean" value="${value('ean')}" placeholder="C.Barras" /></label>
+            <label class="produto-unidade">Un*<input name="unit" list="produtoUnidades" required value="${value('unit', 'UN')}" placeholder="UN" /></label>
+            <label class="produto-descricao">Descrição*<input name="name" required value="${value('name')}" /></label>
+            ${chave('servico', 'Serviço', servico)}
+            ${chave('ativo', 'Ativo', !current || current.status !== 'inativo')}
+          </section>
+
+          <section class="produto-bloco">
+            <div class="produto-linha produto-linha-grupo">
+              <label>Grupo do Produto
+                <input name="categoryName" list="produtoGrupos" value="${S.escape(nomeDaCategoria)}" placeholder="Digite para buscar ou criar grupo..." />
               </label>
+              <label>Marca do Produto
+                <input name="brand" list="produtoMarcas" value="${value('brand')}" placeholder="Digite para buscar ou criar marca..." />
+              </label>
+              ${chave('controlaEstoque', 'Controla Estoque', !servico, servico ? 'disabled' : '')}
+              ${chave('podeVender', 'Pode Vender', !current || current.podeVender !== false)}
+              ${chave('materiaPrima', 'Matéria-Prima', Boolean(current && current.materiaPrima))}
             </div>
-            <label>Observações<textarea name="notes" rows="2">${value('notes')}</textarea></label>
-          `)}
 
-          ${painel('precos', `
-            <div class="row">
-              ${/* Custo só para administrador (14/10/2026): o servidor não manda o
-                   número aos demais e guarda o que o produto já tinha ao salvar. */''}
-              ${typeof usuarioEhAdmin === 'function' && usuarioEhAdmin()
-                ? `<label>Custo<input type="number" step="0.01" min="0" name="costPrice" required value="${current ? Number(current.costPrice || 0) : 0}" /></label>`
-                : ''}
-              <label>Preço de venda<input type="number" step="0.01" min="0" name="salePrice" required value="${current ? Number(current.salePrice || 0) : 0}" /></label>
-            </div>
-          `)}
-
-          <!-- Sem NCM e origem preenchidos, a emissão de NF-e não acha a regra
-               fiscal do item e a nota é recusada. É o motivo de estes campos
-               ficarem no cadastro do produto e não na hora de emitir: quem emite
-               não tem como saber a classificação de cada produto. -->
-          ${painel('fiscal', `
-            <div class="row produto-row-fiscal">
+            <!-- Sem NCM e origem preenchidos, a emissão de NF-e não acha a regra
+                 fiscal do item e a nota é recusada. É o motivo de estes campos
+                 ficarem no cadastro do produto e não na hora de emitir: quem
+                 emite não tem como saber a classificação de cada produto. -->
+            <h4 class="produto-subtitulo">Dados Fiscais</h4>
+            <div class="produto-linha produto-linha-fiscal">
               <label>NCM
-                <input name="ncm" data-campo="ncm" value="${value('ncm')}" />
-              </label>
-              <label>Origem
-                <select name="origem">
-                  ${ORIGENS_MERCADORIA.map((o) => `<option value="${o.value}" ${String(current?.origem ?? '0') === o.value ? 'selected' : ''}>${S.escape(o.label)}</option>`).join('')}
-                </select>
+                <span class="produto-ncm">
+                  <input name="ncm" data-campo="ncm" value="${value('ncm')}" />
+                  <i id="produtoNcmSinal" aria-hidden="true"></i>
+                </span>
+                <small class="muted" id="produtoNcmDescricao"></small>
               </label>
               <label>CEST
-                <input name="cest" data-campo="cest" value="${value('cest')}" placeholder="só com ST" />
+                <input name="cest" data-campo="cest" list="produtoCests" value="${value('cest')}" placeholder="Digite para buscar CEST..." />
               </label>
-              <label>Unidade tributável
-                <input name="unidadeTributavel" value="${value('unidadeTributavel', current ? '' : 'UN')}" placeholder="igual à unidade" />
+              <label>Origem ICMS
+                <select name="origem">
+                  <option value="" ${current && (current.origem === null || current.origem === undefined) ? 'selected' : ''}>—</option>
+                  ${ORIGENS_MERCADORIA.map((o) => `<option value="${o.value}" ${String(current ? current.origem ?? '' : '0') === o.value ? 'selected' : ''}>${S.escape(o.label)}</option>`).join('')}
+                </select>
               </label>
-            </div>
-            <!-- GRUPO TRIBUTÁRIO (fase CP). Ao lado do NCM porque são as duas
-                 classificações do produto, e a diferença entre elas é o que
-                 confunde: o NCM diz o que a mercadoria É (classificação
-                 aduaneira, igual para todo mundo), e o grupo diz como ESTA
-                 empresa a tributa. É o grupo que faz uma regra fiscal valer
-                 para centenas de produtos em vez de um NCM por vez. -->
-            <div class="row">
-              <label class="produto-campo-2">Grupo tributário
+              <!-- GRUPO TRIBUTÁRIO (fase CP), o "Tipo de Tributação" do print:
+                   o NCM diz o que a mercadoria É (igual para todo mundo), e o
+                   grupo diz como ESTA empresa a tributa. É o grupo que faz uma
+                   regra fiscal valer para centenas de produtos de uma vez. -->
+              <label>Tipo de Tributação
                 <select name="grupoTributarioId">${S.options(meta.grupoTributarios, current ? current.grupoTributarioId : '', { empty: 'Sem grupo' })}</select>
               </label>
             </div>
-
-            <!-- IPI E ESCALA (fase CS). Ficam depois do grupo tributário porque
-                 são a exceção dele: o grupo resolve ICMS, PIS e COFINS pela
-                 regra fiscal, e estes cinco a regra não tem como responder.
-
-                 O IPI daqui VENCE a regra fiscal, e é o único imposto em que
-                 isso acontece: a alíquota de IPI segue a classificação do
-                 produto na TIPI, que é do produto e não da operação. Vazio =
-                 usa a regra, e é por isso que nada muda nas notas de hoje. -->
-            <div class="row produto-row-fiscal">
-              <label>CST do IPI
-                <input name="cstIpi" maxlength="2" inputmode="numeric" value="${value('cstIpi')}" placeholder="da regra" />
-              </label>
-              <label>Alíquota de IPI (%)
-                <input name="aliquotaIpi" type="number" step="0.01" min="0" max="100"
-                       value="${current && current.aliquotaIpi !== null && current.aliquotaIpi !== undefined ? current.aliquotaIpi : ''}" placeholder="da regra" />
-              </label>
-              <label>EX TIPI
-                <input name="codigoExTipi" maxlength="3" inputmode="numeric" value="${value('codigoExTipi')}" placeholder="2 ou 3 dígitos" />
-              </label>
-            </div>
-            <div class="row produto-row-fiscal">
-              <!-- TRÊS estados, e o vazio é o que importa: "não declarado" faz a
-                   nota OMITIR o indEscala. Um <select> e não um switch por isso
-                   — um interruptor só tem dois estados, e o padrão dele
-                   passaria a afirmar algo sobre todos os produtos.
-
-                   A pergunta é pela NEGATIVA ("não relevante") porque é o rótulo
-                   que o operador conhece, do Convênio 52/2017 e do sistema
-                   antigo. A inversão para o campo escala_relevante da Focus
-                   acontece AQUI, num lugar só, à vista.
-
-                   (E sem acento grave neste comentário: ele vive DENTRO de um
-                   template literal, e um par de acentos graves aqui fecha o
-                   template e quebra a tela inteira com "missing ) after
-                   argument list" apontando dez linhas adiante.) -->
-              <label class="produto-campo-2">Produzido em escala NÃO relevante
-                <select name="escalaNaoRelevante">
-                  <option value="" ${current && (current.escalaRelevante === null || current.escalaRelevante === undefined) ? 'selected' : (current ? '' : 'selected')}>Não declarado</option>
-                  <option value="1" ${current && current.escalaRelevante === false ? 'selected' : ''}>Sim — escala não relevante</option>
-                  <option value="0" ${current && current.escalaRelevante === true ? 'selected' : ''}>Não — escala relevante</option>
-                </select>
-              </label>
-              <label class="produto-campo-2">CNPJ do fabricante
-                <input name="cnpjFabricante" data-campo="cnpj" value="${value('cnpjFabricante')}" placeholder="exigido em escala não relevante" />
-              </label>
-            </div>
-          `)}
-
-          ${painel('estoque', `
-            <div class="row produto-row-estoque">
-              <label>Estoque mínimo<input type="number" step="0.001" min="0" name="minStock" value="${current ? Number(current.minStock || 0) : 0}" /></label>
-              <label>Estoque máximo<input type="number" step="0.001" min="0" name="maxStock" value="${current ? Number(current.maxStock || 0) : 0}" /></label>
-              <label>Depósito padrão<select name="defaultDepositId">${S.options(meta.deposits, current ? current.defaultDepositId : '', { empty: 'Nenhum' })}</select></label>
-              <label>Localização<input name="location" value="${value('location')}" placeholder="Ex.: Corredor 3, prateleira B" /></label>
-            </div>
-            ${current ? `
-              <div class="row">
-                <label>Saldo atual<input value="${S.formatQty(current.stockQuantity)}" disabled /></label>
+            ${completo(`
+              <!-- IPI E ESCALA (fase CS): a exceção do grupo tributário. O IPI
+                   daqui VENCE a regra fiscal (a alíquota segue a TIPI, que é do
+                   produto); vazio = usa a regra. -->
+              <div class="produto-linha produto-linha-fiscal-extra">
+                <label>Unidade tributável
+                  <input name="unidadeTributavel" value="${value('unidadeTributavel', current ? '' : 'UN')}" placeholder="igual à unidade" />
+                </label>
+                <label>CST do IPI
+                  <input name="cstIpi" maxlength="2" inputmode="numeric" value="${value('cstIpi')}" placeholder="da regra" />
+                </label>
+                <label>Alíquota de IPI (%)
+                  <input name="aliquotaIpi" type="number" step="0.01" min="0" max="100"
+                         value="${current && current.aliquotaIpi !== null && current.aliquotaIpi !== undefined ? current.aliquotaIpi : ''}" placeholder="da regra" />
+                </label>
+                <label>EX TIPI
+                  <input name="codigoExTipi" maxlength="3" inputmode="numeric" value="${value('codigoExTipi')}" placeholder="2 ou 3 dígitos" />
+                </label>
               </div>
-            ` : `
-              <div class="row">
+              <div class="produto-linha produto-linha-escala">
+                <!-- TRÊS estados, e o vazio é o que importa: "não declarado" faz
+                     a nota OMITIR o indEscala. A pergunta é pela NEGATIVA ("não
+                     relevante"), o rótulo do Convênio 52/2017; a inversão para
+                     escala_relevante acontece no envio, num lugar só. (Sem
+                     acento grave neste comentário: ele vive dentro de um
+                     template literal.) -->
+                <label>Produzido em escala NÃO relevante
+                  <select name="escalaNaoRelevante">
+                    <option value="" ${current && (current.escalaRelevante === null || current.escalaRelevante === undefined) ? 'selected' : (current ? '' : 'selected')}>Não declarado</option>
+                    <option value="1" ${current && current.escalaRelevante === false ? 'selected' : ''}>Sim — escala não relevante</option>
+                    <option value="0" ${current && current.escalaRelevante === true ? 'selected' : ''}>Não — escala relevante</option>
+                  </select>
+                </label>
+                <label>CNPJ do fabricante
+                  <input name="cnpjFabricante" data-campo="cnpj" value="${value('cnpjFabricante')}" placeholder="exigido em escala não relevante" />
+                </label>
+              </div>
+            `)}
+
+            <h4 class="produto-subtitulo">Preços e Estoque</h4>
+            <div class="produto-linha produto-linha-precos">
+              ${/* Custo só para administrador (14/10/2026): o servidor não manda o
+                   número aos demais e guarda o que o produto já tinha ao salvar.
+                   A margem sai do custo, então some junto. */''}
+              ${ehAdmin ? `
+                <label>Preço de Custo*<input type="number" step="0.01" min="0" name="costPrice" required value="${current ? Number(current.costPrice || 0) : 0}" /></label>
+                <div class="produto-margem">
+                  <label>Margem (%)<input type="number" step="0.01" name="margem" data-nao-dinheiro id="produtoMargem" /></label>
+                  <div class="produto-margem-setas">
+                    <button type="button" class="icon-button" id="produtoMargemParaPreco" title="Calcular o preço à vista pela margem" aria-label="Calcular o preço pela margem">→</button>
+                    <button type="button" class="icon-button" id="produtoPrecoParaMargem" title="Calcular a margem pelo preço à vista" aria-label="Calcular a margem pelo preço">←</button>
+                  </div>
+                  <small class="muted">Sobre custo: <strong id="produtoSobreCusto">—</strong></small>
+                </div>` : ''}
+              <label>Preço à Vista*<input type="number" step="0.01" min="0" name="salePrice" required value="${current ? Number(current.salePrice || 0) : 0}" />
+                ${ehAdmin ? '<small class="muted">Sobre venda: <strong data-sobre-venda="salePrice">—</strong></small>' : ''}
+              </label>
+              <label>Preço a Prazo<input type="number" step="0.01" min="0" name="precoPrazo" value="${current ? precoOuVazio(current.precoPrazo) : ''}" />
+                ${ehAdmin ? '<small class="muted">Sobre venda: <strong data-sobre-venda="precoPrazo">—</strong></small>' : ''}
+              </label>
+              <label>Preço Mínimo<input type="number" step="0.01" min="0" name="precoMinimo" value="${current ? precoOuVazio(current.precoMinimo) : ''}" /></label>
+            </div>
+            <div class="produto-linha produto-linha-estoque">
+              ${current ? `
+                <div class="produto-estoque-atual">
+                  <label>Estoque Atual<input value="${S.formatQty(current.stockQuantity)}" disabled /></label>
+                  <button type="button" class="icon-button" id="produtoEstoqueHistorico" title="Histórico e saldo por depósito" aria-label="Histórico do estoque">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><polyline points="3 3 3 8 8 8"></polyline><polyline points="12 7 12 12 15 14"></polyline></svg>
+                  </button>
+                  <button type="button" class="icon-button" id="produtoEstoqueAjuste" title="Nova movimentação deste produto" aria-label="Ajustar o estoque">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+                  </button>
+                  <small class="muted">Todas as empresas: ${S.formatQty(current.stockQuantity)}</small>
+                </div>
+              ` : `
                 <label>Estoque inicial<input type="number" step="0.001" min="0" name="stockQuantity" value="0" /></label>
-                <label class="produto-campo-2">Categoria da movimentação inicial<select name="movementCategoryId">${S.options(meta.movementCategories, '', { empty: 'Sem categoria' })}</select></label>
+                ${/* À vista no produto novo: estoque inicial exige o depósito. */''}
+                <label>Depósito padrão<select name="defaultDepositId">${S.options(meta.deposits, '', { empty: 'Nenhum' })}</select></label>
+              `}
+              <label>Estoque Mínimo<input type="number" step="0.001" min="0" name="minStock" value="${current ? Number(current.minStock || 0) : 0}" /></label>
+            </div>
+            ${completo(`
+              <div class="produto-linha produto-linha-deposito">
+                <label>Estoque máximo<input type="number" step="0.001" min="0" name="maxStock" value="${current ? Number(current.maxStock || 0) : 0}" /></label>
+                ${current ? `<label>Depósito padrão<select name="defaultDepositId">${S.options(meta.deposits, current.defaultDepositId, { empty: 'Nenhum' })}</select></label>` : ''}
+                <label>Localização<input name="location" value="${value('location')}" placeholder="Ex.: Corredor 3, prateleira B" /></label>
+                ${current ? '' : `<label>Categoria da movimentação inicial<select name="movementCategoryId">${S.options(meta.movementCategories, '', { empty: 'Sem categoria' })}</select></label>`}
               </div>
-            `}
+            `)}
+          </section>
+
+          ${completo(`
+            <section class="produto-bloco">
+              <h4 class="produto-subtitulo">Cores e Classes</h4>
+              ${blocoClasses()}
+              <label class="produto-observacoes">Observações<textarea name="notes" rows="2">${value('notes')}</textarea></label>
+            </section>
           `)}
 
-          ${painel('classes', blocoClasses())}
-
-          <!-- Fora dos painéis: salvar grava o cadastro inteiro, não a aba
-               aberta. Repetir o botão em cada aba sugeriria o contrário. -->
           <div class="finance-actions-row">
             <button type="submit">${current ? 'Salvar alterações' : 'Salvar produto'}</button>
             <button type="button" class="secondary" id="stockProductCancel">Ver lista</button>
@@ -288,23 +327,108 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
     </div>
   `;
 
-  // Troca de aba mexe só no `hidden`: sem redesenhar, o que já foi digitado nas
-  // outras abas continua no lugar (e no FormData).
-  const abrirAba = (id) => {
-    abaAtiva = id;
-    content.querySelectorAll('.cadastro-tab').forEach((botao) => {
-      const ativa = botao.dataset.tab === id;
-      botao.classList.toggle('active', ativa);
-      botao.setAttribute('aria-selected', String(ativa));
-    });
-    content.querySelectorAll('.cadastro-tab-panel').forEach((caixa) => {
-      caixa.hidden = caixa.dataset.tabPanel !== id;
-    });
-  };
+  const form = document.getElementById('stockProductForm');
+  const campo = (name) => form.querySelector(`[name="${name}"]`);
 
-  content.querySelectorAll('.cadastro-tab').forEach((botao) => {
-    botao.addEventListener('click', () => abrirAba(botao.dataset.tab));
+  // VISUAL: troca só o `hidden` dos blocos do completo, sem redesenhar (o que
+  // foi digitado fica). A escolha vai para as preferências do usuário.
+  document.getElementById('produtoVisual')?.addEventListener('click', (evento) => {
+    resumida = !resumida;
+    content.querySelectorAll('.produto-completo').forEach((bloco) => { bloco.hidden = resumida; });
+    evento.currentTarget.setAttribute('aria-pressed', String(resumida));
+    evento.currentTarget.querySelector('em').textContent = resumida ? 'Resumida' : 'Completa';
+    if (typeof salvarPreferencia === 'function') salvarPreferencia('produto_cadastro', { resumida });
   });
+
+  // SERVIÇO E CONTROLA ESTOQUE são o mesmo dado (movimenta_estoque): serviço
+  // não tem saldo. Ligar um desliga e trava o outro.
+  campo('servico')?.addEventListener('change', () => {
+    const controla = campo('controlaEstoque');
+    if (!controla) return;
+    controla.checked = !campo('servico').checked;
+    controla.disabled = campo('servico').checked;
+  });
+  campo('controlaEstoque')?.addEventListener('change', () => {
+    if (campo('servico')) campo('servico').checked = !campo('controlaEstoque').checked;
+  });
+
+  // MARGEM, como no print: "→" põe no preço à vista o custo + margem; "←"
+  // tira a margem do preço. Embaixo, a margem sobre o custo e sobre a venda de
+  // cada preço — a mesma conta do servidor (stock-core: margin = (venda −
+  // custo) / custo). A margem não é gravada: sai sempre dos dois preços.
+  const numero = (name) => {
+    const n = Number(campo(name)?.value || 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const pct = (n) => (Number.isFinite(n) ? `${n.toFixed(2).replace('.', ',')}%` : '—');
+  function atualizarMargens() {
+    if (!ehAdmin) return;
+    const custo = numero('costPrice');
+    const venda = numero('salePrice');
+    const sobreCusto = document.getElementById('produtoSobreCusto');
+    if (sobreCusto) sobreCusto.textContent = custo > 0 && venda > 0 ? pct(((venda - custo) / custo) * 100) : '—';
+    content.querySelectorAll('[data-sobre-venda]').forEach((caixa) => {
+      const preco = numero(caixa.dataset.sobreVenda);
+      caixa.textContent = preco > 0 && custo > 0 ? pct(((preco - custo) / preco) * 100) : '—';
+    });
+  }
+  function margemDoPreco() {
+    const custo = numero('costPrice');
+    const venda = numero('salePrice');
+    const margem = document.getElementById('produtoMargem');
+    if (margem) margem.value = custo > 0 && venda > 0 ? (((venda - custo) / custo) * 100).toFixed(2) : '';
+  }
+  document.getElementById('produtoMargemParaPreco')?.addEventListener('click', () => {
+    const custo = numero('costPrice');
+    const margem = Number(document.getElementById('produtoMargem')?.value || 0);
+    if (!(custo > 0)) { showToast('Informe o preço de custo para calcular pela margem.', 'warning'); return; }
+    campo('salePrice').value = Math.round(custo * (1 + margem / 100) * 100) / 100;
+    atualizarMargens();
+  });
+  document.getElementById('produtoPrecoParaMargem')?.addEventListener('click', () => {
+    margemDoPreco();
+    atualizarMargens();
+  });
+  ['costPrice', 'salePrice', 'precoPrazo'].forEach((nome) => {
+    campo(nome)?.addEventListener('input', atualizarMargens);
+    campo(nome)?.addEventListener('change', atualizarMargens);
+  });
+  margemDoPreco();
+  atualizarMargens();
+
+  // NCM CONFERIDO NA TABELA OFICIAL (fiscal_ncm, Siscomex): ✓ com a
+  // descrição, ou ✗ quando o código não existe. E os CEST do NCM entram na
+  // busca do campo CEST (fiscal_cest, Convênio 142/18).
+  let ncmConferido = '';
+  async function conferirNcm() {
+    const ncm = String(campo('ncm')?.value || '').replace(/\D/g, '');
+    const sinal = document.getElementById('produtoNcmSinal');
+    const descricao = document.getElementById('produtoNcmDescricao');
+    if (ncm === ncmConferido) return;
+    ncmConferido = ncm;
+    if (ncm.length !== 8) {
+      if (sinal) sinal.className = '';
+      if (descricao) descricao.textContent = '';
+      return;
+    }
+    try {
+      const resposta = await api(`/api/stock/ncm/${ncm}`);
+      if (String(campo('ncm')?.value || '').replace(/\D/g, '') !== ncm) return;
+      if (sinal) sinal.className = resposta.ncm ? 'produto-ncm-ok' : 'produto-ncm-erro';
+      if (descricao) descricao.textContent = resposta.ncm ? resposta.ncm.descricao : 'NCM não encontrado na tabela oficial.';
+      const lista = document.getElementById('produtoCests');
+      if (lista) {
+        lista.innerHTML = (resposta.cests || [])
+          .map((c) => `<option value="${S.escape(c.cest)}">${S.escape(c.cest)} — ${S.escape(c.descricao)}</option>`).join('');
+      }
+    } catch (_) {
+      // Sem a conferência o cadastro continua: o NCM é validado de novo na nota.
+      if (sinal) sinal.className = '';
+    }
+  }
+  campo('ncm')?.addEventListener('input', conferirNcm);
+  campo('ncm')?.addEventListener('blur', conferirNcm);
+  conferirNcm();
 
   // Marcar a classe revela os valores dela. Desmarcar esconde, mas NÃO limpa
   // as escolhas: quem desmarca por engano e remarca não perde as cores que já
@@ -345,51 +469,64 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
     loadModule('stock');
   });
 
+  // Estoque atual: o histórico e o saldo por depósito estão no Status do
+  // Produto; o ajuste é uma movimentação, que já abre com este produto.
+  document.getElementById('produtoEstoqueHistorico')?.addEventListener('click', () => {
+    state.stockStatusProductId = current.id;
+    state.activeSub = 'product_status';
+    loadModule('stock');
+  });
+  document.getElementById('produtoEstoqueAjuste')?.addEventListener('click', () => {
+    state.stockMovementProductId = current.id;
+    state.activeSub = 'new_movement';
+    loadModule('stock');
+  });
+
   document.getElementById('stockProductCancel')?.addEventListener('click', () => {
     state.activeSub = 'products';
     loadModule('stock');
   });
 
-  // Campo obrigatório em aba fechada trava o cadastro em silêncio: o navegador
-  // tenta focar o campo para mostrar "Preencha este campo", não consegue porque
-  // ele está `hidden`, e cancela o submit sem desenhar nada — o botão Salvar
-  // fica parecendo quebrado. ("Nome" e "SKU" vivem em Dados, "Custo" e "Preço
-  // de venda" em Preços: de qualquer aba dá para esbarrar num deles.)
-  //
-  // O `invalid` dispara para cada campo reprovado, na fase de captura, ANTES de
-  // o navegador escolher qual reclamar — abrir a aba aqui devolve o campo à
-  // tela a tempo de a mensagem nativa aparecer em cima dele.
-  let jaAbriuAbaInvalida = false;
-  document.getElementById('stockProductForm')?.addEventListener('invalid', (event) => {
-    // Só o primeiro interessa: é dele que o navegador vai reclamar. Os demais
-    // `invalid` do mesmo lote só trocariam a aba de novo, escondendo o campo
-    // que está prestes a receber a mensagem.
-    if (jaAbriuAbaInvalida) return;
-    jaAbriuAbaInvalida = true;
-    // O lote inteiro é síncrono; voltar ao laço de eventos rearma para a
-    // próxima tentativa de salvar.
-    setTimeout(() => { jaAbriuAbaInvalida = false; }, 0);
-    const caixa = event.target.closest('.cadastro-tab-panel');
-    if (caixa && caixa.hidden) abrirAba(caixa.dataset.tabPanel);
+  // Campo obrigatório no visual resumido não fica escondido (Código, Un,
+  // Descrição, Custo e Preço à Vista estão todos à vista); se um dia um
+  // obrigatório for para o completo, o navegador não conseguiria apontá-lo —
+  // por isso o completo abre sozinho quando um campo escondido é recusado.
+  form.addEventListener('invalid', (event) => {
+    const bloco = event.target.closest('.produto-completo');
+    if (bloco && bloco.hidden) content.querySelectorAll('.produto-completo').forEach((b) => { b.hidden = false; });
   }, true);
 
-  document.getElementById('stockProductForm')?.addEventListener('submit', async (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const submitBtn = event.target.querySelector('button[type="submit"]');
     if (submitBtn?.disabled) return;
     if (submitBtn) submitBtn.disabled = true;
     const formData = new FormData(event.target);
+    // O grupo digitado: o existente pelo nome (sem diferença de maiúscula); um
+    // nome novo vai como categoryName e o servidor cria o grupo.
+    const nomeDoGrupo = String(formData.get('categoryName') || '').trim();
+    const grupo = categorias.find((c) => String(c.name || '').trim().toLowerCase() === nomeDoGrupo.toLowerCase());
+    const servicoMarcado = Boolean(campo('servico')?.checked);
     const payload = {
       id: current ? current.id : undefined,
       name: formData.get('name'),
       sku: formData.get('sku'),
+      codigoFabricante: formData.get('codigoFabricante'),
       ean: formData.get('ean'),
-      categoryId: formData.get('categoryId'),
+      categoryId: grupo ? grupo.id : '',
+      categoryName: grupo ? '' : nomeDoGrupo,
       unit: formData.get('unit'),
       brand: formData.get('brand'),
-      status: formData.get('status'),
+      status: campo('ativo')?.checked ? 'ativo' : 'inativo',
+      // Serviço = não controla estoque (a mão de obra é o caso de hoje).
+      movimentaEstoque: !servicoMarcado,
+      podeVender: Boolean(campo('podeVender')?.checked),
+      materiaPrima: Boolean(campo('materiaPrima')?.checked),
       costPrice: Number(formData.get('costPrice') || 0),
       salePrice: Number(formData.get('salePrice') || 0),
+      // Vazio = sem preço a prazo / sem mínimo (não é zero).
+      precoPrazo: formData.get('precoPrazo') === '' ? '' : Number(formData.get('precoPrazo') || 0),
+      precoMinimo: formData.get('precoMinimo') === '' ? '' : Number(formData.get('precoMinimo') || 0),
       ncm: formData.get('ncm'),
       cest: formData.get('cest'),
       origem: formData.get('origem'),

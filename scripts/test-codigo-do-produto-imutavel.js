@@ -43,8 +43,9 @@ check('a rota antiga também', /deste produto não pode ser alterado\.` \}, 400\
 
 console.log('\n--- 3. a tela ---');
 const tela = ler('public/modules/stock/subs/new_product.js');
-check('editando, o SKU é só de leitura', /current && String\(current\.sku \|\| ''\)\.trim\(\)[\s\S]{0,200}<input name="sku" readonly/.test(tela));
-check('  e produto novo continua com o campo livre e obrigatório', /<label>SKU<input name="sku" required value=/.test(tela));
+// Desde o cadastro em blocos (fase EP, 15/10/2026) o rótulo é "Código*".
+check('editando, o SKU é só de leitura', /current && String\(current\.sku \|\| ''\)\.trim\(\)[\s\S]{0,260}<input name="sku" readonly/.test(tela));
+check('  e produto novo continua com o campo livre e obrigatório', /<label class="produto-codigo">Código\*<input name="sku" required value=/.test(tela));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

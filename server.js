@@ -17764,6 +17764,11 @@ async function tratarRequisicao(req, res) {
         priceTables: (data.priceTables || []).map((t) => ({ id: t.id, name: t.name, type: t.type, markupPercent: t.markupPercent })),
         catalogs: (data.productCatalogs || []).map((c) => ({ id: c.id, name: c.name })),
         grupoTributarios,
+        // As marcas já usadas, para o campo "Marca do Produto" buscar (fase EP).
+        // Não há cadastro de marca: digitar uma nova é criá-la.
+        marcas: [...new Set(Object.values(data.productMeta || {})
+          .map((m) => String((m && m.brand) || '').trim()).filter(Boolean))]
+          .sort((a, b) => a.localeCompare(b, 'pt-BR')),
         // `stockQuantity` SAIU do item: nenhuma tela lê o saldo daqui (o saldo
         // que elas mostram vem de /api/stock/products/:id ou da lista), e ele
         // era 98 KB da resposta. Os cinco que ficaram são os que os seletores
@@ -17914,7 +17919,8 @@ async function tratarRequisicao(req, res) {
         // O NCM entra na busca desde a fase CP: a classificação em lote procura
         // por NCM ("todos os 8471..."), que é o critério mais natural de quem
         // está montando grupo tributário. Sem ele a busca parecia quebrada.
-        list = list.filter((p) => `${p.name} ${p.sku} ${p.ean} ${p.ncm}`.toLowerCase().includes(search));
+        // E o código do fabricante (fase EP, 15/10/2026).
+        list = list.filter((p) => `${p.name} ${p.sku} ${p.ean} ${p.ncm} ${p.codigoFabricante || ''}`.toLowerCase().includes(search));
       }
       if (categoryId) list = list.filter((p) => p.categoryId === categoryId);
       if (status) list = list.filter((p) => p.status === status);
@@ -18090,6 +18096,33 @@ async function tratarRequisicao(req, res) {
     }
   }
 
+  // NCM CONFERIDO NA TABELA OFICIAL, E OS CEST DELE (fase EP, 15/10/2026). Para
+  // o cadastro de produto: o ✓ ao lado do NCM e a busca do CEST. Na rota do
+  // ESTOQUE, e não do Fiscal: quem cadastra produto costuma não ter o módulo
+  // fiscal (ver ORIGENS_MERCADORIA na tela).
+  if (/^\/api\/stock\/ncm\/\d{8}$/.test(pathname) && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const codigo = pathname.slice(-8);
+      const [ncm, cests] = await Promise.all([
+        consultarBanco('select codigo, descricao from fiscal_ncm where codigo = $1', [codigo])
+          .then((r) => r.rows[0] || null).catch(() => null),
+        consultarBanco(
+          `select cest, descricao from fiscal_cest
+            where exists (select 1 from unnest(ncm_prefixos) p where $1 like p || '%')
+            order by cest limit 200`, [codigo]
+        ).then((r) => r.rows).catch(() => [])
+      ]);
+      return sendJson(res, {
+        ncm: ncm ? { codigo: String(ncm.codigo).trim(), descricao: ncm.descricao } : null,
+        cests: cests.map((c) => ({ cest: String(c.cest).trim(), descricao: c.descricao }))
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao conferir o NCM');
+    }
+  }
+
   if (pathname === '/api/stock/products' && req.method === 'POST') {
     try {
       const user = await getCurrentUser(req);
@@ -18114,6 +18147,36 @@ async function tratarRequisicao(req, res) {
       const skuGravado = existing ? String(existing.sku || '').trim() : '';
       if (skuGravado && skuGravado !== sku) {
         return sendJson(res, { error: `O código ${skuGravado} deste produto não pode ser alterado.` }, 400);
+      }
+
+      // PREÇOS DO CADASTRO EM BLOCOS (fase EP, 15/10/2026). Vazio = não
+      // definido; negativo não existe; o mínimo não passa do à vista (seria um
+      // mínimo que o próprio preço de tabela não respeita).
+      const precoInformado = (v) => v !== undefined && v !== null && v !== '';
+      for (const [campo, rotulo] of [['precoPrazo', 'preço a prazo'], ['precoMinimo', 'preço mínimo']]) {
+        if (precoInformado(body[campo]) && !(Number(body[campo]) >= 0)) {
+          return sendJson(res, { error: `O ${rotulo} precisa ser um valor de zero para cima.` }, 400);
+        }
+      }
+      if (precoInformado(body.precoMinimo) && Number(body.precoMinimo) > stockCore.toNumber(body.salePrice)) {
+        return sendJson(res, { error: 'O preço mínimo está acima do preço à vista.' }, 400);
+      }
+
+      // GRUPO DIGITADO QUE AINDA NÃO EXISTE (fase EP): é criado aqui, como no
+      // print ("buscar ou criar grupo"). O nome igual a um existente (sem
+      // diferença de maiúscula) usa o existente.
+      const nomeDoGrupo = String(body.categoryName || '').trim();
+      if (!String(body.categoryId || '').trim() && nomeDoGrupo) {
+        data.productCategories = data.productCategories || [];
+        const existente = data.productCategories.find((c) => String(c.name || '').trim().toLowerCase() === nomeDoGrupo.toLowerCase());
+        if (existente) {
+          body.categoryId = existente.id;
+        } else {
+          const config = stockCore.STOCK_COLLECTIONS['product-categories'];
+          const grupo = { id: stockCore.createId(config.prefix), ...config.build({ name: nomeDoGrupo, status: 'ativo' }, null, data), createdAt: new Date().toISOString() };
+          data.productCategories.push(grupo);
+          body.categoryId = grupo.id;
+        }
       }
 
       // Estoque inicial só vale na criação e vira uma movimentação de entrada,
@@ -18153,7 +18216,9 @@ async function tratarRequisicao(req, res) {
         // um campo só ("Unidade"), que serve de padrão para as duas.
         unidadeComercial: String(body.unit ?? 'UN').trim() || 'UN',
         unidadeTributavel: String(body.unidadeTributavel || body.unit || 'UN').trim() || 'UN',
-        numeroFci: String(body.numeroFci ?? '').trim(),
+        // Só quando veio: a tela não tem o campo, e mandar '' a cada gravação
+        // apagava o FCI do produto (15/10/2026).
+        numeroFci: body.numeroFci === undefined ? undefined : String(body.numeroFci ?? '').trim(),
         // Fase CP. Vazio vira null na coluna uuid (camposFiscaisDoProduto), e é
         // assim que "Sem grupo" se escolhe de volta depois de classificado.
         grupoTributarioId: String(body.grupoTributarioId ?? '').trim(),
@@ -18165,7 +18230,15 @@ async function tratarRequisicao(req, res) {
         aliquotaIpi: body.aliquotaIpi ?? '',
         codigoExTipi: String(body.codigoExTipi ?? '').trim(),
         escalaRelevante: body.escalaRelevante ?? '',
-        cnpjFabricante: String(body.cnpjFabricante ?? '').trim()
+        cnpjFabricante: String(body.cnpjFabricante ?? '').trim(),
+        // Fase EP. undefined = a tela não mandou (o atalho "Novo Produto"), e
+        // o banco fica com o padrão / o que tinha (camposComerciaisDoProduto).
+        codigoFabricante: body.codigoFabricante,
+        precoPrazo: body.precoPrazo,
+        precoMinimo: body.precoMinimo,
+        podeVender: body.podeVender === undefined ? undefined : body.podeVender !== false,
+        materiaPrima: body.materiaPrima === undefined ? undefined : body.materiaPrima === true,
+        movimentaEstoque: body.movimentaEstoque === undefined ? undefined : body.movimentaEstoque !== false
       });
 
       await auditarPrecoDoProduto(user, existing, product, 'Cadastro do produto');
@@ -18184,6 +18257,10 @@ async function tratarRequisicao(req, res) {
         }, user);
         productsById.set(product.id, { ...product, stockQuantity: 0 });
         await commitStockMovements(data, [movement], productsById);
+        // commitStockMovements grava o razão, não o db.json: sem isto o
+        // produto novo com estoque inicial perdia grupo, marca, mínimo,
+        // status e o grupo recém-criado (15/10/2026).
+        saveData(data);
       } else {
         saveData(data);
       }
