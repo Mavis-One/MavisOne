@@ -4233,6 +4233,32 @@ async function loadModule(moduleName) {
           });
         };
 
+        // O CHASSI DOS ITENS VAI SOZINHO PARA AS OBSERVAÇÕES (15/10/2026, pedido
+        // do usuário: "pegue o chassi que aparece logo após o produto ser
+        // adicionado e puxe ele automaticamente nas observações/termos e
+        // condições, para não ter a necessidade de copiar e colar"). Na linha
+        // "CHASSI:" do texto padrão (shared/nfe_texto_padrao.js); texto sem a
+        // linha (o termo da Electric) a ganha no topo. Vários itens, os chassis
+        // separados por vírgula. O que alguém escreveu À MÃO na linha fica: só
+        // se troca o que este sistema pôs ali (ou a linha vazia).
+        const chassisDosItens = () => [...new Set(items.map((i) => String(i.chassi || '').trim()).filter(Boolean))].join(', ');
+        let chassiAutomatico = chassisDosItens();
+        const levarChassiParaObservacoes = () => {
+          const TP = window.MavisNfeTextoPadrao;
+          if (!TP) return;
+          const novo = chassisDosItens();
+          if (novo === chassiAutomatico) return;
+          const texto = formState.note || '';
+          const escritoNoTexto = TP.chassiDoTexto(texto);
+          if (escritoNoTexto && escritoNoTexto !== chassiAutomatico) {
+            chassiAutomatico = novo;
+            return;
+          }
+          if (/^[ \t]*CHASSI[ \t]*:/im.test(texto)) formState.note = TP.comChassi(texto, novo);
+          else if (novo) formState.note = `CHASSI: ${novo}\n${texto}`;
+          chassiAutomatico = novo;
+        };
+
         // Mesmo módulo que o servidor usa — a tela não pode mostrar um total e o
         // servidor gravar outro.
         const computeTotals = () => window.MavisSalesTotals.computeSalesTotals({
@@ -5563,64 +5589,9 @@ async function loadModule(moduleName) {
                 </div><!-- /aba Dados -->
 
                 <div class="sales-tab-panel" data-aba="pagamentos" ${abaAtiva === 'pagamentos' ? '' : 'hidden'}>
-                  <div class="sales-info-grid">
-                    <label class="sales-total-field">Plano de Conta - Receita
-                      <input name="accountPlan" value="${escapeHtml(formState.accountPlan)}" placeholder="Ex.: Revenda de mercadorias" />
-                    </label>
-                    <label class="sales-total-field">Forma de Pagamento
-                      <select name="paymentMethodId">
-                        <option value="">Nenhuma</option>
-                        ${meta.paymentMethods.map((forma) => `<option value="${escapeHtml(forma.id)}" ${formState.paymentMethodId === forma.id ? 'selected' : ''}>${escapeHtml(forma.name)}</option>`).join('')}
-                      </select>
-                    </label>
-                    <label class="sales-total-field">Grupo de Lançamentos
-                      <input name="entryGroup" value="${escapeHtml(formState.entryGroup)}" />
-                    </label>
-                    <label class="sales-total-field">Documento de Impressão
-                      <select name="printDocument">
-                        ${DOCUMENTOS_IMPRESSAO.map((doc) => `<option value="${escapeHtml(doc)}" ${formState.printDocument === doc ? 'selected' : ''}>${escapeHtml(doc)}</option>`).join('')}
-                      </select>
-                    </label>
-
-                    <label class="sales-total-field">Número NF-e
-                      <input name="nfeNumber" value="${escapeHtml(formState.nfeNumber)}" />
-                    </label>
-                    <label class="sales-total-field">Número NFS-e
-                      <input name="nfseNumber" value="${escapeHtml(formState.nfseNumber)}" />
-                    </label>
-                    <label class="sales-total-field">Data Faturamento NF-e
-                      <input name="nfeBillingDate" type="date" value="${escapeHtml(formState.nfeBillingDate)}" />
-                    </label>
-                    <label class="sales-total-field">Detalhes do Faturamento
-                      <input name="billingDetails" value="${escapeHtml(formState.billingDetails)}" />
-                    </label>
-
-                    <label class="sales-total-field">Transação Cartão
-                      <input name="cardTransaction" value="${escapeHtml(formState.cardTransaction)}" />
-                    </label>
-                    <label class="sales-total-field is-readonly" title="O cashback do cliente ainda não é abatido automaticamente no pedido.">Pagamento com Cashback (R$)
-                      <input value="${salesFormatBRL(0)}" disabled />
-                    </label>
-                  </div>
-
-                  <div class="sales-toggle-linha">
-                    <div class="sales-total-toggle">
-                      <button type="button" role="switch" aria-checked="${ignoreCreditLimit}" class="switch ${ignoreCreditLimit ? 'is-on' : ''}" data-toggle="ignoreCreditLimit"
-                              title="Deixa o pedido seguir mesmo que o cliente esteja acima do limite de crédito."><span></span></button>
-                      <span>Ignorar Limite de Crédito</span>
-                    </div>
-                    <div class="sales-total-toggle">
-                      <button type="button" role="switch" aria-checked="${paymentTerm === 'avista'}" class="switch ${paymentTerm === 'avista' ? 'is-on' : ''}" data-toggle="termAvista"
-                              title="Pagamento à vista."><span></span></button>
-                      <span>À Vista</span>
-                    </div>
-                    <div class="sales-total-toggle">
-                      <button type="button" role="switch" aria-checked="${paymentTerm === 'aprazo'}" class="switch ${paymentTerm === 'aprazo' ? 'is-on' : ''}" data-toggle="termAprazo"
-                              title="Pagamento a prazo, em uma ou mais parcelas."><span></span></button>
-                      <span>À Prazo</span>
-                    </div>
-                  </div>
-
+                  <!-- O quadro dos pagamentos vem primeiro (15/10/2026, pedido do usuário:
+                       "pagamentos (informação para NF-e e NFC-e) fique em cima dos demais
+                       campos"). -->
                   <div class="cadastro-section">
                     <div class="cadastro-section-header">
                       <h4>Pagamentos (Informação para NF-e/NFC-e)</h4>
@@ -5705,6 +5676,64 @@ async function loadModule(moduleName) {
                       </div>
                     </div>
                   </div>
+                  <div class="sales-info-grid" style="margin-top: 16px;">
+                    <label class="sales-total-field">Plano de Conta - Receita
+                      <input name="accountPlan" value="${escapeHtml(formState.accountPlan)}" placeholder="Ex.: Revenda de mercadorias" />
+                    </label>
+                    <label class="sales-total-field">Forma de Pagamento
+                      <select name="paymentMethodId">
+                        <option value="">Nenhuma</option>
+                        ${meta.paymentMethods.map((forma) => `<option value="${escapeHtml(forma.id)}" ${formState.paymentMethodId === forma.id ? 'selected' : ''}>${escapeHtml(forma.name)}</option>`).join('')}
+                      </select>
+                    </label>
+                    <label class="sales-total-field">Grupo de Lançamentos
+                      <input name="entryGroup" value="${escapeHtml(formState.entryGroup)}" />
+                    </label>
+                    <label class="sales-total-field">Documento de Impressão
+                      <select name="printDocument">
+                        ${DOCUMENTOS_IMPRESSAO.map((doc) => `<option value="${escapeHtml(doc)}" ${formState.printDocument === doc ? 'selected' : ''}>${escapeHtml(doc)}</option>`).join('')}
+                      </select>
+                    </label>
+
+                    <label class="sales-total-field">Número NF-e
+                      <input name="nfeNumber" value="${escapeHtml(formState.nfeNumber)}" />
+                    </label>
+                    <label class="sales-total-field">Número NFS-e
+                      <input name="nfseNumber" value="${escapeHtml(formState.nfseNumber)}" />
+                    </label>
+                    <label class="sales-total-field">Data Faturamento NF-e
+                      <input name="nfeBillingDate" type="date" value="${escapeHtml(formState.nfeBillingDate)}" />
+                    </label>
+                    <label class="sales-total-field">Detalhes do Faturamento
+                      <input name="billingDetails" value="${escapeHtml(formState.billingDetails)}" />
+                    </label>
+
+                    <label class="sales-total-field">Transação Cartão
+                      <input name="cardTransaction" value="${escapeHtml(formState.cardTransaction)}" />
+                    </label>
+                    <label class="sales-total-field is-readonly" title="O cashback do cliente ainda não é abatido automaticamente no pedido.">Pagamento com Cashback (R$)
+                      <input value="${salesFormatBRL(0)}" disabled />
+                    </label>
+                  </div>
+
+                  <div class="sales-toggle-linha">
+                    <div class="sales-total-toggle">
+                      <button type="button" role="switch" aria-checked="${ignoreCreditLimit}" class="switch ${ignoreCreditLimit ? 'is-on' : ''}" data-toggle="ignoreCreditLimit"
+                              title="Deixa o pedido seguir mesmo que o cliente esteja acima do limite de crédito."><span></span></button>
+                      <span>Ignorar Limite de Crédito</span>
+                    </div>
+                    <div class="sales-total-toggle">
+                      <button type="button" role="switch" aria-checked="${paymentTerm === 'avista'}" class="switch ${paymentTerm === 'avista' ? 'is-on' : ''}" data-toggle="termAvista"
+                              title="Pagamento à vista."><span></span></button>
+                      <span>À Vista</span>
+                    </div>
+                    <div class="sales-total-toggle">
+                      <button type="button" role="switch" aria-checked="${paymentTerm === 'aprazo'}" class="switch ${paymentTerm === 'aprazo' ? 'is-on' : ''}" data-toggle="termAprazo"
+                              title="Pagamento a prazo, em uma ou mais parcelas."><span></span></button>
+                      <span>À Prazo</span>
+                    </div>
+                  </div>
+
                 </div><!-- /aba Pagamentos -->
 
                 <div class="sales-tab-panel" data-aba="entrega" ${abaAtiva === 'entrega' ? '' : 'hidden'}>
@@ -6167,6 +6196,8 @@ async function loadModule(moduleName) {
             btn.addEventListener('click', () => {
               items.splice(Number(btn.dataset.index), 1);
               syncFormState();
+              // O chassi do item removido sai das observações também.
+              levarChassiParaObservacoes();
               renderForm();
             });
           });
@@ -6215,6 +6246,8 @@ async function loadModule(moduleName) {
               const limpo = input.value.trim().toUpperCase();
               items[Number(input.dataset.index)].chassi = limpo;
               syncFormState();
+              // E vai para a linha CHASSI: das observações (15/10/2026).
+              levarChassiParaObservacoes();
               renderForm();
             });
           });
