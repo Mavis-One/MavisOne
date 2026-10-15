@@ -17402,6 +17402,12 @@ async function tratarRequisicao(req, res) {
         // do Estoque.
         produtos: produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', ean: p.ean || '' })),
         depositos: (data.deposits || []).map((d) => ({ id: d.id, name: d.name })),
+        // O do CNPJ que recebeu a nota (15/10/2026). Ver depositoDoDestinatario.
+        depositoPadraoId: entradaNfe.depositoDoDestinatario(
+          conferencia.nota && conferencia.nota.destinatario && conferencia.nota.destinatario.documento,
+          data.deposits,
+          data.companies
+        ),
         permissoes: {
           cadastrarFornecedor: user.allowedModules.includes('cadastros'),
           cadastrarProduto: user.allowedModules.includes('stock')

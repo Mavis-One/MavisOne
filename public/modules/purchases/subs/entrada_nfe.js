@@ -640,7 +640,12 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       tela.depositos = resposta.depositos || [];
       tela.permissoes = resposta.permissoes || {};
       tela.escolhas.clear();
-      if (!tela.depositoId && tela.depositos.length) tela.depositoId = tela.depositos[0].id;
+      // O depósito do CNPJ que recebeu a nota, a cada nota (15/10/2026): o
+      // escolhido na anterior, de outra loja, não passa para esta. Sem depósito
+      // ligado a esse CNPJ, fica o que estava (ou o primeiro).
+      const temNaLista = (id) => tela.depositos.some((d) => d.id === id);
+      if (resposta.depositoPadraoId && temNaLista(resposta.depositoPadraoId)) tela.depositoId = resposta.depositoPadraoId;
+      else if (!temNaLista(tela.depositoId)) tela.depositoId = tela.depositos.length ? tela.depositos[0].id : '';
       tela.analisando = false;
       desenhar();
     }
