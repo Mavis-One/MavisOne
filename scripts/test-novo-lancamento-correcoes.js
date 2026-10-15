@@ -129,8 +129,9 @@ const posGuarda = alternador.indexOf('rascunho[nome] = campo.value');
 const posRedesenha = alternador.indexOf('renderForm();');
 const posDevolve = alternador.indexOf('campo.value = valor');
 check('guarda antes de redesenhar e devolve depois', posGuarda > 0 && posRedesenha > posGuarda && posDevolve > posRedesenha);
+// (e, desde 15/10/2026, a quantidade e o intervalo das parcelas)
 check('  valor, datas, descrição, documento e observação',
-  /const CAMPOS_DO_RASCUNHO = \['date', 'dueDate', 'amount', 'description', 'document', 'note'\];/.test(tela));
+  /const CAMPOS_DO_RASCUNHO = \['date', 'dueDate', 'amount', 'description', 'document', 'note', 'parcelasQtd', 'parcelasIntervalo'\];/.test(tela));
 
 console.log('\n--- 8. "Voltar ao pedido" só no lançamento daquele pedido ---');
 check('o servidor diz de qual pedido é o lançamento', /referenceId: entry\.referenceId \|\| ''/.test(serializa));

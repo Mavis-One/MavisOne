@@ -2093,6 +2093,12 @@ tr[data-detail] { cursor: pointer; }
 /* Empresa do título nas listas do Financeiro (15/10/2026). */
 .fin-empresa { display: inline-flex; flex-direction: column; line-height: 1.25; }
 .fin-empresa .muted { font-size: 0.78rem; }
+/* Parcelas do novo lançamento (15/10/2026): a tabela de vencimento e valor
+   de cada uma, e a lista das criadas na tela de sucesso. */
+.finance-parcelas { max-width: 640px; }
+.finance-parcelas input { width: 100%; min-width: 0; }
+.finance-parcelas td:first-child { white-space: nowrap; font-weight: 700; }
+.finance-parcelas-criadas { margin: 6px auto 0; padding: 0; list-style: none; display: grid; gap: 4px; text-align: center; }
 /* A chave inteira na lista (15/10/2026): os 44 dígitos em blocos de 4, como na
    DANFE, em fonte de largura fixa e duas linhas (6 + 5 blocos). Numa linha só
    ela passava a tabela da tela em notebook (1440 px). O clique copia sem espaços. */

@@ -297,8 +297,26 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           <div class="row">
             <label>Data<input type="date" name="date" required value="${editEntry ? editEntry.date : today}" ${travado('date')} /></label>
             <label>Vencimento<input type="date" name="dueDate" required value="${editEntry ? editEntry.dueDate : today}" /></label>
-            <label>Valor<input type="number" step="0.01" min="0.01" name="amount" required value="${editEntry ? editEntry.amountPrevisto : ''}" ${travado('amount')} /></label>
+            <label><span id="financeRotuloValor">Valor</span><input type="number" step="0.01" min="0.01" name="amount" required value="${editEntry ? editEntry.amountPrevisto : ''}" ${travado('amount')} /></label>
           </div>
+          ${/* PARCELAS (15/10/2026, pedido do usuário: "uma guia de impostos em 2x
+               ou mais precisa ser lançada com datas diferentes"). Só no
+               lançamento NOVO de receita ou despesa: editar mexe num título
+               só, e transferência não se parcela. */''}
+          ${!editEntry && !isTransfer ? `
+            <div class="row finance-parcelamento">
+              <label>Parcelas<input type="number" name="parcelasQtd" min="1" max="120" step="1" value="1" /></label>
+              <label>Intervalo
+                <select name="parcelasIntervalo">
+                  <option value="mensal">Mensal (mesmo dia)</option>
+                  <option value="30">A cada 30 dias</option>
+                  <option value="15">Quinzenal (15 dias)</option>
+                  <option value="7">Semanal (7 dias)</option>
+                </select>
+              </label>
+            </div>
+            <div id="financeParcelas"></div>
+          ` : ''}
 
           ${isTransfer ? `
             <div class="row">
@@ -386,14 +404,18 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     attachFormHandlers();
   }
 
-  function renderSuccess(entry) {
+  function renderSuccess(entry, todas = []) {
+    // Parcelado: as parcelas criadas, uma por linha, com vencimento e valor.
+    const parceladas = Array.isArray(todas) && todas.length > 1 ? todas : null;
     content.innerHTML = `
       <div class="panel finance-coming-soon">
         <div class="finance-coming-soon-icon">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
         </div>
-        <h3>Lançamento salvo com sucesso</h3>
-        <p class="muted">${escapeHtml(entry.description || '')} — ${financeFormatBRL(entry.amountPrevisto)}</p>
+        <h3>${parceladas ? `${parceladas.length} parcelas lançadas` : 'Lançamento salvo com sucesso'}</h3>
+        ${parceladas
+          ? `<ul class="finance-parcelas-criadas">${parceladas.map((e) => `<li>${escapeHtml(e.description || '')} — ${escapeHtml(typeof financeFormatDate === 'function' ? financeFormatDate(e.dueDate) : e.dueDate)} — ${financeFormatBRL(e.amountPrevisto)}</li>`).join('')}</ul>`
+          : `<p class="muted">${escapeHtml(entry.description || '')} — ${financeFormatBRL(entry.amountPrevisto)}</p>`}
         ${acoesDeSaida()}
       </div>
     `;
@@ -545,6 +567,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       parte.value = (r.campos || {}).clientSupplierId || '';
       parteBusca.value = (r.rotulos || {}).financeParty || '';
     }
+    // As parcelas saem de novo dos campos que voltaram (quantidade, intervalo,
+    // vencimento e total); datas e valores acertados à mão na tabela não.
+    gerarParcelas();
     if (r.criadoId) showToast('Cadastrado e já escolhido no lançamento.', 'success');
   }
 
@@ -555,9 +580,107 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   // cliente/fornecedor ficam de fora de propósito: mudam de sentido de um tipo
   // para o outro (a conta de origem da transferência não é a conta da despesa).
   // O estabelecimento não precisa: o redesenho já parte de estabelecimentoAtual.
-  const CAMPOS_DO_RASCUNHO = ['date', 'dueDate', 'amount', 'description', 'document', 'note'];
+  const CAMPOS_DO_RASCUNHO = ['date', 'dueDate', 'amount', 'description', 'document', 'note', 'parcelasQtd', 'parcelasIntervalo'];
+
+  // PARCELAS (15/10/2026). O "Valor" vira o TOTAL, dividido em partes iguais
+  // (os centavos que sobram vão na última); a primeira vence no Vencimento e
+  // as outras a cada intervalo. Cada data e cada valor se editam na tabela:
+  // mexer no valor de uma parcela redistribui o que falta entre as SEGUINTES
+  // (e, na última, o total passa a ser a soma). Uma guia de imposto em 2x com
+  // valores diferentes cabe assim sem conta de cabeça.
+  let parcelas = [];
+  const doisDigitos = (n) => String(n).padStart(2, '0');
+  const dataIso = (d) => `${d.getFullYear()}-${doisDigitos(d.getMonth() + 1)}-${doisDigitos(d.getDate())}`;
+  function dataDaParcela(primeira, indice, intervalo) {
+    const [ano, mes, dia] = String(primeira).split('-').map(Number);
+    if (!ano || !mes || !dia) return primeira;
+    if (intervalo === 'mensal') {
+      // Mesmo dia nos meses seguintes; 31 num mês de 30 vira o último dia.
+      const ultimoDia = new Date(ano, mes - 1 + indice + 1, 0).getDate();
+      return dataIso(new Date(ano, mes - 1 + indice, Math.min(dia, ultimoDia)));
+    }
+    return dataIso(new Date(ano, mes - 1, dia + indice * (Number(intervalo) || 30)));
+  }
+  const centavos = (v) => Math.round(Number(v || 0) * 100);
+  function dividirCentavos(total, n) {
+    const base = Math.floor(total / n);
+    return Array.from({ length: n }, (_, i) => (i === n - 1 ? total - base * (n - 1) : base));
+  }
+  function gerarParcelas({ manterDatas = false } = {}) {
+    const form = document.getElementById('financeEntryForm');
+    const qtd = form && form.elements.namedItem('parcelasQtd');
+    if (!qtd) { parcelas = []; return; }
+    const n = Math.min(120, Math.max(1, Math.floor(Number(qtd.value) || 1)));
+    const intervalo = form.elements.namedItem('parcelasIntervalo')?.value || 'mensal';
+    const primeira = form.elements.namedItem('dueDate')?.value || hojeLocal();
+    const total = centavos(form.elements.namedItem('amount')?.value);
+    const valores = dividirCentavos(total, n);
+    parcelas = valores.map((c, i) => ({
+      dueDate: manterDatas && parcelas.length === n && parcelas[i] ? parcelas[i].dueDate : dataDaParcela(primeira, i, intervalo),
+      amount: c / 100
+    }));
+    desenharParcelas();
+  }
+  function desenharParcelas() {
+    const caixa = document.getElementById('financeParcelas');
+    const rotulo = document.getElementById('financeRotuloValor');
+    if (!caixa) return;
+    if (parcelas.length < 2) {
+      caixa.innerHTML = '';
+      if (rotulo) rotulo.textContent = 'Valor';
+      return;
+    }
+    if (rotulo) rotulo.textContent = 'Valor total';
+    const soma = parcelas.reduce((t, p) => t + centavos(p.amount), 0) / 100;
+    caixa.innerHTML = `
+      <div class="table-scroll finance-parcelas">
+        <table class="table">
+          <thead><tr><th>Parcela</th><th>Vencimento</th><th class="col-valor">Valor</th></tr></thead>
+          <tbody>
+            ${parcelas.map((p, i) => `
+              <tr>
+                <td>${i + 1}/${parcelas.length}</td>
+                <td><input type="date" required data-parcela-data="${i}" value="${escapeHtml(p.dueDate)}" /></td>
+                <td class="col-valor"><input type="number" step="0.01" min="0.01" required data-parcela-valor="${i}" value="${p.amount}" /></td>
+              </tr>`).join('')}
+          </tbody>
+          <tfoot><tr><th colspan="2">Total</th><th class="col-valor">${financeFormatBRL(soma)}</th></tr></tfoot>
+        </table>
+      </div>`;
+  }
+  function ligarParcelas() {
+    const form = document.getElementById('financeEntryForm');
+    const caixa = document.getElementById('financeParcelas');
+    if (!form || !caixa) return;
+    ['parcelasQtd', 'parcelasIntervalo', 'dueDate'].forEach((nome) => {
+      form.elements.namedItem(nome)?.addEventListener('change', () => gerarParcelas());
+    });
+    form.elements.namedItem('parcelasQtd')?.addEventListener('input', () => gerarParcelas());
+    // Trocar o total refaz os valores e mantém as datas já acertadas.
+    form.elements.namedItem('amount')?.addEventListener('change', () => gerarParcelas({ manterDatas: true }));
+    caixa.addEventListener('change', (evento) => {
+      const alvo = evento.target;
+      if (alvo.dataset.parcelaData !== undefined) {
+        parcelas[Number(alvo.dataset.parcelaData)].dueDate = alvo.value;
+        return;
+      }
+      if (alvo.dataset.parcelaValor === undefined) return;
+      const i = Number(alvo.dataset.parcelaValor);
+      parcelas[i].amount = Number(alvo.value) || 0;
+      const total = centavos(form.elements.namedItem('amount')?.value);
+      if (i < parcelas.length - 1) {
+        const ate = parcelas.slice(0, i + 1).reduce((t, p) => t + centavos(p.amount), 0);
+        const resto = dividirCentavos(Math.max(0, total - ate), parcelas.length - i - 1);
+        resto.forEach((c, j) => { parcelas[i + 1 + j].amount = c / 100; });
+      } else {
+        form.elements.namedItem('amount').value = parcelas.reduce((t, p) => t + centavos(p.amount), 0) / 100;
+      }
+      desenharParcelas();
+    });
+  }
 
   function attachFormHandlers() {
+    ligarParcelas();
     content.querySelectorAll('[data-type]').forEach((btn) => {
       btn.addEventListener('click', () => {
         if (editEntry) return;
@@ -574,6 +697,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           const campo = formDepois && formDepois.elements.namedItem(nome);
           if (campo) campo.value = valor;
         });
+        // As parcelas saem dos campos que acabaram de voltar.
+        gerarParcelas();
       });
     });
 
@@ -712,6 +837,20 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         }
       }
 
+      // PARCELAS: duas ou mais vão juntas, e o servidor cria uma por uma
+      // ("Parcela 1/3 - descrição"), conferindo todas antes de gravar a
+      // primeira. O valor do título passa a ser o de cada parcela.
+      if (!editEntry && formType !== 'TRANSFERENCIA' && parcelas.length > 1) {
+        if (parcelas.some((p) => !p.dueDate || !(Number(p.amount) > 0))) {
+          showToast('Toda parcela precisa de vencimento e de valor maior que zero.', 'warning');
+          if (submitBtn) submitBtn.disabled = false;
+          return;
+        }
+        payload.parcelas = parcelas.map((p) => ({ dueDate: p.dueDate, amount: Number(p.amount) }));
+        payload.amount = parcelas.reduce((t, p) => t + centavos(p.amount), 0) / 100;
+        payload.dueDate = parcelas[0].dueDate;
+      }
+
       try {
         let result;
         if (editEntry) {
@@ -719,8 +858,10 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         } else {
           result = await api('/api/finance/entries', { method: 'POST', body: JSON.stringify(payload) });
         }
-        showToast(editEntry ? 'Lançamento atualizado com sucesso.' : 'Lançamento criado com sucesso.', 'success');
-        renderSuccess(result.entry);
+        const quantas = Array.isArray(result.entries) ? result.entries.length : 1;
+        showToast(editEntry ? 'Lançamento atualizado com sucesso.'
+          : (quantas > 1 ? `${quantas} parcelas lançadas.` : 'Lançamento criado com sucesso.'), 'success');
+        renderSuccess(result.entry, result.entries);
       } catch (error) {
         showToast(error.message || 'Erro ao salvar lançamento.', 'error');
         if (submitBtn) submitBtn.disabled = false;

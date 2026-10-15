@@ -20318,6 +20318,21 @@ async function tratarRequisicao(req, res) {
       const invalido = validarLancamentoFinanceiro({ ...body, type, amount });
       if (invalido) return sendJson(res, { error: invalido }, 400);
 
+      // PARCELAS (15/10/2026, pedido do usuário: "uma guia de impostos em 2x ou
+      // mais precisa ser lançada com datas diferentes"). Duas ou mais viram um
+      // título cada, "Parcela 1/3 - descrição", com o vencimento e o valor
+      // dela. Todas são conferidas ANTES de gravar a primeira: uma parcela
+      // errada no meio não pode deixar metade da guia lançada.
+      const parcelasPedidas = type !== 'TRANSFERENCIA' && Array.isArray(body.parcelas) ? body.parcelas : [];
+      if (parcelasPedidas.length > 120) return sendJson(res, { error: 'No máximo 120 parcelas por lançamento.' }, 400);
+      if (parcelasPedidas.length >= 2) {
+        const errada = parcelasPedidas.findIndex((p) => !/^\d{4}-\d{2}-\d{2}$/.test(String(p && p.dueDate || ''))
+          || !(Math.round(Number(p && p.amount) * 100) > 0));
+        if (errada >= 0) {
+          return sendJson(res, { error: `A parcela ${errada + 1} precisa de vencimento e de valor maior que zero.` }, 400);
+        }
+      }
+
       // Fase CD. Duas perguntas, nesta ordem: por qual estabelecimento esta
       // pessoa pode lancar, e se as contas escolhidas servem para ele.
       const escolha = estabelecimentoDaOperacao(user, await ehAdmin(user), body.estabelecimentoId);
@@ -20328,34 +20343,51 @@ async function tratarRequisicao(req, res) {
       });
 
       const today = new Date().toISOString().slice(0, 10);
-      const entry = await db.createFinancialEntry({
-        type,
-        date: body.date || today,
-        dueDate: body.dueDate || body.date || today,
-        amount,
-        description: String(body.description).trim(),
-        document: body.document || '',
-        note: body.note || '',
-        category: body.category || '',
-        costCenter: body.costCenter || '',
-        bankAccountId: body.bankAccountId || '',
-        targetBankAccountId: type === 'TRANSFERENCIA' ? (body.targetBankAccountId || '') : '',
-        estabelecimentoId: escolha.id,
-        clientSupplierId: body.clientSupplierId || '',
-        clientSupplierName: body.clientSupplierName || '',
-        ...formaDoTitulo(data, body.paymentMethodId),
-        referenceId: '',
-        status: 'pending',
-        createdBy: user.id,
-        createdByName: user.name
-      });
-      // O lançamento acabou de nascer no Supabase; a lista em memória ainda é a
-      // de antes da gravação, e serializeFinanceEntry lê dela para resolver
-      // categoria/conta. Sem isto, a resposta sairia sem o registro novo.
-      data.finance.push(entry);
-      await addFinanceAuditLog(data, { action: 'criarLancamento', entry, byId: user.id, byName: user.name });
+      const descricao = String(body.description).trim();
+      const partes = parcelasPedidas.length >= 2
+        ? parcelasPedidas.map((p, i) => ({
+          dueDate: p.dueDate,
+          amount: Math.round(Number(p.amount) * 100) / 100,
+          description: `Parcela ${i + 1}/${parcelasPedidas.length} - ${descricao}`
+        }))
+        : [{ dueDate: body.dueDate || body.date || today, amount, description: descricao }];
+      const criados = [];
+      for (const parte of partes) {
+        const entry = await db.createFinancialEntry({
+          type,
+          date: body.date || today,
+          dueDate: parte.dueDate,
+          amount: parte.amount,
+          description: parte.description,
+          document: body.document || '',
+          note: body.note || '',
+          category: body.category || '',
+          costCenter: body.costCenter || '',
+          bankAccountId: body.bankAccountId || '',
+          targetBankAccountId: type === 'TRANSFERENCIA' ? (body.targetBankAccountId || '') : '',
+          estabelecimentoId: escolha.id,
+          clientSupplierId: body.clientSupplierId || '',
+          clientSupplierName: body.clientSupplierName || '',
+          ...formaDoTitulo(data, body.paymentMethodId),
+          referenceId: '',
+          status: 'pending',
+          createdBy: user.id,
+          createdByName: user.name
+        });
+        // O lançamento acabou de nascer no Supabase; a lista em memória ainda é a
+        // de antes da gravação, e serializeFinanceEntry lê dela para resolver
+        // categoria/conta. Sem isto, a resposta sairia sem o registro novo.
+        data.finance.push(entry);
+        await addFinanceAuditLog(data, { action: 'criarLancamento', entry, byId: user.id, byName: user.name });
+        criados.push(entry);
+      }
       saveData(data);
-      return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
+      return sendJson(res, {
+        success: true,
+        entry: serializeFinanceEntry(criados[0], data),
+        // Parcelado: todas, na ordem (a tela lista as criadas).
+        entries: criados.length > 1 ? criados.map((e) => serializeFinanceEntry(e, data)) : undefined
+      });
     } catch (error) {
       return sendErro(res, error, 'Erro ao criar lançamento', 400);
     }
