@@ -2845,11 +2845,14 @@ function attachSearchableSelect({ id, options, onSelect }) {
   // mousedown com preventDefault, e não click: clicar tira o foco do input, e
   // o blur agenda o fechamento do dropdown para 150ms depois — a lista abriria
   // e sumiria sozinha. É o mesmo motivo pelo qual o dropdown usa mousedown.
+  // O foco vem ANTES (15/10/2026): o foco num campo com texto filtra pelo
+  // texto, e vindo depois trocava a lista inteira pela filtrada — com algo
+  // escolhido, a lupa mostrava só o próprio escolhido.
   lupa?.addEventListener('mousedown', (evento) => {
     evento.preventDefault();
     if (!dropdown.hidden) { fecharLista(); return; }
-    renderDropdown('', { mostrarTudo: true });
     input.focus();
+    renderDropdown('', { mostrarTudo: true });
   });
   input.addEventListener('blur', () => {
     // atraso pra deixar o "mousedown" do clique na opção disparar antes do dropdown fechar
@@ -3222,6 +3225,36 @@ async function loadModule(moduleName) {
         }
         const meta = salesMetaEmCache || { companies: [], sellers: [], deposits: [], directory: [], carriers: [], productCategories: [] };
 
+        // AS LISTAS DA BUSCA AVANÇADA SÃO CAMPOS DE BUSCA (15/10/2026, pedido
+        // do usuário: "campos de pesquisa e seleção unidos", como a Tabela de
+        // Preços da venda). Campo vazio = Todos; a lista da lupa começa por
+        // "Todos", que limpa o filtro.
+        const filtrosComBusca = [
+          { id: 'salesFiltroTipo', name: 'type', todos: 'Todos', placeholder: 'Buscar tipo...',
+            opcoes: [{ value: 'order', label: 'Pedido' }, { value: 'quote', label: 'Orçamento' }] },
+          { id: 'salesFiltroStatus', name: 'status', todos: 'Todos', placeholder: 'Buscar status...',
+            opcoes: SalesStatus.CATALOGO.map((item) => ({ value: item.value, label: item.label })) },
+          { id: 'salesFiltroEmpresa', name: 'companyId', todos: 'Todas', placeholder: 'Buscar empresa...',
+            opcoes: meta.companies.map((c) => ({ value: c.id, label: rotuloDaEmpresa(c) })) },
+          { id: 'salesFiltroVendedor', name: 'sellerId', todos: 'Todos', placeholder: 'Buscar vendedor...',
+            opcoes: meta.sellers.map((s) => ({ value: s.id, label: s.name })) },
+          { id: 'salesFiltroTransportadora', name: 'carrierId', todos: 'Todas', placeholder: 'Buscar transportadora...',
+            opcoes: (meta.carriers || []).map((t) => ({ value: t.id, label: t.name })) },
+          { id: 'salesFiltroCategoria', name: 'category', todos: 'Todas', placeholder: 'Buscar categoria...',
+            opcoes: (meta.productCategories || []).map((c) => ({ value: c.name, label: c.name })) },
+          { id: 'salesFiltroOrigem', name: 'saleOrigin', todos: 'Todas', placeholder: 'Buscar origem...',
+            opcoes: opcoesDeOrigemDeVenda(meta, filters.saleOrigin).map((o) => ({ value: o.value, label: o.label })) }
+        ].map((f) => ({ ...f, options: [{ value: '', label: f.todos }, ...f.opcoes] }));
+        // Desenhado com as opções SEM o "Todos": filtro vazio abre com o campo
+        // vazio e o placeholder, e não com a palavra escrita por cima.
+        const filtroComBusca = (name) => {
+          const f = filtrosComBusca.find((x) => x.name === name);
+          return renderSearchableSelect({
+            id: f.id, name: f.name, options: f.opcoes, selectedValue: filters[name],
+            placeholder: f.placeholder, readonly: f.opcoes.length === 0
+          });
+        };
+
         content.innerHTML = `
           <div class="finance-stat-cards">
             <!-- Os quatro cartoes leem CONTAGEM, e nao o tamanho de listas
@@ -3280,38 +3313,24 @@ async function loadModule(moduleName) {
                          qualquer etapa" é a pergunta mais comum da lista. -->
                     <label class="cadastro-field">
                       <span>Tipo</span>
-                      <select name="type">
-                        <option value="">Todos</option>
-                        <option value="order" ${filters.type === 'order' ? 'selected' : ''}>Pedido</option>
-                        <option value="quote" ${filters.type === 'quote' ? 'selected' : ''}>Orçamento</option>
-                      </select>
+                      ${filtroComBusca('type')}
                     </label>
+                    <!-- Aqui o catálogo inteiro é selecionável: filtrar por um
+                         status que o sistema atribui é justamente o uso deles. -->
                     <label class="cadastro-field">
                       <span>Status do Sistema</span>
-                      <select name="status">
-                        <option value="">Todos</option>
-                        <!-- Aqui o catálogo inteiro é selecionável: filtrar por
-                             um status que o sistema atribui é justamente o uso
-                             deles. -->
-                        ${SalesStatus.CATALOGO.map((item) => `<option value="${item.value}" ${filters.status === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
-                      </select>
+                      ${filtroComBusca('status')}
                     </label>
                     <!-- Cliente/Fornecedor saiu daqui (15/10/2026, pedido do
                          usuário): o cliente se acha na Busca geral, pelo nome
                          ou pelo CPF/CNPJ. -->
                     <label class="cadastro-field">
                       <span>Empresa</span>
-                      <select name="companyId">
-                        <option value="">Todas</option>
-                        ${meta.companies.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.companyId === c.id ? 'selected' : ''}>${escapeHtml(rotuloDaEmpresa(c))}</option>`).join('')}
-                      </select>
+                      ${filtroComBusca('companyId')}
                     </label>
                     <label class="cadastro-field">
                       <span>Vendedor</span>
-                      <select name="sellerId">
-                        <option value="">Todos</option>
-                        ${meta.sellers.map((s) => `<option value="${escapeHtml(s.id)}" ${filters.sellerId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
-                      </select>
+                      ${filtroComBusca('sellerId')}
                     </label>
                     <!-- Uma caixa só para as três notas: quem procura por um
                          número não quer antes descobrir se ele é de NF-e,
@@ -3326,24 +3345,15 @@ async function loadModule(moduleName) {
                     </label>
                     <label class="cadastro-field" ${(meta.carriers || []).length ? '' : 'title="Nenhum cadastro está marcado como Transportadora."'}>
                       <span>Transportadora${(meta.carriers || []).length ? '' : ' <span class="muted">(nenhuma cadastrada)</span>'}</span>
-                      <select name="carrierId" ${(meta.carriers || []).length ? '' : 'disabled'}>
-                        <option value="">Todas</option>
-                        ${(meta.carriers || []).map((t) => `<option value="${escapeHtml(t.id)}" ${filters.carrierId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
-                      </select>
+                      ${filtroComBusca('carrierId')}
                     </label>
                     <label class="cadastro-field" ${(meta.productCategories || []).length ? '' : 'title="Nenhuma categoria de produto cadastrada no Estoque."'}>
                       <span>Categoria${(meta.productCategories || []).length ? '' : ' <span class="muted">(nenhuma cadastrada)</span>'}</span>
-                      <select name="category" ${(meta.productCategories || []).length ? '' : 'disabled'}>
-                        <option value="">Todas</option>
-                        ${(meta.productCategories || []).map((c) => `<option value="${escapeHtml(c.name)}" ${filters.category === c.name ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-                      </select>
+                      ${filtroComBusca('category')}
                     </label>
                     <label class="cadastro-field">
                       <span>Origem da Venda</span>
-                      <select name="saleOrigin">
-                        <option value="">Todas</option>
-                        ${opcoesDeOrigemDeVenda(meta, filters.saleOrigin).map((o) => `<option value="${escapeHtml(o.value)}" ${filters.saleOrigin === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
-                      </select>
+                      ${filtroComBusca('saleOrigin')}
                     </label>
                     <!-- "Status" (do cliente) é texto livre no cadastro, então
                          aqui também é: um select inventaria uma lista que o
@@ -3578,6 +3588,23 @@ async function loadModule(moduleName) {
           state.salesDraft.showOrdersFilters = !showFilters;
           redesenharSemBuscar();
         });
+        // Os campos de busca da Busca Avançada. "Todos" na lista limpa o campo;
+        // texto digitado sem escolher nada some ao sair — o filtro é o que foi
+        // escolhido, e campo vazio é Todos.
+        if (showFilters) {
+          filtrosComBusca.forEach((f) => {
+            const campo = document.getElementById(`${f.id}Input`);
+            const valor = document.getElementById(`${f.id}Value`);
+            attachSearchableSelect({
+              id: f.id,
+              options: f.options,
+              onSelect: (escolhido) => { if (!escolhido && campo) campo.value = ''; }
+            });
+            campo?.addEventListener('blur', () => {
+              if (valor && !valor.value) campo.value = '';
+            });
+          });
+        }
         document.getElementById('salesQuickSearchForm')?.addEventListener('submit', (event) => {
           event.preventDefault();
           filters.search = document.getElementById('salesQuickSearch').value;

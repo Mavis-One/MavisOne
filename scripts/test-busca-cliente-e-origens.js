@@ -51,9 +51,12 @@ const funcao = (src, nome) => {
   console.log('\n--- 2. empresa pelo nome da filial ---');
   check('nome fantasia quando existe', ctx.empresa({ name: 'SAL INFINITY PLUS COMERCIO LTDA', tradeName: 'SAL INFINITY PLUS (MARCOLLA)' }) === 'SAL INFINITY PLUS (MARCOLLA)');
   check('razão social quando não há fantasia', ctx.empresa({ name: 'X LTDA', tradeName: '  ' }) === 'X LTDA');
+  // Três: o formulário (desenho e busca) e, desde 15/10/2026, o filtro da
+  // Busca Avançada, que virou campo de busca.
   const usos = (app.match(/label: rotuloDaEmpresa\(c\)/g) || []).length;
-  check('o campo Empresa do formulário usa o nome da filial (desenho e busca)', usos === 2, usos);
-  check('o filtro de Empresa da busca avançada também', /\$\{escapeHtml\(rotuloDaEmpresa\(c\)\)\}<\/option>/.test(app));
+  check('o campo Empresa do formulário usa o nome da filial (desenho e busca)', usos === 3, usos);
+  check('o filtro de Empresa da busca avançada também',
+    /name: 'companyId', todos: 'Todas', placeholder: 'Buscar empresa\.\.\.',\s*opcoes: meta\.companies\.map\(\(c\) => \(\{ value: c\.id, label: rotuloDaEmpresa\(c\) \}\)\)/.test(app));
   check('nenhum campo de escolha de empresa ficou com a razão social',
     !/meta\.companies\.map\(\(c\) => \(\{ value: c\.id, label: c\.name \}\)\)/.test(app));
 

@@ -94,7 +94,7 @@ console.log('\n--- 5. origem e categoria continuam separadas ---');
 // A mesma venda tem as duas — um atacado que entrou por televendas.
 check('o pedido tem os dois campos',
   /saleOrigin: texto\(body\.saleOrigin\)/.test(ler('server.js'))
-  && /name="category"/.test(appSrc));
+  && /name(?:="|: ')category/.test(appSrc));
 check('e são dois cadastros diferentes',
   /salesOrigins:/.test(ler('server.js')) && /salesCategories:/.test(ler('server.js')));
 check('  em duas tabelas', fs.existsSync(path.join(RAIZ, 'lib/db/origens-venda.js'))
