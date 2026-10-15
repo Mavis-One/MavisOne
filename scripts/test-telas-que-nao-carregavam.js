@@ -112,7 +112,9 @@ check('qualquer método que não seja GET invalida o cache',
   /if \(options\.method && options\.method\.toUpperCase\(\) !== 'GET'\) \{[\s\S]{0,60}atencaoBuscadaEm = 0;/.test(app));
 // Mora no `api`, que é o único caminho até o servidor — em cada tela que grava
 // seria um lugar a mais para alguém esquecer.
-const corpoApi = app.slice(app.indexOf('async function api(path, options = {}'));
+// 15/10/2026: `api` virou a guarda de gravação repetida; quem fala com o
+// servidor (e invalida o sino) é `apiDireto`, chamada por ela.
+const corpoApi = app.slice(app.indexOf('async function apiDireto(path, options = {}'));
 check('  e isso mora dentro do api(), não em cada tela',
   corpoApi.indexOf('atencaoBuscadaEm = 0;') > 0
   && corpoApi.indexOf('atencaoBuscadaEm = 0;') < corpoApi.indexOf('function ', 10));

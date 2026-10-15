@@ -992,6 +992,82 @@ async function fetchCepViaCep(cep) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// A MESMA GRAVAÇÃO DUAS VEZES É UMA SÓ (15/10/2026, pedido do usuário: "reforce
+// e bloqueie qualquer tipo de função de ação em duplicidade").
+//
+// Escrita (POST/PUT/PATCH/DELETE) da MESMA sessão, no MESMO endereço, com o
+// MESMO corpo: se a primeira ainda está rodando, a repetida espera por ela; se
+// terminou bem há menos de 3 s, a repetida recebe a mesma resposta — e nada é
+// executado de novo. É o clique duplo, o Enter repetido, o reenvio de rede, o
+// script que chama duas vezes. Vale para toda rota, inclusive as que vierem.
+//
+// O que NÃO entra: leitura (GET), requisição sem sessão (login, webhooks da
+// Focus, que já são idempotentes por conta própria), e resposta que não é JSON
+// (PDF, arquivo) — essa a repetida executa normalmente. Resposta de erro não
+// fica guardada: tentar de novo depois de um erro continua valendo.
+const GRAVACAO_REPETIDA_JANELA_MS = 3000;
+const LIMITE_CORPO_DA_GUARDA = 16 * 1024 * 1024;
+const gravacoesNoServidor = new Map();
+
+function lerCorpoBruto(req, limiteBytes) {
+  return new Promise((resolve, reject) => {
+    const partes = [];
+    let recebidos = 0;
+    req.on('data', (chunk) => {
+      recebidos += chunk.length;
+      if (recebidos > limiteBytes) {
+        const err = new Error(`Corpo da requisição maior que o limite de ${Math.round(limiteBytes / 1024 / 1024)} MB.`);
+        err.status = 413;
+        req.destroy();
+        reject(err);
+        return;
+      }
+      partes.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(partes).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+/** true quando já respondeu (era repetida); false para seguir para a rota. */
+async function guardaDeGravacaoRepetida(req, res, url) {
+  const corpo = await lerCorpoBruto(req, LIMITE_CORPO_DA_GUARDA);
+  req.__corpoPreLido = corpo;
+  const chave = crypto.createHash('sha256')
+    .update(String(req.headers['x-auth-token'] || '')).update('\n')
+    .update(req.method).update('\n')
+    .update(url.pathname + url.search).update('\n')
+    .update(corpo)
+    .digest('hex');
+
+  const primeira = gravacoesNoServidor.get(chave);
+  if (primeira) {
+    const resposta = await primeira.terminou;
+    if (!resposta) return false;
+    res.setHeader('X-Gravacao-Repetida', '1');
+    sendJson(res, resposta.payload, resposta.status);
+    return true;
+  }
+
+  const registro = { resposta: null };
+  registro.terminou = new Promise((resolve) => { registro.resolver = resolve; });
+  gravacoesNoServidor.set(chave, registro);
+  res.__capturarJson = (payload, status) => { if (!registro.resposta) registro.resposta = { payload, status }; };
+  res.once('close', () => {
+    registro.resolver(registro.resposta);
+    if (!registro.resposta || registro.resposta.status >= 400) {
+      gravacoesNoServidor.delete(chave);
+      return;
+    }
+    const prazo = setTimeout(() => {
+      if (gravacoesNoServidor.get(chave) === registro) gravacoesNoServidor.delete(chave);
+    }, GRAVACAO_REPETIDA_JANELA_MS);
+    if (typeof prazo.unref === 'function') prazo.unref();
+  });
+  return false;
+}
+
 /**
  * O usuário da requisição, buscado UMA VEZ por requisição.
  *
@@ -1325,6 +1401,9 @@ function etagConfere(pedido, etag) {
 }
 
 function sendJson(res, payload, statusCode = 200) {
+  // A guarda de gravação repetida guarda o que a primeira respondeu, para
+  // devolver igual à repetida (ver guardaDeGravacaoRepetida).
+  if (typeof res.__capturarJson === 'function') res.__capturarJson(payload, statusCode);
   // Quem não é administrador não recebe o custo do produto em resposta
   // nenhuma (14/10/2026). A marca é posta no começo de tratarRequisicao.
   if (res.__ocultarCusto && statusCode < 400) payload = custoOculto.semCusto(payload);
@@ -1400,6 +1479,21 @@ function sendJson(res, payload, statusCode = 200) {
 const LIMITE_CORPO_PADRAO = 8 * 1024 * 1024;
 
 function readBody(req, limiteBytes = LIMITE_CORPO_PADRAO) {
+  // Já lido pela guarda de gravação repetida: o fluxo da requisição só se lê
+  // uma vez. O limite de cada rota continua valendo.
+  if (typeof req.__corpoPreLido === 'string') {
+    const corpo = req.__corpoPreLido;
+    if (Buffer.byteLength(corpo, 'utf8') > limiteBytes) {
+      const err = new Error(`Corpo da requisição maior que o limite de ${Math.round(limiteBytes / 1024 / 1024)} MB.`);
+      err.status = 413;
+      return Promise.reject(err);
+    }
+    try {
+      return Promise.resolve(corpo ? JSON.parse(corpo) : {});
+    } catch (erro) {
+      return Promise.reject(erro);
+    }
+  }
   return new Promise((resolve, reject) => {
     let body = '';
     let recebidos = 0;
@@ -10315,6 +10409,11 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'Esta tela é calculada pelo custo dos produtos: só administrador.' }, 403);
       }
     }
+  }
+
+  // Ver guardaDeGravacaoRepetida (15/10/2026).
+  if (sessaoRecebida && pathname.startsWith('/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    if (await guardaDeGravacaoRepetida(req, res, url)) return;
   }
 
   if (pathname === '/api/login' && req.method === 'POST') {

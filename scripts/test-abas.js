@@ -37,7 +37,8 @@ check('entrar avisa as outras abas com o token novo', /setSessionToken\(response
 check('  e elas o adotam (a aba no login entra junto)', /m\.tipo === 'entrou' && m\.token\) \{[\s\S]{0,400}setSessionToken\(m\.token\);[\s\S]{0,300}if \(!state\.user\) abrirSessaoExistente\(\)/.test(app));
 check('  outro usuário entrou na máquina: recarrega (não mistura dados)', /if \(outroUsuario\) \{ window\.location\.reload\(\); return; \}/.test(app));
 check('sair sai de todas as abas', /clearSessionToken\(\);\s*avisarAbas\(\{ tipo: 'saiu' \}\);/.test(app) && /m\.tipo === 'saiu'\) \{[\s\S]{0,300}renderAuth\(/.test(app));
-check('resposta "sessão encerrada" com token novo já adotado: repete uma vez', /if \(!jaRepetiu && getSessionToken\(\) && getSessionToken\(\) !== token\) \{\s*return api\(path, options, true\);/.test(app));
+// 15/10/2026: a ida ao servidor virou apiDireto (api é a guarda de duplicidade).
+check('resposta "sessão encerrada" com token novo já adotado: repete uma vez', /if \(!jaRepetiu && getSessionToken\(\) && getSessionToken\(\) !== token\) \{\s*return apiDireto\(path, options, true\);/.test(app));
 
 console.log('\n--- 3. o que NÃO mudou ---');
 check('a sessão continua no sessionStorage (fechar todas encerra)', /sessionStorage\.setItem\(SESSION_TOKEN_KEY, token\)/.test(app) && !/localStorage\.setItem\(SESSION_TOKEN_KEY/.test(app));

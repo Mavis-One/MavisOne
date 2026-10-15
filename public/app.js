@@ -832,7 +832,75 @@ function salesLerUrl() {
   };
 }
 
-async function api(path, options = {}, jaRepetiu = false) {
+// ---------------------------------------------------------------------------
+// AÇÃO EM DUPLICIDADE NÃO SAI DA TELA (15/10/2026, pedido do usuário: "reforce
+// e bloqueie qualquer tipo de função de ação em duplicidade").
+//
+// Três travas, todas aqui, para valer em toda tela — inclusive as que vierem:
+//   1. api(): a MESMA gravação (método que não é GET, mesmo endereço, mesmo
+//      corpo) disparada enquanto a primeira está no caminho, ou até 2 s depois
+//      de ela dar certo, não é reenviada — quem chamou recebe a mesma resposta;
+//   2. o MESMO botão clicado de novo em menos de 0,4 s é um clique só (abre a
+//      confirmação uma vez, não duas);
+//   3. o MESMO formulário enviado de novo em menos de 0,4 s (Enter repetido).
+// O servidor tem a sua (guardaDeGravacaoRepetida), para quem não passa aqui.
+// Botão que precisa de clique rápido seguido (mover item ▲▼) leva data-repetir.
+const GRAVACAO_REPETIDA_MS = 2000;
+const JANELA_DO_CLIQUE_DUPLO_MS = 400;
+const gravacoesEmAndamento = new Map();
+const gravacoesRecentes = new Map();
+
+function chaveDaGravacao(path, options) {
+  const metodo = String((options && options.method) || 'GET').toUpperCase();
+  if (metodo === 'GET' || metodo === 'HEAD') return '';
+  return `${metodo} ${path} ${typeof options.body === 'string' ? options.body : ''}`;
+}
+
+async function api(path, options = {}) {
+  const chave = chaveDaGravacao(path, options);
+  if (!chave) return apiDireto(path, options);
+  const agora = Date.now();
+  gravacoesRecentes.forEach((g, k) => { if (agora - g.em >= GRAVACAO_REPETIDA_MS) gravacoesRecentes.delete(k); });
+  const recente = gravacoesRecentes.get(chave);
+  if (recente) return recente.dados;
+  const emAndamento = gravacoesEmAndamento.get(chave);
+  if (emAndamento) return emAndamento;
+  const promessa = apiDireto(path, options)
+    .then((dados) => {
+      gravacoesRecentes.set(chave, { em: Date.now(), dados });
+      return dados;
+    })
+    .finally(() => gravacoesEmAndamento.delete(chave));
+  gravacoesEmAndamento.set(chave, promessa);
+  return promessa;
+}
+
+document.addEventListener('click', (evento) => {
+  const alvo = evento.target && evento.target.closest
+    && evento.target.closest('button, input[type="submit"], input[type="button"], [role="button"]');
+  if (!alvo || alvo.hasAttribute('data-repetir')) return;
+  const agora = Date.now();
+  if (alvo.__ultimoClique && agora - alvo.__ultimoClique < JANELA_DO_CLIQUE_DUPLO_MS) {
+    evento.preventDefault();
+    evento.stopImmediatePropagation();
+    return;
+  }
+  alvo.__ultimoClique = agora;
+}, true);
+
+document.addEventListener('submit', (evento) => {
+  const form = evento.target;
+  if (!form) return;
+  const agora = Date.now();
+  if (form.__ultimoEnvio && agora - form.__ultimoEnvio < JANELA_DO_CLIQUE_DUPLO_MS) {
+    evento.preventDefault();
+    evento.stopImmediatePropagation();
+    return;
+  }
+  form.__ultimoEnvio = agora;
+}, true);
+
+async function apiDireto(path, options = {}, jaRepetiu = false) {
   const headers = {};
   if (options.body) {
     headers['Content-Type'] = 'application/json';
@@ -860,7 +928,7 @@ async function api(path, options = {}, jaRepetiu = false) {
     // token antigo, e o novo já chegou (canalDeSessao). Repete uma vez com ele
     // em vez de mandar esta aba para o login.
     if (!jaRepetiu && getSessionToken() && getSessionToken() !== token) {
-      return api(path, options, true);
+      return apiDireto(path, options, true);
     }
     encerrarSessaoLocal(data.error || 'Sua sessão foi encerrada.');
     // Interrompe quem chamou: sem isto a tela seguiria montando com dados que
@@ -5267,9 +5335,9 @@ async function loadModule(moduleName) {
                                          produto aparece no documento impresso e
                                          na nota; mover é decisão de quem monta o
                                          pedido, não do acaso da digitação. -->
-                                    <button type="button" class="icon-button sales-mover-item" data-index="${index}" data-direcao="-1"
+                                    <button type="button" class="icon-button sales-mover-item" data-repetir data-index="${index}" data-direcao="-1"
                                             ${index === 0 ? 'disabled' : ''} title="Mover para cima">▲</button>
-                                    <button type="button" class="icon-button sales-mover-item" data-index="${index}" data-direcao="1"
+                                    <button type="button" class="icon-button sales-mover-item" data-repetir data-index="${index}" data-direcao="1"
                                             ${index === items.length - 1 ? 'disabled' : ''} title="Mover para baixo">▼</button>
                                     <button type="button" class="icon-button sales-remove-item" data-index="${index}" title="Remover">×</button>
                                   </td>
