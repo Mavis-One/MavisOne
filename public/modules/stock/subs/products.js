@@ -323,7 +323,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
               ${visiveis.length === 0
                 ? S.emptyRow(11, 'Nenhum produto encontrado.')
                 : visiveis.map((product) => `
-                  <tr>
+                  <tr data-abrir-produto="${S.escape(product.id)}">
                     <td>${S.escape(product.name)}</td>
                     <td class="produto-codigo">
                       ${S.escape(product.sku || '-')}
@@ -416,6 +416,20 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
     content.querySelectorAll('[data-edit]').forEach((btn) => {
       btn.addEventListener('click', () => {
         state.stockEditProductId = btn.dataset.edit;
+        state.activeSub = 'new_product';
+        loadModule('stock');
+      });
+    });
+
+    // DUPLO CLIQUE NA LINHA ABRE O PRODUTO (15/10/2026, pedido do usuário) — o
+    // mesmo que o lápis, como na lista de Pedidos. Menos nos botões da linha
+    // (estoque por depósito, editar, excluir): lá cada clique faz o seu.
+    content.querySelectorAll('tr[data-abrir-produto]').forEach((linha) => {
+      linha.addEventListener('dblclick', (evento) => {
+        if (evento.target.closest('input, button, a, select, label')) return;
+        const selecao = window.getSelection && window.getSelection();
+        if (selecao && selecao.removeAllRanges) selecao.removeAllRanges();
+        state.stockEditProductId = linha.dataset.abrirProduto;
         state.activeSub = 'new_product';
         loadModule('stock');
       });
