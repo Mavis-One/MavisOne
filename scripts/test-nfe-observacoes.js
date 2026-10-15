@@ -272,7 +272,9 @@ console.log('\n--- onde as guardas ficam ---');
 // Passar do ponto da emissão consome numeração; nota rejeitada por texto longo
 // não se conserta, porque a numeração já foi.
 const posConfere = serverSrc.indexOf('const textoLongo = conferirLimitesDeTexto(payload');
-const posRascunho = serverSrc.indexOf('let nfe = await fiscalDb.createNfeRascunho(');
+// Desde 15/10/2026 o registro é criado OU reaberto (a nota com erro é
+// reenviada no mesmo registro): vale a primeira das duas gravações.
+const posRascunho = serverSrc.indexOf('nfe = await fiscalDb.reabrirNfeComErro(');
 check('a emissão confere ANTES de gravar o rascunho',
   posConfere > 0 && posRascunho > posConfere);
 // Barrar só na emissão chega tarde: a regra já está salva e vale para todo

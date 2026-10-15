@@ -135,7 +135,9 @@ check('  e sem pagamento nenhum nao ha o que conferir',
 console.log('--- 4. onde as guardas ficam ---');
 const src = ler('server.js');
 const posConfere = src.indexOf('const pagamentosNaoFecham = conferirPagamentosDaNota(payload);');
-const posRascunho = src.indexOf('let nfe = await fiscalDb.createNfeRascunho(');
+// Desde 15/10/2026 o registro é criado OU reaberto (a nota com erro é
+// reenviada no mesmo registro): vale a primeira das duas gravações.
+const posRascunho = src.indexOf('nfe = await fiscalDb.reabrirNfeComErro(');
 check('a emissão confere ANTES de gravar o rascunho', posConfere > 0 && posRascunho > posConfere);
 
 const appSrc = ler('public/app.js');

@@ -8448,8 +8448,9 @@ async function estadoDaNotaPeloPayload(nfe) {
 /**
  * "Corrigir nota": a nota com erro volta como NOTA EM EDIÇÃO (fase EL) — a do
  * pedido na chave do pedido, a avulsa na de quem corrige — e a emissão a abre
- * como abre qualquer nota salva. A nota com erro não muda nem some (nunca
- * excluir documento fiscal); a corrigida sai como uma emissão nova.
+ * como abre qualquer nota salva. Desde 15/10/2026 a emissão dali REENVIA a
+ * própria nota com erro, no mesmo registro e com a mesma referência — não
+ * nasce outra (ver notaComErroParaReenviar).
  * Já havendo nota em edição na mesma chave, só substitui com `substituir`.
  */
 async function corrigirNfeComErro(id, user, { substituir = false } = {}) {
@@ -8589,6 +8590,36 @@ async function excluirNfeComErro(id, user) {
   return { excluida: true };
 }
 
+/**
+ * A NOTA COM ERRO QUE ESTA EMISSÃO REENVIA (15/10/2026, pedido do usuário:
+ * "referente aos erros, quero que você não duplique as NF, só mude o status da
+ * mesma nota que está errônea"). A que o "Corrigir nota" abriu (corrigeNfeId)
+ * ou, emitindo de um pedido, a com erro do mesmo pedido e modelo. Sem nenhuma,
+ * null: a emissão cria a nota, como sempre.
+ *
+ * A que o "Corrigir nota" abriu e já não está em erro (outra pessoa reenviou e
+ * foi autorizada) RECUSA: emitir de novo dali criaria uma segunda nota da
+ * mesma venda.
+ */
+async function notaComErroParaReenviar(body, { modelo, pedidoDaNota }) {
+  const pedida = String((body && body.corrigeNfeId) || '').trim();
+  if (pedida) {
+    const nfe = /^[0-9a-f-]{36}$/i.test(pedida) ? await fiscalDb.getNfeById(pedida) : null;
+    if (nfe && nfe.status !== 'ERRO') {
+      const err = new Error(`A nota que você está corrigindo não está mais com erro (situação: ${normalizeNfeStatus(nfe.status)}). Abra-a em NF-e Emitidas antes de emitir de novo.`);
+      err.status = 409;
+      throw err;
+    }
+    if (nfe && Number(nfe.modelo || 55) === Number(modelo)) return nfe;
+  }
+  if (!pedidoDaNota) return null;
+  const { rows } = await consultarBanco(
+    "select id from nfe where order_id = $1 and modelo = $2 and status = 'ERRO' order by criado_em desc limit 1",
+    [String(pedidoDaNota), Number(modelo)]
+  );
+  return rows.length ? fiscalDb.getNfeById(rows[0].id) : null;
+}
+
 // `opcoes.modelo` é decidido pela ROTA, e nunca pelo corpo da requisição: a
 // tela de NF-e não pode virar emissora de NFC-e mandando `modelo: 65`.
 async function emitirNfeFiscal(body, user, opcoes = {}) {
@@ -8605,6 +8636,16 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
     return nfeExistente;
   }
 
+  // A NOTA COM ERRO É A MESMA NOTA (15/10/2026). Reenviar uma nota recusada
+  // não cria outra: o registro dela é reaberto e vai à Focus com a MESMA
+  // referência — a recusa não usou o número na SEFAZ. Emitente trocado não
+  // leva a referência (ela é da empresa na Focus): vai com uma nova, no mesmo
+  // registro. Ver notaComErroParaReenviar.
+  const notaComErro = await notaComErroParaReenviar(body, { modelo, pedidoDaNota });
+  const reaproveitaReferencia = Boolean(notaComErro && notaComErro.referencia
+    && notaComErro.estabelecimentoId === estabelecimento.id);
+  let referenciaDoEnvio = reaproveitaReferencia ? notaComErro.referencia : referencia;
+
   // QUEM MEXEU NOS VALORES FISCAIS (13/10/2026). A aba Impostos deixa editar
   // tudo o que a regra fiscal preencheu; a nota sai com o editado, e aqui fica
   // registrado item a item o que foi digitado à mão e por quem. Liberdade
@@ -8614,15 +8655,15 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
     .filter((x) => Object.keys(x.campos).length);
   if (editados.length) {
     await registrarAuditoria({
-      action: 'nfe.valoresFiscaisEditados', targetId: referencia, targetUsername: naturezaOperacao || '',
+      action: 'nfe.valoresFiscaisEditados', targetId: referenciaDoEnvio, targetUsername: naturezaOperacao || '',
       byId: user && user.id, byName: user && user.name,
       details: { estabelecimentoId: estabelecimento.id, itens: editados }
     }).catch((erro) => console.warn('Auditoria da edição fiscal falhou:', erro.message));
   }
 
-  let nfe = await fiscalDb.createNfeRascunho({
+  const camposDoRegistro = {
     estabelecimentoId: estabelecimento.id,
-    referencia,
+    referencia: referenciaDoEnvio,
     modelo,
     naturezaOperacao,
     tipoDocumento,
@@ -8650,7 +8691,30 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
     estadoDaTela: body.estadoDaTela && typeof body.estadoDaTela === 'object' && !Array.isArray(body.estadoDaTela)
       ? body.estadoDaTela
       : null
-  });
+  };
+  let nfe;
+  if (notaComErro) {
+    nfe = await fiscalDb.reabrirNfeComErro(notaComErro.id, camposDoRegistro);
+    if (!nfe) {
+      const err = new Error('Esta nota com erro já está sendo reenviada. Atualize a lista de NF-e.');
+      err.status = 409;
+      throw err;
+    }
+    // O motivo da recusa sai do registro (a nova resposta grava o dela) e fica
+    // aqui, com a referência de antes.
+    await registrarAuditoria({
+      action: 'nfe.reenviadaAposErro', targetId: nfe.id, targetUsername: referenciaDoEnvio,
+      byId: user && user.id, byName: user && user.name,
+      details: {
+        referenciaAnterior: notaComErro.referencia,
+        motivoAnterior: notaComErro.mensagemSefaz || '',
+        statusSefazAnterior: String((notaComErro.respostaFocus && notaComErro.respostaFocus.status_sefaz) || ''),
+        estabelecimentoAnterior: notaComErro.estabelecimentoId
+      }
+    }).catch((erro) => console.warn('Auditoria do reenvio da NF-e com erro falhou:', erro.message));
+  } else {
+    nfe = await fiscalDb.createNfeRascunho(camposDoRegistro);
+  }
 
   // O PEDIDO PASSA A SABER QUAL NOTA SAIU DELE.
   //
@@ -8681,11 +8745,34 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
     const client = await focusNfe.forEstabelecimento(estabelecimento.id);
     // A NFC-e volta autorizada ou rejeitada NESTA resposta (emissão síncrona):
     // aplicarRespostaFocusNaNfe fatura o pedido na mesma chamada.
+    const enviar = (ref) => (nfce ? client.emitirNfce(ref, payload) : client.emitirNfe(ref, payload));
     let resposta;
     try {
-      resposta = nfce ? await client.emitirNfce(referencia, payload) : await client.emitirNfe(referencia, payload);
+      resposta = await enviar(referenciaDoEnvio);
     } catch (erroDaFocus) {
-      throw nfce ? explicarErroDaNfce(erroDaFocus) : erroDaFocus;
+      // REENVIANDO A REFERÊNCIA DA NOTA COM ERRO (15/10/2026). A Focus responde
+      // 422 a uma referência que ela tem como autorizada ou em processamento
+      // (codigo already_processed / pending_operation, doc.focusnfe.com.br/
+      // reference/emitir_nfe): aí o "erro" daqui estava desatualizado e vale o
+      // que ela tem — nada é emitido de novo. Outro 422 é a referência
+      // recusada: vai uma nova, no mesmo registro.
+      const codigoDaFocus = String((erroDaFocus && erroDaFocus.payload && erroDaFocus.payload.codigo) || '');
+      if (reaproveitaReferencia && Number(erroDaFocus && erroDaFocus.status) === 422) {
+        if (['already_processed', 'pending_operation'].includes(codigoDaFocus)) {
+          resposta = nfce ? await client.consultarNfce(referenciaDoEnvio) : await client.consultarNfe(referenciaDoEnvio);
+        } else {
+          referenciaDoEnvio = createId('nfe');
+          await consultarBanco('update nfe set referencia = $2 where id = $1', [nfe.id, referenciaDoEnvio]);
+          nfe = { ...nfe, referencia: referenciaDoEnvio };
+          try {
+            resposta = await enviar(referenciaDoEnvio);
+          } catch (erroDaNova) {
+            throw nfce ? explicarErroDaNfce(erroDaNova) : erroDaNova;
+          }
+        }
+      } else {
+        throw nfce ? explicarErroDaNfce(erroDaFocus) : erroDaFocus;
+      }
     }
     // EMITIR FATURA O PEDIDO (fase AV) — a outra metade da unificação.
     // Faturar passou a exigir documento fiscal; sem isto, o usuário emitiria a
@@ -8703,7 +8790,7 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
     nfe = await aplicarRespostaFocusNaNfe(nfe, resposta, user);
     const data = loadData();
     data.auditLogs = data.auditLogs || [];
-    await registrarAuditoria({ action: nfce ? 'emitirNfceFiscal' : 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referencia, byId: user.id, byName: user.name });
+    await registrarAuditoria({ action: nfce ? 'emitirNfceFiscal' : 'emitirNfeFiscal', targetId: nfe.id, targetUsername: referenciaDoEnvio, byId: user.id, byName: user.name });
     saveData(data);
     return nfe;
   } catch (error) {

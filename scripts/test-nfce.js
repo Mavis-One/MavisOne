@@ -118,8 +118,10 @@ console.log('\n--- 5. o cliente da Focus fala com /nfce ---');
   check('frete, seguro e despesa acessória são recusados', /nfce && \(Number\(body\.frete/.test(preparar));
   check('a regra fiscal é a de dentro do estado, sem contribuinte', /const dentroDoEstado = nfce \|\|/.test(preparar) && /destinatarioContribuinte: nfce \? false/.test(preparar));
   check('o endereço do consumidor não é cobrado', /nfce \? null : conferirDestinatarioDaNota\(payload\)/.test(preparar));
-  check('o rascunho grava o modelo', /createNfeRascunho\(\{[\s\S]{0,120}modelo,/.test(emitir));
-  check('transmite por /nfce', /nfce \? await client\.emitirNfce\(referencia, payload\)/.test(emitir));
+  // 15/10/2026: os campos do registro saem num objeto só, para criar a nota
+  // ou reabrir a com erro (ver test-nota-com-erro-reenviada.js).
+  check('o rascunho grava o modelo', /const camposDoRegistro = \{[\s\S]{0,160}modelo,/.test(emitir) && /fiscalDb\.createNfeRascunho\(camposDoRegistro\)/.test(emitir));
+  check('transmite por /nfce', /const enviar = \(ref\) => \(nfce \? client\.emitirNfce\(ref, payload\) : client\.emitirNfe\(ref, payload\)\);/.test(emitir));
   check('a falta de CSC vira instrução, não só o código da Focus', /explicarErroDaNfce\(erroDaFocus\)/.test(emitir) && /SEF\/SC/.test(servidor));
   check('NFC-e não tem Carta de Correção', /String\(nfe\.modelo\) === '65'\) \{\s*const err = new Error\('NFC-e não tem Carta de Correção/.test(servidor));
   check('a reconsulta usa o endpoint da NFC-e', /client\.consultarNfce\(nfe\.referencia\)/.test(servidor));

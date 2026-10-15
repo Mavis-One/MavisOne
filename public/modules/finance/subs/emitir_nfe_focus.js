@@ -2309,7 +2309,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             aliquotaIcms: Number(formData.get('complementoAliquota') || 0),
             valorIcms
           }],
-          informacoesAdicionais: formData.get('complementoInformacoes') || ''
+          informacoesAdicionais: formData.get('complementoInformacoes') || '',
+          // A nota com erro que esta corrige: o servidor a reenvia no mesmo
+          // registro, em vez de criar outra (15/10/2026).
+          corrigeNfeId: corrigindoNfe ? corrigindoNfe.id : undefined
         };
         try {
           const result = await api('/api/fiscal/nfe/emitir', { method: 'POST', body: JSON.stringify(corpo) });
@@ -2371,6 +2374,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // Fase EO: o estado da tela vai junto e fica na nota. Dando erro, é ele
       // que "Corrigir nota" (NF-e Emitidas) devolve a esta tela.
       body.estadoDaTela = estadoDaTela();
+      // Corrigindo uma nota com erro: o servidor reenvia ESTA nota, no mesmo
+      // registro, e não cria outra (15/10/2026, pedido do usuário: "não
+      // duplique as NF, só mude o status da mesma nota que está errônea").
+      if (corrigindoNfe) body.corrigeNfeId = corrigindoNfe.id;
 
       // EMITIU, VAI PARA NF-e EMITIDAS (14/10/2026, pedido do usuário: "a
       // página recarrega já nas NF-e emitidas e já mostra erro ou aprovação").
@@ -2423,7 +2430,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   if (camposDoRascunho) {
     preencherCamposSalvos(camposDoRascunho);
     showToast(corrigindoNfe
-      ? `Corrigindo a NF-e com erro (${corrigindoNfe.referencia || 'sem referência'}). Emitir sai como nota nova; a com erro fica no histórico.`
+      ? `Corrigindo a NF-e com erro (${corrigindoNfe.referencia || 'sem referência'}). Emitir reenvia esta mesma nota.`
       : `Nota em edição recuperada (salva em ${new Date(rascunhoSalvoEm).toLocaleString('pt-BR')}).`, 'info', corrigindoNfe ? 8000 : undefined);
   }
   // CADASTROU EM OUTRA ABA, APARECE AQUI (15/10/2026, ver modules/shared/
