@@ -1275,6 +1275,15 @@ button.success:hover { background: var(--success-hover); }
 .table-scroll { overflow-x: auto; }
 .table { width: 100%; min-width: 640px; border-collapse: collapse; margin-top: 12px; }
 .table th, .table td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+/* LINHAS ALTERNADAS EM TODA TABELA E LISTAGEM (15/10/2026, pedido do usuário:
+   "todas as tabelas e listagens de qualquer tipo ... em ordem sequencial em
+   tons claros e escuros"). Uma linha sim, outra não, um tom da cor do texto
+   do tema: mais escura no claro, mais clara no escuro. A linha sob o mouse
+   fica um pouco mais forte. :where() zera o peso da regra e ela vem ANTES das
+   linhas marcadas (selecionada, vencida, em edição...): a marca continua
+   vencendo a listra. */
+:where(.table, .data-table) > tbody > tr:where(:nth-child(even)) > td { background: rgba(var(--text-rgb), 0.07); }
+:where(.table, .data-table) > tbody > tr:where(:hover) > td { background: rgba(var(--text-rgb), 0.12); }
 .table-actions th:last-child, .table-actions td:last-child { text-align: right; width: 120px; }
 .cadastro-row-clickable { cursor: pointer; }
 .cadastro-row-clickable:hover { background: var(--hover-bg, rgba(148, 163, 184, 0.08)); }
@@ -1740,6 +1749,8 @@ button.success:hover { background: var(--success-hover); }
   cursor: pointer;
 }
 .finance-due-item:hover { background: var(--panel-alt-hover); }
+/* Listagem em cartões também alterna o tom (15/10/2026, ver .table acima). */
+.finance-due-list > .finance-due-item:nth-child(even):not(:hover) { background-image: linear-gradient(rgba(var(--text-rgb), 0.07), rgba(var(--text-rgb), 0.07)); }
 .finance-due-item-amount { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-weight: 600; }
 
 .finance-clickable-row { cursor: pointer; }
