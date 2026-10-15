@@ -241,12 +241,31 @@ ${RODAPE}`;
    * contar pelo valor salvo daria orçamento cheio numa nota que vai levar o
    * aviso. A tela recebe essa informação em `travadoEmHomologacao`.
    */
-  function orcamentoDoRodape({ ambiente, destinatarioNome } = {}) {
-    if (String(ambiente || '').toLowerCase() !== 'homologacao') return LIMITE_INFCPL;
-    const reserva = SEPARADOR_RODAPE.length + avisoDeHomologacao(destinatarioNome).length;
+  function orcamentoDoRodape({ ambiente, destinatarioNome, linhaDoPedido: doPedido = '' } = {}) {
+    // A linha do pedido (linhaDoPedido) também entra no campo, antes do texto.
+    const doNumero = doPedido ? doPedido.length + SEPARADOR_RODAPE.length : 0;
+    if (String(ambiente || '').toLowerCase() !== 'homologacao') return Math.max(0, LIMITE_INFCPL - doNumero);
+    const reserva = doNumero + SEPARADOR_RODAPE.length + avisoDeHomologacao(destinatarioNome).length;
     // Nunca negativo: um nome absurdamente longo zeraria o campo em vez de
     // devolver um limite sem sentido.
     return Math.max(0, LIMITE_INFCPL - reserva);
+  }
+
+  /**
+   * O NÚMERO DO PEDIDO NO RODAPÉ DA NOTA (15/10/2026, pedido do usuário:
+   * "preciso que o número do pedido seja colocado no rodapé da NF
+   * automaticamente"). O montador do payload põe esta linha na frente das
+   * observações de toda nota que sai de um pedido — NF-e e NFC-e, pela tela
+   * ou reenviada. Vazio quando não há pedido, ou quando o texto já traz o
+   * número ("PEDIDO: 14757", "Pedido nº 14757"): a nota corrigida reaproveita
+   * o rodapé da anterior, e o número não pode sair duas vezes.
+   */
+  function linhaDoPedido(codigo, texto = '') {
+    const numero = String(codigo ?? '').trim();
+    if (!numero) return '';
+    const escapado = numero.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const jaTem = new RegExp(`PEDIDO[^0-9A-Z]{0,4}(?:N[^0-9A-Z]{0,4})?${escapado}(?![0-9])`, 'i').test(String(texto || ''));
+    return jaTem ? '' : `PEDIDO: ${numero}`;
   }
 
   /**
@@ -284,7 +303,7 @@ ${RODAPE}`;
     PADRAO, FICHA, RODAPE, LIMITE_INFCPL, LIMITE_INFADPROD, CAMPOS_A_PREENCHER,
     SEPARADOR_RODAPE, paraDanfe,
     ficha, montar, comChassi, chassiDoTexto, ehTextoPadrao, camposVazios, padraoDaEmpresa, observacaoAoTrocarEmpresa,
-    excedeLimite, excedeLimiteDoItem, avisoDeHomologacao, orcamentoDoRodape
+    excedeLimite, excedeLimiteDoItem, avisoDeHomologacao, orcamentoDoRodape, linhaDoPedido
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

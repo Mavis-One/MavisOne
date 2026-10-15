@@ -104,8 +104,27 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const campoNome = document.querySelector('[name="destNome"]');
     return TextoPadrao.orcamentoDoRodape({
       ambiente: ambienteEfetivoDaTela(),
-      destinatarioNome: (campoNome && campoNome.value) || destinatario.nome
+      destinatarioNome: (campoNome && campoNome.value) || destinatario.nome,
+      linhaDoPedido: linhaDoPedidoNoRodape()
     });
+  }
+
+  // O número do pedido entra na frente do rodapé, no servidor (15/10/2026).
+  function linhaDoPedidoNoRodape() {
+    if (!TextoPadrao || !TextoPadrao.linhaDoPedido) return '';
+    const campoTexto = document.querySelector('[name="complementoInformacoes"]');
+    const codigoDoPedido = doPedido && doPedido.code ? String(doPedido.code) : '';
+    return TextoPadrao.linhaDoPedido(codigoDoPedido, campoTexto ? campoTexto.value : observacoes);
+  }
+
+  // Por que cabe menos que o limite: um contador que para em 4919 sem
+  // explicação parece defeito.
+  function motivoDoOrcamentoMenor() {
+    const homologacao = String(ambienteEfetivoDaTela() || '').toLowerCase() === 'homologacao';
+    if (linhaDoPedidoNoRodape()) {
+      return homologacao ? 'o número do pedido e, em homologação, o aviso de teste ocupam o resto' : 'o número do pedido ocupa o resto';
+    }
+    return 'em homologação o aviso de teste ocupa o resto';
   }
 
   function textoPadraoDoEmitente() {
@@ -2207,7 +2226,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         // Quando o orçamento é menor que o limite, dizer POR QUÊ: um contador
         // que para em 4919 sem explicação parece defeito.
         const porque = orcamento < TextoPadrao.LIMITE_INFCPL
-          ? ` (a SEFAZ aceita ${TextoPadrao.LIMITE_INFCPL}; em homologação o aviso de teste ocupa o resto)`
+          ? ` (a SEFAZ aceita ${TextoPadrao.LIMITE_INFCPL}; ${motivoDoOrcamentoMenor()})`
           : '';
         contador.textContent = `${texto.length} de ${orcamento} caracteres${porque}`;
         contador.classList.toggle('finance-negative', texto.length > orcamento);
@@ -2349,7 +2368,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       const orcamentoObs = TextoPadrao ? orcamentoDasObservacoes() : Infinity;
       if (observacoes.length > orcamentoObs) {
         const extra = orcamentoObs < TextoPadrao.LIMITE_INFCPL
-          ? ` (a SEFAZ aceita ${TextoPadrao.LIMITE_INFCPL}, e em homologação o aviso de teste ocupa o resto)`
+          ? ` (a SEFAZ aceita ${TextoPadrao.LIMITE_INFCPL}; ${motivoDoOrcamentoMenor()})`
           : '';
         showToast(`As observações têm ${observacoes.length} caracteres; cabem ${orcamentoObs}${extra}.`, 'error');
         if (submitBtn) submitBtn.disabled = false;

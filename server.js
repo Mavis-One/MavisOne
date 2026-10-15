@@ -8074,6 +8074,8 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   // Nota que terminou em ERRO ou foi CANCELADA não conta: o pedido precisa
   // poder tentar de novo.
   const pedidoDaNota = body.orderId || body.saleId || '';
+  // O código do pedido vai ao rodapé da nota (15/10/2026; textoNfe.linhaDoPedido).
+  let codigoDoPedido = '';
   if (pedidoDaNota) {
     const jaEmitidas = await fiscalDb.getNfesPorPedido(pedidoDaNota);
     const viva = jaEmitidas.find((n) => !['ERRO', 'CANCELADO', 'DENEGADO'].includes(String(n.status || '').toUpperCase()));
@@ -8091,6 +8093,7 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     // do faturamento é feita aqui, antes de transmitir. Ver
     // itensSemEstoqueParaFaturar.
     const pedido = await db.getOrderById(pedidoDaNota);
+    codigoDoPedido = pedido ? String(pedido.code || '') : '';
     const faltando = pedido ? await itensSemEstoqueParaFaturar(pedido) : [];
     if (faltando.length) {
       const err = new Error(
@@ -8277,6 +8280,7 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     pagamentos: await pagamentosComCredenciadora(body.pagamentos),
     desconto: body.desconto,
     informacoesAdicionais: body.informacoesAdicionais,
+    numeroDoPedido: codigoDoPedido,
     ambiente: focusNfe.ambienteEfetivo(estabelecimento.focusAmbiente).efetivo
   }) : buildNfePayload({
     estabelecimento,
@@ -8308,7 +8312,8 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     ambiente: focusNfe.ambienteEfetivo(estabelecimento.focusAmbiente).efetivo,
     // Grupo NFref. Sem ele a SEFAZ recusa a complementar, e a devolução perde
     // o vínculo com a nota devolvida.
-    referencias
+    referencias,
+    numeroDoPedido: codigoDoPedido
   });
 
   // OS TEXTOS CABEM? ANTES DE GRAVAR QUALQUER COISA (fase BL).
