@@ -197,5 +197,16 @@ check('"configurado" = algum estabelecimento com token (ou a reserva do .env)',
 check('a tela lista os estabelecimentos sem token', /Sem token da Focus NFe:/.test(tela) && !/A Focus NFe não está configurada/.test(tela));
 check('  e não deixa escolher, na busca, quem não tem token', /\$\{e\.temToken === false \? 'disabled' : ''\}/.test(tela));
 
+// 15/10/2026, pedido do usuário: as filiais da Plus têm a mesma razão social,
+// e a lista "Empresa" mostrava onze "SAL INFINITY PLUS COMERCIO LTDA". Provado
+// na tela: "SAL INFINITY PLUS (MARCOLLA) — 43.792.899/0002-16", uma por filial.
+const srvDfe = ler('server.js');
+check('o nome da filial (fantasia) vem antes da razão social, na lista e no que se grava',
+  srvDfe.includes("empresas: estabelecimentos.map((e) => ({ id: e.id, nome: e.nomeFantasia || e.razaoSocial || ''")
+  && srvDfe.includes("empresaNome: destino.nomeFantasia || destino.razaoSocial || '',")
+  && srvDfe.includes("const nomeEmpresa = estabelecimento.nomeFantasia || estabelecimento.razaoSocial || '';"));
+check('  as notas já gravadas mostram o nome atual da filial pelo CNPJ',
+  tela.includes('<td>${escapeHtml(nomeDaFilial(doc))}</td>') && tela.includes('return (daLista && daLista.nome) || doc.empresaNome || cnpjFormatado(doc.cnpjDestinatario);'));
+
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

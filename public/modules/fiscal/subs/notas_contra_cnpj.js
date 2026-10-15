@@ -46,6 +46,15 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     return `${s.slice(0, 2)}.${s.slice(2, 5)}.${s.slice(5, 8)}/${s.slice(8, 12)}-${s.slice(12)}`;
   };
 
+  // A filial da nota pelo CNPJ destinatário (15/10/2026): o nome ATUAL do
+  // estabelecimento, que diz qual filial é. As notas gravadas antes guardaram a
+  // razão social, igual em todas as filiais da Plus.
+  const nomeDaFilial = (doc) => {
+    const cnpj = String(doc.cnpjDestinatario || '').replace(/\D/g, '');
+    const daLista = (dados.empresas || []).find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpj);
+    return (daLista && daLista.nome) || doc.empresaNome || cnpjFormatado(doc.cnpjDestinatario);
+  };
+
   async function carregar() {
     try {
       const query = tela.cnpjFiltro ? `?cnpj=${encodeURIComponent(tela.cnpjFiltro)}` : '';
@@ -174,7 +183,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
             <tbody>
               ${docs.length ? docs.map((doc) => `
                 <tr>
-                  <td>${escapeHtml(doc.empresaNome || cnpjFormatado(doc.cnpjDestinatario))}</td>
+                  <td>${escapeHtml(nomeDaFilial(doc))}</td>
                   <td>${cnpjFormatado(doc.emitenteDocumento)}</td>
                   <td>${escapeHtml(doc.emitenteNome || '-')}</td>
                   <td><code>${escapeHtml(doc.chave)}</code></td>

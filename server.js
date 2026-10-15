@@ -14661,7 +14661,8 @@ async function tratarRequisicao(req, res) {
 
       const gravado = await dfeDb.gravarDocumento({
         cnpjDestinatario: aviso.destinatarioDocumento,
-        empresaNome: destino.razaoSocial || destino.nomeFantasia || '',
+        // Nome da filial, não a razão social repetida (15/10/2026).
+        empresaNome: destino.nomeFantasia || destino.razaoSocial || '',
         documento: aviso.documento
       });
 
@@ -14849,7 +14850,11 @@ async function tratarRequisicao(req, res) {
           // FOCUS_NFE_TOKEN do .env — que em produção não existe desde a fase
           // CF (a chave mora no banco) — e dizia "Focus não configurada" com a
           // Focus funcionando (12/10/2026).
-          empresas: estabelecimentos.map((e) => ({ id: e.id, nome: e.razaoSocial || e.nomeFantasia || '', cnpj: e.cnpj, temToken: Boolean(e.focusTokenConfigured) })),
+          // O NOME DA FILIAL (15/10/2026, pedido do usuário): as filiais da Plus
+          // têm a mesma razão social, e a lista mostrava onze 'SAL INFINITY PLUS
+          // COMERCIO LTDA' que só o CNPJ separava. O nome fantasia do
+          // estabelecimento é o que diz qual é ('SAL INFINITY PLUS (MARCOLLA)').
+          empresas: estabelecimentos.map((e) => ({ id: e.id, nome: e.nomeFantasia || e.razaoSocial || '', cnpj: e.cnpj, temToken: Boolean(e.focusTokenConfigured) })),
           ponteiros,
           manifestacoes: manifestacao.CATALOGO,
           focusConfigurado: estabelecimentos.some((e) => e.focusTokenConfigured) || focusNfe.isConfigured()
@@ -14870,7 +14875,8 @@ async function tratarRequisicao(req, res) {
           // nunca existiu neste escopo — a busca manual estourava ReferenceError
           // antes de falar com a Focus, e o 500 saía sem dizer o motivo.
           const cnpj = String(estabelecimento.cnpj || '').replace(/\D/g, '');
-          const nomeEmpresa = estabelecimento.razaoSocial || estabelecimento.nomeFantasia || '';
+          // Nome da filial, não a razão social repetida (15/10/2026).
+          const nomeEmpresa = estabelecimento.nomeFantasia || estabelecimento.razaoSocial || '';
 
           const modo = String(body.modo || 'ultimo-nsu');
           const ponteiro = await dfeDb.obterNsu(cnpj);
