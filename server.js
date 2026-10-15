@@ -632,6 +632,50 @@ function normalizeText(value) {
 // a CHAVE do endereço completo, saiu daqui na fase CW — mora em
 // public/modules/shared/duplicidade_cadastro.js, num lugar só, porque havia uma
 // cópia idêntica dela no public/app.js.
+// O QUE FOI DIGITADO VENCE (15/10/2026). Gravar uma pessoa jurídica consultava
+// o CNPJ de novo e SOBRESCREVIA nome, fantasia e endereço com os dados da
+// Receita — a correção feita na tela (endereço de entrega, nome usado) sumia
+// a cada salvamento, e cada salvamento gastava uma consulta. Agora os dados
+// oficiais só preenchem o que está VAZIO, e a consulta só acontece na criação,
+// quando falta algum obrigatório. Logradouro e número vão para street e
+// streetNumber, que é o que o cadastro e a NF-e leem (enderecoDaPessoa);
+// `address` (o endereço concatenado de antes) não é mais preenchido aqui.
+function faltaDadoObrigatorio(registro) {
+  const r = registro || {};
+  return [r.name, r.street || r.address, r.city, r.state, r.zipCode].some((v) => !String(v || '').trim());
+}
+
+function completarComDadosOficiais(registro, oficial) {
+  if (!oficial) return registro;
+  const e = oficial.endereco || {};
+  const contato = (tipo) => ((oficial.contatos || []).find((c) => c && c.type === tipo) || {}).value || '';
+  const vazio = (v) => v === undefined || v === null || String(v).trim() === '';
+  const saida = { ...registro };
+  const preencher = (campo, valor, jaTem) => {
+    if (vazio(valor) || !vazio(saida[campo]) || (jaTem && !vazio(jaTem))) return;
+    saida[campo] = String(valor);
+  };
+  preencher('name', oficial.razaoSocial);
+  preencher('tradeName', oficial.nomeFantasia);
+  preencher('email', contato('email'));
+  preencher('phone', contato('phone'));
+  preencher('street', e.logradouro, saida.address);
+  preencher('streetNumber', e.numero, saida.addressNumber);
+  preencher('addressComplement', e.complemento);
+  preencher('neighborhood', e.bairro);
+  preencher('city', e.cidade);
+  preencher('state', e.estado);
+  preencher('zipCode', e.cep);
+  preencher('ibgeCityCode', oficial.codigoMunicipioIbge);
+  preencher('stateRegistration', oficial.inscricaoEstadual);
+  preencher('registrationStatus', oficial.situacaoCadastral);
+  preencher('mainCnae', oficial.cnaePrincipal);
+  preencher('openingDate', oficial.dataAbertura);
+  if (!Array.isArray(saida.contacts) || !saida.contacts.length) saida.contacts = oficial.contatos || [];
+  saida.cnpjVerifiedAt = new Date().toISOString();
+  return saida;
+}
+
 function getAddressLine(record) {
   return record.address || record.street || '';
 }
@@ -697,28 +741,38 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
 // As reservas aceitam poucas consultas por minuto: servem para a queda, não
 // para lote.
 function resultadoDoCnpj(cnpj, campos) {
+  const uf = campos.uf || '';
+  // A INSCRIÇÃO ESTADUAL (15/10/2026): só a CNPJ.ws traz a lista. Vale a ATIVA
+  // da UF do endereço — a da matriz em outro estado não serve à nota desta.
+  const inscricoes = Array.isArray(campos.inscricoesEstaduais) ? campos.inscricoesEstaduais : [];
+  const daUf = inscricoes.filter((i) => i && i.inscricao && (!uf || i.uf === uf));
+  const inscricao = daUf.find((i) => i.ativa) || daUf[0] || null;
   const contatos = [];
   if (campos.email) contatos.push({ type: 'email', value: campos.email });
   (campos.telefones || []).filter(Boolean).forEach((value) => contatos.push({ type: 'phone', value }));
+  // A Receita manda espaços repetidos ("SALA  01", medido em 15/10/2026): o
+  // texto vai para o cadastro e para a NF-e, então sai limpo daqui.
+  const limpo = (v) => String(v || '').replace(/\s+/g, ' ').trim();
   const endereco = {
-    logradouro: campos.logradouro || '',
-    numero: campos.numero || '',
-    complemento: campos.complemento || '',
-    bairro: campos.bairro || '',
+    logradouro: limpo(campos.logradouro),
+    numero: limpo(campos.numero),
+    complemento: limpo(campos.complemento),
+    bairro: limpo(campos.bairro),
     cep: sanitizeDigits(campos.cep || ''),
-    cidade: campos.cidade || '',
-    estado: campos.uf || ''
+    cidade: limpo(campos.cidade),
+    estado: limpo(campos.uf)
   };
   return {
     cnpj: sanitizeDigits(campos.cnpj || cnpj),
-    razaoSocial: campos.razaoSocial || '',
-    nomeFantasia: campos.nomeFantasia || '',
+    razaoSocial: limpo(campos.razaoSocial),
+    nomeFantasia: limpo(campos.nomeFantasia),
     situacaoCadastral: campos.situacaoCadastral || '',
     endereco,
     enderecoCompleto: [endereco.logradouro, endereco.numero, endereco.complemento].filter(Boolean).join(', '),
     cnaePrincipal: campos.cnaePrincipal || '',
     dataAbertura: campos.dataAbertura || '',
     codigoMunicipioIbge: campos.codigoMunicipioIbge ? String(campos.codigoMunicipioIbge) : '',
+    inscricaoEstadual: inscricao ? String(inscricao.inscricao) : '',
     contatos,
     fonte: campos.fonte,
     raw: campos.raw
@@ -775,6 +829,11 @@ async function cnpjPelaCnpjWs(cnpj) {
     numero: e.numero, complemento: e.complemento, bairro: e.bairro, cep: e.cep,
     cidade: e.cidade && e.cidade.nome, uf: e.estado && (e.estado.sigla || e.estado),
     codigoMunicipioIbge: e.cidade && e.cidade.ibge_id,
+    // Conferido em 15/10/2026 (43792899000135): [{ inscricao_estadual, ativo,
+    // estado: { sigla } }].
+    inscricoesEstaduais: (e.inscricoes_estaduais || []).map((i) => ({
+      inscricao: i.inscricao_estadual, ativa: i.ativo !== false, uf: i.estado && i.estado.sigla
+    })),
     cnaePrincipal: e.atividade_principal && e.atividade_principal.descricao,
     dataAbertura: e.data_inicio_atividade,
     email: e.email,
@@ -810,20 +869,53 @@ async function cnpjPelaReceitaWs(cnpj) {
   });
 }
 
+// A ORDEM E A CORRIDA (15/10/2026). Medido nesse dia: a BrasilAPI respondia
+// 500 depois de 5,3 s, e toda consulta esperava isso antes da reserva. Agora:
+// primeiro a CNPJ.ws (a única que traz a inscrição estadual, e traz o IBGE);
+// se ela não responder em 1,5 s, a BrasilAPI corre junto e vale a primeira que
+// trouxer o CNPJ; a ReceitaWS fica por último. CNPJ.ws e ReceitaWS aceitam
+// poucas consultas por minuto — a corrida escalonada só gasta a BrasilAPI
+// quando a primeira demora ou falha.
+const esperarMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function fetchCnpjOfficialData(cnpj) {
-  try {
-    return await cnpjPelaBrasilApi(cnpj);
-  } catch (erroBrasilApi) {
-    if (erroBrasilApi.status === 404) throw erroBrasilApi;
-    for (const reserva of [cnpjPelaCnpjWs, cnpjPelaReceitaWs]) {
+  const erros = [];
+  const tentar = (fonte) => fonte(cnpj).catch((erro) => { erros.push(erro); throw erro; });
+  let resultado = null;
+  const primeira = tentar(cnpjPelaCnpjWs);
+  primeira.catch(() => {});
+  const rapida = await Promise.race([primeira.then((r) => r, () => null), esperarMs(1500).then(() => null)]);
+  if (rapida) {
+    resultado = rapida;
+  } else {
+    try {
+      resultado = await Promise.any([primeira, tentar(cnpjPelaBrasilApi)]);
+    } catch (_) {
       try {
-        return await reserva(cnpj);
-      } catch (_) { /* a próxima */ }
+        resultado = await tentar(cnpjPelaReceitaWs);
+      } catch (__) { /* todas falharam */ }
     }
-    const err = new Error('Os serviços de consulta de CNPJ não estão respondendo agora (BrasilAPI, CNPJ.ws e ReceitaWS). Tente de novo em alguns minutos.');
+  }
+  if (!resultado) {
+    // Alguma respondeu "não existe" e nenhuma achou: é CNPJ que a Receita não tem.
+    if (erros.some((e) => Number(e && e.status) === 404)) {
+      const err = new Error('CNPJ não encontrado na Receita Federal.');
+      err.status = 404;
+      throw err;
+    }
+    const err = new Error('Os serviços de consulta de CNPJ não estão respondendo agora (CNPJ.ws, BrasilAPI e ReceitaWS). Tente de novo em alguns minutos.');
     err.status = 503;
     throw err;
   }
+  // Fonte sem o IBGE (ReceitaWS): ele vem do CEP. Falhar aqui não derruba a
+  // consulta — a tela também busca pelo CEP.
+  if (!resultado.codigoMunicipioIbge && resultado.endereco && resultado.endereco.cep && resultado.endereco.cep.length === 8) {
+    try {
+      const doCep = await fetchCepData(resultado.endereco.cep);
+      if (doCep && doCep.ibgeCityCode) resultado.codigoMunicipioIbge = String(doCep.ibgeCityCode);
+    } catch (_) { /* sem IBGE */ }
+  }
+  return resultado;
 }
 
 // O CEP PELA BRASILAPI QUANDO O VIACEP NÃO RESPONDE (14/10/2026). O ViaCEP às
@@ -870,16 +962,27 @@ async function fetchCepViaCep(cep) {
   });
 
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.erro) {
+  // "Não encontrado" só quando o ViaCEP RESPONDEU que o CEP não existe
+  // ({ erro: true }). Erro de servidor, bloqueio ou limite (5xx, 403, 429)
+  // virava 404 também, e a reserva da BrasilAPI nunca era tentada (15/10/2026).
+  if (payload.erro) {
     const err = new Error('CEP não encontrado.');
     err.status = 404;
+    throw err;
+  }
+  if (!response.ok) {
+    const err = new Error('ViaCEP não respondeu.');
+    err.status = 502;
     throw err;
   }
 
   return {
     zipCode: sanitizeDigits(payload.cep || cep),
     street: payload.logradouro || '',
-    complement: payload.complemento || '',
+    // O "complemento" do ViaCEP é a FAIXA de numeração do CEP ("até 478/479",
+    // "lado par"), não o complemento do endereço: preenchê-lo no cadastro
+    // gravava a faixa como sala/apto. Fica só no raw.
+    complement: '',
     neighborhood: payload.bairro || '',
     city: payload.localidade || '',
     state: payload.uf || '',
@@ -15949,38 +16052,25 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'CPF/CNPJ inválido. Não foi possível concluir o cadastro.' }, 400);
       }
 
+      const digitado = {
+        id: body.id || createId('pes'),
+        ...body,
+        type,
+        document,
+        contacts: body.contacts || [],
+        cnpjVerifiedAt: null,
+        createdAt: body.createdAt || new Date().toISOString()
+      };
+      // Ver completarComDadosOficiais: só na criação, só se faltar obrigatório.
       let officialData = null;
-      if (type === 'pessoa-juridica' && body.lookupCnpj !== false) {
+      if (type === 'pessoa-juridica' && body.lookupCnpj !== false && faltaDadoObrigatorio(digitado)) {
         try {
           officialData = await fetchCnpjOfficialData(document);
         } catch (error) {
           officialData = null;
         }
       }
-
-      const person = {
-        id: body.id || createId('pes'),
-        ...body,
-        type,
-        document,
-        name: (officialData && officialData.razaoSocial) || body.name || '',
-        tradeName: (officialData && officialData.nomeFantasia) || body.tradeName || '',
-        email: body.email || (officialData?.contatos || []).find((contact) => contact.type === 'email')?.value || '',
-        phone: body.phone || (officialData?.contatos || []).find((contact) => contact.type === 'phone')?.value || '',
-        address: (officialData && officialData.enderecoCompleto) || body.address || '',
-        city: (officialData && officialData.endereco?.cidade) || body.city || '',
-        state: (officialData && officialData.endereco?.estado) || body.state || '',
-        zipCode: (officialData && officialData.endereco?.cep) || body.zipCode || '',
-        neighborhood: (officialData && officialData.endereco?.bairro) || body.neighborhood || '',
-        addressNumber: (officialData && officialData.endereco?.numero) || body.addressNumber || '',
-        addressComplement: (officialData && officialData.endereco?.complemento) || body.addressComplement || '',
-        registrationStatus: (officialData && officialData.situacaoCadastral) || body.registrationStatus || '',
-        mainCnae: (officialData && officialData.cnaePrincipal) || body.mainCnae || '',
-        openingDate: (officialData && officialData.dataAbertura) || body.openingDate || '',
-        contacts: (officialData && officialData.contatos) || body.contacts || [],
-        cnpjVerifiedAt: officialData ? new Date().toISOString() : null,
-        createdAt: body.createdAt || new Date().toISOString()
-      };
+      const person = completarComDadosOficiais(digitado, officialData);
 
       const missingFields = validateRequiredRegistrationFields(person);
       if (missingFields.length) {
@@ -16031,15 +16121,8 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'CPF/CNPJ inválido. Não foi possível concluir o cadastro.' }, 400);
       }
 
-      let officialData = null;
-      if (type === 'pessoa-juridica' && body.lookupCnpj !== false) {
-        try {
-          officialData = await fetchCnpjOfficialData(document);
-        } catch (error) {
-          officialData = null;
-        }
-      }
-
+      // Editar não reconsulta o CNPJ (15/10/2026): o que está na tela é o que
+      // se quer gravar — ver completarComDadosOficiais.
       const person = {
         ...current,
         ...body,
@@ -16047,22 +16130,6 @@ async function tratarRequisicao(req, res) {
         type,
         document,
         code: current.code,
-        name: (officialData && officialData.razaoSocial) || body.name || current.name || '',
-        tradeName: (officialData && officialData.nomeFantasia) || body.tradeName || current.tradeName || '',
-        email: body.email || (officialData?.contatos || []).find((contact) => contact.type === 'email')?.value || current.email || '',
-        phone: body.phone || (officialData?.contatos || []).find((contact) => contact.type === 'phone')?.value || current.phone || '',
-        address: (officialData && officialData.enderecoCompleto) || body.address || current.address || '',
-        city: (officialData && officialData.endereco?.cidade) || body.city || current.city || '',
-        state: (officialData && officialData.endereco?.estado) || body.state || current.state || '',
-        zipCode: (officialData && officialData.endereco?.cep) || body.zipCode || current.zipCode || '',
-        neighborhood: (officialData && officialData.endereco?.bairro) || body.neighborhood || current.neighborhood || '',
-        addressNumber: (officialData && officialData.endereco?.numero) || body.addressNumber || current.addressNumber || '',
-        addressComplement: (officialData && officialData.endereco?.complemento) || body.addressComplement || current.addressComplement || '',
-        registrationStatus: (officialData && officialData.situacaoCadastral) || body.registrationStatus || current.registrationStatus || '',
-        mainCnae: (officialData && officialData.cnaePrincipal) || body.mainCnae || current.mainCnae || '',
-        openingDate: (officialData && officialData.dataAbertura) || body.openingDate || current.openingDate || '',
-        contacts: (officialData && officialData.contatos) || body.contacts || current.contacts || [],
-        cnpjVerifiedAt: officialData ? new Date().toISOString() : current.cnpjVerifiedAt || null,
         createdAt: current.createdAt || new Date().toISOString()
       };
 
@@ -16123,40 +16190,27 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'CNPJ inválido. Não foi possível concluir o cadastro.' }, 400);
       }
 
+      const digitado = {
+        id: body.id || createId('cnpj'),
+        ...body,
+        type: 'pessoa-juridica',
+        document: cnpj,
+        contacts: body.contacts || [],
+        notes: body.notes || '',
+        status: body.status || 'ativo',
+        cnpjVerifiedAt: null,
+        createdAt: body.createdAt || new Date().toISOString()
+      };
+      // Ver completarComDadosOficiais: só na criação, só se faltar obrigatório.
       let cnpjValidation = null;
-      if (body.lookupCnpj !== false) {
+      if (body.lookupCnpj !== false && faltaDadoObrigatorio(digitado)) {
         try {
           cnpjValidation = await fetchCnpjOfficialData(cnpj);
         } catch (error) {
           cnpjValidation = null;
         }
       }
-
-      const company = {
-        id: body.id || createId('cnpj'),
-        ...body,
-        type: 'pessoa-juridica',
-        document: cnpj,
-        name: (cnpjValidation && cnpjValidation.razaoSocial) || body.name || '',
-        tradeName: (cnpjValidation && cnpjValidation.nomeFantasia) || body.tradeName || '',
-        email: body.email || (cnpjValidation?.contatos || []).find((contact) => contact.type === 'email')?.value || '',
-        phone: body.phone || (cnpjValidation?.contatos || []).find((contact) => contact.type === 'phone')?.value || '',
-        address: (cnpjValidation && cnpjValidation.enderecoCompleto) || body.address || '',
-        city: (cnpjValidation && cnpjValidation.endereco?.cidade) || body.city || '',
-        state: (cnpjValidation && cnpjValidation.endereco?.estado) || body.state || '',
-        zipCode: (cnpjValidation && cnpjValidation.endereco?.cep) || body.zipCode || '',
-        neighborhood: (cnpjValidation && cnpjValidation.endereco?.bairro) || body.neighborhood || '',
-        addressNumber: (cnpjValidation && cnpjValidation.endereco?.numero) || body.addressNumber || '',
-        addressComplement: (cnpjValidation && cnpjValidation.endereco?.complemento) || body.addressComplement || '',
-        registrationStatus: (cnpjValidation && cnpjValidation.situacaoCadastral) || body.registrationStatus || '',
-        mainCnae: (cnpjValidation && cnpjValidation.cnaePrincipal) || body.mainCnae || '',
-        openingDate: (cnpjValidation && cnpjValidation.dataAbertura) || body.openingDate || '',
-        contacts: (cnpjValidation && cnpjValidation.contatos) || body.contacts || [],
-        notes: body.notes || '',
-        status: body.status || 'ativo',
-        cnpjVerifiedAt: cnpjValidation ? new Date().toISOString() : null,
-        createdAt: body.createdAt || new Date().toISOString()
-      };
+      const company = completarComDadosOficiais(digitado, cnpjValidation);
 
       const missingFields = validateRequiredRegistrationFields(company);
       if (missingFields.length) {
@@ -16198,15 +16252,8 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'CNPJ inválido. Não foi possível concluir o cadastro.' }, 400);
       }
 
-      let cnpjValidation = null;
-      if (body.lookupCnpj !== false) {
-        try {
-          cnpjValidation = await fetchCnpjOfficialData(cnpj);
-        } catch (error) {
-          cnpjValidation = null;
-        }
-      }
-
+      // Editar não reconsulta o CNPJ (15/10/2026): o que está na tela é o que
+      // se quer gravar — ver completarComDadosOficiais.
       const company = {
         ...current,
         ...body,
@@ -16214,24 +16261,8 @@ async function tratarRequisicao(req, res) {
         type: 'pessoa-juridica',
         document: cnpj,
         code: current.code,
-        name: (cnpjValidation && cnpjValidation.razaoSocial) || body.name || current.name || '',
-        tradeName: (cnpjValidation && cnpjValidation.nomeFantasia) || body.tradeName || current.tradeName || '',
-        email: body.email || (cnpjValidation?.contatos || []).find((contact) => contact.type === 'email')?.value || current.email || '',
-        phone: body.phone || (cnpjValidation?.contatos || []).find((contact) => contact.type === 'phone')?.value || current.phone || '',
-        address: (cnpjValidation && cnpjValidation.enderecoCompleto) || body.address || current.address || '',
-        city: (cnpjValidation && cnpjValidation.endereco?.cidade) || body.city || current.city || '',
-        state: (cnpjValidation && cnpjValidation.endereco?.estado) || body.state || current.state || '',
-        zipCode: (cnpjValidation && cnpjValidation.endereco?.cep) || body.zipCode || current.zipCode || '',
-        neighborhood: (cnpjValidation && cnpjValidation.endereco?.bairro) || body.neighborhood || current.neighborhood || '',
-        addressNumber: (cnpjValidation && cnpjValidation.endereco?.numero) || body.addressNumber || current.addressNumber || '',
-        addressComplement: (cnpjValidation && cnpjValidation.endereco?.complemento) || body.addressComplement || current.addressComplement || '',
-        registrationStatus: (cnpjValidation && cnpjValidation.situacaoCadastral) || body.registrationStatus || current.registrationStatus || '',
-        mainCnae: (cnpjValidation && cnpjValidation.cnaePrincipal) || body.mainCnae || current.mainCnae || '',
-        openingDate: (cnpjValidation && cnpjValidation.dataAbertura) || body.openingDate || current.openingDate || '',
-        contacts: (cnpjValidation && cnpjValidation.contatos) || body.contacts || current.contacts || [],
-        notes: body.notes || current.notes || '',
+        notes: body.notes ?? current.notes ?? '',
         status: body.status || current.status || 'ativo',
-        cnpjVerifiedAt: cnpjValidation ? new Date().toISOString() : current.cnpjVerifiedAt || null,
         createdAt: current.createdAt || new Date().toISOString()
       };
 

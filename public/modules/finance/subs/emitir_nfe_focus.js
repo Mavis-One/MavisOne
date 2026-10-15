@@ -929,9 +929,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           // o código IBGE de verdade — o "Buscar CEP" continua sendo a outra
           // forma de obtê-lo.
           preencher('destCodigoMunicipio', dados.codigoMunicipioIbge);
-          // Quem tem CNPJ é presumidamente contribuinte; a inscrição estadual
-          // não vem da Receita federal, então o checkbox fica marcado e a IE
-          // continua em branco para ser preenchida à mão.
+          // Quem tem CNPJ é presumidamente contribuinte. A IE vem quando a
+          // consulta trouxe (CNPJ.ws, 15/10/2026); senão fica para preencher à mão.
+          preencher('destIe', dados.inscricaoEstadual);
           const contribuinte = form()?.querySelector('[name="destContribuinte"]');
           if (contribuinte && !contribuinte.checked) contribuinte.checked = true;
         }

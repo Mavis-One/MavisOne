@@ -208,6 +208,9 @@ window.MavisDocumento = (function () {
       // O servidor já entrega o IBGE separado do SIAFI, venha de qual fonte vier
       // (14/10/2026); o raw da BrasilAPI fica de reserva para servidor antigo.
       codigoMunicipioIbge: String(oficial.codigoMunicipioIbge || oficial?.raw?.codigo_municipio_ibge || ''),
+      // A IE ativa da UF do endereço (15/10/2026). Só a CNPJ.ws traz; nas outras
+      // fontes vem vazia e o campo continua para preencher à mão.
+      inscricaoEstadual: String(oficial.inscricaoEstadual || ''),
       email: contatoOficial(oficial, ['email'], ['email']),
       telefone: contatoOficial(oficial, ['phone', 'telefone', 'celular'], ['ddd_telefone_1', 'ddd_telefone_2', 'ddd_fax']),
       situacaoCadastral: oficial.situacaoCadastral || '',

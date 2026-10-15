@@ -823,6 +823,7 @@ window.MavisSubscreenRegistry.settings.fiscal = async function renderSettingsFis
           // Só o código IBGE de verdade — o codigo_municipio da BrasilAPI é
           // SIAFI e a SEFAZ rejeitaria a nota inteira.
           preencher('codigoMunicipio', dados.codigoMunicipioIbge);
+          preencher('inscricaoEstadual', dados.inscricaoEstadual);
           // A Receita devolve o CNAE como descrição ("Comércio varejista…"),
           // não como código; o campo aqui espera o código, então não é
           // preenchido — chutar deixaria o cadastro fiscal errado em silêncio.

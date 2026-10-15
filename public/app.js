@@ -8249,6 +8249,10 @@ async function loadModule(moduleName) {
         cepInput.addEventListener('input', () => {
           cepInput.value = maskCep(cepInput.value);
         });
+        // O CEP com que o formulário abriu (ou o último aplicado). Sair do
+        // campo sem trocar o CEP não reescreve o endereço — senão a correção
+        // feita à mão na rua sumia a cada Tab (15/10/2026).
+        let cepAplicado = sanitizeDigits(cepInput.value);
 
         const clearFieldError = (input) => {
           const wrapper = input?.closest('.cadastro-field, .cadastro-field-inline');
@@ -8258,11 +8262,12 @@ async function loadModule(moduleName) {
 
         cepInput.addEventListener('blur', async () => {
           const cep = sanitizeDigits(cepInput.value);
-          if (cep.length !== 8) return;
+          if (cep.length !== 8 || cep === cepAplicado) return;
 
           try {
             const response = await api(`/api/cep/${cep}`);
             const address = response.address || {};
+            cepAplicado = cep;
 
             const fieldValues = {
               [fieldMap.street]: address.street || '',
@@ -8276,8 +8281,11 @@ async function loadModule(moduleName) {
             }
 
             clearFieldError(cepInput);
+            // CEP de cidade inteira não tem rua nem bairro: os do CEP anterior
+            // saem, em vez de ficarem num endereço que não é mais o deles.
+            const limparSeVazio = [fieldMap.street, fieldMap.neighborhood];
             Object.entries(fieldValues).forEach(([fieldName, value]) => {
-              if (!value) return;
+              if (!value && !limparSeVazio.includes(fieldName)) return;
               const input = form.querySelector(`[name="${fieldName}"]`);
               if (!input) return;
               input.value = value;
@@ -8346,13 +8354,21 @@ async function loadModule(moduleName) {
               tradeName: official.nomeFantasia || formData.get('tradeName') || '',
               email: officialEmail || formData.get('email') || '',
               phone: officialPhone || formData.get('phone') || '',
+              // OS CAMPOS DESTE FORMULÁRIO (15/10/2026): street e streetNumber.
+              // A consulta gravava address (o endereço concatenado, com número e
+              // complemento) e addressNumber — nomes da tela antiga —, e aqui o
+              // Logradouro e o Número ficavam vazios. IBGE e inscrição estadual
+              // (a CNPJ.ws traz) também não eram preenchidos.
               zipCode: official.endereco?.cep || formData.get('zipCode') || '',
-              address: official.enderecoCompleto || formData.get('address') || '',
+              street: official.endereco?.logradouro || formData.get('street') || '',
+              streetNumber: official.endereco?.numero || formData.get('streetNumber') || '',
+              addressComplement: official.endereco?.complemento || formData.get('addressComplement') || '',
               city: official.endereco?.cidade || formData.get('city') || '',
               state: official.endereco?.estado || formData.get('state') || '',
               neighborhood: official.endereco?.bairro || formData.get('neighborhood') || '',
-              addressNumber: official.endereco?.numero || formData.get('addressNumber') || '',
-              addressComplement: official.endereco?.complemento || formData.get('addressComplement') || '',
+              ibgeCityCode: official.codigoMunicipioIbge || formData.get('ibgeCityCode') || '',
+              stateRegistration: official.inscricaoEstadual || formData.get('stateRegistration') || '',
+              registrationStatus: official.situacaoCadastral || formData.get('registrationStatus') || '',
               mainCnae: official.cnaePrincipal || formData.get('mainCnae') || '',
               openingDate: official.dataAbertura || formData.get('openingDate') || '',
               documentMessage: 'CNPJ consultado com sucesso e dados oficiais preenchidos.'

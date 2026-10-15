@@ -337,6 +337,7 @@ window.MavisAtalhos = (function () {
           preencher('neighborhood', dados.bairro);
           preencher('city', dados.municipio);
           preencher('ibgeCityCode', dados.codigoMunicipioIbge);
+          preencher('stateRegistration', dados.inscricaoEstadual);
           const uf = overlay.querySelector('[name="state"]');
           // O UF é um <select>: só troca se a sigla existir na lista.
           if (uf && dados.uf && [...uf.options].some((o) => o.value === dados.uf)) uf.value = dados.uf;
