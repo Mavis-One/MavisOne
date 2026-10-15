@@ -8773,11 +8773,17 @@ async function loadModule(moduleName) {
         const avisoDup = duplicidadeDoCadastro.aviso;
         if (avisoDup && !(await confirmModal(avisoDup))) return;
 
-        state.cadastroDraft = { ...state.cadastroDraft, people: payload };
+        state.cadastroDraft = { ...state.cadastroDraft, people: { ...payload, kind: peopleDraft.kind } };
 
         try {
-          const kind = (peopleDraft.kind === 'cnpj' || type === 'pessoa-juridica') ? 'cnpj' : 'people';
           const isEditing = Boolean(payload.id);
+          // EDITAR GRAVA NA TABELA DE ONDE O CADASTRO VEIO (15/10/2026). Os PJ
+          // antigos (importados do Viper) estão em `people`, não em `cnpjs`:
+          // escolher a rota pelo tipo mandava o PUT para /cnpjs, que respondia
+          // "CNPJ não encontrado". O tipo só decide no cadastro novo.
+          const kind = isEditing
+            ? (peopleDraft.kind === 'cnpj' || (!peopleDraft.kind && String(payload.id).startsWith('cnpj-')) ? 'cnpj' : 'people')
+            : ((peopleDraft.kind === 'cnpj' || type === 'pessoa-juridica') ? 'cnpj' : 'people');
           const endpointBase = kind === 'cnpj' ? '/api/cadastros/cnpjs' : '/api/cadastros/pessoas';
           const endpoint = isEditing ? `${endpointBase}/${payload.id}` : endpointBase;
           const method = isEditing ? 'PUT' : 'POST';
@@ -8791,7 +8797,7 @@ async function loadModule(moduleName) {
           showToast(error.message || 'Erro ao salvar pessoa.', 'error');
           state.cadastroDraft = {
             ...state.cadastroDraft,
-            people: { ...payload, error: error.message || 'Erro ao salvar pessoa.' }
+            people: { ...payload, kind: peopleDraft.kind, error: error.message || 'Erro ao salvar pessoa.' }
           };
           renderApp();
           loadModule('cadastros');
