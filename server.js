@@ -15179,6 +15179,7 @@ async function tratarRequisicao(req, res) {
           }
 
           let novos = 0;
+          let manifestacoesAtualizadas = 0;
           let maiorNsu = nsuInicial;
           for (const documento of documentos) {
             const gravado = await dfeDb.gravarDocumento({
@@ -15186,13 +15187,20 @@ async function tratarRequisicao(req, res) {
             });
             if (gravado.novo) novos += 1;
             if (documento.nsu > maiorNsu) maiorNsu = documento.nsu;
+            // A manifestação que a SEFAZ já tem (15/10/2026) — feita no Viper, no
+            // portal ou pela ciência automática. As versões vêm em ordem, então
+            // a última que passa aqui é a situação atual. Ver
+            // registrarManifestacaoDaSefaz (nunca rebaixa).
+            if (await dfeDb.registrarManifestacaoDaSefaz(gravado.id, documento.manifestacao, gravado.manifestacaoCodigo)) {
+              manifestacoesAtualizadas += 1;
+            }
           }
 
           // O ponteiro so avanca nos modos que VARREM. Buscar uma chave ou um NSU
           // antigo nao pode mover o marcador de "ja sincronizei ate aqui" — seria
           // pular tudo o que existe entre o antigo e o atual.
           let ponteiroFinal = ponteiro;
-          if (modo === 'ultimo-nsu' || modo === 'tres-meses') {
+          if (modo === 'ultimo-nsu' || modo === 'tres-meses' || modo === 'tudo') {
             ponteiroFinal = await dfeDb.avancarNsu(cnpj, {
               ultimoNsu: maiorNsu, maxNsu: resultado.maxNsu
             });
@@ -15201,7 +15209,7 @@ async function tratarRequisicao(req, res) {
           await db.rbac.registrarAcesso({
             userId: user?.id, userName: user?.name, action: 'fiscal.documentos_recebidos',
             resourceType: 'dfe', result: 'PERMITIDO', ip: ipDaRequisicao(req),
-            detail: { cnpj, modo, encontrados: documentos.length, novos }
+            detail: { cnpj, modo, encontrados: documentos.length, novos, manifestacoesAtualizadas }
           });
 
           // As entradas de fornecedor importadas do Viper sem chave ganham a chave
@@ -15214,6 +15222,7 @@ async function tratarRequisicao(req, res) {
             success: true,
             encontrados: documentos.length,
             novos,
+            manifestacoesAtualizadas,
             chavesCompletadas,
             ponteiro: ponteiroFinal,
             // A SEFAZ entrega no maximo 50 por consulta: dizer que ainda falta e o

@@ -162,6 +162,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
             <select id="dfeModo">
               <option value="ultimo-nsu" ${modo === 'ultimo-nsu' ? 'selected' : ''}>A partir do último NSU sincronizado</option>
               <option value="tres-meses" ${modo === 'tres-meses' ? 'selected' : ''}>NSUs dos últimos 3 meses</option>
+              <option value="tudo" ${modo === 'tudo' ? 'selected' : ''}>Todas as notas (desde o início)</option>
               <option value="nsu" ${modo === 'nsu' ? 'selected' : ''}>NSU específico</option>
               <option value="chave" ${modo === 'chave' ? 'selected' : ''}>Chave de acesso específica</option>
             </select>
@@ -171,7 +172,8 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         </div>
         ${blocoPonteiro()}
         <div class="row">
-          <button type="button" id="dfeBuscar" ${tela.ocupado ? 'disabled' : ''}>${tela.ocupado ? 'Consultando a SEFAZ…' : 'Buscar'}</button>
+          <button type="button" id="dfeBuscar" ${tela.ocupado ? 'disabled' : ''}>${tela.ocupado && !tela.todas ? 'Consultando a SEFAZ…' : 'Buscar'}</button>
+          <button type="button" class="secondary" id="dfeAtualizarTodas" ${tela.ocupado ? 'disabled' : ''}>${tela.todas ? `Atualizando ${tela.todas.feitas + 1} de ${tela.todas.total}…` : 'Atualizar todas as empresas'}</button>
           <button type="button" class="secondary" id="dfeFecharBusca">Fechar</button>
         </div>
       </section>
@@ -426,6 +428,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
           })
         });
         const resumo = `${r.encontrados} ${r.encontrados === 1 ? 'documento' : 'documentos'} · ${r.novos} ${r.novos === 1 ? 'novo' : 'novos'}`
+          + (r.manifestacoesAtualizadas ? ` · ${r.manifestacoesAtualizadas} ${r.manifestacoesAtualizadas === 1 ? 'manifestação atualizada' : 'manifestações atualizadas'} pela SEFAZ` : '')
           + (r.chavesCompletadas ? ` · ${r.chavesCompletadas} ${r.chavesCompletadas === 1 ? 'entrada importada ganhou a chave' : 'entradas importadas ganharam a chave'}` : '');
         showToast(r.faltaBuscar ? `${resumo}. Ainda há notas a buscar — repita a busca.` : `${resumo}.`, 'success');
       } catch (erro) {
@@ -434,6 +437,44 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         tela.ocupado = false;
         await carregar();
       }
+    });
+
+    // TODAS AS EMPRESAS DE UMA VEZ (15/10/2026, pedido do usuário: "verifique
+    // pela SEFAZ todas as notas antigas que já foram manifestadas e atualize
+    // elas no MavisONE"). Uma busca "desde o início" por empresa, uma depois da
+    // outra (cada uma pagina até 5.000 versões; o que passar disso continua
+    // do ponteiro). A manifestação que a SEFAZ já tem entra na nota (ver
+    // registrarManifestacaoDaSefaz). Empresa que falhar não para as outras.
+    document.getElementById('dfeAtualizarTodas')?.addEventListener('click', async () => {
+      const empresas = dados.empresas.filter((e) => e.temToken !== false);
+      if (!empresas.length) return;
+      const soma = { encontrados: 0, novos: 0, manifestacoes: 0 };
+      const falhas = [];
+      tela.ocupado = true;
+      tela.todas = { feitas: 0, total: empresas.length };
+      desenhar();
+      for (const empresa of empresas) {
+        try {
+          let modo = 'tudo';
+          for (let volta = 0; volta < 20; volta += 1) {
+            const r = await api('/api/fiscal/dfe/buscar', { method: 'POST', body: JSON.stringify({ empresaId: empresa.id, modo }) });
+            soma.encontrados += r.encontrados || 0;
+            soma.novos += r.novos || 0;
+            soma.manifestacoes += r.manifestacoesAtualizadas || 0;
+            if (!r.faltaBuscar) break;
+            modo = 'ultimo-nsu';
+          }
+        } catch (erro) {
+          falhas.push(`${empresa.nome}: ${erro.message || erro}`);
+        }
+        tela.todas.feitas += 1;
+        desenhar();
+      }
+      tela.ocupado = false;
+      tela.todas = null;
+      showToast(`${empresas.length - falhas.length} de ${empresas.length} empresas · ${soma.encontrados} notas · ${soma.novos} novas · ${soma.manifestacoes} ${soma.manifestacoes === 1 ? 'manifestação atualizada' : 'manifestações atualizadas'}`
+        + (falhas.length ? `. Sem resposta: ${falhas.join(' | ')}` : '.'), falhas.length ? 'warning' : 'success', falhas.length ? 15000 : undefined);
+      await carregar();
     });
 
     document.querySelectorAll('[data-manifestar]').forEach((botao) => {
