@@ -489,6 +489,7 @@ function renderSecondarySidebar() {
   sidebar.querySelectorAll('.secondary-open-item').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      trocarDeModulo(btn.dataset.module);
       state.activeModule = btn.dataset.module;
       state.activeSub = btn.dataset.sub;
       state.hoveredModule = null;
@@ -1448,6 +1449,14 @@ let salesMetaEmCache = null;
 let salesMetaBuscadaEm = 0;
 
 /** Esquece as listas do filtro: cadastro novo tem de aparecer na próxima busca. */
+// A BUSCA DE CADA TELA VALE ATÉ TROCAR DE MÓDULO PELO MENU (15/10/2026). As
+// telas guardam o que foi pesquisado em state.buscasDasTelas (hoje, a lista de
+// Produtos); abrir um registro, salvar, voltar ou pular para outra tela de
+// dentro dela não esvazia. Só escolher outro módulo no menu.
+function trocarDeModulo(destino) {
+  if (destino !== state.activeModule) state.buscasDasTelas = {};
+}
+
 function esquecerSalesMeta() {
   salesMetaEmCache = null;
   salesMetaBuscadaEm = 0;
@@ -1949,6 +1958,7 @@ function renderApp() {
   if (marcaDashboard) {
     marcaDashboard.onclick = () => {
       esconderDicaDaSidebar();
+      trocarDeModulo('dashboard');
       state.activeModule = 'dashboard';
       state.activeSub = null;
       state.selectedModule = getSecondarySidebarConfig('dashboard') ? 'dashboard' : null;
@@ -1962,6 +1972,7 @@ function renderApp() {
       // O balão some junto: o ícone sai de baixo do cursor quando a tela
       // troca, e sem isto ele ficaria pendurado sobre o conteúdo novo.
       esconderDicaDaSidebar();
+      trocarDeModulo(module);
       state.activeModule = module;
       state.activeSub = null;
       state.selectedModule = getSecondarySidebarConfig(module) ? module : null;
@@ -1989,6 +2000,7 @@ function renderApp() {
       e.stopPropagation();
       const module = btn.dataset.module;
       const sub = btn.dataset.sub;
+      trocarDeModulo(module);
       state.activeModule = module;
       state.activeSub = sub;
       state.selectedModule = getSecondarySidebarConfig(module) ? module : null;

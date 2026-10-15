@@ -114,7 +114,8 @@ check('some ao rolar a barra', /barra\.addEventListener\('scroll', esconderDicaD
 check('no celular o balão some', /#navDica \{ display: none; \}/.test(cssSrc));
 // Clicar troca a tela e o ícone sai de baixo do cursor — sem esconder, o
 // balão fica pendurado sobre o conteúdo novo.
-check('some ao clicar no módulo', /esconderDicaDaSidebar\(\);\s*\n\s*state\.activeModule = module;/.test(appSrc));
+// (trocarDeModulo, 15/10/2026: a busca guardada das telas some junto.)
+check('some ao clicar no módulo', /esconderDicaDaSidebar\(\);\s*\n\s*(trocarDeModulo\(module\);\s*\n\s*)?state\.activeModule = module;/.test(appSrc));
 // O mouse pode sair da janela sem passar pelo mouseleave e deixar o balão preso.
 check('Escape some com o balão', /if \(evento\.key !== 'Escape'\) return;\s*\n\s*esconderDicaDaSidebar\(\);/.test(appSrc));
 

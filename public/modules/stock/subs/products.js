@@ -13,6 +13,17 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   // existir nesta linha.
   const filters = { search: '', categoryId: '', status: '', situation: '', depositId: '', pendencia: '' };
 
+  // A BUSCA FICA ATÉ TROCAR DE MÓDULO (15/10/2026, pedido do usuário: "quando
+  // eu pesquisar um produto, independente da minha ação referente a classe ou
+  // ao produto em si, apenas se eu trocar de módulo eu quero perder minha
+  // busca"). Filtros, página e ordem eram desta abertura da tela: editar o
+  // produto, ver o status ou as classes e voltar abria a lista do zero. Agora
+  // ficam em state.buscasDasTelas, que só o menu esvazia (trocarDeModulo, no
+  // app.js). A mesma chave em Cadastros e Estoque: a tela é uma só.
+  state.buscasDasTelas = state.buscasDasTelas || {};
+  const buscaGuardada = state.buscasDasTelas.produtos || {};
+  Object.assign(filters, buscaGuardada.filters || {});
+
   // ---------------------------------------------------------------------
   // PAGINA E ORDEM (fase CG)
   //
@@ -25,8 +36,11 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   // exatamente como via antes.
   // ---------------------------------------------------------------------
   const POR_PAGINA = 100;
-  let pagina = 1;
-  const ordem = { campo: 'name', direcao: 'asc' };
+  let pagina = buscaGuardada.pagina || 1;
+  const ordem = { campo: 'name', direcao: 'asc', ...(buscaGuardada.ordem || {}) };
+  const guardarBusca = () => {
+    state.buscasDasTelas.produtos = { filters: { ...filters }, pagina, ordem: { ...ordem } };
+  };
   // Preenchido por fetchProducts a cada carga (fase CT).
   let pendencias = {};
   // Idem, e pela mesma razao: os quatro cartoes somam a SELECAO, e a selecao ja
@@ -173,6 +187,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
   }
 
   async function render() {
+    guardarBusca();
     // `visiveis` e' a pagina que o SERVIDOR mandou, ja filtrada e ja ordenada
     // (fase DG). Antes era `todos` inteiro aqui e o fatiamento acontecia
     // abaixo -- 3.713 KB para mostrar 100 linhas.
