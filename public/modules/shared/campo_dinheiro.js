@@ -4,13 +4,20 @@
 // ajustem automaticamente, seja por cópia e cola ou digitação; coloque sempre
 // em unidade qualquer dígito, no padrão xx,xx; xxx,xx; x.xxx,xx".
 //
-// O QUE O CAMPO FAZ
-//   - Digitando: cada dígito entra como REAIS (unidade), não centavos —
-//     "1500" aparece "1.500". A vírgula (ou o ponto do teclado numérico) abre
-//     os centavos, no máximo dois. O ponto de milhar é posto sozinho.
-//   - Saindo do campo: completa os centavos — "1.500" vira "1.500,00".
+// O QUE O CAMPO FAZ (desde 16/10/2026, pedido do usuário: "todos os valores
+// fiquem em 0,00, e toda edição e modificação comece pelos centavos ao invés
+// de começar pelos reais e a vírgula deve se manter")
+//   - Mostra sempre o valor com centavos; o campo vazio mostra "0,00".
+//   - Digitando: cada dígito entra pelos CENTAVOS e empurra os outros para a
+//     esquerda — "5" -> "0,05", "50" -> "0,50", "500" -> "5,00",
+//     "150000" -> "1.500,00". Apagar tira o último dígito ("5,00" -> "0,50").
+//     A vírgula fica onde está: digitar vírgula ou ponto não faz nada. O
+//     ponto de milhar é posto sozinho. (Até 16/10 o dígito entrava como reais.)
 //   - Colando: aceita "R$ 1.500,50", "1500.5", "1.500,50", "1,500.50"... e
 //     mostra "1.500,50".
+//   - O "0,00" do campo VAZIO continua vazio para quem lê (`value` = ""):
+//     filtro de valor, preço a prazo e preço mínimo distinguem "não
+//     informado" de zero, e mostrar 0,00 não pode virar um zero gravado.
 //
 // O RESTO DO SISTEMA NÃO MUDA. A tela mostra "1.500,50", mas `campo.value`
 // (e o FormData do formulário) continuam devolvendo "1500.5" — o número puro
@@ -35,17 +42,19 @@
 
   const agruparMilhar = (digitos) => digitos.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
-  /** O texto enquanto se digita: "1500" -> "1.500"; "1500,5" -> "1.500,5". */
+  const ZERO = '0,00';
+
+  /**
+   * O texto enquanto se digita, PELOS CENTAVOS: os dígitos, na ordem, são o
+   * valor em centavos — "5" -> "0,05"; "1.500,505" (um 5 digitado depois de
+   * "1.500,50") -> "15.005,05"; sem dígito, "0,00". O sinal: cada "-" digitado
+   * troca, onde o campo aceita negativo.
+   */
   function formatarDigitando(texto, permitirNegativo) {
     const t = String(texto == null ? '' : texto);
-    const negativo = Boolean(permitirNegativo) && /^\s*-/.test(t);
-    const virgula = t.indexOf(',');
-    let inteiro = (virgula < 0 ? t : t.slice(0, virgula)).replace(/\D/g, '').slice(0, MAX_DIGITOS_INTEIROS);
-    const decimal = virgula < 0 ? null : t.slice(virgula + 1).replace(/\D/g, '').slice(0, 2);
-    inteiro = inteiro.replace(/^0+(?=\d)/, '');
-    if (decimal !== null && inteiro === '') inteiro = '0';
-    if (inteiro === '' && decimal === null) return negativo ? '-' : '';
-    return (negativo ? '-' : '') + agruparMilhar(inteiro) + (decimal !== null ? ',' + decimal : '');
+    const negativo = Boolean(permitirNegativo) && (t.match(/-/g) || []).length % 2 === 1;
+    const digitos = t.replace(/\D/g, '').replace(/^0+/, '').slice(0, MAX_DIGITOS_INTEIROS + 2).padStart(3, '0');
+    return (negativo ? '-' : '') + agruparMilhar(digitos.slice(0, -2)) + ',' + digitos.slice(-2);
   }
 
   /** "1.500,5" -> "1500.5" (o que `value` devolve). Vazio -> "". */
@@ -162,17 +171,24 @@
     el.setAttribute('type', 'text');
     el.setAttribute('inputmode', 'decimal');
     el.setAttribute('autocomplete', 'off');
+    // __vazio: a tela mostra "0,00", mas ninguém informou valor (16/10/2026).
     Object.defineProperty(el, 'value', {
       configurable: true,
-      get() { return paraNumero(lerTela(el)); },
-      set(v) { escreverTela(el, textoDoValor(v)); validar(el); }
+      get() { return el.__vazio ? '' : paraNumero(lerTela(el)); },
+      set(v) { mostrar(el, textoDoValor(v)); validar(el); }
     });
     Object.defineProperty(el, 'valueAsNumber', {
       configurable: true,
       get() { const s = el.value; return s === '' ? NaN : Number(s); }
     });
-    escreverTela(el, textoDoValor(inicial));
+    mostrar(el, textoDoValor(inicial));
     validar(el);
+  }
+
+  /** Escreve um valor já formatado; sem valor, "0,00" e vazio para quem lê. */
+  function mostrar(el, texto) {
+    el.__vazio = texto === '';
+    escreverTela(el, texto === '' ? ZERO : texto);
   }
 
   function ativarTodos(raiz) {
@@ -181,32 +197,28 @@
     if (raiz.querySelectorAll) raiz.querySelectorAll(SELETOR).forEach(ativar);
   }
 
-  /** Reformata o que está na tela mantendo o cursor no mesmo dígito. */
+  /**
+   * Reformata o que está na tela, pelos centavos. O cursor fica com os mesmos
+   * dígitos à DIREITA dele — o valor cresce para a esquerda, e no fim do campo
+   * (o caso de sempre) ele continua no fim.
+   */
   function reformatar(el) {
     const bruto = lerTela(el);
     let pos = bruto.length;
     try { pos = el.selectionStart == null ? bruto.length : el.selectionStart; } catch (e) { /* sem seleção */ }
-    const significativos = bruto.slice(0, pos).replace(/[^\d,-]/g, '').length;
+    const aDireita = bruto.slice(pos).replace(/\D/g, '').length;
+    // Apagou tudo: volta a ser "não informado", como o campo que nasce vazio.
+    el.__vazio = !/\d/.test(bruto);
     const novo = formatarDigitando(bruto, permiteNegativo(el));
-    if (novo !== bruto) {
-      escreverTela(el, novo);
-      let i = 0;
-      let contados = 0;
-      while (i < novo.length && contados < significativos) {
-        if (/[\d,-]/.test(novo[i])) contados += 1;
-        i += 1;
-      }
-      try { if (document.activeElement === el) el.setSelectionRange(i, i); } catch (e) { /* idem */ }
+    if (novo !== bruto) escreverTela(el, novo);
+    let i = novo.length;
+    let contados = 0;
+    while (i > 0 && contados < aDireita) {
+      i -= 1;
+      if (/\d/.test(novo[i])) contados += 1;
     }
+    try { if (document.activeElement === el) el.setSelectionRange(i, i); } catch (e) { /* sem seleção */ }
     validar(el);
-  }
-
-  /**
-   * O texto para EDITAR: sem os ",00" que a saída do campo completa
-   * ("5.000,00" -> "5.000"; "0,00" -> "0"). Centavos de verdade ficam.
-   */
-  function paraEdicao(texto) {
-    return String(texto == null ? '' : texto).replace(/,00$/, '');
   }
 
   function ligar(doc) {
@@ -216,12 +228,11 @@
     // (queixa do usuário nos valores dos pagamentos do pedido). Ao entrar, os
     // ",00" saem e o valor fica selecionado — digitar substitui; a saída do
     // campo devolve os centavos (focusout, abaixo).
+    // Desde 16/10/2026 os ",00" ficam (a vírgula não sai do lugar): o valor
+    // só fica selecionado, e o primeiro dígito o substitui pelos centavos.
     doc.addEventListener('focusin', (evento) => {
       const el = evento.target;
       if (!el || !el.__dinheiro || el.readOnly || el.disabled) return;
-      const texto = lerTela(el);
-      const editavel = paraEdicao(texto);
-      if (editavel !== texto) escreverTela(el, editavel);
       try { el.select(); } catch (e) { /* sem seleção */ }
       // O mouseup do próprio clique desfaria a seleção: ele é ignorado uma vez.
       el.__selecionarNoClique = true;
@@ -236,20 +247,12 @@
       if (evento.target && evento.target.__selecionarNoClique) evento.target.__selecionarNoClique = false;
     }, true);
 
-    // O ponto do teclado numérico (e de quem digita "1500.50") vira a vírgula
-    // dos centavos — o ponto de milhar quem põe é o campo. Uma segunda vírgula
-    // é ignorada.
+    // A vírgula é fixa (16/10/2026): vírgula e ponto digitados não fazem nada
+    // — "1500,50" digitado vira 1.500,50 pelos dígitos, do mesmo jeito.
     doc.addEventListener('beforeinput', (evento) => {
       const el = evento.target;
       if (!el || !el.__dinheiro || evento.inputType !== 'insertText' || !evento.data) return;
-      if (evento.data !== '.' && evento.data !== ',') return;
-      evento.preventDefault();
-      const texto = lerTela(el);
-      const ini = el.selectionStart;
-      const fim = el.selectionEnd;
-      if ((texto.slice(0, ini) + texto.slice(fim)).includes(',')) return;
-      el.setRangeText(',', ini, fim, 'end');
-      el.dispatchEvent(new Event('input', { bubbles: true }));
+      if (evento.data === '.' || evento.data === ',') evento.preventDefault();
     }, true);
 
     // Captura: roda ANTES das escutas da tela, que já leem o valor arrumado.
@@ -264,13 +267,10 @@
       const n = deColagem(colado);
       evento.preventDefault();
       if (n === null) return;
-      const texto = lerTela(el);
-      const tudo = el.selectionStart === 0 && el.selectionEnd === texto.length;
-      if (tudo || texto === '') {
-        escreverTela(el, formatar(n));
-      } else {
-        el.setRangeText(String(Math.abs(n)).replace('.', ','), el.selectionStart, el.selectionEnd, 'end');
-      }
+      // O valor colado é o valor inteiro (16/10/2026): pelos centavos, colar
+      // no meio de outro número não tem leitura que faça sentido.
+      mostrar(el, formatar(n));
+      // A escuta de input reformata pelos dígitos — que já são os do valor.
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }, true);
@@ -278,8 +278,9 @@
     doc.addEventListener('focusout', (evento) => {
       const el = evento.target;
       if (!el || !el.__dinheiro) return;
-      const completo = completar(lerTela(el));
-      if (completo !== lerTela(el)) escreverTela(el, completo);
+      const tela = lerTela(el);
+      const completo = completar(tela) || ZERO;
+      if (completo !== tela) escreverTela(el, completo);
       validar(el);
     }, true);
 
@@ -309,7 +310,7 @@
     else ativarTodos(doc);
   }
 
-  const api = { formatarDigitando, paraNumero, formatar, completar, deColagem, textoDoValor, paraEdicao, candidato, NAO_E_DINHEIRO, SELETOR };
+  const api = { ZERO, formatarDigitando, paraNumero, formatar, completar, deColagem, textoDoValor, candidato, NAO_E_DINHEIRO, SELETOR };
   if (temDom && nativo && typeof document !== 'undefined' && document.documentElement) ligar(document);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisCampoDinheiro = api;

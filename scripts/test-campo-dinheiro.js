@@ -29,17 +29,22 @@ const check = (nome, cond, det) => {
 };
 const ler = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
-console.log('--- 1. digitando: cada dígito é unidade ---');
+// Desde 16/10/2026 (pedido do usuário: "toda edição e modificação comece pelos
+// centavos ao invés de começar pelos reais e a vírgula deve se manter"). Até
+// então cada dígito entrava como reais.
+console.log('--- 1. digitando: cada dígito entra pelos centavos ---');
 const passos = ['1', '15', '150', '1500', '15000', '150000', '1500000'].map((t) => D.formatarDigitando(t));
-check('1 -> 15 -> 150 -> 1.500 -> 15.000 -> 150.000 -> 1.500.000',
-  passos.join(' ') === '1 15 150 1.500 15.000 150.000 1.500.000', passos.join(' '));
-check('a vírgula abre os centavos', D.formatarDigitando('1.500,5') === '1.500,5');
-check('  no máximo dois', D.formatarDigitando('1.500,567') === '1.500,56');
-check('  e vírgula sozinha vira 0,', D.formatarDigitando(',') === '0,');
-check('zeros à esquerda somem', D.formatarDigitando('0001234') === '1.234');
-check('letras e símbolos são ignorados', D.formatarDigitando('R$ 12a3') === '123');
-check('sinal só onde o campo aceita negativo',
-  D.formatarDigitando('-12', true) === '-12' && D.formatarDigitando('-12', false) === '12');
+check('1 -> 15 -> 150 -> 1500 -> ... : 0,01 0,15 1,50 15,00 150,00 1.500,00 15.000,00',
+  passos.join(' ') === '0,01 0,15 1,50 15,00 150,00 1.500,00 15.000,00', passos.join(' '));
+check('um dígito depois de "1.500,50" empurra para a esquerda', D.formatarDigitando('1.500,505') === '15.005,05');
+check('apagar o último dígito volta uma casa', D.formatarDigitando('5,0') === '0,50' && D.formatarDigitando('0,0') === '0,00');
+check('sem dígito, "0,00"', D.formatarDigitando('') === '0,00' && D.formatarDigitando(',') === '0,00' && D.ZERO === '0,00');
+check('a vírgula fica no lugar, digitada ou não', D.formatarDigitando('1500,50') === '1.500,50' && D.formatarDigitando('150050') === '1.500,50');
+check('zeros à esquerda somem', D.formatarDigitando('0001234') === '12,34');
+check('letras e símbolos são ignorados', D.formatarDigitando('R$ 12a3') === '1,23');
+check('sinal só onde o campo aceita negativo, e cada "-" troca',
+  D.formatarDigitando('-12', true) === '-0,12' && D.formatarDigitando('-12', false) === '0,12'
+  && D.formatarDigitando('-0,12-', true) === '0,12');
 
 console.log('\n--- 2. saindo do campo: completa os centavos ---');
 check('"1.500" -> "1.500,00"', D.completar('1.500') === '1.500,00');
@@ -102,12 +107,19 @@ check('trocar preço ou quantidade refaz o total do item (Total da Venda na hora
 // ",00" e os dígitos (já há dois centavos) eram descartados. Provado no
 // navegador com clique e teclado reais: ao entrar, "5.990" selecionado;
 // digitar 3000 virou "3.000,00" ao sair; a outra linha aceitou "2990,5".
+// Desde 16/10/2026 os ",00" ficam ao entrar (a vírgula não sai do lugar).
 console.log('\n--- 7. entrar no campo seleciona o valor ---');
-check('ao entrar, os ",00" saem', D.paraEdicao('5.000,00') === '5.000' && D.paraEdicao('0,00') === '0' && D.paraEdicao('1.500,50') === '1.500,50');
-check('  e o valor fica selecionado (o mouseup do clique não desfaz)', (() => {
-  const fonte = ler('public/modules/shared/campo_dinheiro.js');
-  return /addEventListener\('focusin'/.test(fonte) && fonte.includes('el.select();') && fonte.includes('el.__selecionarNoClique = true;');
-})());
+const fonteDoCampo = ler('public/modules/shared/campo_dinheiro.js');
+check('o valor fica selecionado, com os centavos (o mouseup do clique não desfaz)',
+  /addEventListener\('focusin'/.test(fonteDoCampo) && fonteDoCampo.includes('el.select();') && fonteDoCampo.includes('el.__selecionarNoClique = true;')
+  && !/paraEdicao/.test(fonteDoCampo));
+
+console.log('\n--- 8. o campo vazio mostra 0,00 e continua vazio para quem lê ---');
+check('vazio mostra "0,00" e lê ""',
+  /get\(\) \{ return el\.__vazio \? '' : paraNumero\(lerTela\(el\)\); \}/.test(fonteDoCampo)
+  && /function mostrar\(el, texto\) \{\s*el\.__vazio = texto === '';\s*escreverTela\(el, texto === '' \? ZERO : texto\);/.test(fonteDoCampo));
+check('apagar tudo volta a ser "não informado"', /el\.__vazio = !\/\\d\/\.test\(bruto\);/.test(fonteDoCampo));
+check('vírgula e ponto digitados não fazem nada', /if \(evento\.data === '\.' \|\| evento\.data === ','\) evento\.preventDefault\(\);/.test(fonteDoCampo));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);
