@@ -1315,6 +1315,15 @@ button.success:hover { background: var(--success-hover); }
 .transfer-add-botao button { width: 100%; }
 .transfer-classe-aviso { margin: 6px 0 0; font-size: 0.85em; }
 
+/* A movimentação com vários itens (16/10/2026) usa a mesma linha, com uma
+   coluna a mais: o custo unitário. */
+.movimento-add-linha { grid-template-columns: minmax(220px, 2fr) minmax(0, 1fr) 120px 140px auto; }
+/* O nome do produto quebra: sem isto, os nomes longos do Viper ("CONTROLADOR
+   PARTES E ACESSORIOS DOS VEICULOS...") empurravam o Saldo — e o aviso de
+   "insuficiente" — para fora da tela. */
+.movimento-itens td:first-child { white-space: normal; min-width: 240px; }
+.movimento-itens td:not(:first-child) { white-space: nowrap; }
+
 @media (max-width: 900px) {
   .transfer-add-linha { grid-template-columns: 1fr; }
 }

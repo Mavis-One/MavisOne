@@ -143,7 +143,8 @@ check('  sem ler pessoas', !/syncCadastroData|getPeople/.test(contexto));
 const ROTAS_DO_RECORTE = [
   ["/^\\/api\\/stock\\/products\\/[^/]+$/.test(pathname) && req.method === 'GET'", 'Status do Produto', /loadStockContextDosProdutos\(\[id\], \{ comReservas: true \}\)/],
   ["pathname === '/api/stock/products' && req.method === 'POST'", 'cadastro de produto', /loadStockContextDosProdutos\(\[body\.id\], \{ comSkus: true \}\)/],
-  ["pathname === '/api/stock/movements' && req.method === 'POST'", 'movimentação', /loadStockContextDosProdutos\(\[body\.productId\]\)/],
+  // Desde 16/10/2026 a movimentação tem vários itens: os produtos dela todos.
+  ["pathname === '/api/stock/movements' && req.method === 'POST'", 'movimentação', /loadStockContextDosProdutos\(idsDosProdutos\)/],
   ["pathname === '/api/stock/transfers' && req.method === 'POST'", 'transferência', /loadStockContextDosProdutos\(idsDosItens\)/],
   ["pathname === '/api/stock/transfers/receive' && req.method === 'POST'", 'conferência da carga', /loadStockContextDosProdutos\(\s*await razaoEstoque\.produtosDaCarga\(body\.batchId\)\)/]
 ];

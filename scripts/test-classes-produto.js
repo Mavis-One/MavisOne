@@ -337,13 +337,16 @@ check('o estorno devolve para a mesma cor', /O estorno devolve para a MESMA cor/
 
 console.log('\n--- §16 e §17: entrada com cor ---');
 const movSrc = ler('public/modules/stock/subs/new_movement.js');
-check('a movimentação envia a cor', /classValueId: formData\.get\('classValueId'\) \|\| '',/.test(movSrc));
+// Desde 16/10/2026 a movimentação tem vários itens, como a transferência: a cor
+// é de cada item, e o saldo vem do produto, pelo depósito escolhido.
+check('a movimentação envia a cor de cada item', /classValueId: item\.classValueId/.test(movSrc));
 // O saldo por cor é por depósito: "8 pretos" que estão em outro galpão faria a
 // saída ser recusada depois de preenchida.
-check('o saldo da cor segue o depósito escolhido', /const query = depositId \? `\?depositId=\$\{encodeURIComponent\(depositId\)\}` : '';/.test(movSrc));
-check('e trocar de depósito recarrega', /depositId = event\.target\.value;\s*\n\s*const productId/.test(movSrc));
+check('o saldo da cor segue o depósito escolhido', /const deposito = depositoEscolhido\(\);[\s\S]{0,300}const linha = \(balance\.classes \|\| \[\]\)\.find\(\(c\) => c\.classValueId === classValueId\);/.test(movSrc));
+check('e trocar de depósito repinta a cor e a lista', /getElementById\('movementDeposit'\)\?\.addEventListener\('change', \(\) => \{\s*pintarCampoClasse\(\);\s*pintarItens\(\);/.test(movSrc));
 // Na entrada não há nada a decidir pelo saldo; o número só polui o rótulo.
-check('o saldo só aparece na saída', /type === 'saida' \? `\$\{valor\.name\} — \$\{S\.formatQty\(saldo\)\} disponível` : valor\.name/.test(movSrc));
+check('o saldo só aparece na saída', /const saldo = type === 'saida' \? saldoNoDeposito\(produtoAtual, valor\.id\) : null;/.test(movSrc)
+  && /const falta = type === 'saida' && saldo !== null && item\.quantity > saldo;/.test(movSrc));
 // O razão guarda UMA classe por movimento. Duas classes atribuídas não cabem —
 // gravar metade em silêncio é pior do que avisar.
 check('avisa quando o produto tem mais de uma classe', /mas a movimentação registra apenas/.test(movSrc));

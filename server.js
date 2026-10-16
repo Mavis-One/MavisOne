@@ -18887,33 +18887,98 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const body = await readBody(req);
-      // O produto movimentado e o razão dele bastam: a validação de saldo
-      // (assertMovementIsPossible) filtra por este produto, e a guarda que
-      // vale é a do commitStockMovements, em SQL, dentro da transação.
-      const { data, productsById } = await loadStockContextDosProdutos([body.productId]);
+      // VÁRIOS ITENS NUMA MOVIMENTAÇÃO SÓ (16/10/2026, pedido do usuário: "quero
+      // poder adicionar mais de um item em uma única movimentação, para não
+      // precisar abrir 15 movimentações de 15 itens diferentes"). `items` traz
+      // as linhas; tipo, depósito, data, categoria, documento e observação são
+      // da movimentação e valem para todas. Sem `items`, é o formato de antes
+      // (um produto no corpo). As linhas viram um movimento cada, ligados pela
+      // mesma referência ('movimentacao' + id), e entram TODAS ou NENHUMA: a
+      // validação passa por todas antes, e o commit é uma transação só.
+      const linhas = (Array.isArray(body.items) && body.items.length ? body.items : [body]).map((item) => ({
+        productId: String(item.productId || ''),
+        quantity: item.quantity,
+        unitCost: item.unitCost,
+        classId: item.classId || '',
+        classValueId: item.classValueId || ''
+      }));
+      if (linhas.length > 200) {
+        return sendJson(res, { error: 'No máximo 200 itens por movimentação.' }, 400);
+      }
+      // Os produtos movimentados e o razão deles bastam: a validação de saldo
+      // (assertMovementIsPossible) filtra por produto, e a guarda que vale é a
+      // do commitStockMovements, em SQL, dentro da transação.
+      const idsDosProdutos = [...new Set(linhas.map((l) => l.productId))];
+      const { data, productsById } = await loadStockContextDosProdutos(idsDosProdutos);
       const type = String(body.type || '').trim().toLowerCase();
       if (!['entrada', 'saida'].includes(type)) {
         return sendJson(res, { error: 'Tipo de movimentação inválido. Use entrada ou saída.' }, 400);
       }
       // Falha de catálogo não pode travar a movimentação de um produto que
       // não usa classe nenhuma — a lista vazia é o comportamento de sempre.
-      let classesDoProduto = [];
-      try {
-        classesDoProduto = await classesDb.classesDoProduto(body.productId);
-      } catch (erroClasses) {
-        classesDoProduto = [];
+      const classesPorProduto = new Map();
+      for (const productId of idsDosProdutos) {
+        try {
+          classesPorProduto.set(productId, await classesDb.classesDoProduto(productId));
+        } catch (erroClasses) {
+          classesPorProduto.set(productId, []);
+        }
       }
-      assertMovementIsPossible(data, productsById, {
-        productId: body.productId,
-        depositId: body.depositId,
+      // Produto + cor repetidos SOMAM antes de conferir: duas linhas de 5 com
+      // saldo 8 passariam uma a uma e deixariam o depósito negativo.
+      const somadas = new Map();
+      for (const linha of linhas) {
+        const chave = `${linha.productId}|${linha.classValueId}`;
+        const atual = somadas.get(chave) || { ...linha, quantity: 0 };
+        atual.quantity = Number(atual.quantity || 0) + Number(linha.quantity || 0);
+        somadas.set(chave, atual);
+      }
+      for (const linha of linhas) {
+        if (!(Number(linha.quantity) > 0)) {
+          const produto = productsById.get(linha.productId);
+          return sendJson(res, { error: `${produto ? `${produto.name}: ` : ''}informe uma quantidade maior que zero.` }, 400);
+        }
+      }
+      for (const linha of somadas.values()) {
+        try {
+          assertMovementIsPossible(data, productsById, {
+            productId: linha.productId,
+            depositId: body.depositId,
+            type,
+            quantity: linha.quantity,
+            classValueId: linha.classValueId,
+            classesDoProduto: classesPorProduto.get(linha.productId) || []
+          });
+        } catch (erroDaLinha) {
+          // Com vários itens, a recusa diz QUAL produto.
+          const produto = productsById.get(linha.productId);
+          if (linhas.length > 1 && produto && !String(erroDaLinha.message || '').includes(produto.name)) {
+            erroDaLinha.message = `${produto.name}: ${erroDaLinha.message}`;
+          }
+          throw erroDaLinha;
+        }
+      }
+      const grupo = linhas.length > 1 ? stockCore.createId('movgrp') : '';
+      const movements = linhas.map((linha) => buildMovementRecord(data, {
         type,
-        quantity: body.quantity,
-        classValueId: body.classValueId,
-        classesDoProduto
-      });
-      const movement = buildMovementRecord(data, { ...body, type }, user);
-      await commitStockMovements(data, [movement], productsById);
-      return sendJson(res, { success: true, movement: stockCore.serializeMovement(movement, data, productsById) });
+        productId: linha.productId,
+        depositId: body.depositId,
+        quantity: linha.quantity,
+        unitCost: linha.unitCost,
+        classId: linha.classId,
+        classValueId: linha.classValueId,
+        categoryId: body.categoryId,
+        date: body.date,
+        document: body.document,
+        note: body.note,
+        origin: body.origin,
+        transferId: body.transferId,
+        referenceType: grupo ? 'movimentacao' : body.referenceType,
+        referenceId: grupo || body.referenceId
+      }, user));
+      await commitStockMovements(data, movements, productsById);
+      const serializados = movements.map((m) => stockCore.serializeMovement(m, data, productsById));
+      return sendJson(res, { success: true, movement: serializados[0], movements: serializados });
     } catch (error) {
       return sendErro(res, error, 'Erro ao registrar movimentação');
     }
