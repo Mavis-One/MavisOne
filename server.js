@@ -94,8 +94,9 @@ const salesStatus = require('./public/modules/shared/sales_status');
 const vendaObrigatorios = require('./public/modules/shared/venda_obrigatorios');
 // Custo do produto só para administrador (14/10/2026). Ver lib/custo-oculto.js.
 const custoOculto = require('./lib/custo-oculto');
-// A planilha .xlsx das Notas de Entrada (16/10/2026).
+// As planilhas .xlsx das Notas de Entrada e dos Lançamentos (16/10/2026).
 const planilhaEntradas = require('./lib/planilha-entradas');
+const planilhaLancamentos = require('./lib/planilha-lancamentos');
 // Aba Impostos do pedido. Roda a MESMA montagem tributária da emissão — ver o
 // cabeçalho de lib/calcularTributos.js.
 const { calcularTributos } = require('./lib/calcularTributos');
@@ -20569,9 +20570,43 @@ async function tratarRequisicao(req, res) {
         if (doLancamento) doLancamento.push(p);
         else baixasPorLancamento.set(p.entryId, [p]);
       });
-      const conteudo = relatoriosCsv.lancamentos(lista.map((entry) =>
-        serializeFinanceEntry(entry, data, baixasPorLancamento.get(entry.id) || [])));
-      return enviarCsv(res, conteudo, `lancamentos-${toDateStr(getTodayLocal())}.csv`);
+      // ?formato=csv: o CSV de colunas fixas, com a descrição inteira (dado
+      // para análise, sem botão na tela). Sem ele, a PLANILHA PRONTA PARA
+      // IMPRIMIR (16/10/2026): as colunas que a tela mostra, na ordem dela,
+      // com a empresa de cada título como na lista — ver
+      // lib/planilha-lancamentos.js.
+      if (url.searchParams.get('formato') === 'csv') {
+        const conteudo = relatoriosCsv.lancamentos(lista.map((entry) =>
+          serializeFinanceEntry(entry, data, baixasPorLancamento.get(entry.id) || [])));
+        return enviarCsv(res, conteudo, `lancamentos-${toDateStr(getTodayLocal())}.csv`);
+      }
+      const empresaDe = await empresasDosTitulos(lista, data);
+      const lancamentos = lista.map((entry) => {
+        const empresa = empresaDe.get(entry.id);
+        return {
+          ...serializeFinanceEntry(entry, data, baixasPorLancamento.get(entry.id) || []),
+          empresaNome: empresa ? empresa.nome : '',
+          empresaCnpj: empresa ? empresa.cnpj : ''
+        };
+      });
+      const tela = Object.prototype.hasOwnProperty.call(planilhaLancamentos.TELAS, url.searchParams.get('tela'))
+        ? url.searchParams.get('tela') : 'lancamentos';
+      const agora = new Date();
+      const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(agora);
+      const emitidoEm = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      }).format(agora).replace(',', ' às');
+      const arquivo = planilhaLancamentos.planilhaDosLancamentos({
+        lancamentos, tela, hoje, emitidoEm,
+        colunas: planilhaLancamentos.colunasPedidas(url.searchParams.get('colunas'))
+      });
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${tela.replace(/_/g, '-')}-${hoje}.xlsx"`,
+        'Content-Length': arquivo.length,
+        'Cache-Control': 'no-store'
+      });
+      return res.end(arquivo);
     } catch (error) {
       return sendErro(res, error, 'Erro ao exportar lançamentos', 500);
     }

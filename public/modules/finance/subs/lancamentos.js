@@ -779,7 +779,7 @@ function criarTelaDeLancamentos(telaChave) {
         </div>
         <div class="cadastro-list-actions">
           <button type="button" id="financeNewEntryBtn">+ ${escapeHtml(tela.novo)}</button>
-          <button type="button" class="secondary" id="financeExportarBtn" title="Baixa um CSV com todos os lançamentos do filtro, de todas as páginas, na ordem da tela">Exportar CSV</button>
+          <button type="button" class="secondary" id="financeExportarBtn" title="Baixa uma planilha do Excel pronta para imprimir: todos os lançamentos do filtro, de todas as páginas, com as colunas e a ordem da tela">Exportar Excel</button>
           <button type="button" class="secondary" id="financeColunasBtn" aria-expanded="${Boolean(lista.showColunas)}" title="Escolher colunas visíveis">Colunas</button>
           <button type="button" class="secondary" id="financeFilterToggleBtn" aria-expanded="${Boolean(lista.showAdvanced)}">${lista.showAdvanced ? 'Ocultar filtros' : 'Busca avançada'}</button>
         </div>
@@ -892,7 +892,7 @@ function criarTelaDeLancamentos(telaChave) {
       loadModule('finance');
     });
     document.getElementById('financeExportarBtn')?.addEventListener('click', () => {
-      baixarCsv(`/api/finance/entries/exportar?${consulta({ paginado: false }).toString()}`, `${telaChave.replace(/_/g, '-')}.csv`);
+      baixarPlanilha(`/api/finance/entries/exportar?${paraAPlanilha(consulta({ paginado: false })).toString()}`, `${telaChave.replace(/_/g, '-')}.xlsx`);
     });
     document.getElementById('financeColunasBtn')?.addEventListener('click', () => {
       lista.showColunas = !lista.showColunas;
@@ -1124,7 +1124,16 @@ function criarTelaDeLancamentos(telaChave) {
 
   // Baixa o arquivo que o servidor montou, com o token da sessão — um <a href>
   // direto iria sem ele. Mesmo caminho dos relatórios (reports/subs/catalogo.js).
-  async function baixarCsv(endereco, nomePadrao) {
+  // A PLANILHA SEGUE A TELA (16/10/2026): o nome da tela vira o título da
+  // folha impressa, e as colunas visíveis agora, na ordem do catálogo, são as
+  // da planilha — ver lib/planilha-lancamentos.js.
+  function paraAPlanilha(params) {
+    params.set('tela', telaChave);
+    params.set('colunas', colunasVisiveis().map((c) => c.chave).join(','));
+    return params;
+  }
+
+  async function baixarPlanilha(endereco, nomePadrao) {
     let url = null;
     try {
       const resposta = await fetch(endereco, {
@@ -1154,12 +1163,12 @@ function criarTelaDeLancamentos(telaChave) {
     const ids = selecionados().map((l) => l.id);
     if (!ids.length) return;
     if (ids.length > Lista.MAXIMO_DO_LOTE) {
-      showToast(`Exporte até ${Lista.MAXIMO_DO_LOTE} selecionados por vez — ou use Exportar CSV, que leva o filtro inteiro.`, 'warning');
+      showToast(`Exporte até ${Lista.MAXIMO_DO_LOTE} selecionados por vez — ou use Exportar Excel, que leva o filtro inteiro.`, 'warning');
       return;
     }
     const params = new URLSearchParams({ ids: ids.join(',') });
     if (lista.sort) { params.set('sort', lista.sort); params.set('dir', lista.dir); }
-    baixarCsv(`/api/finance/entries/exportar?${params.toString()}`, 'lancamentos-selecionados.csv');
+    baixarPlanilha(`/api/finance/entries/exportar?${paraAPlanilha(params).toString()}`, `${telaChave.replace(/_/g, '-')}-selecionados.xlsx`);
   }
 
   // A resposta do lote vem do SERVIDOR, e não do que a tela previu: entre

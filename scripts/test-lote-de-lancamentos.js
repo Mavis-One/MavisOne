@@ -44,13 +44,18 @@ function pedir(metodo, caminho, corpo) {
         ...(dados ? { 'Content-Length': Buffer.byteLength(dados) } : {})
       }
     }, (res) => {
-      let b = '';
-      res.setEncoding('utf8');
-      res.on('data', (d) => { b += d; });
+      // Os bytes, e não texto: a planilha .xlsx é binária (16/10/2026).
+      const pedacos = [];
+      res.on('data', (d) => { pedacos.push(d); });
       res.on('end', () => {
+        const bytes = Buffer.concat(pedacos);
+        const b = bytes.toString('utf8');
         let json = null;
-        try { json = JSON.parse(b); } catch (_) { /* CSV ou HTML */ }
-        resolve({ status: res.statusCode, json, corpo: b, tipo: res.headers['content-type'] || '' });
+        try { json = JSON.parse(b); } catch (_) { /* CSV, planilha ou HTML */ }
+        resolve({
+          status: res.statusCode, json, corpo: b, bytes, tipo: res.headers['content-type'] || '', disposicao: res.headers['content-disposition'] || '',
+          repetida: res.headers['x-gravacao-repetida'] === '1'
+        });
       });
     });
     req.on('error', (erro) => resolve({ status: 0, erro }));
@@ -175,11 +180,15 @@ const lixo = { usuario: null, lancamentos: [] };
     pedir('POST', '/api/finance/entries/lote', { acao: 'baixar', ids: [D2.id, E2.id, F2.id], date: hoje }),
     pedir('POST', '/api/finance/entries/lote', { acao: 'baixar', ids: [D2.id, E2.id, F2.id], date: hoje })
   ]);
-  const feitos = juntos.reduce((s, r) => s + ((r.json && r.json.processados) || []).length, 0);
+  // Desde a guarda de gravação repetida (15/10/2026), o segundo envio idêntico
+  // nem roda: recebe a CÓPIA da resposta do primeiro (X-Gravacao-Repetida).
+  // Conta só o que rodou de verdade.
+  const feitos = juntos.filter((r) => !r.repetida).reduce((s, r) => s + ((r.json && r.json.processados) || []).length, 0);
   const baixasDeCada = await Promise.all([D2, E2, F2].map(async (e) =>
     ((await pedir('GET', `/api/finance/entries/${encodeURIComponent(e.id)}`)).json.entry.payments || []).length));
   ok('cada título com exatamente UMA baixa', baixasDeCada.every((n) => n === 1), baixasDeCada.join(','));
   ok('  e os dois pedidos juntos processaram 3, não 6', feitos === 3, feitos);
+  ok('  o segundo recebeu a resposta do primeiro, sem rodar de novo', juntos.filter((r) => r.repetida).length === 1);
 
   console.log('\n--- 5. o lote recusa o que não faz sentido ---');
   const recusas = [
@@ -194,15 +203,32 @@ const lixo = { usuario: null, lancamentos: [] };
     ok(`400 para ${nome}`, r.status === 400, `${r.status} ${(r.json && r.json.error) || ''}`);
   }
 
-  console.log('\n--- 6. exportar ---');
-  const csv = await pedir('GET', `/api/finance/entries/exportar?search=${encodeURIComponent(marca)}&sort=amount&dir=asc`);
+  console.log('\n--- 6. exportar: a planilha pronta para imprimir (16/10/2026) ---');
+  const { lerXlsx } = require('../lib/xlsx-leitor');
+  const xlsx = await pedir('GET', `/api/finance/entries/exportar?search=${encodeURIComponent(marca)}&sort=amount&dir=asc`);
+  const abaXlsx = xlsx.status === 200 ? lerXlsx(xlsx.bytes)[0] : { nome: '', linhas: [] };
+  ok('sem formato, vem a planilha .xlsx', xlsx.status === 200 && /spreadsheetml/.test(xlsx.tipo) && /\.xlsx"/.test(xlsx.disposicao), `${xlsx.status} ${xlsx.tipo}`);
+  ok('  com as colunas da tela, na ordem dela', (abaXlsx.linhas[0] || []).join('|')
+    === 'Conta bancária|Data|Vencimento|Empresa|Tipo|Categoria|Cliente/Fornecedor|Descrição|Valor previsto|Valor realizado|Situação|Documento|Forma de pagamento',
+  (abaXlsx.linhas[0] || []).join('|'));
+  ok('  os seis do filtro, na ordem da tela, e a linha de total', abaXlsx.linhas.length === 8
+    && String(abaXlsx.linhas[1][7]).includes(`${marca} D`) && /^Total \(6 lançamentos\)/.test(abaXlsx.linhas[7][0]), `${abaXlsx.linhas.length} linhas`);
+  const doPagar = await pedir('GET', `/api/finance/entries/exportar?search=${encodeURIComponent(marca)}&tela=contas_a_pagar&colunas=description,amountPrevisto,nao-existe`);
+  const abaPagar = doPagar.status === 200 ? lerXlsx(doPagar.bytes)[0] : { nome: '', linhas: [[]] };
+  ok('  a tela dá o nome da aba (e do arquivo), e só as colunas pedidas e conhecidas', abaPagar.nome === 'Contas a Pagar'
+    && abaPagar.linhas[0].join('|') === 'Descrição|Valor previsto' && /contas-a-pagar-/.test(doPagar.disposicao), `${abaPagar.nome} · ${abaPagar.linhas[0].join('|')}`);
+  const xlsxSel = await pedir('GET', `/api/finance/entries/exportar?ids=${encodeURIComponent([A.id, B.id].join(','))}`);
+  ok('  só os selecionados', xlsxSel.status === 200 && lerXlsx(xlsxSel.bytes)[0].linhas.length === 4);
+
+  console.log('\n--- 6b. o CSV de dados continua, com ?formato=csv ---');
+  const csv = await pedir('GET', `/api/finance/entries/exportar?search=${encodeURIComponent(marca)}&sort=amount&dir=asc&formato=csv`);
   const linhas = csv.corpo.replace(/^﻿/, '').trim().split('\r\n');
   ok('o filtro inteiro, em CSV (os seis do teste)', csv.status === 200 && /text\/csv/.test(csv.tipo) && linhas.length === 7, `${csv.status} · ${linhas.length} linhas`);
   ok('  com BOM (acentos no Excel) e o cabeçalho em português', csv.corpo.startsWith('﻿') && /^Código;Data;Vencimento;Descrição/.test(linhas[0]));
   ok('  na ordem da tela (valor crescente: D, de R$ 10, primeiro)', linhas[1].includes(`${marca} D`) && /;10,00;/.test(linhas[1]), linhas[1]);
   ok('  e o em aberto do pago é zero', /;10,00;10,00;0,00;Pago;/.test(linhas[1]), linhas[1]);
   ok('  com a descrição inteira, não o resumo', linhas.slice(1).every((l) => l.includes(marca)));
-  const csvSel = await pedir('GET', `/api/finance/entries/exportar?ids=${encodeURIComponent([A.id, B.id].join(','))}`);
+  const csvSel = await pedir('GET', `/api/finance/entries/exportar?ids=${encodeURIComponent([A.id, B.id].join(','))}&formato=csv`);
   ok('só os selecionados', csvSel.status === 200 && csvSel.corpo.trim().split('\r\n').length === 3);
   const csvDemais = await pedir('GET', `/api/finance/entries/exportar?ids=${Array.from({ length: 201 }, (_, i) => `x${i}`).join(',')}`);
   ok('mais de 200 selecionados: recusado, com o caminho', csvDemais.status === 400 && /filtro/.test((csvDemais.json && csvDemais.json.error) || ''));
