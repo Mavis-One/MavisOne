@@ -3752,6 +3752,27 @@ async function loadModule(moduleName) {
               }
               draft.selecionados = [];
               draft.showLoteMenu = false;
+              // APROVAR PELA LISTA TAMBÉM ABRE OS TÍTULOS (16/10/2026, queixa do
+              // usuário: a Edição de Título não abria). A mesma fila de quem
+              // aprova de dentro do pedido; cada título diz de qual pedido é, e
+              // o último volta à lista.
+              const comTitulos = (resposta.resultados || []).filter((r) => (r.titulos || []).length);
+              if (comTitulos.length && (state.user?.allowedModules || []).includes('finance')) {
+                const ids = comTitulos.flatMap((r) => r.titulos);
+                state.financeFilaDaEntrada = {
+                  ids,
+                  titulo: comTitulos.length === 1 ? `Pedido ${comTitulos[0].code}` : `${comTitulos.length} pedidos aprovados`,
+                  tituloDe: Object.fromEntries(comTitulos.flatMap((r) => r.titulos.map((id) => [id, `Pedido ${r.code}`]))),
+                  aviso: 'Valor, data, descrição e cliente vêm do pedido.',
+                  volta: { module: 'sales', sub: 'orders_quotes', rotulo: 'Voltar aos Pedidos e Orçamentos' }
+                };
+                state.financeEditEntryId = ids[0];
+                state.activeModule = 'finance';
+                state.activeSub = 'edicao_titulo';
+                renderApp();
+                loadModule('finance');
+                return;
+              }
               loadModule('sales');
             } catch (erro) {
               showToast(erro.message || 'Não foi possível executar a ação.', 'error');

@@ -75,9 +75,23 @@ check('aprovar abre os títulos criados, um após o outro',
   && /state\.financeFilaDaEntrada = \{\s*ids: gerados,\s*titulo: `Pedido /.test(app)
   && /volta: \{ module: 'sales', sub: 'new_sale', rotulo: 'Voltar ao pedido', recordId: editRecord\.id \}/.test(app));
 const titulo = ler('public/modules/finance/subs/novo_lancamento.js');
-check('  a Edição de Título mostra o pedido e a posição', /\$\{escapeHtml\(filaDaEntrada\.titulo \|\| `Entrada da \$\{filaDaEntrada\.nota\}`\)\} · título/.test(titulo));
+check('  a Edição de Título mostra o pedido e a posição', /\$\{escapeHtml\(\(filaDaEntrada\.tituloDe && filaDaEntrada\.tituloDe\[editEntry\.id\]\) \|\| filaDaEntrada\.titulo \|\| `Entrada da \$\{filaDaEntrada\.nota\}`\)\} · título/.test(titulo));
 check('  e o último volta ao pedido aberto',
   /async function voltarDaFila\(\) \{[\s\S]{0,200}if \(volta\.recordId\) \{[\s\S]{0,200}state\.salesDraft = \{ \.\.\.\(state\.salesDraft \|\| \{\}\), editRecord: res\.record, novoStatus: '' \};/.test(titulo));
+
+// Queixa do usuário (16/10/2026, depois do commit): a Edição de Título não
+// abria. Aprovar pela LISTA (seleciona e "Aprovar") ia ao lote do servidor e
+// voltava para a lista; só o Aprovar de dentro do pedido abria a fila.
+console.log('\n--- 4b. aprovar pela lista também abre os títulos ---');
+check('o lote devolve os títulos que cada troca criou',
+  /const antes = new Set\(doPedido\(\)\);\s*await mudarStatusSalesRecord\(registro, acao\.destino\(registro\), data, user\);\s*resultados\.push\(\{ id: registro\.id, code: registro\.code, titulos: doPedido\(\)\.filter\(\(tituloId\) => !antes\.has\(tituloId\)\) \}\);/.test(servidor));
+check('  e a lista abre a fila com eles, cada título com o seu pedido',
+  /const comTitulos = \(resposta\.resultados \|\| \[\]\)\.filter\(\(r\) => \(r\.titulos \|\| \[\]\)\.length\);/.test(app)
+  && /tituloDe: Object\.fromEntries\(comTitulos\.flatMap\(\(r\) => r\.titulos\.map\(\(id\) => \[id, `Pedido \$\{r\.code\}`\]\)\)\),/.test(app)
+  && /volta: \{ module: 'sales', sub: 'orders_quotes', rotulo: 'Voltar aos Pedidos e Orçamentos' \}/.test(app));
+check('as confirmações dizem que as contas a receber nascem na aprovação',
+  /As contas a receber são geradas agora e a Edição de Título abre em seguida\./.test(ler('public/modules/shared/sales_record_actions.js'))
+  && /com as contas a receber geradas agora\./.test(ler('public/modules/shared/sales_bulk_actions.js')));
 
 console.log('\n--- 5. Pagamentos › Lançamentos financeiros ---');
 // Pedido do usuário (16/10/2026): "dentro de pagamentos para pedidos já

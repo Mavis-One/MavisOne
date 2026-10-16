@@ -284,7 +284,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         </div>
         ${filaDaEntrada ? `
           <p class="prompt-aviso">
-            <strong>${escapeHtml(filaDaEntrada.titulo || `Entrada da ${filaDaEntrada.nota}`)} · título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length}.</strong>
+            <strong>${escapeHtml((filaDaEntrada.tituloDe && filaDaEntrada.tituloDe[editEntry.id]) || filaDaEntrada.titulo || `Entrada da ${filaDaEntrada.nota}`)} · título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length}.</strong>
             ${escapeHtml(filaDaEntrada.aviso || 'Valor, data, descrição e fornecedor vêm da nota.')}
           </p>` : vinculado ? `
           <p class="prompt-aviso">

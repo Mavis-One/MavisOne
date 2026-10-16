@@ -59,7 +59,9 @@
       // para "Faturado", e faturar sem nota é recusado (fase AV): o Aprovar da
       // lista não aprovava pedido nenhum. Quem fatura é a autorização da nota.
       destino: (r) => (ehPedido(r) ? 'pedido-pre-faturado' : 'orcamento-aprovado'),
-      confirma: 'Aprovar os selecionados? Orçamentos passam a Aprovado; pedidos a Pré-Faturado, e em seguida se gera a NF-e ou a NFC-e de cada um (a autorização da nota baixa o estoque e gera as contas a receber).',
+      // Desde 16/10/2026 as contas a receber nascem na aprovação, e a Edição de
+      // Título abre para elas em seguida (app.js, resposta do lote).
+      confirma: 'Aprovar os selecionados? Orçamentos passam a Aprovado; pedidos a Pré-Faturado, com as contas a receber geradas agora. Em seguida se gera a NF-e ou a NFC-e de cada um (a autorização da nota baixa o estoque).',
       elegivel: (r) => {
         if (ehPedido(r)) {
           if (S.geraFinanceiro(r.status)) return 'Este pedido já está faturado.';

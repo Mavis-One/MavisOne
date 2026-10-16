@@ -14089,8 +14089,15 @@ async function tratarRequisicao(req, res) {
             await excluirSalesRecord(registro.id, data, user, escopoDoUsuario);
             resultados.push({ id: registro.id, code: registro.code });
           } else if (acao.destino) {
+            // Os títulos que esta troca criou (16/10/2026: aprovar cria as
+            // contas a receber), para a lista abrir a Edição de Título deles.
+            // data.finance tem os do pedido (syncFinanceDataDosPedidos), e os
+            // criados entram nele.
+            const doPedido = () => (data.finance || [])
+              .filter((entry) => entry.referenceId === registro.id && entry.status !== 'cancelado').map((entry) => entry.id);
+            const antes = new Set(doPedido());
             await mudarStatusSalesRecord(registro, acao.destino(registro), data, user);
-            resultados.push({ id: registro.id, code: registro.code });
+            resultados.push({ id: registro.id, code: registro.code, titulos: doPedido().filter((tituloId) => !antes.has(tituloId)) });
           } else {
             falhas.push({ code: registro.code, motivo: 'Ação sem execução no servidor.' });
           }

@@ -91,8 +91,9 @@ window.MavisSalesRecordActions = (function () {
         if (temNotaValendo(ctx)) {
           return ctx.mudarStatus('pedido-faturado', 'Faturar este pedido? O estoque será baixado e as contas a receber serão geradas.');
         }
+        // Desde 16/10/2026 as contas a receber nascem aqui, na aprovação.
         return ctx.mudarStatus('pedido-pre-faturado',
-          'Aprovar este pedido? Em seguida gere a NF-e ou a NFC-e: a autorização da nota baixa o estoque e gera as contas a receber.');
+          'Aprovar este pedido? As contas a receber são geradas agora e a Edição de Título abre em seguida. Depois gere a NF-e ou a NFC-e (a autorização da nota baixa o estoque).');
       }
     },
     {
