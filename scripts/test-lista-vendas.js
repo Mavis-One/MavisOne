@@ -59,7 +59,8 @@ const rota = serverSrc.slice(serverSrc.indexOf("if (view === 'orders_quotes')"),
 // Isso vale para o CAMINHO COMPLETO, que e' o que filtra. A fase DE pos um
 // caminho para a busca SEM filtro, e la a ordem e decidida antes -- ver o bloco
 // seguinte, que confere as tres coisas que fazem os dois caminhos concordarem.
-const completo = rota.slice(rota.indexOf('const combined = [...data.orders'));
+// pedidosVisiveis desde 16/10/2026: o vendedor só vê as vendas dele.
+const completo = rota.slice(rota.indexOf('const combined = [...pedidosVisiveis'));
 const posSerializa = completo.indexOf('combined.map((record) => serializeSalesRecord');
 const posOrdena = completo.indexOf('ordenarSalesRecords(');
 const posFatia = completo.indexOf('.slice(start, start + limit)');
@@ -106,7 +107,7 @@ check('  nos DOIS ramos de ordenarSalesRecords', usosDoDesempate === 2, `${usosD
 check('o caminho rapido e escolhido pelos parametros INERTES',
   /const PARAMETROS_QUE_NAO_FILTRAM = new Set\(\[/.test(serverSrc)
   && /if \(!PARAMETROS_QUE_NAO_FILTRAM\.has\(chave\)\) return false;/.test(serverSrc));
-const posDecide = serverSrc.indexOf('const listaSemFiltro = view ===');
+const posDecide = serverSrc.indexOf('const listaSemFiltro = !soDoVendedor && view ===');
 const posOnda = serverSrc.indexOf('listaSemFiltro ? syncSalesDataDaPagina(data');
 check('e a decisao vem ANTES da onda de sincronizacao',
   posDecide > -1 && posOnda > posDecide, `decide ${posDecide}, sincroniza ${posOnda}`);

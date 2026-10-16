@@ -57,14 +57,34 @@ check('gravar e lote (aplicarEfeitosDeStatus): só rascunho, antes de tudo',
   && efeitos.indexOf('vendaDoVendedor.soCria(escopo)') < efeitos.indexOf('const eraFaturado'));
 check('criar: só rascunho', /if \(vendaDoVendedor\.soCria\(escopoDoUsuario\)\s*&& \(type === 'nfe' \|\| !vendaDoVendedor\.ehRascunho\(status,/.test(server));
 check('excluir (rota e lote): recusado', /if \(escopoDaExclusao && vendaDoVendedor\.soCria\(escopoDaExclusao\)\) \{/.test(server));
-check('lista: o vendedor dele entra no filtro antes de escolher o caminho',
-  /if \(soDoVendedor\) url\.searchParams\.set\('sellerId', soDoVendedor\);[\s\S]{0,300}const \{ page, limit \} = parsePageParams[\s\S]{0,200}const listaSemFiltro = /.test(server));
+// Desde 16/10/2026 "dele" = vendedor dele OU criada por ele (lista vazia de
+// vendedor que lançou venda antes de a venda nascer no nome dele).
+check('lista: só as que ele vê, e o vendedor não vai pelo caminho sem filtro',
+  /const vendaVisivel = \(r\) => !soDoVendedor\s*\|\| vendaDoVendedor\.podeVerVenda\(escopoDaLista, r\.sellerId, r\.createdBy, usuarioDaLista && usuarioDaLista\.id\);/.test(server)
+  && /const listaSemFiltro = !soDoVendedor && view === 'orders_quotes'/.test(server)
+  && /const pedidosVisiveis = data\.orders\.filter\(vendaVisivel\);/.test(server)
+  && !/url\.searchParams\.set\('sellerId', soDoVendedor\)/.test(server));
 check('  e os cartões contam só as dele', /contagens: soDoVendedor \? \(\(\) => \{/.test(server));
 check('  e as outras visões também', /return sendJson\(res, \{ orders: doVendedor\(data\.orders\), quotes: doVendedor\(data\.quotes\), nfes: notasVisiveis/.test(server));
-check('abrir: venda de outro = não encontrada', /if \(!vendaDoVendedor\.podeVerVenda\(escopoDeQuemAbre, registro\.sellerId\)\) \{\s*return sendJson\(res, \{ error: 'Pedido\/orçamento não encontrado' \}, 404\);/.test(server));
-check('gravar: idem, antes da regra do colega', /if \(!vendaDoVendedor\.podeVerVenda\(escopoDoUsuario, current\.sellerId\)\) \{\s*return sendJson\(res, \{ error: 'Pedido\/orçamento não encontrado' \}, 404\);\s*\}\s*if \(!vendaDoVendedor\.podeMexerNaVenda/.test(server));
-check('anexos: idem', /if \(!vendaDoVendedor\.podeVerVenda\(escopoLib\.escopoDeVendas\(user, \{ ehAdmin: await ehAdmin\(user\) \}\), registro\.sellerId\)\)/.test(server));
-check('lote: venda invisível nem entra', /\.filter\(\(r\) => r && vendaDoVendedor\.podeVerVenda\(escopoDoUsuario, r\.sellerId\)\)/.test(server));
+check('abrir: venda de outro = não encontrada', /if \(!vendaDoVendedor\.podeVerVenda\(escopoDeQuemAbre, registro\.sellerId, registro\.createdBy, user\.id\)\) \{\s*return sendJson\(res, \{ error: 'Pedido\/orçamento não encontrado' \}, 404\);/.test(server));
+check('gravar: idem, antes da regra do colega', /if \(!vendaDoVendedor\.podeVerVenda\(escopoDoUsuario, current\.sellerId, current\.createdBy, user\.id\)\) \{\s*return sendJson\(res, \{ error: 'Pedido\/orçamento não encontrado' \}, 404\);\s*\}\s*if \(!vendaDoVendedor\.podeMexerNaVenda/.test(server));
+check('anexos: idem', /if \(!vendaDoVendedor\.podeVerVenda\(escopoLib\.escopoDeVendas\(user, \{ ehAdmin: await ehAdmin\(user\) \}\), registro\.sellerId, registro\.createdBy, user\.id\)\)/.test(server));
+check('lote: venda invisível nem entra', /\.filter\(\(r\) => r && vendaDoVendedor\.podeVerVenda\(escopoDoUsuario, r\.sellerId, r\.createdBy, user\.id\)\)/.test(server));
+check('a busca traz quem criou a venda', /created_by/.test(fs.readFileSync(path.join(__dirname, '..', 'lib/db/vendas-compras.js'), 'utf8').match(/COLUNAS_DA_BUSCA[\s\S]{0,1500}?;/)[0]));
+
+const regra = require('../lib/venda-do-vendedor');
+const escopoVendedor = { tipo: require('../lib/relatorios-escopo').PROPRIO, sellerIds: ['v1'] };
+check('vê a venda em que é o vendedor', regra.podeVerVenda(escopoVendedor, 'v1', 'outro', 'u1'));
+check('  e a que ele criou no nome de outro vendedor', regra.podeVerVenda(escopoVendedor, 'v2', 'u1', 'u1'));
+check('  mas não a de colega que ele não criou', !regra.podeVerVenda(escopoVendedor, 'v2', 'u2', 'u1'));
+check('  nem a sem vendedor criada por outro', !regra.podeVerVenda(escopoVendedor, '', 'u2', 'u1'));
+check('  e sem saber quem é ele, só pelo vendedor', !regra.podeVerVenda(escopoVendedor, 'v2', '', ''));
+
+console.log('\n--- Nova Venda pelo menu abre em branco ---');
+const appJs = semComentarios(fs.readFileSync(path.join(__dirname, '..', 'public/app.js'), 'utf8'));
+check('o menu limpa o pedido aberto antes de abrir Nova Venda',
+  /function novaVendaPeloMenu\(modulo, sub\) \{\s*if \(modulo !== 'sales' \|\| sub !== 'new_sale' \|\| !state\.salesDraft\) return;\s*state\.salesDraft\.editRecord = null;\s*state\.salesDraft\.novoStatus = '';\s*\}/.test(appJs));
+check('  chamado nos caminhos do menu', (appJs.match(/novaVendaPeloMenu\(/g) || []).length >= 5, (appJs.match(/novaVendaPeloMenu\(/g) || []).length);
 check('NF-e, NFC-e do pedido e nota manual ligada a pedido: recusadas',
   /async function emitirNfeFiscal\(body, user, opcoes = \{\}\) \{\s*await recusarVendedorNaNotaDoPedido\(user, Boolean\(body\.orderId \|\| body\.saleId\)\);/.test(server)
   && /async function emitirNfceDoPedido\([^)]*\) \{\s*await recusarVendedorNaNotaDoPedido\(user, true\);/.test(server)

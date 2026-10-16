@@ -13634,14 +13634,18 @@ async function tratarRequisicao(req, res) {
       ? escopoLib.escopoDeVendas(usuarioDaLista, { ehAdmin: await ehAdmin(usuarioDaLista) })
       : null;
     const soDoVendedor = escopoDaLista ? vendaDoVendedor.soVeAsDele(escopoDaLista) : '';
-    if (soDoVendedor) url.searchParams.set('sellerId', soDoVendedor);
+    // Desde 16/10/2026 "as dele" é o vendedor da venda OU quem a criou
+    // (vendaDoVendedor.podeVerVenda) — um filtro de vendedor só não serve;
+    // a lista do vendedor vai sempre pela busca, que filtra registro a registro.
+    const vendaVisivel = (r) => !soDoVendedor
+      || vendaDoVendedor.podeVerVenda(escopoDaLista, r.sellerId, r.createdBy, usuarioDaLista && usuarioDaLista.id);
     // A tela usa para desligar, com o motivo, o que o vendedor não faz.
     const vendedorDaLista = {
       soCria: Boolean(escopoDaLista && vendaDoVendedor.soCria(escopoDaLista)),
       soVeAsDele: Boolean(soDoVendedor)
     };
     const { page, limit } = parsePageParams(url.searchParams, 15);
-    const listaSemFiltro = view === 'orders_quotes' && buscaDeVendasSemFiltro(url.searchParams);
+    const listaSemFiltro = !soDoVendedor && view === 'orders_quotes' && buscaDeVendasSemFiltro(url.searchParams);
 
     // O HISTÓRICO DE IMPORTAÇÕES SÓ LÊ O HISTÓRICO (fase DS). Esta view caía
     // na onda de baixo — `select *` dos 14.942 registros, cadastro e notas —
@@ -13718,7 +13722,9 @@ async function tratarRequisicao(req, res) {
         }));
       }
 
-      const combined = [...data.orders, ...data.quotes];
+      const pedidosVisiveis = data.orders.filter(vendaVisivel);
+      const orcamentosVisiveis = data.quotes.filter(vendaVisivel);
+      const combined = [...pedidosVisiveis, ...orcamentosVisiveis];
 
       // SERIALIZA -> FILTRA -> ORDENA -> FATIA, nesta ordem.
       //
@@ -13736,7 +13742,7 @@ async function tratarRequisicao(req, res) {
       const serializados = combined.map((record) => serializeSalesRecord(record, data));
       // De qual tabela veio cada um: o segundo passo relê por tabela, e o id
       // sozinho não diz (a troca de tipo mantém o id ao mudar de tabela).
-      const tabelaDe = new Map(serializados.map((s, i) => [s, i < data.orders.length ? 'orders' : 'quotes']));
+      const tabelaDe = new Map(serializados.map((s, i) => [s, i < pedidosVisiveis.length ? 'orders' : 'quotes']));
       const filtered = filterSalesRecords(serializados, url.searchParams);
       const ordenados = ordenarSalesRecords(
         filtered,
@@ -13764,7 +13770,7 @@ async function tratarRequisicao(req, res) {
         limit,
         // Para o vendedor, os cartões do alto contam só as vendas dele.
         contagens: soDoVendedor ? (() => {
-          const dele = serializados.filter((s) => s.sellerId === soDoVendedor);
+          const dele = serializados;
           return {
             orders: dele.filter((s) => tabelaDe.get(s) === 'orders').length,
             quotes: dele.filter((s) => tabelaDe.get(s) === 'quotes').length,
@@ -13783,7 +13789,7 @@ async function tratarRequisicao(req, res) {
       }));
     }
     // As outras visões devolvem as listas inteiras: para o vendedor, só o dele.
-    const doVendedor = (lista) => (soDoVendedor ? (lista || []).filter((r) => String(r.sellerId || '').trim() === soDoVendedor) : lista);
+    const doVendedor = (lista) => (soDoVendedor ? (lista || []).filter(vendaVisivel) : lista);
     const pedidosDele = soDoVendedor ? new Set(doVendedor(data.orders).map((o) => o.id)) : null;
     const notasVisiveis = pedidosDele ? (data.nfes || []).filter((n) => pedidosDele.has(n.orderId || n.saleId)) : data.nfes;
     if (view === 'nfes') {
@@ -14012,7 +14018,7 @@ async function tratarRequisicao(req, res) {
       // como se o id não existisse — nem duplicar, nem imprimir.
       const selecionados = ids
         .map((id) => todos.find((r) => r.id === id))
-        .filter((r) => r && vendaDoVendedor.podeVerVenda(escopoDoUsuario, r.sellerId))
+        .filter((r) => r && vendaDoVendedor.podeVerVenda(escopoDoUsuario, r.sellerId, r.createdBy, user.id))
         .map((r) => serializeSalesRecord(r, data));
 
       // A ELEGIBILIDADE É AVALIADA AQUI TAMBÉM, e não só na tela. A tela avalia
@@ -14087,7 +14093,7 @@ async function tratarRequisicao(req, res) {
       const registro = [...(data.orders || []), ...(data.quotes || [])].find((r) => r.id === registroId);
       if (!registro) return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       // Os anexos de venda que o vendedor não enxerga (16/10/2026) também não.
-      if (!vendaDoVendedor.podeVerVenda(escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) }), registro.sellerId)) {
+      if (!vendaDoVendedor.podeVerVenda(escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) }), registro.sellerId, registro.createdBy, user.id)) {
         return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       }
       const fichas = Array.isArray(registro.attachments) ? registro.attachments : [];
@@ -14512,7 +14518,7 @@ async function tratarRequisicao(req, res) {
       if (!registro) return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       // O vendedor só abre as vendas dele (16/10/2026; ver podeVerVenda).
       const escopoDeQuemAbre = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
-      if (!vendaDoVendedor.podeVerVenda(escopoDeQuemAbre, registro.sellerId)) {
+      if (!vendaDoVendedor.podeVerVenda(escopoDeQuemAbre, registro.sellerId, registro.createdBy, user.id)) {
         return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       }
       return sendJson(res, { record: serializeSalesRecord(registro, data) });
@@ -14562,7 +14568,7 @@ async function tratarRequisicao(req, res) {
       const escopoDoUsuario = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
       // Venda que o vendedor não enxerga (16/10/2026) é venda que não existe
       // para ele: a mesma resposta de abrir.
-      if (!vendaDoVendedor.podeVerVenda(escopoDoUsuario, current.sellerId)) {
+      if (!vendaDoVendedor.podeVerVenda(escopoDoUsuario, current.sellerId, current.createdBy, user.id)) {
         return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
       }
       if (!vendaDoVendedor.podeMexerNaVenda(escopoDoUsuario, current.sellerId)) {

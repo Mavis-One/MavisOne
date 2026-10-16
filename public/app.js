@@ -214,6 +214,21 @@ function temTelaAnteriorNoHistorico() {
   return Number((window.history.state && window.history.state.mavisPasso) || 0) > 0;
 }
 
+/**
+ * A NOVA VENDA ABERTA PELO MENU É UMA VENDA NOVA (16/10/2026, pedido do
+ * usuário: "pedido que foi finalizado está voltando para um pedido já
+ * faturado" — ao abrir a Nova Venda aparecia o pedido anterior). Salvar e
+ * aprovar deixam o pedido aberto de propósito (state.salesDraft.editRecord),
+ * e o botão "+ Nova Venda" da lista o limpava; o menu lateral, o submenu e os
+ * Atalhos iam direto para a tela e o reabriam. Quem abre um pedido de
+ * propósito (lápis, duplo clique) põe o registro depois de chamar isto.
+ */
+function novaVendaPeloMenu(modulo, sub) {
+  if (modulo !== 'sales' || sub !== 'new_sale' || !state.salesDraft) return;
+  state.salesDraft.editRecord = null;
+  state.salesDraft.novoStatus = '';
+}
+
 /** A tela do endereço, se ela pode ser aberta por quem entrou. */
 function aplicarTelaDoEndereco() {
   const doEndereco = telaDoEndereco();
@@ -490,6 +505,7 @@ function renderSecondarySidebar() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       trocarDeModulo(btn.dataset.module);
+      novaVendaPeloMenu(btn.dataset.module, btn.dataset.sub);
       state.activeModule = btn.dataset.module;
       state.activeSub = btn.dataset.sub;
       state.hoveredModule = null;
@@ -1971,6 +1987,7 @@ function renderApp() {
     escapeHtml,
     temAcesso: hasModuleAccess,
     irPara: (modulo, sub) => {
+      novaVendaPeloMenu(modulo, sub);
       state.activeModule = modulo;
       state.activeSub = sub;
       renderApp();
@@ -2030,6 +2047,7 @@ function renderApp() {
       const module = btn.dataset.module;
       const sub = btn.dataset.sub;
       trocarDeModulo(module);
+      novaVendaPeloMenu(module, sub);
       state.activeModule = module;
       state.activeSub = sub;
       state.selectedModule = getSecondarySidebarConfig(module) ? module : null;
@@ -9267,10 +9285,7 @@ async function loadModule(moduleName) {
 document.addEventListener('click', (evento) => {
   const botao = evento.target.closest('[data-ir-para]');
   if (!botao) return;
-  if (botao.dataset.limpaRascunho) {
-    state.salesDraft.editRecord = null;
-    state.salesDraft.novoStatus = '';
-  }
+  if (botao.dataset.limpaRascunho) novaVendaPeloMenu('sales', 'new_sale');
   state.activeSub = botao.dataset.irPara;
   renderApp();
   loadModule('sales');
