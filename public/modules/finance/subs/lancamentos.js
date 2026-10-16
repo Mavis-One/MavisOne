@@ -87,28 +87,15 @@ function financeEmAberto(entry) {
 // seletor de colunas e a preferência salva leem esta lista. `ordem` é a chave
 // que o servidor ordena (MavisListaDeLancamentos.ORDENAVEIS); coluna sem ela
 // não ganha cabeçalho clicável. `f` traz os formatadores que dependem do ctx.
+//
+// 16/10/2026, pedido do usuário: "inverta os campos de descrição e empresa ...
+// também retire o código e coloque as contas bancárias". A Conta bancária
+// ocupa o lugar do Código, Empresa e Descrição trocaram de lugar, e o Código
+// deixou de ser fixo: continua no seletor de colunas, no fim, para quem quiser.
 const FINANCE_LISTA_COLUNAS = [
-  { chave: 'codigo', rotulo: 'Código', ordem: 'codigo', fixa: true, valor: (e, f) => f.esc(e.codigo || '-') },
+  { chave: 'bankAccount', rotulo: 'Conta bancária', ordem: 'bankAccount', valor: (e, f) => f.cortado(e.bankAccountName, 'is-curto') },
   { chave: 'date', rotulo: 'Data', ordem: 'date', valor: (e) => financeFormatDate(e.date) },
   { chave: 'dueDate', rotulo: 'Vencimento', ordem: 'dueDate', valor: (e) => financeFormatDate(e.dueDate) },
-  {
-    chave: 'description',
-    rotulo: 'Descrição',
-    ordem: 'description',
-    // O RESUMO, E NÃO SÓ O CORTE: 98% das descrições começam com a mesma frase
-    // do Viper, e cortar sem resumir deixaria todas as linhas iguais. Ver
-    // `resumir` em shared/descricao_lancamento.js.
-    valor: (e, f) => {
-      const inteira = String(e.description || '').trim();
-      if (!inteira) return '-';
-      const D = window.MavisDescricaoLancamento;
-      const curta = D && D.resumir ? D.cortar(D.resumir(inteira), FINANCE_DESCRICAO_LIMITE) : inteira;
-      return `<span class="texto-cortado" title="${f.esc(inteira)}">${f.esc(curta)}</span>`;
-    }
-  },
-  { chave: 'type', rotulo: 'Tipo', ordem: 'type', valor: (e, f) => FINANCE_TYPE_LABEL[e.type] || f.esc(e.type || '-') },
-  { chave: 'category', rotulo: 'Categoria', ordem: 'category', valor: (e, f) => f.cortado(e.categoryName, 'is-curto') },
-  { chave: 'clienteFornecedor', rotulo: 'Cliente/Fornecedor', ordem: 'clienteFornecedor', valor: (e, f) => f.cortado(e.clienteFornecedor, 'is-medio') },
   // De qual empresa é o título (15/10/2026): nome e CNPJ (ou a raiz, quando a
   // empresa tem várias filiais e o título não diz qual). Ver
   // empresasDosTitulos no servidor.
@@ -122,6 +109,24 @@ const FINANCE_LISTA_COLUNAS = [
         ? doc.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
         : (doc.length === 8 ? doc.replace(/(\d{2})(\d{3})(\d{3})/, '$1.$2.$3') : doc);
       return `<span class="fin-empresa">${f.cortado(e.empresaNome || cnpj, 'is-curto', `${e.empresaNome || ''} ${cnpj}`.trim())}${e.empresaNome && cnpj ? `<span class="muted">${f.esc(cnpj)}</span>` : ''}</span>`;
+    }
+  },
+  { chave: 'type', rotulo: 'Tipo', ordem: 'type', valor: (e, f) => FINANCE_TYPE_LABEL[e.type] || f.esc(e.type || '-') },
+  { chave: 'category', rotulo: 'Categoria', ordem: 'category', valor: (e, f) => f.cortado(e.categoryName, 'is-curto') },
+  { chave: 'clienteFornecedor', rotulo: 'Cliente/Fornecedor', ordem: 'clienteFornecedor', valor: (e, f) => f.cortado(e.clienteFornecedor, 'is-medio') },
+  {
+    chave: 'description',
+    rotulo: 'Descrição',
+    ordem: 'description',
+    // O RESUMO, E NÃO SÓ O CORTE: 98% das descrições começam com a mesma frase
+    // do Viper, e cortar sem resumir deixaria todas as linhas iguais. Ver
+    // `resumir` em shared/descricao_lancamento.js.
+    valor: (e, f) => {
+      const inteira = String(e.description || '').trim();
+      if (!inteira) return '-';
+      const D = window.MavisDescricaoLancamento;
+      const curta = D && D.resumir ? D.cortar(D.resumir(inteira), FINANCE_DESCRICAO_LIMITE) : inteira;
+      return `<span class="texto-cortado" title="${f.esc(inteira)}">${f.esc(curta)}</span>`;
     }
   },
   { chave: 'amountPrevisto', rotulo: 'Valor previsto', ordem: 'amount', dinheiro: true, valor: (e) => financeFormatBRL(e.amountPrevisto) },
@@ -141,23 +146,28 @@ const FINANCE_LISTA_COLUNAS = [
     chave: 'document',
     rotulo: 'Documento',
     ordem: 'document',
-    // O Documento nasce com o código na frente ("LF0042 · 000123", fase AY), e
-    // a linha já mostra o código duas colunas antes: aqui fica só a referência
-    // externa, que é o que distingue uma linha da outra. O inteiro vai no title.
+    // O Documento nasce com o código na frente ("LF0042 · 000123", fase AY):
+    // aqui fica só a referência externa, que é o que distingue uma linha da
+    // outra. O inteiro vai no title (e o código tem coluna própria, opcional).
     valor: (e, f) => {
       const C = window.MavisLancamentoCodigo;
       return f.cortado(C ? C.referencia(e.code, e.document) : e.document, 'is-curto', e.document);
     }
   },
   { chave: 'costCenter', rotulo: 'Centro de custo', ordem: 'costCenter', valor: (e, f) => f.cortado(e.costCenterName, 'is-curto') },
-  { chave: 'bankAccount', rotulo: 'Conta bancária', ordem: 'bankAccount', valor: (e, f) => f.cortado(e.bankAccountName, 'is-curto') },
   // Fase EN (14/10/2026): a forma de pagamento do título.
   { chave: 'paymentMethod', rotulo: 'Forma de pagamento', valor: (e, f) => f.cortado(e.paymentMethodName, 'is-curto') },
-  { chave: 'createdByName', rotulo: 'Lançado por', valor: (e, f) => f.cortado(e.createdByName, 'is-curto') }
+  { chave: 'createdByName', rotulo: 'Lançado por', valor: (e, f) => f.cortado(e.createdByName, 'is-curto') },
+  { chave: 'codigo', rotulo: 'Código', ordem: 'codigo', valor: (e, f) => f.esc(e.codigo || '-') }
 ];
 
-// Para quem nunca escolheu: as colunas que a tela tinha antes do seletor.
-const FINANCE_COLUNAS_PADRAO = ['codigo', 'date', 'dueDate', 'description', 'type', 'category', 'clienteFornecedor', 'empresa', 'paymentMethod', 'amountPrevisto', 'amountRealizado', 'status', 'document'];
+// Para quem nunca escolheu. A ordem na tela é a do catálogo, não a desta lista.
+const FINANCE_COLUNAS_PADRAO = ['bankAccount', 'date', 'dueDate', 'empresa', 'type', 'category', 'clienteFornecedor', 'description', 'paymentMethod', 'amountPrevisto', 'amountRealizado', 'status', 'document'];
+// A troca de 16/10/2026 vale também para quem já tinha escolhido as colunas:
+// UMA VEZ, sai o Código e entra a Conta bancária (preferência sem `layout`, ou
+// com um menor que este). Ao mexer no seletor, a preferência passa a ter este
+// layout, e daí em diante a escolha é só da pessoa.
+const FINANCE_LAYOUT_DAS_COLUNAS = 2;
 // Colunas que entraram depois de o seletor existir: aparecem também para quem
 // já tinha escolhido as suas, uma vez — se a pessoa tirar, fica tirada
 // (`conhecidas` guarda o que ela já viu no seletor).
@@ -283,7 +293,12 @@ function criarTelaDeLancamentos(telaChave) {
     const salvas = state.preferences && state.preferences.finance_lancamentos
       ? state.preferences.finance_lancamentos.colunas
       : null;
-    const validas = Array.isArray(salvas) ? salvas.filter((c) => FINANCE_LISTA_COLUNAS.some((col) => col.chave === c)) : [];
+    let validas = Array.isArray(salvas) ? salvas.filter((c) => FINANCE_LISTA_COLUNAS.some((col) => col.chave === c)) : [];
+    const layout = Number((state.preferences && state.preferences.finance_lancamentos && state.preferences.finance_lancamentos.layout) || 1);
+    if (validas.length && layout < FINANCE_LAYOUT_DAS_COLUNAS) {
+      validas = validas.filter((c) => c !== 'codigo');
+      if (!validas.includes('bankAccount')) validas.push('bankAccount');
+    }
     const conhecidas = (state.preferences && state.preferences.finance_lancamentos && state.preferences.finance_lancamentos.conhecidas) || [];
     const escolhidas = validas.length
       ? validas.concat(FINANCE_COLUNAS_NOVAS.filter((c) => !conhecidas.includes(c)))
@@ -724,7 +739,7 @@ function criarTelaDeLancamentos(telaChave) {
             <label class="muted" style="display:flex;align-items:center;gap:6px;">
               <input type="checkbox" data-coluna-visivel="${col.chave}"
                 ${colunas.some((c) => c.chave === col.chave) ? 'checked' : ''}
-                ${col.fixa ? 'disabled title="O código identifica a linha e não pode ser escondido."' : ''} />
+                ${col.fixa ? 'disabled title="Esta coluna não pode ser escondida."' : ''} />
               ${escapeHtml(col.rotulo)}
             </label>`).join('')}
         </div>
@@ -887,13 +902,17 @@ function criarTelaDeLancamentos(telaChave) {
       caixa.addEventListener('change', () => {
         const escolhidas = [...content.querySelectorAll('[data-coluna-visivel]')]
           .filter((c) => c.checked).map((c) => c.dataset.colunaVisivel);
-        if (escolhidas.filter((c) => c !== 'codigo').length === 0) {
-          showToast('Deixe ao menos uma coluna além do código.', 'warning');
+        if (escolhidas.length === 0) {
+          showToast('Deixe ao menos uma coluna.', 'warning');
           caixa.checked = true;
           return;
         }
         // Na ORDEM do catálogo, não na de clique: é ela que desenha a tabela.
-        salvarPreferenciaDaLista({ colunas: FINANCE_LISTA_COLUNAS.map((c) => c.chave).filter((c) => escolhidas.includes(c)), conhecidas: FINANCE_LISTA_COLUNAS.map((c) => c.chave) });
+        salvarPreferenciaDaLista({
+          colunas: FINANCE_LISTA_COLUNAS.map((c) => c.chave).filter((c) => escolhidas.includes(c)),
+          conhecidas: FINANCE_LISTA_COLUNAS.map((c) => c.chave),
+          layout: FINANCE_LAYOUT_DAS_COLUNAS
+        });
         redesenhar();
       });
     });
