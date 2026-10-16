@@ -12656,6 +12656,28 @@ async function tratarRequisicao(req, res) {
     });
   }
 
+  // A EXPORTAÇÃO DOS RELATÓRIOS DO CATÁLOGO E DO PERSONALIZADO (16/10/2026):
+  // a planilha .xlsx formatada (motorDeRelatorios.paraXlsx), ou o CSV de
+  // antes com ?formato=csv. Montada ANTES do cabeçalho: se a montagem falhar,
+  // a resposta ainda pode ser um erro, e não um 200 pela metade.
+  function exportarRelatorio(res, resultado, url) {
+    if (url.searchParams.get('formato') === 'csv') {
+      const arquivoCsv = motorDeRelatorios.paraCsv(resultado);
+      return enviarCsv(res, arquivoCsv, motorDeRelatorios.nomeDoArquivo(resultado));
+    }
+    const emitidoEm = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    }).format(new Date()).replace(',', ' às');
+    const arquivo = motorDeRelatorios.paraXlsx(resultado, { emitidoEm });
+    res.writeHead(200, {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${motorDeRelatorios.nomeDoArquivo(resultado, 'xlsx')}"`,
+      'Content-Length': arquivo.length,
+      'Cache-Control': 'no-store'
+    });
+    return res.end(arquivo);
+  }
+
   async function montarRelatorioDeVendas(req, params) {
     // A PERMISSÃO ANTES DA LEITURA (06/10/2026). A rota lia os pedidos e o
     // cadastro inteiros e só depois perguntava quem estava pedindo: trabalho
@@ -12804,12 +12826,7 @@ async function tratarRequisicao(req, res) {
         if (erro) return sendJson(res, { error: erro }, status);
         // Sem colunas de custo para quem não é administrador — na tela e no CSV.
         const resultado = res.__ocultarCusto ? custoOculto.relatorioSemCusto(executado.resultado) : executado.resultado;
-        if (casa[2]) {
-          // Montado ANTES do cabeçalho: se a montagem falhar, a resposta ainda
-          // pode ser um erro, e não um 200 pela metade.
-          const arquivo = motorDeRelatorios.paraCsv(resultado);
-          return enviarCsv(res, arquivo, motorDeRelatorios.nomeDoArquivo(resultado));
-        }
+        if (casa[2]) return exportarRelatorio(res, resultado, url);
         // A TELA MOSTRA ATÉ 2.000 LINHAS; o arquivo leva todas. Os totais são
         // sempre do resultado inteiro, e a tela diz quantas ficaram de fora.
         const LIMITE = 2000;
@@ -12894,10 +12911,7 @@ async function tratarRequisicao(req, res) {
           });
           await relatoriosPersonalizadosDb.marcarExecucao(rel.id);
           const resultado = res.__ocultarCusto ? custoOculto.relatorioSemCusto(executadoPersonalizado) : executadoPersonalizado;
-          if (casa[3]) {
-            const arquivo = motorDeRelatorios.paraCsv(resultado);
-            return enviarCsv(res, arquivo, motorDeRelatorios.nomeDoArquivo(resultado));
-          }
+          if (casa[3]) return exportarRelatorio(res, resultado, url);
           const LIMITE = 2000;
           return sendJson(res, { ...resultado, linhas: resultado.linhas.slice(0, LIMITE), totalLinhas: resultado.linhas.length });
         }

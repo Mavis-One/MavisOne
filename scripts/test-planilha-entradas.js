@@ -67,7 +67,7 @@ check('impressão deitada, na largura de uma folha', /<pageSetUpPr fitToPage="1"
 check('cabeçalho repetido em cada folha', /_xlnm\.Print_Titles" localSheetId="0">'Teste   x'!\$1:\$1</.test(workbook));
 check('o Excel calcula o total ao abrir', /<calcPr calcId="0" fullCalcOnLoad="1"\/>/.test(workbook));
 let recusou = false;
-try { xlsx.criarPlanilha([{ nome: 'x', colunas: [{ titulo: 'a', tipo: 'percentual' }], linhas: [] }]); } catch (_) { recusou = true; }
+try { xlsx.criarPlanilha([{ nome: 'x', colunas: [{ titulo: 'a', tipo: 'fracao' }], linhas: [] }]); } catch (_) { recusou = true; }
 check('tipo de coluna desconhecido é recusado', recusou);
 
 console.log('\n--- a planilha das entradas ---');

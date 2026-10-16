@@ -134,7 +134,7 @@ window.MavisRelatoriosCatalogo = (function () {
           <div>${campos ? '<button type="button" id="relCatAplicar">Aplicar</button>' : ''}
             <button type="button" class="secondary" id="relCatAtualizar">Atualizar</button></div>
           <div>
-            <button type="button" class="secondary" id="relCatExportar">Excel (CSV)</button>
+            <button type="button" class="secondary" id="relCatExportar" title="Planilha do Excel formatada, pronta para imprimir">Exportar Excel</button>
             <button type="button" class="secondary" id="relCatImprimir">Imprimir</button>
           </div>
         </div>
@@ -169,7 +169,7 @@ window.MavisRelatoriosCatalogo = (function () {
   }
 
   async function exportar(ctx, def, filtros) {
-    return baixar(ctx, `/api/reports/catalogo/${encodeURIComponent(def.key)}/export?${query(filtros)}`, `${def.key}.csv`);
+    return baixar(ctx, `/api/reports/catalogo/${encodeURIComponent(def.key)}/export?${query(filtros)}`, `${def.key}.xlsx`);
   }
 
   /** Baixa o CSV que o servidor montou. O Personalizado usa o mesmo caminho. */

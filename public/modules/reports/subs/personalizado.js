@@ -306,7 +306,7 @@ window.MavisRelatoriosPersonalizados = (function () {
               <button type="button" class="secondary" id="relPersAtualizar">Atualizar</button>
               ${salvo.podeEditar ? '<button type="button" class="secondary" id="relPersEditar">Editar</button>' : ''}</div>
             <div>
-              <button type="button" class="secondary" id="relPersExportar">Excel (CSV)</button>
+              <button type="button" class="secondary" id="relPersExportar" title="Planilha do Excel formatada, pronta para imprimir">Exportar Excel</button>
               <button type="button" class="secondary" id="relPersImprimir">Imprimir</button>
             </div>
           </div>
@@ -325,7 +325,7 @@ window.MavisRelatoriosPersonalizados = (function () {
     });
     content.querySelector('#relPersExportar').addEventListener('click', () => {
       ler();
-      catalogo.baixar(ctx, `/api/reports/personalizados/${encodeURIComponent(salvo.id)}/executar/export?${catalogo.query(st.periodo)}`, 'relatorio-personalizado.csv');
+      catalogo.baixar(ctx, `/api/reports/personalizados/${encodeURIComponent(salvo.id)}/executar/export?${catalogo.query(st.periodo)}`, 'relatorio-personalizado.xlsx');
     });
   }
 

@@ -351,8 +351,15 @@ const recortar = (fonte, nome) => {
   // Conta TODA chamada, com ou sem `return` antes: exigir o `return` deixava
   // de fora uma chamada escrita como `enviarCsv(res, ...); return;`.
   const chamadasDeEnviar = (rotasDeRelatorio.match(/\benviarCsv\(res,/g) || []).length;
-  check('  os exports de relatório passam por ela', chamadasDeEnviar === 4
-    && /return enviarCsv\(res, conteudo/.test(rotasDeRelatorio), `${chamadasDeEnviar} chamadas`);
+  // Desde 16/10/2026 o catálogo e o Personalizado exportam por
+  // exportarRelatorio (planilha .xlsx, ou o CSV com ?formato=csv, que passa por
+  // enviarCsv lá dentro): nas rotas ficam as chamadas de Vendas e Financeiro.
+  const exportar = servidorSemComent.slice(servidorSemComent.indexOf('function exportarRelatorio('),
+    servidorSemComent.indexOf('async function montarRelatorioDeVendas('));
+  check('  os exports de relatório passam por ela', chamadasDeEnviar === 2
+    && /return enviarCsv\(res, conteudo/.test(rotasDeRelatorio)
+    && (rotasDeRelatorio.match(/return exportarRelatorio\(res, resultado, url\)/g) || []).length === 2
+    && /return enviarCsv\(res, arquivoCsv,/.test(exportar), `${chamadasDeEnviar} chamadas`);
   check('  e nenhum escreve text/csv por conta própria', !/text\/csv/.test(rotasDeRelatorio));
 
   // -------------------------------------------------------------------------
