@@ -59,7 +59,8 @@ console.log('\n--- a janela pede o que a rota exige ---');
 // recusa em branco está declarado como obrigatório na janela.
 const OBRIGATORIOS = {
   '/api/cadastros/pessoas': ['document'],          // "CPF/CNPJ inválido"
-  '/api/stock/products': ['name', 'sku'],          // "Informe o nome"/"Informe o SKU"
+  // Sem o código desde 16/10/2026: vazio, ele sai da sequência.
+  '/api/stock/products': ['name'],                 // "Informe o nome"
   '/api/finance/entries': ['description', 'amount'] // "Informe a descrição"/"valor maior que zero"
 };
 A.ATALHOS_CRIAR.forEach((atalho) => {

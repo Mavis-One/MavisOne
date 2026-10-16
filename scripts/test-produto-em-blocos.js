@@ -43,7 +43,9 @@ const declaradosNoHtml = new Set([...telaSrc.matchAll(/name="([^"]+)"/g)].map((m
 check('o formulário lê os campos do cadastro', lidosNoPayload.length >= 20, lidosNoPayload.length + ' campos');
 const orfaos = [...new Set(lidosNoPayload)].filter((campo) => !declaradosNoHtml.has(campo));
 check('todo campo lido no submit existe no HTML', orfaos.length === 0, orfaos.length ? 'órfãos: ' + orfaos.join(', ') : 'nenhum órfão');
-['name', 'sku', 'unit', 'costPrice', 'salePrice'].forEach((campo) => {
+// O código saiu da lista em 16/10/2026: vazio, ele vem da sequência
+// (test-codigo-automatico-do-produto.js).
+['name', 'unit', 'costPrice', 'salePrice'].forEach((campo) => {
   check(`"${campo}" é obrigatório`, new RegExp(`name="${campo}"[^>]*required|required[^>]*name="${campo}"`).test(telaSrc));
 });
 

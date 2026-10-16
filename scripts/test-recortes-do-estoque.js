@@ -162,7 +162,7 @@ check('a quebra por cor lê o razão do produto, não o de todos',
 const cadastro = pedacoDaRota("pathname === '/api/stock/products' && req.method === 'POST'");
 check('o cadastro confere o SKU contra o catálogo inteiro',
   /comSkus \? db\.getProductsResumidos\('id, sku'\) : null/.test(contexto)
-  && /products\.some\(\(p\) => p\.id !== body\.id && String\(p\.sku \|\| ''\)\.toLowerCase\(\) === sku\.toLowerCase\(\)\)/.test(cadastro));
+  && /products\.some\(\(p\) => p\.id !== body\.id && String\(p\.sku \|\| ''\)\.trim\(\)\.toLowerCase\(\) === sku\.toLowerCase\(\)\)/.test(cadastro));
 
 // As listas de movimentações e transferências: razão inteiro, produto só rótulo.
 for (const [assinatura, nome] of [

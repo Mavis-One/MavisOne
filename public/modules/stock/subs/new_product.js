@@ -56,6 +56,20 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
     }
   }
 
+  // CÓDIGO AUTOMÁTICO (16/10/2026): o campo já vem com o próximo da sequência
+  // (lib/codigo-do-produto.js). Quem quiser outro, digita. Mantido o sugerido,
+  // o servidor tira o código na hora de gravar: se outro cadastro levou este,
+  // vem o seguinte.
+  const codigoLivre = !(current && String(current.sku || '').trim());
+  let codigoSugerido = '';
+  if (codigoLivre) {
+    try {
+      codigoSugerido = String((await api('/api/stock/products/proximo-codigo')).codigo || '');
+    } catch (erro) {
+      codigoSugerido = '';
+    }
+  }
+
   const value = (key, fallback = '') => S.escape(current ? current[key] ?? fallback : fallback);
   const ehAdmin = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
 
@@ -165,10 +179,11 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
             </button>
             ${/* Fase EJ: o código de um produto cadastrado não muda — o banco
                  recusa. Só leitura (e não desabilitado: ele precisa ir no
-                 envio). Produto sem código ainda recebe o primeiro. */''}
-            ${current && String(current.sku || '').trim()
+                 envio). Produto sem código ainda recebe o primeiro, que vem
+                 da sequência; vazio, o servidor também tira da sequência. */''}
+            ${!codigoLivre
               ? `<label class="campo-somente-leitura produto-codigo" title="O código de um produto cadastrado não pode ser alterado.">Código*<input name="sku" readonly value="${value('sku')}" /></label>`
-              : `<label class="produto-codigo">Código*<input name="sku" required value="${value('sku')}" /></label>`}
+              : `<label class="produto-codigo">Código<input name="sku" value="${S.escape(codigoSugerido)}" placeholder="Automático" /></label>`}
             <label class="produto-codigo">C.Fabricante<input name="codigoFabricante" value="${value('codigoFabricante')}" placeholder="C.Fabricante" /></label>
             <label class="produto-codigo">C.Barras<input name="ean" value="${value('ean')}" placeholder="C.Barras" /></label>
             <label class="produto-unidade">Un*<input name="unit" list="produtoUnidades" required value="${value('unit', 'UN')}" placeholder="UN" /></label>
@@ -515,6 +530,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       id: current ? current.id : undefined,
       name: formData.get('name'),
       sku: formData.get('sku'),
+      codigoAutomatico: codigoLivre && Boolean(codigoSugerido) && String(formData.get('sku') || '').trim() === codigoSugerido,
       codigoFabricante: formData.get('codigoFabricante'),
       ean: formData.get('ean'),
       categoryId: grupo ? grupo.id : '',
@@ -568,7 +584,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
     }
 
     try {
-      await api('/api/stock/products', { method: 'POST', body: JSON.stringify(payload) });
+      const salvo = await api('/api/stock/products', { method: 'POST', body: JSON.stringify(payload) });
       // As classes salvam DEPOIS e por rota própria, mas no mesmo clique: dois
       // botões de salvar na mesma tela fariam metade do cadastro ser perdida
       // por quem clicasse no errado.
@@ -587,7 +603,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
           return;
         }
       }
-      showToast(current ? 'Produto atualizado.' : 'Produto criado.', 'success');
+      showToast(current ? 'Produto atualizado.' : `Produto ${salvo?.product?.sku || ''} criado.`, 'success');
       state.activeSub = 'products';
       loadModule('stock');
     } catch (error) {

@@ -736,20 +736,19 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       const item = tela.conferencia.itens.find((i) => i.numero === numeroItem);
       if (!item || !item.sugestaoProduto) return;
       const s = item.sugestaoProduto;
-      if (!s.sku) {
-        showToast('Este item não tem código no XML. Cadastre o produto pelo Estoque e volte para vincular.', 'warning');
-        return;
-      }
       const confirmado = await confirmModal(
-        `Cadastrar "${s.name}" como produto novo? NCM, unidade e código de barras vêm da nota; o preço de venda fica zerado.`
+        `Cadastrar "${s.name}" como produto novo? O código sai da sequência${s.sku ? ` e o do fornecedor (${s.sku}) fica em C.Fabricante` : ''}; NCM, unidade e código de barras vêm da nota; o preço de venda fica zerado.`
       );
       if (!confirmado) return;
       try {
+        // Código vazio = o próximo da sequência (16/10/2026). O do fornecedor
+        // vai para C.Fabricante, e é por ele que a próxima nota deste item casa.
         const resposta = await api('/api/stock/products', {
           method: 'POST',
           body: JSON.stringify({
             name: s.name,
-            sku: s.sku,
+            sku: '',
+            codigoFabricante: s.sku || '',
             ean: s.ean,
             ncm: s.ncm,
             cest: s.cest,

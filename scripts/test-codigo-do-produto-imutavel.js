@@ -38,14 +38,20 @@ console.log('\n--- 2. o servidor diz o porquê ---');
 const servidor = ler('server.js');
 check('cadastro de produto recusa trocar o código',
   /if \(skuGravado && skuGravado !== sku\) \{\s+return sendJson\(res, \{ error: `O código \$\{skuGravado\} deste produto não pode ser alterado\.` \}, 400\);/.test(servidor));
-check('  e grava o código como está no banco', /sku: skuGravado \? existing\.sku : sku,/.test(servidor));
+// Desde 16/10/2026 o código do produto novo pode sair da sequência
+// (test-codigo-automatico-do-produto.js).
+check('  e grava o código como está no banco', /sku: skuGravado \? existing\.sku : \(codigoAutomatico \? await db\.proximoCodigoDeProduto\(\) : sku\),/.test(servidor));
+check('  e o código automático nunca vale para quem já tem código', /const codigoAutomatico = !skuGravado && /.test(servidor));
 check('a rota antiga também', /deste produto não pode ser alterado\.` \}, 400\);[\s\S]{0,400}sku: anterior && String\(anterior\.sku \|\| ''\)\.trim\(\) \? anterior\.sku : body\.sku,/.test(servidor));
 
 console.log('\n--- 3. a tela ---');
 const tela = ler('public/modules/stock/subs/new_product.js');
 // Desde o cadastro em blocos (fase EP, 15/10/2026) o rótulo é "Código*".
-check('editando, o SKU é só de leitura', /current && String\(current\.sku \|\| ''\)\.trim\(\)[\s\S]{0,260}<input name="sku" readonly/.test(tela));
-check('  e produto novo continua com o campo livre e obrigatório', /<label class="produto-codigo">Código\*<input name="sku" required value=/.test(tela));
+check('editando, o SKU é só de leitura', /const codigoLivre = !\(current && String\(current\.sku \|\| ''\)\.trim\(\)\);/.test(tela)
+  && /\$\{!codigoLivre\s*\? `<label class="campo-somente-leitura produto-codigo"[^`]*<input name="sku" readonly/.test(tela));
+// Desde 16/10/2026 o campo do produto novo vem com o próximo da sequência e
+// pode ficar vazio (o servidor tira da sequência).
+check('  e produto novo continua com o campo livre', /<label class="produto-codigo">Código<input name="sku" value="\$\{S\.escape\(codigoSugerido\)\}" placeholder="Automático" \/>/.test(tela));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);

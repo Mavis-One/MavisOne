@@ -118,6 +118,8 @@ const salesBulk = require('./public/modules/shared/sales_bulk_actions');
 const escopoLib = require('./lib/relatorios-escopo');
 // A venda é do vendedor que a fez: vendedor gravado e quem pode mexer nela.
 const vendaDoVendedor = require('./lib/venda-do-vendedor');
+// O código do produto novo sai da sequência (16/10/2026).
+const codigoDoProduto = require('./lib/codigo-do-produto');
 const filtroPainelVendedor = require('./lib/filtro-painel-vendedor');
 const relatoriosVendas = require('./lib/relatorios-vendas');
 // Fase DB: as colunas do CSV do Financeiro e do Estoque, que nao tinham
@@ -18599,6 +18601,18 @@ async function tratarRequisicao(req, res) {
     }
   }
 
+  // O código que o próximo produto vai receber (16/10/2026, ver
+  // lib/codigo-do-produto.js). Antes da rota por id: "proximo-codigo" não é id.
+  if (pathname === '/api/stock/products/proximo-codigo' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      return sendJson(res, { codigo: await db.proximoCodigoDeProduto() });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao ler o próximo código', 500);
+    }
+  }
+
   // Status do Produto: posição por depósito + histórico recente.
   if (/^\/api\/stock\/products\/[^/]+$/.test(pathname) && req.method === 'GET') {
     try {
@@ -18732,10 +18746,6 @@ async function tratarRequisicao(req, res) {
       const name = String(body.name || '').trim();
       if (!name) return sendJson(res, { error: 'Informe o nome do produto.' }, 400);
       const sku = String(body.sku || '').trim();
-      if (!sku) return sendJson(res, { error: 'Informe o SKU do produto.' }, 400);
-      const duplicated = products.some((p) => p.id !== body.id && String(p.sku || '').toLowerCase() === sku.toLowerCase());
-      if (duplicated) return sendJson(res, { error: 'Já existe um produto com este SKU.' }, 409);
-
       const existing = body.id ? productsById.get(body.id) : null;
       if (body.id && !existing) return sendJson(res, { error: 'Produto não encontrado' }, 404);
       // O CÓDIGO DO PRODUTO NÃO MUDA (fase EJ, 13/10/2026). O banco recusa do
@@ -18743,6 +18753,14 @@ async function tratarRequisicao(req, res) {
       const skuGravado = existing ? String(existing.sku || '').trim() : '';
       if (skuGravado && skuGravado !== sku) {
         return sendJson(res, { error: `O código ${skuGravado} deste produto não pode ser alterado.` }, 400);
+      }
+      // CÓDIGO AUTOMÁTICO (16/10/2026): sem código, ou com o que a tela
+      // sugeriu e ninguém mudou (codigoAutomatico), o código sai da sequência
+      // na hora de gravar — se outro cadastro levou o sugerido, vem o seguinte.
+      const codigoAutomatico = !skuGravado && (!sku || body.codigoAutomatico === true);
+      if (!skuGravado && !codigoAutomatico) {
+        const duplicated = products.some((p) => p.id !== body.id && String(p.sku || '').trim().toLowerCase() === sku.toLowerCase());
+        if (duplicated) return sendJson(res, { error: 'Já existe um produto com este código.' }, 409);
       }
 
       // PREÇOS DO CADASTRO EM BLOCOS (fase EP, 15/10/2026). Vazio = não
@@ -18789,12 +18807,12 @@ async function tratarRequisicao(req, res) {
         }
       }
 
-      const product = await db.upsertProduct({
+      const gravarProduto = async () => db.upsertProduct({
         id: body.id || undefined,
         name,
         // O gravado, tal como está (até o espaço sobrando de um cadastro
         // antigo): o gatilho compara o texto exato.
-        sku: skuGravado ? existing.sku : sku,
+        sku: skuGravado ? existing.sku : (codigoAutomatico ? await db.proximoCodigoDeProduto() : sku),
         stockQuantity: existing ? stockCore.toNumber(existing.stockQuantity) : 0,
         // Quem não é administrador não vê o custo (14/10/2026) — e por isso não
         // o altera: o produto que já existe guarda o custo que tinha.
@@ -18836,6 +18854,7 @@ async function tratarRequisicao(req, res) {
         materiaPrima: body.materiaPrima === undefined ? undefined : body.materiaPrima === true,
         movimentaEstoque: body.movimentaEstoque === undefined ? undefined : body.movimentaEstoque !== false
       });
+      const product = codigoAutomatico ? await codigoDoProduto.umPorVez(gravarProduto) : await gravarProduto();
 
       await auditarPrecoDoProduto(user, existing, product, 'Cadastro do produto');
       data.productMeta[product.id] = stockCore.buildProductMeta(body, stockCore.productMeta(data, product.id));

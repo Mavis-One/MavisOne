@@ -115,7 +115,8 @@ window.MavisAtalhos = (function () {
       titulo: 'Produto', endpoint: '/api/stock/products',
       campos: [
         { name: 'name', label: 'Nome do produto', required: true, linha: 1 },
-        { name: 'sku', label: 'SKU', required: true, linha: 1 },
+        // Vazio = o próximo da sequência (16/10/2026, lib/codigo-do-produto.js).
+        { name: 'sku', label: 'Código', placeholder: 'Automático', linha: 1 },
         { name: 'unit', label: 'Unidade', valor: 'UN', linha: 1 },
         { name: 'costPrice', label: 'Custo (R$)', type: 'number', step: '0.01', min: 0, valor: '0', linha: 2 },
         { name: 'salePrice', label: 'Preço de venda (R$)', type: 'number', step: '0.01', min: 0, valor: '0', linha: 2 },
@@ -128,7 +129,7 @@ window.MavisAtalhos = (function () {
           rotulos: { 0: '0 — Nacional', 1: '1 — Importação direta', 2: '2 — Mercado interno', 3: '3 — Nacional > 40% importado', 4: '4 — Processos básicos', 5: '5 — Nacional <= 40% importado', 6: '6 — Importada sem similar', 7: '7 — Mercado interno sem similar', 8: '8 — Nacional > 70% importado' } }
       ],
       extras: { status: 'ativo', stockQuantity: 0 },
-      sucesso: () => 'Produto cadastrado.'
+      sucesso: (r) => `Produto ${r.product?.sku || ''} cadastrado.`
     },
     {
       id: 'novo_lancamento', label: 'Novo Lançamento', icone: ICONES.lancamento, modulo: 'finance',
