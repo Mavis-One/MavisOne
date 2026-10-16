@@ -210,7 +210,8 @@ check('a barra aparece com seleção', /sales-lote-barra/.test(appSrc));
 // que poe Aprovar e Cancelar antes de Gerar Ordem de Producao.
 check('o menu é em grade, na ordem dos grupos', /sales-lote-grade/.test(appSrc) && /Object\.entries\(grupos\)\.map/.test(appSrc));
 // Habilitar com zero elegíveis levaria a "0 processados, 15 ignorados".
-check('ação sem elegível fica desabilitada com o motivo', /const motivo = elegiveis\.length \? '' : /.test(appSrc));
+// Desde 16/10/2026 o motivo do vendedor (só cria) vem antes.
+check('ação sem elegível fica desabilitada com o motivo', /const motivo = doVendedor\s*\?[\s\S]{0,120}: \(elegiveis\.length \? '' : /.test(appSrc));
 // Entre desenhar a lista e clicar, outra pessoa pode ter faturado um deles.
 check('o resumo mostrado vem do SERVIDOR', /showToast\(resposta\.resumo/.test(appSrc));
 check('e o detalhe de cada ignorado é mostrado', /naoFeitos\.map\(\(i\) => /.test(appSrc));

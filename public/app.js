@@ -606,6 +606,11 @@ function botaoDaNotaDoPedido(r) {
     title="Ver a ${escapeHtml(rotulo)}" aria-label="Ver a ${escapeHtml(rotulo)}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="13" y2="17"></line></svg></button>`;
 }
 
+// As ações do "Mais Ações" que o vendedor não faz (16/10/2026; ver
+// lib/venda-do-vendedor.js, soCria). As do pedido estão em
+// sales_record_actions.js (SO_QUEM_NAO_E_VENDEDOR).
+const SALES_LOTE_SO_QUEM_NAO_E_VENDEDOR = ['aprovar', 'aprovar_sem_faturamento', 'cancelar', 'excluir', 'nfe', 'nfce'];
+
 const SALES_COLUNAS = [
   { chave: 'code', rotulo: 'Código', ordenavel: true, fixa: true, valor: (r) => escapeHtml(String(r.code)) + botaoDaNotaDoPedido(r) },
   { chave: 'type', rotulo: 'Tipo', ordenavel: false, valor: (r) => (r.type === 'quote' ? 'Orçamento' : 'Pedido') },
@@ -3218,6 +3223,8 @@ async function loadModule(moduleName) {
         // cache das listas (ver o `if (data.meta)` abaixo) sem buscar nada.
         draft.ultimaLista = { chave: chaveDaLista, dados: { ...data, meta: undefined } };
         const records = data.records || [];
+        // Vendedor que só cria (16/10/2026; ver lib/venda-do-vendedor.js).
+        const vendedorSoCria = Boolean(data.vendedor && data.vendedor.soCria);
         const totalPages = Math.max(1, Math.ceil((data.total || 0) / limit));
         if (data.meta) {
           salesMetaEmCache = data.meta;
@@ -3495,7 +3502,12 @@ async function loadModule(moduleName) {
                       // Zero elegíveis = botão que só produziria "0
                       // processados, N ignorados". Desabilita e mostra o
                       // primeiro motivo, que é o que a pessoa precisa saber.
-                      const motivo = elegiveis.length ? '' : ((ignorados[0] && ignorados[0].motivo) || 'Nenhum selecionado é elegível.');
+                      // O vendedor só cria (16/10/2026): o que aprova, fatura,
+                      // cancela ou exclui fica desligado, com o motivo.
+                      const doVendedor = vendedorSoCria && SALES_LOTE_SO_QUEM_NAO_E_VENDEDOR.includes(acao.id);
+                      const motivo = doVendedor
+                        ? window.MavisSalesRecordActions.VENDEDOR_SO_CRIA
+                        : (elegiveis.length ? '' : ((ignorados[0] && ignorados[0].motivo) || 'Nenhum selecionado é elegível.'));
                       // O catálogo guarda o NOME do desenho (ele também roda no
                       // servidor, onde não há SVG). A lupa é o desenho de
                       // reserva: ação nova sem ícone aparece assim mesmo, em vez
@@ -3549,9 +3561,9 @@ async function loadModule(moduleName) {
                         <button class="icon-button edit sales-edit-record" data-id="${escapeHtml(record.id)}" title="Editar" aria-label="Editar">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
                         </button>
-                        <button class="icon-button sales-delete-record" data-id="${escapeHtml(record.id)}" title="Excluir" aria-label="Excluir">
+                        ${vendedorSoCria ? '' : `<button class="icon-button sales-delete-record" data-id="${escapeHtml(record.id)}" title="Excluir" aria-label="Excluir">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                        </button>
+                        </button>`}
                       </td>
                     </tr>
                   `).join('') : `<tr><td colspan="${colunas.length + 2}" class="muted">Nenhum pedido ou orçamento encontrado${filters.search || showFilters ? ' com os filtros atuais' : ''}.</td></tr>`}
@@ -3882,6 +3894,15 @@ async function loadModule(moduleName) {
         const vendaDeColega = Boolean(isEditing && meuVendedor.travado
           && editRecord.sellerId && editRecord.sellerId !== meuVendedor.sellerId);
         const deOutroVendedor = vendaDeColega && meuVendedor.podeAlterarDeOutros !== true;
+        // O vendedor só mexe em orçamento ou pedido em aberto (16/10/2026; ver
+        // lib/venda-do-vendedor.js): aprovado por alguém, abre para consulta,
+        // como a venda de colega. O servidor recusa do mesmo jeito.
+        const aprovadoParaOVendedor = Boolean(isEditing && meuVendedor.soCria
+          && !['orcamento', 'pedido'].includes(SalesStatus.normalizar(editRecord.status)));
+        const somenteConsulta = deOutroVendedor || aprovadoParaOVendedor;
+        const motivoDaConsulta = deOutroVendedor
+          ? 'Este pedido/orçamento é de outro vendedor. Só o vendedor dele ou um administrador pode alterá-lo.'
+          : 'Este pedido já foi aprovado: o vendedor não altera mais. Peça a um administrador.';
         const vendedorInicial = vendaDeColega
           ? editRecord.sellerId
           : (meuVendedor.travado
@@ -4745,6 +4766,8 @@ async function loadModule(moduleName) {
           recordType,
           isEditing,
           somenteLeitura: deOutroVendedor,
+          // O vendedor só cria (16/10/2026): ver SO_QUEM_NAO_E_VENDEDOR.
+          soCria: Boolean(meuVendedor.soCria),
           status: formState.status,
           escapeHtml,
           showToast,
@@ -6041,13 +6064,13 @@ async function loadModule(moduleName) {
           // Pedido de outro vendedor: abre para consulta, sem campo editável
           // nem Salvar. Voltar, Imprimir e Duplicar (cópia é venda nova dele)
           // continuam valendo.
-          if (deOutroVendedor) {
+          if (somenteConsulta) {
             document.querySelectorAll('#salesRecordForm input, #salesRecordForm select, #salesRecordForm textarea, #salesRecordForm button')
               .forEach((campo) => { campo.disabled = true; });
             const salvar = document.getElementById('salesRecordActionsSave');
             if (salvar) {
               salvar.disabled = true;
-              salvar.title = 'Este pedido/orçamento é de outro vendedor.';
+              salvar.title = motivoDaConsulta;
             }
           }
 
@@ -6598,8 +6621,8 @@ async function loadModule(moduleName) {
             event.preventDefault();
             // Pedido de outro vendedor: só leitura. O servidor recusa do mesmo
             // jeito (ver lib/venda-do-vendedor.js); aqui é só não deixar tentar.
-            if (deOutroVendedor) {
-              showToast('Este pedido/orçamento é de outro vendedor. Só o vendedor dele ou um administrador pode alterá-lo.', 'warning');
+            if (somenteConsulta) {
+              showToast(motivoDaConsulta, 'warning');
               return;
             }
             // CLIQUE DUPLO NÃO GRAVA DOIS PEDIDOS (fase BS).

@@ -52,7 +52,8 @@ check('editar: recusa venda de outro (403) antes de ler o corpo',
 // (desde 15/10/2026 com o vendedor da venda: quem pode mexer na do colega não a
 // toma para si — ver test-vendas-de-outros-vendedores.js)
 check('editar: vendedor sai da regra', /sellerId: vendaDoVendedor\.vendedorAoGravar\(escopoDoUsuario, body\.sellerId, current\.sellerId\),\s*depositId: body\.depositId \|\| '',\s*date: body\.date \|\| current\.date/.test(server));
-check('excluir: a função que exclui confere', /async function excluirSalesRecord\(id, data, user, escopo = null\)[\s\S]{0,400}if \(escopo && !vendaDoVendedor\.podeMexerNaVenda\(escopo, record\.sellerId\)\)/.test(server));
+// {0,1200}: desde 16/10/2026 a recusa do vendedor (soCria) vem antes desta.
+check('excluir: a função que exclui confere', /async function excluirSalesRecord\(id, data, user, escopo = null\)[\s\S]{0,1200}if \(escopo && !vendaDoVendedor\.podeMexerNaVenda\(escopo, record\.sellerId\)\)/.test(server));
 check('  e a rota passa o escopo', /await excluirSalesRecord\(id, data, user, escopoLib\.escopoDeVendas\(user/.test(server));
 check('lote: venda de outro vira "não feito" com o motivo', /else if \(!vendaDoVendedor\.podeMexerNaVenda\(escopoDoUsuario, registro\.sellerId\)\) \{\s*falhas\.push\(\{ code: registro\.code, motivo: vendaDoVendedor\.MOTIVO_DE_OUTRO_VENDEDOR \}\);/.test(server));
 check('  duplicar continua livre, e a cópia é de quem duplicou', /sellerId: vendaDoVendedor\.vendedorAoGravar\(escopo, serializado\.sellerId\)/.test(server));
@@ -65,8 +66,11 @@ console.log('\n--- 4. a tela ---');
 const app = semComentarios(fs.readFileSync(path.join(RAIZ, 'public/app.js'), 'utf8'));
 check('venda nova nasce com o vendedor do usuário', /sellerId: vendedorInicial,/.test(app) && /: \(origem \? \(origem\.sellerId \|\| ''\) : meuVendedor\.sellerId\)\);/.test(app));
 check('vendedor travado vê o campo fixo (sem seletor)', /\$\{meuVendedor\.travado \|\| deOutroVendedor \? `[\s\S]{0,120}campo-somente-leitura">Vendedor/.test(app));
-check('pedido de colega: sem Salvar e campos desligados', /if \(deOutroVendedor\) \{\s*document\.querySelectorAll\('#salesRecordForm input/.test(app) && /salvar\.disabled = true;/.test(app));
-check('  e o Enter também não grava', /event\.preventDefault\(\);\s*if \(deOutroVendedor\) \{/.test(app));
+// Desde 16/10/2026 o "só consulta" vale também para o pedido já aprovado
+// aberto pelo vendedor (que só cria) — somenteConsulta inclui o de colega.
+check('  só consulta = venda de colega OU aprovada para o vendedor', /const somenteConsulta = deOutroVendedor \|\| aprovadoParaOVendedor;/.test(app));
+check('pedido de colega: sem Salvar e campos desligados', /if \(somenteConsulta\) \{\s*document\.querySelectorAll\('#salesRecordForm input/.test(app) && /salvar\.disabled = true;/.test(app));
+check('  e o Enter também não grava', /event\.preventDefault\(\);\s*if \(somenteConsulta\) \{/.test(app));
 check('  e as ações que mudam o pedido ficam bloqueadas', /somenteLeitura: deOutroVendedor,/.test(app));
 const acoes = fs.readFileSync(path.join(RAIZ, 'public/modules/shared/sales_record_actions.js'), 'utf8');
 check('  (cancelar, aprovar, aprovar sem faturamento, NF-e, NFC-e)', (acoes.match(/if \(ctx\.somenteLeitura\) return DE_OUTRO_VENDEDOR;/g) || []).length === 5);

@@ -3878,7 +3878,7 @@ async function origensDoFiltroDeVendas(url) {
   return (await origensVendaDb.listar()).map((o) => o.name);
 }
 
-function montarRespostaDeVendas({ records, total, page, limit, contagens, data, url, origens }) {
+function montarRespostaDeVendas({ records, total, page, limit, contagens, data, url, origens, vendedor }) {
   // `meta=0`: QUEM JÁ TEM AS LISTAS DO FILTRO NÃO AS RECEBE DE NOVO (fase DE).
   //
   // O `meta` só alimenta os selects da Busca Avançada — cliente, empresa,
@@ -3932,6 +3932,9 @@ function montarRespostaDeVendas({ records, total, page, limit, contagens, data, 
     // simplesmente estaria errado. Quem sabe o total é quem carregou, então é
     // quem informa. Ver syncSalesDataDaPagina.
     contagens,
+    // O que o usuário é na lista (16/10/2026): vendedor que só cria, e se só
+    // vê as vendas dele. Fora do `meta`, que a tela pode não pedir.
+    vendedor: vendedor || { soCria: false, soVeAsDele: false },
     meta: !querMeta ? undefined : {
       companies: data.companies,
       sellers: getSellersDirectory(data),
@@ -4202,6 +4205,26 @@ async function recarregarCategoriasDosRelatorios() {
 }
 
 async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo, tipoNovo, isOrder, data, user }) {
+  // O VENDEDOR SÓ CRIA (16/10/2026; ver vendaDoVendedor.soCria). Aqui, porque
+  // por este ponto passam a gravação do pedido E as ações em lote: o vendedor
+  // grava só Orçamento/Pedido, e só enquanto a venda ainda é um dos dois.
+  if (user) {
+    const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+    if (vendaDoVendedor.soCria(escopo)) {
+      const rascunho = (s) => vendaDoVendedor.ehRascunho(s, (x) => salesStatus.normalizar(x, undefined));
+      if (!rascunho(current.status)) {
+        const erro = new Error(vendaDoVendedor.MOTIVO_APROVADA);
+        erro.status = 403;
+        throw erro;
+      }
+      if (!rascunho(statusNovo)) {
+        const erro = new Error(vendaDoVendedor.MOTIVO_SO_CRIA);
+        erro.status = 403;
+        throw erro;
+      }
+    }
+  }
+
   // Os dois efeitos são independentes: cada status do catálogo declara se
   // baixa estoque e se gera financeiro, e "Pedido Aprovado Sem Faturamento"
   // é justamente o que faz um sem o outro (transferência, remessa,
@@ -4437,6 +4460,14 @@ async function excluirSalesRecord(id, data, user, escopo = null) {
   if (!record) {
     const erro = new Error('Registro não encontrado.');
     erro.status = 404;
+    throw erro;
+  }
+  // O vendedor não exclui (16/10/2026; ver vendaDoVendedor.soCria) — nem a
+  // venda dele. O escopo é calculado aqui quando quem chama não o mandou.
+  const escopoDaExclusao = escopo || (user ? escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) }) : null);
+  if (escopoDaExclusao && vendaDoVendedor.soCria(escopoDaExclusao)) {
+    const erro = new Error(vendaDoVendedor.MOTIVO_SO_CRIA);
+    erro.status = 403;
     throw erro;
   }
   // Venda de outro vendedor (ver lib/venda-do-vendedor.js). Aqui, e não só na
@@ -8692,7 +8723,19 @@ async function notaComErroParaReenviar(body, { modelo, pedidoDaNota }) {
 
 // `opcoes.modelo` é decidido pela ROTA, e nunca pelo corpo da requisição: a
 // tela de NF-e não pode virar emissora de NFC-e mandando `modelo: 65`.
+// O vendedor não fatura (16/10/2026; ver vendaDoVendedor.soCria): a nota do
+// pedido, autorizada, fatura o pedido. Nota sem pedido não passa por aqui.
+async function recusarVendedorNaNotaDoPedido(user, temPedido) {
+  if (!temPedido || !user) return;
+  const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+  if (!vendaDoVendedor.soCria(escopo)) return;
+  const err = new Error(vendaDoVendedor.MOTIVO_SO_CRIA);
+  err.status = 403;
+  throw err;
+}
+
 async function emitirNfeFiscal(body, user, opcoes = {}) {
+  await recusarVendedorNaNotaDoPedido(user, Boolean(body.orderId || body.saleId));
   // A MESMA conferencia que o pre-check roda. Ver prepararNfeParaTransmitir.
   const {
     estabelecimento, destinatario, payload, referencia, naturezaOperacao,
@@ -8889,6 +8932,7 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
  * o pedido fica como estava e pode tentar de novo.
  */
 async function emitirNfceDoPedido({ orderId, estabelecimentoId: escolhido }, user) {
+  await recusarVendedorNaNotaDoPedido(user, true);
   let estabelecimentoId = escolhido;
   const data = loadData();
   await Promise.all([syncSalesData(data), syncCadastroData(data)]);
@@ -13279,7 +13323,9 @@ async function tratarRequisicao(req, res) {
         sellerId: String(user.sellerId || '').trim(),
         travado: Boolean(vendaDoVendedor.vendedorTravado(escopoDoUsuario)),
         // Fase EQ: a tela abre a venda de um colega para edição (e não só leitura).
-        podeAlterarDeOutros: vendaDoVendedor.podeAlterarDeOutros(escopoDoUsuario)
+        podeAlterarDeOutros: vendaDoVendedor.podeAlterarDeOutros(escopoDoUsuario),
+        // 16/10/2026: o vendedor só cria — não aprova, fatura, cancela nem exclui.
+        soCria: vendaDoVendedor.soCria(escopoDoUsuario)
       },
       deposits: data.deposits,
       // SÓ id E name (fase DS), como na lista de Vendas (fase CJ). O formulário
@@ -13563,6 +13609,20 @@ async function tratarRequisicao(req, res) {
     // ela existe para evitar — foi assim na primeira versão disto, e o ganho
     // medido ficou em 6%: economizava a serialização (34 ms) e mantinha a
     // carga (366 ms). Com a decisão aqui em cima, são 17,5x na carga.
+    // O VENDEDOR SÓ VÊ AS VENDAS DELE (16/10/2026; ver vendaDoVendedor.soVeAsDele).
+    // O filtro entra nos parâmetros ANTES de escolher o caminho: com ele a
+    // lista cai na busca filtrada, e o vendedor que a tela mandasse é trocado.
+    const usuarioDaLista = await getCurrentUser(req);
+    const escopoDaLista = usuarioDaLista
+      ? escopoLib.escopoDeVendas(usuarioDaLista, { ehAdmin: await ehAdmin(usuarioDaLista) })
+      : null;
+    const soDoVendedor = escopoDaLista ? vendaDoVendedor.soVeAsDele(escopoDaLista) : '';
+    if (soDoVendedor) url.searchParams.set('sellerId', soDoVendedor);
+    // A tela usa para desligar, com o motivo, o que o vendedor não faz.
+    const vendedorDaLista = {
+      soCria: Boolean(escopoDaLista && vendaDoVendedor.soCria(escopoDaLista)),
+      soVeAsDele: Boolean(soDoVendedor)
+    };
     const { page, limit } = parsePageParams(url.searchParams, 15);
     const listaSemFiltro = view === 'orders_quotes' && buscaDeVendasSemFiltro(url.searchParams);
 
@@ -13636,7 +13696,8 @@ async function tratarRequisicao(req, res) {
             importLogs: importacoes
           },
           data,
-          url
+          url,
+          vendedor: vendedorDaLista
         }));
       }
 
@@ -13684,20 +13745,34 @@ async function tratarRequisicao(req, res) {
         total: filtered.length,
         page,
         limit,
-        contagens: {
+        // Para o vendedor, os cartões do alto contam só as vendas dele.
+        contagens: soDoVendedor ? (() => {
+          const dele = serializados.filter((s) => s.sellerId === soDoVendedor);
+          return {
+            orders: dele.filter((s) => tabelaDe.get(s) === 'orders').length,
+            quotes: dele.filter((s) => tabelaDe.get(s) === 'quotes').length,
+            nfes: dele.filter((s) => s.nfeId).length,
+            importLogs: importacoes
+          };
+        })() : {
           orders: (data.orders || []).length,
           quotes: (data.quotes || []).length,
           nfes: (data.nfes || []).length,
           importLogs: importacoes
         },
         data,
-        url
+        url,
+        vendedor: vendedorDaLista
       }));
     }
+    // As outras visões devolvem as listas inteiras: para o vendedor, só o dele.
+    const doVendedor = (lista) => (soDoVendedor ? (lista || []).filter((r) => String(r.sellerId || '').trim() === soDoVendedor) : lista);
+    const pedidosDele = soDoVendedor ? new Set(doVendedor(data.orders).map((o) => o.id)) : null;
+    const notasVisiveis = pedidosDele ? (data.nfes || []).filter((n) => pedidosDele.has(n.orderId || n.saleId)) : data.nfes;
     if (view === 'nfes') {
-      return sendJson(res, { nfes: data.nfes });
+      return sendJson(res, { nfes: notasVisiveis });
     }
-    return sendJson(res, { orders: data.orders, quotes: data.quotes, nfes: data.nfes, importLogs: data.importLogs });
+    return sendJson(res, { orders: doVendedor(data.orders), quotes: doVendedor(data.quotes), nfes: notasVisiveis, importLogs: data.importLogs });
   }
 
   if (pathname === '/api/sales/records' && req.method === 'POST') {
@@ -13736,6 +13811,12 @@ async function tratarRequisicao(req, res) {
         ? ''
         : salesStatus.normalizar(body.status || salesStatus.padraoDoTipo(tipoPedido === 'quote' ? 'quote' : 'order'));
       const type = tipoPedido === 'nfe' ? 'nfe' : salesStatus.tipoDoStatus(status);
+      // O vendedor só cria rascunho (16/10/2026; ver vendaDoVendedor.soCria):
+      // nem venda que já nasce aprovada ou faturada, nem a NF-e deste ramo.
+      if (vendaDoVendedor.soCria(escopoDoUsuario)
+        && (type === 'nfe' || !vendaDoVendedor.ehRascunho(status, (s) => salesStatus.normalizar(s, undefined)))) {
+        return sendJson(res, { error: vendaDoVendedor.MOTIVO_SO_CRIA }, 403);
+      }
       let record;
       if (type === 'order' || type === 'quote') {
         const itensBrutos = normalizeSalesItems(await completarNomesDosItens(body.items));
@@ -13910,9 +13991,11 @@ async function tratarRequisicao(req, res) {
       ]);
 
       const todos = [...(data.orders || []), ...(data.quotes || [])];
+      // Venda que o vendedor não enxerga (16/10/2026) não entra no lote: é
+      // como se o id não existisse — nem duplicar, nem imprimir.
       const selecionados = ids
         .map((id) => todos.find((r) => r.id === id))
-        .filter(Boolean)
+        .filter((r) => r && vendaDoVendedor.podeVerVenda(escopoDoUsuario, r.sellerId))
         .map((r) => serializeSalesRecord(r, data));
 
       // A ELEGIBILIDADE É AVALIADA AQUI TAMBÉM, e não só na tela. A tela avalia
@@ -13986,6 +14069,10 @@ async function tratarRequisicao(req, res) {
       const ehPedido = (data.orders || []).some((o) => o.id === registroId);
       const registro = [...(data.orders || []), ...(data.quotes || [])].find((r) => r.id === registroId);
       if (!registro) return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      // Os anexos de venda que o vendedor não enxerga (16/10/2026) também não.
+      if (!vendaDoVendedor.podeVerVenda(escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) }), registro.sellerId)) {
+        return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      }
       const fichas = Array.isArray(registro.attachments) ? registro.attachments : [];
       const gravar = async (novas) => {
         const atualizado = { ...registro, attachments: novas };
@@ -14406,6 +14493,11 @@ async function tratarRequisicao(req, res) {
       const id = decodeURIComponent(pathname.replace('/api/sales/records/', ''));
       const registro = [...(data.orders || []), ...(data.quotes || [])].find((entrada) => entrada.id === id);
       if (!registro) return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      // O vendedor só abre as vendas dele (16/10/2026; ver podeVerVenda).
+      const escopoDeQuemAbre = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+      if (!vendaDoVendedor.podeVerVenda(escopoDeQuemAbre, registro.sellerId)) {
+        return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      }
       return sendJson(res, { record: serializeSalesRecord(registro, data) });
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar o registro', 500);
@@ -14451,6 +14543,11 @@ async function tratarRequisicao(req, res) {
       // Pedido de outro vendedor: o vendedor vê, mas não altera. Antes de ler
       // o corpo — nada do que vier nele muda a resposta.
       const escopoDoUsuario = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+      // Venda que o vendedor não enxerga (16/10/2026) é venda que não existe
+      // para ele: a mesma resposta de abrir.
+      if (!vendaDoVendedor.podeVerVenda(escopoDoUsuario, current.sellerId)) {
+        return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      }
       if (!vendaDoVendedor.podeMexerNaVenda(escopoDoUsuario, current.sellerId)) {
         return sendJson(res, { error: vendaDoVendedor.MOTIVO_DE_OUTRO_VENDEDOR }, 403);
       }
@@ -21492,6 +21589,8 @@ async function tratarRequisicao(req, res) {
         syncSalesData(data)
       ]);
       const body = await readBody(req);
+      // Nota ligada a pedido é faturamento: o vendedor não faz (16/10/2026).
+      await recusarVendedorNaNotaDoPedido(user, Boolean(body.orderId));
 
       const clientName = String(body.customer || '').trim();
       if (!clientName) {

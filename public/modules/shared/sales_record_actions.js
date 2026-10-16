@@ -207,5 +207,19 @@ window.MavisSalesRecordActions = (function () {
     }
   ];
 
-  return { CATALOG };
+  // O VENDEDOR SÓ CRIA (16/10/2026, pedido do usuário: "que eles não consigam
+  // aprovar nem faturar ou até mesmo excluir, somente criar pedidos/
+  // orçamentos"). Ficam à vista e desligadas, com o motivo — quem decide de
+  // verdade é o servidor (lib/venda-do-vendedor.js, soCria).
+  const SO_QUEM_NAO_E_VENDEDOR = ['cancelar', 'faturamento_parcial', 'aprovar', 'aprovar_sem_faturamento', 'gerar_nfe', 'emitir_nfce'];
+  const VENDEDOR_SO_CRIA = 'Vendedor só cria e edita orçamentos e pedidos em aberto: aprovar, faturar, cancelar e emitir nota ficam com o administrador ou com quem não é vendedor.';
+  CATALOG.forEach((acao) => {
+    if (!SO_QUEM_NAO_E_VENDEDOR.includes(acao.id)) return;
+    const original = acao.enabled;
+    acao.enabled = (ctx) => (ctx && ctx.soCria
+      ? VENDEDOR_SO_CRIA
+      : (typeof original === 'function' ? original(ctx) : true));
+  });
+
+  return { CATALOG, SO_QUEM_NAO_E_VENDEDOR, VENDEDOR_SO_CRIA };
 })();

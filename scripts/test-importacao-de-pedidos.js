@@ -156,7 +156,8 @@ check('e NÃO manda mais as listas completas',
 // Fase DS: `import_logs` responde ANTES da onda, lendo só o histórico
 // (getImportLogs) — a mesma lista, sem carregar pedido nenhum.
 check('as outras views continuam entregando a lista',
-  /if \(view === 'nfes'\) \{\s*\n\s*return sendJson\(res, \{ nfes: data\.nfes \}\);/.test(rota)
+  // Desde 16/10/2026 a lista vem filtrada para o vendedor (notasVisiveis).
+  /if \(view === 'nfes'\) \{\s*\n\s*return sendJson\(res, \{ nfes: notasVisiveis \}\);/.test(rota)
   && /if \(view === 'import_logs'\) \{[\s\S]{0,300}return sendJson\(res, \{ importLogs: await db\.getImportLogs\(\) \}\);/.test(rota));
 
 console.log('--- 3. a tela lê a contagem ---');
