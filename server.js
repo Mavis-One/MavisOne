@@ -4218,6 +4218,29 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
   const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.geraFinanceiro(statusNovo)
     && (eraFaturado || regraCategoria.geraFinanceiro);
 
+  // APROVAR O PEDIDO CONFERE O ESTOQUE (16/10/2026, pedido do usuário: "quero
+  // que o sistema bloqueie na aprovação do pedido ao invés de permitir gerar a
+  // NF com estoque zerado"). Aprovar leva a Pré-Faturado, e é só dali que saem
+  // a NF-e e a NFC-e: sem saldo no depósito do pedido, não aprova. A conta é a
+  // do faturamento (itensSemEstoqueParaFaturar: depósito do pedido, cor,
+  // categoria que não mexe em estoque, serviço). Aqui, e não na rota, pelo
+  // motivo do bloco abaixo: a aprovação em lote passa por este mesmo ponto.
+  //
+  // A emissão continua conferindo: não há reserva de estoque, e o saldo pode
+  // sair (outra venda, transferência) entre aprovar e emitir.
+  if (tipoNovo === 'order' && statusNovo === 'pedido-pre-faturado'
+    && salesStatus.normalizar(current.status, undefined) !== 'pedido-pre-faturado') {
+    const faltando = await itensSemEstoqueParaFaturar({ ...current, ...updated, items: items || updated.items || current.items });
+    if (faltando.length) {
+      const erro = new Error(
+        `Sem estoque para aprovar: ${faltando.map((f) => `"${f.nome}" (disponível ${f.disponivel}, necessário ${f.quantidade})`).join('; ')}. `
+        + 'Dê entrada no estoque, ou ajuste o depósito do pedido, e aprove de novo.'
+      );
+      erro.status = 400;
+      throw erro;
+    }
+  }
+
   // FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
   //
   // Faturar e emitir eram passos soltos: o pedido ficava "Pedido Faturado", com
