@@ -1617,7 +1617,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // da nota com a base e o valor digitados (eles valem no servidor).
       carregarPrevia();
     });
-    totais && totais.addEventListener('change', (evento) => {
+    // A cada tecla, como os itens (16/10/2026): só na saída do campo, o "Valor
+    // total" ficava com o frete antigo enquanto se digitava o novo.
+    totais && totais.addEventListener('input', (evento) => {
       const campo = evento.target.dataset.totalCampo;
       if (!campo) return;
       const valor = Math.max(0, Number(evento.target.value || 0));
