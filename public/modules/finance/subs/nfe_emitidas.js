@@ -36,6 +36,19 @@ function chaveEmBlocos(chave) {
   return digitos.length > 24 ? `${blocos(digitos.slice(0, 24))}<br>${blocos(digitos.slice(24))}` : blocos(digitos);
 }
 
+// DIA E HORA DA NOTA, EM BRASÍLIA (16/10/2026, pedido do usuário: "quero ver
+// dia/mês/ano e horário"). O instante chega em UTC; sem o fuso explícito, a
+// nota das 21h30 sairia com o dia seguinte. Sem instante (nota importada do
+// Viper, que só tem o dia, ou registro manual), fica só o dia.
+const NFE_DIA_E_HORA = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+});
+function nfeDiaEHora(instante, dia) {
+  const momento = new Date(instante || '');
+  if (!instante || Number.isNaN(momento.getTime())) return financeFormatDate(dia);
+  return NFE_DIA_E_HORA.format(momento).replace(',', '');
+}
+
 function nfeFormatDocument(value) {
   const digits = String(value || '').replace(/\D/g, '');
   if (digits.length === 11) {
@@ -875,7 +888,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
                   <td>NF-e</td>
                   <td><span class="muted">—</span></td>
                   <td><span class="muted">—</span></td>
-                  <td>${financeFormatDate(String(r.atualizadoEm || '').slice(0, 10))}</td>
+                  <td>${nfeDiaEHora(r.atualizadoEm, String(r.atualizadoEm || '').slice(0, 10))}</td>
                   <td class="nfe-empresa"><span class="texto-cortado is-curto" title="${escapeHtml(r.empresa || '')}">${escapeHtml(r.empresa || '-')}</span></td>
                   <td><span class="texto-cortado is-medio" title="${escapeHtml(r.cliente || '')}">${escapeHtml(r.cliente || '-')}</span></td>
                   <td>${escapeHtml(nfeFormatDocument(r.documento))}</td>
@@ -904,7 +917,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
                   <td>${Number(nfe.modelo) === 65 ? 'NFC-e' : 'NF-e'}</td>
                   <td>${escapeHtml(nfe.number)}</td>
                   <td>${escapeHtml(nfe.series)}</td>
-                  <td>${financeFormatDate(nfe.date)}</td>
+                  <td>${nfeDiaEHora(nfe.emitidaEm, nfe.date)}</td>
                   <td class="nfe-empresa"><span class="texto-cortado is-curto" title="${escapeHtml(nfe.empresa || '')}">${escapeHtml(nfe.empresa || '-')}</span></td>
                   <td><span class="texto-cortado is-medio" title="${escapeHtml(nfe.customer || '')}">${escapeHtml(nfe.customer || '-')}</span></td>
                   <td>${escapeHtml(nfeFormatDocument(nfe.clientDocument))}</td>
@@ -1204,6 +1217,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
       number: fiscal?.numero || daLista.number || '',
       series: fiscal?.serie || daLista.series || '',
       date: daLista.date,
+      emitidaEm: daLista.emitidaEm || '',
       status: daLista.status,
       key: fiscal?.chaveAcesso || '',
       amount: Number(fiscal?.valorTotal || daLista.amount || 0),
@@ -1260,7 +1274,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
         </div>
 
         <div class="finance-modal-info-grid">
-          <div><span class="muted">Data de emissão</span><strong>${financeFormatDate(nfe.date)}</strong></div>
+          <div><span class="muted">Data de emissão</span><strong>${nfeDiaEHora(nfe.emitidaEm, nfe.date)}</strong></div>
           <div><span class="muted">CPF/CNPJ</span><strong>${escapeHtml(nfeFormatDocument(nfe.clientDocument))}</strong></div>
           <div><span class="muted">Endereço</span><strong>${escapeHtml(nfe.clientAddress || '-')}</strong></div>
           <div><span class="muted">Cidade/UF</span><strong>${escapeHtml(nfe.clientCity || '-')} ${nfe.clientState ? '/ ' + escapeHtml(nfe.clientState) : ''}</strong></div>

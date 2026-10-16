@@ -5499,6 +5499,16 @@ function fiscalNfeParaLista(nfe) {
     if (Number.isNaN(instante.getTime())) return texto.slice(0, 10);
     return formatoBrasilia.format(instante);
   };
+  const date = nfe.dataEmissao ? diaDaNfeEmBrasilia(nfe.dataEmissao) : diaDaNfeEmBrasilia(nfe.criadoEm, true);
+  // O INSTANTE DA EMISSÃO, para a lista mostrar dia e hora (16/10/2026, pedido
+  // do usuário: "quero ver dia/mês/ano e horário"). data_emissao só quando é
+  // instante de verdade: a data civil (meia-noite UTC) não tem hora, e aí vale
+  // a da autorização, ou a da criação. E só se cair no mesmo dia da coluna
+  // Data — o dia de uma leitura com a hora de outro dia não se misturam.
+  const dataComHora = nfe.dataEmissao && !/T00:00:00(?:\.0+)?(?:Z|[+-]00:?00)$/.test(String(nfe.dataEmissao));
+  const instanteDaEmissao = new Date((dataComHora ? nfe.dataEmissao : (nfe.autorizadoEm || nfe.criadoEm)) || '');
+  const emitidaEm = !Number.isNaN(instanteDaEmissao.getTime()) && formatoBrasilia.format(instanteDaEmissao) === date
+    ? instanteDaEmissao.toISOString() : '';
   return {
     id: nfe.id,
     origem: 'fiscal',
@@ -5508,7 +5518,8 @@ function fiscalNfeParaLista(nfe) {
     modelo: Number(nfe.modelo || 55),
     number: nfe.numero || '',
     series: nfe.serie || '',
-    date: nfe.dataEmissao ? diaDaNfeEmBrasilia(nfe.dataEmissao) : diaDaNfeEmBrasilia(nfe.criadoEm, true),
+    date,
+    emitidaEm,
     status: normalizeNfeStatus(nfe.status),
     statusFiscal: nfe.status,
     key: nfe.chaveAcesso || '',
@@ -5603,7 +5614,9 @@ function filterNfes(data, query, listaBase) {
  */
 const ORDENS_DA_LISTA_DE_NFE = {
   numero: (a, b) => (Number(a.number) || 0) - (Number(b.number) || 0) || String(a.series || '').localeCompare(String(b.series || '')),
-  data: (a, b) => String(a.date || '').localeCompare(String(b.date || '')),
+  // No mesmo dia, pela hora da emissão (16/10/2026).
+  data: (a, b) => String(a.date || '').localeCompare(String(b.date || ''))
+    || String(a.emitidaEm || '').localeCompare(String(b.emitidaEm || '')),
   cliente: (a, b) => String(a.customer || '').localeCompare(String(b.customer || ''), 'pt-BR', { sensitivity: 'base' }),
   empresa: (a, b) => String(a.empresa || '').localeCompare(String(b.empresa || ''), 'pt-BR', { sensitivity: 'base' }),
   valor: (a, b) => Number(a.amount || 0) - Number(b.amount || 0),
