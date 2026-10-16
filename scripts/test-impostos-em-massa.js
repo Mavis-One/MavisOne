@@ -22,7 +22,7 @@ const tela = fs.readFileSync(path.join(__dirname, '..', 'public/modules/finance/
 
 check('botão na aba Impostos, ao lado do Recalcular', tela.includes('<button type="button" class="secondary" data-fiscal-massa>Alterar em massa</button>'));
 check('os campos da aba, menos base/valor e o ST retido',
-  tela.includes('.filter((g) => !g.soComStRetido)') && tela.includes('.filter(([campo]) => !CAMPOS_SO_LEITURA.includes(campo))'));
+  tela.includes('.filter((g) => !g.soComStRetido)') && tela.includes('.filter(([campo]) => !CAMPOS_CALCULADOS.includes(campo))'));
 check('CST em lista, com "manter" no vazio', tela.includes(".replace('>—</option>', '>— manter —</option>')"));
 check('o cClassTrib segue o CST do IBS/CBS escolhido na janela', tela.includes("if (e.target.dataset.massaCampo !== 'cstIbsCbs') return;"));
 check('só os itens marcados, só os campos preenchidos', tela.includes(".filter(([, v]) => v !== '')") && tela.includes('lista.forEach((i) => {'));

@@ -32,10 +32,17 @@ check('o do ICMS separa CSOSN (3 dígitos) de CST (2)',
 check('código fora da tabela continua aparecendo (não some em silêncio)',
   tela.includes("(codigo && !conhecido ? `<option value=\"${escapeHtml(codigo)}\" selected>"));
 check('sem permissão de ler as tabelas, volta a ser texto', tela.includes('if (!tabelasFiscais) return null;'));
-const travados = ['baseIcms', 'valorIcms', 'baseIcmsSt', 'valorIcmsSt', 'baseIpi', 'valorIpi', 'basePis', 'valorPis', 'baseCofins', 'valorCofins', 'valorIbs', 'valorCbs'];
-const bloco = tela.slice(tela.indexOf('const CAMPOS_SO_LEITURA = ['), tela.indexOf('];', tela.indexOf('const CAMPOS_SO_LEITURA = [')));
-check('base e valor travados em todos os grupos', travados.every((c) => bloco.includes(`'${c}'`)));
-check('  e nenhum percentual travado', !/'aliquota|'reducao|'mva/.test(bloco));
+// 16/10/2026, pedido do usuário ("permita edição no campo de valor das NF"):
+// base e valor deixaram de ser travados — vêm calculados e se digitam. O
+// digitado vale na nota (aplicarValoresEditados), e trocar a alíquota ou a base
+// devolve o valor ao cálculo (RECALCULA).
+const calculados = ['baseIcms', 'valorIcms', 'baseIcmsSt', 'valorIcmsSt', 'baseIpi', 'valorIpi', 'basePis', 'valorPis', 'baseCofins', 'valorCofins', 'valorIbs', 'valorCbs'];
+const bloco = tela.slice(tela.indexOf('const CAMPOS_CALCULADOS = ['), tela.indexOf('];', tela.indexOf('const CAMPOS_CALCULADOS = [')));
+check('base e valor de todos os grupos: calculados', calculados.every((c) => bloco.includes(`'${c}'`)));
+check('  e nenhum campo de imposto fica só leitura', !/readonly tabindex="-1"/.test(tela.slice(tela.indexOf('function campoFiscal('), tela.indexOf('function valorFiscal('))));
+check('  trocar a alíquota ou a base devolve o valor ao cálculo',
+  /aliquotaIcms: \['baseIcms', 'valorIcms'\]/.test(tela) && /baseIcms: \['valorIcms'\]/.test(tela) && /aliquotaCbs: \['valorCbs'\]/.test(tela)
+  && /\(RECALCULA\[campo\] \|\| \[\]\)\.forEach\(\(dependente\) => \{ delete item\.fiscal\[dependente\]; \}\);/.test(tela));
 check('mudar CST ou percentual refaz a prévia sozinho',
   /evento\.target\.closest\('label'\)\?\.classList\.toggle\('is-editado', editado\(item, campo\)\);\s*\/\/[^\n]*\n[^\n]*\n\s*carregarPrevia\(\);/.test(tela));
 check('a lista editada fica marcada como o campo editado', css.includes('.nfe-imposto-campos label.is-editado select'));

@@ -122,8 +122,9 @@ check('  IBS do município zero vai como zero', ibs.itens[0].aliquotaIbsMun === 
 check('  e os totais trazem IBS e CBS', ibs.totais.ibs === 1 && ibs.totais.cbs === 9);
 check('a tela tem o grupo IBS/CBS com CST e cClassTrib',
   /titulo: 'IBS\/CBS', campos: \[\['cstIbsCbs', 'CST'\], \['classTrib', 'cClassTrib'\]/.test(tela));
-// 14/10/2026: base e valor de todos os grupos travaram (test-impostos-cst-em-lista).
-check('  e os valores são só leitura', /const CAMPOS_SO_LEITURA = \[[\s\S]*?'valorIbs', 'valorCbs'\s*\];/.test(tela));
+// 14/10/2026 base e valor travaram; 16/10/2026 voltaram a se digitar, a pedido
+// do usuário (test-impostos-cst-em-lista). Continuam fora da alteração em massa.
+check('  e os valores entram na lista dos calculados (que também se digitam)', /const CAMPOS_CALCULADOS = \[[\s\S]*?'valorIbs', 'valorCbs'\s*\];/.test(tela));
 
 console.log('\n--- 7. cobrança: fatura e duplicatas ---');
 // Nomes conferidos em campos.focusnfe.com.br/nfe/NotaFiscalXML.html (13/10/2026).

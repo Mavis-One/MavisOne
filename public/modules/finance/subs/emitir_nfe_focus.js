@@ -1117,13 +1117,35 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     { titulo: 'IBS/CBS', campos: [['cstIbsCbs', 'CST'], ['classTrib', 'cClassTrib'], ['aliquotaIbsUf', 'IBS UF %'], ['aliquotaIbsMun', 'IBS Mun. %'], ['aliquotaCbs', 'CBS %'], ['valorIbs', 'IBS (valor)'], ['valorCbs', 'CBS (valor)']] }
   ];
   const CAMPOS_DE_TEXTO = ['cfop', 'ncm', 'cest', 'cstIcms', 'codigoBeneficioFiscal', 'cstIpi', 'cstPis', 'cstCofins', 'cstIbsCbs', 'classTrib'];
-  // Pedido do usuário (14/10/2026): os CST se ESCOLHEM na lista, e nos grupos
-  // de imposto só o percentual se digita. Base e valor saem do servidor (base
-  // do item × alíquota), já com o que a regra fiscal carregou.
-  const CAMPOS_SO_LEITURA = [
+  // Pedido do usuário (14/10/2026): os CST se ESCOLHEM na lista. Base e valor
+  // saem do servidor (base do item × alíquota), já com o que a regra fiscal
+  // carregou — e, desde 16/10/2026 (pedido do usuário: "permita edição no
+  // campo de valor das NF"), também se DIGITAM: o digitado vale na nota
+  // (aplicarValoresEditados, no servidor). Ficam fora da alteração em massa,
+  // que poria o mesmo valor em todos os itens.
+  const CAMPOS_CALCULADOS = [
     'baseIcms', 'valorIcms', 'baseIcmsSt', 'valorIcmsSt', 'baseIpi', 'valorIpi',
     'basePis', 'valorPis', 'baseCofins', 'valorCofins', 'valorIbs', 'valorCbs'
   ];
+  // Trocar a alíquota (ou a base) devolve o valor ao cálculo: o valor digitado
+  // antes era para a alíquota antiga, e ficaria valendo calado.
+  const RECALCULA = {
+    aliquotaIcms: ['baseIcms', 'valorIcms'],
+    reducaoBcIcms: ['baseIcms', 'valorIcms'],
+    baseIcms: ['valorIcms'],
+    aliquotaIcmsSt: ['baseIcmsSt', 'valorIcmsSt'],
+    mvaSt: ['baseIcmsSt', 'valorIcmsSt'],
+    baseIcmsSt: ['valorIcmsSt'],
+    aliquotaIpi: ['baseIpi', 'valorIpi'],
+    baseIpi: ['valorIpi'],
+    aliquotaPis: ['basePis', 'valorPis'],
+    basePis: ['valorPis'],
+    aliquotaCofins: ['baseCofins', 'valorCofins'],
+    baseCofins: ['valorCofins'],
+    aliquotaIbsUf: ['valorIbs'],
+    aliquotaIbsMun: ['valorIbs'],
+    aliquotaCbs: ['valorCbs']
+  };
   const LISTA_DO_CST = { cstIpi: 'cstIpi', cstPis: 'cstPisCofins', cstCofins: 'cstPisCofins', cstIbsCbs: 'cstIbsCbs' };
 
   /** As opções do CST, com o código atual garantido mesmo fora da tabela. */
@@ -1200,7 +1222,6 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     }
     return `<input data-fiscal-index="${index}" data-fiscal-campo="${campo}"
                    ${CAMPOS_DE_TEXTO.includes(campo) ? '' : 'type="number" step="0.01"'}
-                   ${CAMPOS_SO_LEITURA.includes(campo) ? 'readonly tabindex="-1"' : ''}
                    value="${escapeHtml(valor)}" />`;
   }
 
@@ -1443,6 +1464,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // CST sem código na tabela: o digitado de outro CST não fica valendo.
       else if (valor && !doCst.length && String(item.fiscal.classTrib || '') && !String(item.fiscal.classTrib).startsWith(valor)) delete item.fiscal.classTrib;
     }
+    // A alíquota (ou a base) nova devolve ao cálculo o valor digitado antes.
+    (RECALCULA[campo] || []).forEach((dependente) => { delete item.fiscal[dependente]; });
     if (campo === 'cstIcms') {
       // Três dígitos é CSOSN (Simples Nacional); dois é CST.
       delete item.fiscal.cstIcms; delete item.fiscal.csosn;
@@ -1460,7 +1483,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // nota de entrada). Campo vazio não mexe; só os itens marcados mudam.
   const GRUPOS_EM_MASSA = GRUPOS_FISCAIS
     .filter((g) => !g.soComStRetido)
-    .map((g) => ({ titulo: g.titulo, campos: g.campos.filter(([campo]) => !CAMPOS_SO_LEITURA.includes(campo)) }))
+    .map((g) => ({ titulo: g.titulo, campos: g.campos.filter(([campo]) => !CAMPOS_CALCULADOS.includes(campo)) }))
     .filter((g) => g.campos.length);
 
   function campoEmMassa(campo, cstIbsCbsEscolhido) {
@@ -1590,8 +1613,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       if (!item) return;
       gravarCampoFiscal(item, previa && previa.itens ? previa.itens[indice] : null, campo, evento.target.value);
       evento.target.closest('label')?.classList.toggle('is-editado', editado(item, campo));
-      // Base e valor não se digitam mais: refaz a prévia para mostrar o que o
-      // CST ou o percentual novo dão.
+      // Refaz a prévia: mostra o que o CST ou o percentual novo dão, e o total
+      // da nota com a base e o valor digitados (eles valem no servidor).
       carregarPrevia();
     });
     totais && totais.addEventListener('change', (evento) => {
