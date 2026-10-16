@@ -94,6 +94,8 @@ const salesStatus = require('./public/modules/shared/sales_status');
 const vendaObrigatorios = require('./public/modules/shared/venda_obrigatorios');
 // Custo do produto só para administrador (14/10/2026). Ver lib/custo-oculto.js.
 const custoOculto = require('./lib/custo-oculto');
+// A planilha .xlsx das Notas de Entrada (16/10/2026).
+const planilhaEntradas = require('./lib/planilha-entradas');
 // Aba Impostos do pedido. Roda a MESMA montagem tributária da emissão — ver o
 // cabeçalho de lib/calcularTributos.js.
 const { calcularTributos } = require('./lib/calcularTributos');
@@ -17666,6 +17668,49 @@ async function tratarRequisicao(req, res) {
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
       return sendErro(res, traduzido, 'Erro ao listar entradas', 400);
+    }
+  }
+
+  // A PLANILHA DAS NOTAS DE ENTRADA (16/10/2026): todas as entradas e os itens
+  // delas num .xlsx formatado — ver lib/planilha-entradas.js. Os valores só vão
+  // para administrador, como na tela (a resposta é um arquivo, e o filtro de
+  // custo do sendJson não passa por aqui). Antes da rota genérica /:id.
+  if (pathname === '/api/purchases/entrada-nfe/planilha' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const [entradas, itens, estabelecimentos] = await Promise.all([
+        consultarBanco(
+          `select id, chave, serie, numero, data_emissao, natureza_operacao, emitente_documento, emitente_nome,
+                  emitente_ie, destinatario_documento, valor_produtos, valor_total, status, movimentou_estoque,
+                  gerou_financeiro, criado_por_nome, criado_em
+             from nfe_entrada
+            order by data_emissao desc nulls last, criado_em desc`
+        ).then((r) => r.rows),
+        consultarBanco(
+          `select i.entrada_id, i.numero, i.codigo_fornecedor, i.ean, i.descricao, i.ncm, i.cfop, i.unidade,
+                  i.quantidade, i.valor_unitario, i.valor_total, i.vinculo_origem, i.movimentou_estoque,
+                  p.sku as produto_sku, p.name as produto_nome
+             from nfe_entrada_item i left join products p on p.id = i.product_id`
+        ).then((r) => r.rows),
+        fiscalDb.getEstabelecimentos().catch(() => [])
+      ]);
+      const arquivo = planilhaEntradas.planilhaDasEntradas({
+        entradas, itens, estabelecimentos, comValores: await ehAdmin(user)
+      });
+      const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="notas-de-entrada-${hoje}.xlsx"`,
+        'Content-Length': arquivo.length,
+        'Cache-Control': 'no-store'
+      });
+      return res.end(arquivo);
+    } catch (error) {
+      const traduzido = traduzirErroDaEntrada(error);
+      return sendErro(res, traduzido, 'Erro ao montar a planilha das notas de entrada', 400);
     }
   }
 

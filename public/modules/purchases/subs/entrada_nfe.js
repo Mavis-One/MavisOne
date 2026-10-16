@@ -31,7 +31,11 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
   const moeda = (valor) => Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   // O valor pago é o custo: quem não é administrador recebe a nota sem os
   // valores (ver lib/custo-oculto.js), e as colunas deles somem.
-  const veValores = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
+  //
+  // Decidido AO ABRIR A TELA, e não aqui (16/10/2026): este arquivo carrega
+  // antes do app.js, onde usuarioEhAdmin mora — avaliado aqui dava sempre
+  // "não", e nem o administrador via Total, valores e "baixar XML".
+  let veValores = false;
   const numero = (valor, casas = 4) => Number(valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: casas });
   const dataBr = (iso) => {
     const texto = String(iso || '').slice(0, 10);
@@ -84,6 +88,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
 
   window.MavisSubscreenRegistry.purchases.entrada_nfe = async function renderEntradaNfe(ctx) {
     const { content, api, showToast, escapeHtml, confirmModal, state } = ctx;
+    veValores = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
     // Veio do "Dar entrada" das Notas emitidas contra CNPJ (14/10/2026): abre
     // com o XML daquela nota e, ao lançar, liga a entrada a ela.
     const doDfe = state && state.entradaNfeDoDfe ? state.entradaNfeDoDfe : null;
@@ -419,7 +424,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       }
       return `
         <section class="panel">
-          <h4>Últimas entradas</h4>
+          <div class="panel-header">
+            <h4>Últimas entradas</h4>
+            <button type="button" class="secondary" id="entradaPlanilha">Baixar planilha</button>
+          </div>
           <div class="table-scroll">
             <table class="table">
               <thead>
@@ -513,6 +521,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       content.querySelectorAll('[data-baixar-xml]').forEach((botao) => {
         botao.addEventListener('click', () => baixarXml(botao.dataset.baixarXml));
       });
+      document.getElementById('entradaPlanilha')?.addEventListener('click', baixarPlanilha);
       // O resumo da entrada (15/10/2026): a mesma janela das Notas contra CNPJ.
       content.querySelectorAll('[data-resumo-entrada]').forEach((botao) => {
         botao.addEventListener('click', async () => {
@@ -598,6 +607,39 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
      * cabeçalho x-auth-token: um link comum chegaria ao servidor sem sessão e
      * voltaria 403. Mesmo caminho que a tela de NF-e Emitidas usa.
      */
+    // A PLANILHA (16/10/2026, pedido do usuário: "um botão para baixar uma
+    // planilha já formatada"): todas as entradas e os itens, num .xlsx — ver
+    // lib/planilha-entradas.js. O nome do arquivo vem do servidor, com a data.
+    async function baixarPlanilha() {
+      const botao = document.getElementById('entradaPlanilha');
+      if (botao) botao.disabled = true;
+      let url = null;
+      try {
+        const resposta = await fetch('/api/purchases/entrada-nfe/planilha', {
+          headers: { 'x-auth-token': getSessionToken() || '' }
+        });
+        if (!resposta.ok) {
+          const corpo = await resposta.json().catch(() => ({}));
+          showToast(corpo.error || `Não consegui montar a planilha (HTTP ${resposta.status}).`, 'error');
+          return;
+        }
+        const blob = await resposta.blob();
+        url = URL.createObjectURL(blob);
+        const nome = /filename="([^"]+)"/.exec(resposta.headers.get('Content-Disposition') || '');
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = nome ? nome[1] : 'notas-de-entrada.xlsx';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } catch (erro) {
+        showToast(erro.message || 'Não consegui baixar a planilha.', 'error');
+      } finally {
+        if (url) setTimeout(() => URL.revokeObjectURL(url), 10000);
+        if (botao) botao.disabled = false;
+      }
+    }
+
     async function baixarXml(id) {
       let url = null;
       try {
