@@ -117,7 +117,12 @@ check('o valor fica selecionado, com os centavos (o mouseup do clique não desfa
 console.log('\n--- 8. o campo vazio mostra 0,00 e continua vazio para quem lê ---');
 check('vazio mostra "0,00" e lê ""',
   /get\(\) \{ return el\.__vazio \? '' : paraNumero\(lerTela\(el\)\); \}/.test(fonteDoCampo)
-  && /function mostrar\(el, texto\) \{\s*el\.__vazio = texto === '';\s*escreverTela\(el, texto === '' \? ZERO : texto\);/.test(fonteDoCampo));
+  && /function mostrar\(el, texto\) \{\s*el\.__vazio = texto === '';\s*escreverTela\(el, texto === '' \? semValor\(el\) : texto\);/.test(fonteDoCampo));
+// Menos onde o vazio tem nome próprio: "manter" (Alterar em massa da NF-e), o
+// preço base (tabela de preços). Ali o "0,00" pareceria zerar o valor.
+check('  menos com dica própria, que continua à vista',
+  /const dica = String\(el\.getAttribute\('placeholder'\) \|\| ''\)\.trim\(\);\s*return dica && dica !== ZERO \? '' : ZERO;/.test(fonteDoCampo)
+  && /const novo = el\.__vazio && semValor\(el\) === '' \? '' : formatarDigitando\(bruto, permiteNegativo\(el\)\);/.test(fonteDoCampo));
 check('apagar tudo volta a ser "não informado"', /el\.__vazio = !\/\\d\/\.test\(bruto\);/.test(fonteDoCampo));
 check('vírgula e ponto digitados não fazem nada', /if \(evento\.data === '\.' \|\| evento\.data === ','\) evento\.preventDefault\(\);/.test(fonteDoCampo));
 

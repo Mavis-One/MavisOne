@@ -188,7 +188,16 @@
   /** Escreve um valor já formatado; sem valor, "0,00" e vazio para quem lê. */
   function mostrar(el, texto) {
     el.__vazio = texto === '';
-    escreverTela(el, texto === '' ? ZERO : texto);
+    escreverTela(el, texto === '' ? semValor(el) : texto);
+  }
+
+  // O VAZIO QUE TEM SIGNIFICADO PRÓPRIO (16/10/2026). Campo com dica que não
+  // é "0,00" — "manter" no Alterar em massa da NF-e, o preço base na tabela de
+  // preços — fica vazio, mostrando a dica: ali vazio é "não mexer"/"usar o
+  // base", e um "0,00" na tela pareceria zerar o valor.
+  function semValor(el) {
+    const dica = String(el.getAttribute('placeholder') || '').trim();
+    return dica && dica !== ZERO ? '' : ZERO;
   }
 
   function ativarTodos(raiz) {
@@ -209,7 +218,7 @@
     const aDireita = bruto.slice(pos).replace(/\D/g, '').length;
     // Apagou tudo: volta a ser "não informado", como o campo que nasce vazio.
     el.__vazio = !/\d/.test(bruto);
-    const novo = formatarDigitando(bruto, permiteNegativo(el));
+    const novo = el.__vazio && semValor(el) === '' ? '' : formatarDigitando(bruto, permiteNegativo(el));
     if (novo !== bruto) escreverTela(el, novo);
     let i = novo.length;
     let contados = 0;
@@ -279,7 +288,7 @@
       const el = evento.target;
       if (!el || !el.__dinheiro) return;
       const tela = lerTela(el);
-      const completo = completar(tela) || ZERO;
+      const completo = el.__vazio ? semValor(el) : (completar(tela) || semValor(el));
       if (completo !== tela) escreverTela(el, completo);
       validar(el);
     }, true);
