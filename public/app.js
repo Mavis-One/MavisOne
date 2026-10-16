@@ -5493,9 +5493,11 @@ async function loadModule(moduleName) {
                                     ${item.classValueId ? `<span class="sales-item-cor">${escapeHtml(item.classValueName || item.classValueId)}</span>` : ''}
                                   </td>
                                   <td>
-                                    <input type="text" class="sales-item-chassi" data-index="${index}"
+                                    <!-- Veículo (NCM 8711) exige chassi (16/10/2026,
+                                         shared/venda_obrigatorios.js). -->
+                                    <input type="text" class="sales-item-chassi ${window.MavisVendaObrigatorios.ehVeiculo(produto?.ncm) ? 'is-obrigatorio' : ''}" data-index="${index}"
                                            value="${escapeHtml(item.chassi || '')}" maxlength="25"
-                                           placeholder="—" autocomplete="off" spellcheck="false"
+                                           placeholder="${window.MavisVendaObrigatorios.ehVeiculo(produto?.ncm) ? 'Obrigatório' : '—'}" autocomplete="off" spellcheck="false"
                                            title="Chassi do equipamento. Vai para as observações da NF-e." />
                                     <!-- Um chassi identifica UMA unidade. Com dois
                                          ou mais na mesma linha, o número serviria
@@ -6680,12 +6682,13 @@ async function loadModule(moduleName) {
             // aqui é para dizer qual falta e levar até ele, na aba certa. Sem o
             // atributo `required` de propósito: campo obrigatório numa aba
             // escondida trava o envio sem mensagem nenhuma.
-            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload, { categorias: meta.salesCategories || [], total: computeTotals().totalAmount, formas: meta.paymentMethods || [], tipoRegistro: recordType });
+            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload, { categorias: meta.salesCategories || [], total: computeTotals().totalAmount, formas: meta.paymentMethods || [], tipoRegistro: recordType, ncmDoItem: (item) => produtoDoItem(item)?.ncm });
             if (obrigatorioQueFalta) {
               showToast(obrigatorioQueFalta.mensagem, 'warning');
               abrirAba(obrigatorioQueFalta.aba || 'dados');
               if (obrigatorioQueFalta.foco) document.getElementById(obrigatorioQueFalta.foco)?.focus();
               if (obrigatorioQueFalta.linha !== undefined) content.querySelector(`.sales-payment-auth[data-index="${obrigatorioQueFalta.linha}"]`)?.focus();
+              if (obrigatorioQueFalta.itemSemChassi !== undefined) content.querySelector(`.sales-item-chassi[data-index="${obrigatorioQueFalta.itemSemChassi}"]`)?.focus();
               return;
             }
             if (botaoSalvar) botaoSalvar.disabled = true;

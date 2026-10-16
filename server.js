@@ -2956,6 +2956,17 @@ async function completarNomesDosItens(rawItems) {
   }));
 }
 
+// O NCM do produto de cada item, para o chassi obrigatório do veículo
+// (shared/venda_obrigatorios.js, 16/10/2026). Só os produtos da venda.
+async function ncmDosItensDaVenda(itens) {
+  const ids = (Array.isArray(itens) ? itens : []).map((item) => item && item.productId).filter(Boolean);
+  const produtos = await db.getProductsEmMapaPorIds(ids);
+  return (item) => {
+    const produto = item && produtos.get(item.productId);
+    return produto ? produto.ncm : '';
+  };
+}
+
 // Lista vazia e lista inteira recusada são problemas diferentes e pedem
 // respostas diferentes: "não mandou item" vs. "mandou item que não dá para
 // usar". A mesma frase para os dois fazia o integrador conferir o campo errado.
@@ -13869,7 +13880,7 @@ async function tratarRequisicao(req, res) {
         }
         // A categoria decide se o pagamento é obrigatório (transferência não é).
         // A soma dos pagamentos fecha com o total (mesma conta da tela).
-        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: type });
+        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: type, ncmDoItem: await ncmDosItensDaVenda(body.items) });
         if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
         const totais = computeSalesTotals(items, body);
         record = {
@@ -14602,7 +14613,7 @@ async function tratarRequisicao(req, res) {
       // tela: o que faltar precisa ser preenchido antes. Menos para CANCELAR —
       // um pedido incompleto tem de poder ser cancelado como está.
       const vaiCancelar = salesStatus.ehCancelado(salesStatus.normalizar(body.status || current.status, undefined));
-      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: current.type });
+      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: current.type, ncmDoItem: await ncmDosItensDaVenda(body.items) });
       if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
       // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
       // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo

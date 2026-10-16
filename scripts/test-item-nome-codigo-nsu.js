@@ -54,7 +54,7 @@ check('com NSU passa', falta([{ methodId: 'c', amount: 100, cardAuthorization: '
 check('dinheiro não pede NSU', falta([{ methodId: 'd', amount: 100 }]) === null);
 check('orçamento não pede NSU', falta([{ methodId: 'c', amount: 100 }], { status: 'orcamento' }, 'quote') === null);
 check('tela e servidor passam o cadastro de formas',
-  app.includes('formas: meta.paymentMethods || [], tipoRegistro: recordType });')
+  app.includes('formas: meta.paymentMethods || [], tipoRegistro: recordType, ncmDoItem: ')
   && (servidor.match(/formas: loadData\(\)\.paymentMethods \|\| \[\], tipoRegistro: /g) || []).length === 2);
 check('o campo diz "Obrigatório"', app.includes('placeholder="Obrigatório" />'));
 

@@ -50,6 +50,18 @@
     });
   }
 
+  // CHASSI OBRIGATÓRIO NO VEÍCULO (16/10/2026, pedido do usuário: "deixe o
+  // campo chassi ... de um novo pedido/orçamento como obrigatório"). Veículo é
+  // o produto de NCM 8711 (autopropelidos, motos e bicicletas elétricas): peça,
+  // acessório e serviço não têm chassi. `ncmDoItem(item)` dá o NCM do produto
+  // da linha; sem ele, não confere.
+  const ehVeiculo = (ncm) => /^8711/.test(String(ncm || '').replace(/\D/g, ''));
+  function itemSemChassi(itens, ncmDoItem) {
+    if (typeof ncmDoItem !== 'function') return -1;
+    return (Array.isArray(itens) ? itens : [])
+      .findIndex((item) => item && ehVeiculo(ncmDoItem(item)) && !String(item.chassi || '').trim());
+  }
+
   /**
    * O primeiro campo obrigatório que falta, ou null.
    *
@@ -59,11 +71,23 @@
    *
    * `formas` (cadastro de formas de pagamento) e `tipoRegistro` ('order' |
    * 'quote'): com eles, cartão sem NSU/Autorização também falta.
+   *
+   * `ncmDoItem`: com ele, veículo sem chassi também falta.
    */
-  function faltando(registro, { categorias = [], total, formas, tipoRegistro } = {}) {
+  function faltando(registro, { categorias = [], total, formas, tipoRegistro, ncmDoItem } = {}) {
     const r = registro || {};
     for (const def of CAMPOS) {
       if (!String(r[def.campo] == null ? '' : r[def.campo]).trim()) return def;
+    }
+    const semChassi = itemSemChassi(r.items, ncmDoItem);
+    if (semChassi >= 0) {
+      return {
+        campo: 'items',
+        rotulo: 'Chassi',
+        mensagem: `Informe o chassi de ${String(r.items[semChassi].name || 'veículo').trim()} (item ${semChassi + 1}).`,
+        aba: 'dados',
+        itemSemChassi: semChassi
+      };
     }
     const exige = categoriaVenda && typeof categoriaVenda.exigePagamento === 'function'
       ? categoriaVenda.exigePagamento(r.category, categorias)
@@ -104,7 +128,7 @@
     return null;
   }
 
-  const api = { CAMPOS, faltando, temPagamento, cartaoSemNsu };
+  const api = { CAMPOS, faltando, temPagamento, cartaoSemNsu, ehVeiculo, itemSemChassi };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisVendaObrigatorios = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -58,7 +58,8 @@ check('a tela avisa se a quantidade for maior que 1', /1 chassi para ' \+ salesF
 
 console.log('\n--- a tela ---');
 check('há coluna de Chassi', /<th>Chassi<\/th>/.test(appSrc));
-check('com campo editável por linha', /class="sales-item-chassi" data-index="\$\{index\}"/.test(appSrc));
+// Desde 16/10/2026 a classe ganha is-obrigatorio no veículo (test-chassi-obrigatorio.js).
+check('com campo editável por linha', /class="sales-item-chassi \$\{[^}]*\}" data-index="\$\{index\}"/.test(appSrc));
 // Um renderForm() por tecla reconstruiria a linha e tiraria o foco do campo.
 check('guarda a cada tecla sem redesenhar', /input'.*\n?\s*items\[Number\(input\.dataset\.index\)\]\.chassi = input\.value;/.test(appSrc));
 check('e redesenha só ao sair do campo', /const limpo = input\.value\.trim\(\)\.toUpperCase\(\);/.test(appSrc));
