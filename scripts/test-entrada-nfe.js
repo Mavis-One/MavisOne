@@ -334,10 +334,14 @@ console.log('\n--- nota de uma filial para outra ---');
   check('mesmo CNPJ nos dois lados entra, com aviso', !bloqueado(mesmoCnpj) && avisado(mesmoCnpj));
   check('fornecedor -> nós segue normal', !bloqueado(conferir('05824631000149', '43792899000135')));
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  check('transferência não gera contas a pagar (servidor)', srv.includes('const querFinanceiro = body.gerarFinanceiro !== false && !conferencia.transferencia;'));
-  // Desde 15/10/2026 a cada nota: desligado na transferência e LIGADO nas
-  // outras (antes seguia desligado na nota seguinte). Ver test-titulos-da-entrada.
-  check('  e a tela já vem com o financeiro desligado', fs.readFileSync(path.join(__dirname, '..', 'public/modules/purchases/subs/entrada_nfe.js'), 'utf8').includes('tela.gerarFinanceiro = !resposta.transferencia;'));
+  // Desde 16/10/2026 a transferência gera contas a pagar como as outras: o
+  // usuário quer a Edição de Título em TODOS os lançamentos pelas Notas contra
+  // CNPJ. Quem decide é só a caixa "Gerar contas a pagar".
+  check('transferência gera contas a pagar como as outras (servidor)', srv.includes('const querFinanceiro = body.gerarFinanceiro !== false;')
+    && !srv.includes('&& !conferencia.transferencia'));
+  const telaEntrada = fs.readFileSync(path.join(__dirname, '..', 'public/modules/purchases/subs/entrada_nfe.js'), 'utf8');
+  check('  e a tela vem com o financeiro ligado em toda nota, transferência inclusive', telaEntrada.includes('tela.gerarFinanceiro = true;')
+    && !/id="entradaGerarFinanceiro"[^>]*transferencia/.test(telaEntrada));
 }
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);

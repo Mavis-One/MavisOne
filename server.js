@@ -10474,9 +10474,12 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
     }
   }
 
-  // Transferência entre filiais da mesma empresa não tem conta a pagar: é a
-  // mesma pessoa jurídica (montarConferencia, 15/10/2026).
-  const querFinanceiro = body.gerarFinanceiro !== false && !conferencia.transferencia;
+  // A transferência entre filiais deixou de ser exceção (16/10/2026, pedido do
+  // usuário: a Edição de Título "precisa aparecer em todos os tipos de
+  // lançamentos de NF de entrada pela tela Notas contra CNPJ"). Ela gera
+  // contas a pagar como as outras, e a tela abre a Edição de cada uma; quem
+  // não quiser o título desmarca "Gerar contas a pagar".
+  const querFinanceiro = body.gerarFinanceiro !== false;
   const vaiMovimentar = decisoes.some((d) => d.movimentarEstoque);
   const status = decisoes.some((d) => !d.produtoId) ? 'REVISAR' : 'LANCADA';
 

@@ -345,7 +345,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             </p>
           `}
           <label class="entrada-opcao">
-            <input type="checkbox" id="entradaGerarFinanceiro" ${tela.gerarFinanceiro ? 'checked' : ''} ${tela.conferencia && tela.conferencia.transferencia ? 'disabled' : ''} />
+            <input type="checkbox" id="entradaGerarFinanceiro" ${tela.gerarFinanceiro ? 'checked' : ''} />
             <span>Gerar contas a pagar a partir desta nota</span>
           </label>
         </section>
@@ -688,11 +688,12 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       });
       tela.xml = xml;
       tela.conferencia = { nota: resposta.nota, fornecedor: resposta.fornecedor, itens: resposta.itens, bloqueios: resposta.bloqueios, avisos: resposta.avisos, transferencia: Boolean(resposta.transferencia) };
-      // Transferência entre filiais não gera contas a pagar (15/10/2026).
-      // A CADA NOTA (15/10/2026): marcado, menos na transferência. Desligado
-      // numa nota, o "Gerar contas a pagar" seguia desligado nas seguintes, e
-      // sem conta a pagar a Edição de Título não abria depois de lançar.
-      tela.gerarFinanceiro = !resposta.transferencia;
+      // A CADA NOTA (15/10/2026): marcado. Desligado numa nota, o "Gerar contas
+      // a pagar" seguia desligado nas seguintes, e sem conta a pagar a Edição
+      // de Título não abria depois de lançar. Desde 16/10/2026 vale também na
+      // transferência entre filiais (pedido do usuário: a Edição de Título em
+      // todos os tipos de lançamento).
+      tela.gerarFinanceiro = true;
       tela.produtos = resposta.produtos || [];
       tela.depositos = resposta.depositos || [];
       tela.permissoes = resposta.permissoes || {};
