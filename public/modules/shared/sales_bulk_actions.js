@@ -119,6 +119,8 @@
         // Faturado tem estoque baixado e financeiro gerado; sumir com o
         // registro deixaria os dois sem origem.
         if (S.geraFinanceiro(r.status)) return 'Pedido faturado não é excluído — cancele primeiro.';
+        // Aprovado também não (16/10/2026): ele não se altera e já tem títulos.
+        if ((ehPedido(r) && S.travaAlteracao(r.status)) || r.financeApplied) return 'Pedido aprovado não é excluído — cancele primeiro.';
         if (r.nfeId) return 'Tem NF-e emitida: documento fiscal não se apaga.';
         return true;
       }

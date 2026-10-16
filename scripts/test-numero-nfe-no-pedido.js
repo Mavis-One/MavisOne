@@ -29,8 +29,10 @@ check('só as duas chaves mudam em payment_info',
 check('limpar só se ainda for o número da nota cancelada',
   banco.includes("where id = $1 and payment_info->>'nfeNumber' = $2::text"));
 const fatura = servidor.slice(servidor.indexOf('async function faturarPedidoDaNota('), servidor.indexOf('function enderecoDaPessoa('));
+// Entre os dois, desde 16/10/2026, o número da nota nos títulos que nasceram
+// na aprovação (test-titulos-na-aprovacao.js).
 check('grava DEPOIS de faturar (o faturamento regrava o pedido inteiro)',
-  /await mudarStatusSalesRecord\(\{ id: pedido\.id, code: pedido\.code \}, 'pedido-faturado', dataVendas, quemFatura\);\s*await anotarNumeroDaNotaNoPedido\(nfe, pedido\.id\);/.test(fatura));
+  /await mudarStatusSalesRecord\(\{ id: pedido\.id, code: pedido\.code \}, 'pedido-faturado', dataVendas, quemFatura\);\s*(?:\/\/[^\n]*\s*)*if \(pedido\.financeApplied\) await anotarNotaNoFinanceiroDoPedido\(dataVendas, pedido, nfe\.numero\);\s*await anotarNumeroDaNotaNoPedido\(nfe, pedido\.id\);/.test(fatura));
 check('  também quando o pedido já estava faturado (dispensa) e quando o faturamento falha',
   /anotarNotaNoFinanceiroDoPedido\(dataVendas, pedido, nfe\.numero\);\s*await anotarNumeroDaNotaNoPedido\(nfe, pedido\.id\);/.test(fatura)
   && fatura.includes('await anotarNumeroDaNotaNoPedido(nfe, pedidoId);'));

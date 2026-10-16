@@ -284,8 +284,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         </div>
         ${filaDaEntrada ? `
           <p class="prompt-aviso">
-            <strong>Entrada da ${escapeHtml(filaDaEntrada.nota)} · título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length}.</strong>
-            Valor, data, descrição e fornecedor vêm da nota.
+            <strong>${escapeHtml(filaDaEntrada.titulo || `Entrada da ${filaDaEntrada.nota}`)} · título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length}.</strong>
+            ${escapeHtml(filaDaEntrada.aviso || 'Valor, data, descrição e fornecedor vêm da nota.')}
           </p>` : vinculado ? `
           <p class="prompt-aviso">
             <strong>Lançamento gerado ${editEntry.vinculo === 'nfe' ? 'por uma NF-e' : 'por um pedido'}.</strong>
@@ -501,9 +501,18 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     renderFinanceNovoLancamento(ctx);
   }
 
-  function voltarDaFila() {
+  async function voltarDaFila() {
     const volta = filaDaEntrada.volta;
     state.financeFilaDaEntrada = null;
+    // A fila da aprovação do pedido (16/10/2026) volta ao PEDIDO aberto.
+    if (volta.recordId) {
+      try {
+        const res = await api(`/api/sales/records/${encodeURIComponent(volta.recordId)}`);
+        if (res.record) state.salesDraft = { ...(state.salesDraft || {}), editRecord: res.record, novoStatus: '' };
+      } catch (error) {
+        showToast('Não foi possível reabrir o pedido — abra pela lista de Pedidos e Orçamentos.', 'warning');
+      }
+    }
     state.activeModule = volta.module;
     state.activeSub = volta.sub;
     if (typeof renderApp === 'function') renderApp();

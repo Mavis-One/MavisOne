@@ -47,7 +47,9 @@ const titulo = ler('public/modules/finance/subs/novo_lancamento.js');
 check('reconhece o título da fila (e outro título encerra a fila)',
   /const filaDaEntrada = state\.financeFilaDaEntrada && editEntry\s*&& state\.financeFilaDaEntrada\.ids\.includes\(editEntry\.id\)/.test(titulo)
   && /if \(!filaDaEntrada\) state\.financeFilaDaEntrada = null;/.test(titulo));
-check('  mostra a nota e a posição', /Entrada da \$\{escapeHtml\(filaDaEntrada\.nota\)\} · título \$\{posicaoNaFila \+ 1\} de \$\{filaDaEntrada\.ids\.length\}/.test(titulo));
+// Desde 16/10/2026 a fila serve também à aprovação do pedido (titulo/aviso
+// próprios; test-titulos-na-aprovacao.js). Sem eles, o texto da entrada.
+check('  mostra a nota e a posição', /\$\{escapeHtml\(filaDaEntrada\.titulo \|\| `Entrada da \$\{filaDaEntrada\.nota\}`\)\} · título \$\{posicaoNaFila \+ 1\} de \$\{filaDaEntrada\.ids\.length\}/.test(titulo));
 check('  salvar abre o seguinte', /if \(filaDaEntrada && proximoDaFila\) \{[\s\S]{0,200}abrirProximoDaFila\(\);\s*return;/.test(titulo));
 check('  o último oferece a volta, que encerra a fila',
   /id="financeFilaVolta">\$\{escapeHtml\(filaDaEntrada\.volta\.rotulo\)\}/.test(titulo)

@@ -70,12 +70,13 @@ check('categoria cadastrada: vale o "gera financeiro" dela',
 
 console.log('\n--- 2. o servidor recusa ---');
 const servidor = ler('server.js');
-// Desde 16/10/2026 com o NCM dos itens (chassi do veículo;
-// test-chassi-obrigatorio.js).
+// Desde 16/10/2026 com o NCM dos itens (chassi do veículo) e sem conferir o
+// pedido aprovado, que não se altera (test-chassi-obrigatorio.js,
+// test-titulos-na-aprovacao.js).
 check('na criação e na edição, com as categorias cadastradas',
-  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\), total: computeSalesTotals\(items, body\)\.totalAmount, formas: loadData\(\)\.paymentMethods \|\| \[\], tipoRegistro: (?:type|current\.type), ncmDoItem: await ncmDosItensDaVenda\(body\.items\) \}\);/g) || []).length === 2);
+  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \|\| travadoPorAprovacao \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\), total: computeSalesTotals\(items, body\)\.totalAmount, formas: loadData\(\)\.paymentMethods \|\| \[\], tipoRegistro: (?:type|current\.type), ncmDoItem: await ncmDosItensDaVenda\(body\.items\) \}\);/g) || []).length === 2);
 check('  menos para cancelar um pedido incompleto',
-  /const vaiCancelar = salesStatus\.ehCancelado\(/.test(servidor) && /vaiCancelar \? null : vendaObrigatorios\.faltando\(body, /.test(servidor));
+  /const vaiCancelar = salesStatus\.ehCancelado\(/.test(servidor) && /vaiCancelar \|\| travadoPorAprovacao \? null : vendaObrigatorios\.faltando\(body, /.test(servidor));
 
 console.log('\n--- 3. a tela ---');
 const app = ler('public/app.js');

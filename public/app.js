@@ -3585,7 +3585,7 @@ async function loadModule(moduleName) {
                         <button class="icon-button edit sales-edit-record" data-id="${escapeHtml(record.id)}" title="Editar" aria-label="Editar">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
                         </button>
-                        ${vendedorSoCria ? '' : `<button class="icon-button sales-delete-record" data-id="${escapeHtml(record.id)}" title="Excluir" aria-label="Excluir">
+                        ${vendedorSoCria || (record.type === 'order' && SalesStatus.travaAlteracao(record.status)) || record.financeApplied ? '' : `<button class="icon-button sales-delete-record" data-id="${escapeHtml(record.id)}" title="Excluir" aria-label="Excluir">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
                         </button>`}
                       </td>
@@ -3923,10 +3923,18 @@ async function loadModule(moduleName) {
         // como a venda de colega. O servidor recusa do mesmo jeito.
         const aprovadoParaOVendedor = Boolean(isEditing && meuVendedor.soCria
           && !['orcamento', 'pedido'].includes(SalesStatus.normalizar(editRecord.status)));
-        const somenteConsulta = deOutroVendedor || aprovadoParaOVendedor;
+        // PEDIDO APROVADO NÃO SE ALTERA (16/10/2026): para todos, administrador
+        // inclusive. Abre para consulta; gerar a nota e cancelar continuam no
+        // Mais Ações. O servidor recusa do mesmo jeito.
+        const aprovadoTravado = Boolean(isEditing && editRecord.type === 'order' && SalesStatus.travaAlteracao(editRecord.status));
+        // Pedido que já tem títulos a receber (aprovado desde 16/10/2026, ou
+        // faturado): ganha a aba Lançamentos financeiros em Pagamentos.
+        const pedidoComTitulos = Boolean(isEditing && editRecord.type === 'order'
+          && (editRecord.financeApplied || SalesStatus.criaTitulos(editRecord.status)));
+        const somenteConsulta = deOutroVendedor || aprovadoParaOVendedor || aprovadoTravado;
         const motivoDaConsulta = deOutroVendedor
           ? 'Este pedido/orçamento é de outro vendedor. Só o vendedor dele ou um administrador pode alterá-lo.'
-          : 'Este pedido já foi aprovado: o vendedor não altera mais. Peça a um administrador.';
+          : (aprovadoTravado ? SalesStatus.MOTIVO_PEDIDO_APROVADO : 'Este pedido já foi aprovado: o vendedor não altera mais. Peça a um administrador.');
         const vendedorInicial = vendaDeColega
           ? editRecord.sellerId
           : (meuVendedor.travado
@@ -4902,6 +4910,27 @@ async function loadModule(moduleName) {
               // financeiro gerado para ele ajustar forma de pagamento e vencimento —
               // que é o passo seguinte do fluxo, e o que mais se esquece de fazer.
               const gerados = resposta?.financeiro?.entryIds || [];
+              // OS TÍTULOS QUE A APROVAÇÃO CRIOU, UM APÓS O OUTRO (16/10/2026,
+              // pedido do usuário: a Edição de Título ao aprovar, "para eu poder
+              // ajeitar caixa certinho"). A mesma fila da entrada de NF-e
+              // (finance/subs/novo_lancamento.js); o último título volta ao
+              // pedido, onde está o passo seguinte (gerar a nota).
+              if (SalesStatus.criaTitulos(novoStatus) && Number(resposta?.financeiro?.criadas || 0) > 0 && gerados.length
+                && (state.user?.allowedModules || []).includes('finance')) {
+                state.salesDraft.editRecord = null;
+                state.financeFilaDaEntrada = {
+                  ids: gerados,
+                  titulo: `Pedido ${resposta.record?.code || editRecord.code || ''}`,
+                  aviso: 'Valor, data, descrição e cliente vêm do pedido.',
+                  volta: { module: 'sales', sub: 'new_sale', rotulo: 'Voltar ao pedido', recordId: editRecord.id }
+                };
+                state.financeEditEntryId = gerados[0];
+                state.activeModule = 'finance';
+                state.activeSub = 'edicao_titulo';
+                renderApp();
+                loadModule('finance');
+                return;
+              }
               // Só desvia quando o status realmente gerou financeiro. "Aprovado
               // Sem Faturamento" baixa estoque e não cria nada a receber — levar
               // o usuário ao Financeiro ali seria mandá-lo para uma tela vazia.
@@ -5694,6 +5723,15 @@ async function loadModule(moduleName) {
                 </div><!-- /aba Dados -->
 
                 <div class="sales-tab-panel" data-aba="pagamentos" ${abaAtiva === 'pagamentos' ? '' : 'hidden'}>
+                  <!-- A SEGUNDA ABA, LANÇAMENTOS FINANCEIROS (16/10/2026, pedido do
+                       usuário): os títulos do pedido aprovado, como estão no
+                       Financeiro. As linhas abaixo são de onde eles nasceram. -->
+                  ${pedidoComTitulos ? `
+                  <div class="sales-subabas" role="tablist">
+                    <button type="button" class="sales-subaba is-active" role="tab" aria-selected="true" data-subaba-botao="linhas">Pagamentos</button>
+                    <button type="button" class="sales-subaba" role="tab" aria-selected="false" data-subaba-botao="titulos">Lançamentos financeiros</button>
+                  </div>` : ''}
+                  <div class="sales-pagamentos-sub" data-subaba-pagamentos="linhas">
                   <!-- O quadro dos pagamentos vem primeiro (15/10/2026, pedido do usuário:
                        "pagamentos (informação para NF-e e NFC-e) fique em cima dos demais
                        campos"). -->
@@ -5839,6 +5877,14 @@ async function loadModule(moduleName) {
                     </div>
                   </div>
 
+                  </div>
+                  ${pedidoComTitulos ? `
+                  <div class="sales-pagamentos-sub" data-subaba-pagamentos="titulos" hidden>
+                    <div class="cadastro-section">
+                      <div class="cadastro-section-header"><h4>Lançamentos financeiros</h4></div>
+                      <div class="cadastro-section-body" id="salesTitulosDoPedido"></div>
+                    </div>
+                  </div>` : ''}
                 </div><!-- /aba Pagamentos -->
 
                 <div class="sales-tab-panel" data-aba="entrega" ${abaAtiva === 'entrega' ? '' : 'hidden'}>
@@ -6091,8 +6137,9 @@ async function loadModule(moduleName) {
           // nem Salvar. Voltar, Imprimir e Duplicar (cópia é venda nova dele)
           // continuam valendo.
           if (somenteConsulta) {
+            // As abas de Pagamentos (16/10/2026) só trocam o que se vê.
             document.querySelectorAll('#salesRecordForm input, #salesRecordForm select, #salesRecordForm textarea, #salesRecordForm button')
-              .forEach((campo) => { campo.disabled = true; });
+              .forEach((campo) => { if (!campo.closest('.sales-subabas')) campo.disabled = true; });
             const salvar = document.getElementById('salesRecordActionsSave');
             if (salvar) {
               salvar.disabled = true;
@@ -6410,6 +6457,68 @@ async function loadModule(moduleName) {
               // outra aba seria uma chamada por caractere. Sem item não há o
               // que apurar.
               if (botao.dataset.aba === 'impostos' && !tributos && items.length) carregarTributos();
+            });
+          });
+
+          // LANÇAMENTOS FINANCEIROS (16/10/2026): lidos ao entrar na aba, e de
+          // novo a cada entrada — o título pode ter mudado no Financeiro. A
+          // linha abre a Edição de Título, que volta a este pedido.
+          const carregarTitulosDoPedido = async () => {
+            const alvo = document.getElementById('salesTitulosDoPedido');
+            if (!alvo) return;
+            alvo.innerHTML = '<p class="muted">Carregando…</p>';
+            try {
+              const { titulos = [] } = await api(`/api/sales/records/${encodeURIComponent(editRecord.id)}/titulos`);
+              const dia = (valor) => {
+                const [ano, mes, d] = String(valor || '').slice(0, 10).split('-');
+                return ano && mes && d ? `${d}/${mes}/${ano}` : '-';
+              };
+              const abreTitulo = (state.user?.allowedModules || []).includes('finance');
+              alvo.innerHTML = titulos.length ? `
+                <div class="table-scroll">
+                  <table class="table">
+                    <thead><tr><th>Título</th><th>Descrição</th><th>Forma</th><th>Conta</th><th>Plano de contas</th><th>Vencimento</th><th class="col-valor">Valor</th><th class="col-valor">Recebido</th><th class="col-valor">Em aberto</th><th>Situação</th></tr></thead>
+                    <tbody>
+                      ${titulos.map((t) => `
+                        <tr class="${abreTitulo ? 'cadastro-row-clickable' : ''} ${t.rawStatus === 'cancelado' ? 'is-cancelado' : ''}" data-titulo="${escapeHtml(t.id)}">
+                          <td>${escapeHtml(t.codigo || '-')}</td>
+                          <td>${escapeHtml(t.description || '')}</td>
+                          <td>${escapeHtml(t.paymentMethodName || '-')}</td>
+                          <td>${escapeHtml(t.bankAccountName || '-')}</td>
+                          <td>${escapeHtml(t.categoryName || '-')}</td>
+                          <td>${dia(t.dueDate)}</td>
+                          <td class="col-valor">${salesFormatBRL(t.amountPrevisto)}</td>
+                          <td class="col-valor">${salesFormatBRL(t.amountRealizado)}</td>
+                          <td class="col-valor">${salesFormatBRL(t.emAberto)}</td>
+                          <td>${escapeHtml(t.status || '')}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                  </table>
+                </div>` : '<p class="muted">Nenhum lançamento financeiro.</p>';
+              if (!abreTitulo) return;
+              alvo.querySelectorAll('[data-titulo]').forEach((linha) => {
+                linha.addEventListener('click', () => {
+                  state.financeReturnTo = { module: 'sales', sub: 'new_sale', recordId: editRecord.id };
+                  state.financeEditEntryId = linha.dataset.titulo;
+                  state.activeModule = 'finance';
+                  state.activeSub = 'edicao_titulo';
+                  renderApp();
+                  loadModule('finance');
+                });
+              });
+            } catch (erro) {
+              alvo.innerHTML = `<p class="muted">${escapeHtml(erro.message || 'Não consegui ler os lançamentos financeiros.')}</p>`;
+            }
+          };
+          content.querySelectorAll('[data-subaba-botao]').forEach((botao) => {
+            botao.addEventListener('click', () => {
+              const qual = botao.dataset.subabaBotao;
+              content.querySelectorAll('[data-subaba-botao]').forEach((outro) => {
+                outro.classList.toggle('is-active', outro === botao);
+                outro.setAttribute('aria-selected', String(outro === botao));
+              });
+              content.querySelectorAll('[data-subaba-pagamentos]').forEach((painel) => { painel.hidden = painel.dataset.subabaPagamentos !== qual; });
+              if (qual === 'titulos') carregarTitulosDoPedido();
             });
           });
 

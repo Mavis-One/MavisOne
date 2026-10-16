@@ -2768,6 +2768,27 @@ tr.is-selecionada > td { background: var(--panel-alt); }
 .sales-tab-panel { display: grid; gap: 26px; align-content: start; }
 .sales-tab-panel[hidden] { display: none; }
 
+/* As duas abas de Pagamentos (16/10/2026): as linhas do pedido e os
+   lançamentos financeiros dele. Mesmo desenho das abas da venda, um nível
+   abaixo; classe própria porque abrirAba() responde por todo .sales-tab. */
+.sales-subabas { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); }
+.sales-subaba {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sales-subaba:hover { color: var(--text); background: var(--panel-alt); }
+.sales-subaba.is-active { color: var(--primary); background: var(--panel); border-color: var(--border); margin-bottom: -1px; padding-bottom: 9px; }
+.sales-pagamentos-sub { display: grid; gap: 26px; align-content: start; }
+.sales-pagamentos-sub[hidden] { display: none; }
+#salesTitulosDoPedido tr.is-cancelado td { color: var(--muted); text-decoration: line-through; }
+
 .sales-toggle-linha { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-top: 16px; }
 .sales-campo-longo { display: grid; gap: 10px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
 .sales-campo-longo textarea { width: 100%; }

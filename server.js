@@ -4251,7 +4251,10 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
   const regraCategoria = await regraDaCategoriaDoPedido(updated.category || current.category);
   const vaiBaixarEstoque = tipoNovo === 'order' && salesStatus.baixaEstoque(statusNovo)
     && (Boolean(current.stockApplied) || regraCategoria.alteraEstoque);
-  const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.geraFinanceiro(statusNovo)
+  // criaTitulos, e não geraFinanceiro: desde 16/10/2026 as contas a receber
+  // nascem na aprovação (Pré-Faturado), e a autorização da nota as encontra
+  // prontas (wasApplied === willApply: nada a criar de novo).
+  const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus.criaTitulos(statusNovo)
     && (eraFaturado || regraCategoria.geraFinanceiro);
 
   // APROVAR O PEDIDO CONFERE O ESTOQUE (16/10/2026, pedido do usuário: "quero
@@ -4488,6 +4491,14 @@ async function excluirSalesRecord(id, data, user, escopo = null) {
   if (escopo && !vendaDoVendedor.podeMexerNaVenda(escopo, record.sellerId)) {
     const erro = new Error(vendaDoVendedor.MOTIVO_DE_OUTRO_VENDEDOR);
     erro.status = 403;
+    throw erro;
+  }
+  // Pedido aprovado não se altera — e excluir é o máximo de alterar
+  // (16/10/2026). Desde então ele também tem títulos a receber, que ficariam
+  // sem pedido: o caminho é cancelar, que cancela os títulos em aberto.
+  if (isOrder && (salesStatus.travaAlteracao(record.status) || record.financeApplied)) {
+    const erro = new Error('Pedido aprovado não é excluído: cancele o pedido.');
+    erro.status = 409;
     throw erro;
   }
   if (isOrder && record.stockApplied) {
@@ -5176,6 +5187,15 @@ async function empresasDosTitulos(entries, data) {
   return resultado;
 }
 
+// O VALOR REALIZADO DE UM LANÇAMENTO. Entradas antigas de vendas/compras
+// marcam status 'paid' direto, sem registrar baixa em financialPayments; sem
+// esse fallback o realizado aparece como R$ 0,00 para um lançamento já
+// "Pago/Recebido". Uma função para a ficha do Financeiro e para a aba de
+// títulos do pedido (16/10/2026) não divergirem.
+function realizadoDoLancamento(entry, payments) {
+  return payments.length > 0 ? financeEntryPaidTotal(payments) : (isFinanceEntryRealized(entry) ? Number(entry.amount || 0) : 0);
+}
+
 // `baixasDoLancamento` (fase EI) é para quem serializa MUITOS de uma vez: sem
 // ele, cada chamada filtra a lista inteira de baixas — 27 mil lançamentos ×
 // 25 mil baixas na exportação sem filtro eram ~700 milhões de comparações, 10 a
@@ -5211,9 +5231,7 @@ function serializeFinanceEntry(entry, data, baixasDoLancamento) {
     clientSupplierId: entry.clientSupplierId || '',
     clienteFornecedor: resolveFinanceCounterparty(entry, data),
     amountPrevisto: Number(entry.amount || 0),
-    // entradas antigas de vendas/compras marcam status 'paid' direto, sem registrar baixa em financialPayments;
-    // sem esse fallback o valor realizado aparece como R$ 0,00 para um lançamento já "Pago/Recebido"
-    amountRealizado: payments.length > 0 ? financeEntryPaidTotal(payments) : (isFinanceEntryRealized(entry) ? Number(entry.amount || 0) : 0),
+    amountRealizado: realizadoDoLancamento(entry, payments),
     // O QUE FALTA, pela regra da baixa (fase EI): devido efetivo (previsto +
     // juros + multa − desconto das baixas) menos o baixado. "Previsto menos
     // realizado" errava no cartão: baixado pelo líquido com a taxa de
@@ -7675,6 +7693,9 @@ async function faturarPedidoDaNota(nfe, pedidoId, user) {
       return;
     }
     await mudarStatusSalesRecord({ id: pedido.id, code: pedido.code }, 'pedido-faturado', dataVendas, quemFatura);
+    // Os títulos que nasceram na aprovação (16/10/2026) ganham o número da
+    // nota na descrição, como os que nascem no faturamento.
+    if (pedido.financeApplied) await anotarNotaNoFinanceiroDoPedido(dataVendas, pedido, nfe.numero);
     await anotarNumeroDaNotaNoPedido(nfe, pedido.id);
   } catch (erro) {
     // A EXCEÇÃO NÃO SOBE, MAS TAMBÉM NÃO SOME.
@@ -13922,7 +13943,7 @@ async function tratarRequisicao(req, res) {
         // Fase EF: a categoria da venda decide se baixa estoque e se gera
         // financeiro (ver aplicarEfeitosDeStatus).
         const regraCategoria = await regraDaCategoriaDoPedido(record.category);
-        const geraFinanceiroAgora = type === 'order' && salesStatus.geraFinanceiro(status) && regraCategoria.geraFinanceiro;
+        const geraFinanceiroAgora = type === 'order' && salesStatus.criaTitulos(status) && regraCategoria.geraFinanceiro;
         if (geraFinanceiroAgora) {
           const pagamentosInvalidos = pagamentosCabemNoPedido(record);
           if (pagamentosInvalidos) return sendJson(res, { error: pagamentosInvalidos }, 400);
@@ -14095,6 +14116,59 @@ async function tratarRequisicao(req, res) {
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao executar a ação em lote', 400);
+    }
+  }
+
+  // OS TÍTULOS DO PEDIDO (16/10/2026, pedido do usuário: "dentro de pagamentos
+  // para pedidos já aprovados faça uma segunda aba para lançamentos
+  // financeiros que puxe os dados do título já corretamente"). Os títulos como
+  // estão gravados — com o que a Edição de Título mudou —, e não as linhas de
+  // pagamento de onde nasceram. Antes do GET genérico, pelo mesmo motivo dos
+  // anexos logo abaixo.
+  const rotaTitulos = pathname.match(/^\/api\/sales\/records\/([^/]+)\/titulos$/);
+  if (rotaTitulos && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(rotaTitulos[1]);
+      const data = loadData();
+      await Promise.all([
+        syncCadastroData(data),
+        syncSalesDataDosIds(data, [id]),
+        syncFinanceDataDosPedidos(data, [id])
+      ]);
+      const registro = [...(data.orders || []), ...(data.quotes || [])].find((entrada) => entrada.id === id);
+      if (!registro) return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      const escopoDeQuemAbre = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+      if (!vendaDoVendedor.podeVerVenda(escopoDeQuemAbre, registro.sellerId, registro.createdBy, user.id)) {
+        return sendJson(res, { error: 'Pedido/orçamento não encontrado' }, 404);
+      }
+      // Os campos da aba, pelas mesmas funções da ficha do Financeiro — e não
+      // serializeFinanceEntry inteiro: o nome da contraparte de lançamento
+      // legado lê compras, que esta rota não carrega (e título de pedido não usa).
+      const titulos = (data.finance || [])
+        .filter((entry) => entry.referenceId === id && entry.type === 'RECEITA')
+        .map((entry) => {
+          const baixas = getFinanceEntryPayments(data, entry.id);
+          return {
+            id: entry.id,
+            codigo: lancamentoCodigo.formatar(entry.code),
+            description: entry.description || '',
+            dueDate: financeEntryDueDate(entry),
+            paymentMethodName: entry.paymentMethodName || '',
+            bankAccountName: resolveById(data.bankAccounts, entry.bankAccountId),
+            categoryName: resolveById(data.financialCategories, entry.category),
+            amountPrevisto: Number(entry.amount || 0),
+            amountRealizado: realizadoDoLancamento(entry, baixas),
+            emAberto: financeEntryEmAberto(entry, baixas),
+            status: financeEntryStatusLabel(entry),
+            rawStatus: entry.status
+          };
+        })
+        .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')) || String(a.id).localeCompare(String(b.id)));
+      return sendJson(res, { titulos });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao ler os títulos do pedido', 500);
     }
   }
 
@@ -14601,19 +14675,31 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: vendaDoVendedor.MOTIVO_DE_OUTRO_VENDEDOR }, 403);
       }
       const body = await readBody(req);
-      const itensBrutos = normalizeSalesItems(await completarNomesDosItens(body.items));
+      // PEDIDO APROVADO NÃO SE ALTERA (16/10/2026, pedido do usuário: "pedido
+      // aprovado, não pode ser alterado!"; para todos, administrador
+      // inclusive). Gravar sem trocar o status é alterar: recusado. Trocar o
+      // status (cancelar, faturar) segue com o pedido COMO ESTÁ GRAVADO — o
+      // resto do corpo não entra (a tela já o abre só para consulta).
+      const travadoPorAprovacao = isOrder && salesStatus.travaAlteracao(current.status);
+      if (travadoPorAprovacao
+        && salesStatus.normalizar(body.status || current.status, undefined) === salesStatus.normalizar(current.status, undefined)) {
+        return sendJson(res, { error: salesStatus.MOTIVO_PEDIDO_APROVADO }, 409);
+      }
+      const itensBrutos = travadoPorAprovacao
+        ? (current.items || [])
+        : normalizeSalesItems(await completarNomesDosItens(body.items));
       if (!itensBrutos.length) {
         return sendJson(res, { error: mensagemItensInvalidos(body.items) }, 400);
       }
       const items = itensBrutos;
-      if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
+      if (!travadoPorAprovacao && !body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
         return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
       }
       // Vale também para o pedido antigo aberto e salvo (ou aprovado) pela
       // tela: o que faltar precisa ser preenchido antes. Menos para CANCELAR —
       // um pedido incompleto tem de poder ser cancelado como está.
       const vaiCancelar = salesStatus.ehCancelado(salesStatus.normalizar(body.status || current.status, undefined));
-      const obrigatorioQueFalta = vaiCancelar ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: current.type, ncmDoItem: await ncmDosItensDaVenda(body.items) });
+      const obrigatorioQueFalta = vaiCancelar || travadoPorAprovacao ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: current.type, ncmDoItem: await ncmDosItensDaVenda(body.items) });
       if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
       // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
       // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo
@@ -14657,6 +14743,9 @@ async function tratarRequisicao(req, res) {
         updatedByName: user.name,
         updatedAt: new Date().toISOString()
       };
+      if (travadoPorAprovacao) {
+        updated = { ...current, type: tipoNovo, status: statusNovo, updatedByName: updated.updatedByName, updatedAt: updated.updatedAt };
+      }
 
       // Estoque, financeiro e a eventual troca de tabela saem daqui — ver
       // aplicarEfeitosDeStatus(). Antes esta orquestração morava só nesta rota,

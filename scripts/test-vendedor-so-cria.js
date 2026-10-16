@@ -106,7 +106,8 @@ check('  duplicar continua ligado', porId('duplicar').enabled(ctx) === true);
 const app = semComentarios(fs.readFileSync(path.join(RAIZ, 'public/app.js'), 'utf8'));
 check('Mais Ações: as do vendedor desligadas', /const SALES_LOTE_SO_QUEM_NAO_E_VENDEDOR = \['aprovar', 'aprovar_sem_faturamento', 'cancelar', 'excluir', 'nfe', 'nfce'\];/.test(app)
   && /const doVendedor = vendedorSoCria && SALES_LOTE_SO_QUEM_NAO_E_VENDEDOR\.includes\(acao\.id\);/.test(app));
-check('lista sem lixeira para o vendedor', /\$\{vendedorSoCria \? '' : `<button class="icon-button sales-delete-record"/.test(app));
+// E, desde 16/10/2026, sem lixeira também no pedido aprovado (test-titulos-na-aprovacao.js).
+check('lista sem lixeira para o vendedor', /\$\{vendedorSoCria \|\| [^?]*\? '' : `<button class="icon-button sales-delete-record"/.test(app));
 check('pedido aprovado abre só para consulta', /const aprovadoParaOVendedor = Boolean\(isEditing && meuVendedor\.soCria\s*&& !\['orcamento', 'pedido'\]\.includes\(SalesStatus\.normalizar\(editRecord\.status\)\)\);/.test(app));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');

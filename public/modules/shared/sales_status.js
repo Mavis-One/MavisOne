@@ -49,8 +49,9 @@
     },
     {
       // Separado/reservado para faturar, mas sem documento emitido ainda.
+      // Desde 16/10/2026 os títulos a receber nascem aqui (criaTitulos).
       value: 'pedido-pre-faturado', label: 'Pedido Pré-Faturado', tipo: 'order',
-      tom: 'info', baixaEstoque: false, geraFinanceiro: false
+      tom: 'info', baixaEstoque: false, geraFinanceiro: false, criaTitulos: true, aprovado: true
     },
     {
       // O caminho normal: saiu mercadoria e nasceu conta a receber.
@@ -64,13 +65,13 @@
       // Faturamento", logo abaixo). A que precisa faturar antes da nota usa a
       // dispensa registrada, com motivo — ver a migração fase-av.
       value: 'pedido-faturado', label: 'Pedido Faturado', tipo: 'order',
-      tom: 'success', baixaEstoque: true, geraFinanceiro: true, exigeDocumento: true
+      tom: 'success', baixaEstoque: true, geraFinanceiro: true, exigeDocumento: true, criaTitulos: true, aprovado: true
     },
     {
       // Sai mercadoria, NÃO nasce financeiro. Transferência entre depósitos,
       // remessa, bonificação, comodato, troca em garantia.
       value: 'pedido-aprovado-sem-faturamento', label: 'Pedido Aprovado Sem Faturamento', tipo: 'order',
-      tom: 'success', baixaEstoque: true, geraFinanceiro: false
+      tom: 'success', baixaEstoque: true, geraFinanceiro: false, aprovado: true
     },
     {
       value: 'pedido-cancelado', label: 'Pedido Cancelado', tipo: 'order',
@@ -87,7 +88,7 @@
       // propósito: é a combinação de dois casos que o sistema não trabalha
       // (parcial + sem faturamento) e nenhuma tela ou rotina a atribui.
       value: 'pedido-parcialmente-faturado', label: 'Pedido Parcialmente Faturado', tipo: 'order',
-      tom: 'info', baixaEstoque: true, geraFinanceiro: false, parcial: true
+      tom: 'info', baixaEstoque: true, geraFinanceiro: false, parcial: true, aprovado: true
     },
 
     // --- Orçamento: desfechos -------------------------------------------------
@@ -232,6 +233,22 @@
   const tipoDoStatus = (status) => meta(status).tipo;
   const baixaEstoque = (status, tipoRegistro) => Boolean(meta(status, tipoRegistro).baixaEstoque);
   const geraFinanceiro = (status, tipoRegistro) => Boolean(meta(status, tipoRegistro).geraFinanceiro);
+  // OS TÍTULOS A RECEBER NASCEM NA APROVAÇÃO (16/10/2026, pedido do usuário:
+  // a Edição de Título ao aprovar o pedido, "para eu poder ajeitar caixa
+  // certinho"). geraFinanceiro continua querendo dizer "faturado" — é o que as
+  // regras de cancelar e excluir e os painéis leem; criaTitulos diz quando as
+  // contas a receber existem: do Pré-Faturado em diante. Sem a marca, vale
+  // geraFinanceiro.
+  const criaTitulos = (status, tipoRegistro) => {
+    const m = meta(status, tipoRegistro);
+    return Boolean(m.criaTitulos === undefined ? m.geraFinanceiro : m.criaTitulos);
+  };
+  // PEDIDO APROVADO NÃO SE ALTERA (16/10/2026, pedido do usuário: "pedido
+  // aprovado, não pode ser alterado!"). Do Pré-Faturado em diante ninguém,
+  // administrador inclusive, muda o pedido: só o fluxo troca o status (gerar
+  // a nota, cancelar).
+  const travaAlteracao = (status, tipoRegistro) => Boolean(meta(status, tipoRegistro).aprovado);
+  const MOTIVO_PEDIDO_APROVADO = 'Pedido aprovado não pode ser alterado. Para corrigir, cancele e refaça o pedido.';
   // Fase AV: o status exige documento fiscal para ser alcançado. Mesma
   // assinatura das irmãs — é `meta` quem normaliza status legado.
   const exigeDocumento = (status, tipoRegistro) => Boolean(meta(status, tipoRegistro).exigeDocumento);
@@ -288,6 +305,9 @@
     baixaEstoque,
     reservaEstoque,
     geraFinanceiro,
+    criaTitulos,
+    travaAlteracao,
+    MOTIVO_PEDIDO_APROVADO,
     exigeDocumento,
     ehCancelado,
     TRANSICOES,

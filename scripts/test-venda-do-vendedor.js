@@ -68,7 +68,9 @@ check('venda nova nasce com o vendedor do usuário', /sellerId: vendedorInicial,
 check('vendedor travado vê o campo fixo (sem seletor)', /\$\{meuVendedor\.travado \|\| deOutroVendedor \? `[\s\S]{0,120}campo-somente-leitura">Vendedor/.test(app));
 // Desde 16/10/2026 o "só consulta" vale também para o pedido já aprovado
 // aberto pelo vendedor (que só cria) — somenteConsulta inclui o de colega.
-check('  só consulta = venda de colega OU aprovada para o vendedor', /const somenteConsulta = deOutroVendedor \|\| aprovadoParaOVendedor;/.test(app));
+// E, também desde 16/10/2026, o pedido aprovado para todos (aprovadoTravado;
+// test-titulos-na-aprovacao.js).
+check('  só consulta = venda de colega OU aprovada para o vendedor', /const somenteConsulta = deOutroVendedor \|\| aprovadoParaOVendedor \|\| aprovadoTravado;/.test(app));
 check('pedido de colega: sem Salvar e campos desligados', /if \(somenteConsulta\) \{\s*document\.querySelectorAll\('#salesRecordForm input/.test(app) && /salvar\.disabled = true;/.test(app));
 check('  e o Enter também não grava', /event\.preventDefault\(\);\s*if \(somenteConsulta\) \{/.test(app));
 check('  e as ações que mudam o pedido ficam bloqueadas', /somenteLeitura: deOutroVendedor,/.test(app));

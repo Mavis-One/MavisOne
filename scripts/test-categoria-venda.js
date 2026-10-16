@@ -50,8 +50,10 @@ console.log('\n--- 3. ligações ---');
 const server = semComentarios(ler('server.js'));
 check('pedido: estoque e financeiro pela categoria, sem desfazer o já aplicado',
   /salesStatus\.baixaEstoque\(statusNovo\)\s*&& \(Boolean\(current\.stockApplied\) \|\| regraCategoria\.alteraEstoque\)/.test(server)
-  && /salesStatus\.geraFinanceiro\(statusNovo\)\s*&& \(eraFaturado \|\| regraCategoria\.geraFinanceiro\)/.test(server));
-check('  também no pedido que já nasce faturado', /const geraFinanceiroAgora = type === 'order' && salesStatus\.geraFinanceiro\(status\) && regraCategoria\.geraFinanceiro;/.test(server));
+  // criaTitulos desde 16/10/2026: os títulos nascem na aprovação
+  // (test-titulos-na-aprovacao.js). A categoria continua decidindo.
+  && /salesStatus\.criaTitulos\(statusNovo\)\s*&& \(eraFaturado \|\| regraCategoria\.geraFinanceiro\)/.test(server));
+check('  também no pedido que já nasce faturado', /const geraFinanceiroAgora = type === 'order' && salesStatus\.criaTitulos\(status\) && regraCategoria\.geraFinanceiro;/.test(server));
 check('financeiro: conta a receber com a categoria financeira', /category: categoriaFinanceira,/.test(server));
 check('relatórios em memória recarregam ao subir e ao mudar o cadastro', (server.match(/await recarregarCategoriasDosRelatorios\(\);/g) || []).length === 3 && /recarregarCategoriasDosRelatorios\(\);\s*\}\);/.test(server));
 const filial = ler('lib/filial-da-venda.js');
