@@ -272,6 +272,11 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   }
 
   // -------------------------------------------------------------- a listagem
+  // A manifestação que veio da SEFAZ, e não de quem manifestou por aqui: a
+  // consulta antes de manifestar a achou, ou a SEFAZ recusou por duplicidade
+  // (16/10/2026). O servidor grava "SEFAZ (...)" como autor nesses casos.
+  const manifestadaNaSefaz = (doc) => /^SEFAZ\b/.test(String(doc.manifestadoPorNome || ''));
+
   function badgeManifestado(doc) {
     if (!doc.manifestacaoCodigo) return '<span class="finance-badge finance-badge-danger">Não</span>';
     const evento = catalogo.obter(doc.manifestacaoCodigo);
@@ -347,7 +352,7 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
                   <td>${doc.nsu == null ? '-' : doc.nsu}</td>
                   <td>${badgeManifestado(doc)}</td>
                   <td>${doc.manifestacaoCodigo
-                      ? `${escapeHtml(doc.manifestacaoCodigo)} - ${escapeHtml(catalogo.rotulo(doc.manifestacaoCodigo))}`
+                      ? `${escapeHtml(doc.manifestacaoCodigo)} - ${escapeHtml(catalogo.rotulo(doc.manifestacaoCodigo))}${manifestadaNaSefaz(doc) ? '<br /><span class="muted">já manifestada na SEFAZ</span>' : ''}`
                       : '<span class="muted">-</span>'}</td>
                   <td>${colunaEntrada(doc)}</td>
                   <td class="finance-extrato-actions">${acoesDaNota(doc)}</td>
@@ -438,7 +443,10 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         showToast('A SEFAZ ainda não liberou o XML completo desta nota; o “Dar entrada” funciona quando ele chegar.', 'warning');
       }
     } catch (erro) {
-      showToast(erro.message || 'Erro ao manifestar.', 'error');
+      // Já manifestada (16/10/2026): não é falha — a nota passa a constar
+      // como manifestada, e a lista recarregada mostra isso.
+      const jaManifestada = Boolean(erro.dados && erro.dados.jaManifestada);
+      showToast(erro.message || 'Erro ao manifestar.', jaManifestada ? 'warning' : 'error', jaManifestada ? 7000 : undefined);
     } finally {
       tela.ocupado = false;
       await carregar();

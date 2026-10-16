@@ -961,7 +961,13 @@ async function apiDireto(path, options = {}, jaRepetiu = false) {
   }
 
   if (!response.ok) {
-    throw new Error(data.error || 'Erro inesperado');
+    // O corpo e o status vão junto (16/10/2026): quem chamou pode ler o que a
+    // recusa trouxe além da mensagem (ex.: `jaManifestada` nas Notas contra
+    // CNPJ). Quem só lê `.message` continua igual.
+    const erro = new Error(data.error || 'Erro inesperado');
+    erro.status = response.status;
+    erro.dados = data;
+    throw erro;
   }
 
   // ESCREVEU, O SINO ENVELHECEU.

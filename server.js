@@ -15707,7 +15707,8 @@ async function tratarRequisicao(req, res) {
             return sendJson(res, {
               error: `Esta nota já foi manifestada na SEFAZ como "${manifestacao.rotulo(codigoAtual)}". `
                 + 'Uma nota com manifestação definitiva não pode ser manifestada de novo.',
-              documento: atual
+              documento: atual,
+              jaManifestada: true
             }, 409);
           }
           // Ciência é provisória: depois dela vem a definitiva (o caminho normal).
@@ -15736,12 +15737,22 @@ async function tratarRequisicao(req, res) {
             || ['135', '136'].includes(String(resposta && resposta.status_sefaz || ''));
           if (!aceita) {
             const duplicidade = String(resposta && resposta.status_sefaz || '') === '573';
-            const depois = duplicidade ? await atualizarPelaSefaz() : atual;
+            let depois = duplicidade ? await atualizarPelaSefaz() : atual;
+            // A NOTA PASSA A CONSTAR COMO JÁ MANIFESTADA (16/10/2026). A
+            // duplicidade diz que a SEFAZ já tem ESTE evento: se a consulta não
+            // o trouxe (manifestação feita no Viper ou no portal), ele é
+            // registrado aqui — senão a nota continuaria "sem manifestação" e
+            // o botão Manifestar voltaria a cada tentativa.
+            if (duplicidade) {
+              await dfeDb.registrarJaManifestada(id, evento.codigo, depois && depois.manifestacaoCodigo);
+              depois = await dfeDb.obterDocumento(id);
+            }
             return sendJson(res, {
               error: duplicidade
-                ? `A SEFAZ recusou: esta nota já tem este evento (duplicidade).${depois && depois.manifestacaoCodigo ? ` Situação na SEFAZ: ${manifestacao.rotulo(depois.manifestacaoCodigo)}.` : ''}`
+                ? `Esta nota já estava manifestada na SEFAZ${depois && depois.manifestacaoCodigo ? ` como "${manifestacao.rotulo(depois.manifestacaoCodigo)}"` : ''}. A situação dela foi atualizada aqui.`
                 : `A SEFAZ recusou a manifestação: ${(resposta && (resposta.mensagem_sefaz || resposta.mensagem || resposta.status)) || 'sem motivo informado'}.`,
               documento: depois,
+              jaManifestada: duplicidade,
               sefaz: resposta
             }, 409);
           }

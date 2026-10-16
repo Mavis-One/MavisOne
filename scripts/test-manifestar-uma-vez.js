@@ -40,13 +40,13 @@ check('  e grava aqui o que a SEFAZ já tem', /naSefaz && naSefaz\.manifestacao[
 check('  pela consulta individual, sem o XML', /async function consultarRecebida\(\{ chave \}, credentials\)[\s\S]{0,400}`\/nfes_recebidas\/\$\{chaveLimpa\}\.json`/.test(focus)
   && focus.includes('consultarRecebida: (args) => consultarRecebida(args, creds)'));
 check('definitiva (confirmação, desconhecimento, não realizada) não se repete',
-  rota.includes("const FINAIS = ['210200', '210220', '210240'];") && /if \(FINAIS\.includes\(codigoAtual\)\) \{[\s\S]{0,300}\}, 409\);/.test(rota));
+  rota.includes("const FINAIS = ['210200', '210220', '210240'];") && /if \(FINAIS\.includes\(codigoAtual\)\) \{[\s\S]{0,400}\}, 409\);/.test(rota));
 check('ciência de novo é duplicidade; depois da ciência, a definitiva passa',
   /if \(codigoAtual === '210210' && evento\.codigo === '210210'\)/.test(rota) && !rota.includes('if (documento.manifestacaoCodigo) {'));
 check('recusa da SEFAZ (status "erro", HTTP 200) não vira manifestada',
   /const aceita = \['evento_registrado', 'aceita'\]\.includes/.test(rota)
   && rota.indexOf('if (!aceita) {') < rota.indexOf('dfeDb.registrarManifestacao(id, {'));
-check('  e a duplicidade (573) atualiza a nota pela SEFAZ', /const duplicidade = String\(resposta && resposta\.status_sefaz \|\| ''\) === '573';\s*const depois = duplicidade \? await atualizarPelaSefaz\(\)/.test(rota));
+check('  e a duplicidade (573) atualiza a nota pela SEFAZ', /const duplicidade = String\(resposta && resposta\.status_sefaz \|\| ''\) === '573';\s*let depois = duplicidade \? await atualizarPelaSefaz\(\)/.test(rota));
 
 check('tela: Manifestar só sem manifestação ou com ciência', tela.includes("const podeManifestar = (doc) => !doc.manifestacaoCodigo || doc.manifestacaoCodigo === SO_CIENCIA;"));
 check('  com ciência, a janela não oferece ciência de novo', tela.includes('catalogo.CATALOGO.filter((m) => !(doc.manifestacaoCodigo === SO_CIENCIA && m.codigo === SO_CIENCIA))'));
