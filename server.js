@@ -18230,6 +18230,10 @@ async function tratarRequisicao(req, res) {
         marcas: [...new Set(Object.values(data.productMeta || {})
           .map((m) => String((m && m.brand) || '').trim()).filter(Boolean))]
           .sort((a, b) => a.localeCompare(b, 'pt-BR')),
+        // Idem para o Modelo (16/10/2026).
+        modelos: [...new Set(Object.values(data.productMeta || {})
+          .map((m) => String((m && m.model) || '').trim()).filter(Boolean))]
+          .sort((a, b) => a.localeCompare(b, 'pt-BR')),
         // `stockQuantity` SAIU do item: nenhuma tela lê o saldo daqui (o saldo
         // que elas mostram vem de /api/stock/products/:id ou da lista), e ele
         // era 98 KB da resposta. Os cinco que ficaram são os que os seletores

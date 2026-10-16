@@ -154,6 +154,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
           <datalist id="produtoUnidades">${UNIDADES_DO_PRODUTO.map((u) => `<option value="${u}"></option>`).join('')}</datalist>
           <datalist id="produtoGrupos">${categorias.map((c) => `<option value="${S.escape(c.name)}"></option>`).join('')}</datalist>
           <datalist id="produtoMarcas">${(meta.marcas || []).map((m) => `<option value="${S.escape(m)}"></option>`).join('')}</datalist>
+          <datalist id="produtoModelos">${(meta.modelos || []).map((m) => `<option value="${S.escape(m)}"></option>`).join('')}</datalist>
           <datalist id="produtoCests"></datalist>
 
           <section class="produto-bloco produto-bloco-identificacao">
@@ -183,6 +184,9 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
               </label>
               <label>Marca do Produto
                 <input name="brand" list="produtoMarcas" value="${value('brand')}" placeholder="Digite para buscar ou criar marca..." />
+              </label>
+              <label>Modelo do Produto
+                <input name="model" list="produtoModelos" value="${value('model')}" placeholder="Digite para buscar ou criar modelo..." />
               </label>
               ${chave('controlaEstoque', 'Controla Estoque', !servico, servico ? 'disabled' : '')}
               ${chave('podeVender', 'Pode Vender', !current || current.podeVender !== false)}
@@ -517,6 +521,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       categoryName: grupo ? '' : nomeDoGrupo,
       unit: formData.get('unit'),
       brand: formData.get('brand'),
+      model: formData.get('model'),
       status: campo('ativo')?.checked ? 'ativo' : 'inativo',
       // Serviço = não controla estoque (a mão de obra é o caso de hoje).
       movimentaEstoque: !servicoMarcado,

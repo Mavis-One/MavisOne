@@ -2258,7 +2258,7 @@ tr.is-selected > td { background: color-mix(in srgb, var(--primary) 8%, transpar
 .produto-chave input { margin: 0; }
 
 .produto-linha { display: grid; gap: 14px; align-items: start; }
-.produto-linha-grupo { grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) auto auto auto; align-items: end; }
+.produto-linha-grupo { grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 2fr) auto auto auto; align-items: end; }
 .produto-linha-fiscal { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .produto-linha-fiscal-extra { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .produto-linha-escala { grid-template-columns: repeat(2, minmax(0, 1fr)); }
