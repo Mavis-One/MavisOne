@@ -260,8 +260,13 @@ check('  valida todos os itens ANTES de gravar',
   rotaLancar.indexOf('assertMovementIsPossible') < rotaLancar.indexOf('criarEntrada'));
 check('  grava auditoria', /entrada-nfe-lancada/.test(rotaLancar));
 
-// Documento fiscal recebido não se apaga — mesma regra da nota emitida.
-check('não existe rota DELETE de entrada', !/entrada-nfe[\s\S]{0,200}req\.method === 'DELETE'/.test(servidor));
+// Documento fiscal recebido não se apaga — mesma regra da nota emitida. Desde
+// 16/10/2026 (pedido do usuário) a ENTRADA pode ser excluída para refazer, mas
+// só o lançamento: o XML fica na nota recebida, e sem ele lá a exclusão recusa
+// (test-excluir-entrada.js).
+check('excluir a entrada não apaga o documento recebido',
+  !/delete from nfe_distribuicao/.test(servidor)
+  && /O XML da \$\{nota\} só está guardado nesta entrada: excluí-la apagaria o documento recebido\./.test(servidor));
 const dbEntrada = ler('lib/db/entrada-nfe.js');
 check('nem função de exclusão na camada de dados', !/function excluir|function deletar|function remover/.test(dbEntrada));
 // A coluna xml tem o documento inteiro; num `select *` a lista viraria

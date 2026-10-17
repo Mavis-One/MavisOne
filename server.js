@@ -5058,6 +5058,129 @@ async function addFinanceAuditLog(_data, { action, entry, byId, byName, details 
 // também em Notas de Entrada e no fim do lançamento, onde a lista de Notas
 // contra CNPJ não está à mão. Da nota recebida ligada à entrada, ou da mesma
 // chave; entrada de XML arrastado sem nota recebida fica sem (null).
+/**
+ * EXCLUIR A ENTRADA DE UMA NF-e RECEBIDA (16/10/2026). Pedido do usuário:
+ * "adicione dois comandos para excluir a nf de entrada, e a permissão para
+ * refazê-la". Quem pode: a permissão Compras › excluir (DELETE em
+ * /api/purchases/*, cobrada pelo portão de permissões).
+ *
+ * Não contradiz "documento fiscal não se exclui": aquela regra é da NF-e que
+ * NÓS emitimos. Aqui sai o LANÇAMENTO de uma nota do fornecedor, que continua
+ * na nota recebida (XML) para dar entrada de novo — é o mesmo raciocínio de
+ * entradaNfeDb.desfazerEntrada.
+ *
+ * TUDO OU NADA, numa transação só: o estoque volta por movimentos de estorno
+ * (o histórico fica), as contas a pagar em aberto são canceladas, a ordem de
+ * compra ligada volta a Ordem de Compra, a nota recebida volta a "pendente" e
+ * o registro da entrada sai. Recusa, sem mexer em nada, quando a entrada já
+ * está escriturada no SPED, quando alguma conta a pagar dela tem baixa, ou
+ * quando o estoque que ela lançou já saiu (nenhum depósito fica negativo).
+ * O custo dos produtos não volta: dar entrada de novo o grava outra vez.
+ */
+async function excluirEntradaDeNfe(id, user) {
+  const recusa = (status, mensagem) => Object.assign(new Error(mensagem), { status });
+  const entrada = await entradaNfeDb.obterEntrada(id);
+  if (!entrada) throw recusa(404, 'Entrada não encontrada.');
+  const nota = `NF-e ${entrada.numero}/${entrada.serie}`;
+
+  // O DOCUMENTO RECEBIDO NÃO SE APAGA: sai o lançamento, e o XML continua na
+  // nota recebida (nfe_distribuicao). Se só a entrada o guarda (nota lançada
+  // por upload), excluí-la apagaria o documento — recusa.
+  const { rows: comXml } = await consultarBanco("select 1 from nfe_entrada where id = $1 and coalesce(xml, '') <> ''", [id]);
+  if (comXml.length) {
+    const { rows: guardado } = await consultarBanco(
+      "select 1 from nfe_distribuicao where chave = $1 and coalesce(xml, '') <> '' limit 1", [entrada.chave]);
+    if (!guardado.length) {
+      throw recusa(409, `O XML da ${nota} só está guardado nesta entrada: excluí-la apagaria o documento recebido. Busque a nota em Notas contra CNPJ antes de excluir.`);
+    }
+  }
+  const { rows: escriturada } = await consultarBanco('select 1 from fiscal_documentos where nfe_entrada_id = $1 limit 1', [id]);
+  if (escriturada.length) {
+    throw recusa(409, `A entrada da ${nota} já está escriturada nos documentos fiscais (SPED) e não pode ser excluída.`);
+  }
+  const { rows: titulos } = await consultarBanco(
+    `select e.id, e.code, e.status, (select count(*) from financial_payments p where p.entry_id = e.id)::int as baixas
+       from financial_entries e where e.reference_id = $1`, [id]);
+  const comBaixa = titulos.filter((t) => t.status !== 'cancelado' && (t.status !== 'pending' || t.baixas > 0));
+  if (comBaixa.length) {
+    throw recusa(409, `A ${nota} tem conta a pagar com baixa (${comBaixa.map((t) => lancamentoCodigo.formatar(t.code)).join(', ')}): estorne a baixa antes de excluir a entrada.`);
+  }
+
+  // As movimentações da entrada: pela referência (desde 15/10/2026) ou, nas
+  // de antes, pelo documento "NF-e n/s" — o mesmo critério de resumoDaEntrada.
+  const idsProdutos = [...new Set(entrada.itens.map((i) => i.produtoId).filter(Boolean))];
+  const { rows: movimentos } = await consultarBanco(
+    `select product_id, deposit_id, class_id, class_value_id, quantity, unit_cost from stock_movements
+      where type = 'entrada'
+        and (reference_id = $1
+             or (reference_id = '' and origin = 'entrada-nfe' and document = $2
+                 and product_id = any($3::text[]) and date = $4::date))`,
+    [id, nota, idsProdutos, entrada.dataEmissao || null]
+  );
+  const { data, productsById } = await loadStockContextDosProdutos(movimentos.map((m) => m.product_id));
+  // O nome vai no movimento: é por ele que a recusa de saldo diz qual produto.
+  const nomes = new Map((await consultarBanco('select id, name from products where id = any($1::text[])',
+    [[...new Set(movimentos.map((m) => m.product_id))]])).rows.map((p) => [p.id, p.name]));
+  const estornos = movimentos.map((m) => Object.assign(buildMovementRecord(data, {
+    type: 'saida',
+    productId: m.product_id,
+    depositId: m.deposit_id,
+    classId: m.class_id || '',
+    classValueId: m.class_value_id || '',
+    quantity: Number(m.quantity || 0),
+    unitCost: Number(m.unit_cost || 0),
+    document: nota,
+    note: `Exclusão da entrada da ${nota} de ${entrada.emitenteNome || entrada.emitenteDocumento}`,
+    origin: 'estorno-entrada-nfe',
+    referenceType: 'entrada-nfe',
+    referenceId: id
+  }, user), { productName: nomes.get(m.product_id) || '' }));
+
+  const motivo = `Entrada da ${nota} excluída por ${user.name}`;
+  let titulosCancelados = 0;
+  let ordensReabertas = 0;
+  const desfazerTudo = () => commitStockMovements(data, estornos, productsById, {
+    tambemNaTransacao: async (cliente) => {
+      const cancelados = await cliente.query(
+        `update financial_entries set status = 'cancelado', cancel_reason = $2, cancelled_at = now(),
+                cancelled_by_name = $3, updated_at = now()
+          where reference_id = $1 and status = 'pending'`,
+        [id, motivo, user.name]
+      );
+      titulosCancelados = cancelados.rowCount || 0;
+      const { rows: ordens } = await cliente.query('select id from purchase_orders where entrada_nfe_id = $1', [id]);
+      for (const ordem of ordens) {
+        await comprasDb.atualizarStatus(ordem.id, { status: 'ordem', type: 'order', stockApplied: false, entradaNfeId: '' }, cliente);
+      }
+      ordensReabertas = ordens.length;
+      await cliente.query('update nfe_distribuicao set entrada_id = null, atualizado_em = now() where entrada_id = $1', [id]);
+      await cliente.query('delete from nfe_entrada where id = $1', [id]);
+    }
+  });
+  try {
+    await desfazerTudo();
+  } catch (erroDoEstoque) {
+    // O saldo que a nota lançou já saiu (venda, transferência): nada foi
+    // desfeito. A recusa do razão diz produto e depósito; a dica do fim dela
+    // (transferir, escolher outro depósito) é de outra tela.
+    if (/^Estoque insuficiente/.test(String(erroDoEstoque.message || ''))) {
+      throw recusa(409, `Não dá para excluir a entrada da ${nota}: o estoque que ela lançou já saiu. `
+        + String(erroDoEstoque.message).replace(/ Nenhum depósito pode ficar negativo.*$/, ''));
+    }
+    throw erroDoEstoque;
+  }
+  saveData(data);
+  await registrarAuditoria({
+    action: 'entrada-nfe-excluida',
+    targetId: id,
+    targetUsername: nota,
+    byId: user.id,
+    byName: user.name,
+    details: { chave: entrada.chave, emitente: entrada.emitenteNome || '', movimentosEstornados: estornos.length, titulosCancelados, ordensReabertas }
+  });
+  return { nota, chave: entrada.chave, movimentosEstornados: estornos.length, titulosCancelados, ordensReabertas };
+}
+
 async function resumoDaEntrada(id, { comValores = true } = {}) {
   const entrada = await entradaNfeDb.obterEntrada(id);
   if (!entrada) return null;
@@ -18010,6 +18133,22 @@ async function tratarRequisicao(req, res) {
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
       return sendErro(res, traduzido, 'Erro ao listar entradas', 400);
+    }
+  }
+
+  // EXCLUIR A ENTRADA (16/10/2026): ver excluirEntradaDeNfe. A permissão é
+  // Compras › excluir, cobrada pelo portão (DELETE em /api/purchases).
+  const rotaExcluirEntrada = pathname.match(/^\/api\/purchases\/entrada-nfe\/([^/]+)$/);
+  if (rotaExcluirEntrada && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const feito = await excluirEntradaDeNfe(decodeURIComponent(rotaExcluirEntrada[1]), user);
+      return sendJson(res, { success: true, ...feito });
+    } catch (error) {
+      return sendErro(res, traduzirErroDaEntrada(error), 'Erro ao excluir a entrada', 400);
     }
   }
 

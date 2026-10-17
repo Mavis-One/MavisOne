@@ -311,6 +311,12 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     // Depois de lançada, o resumo do que a entrada fez (15/10/2026).
     if (doc.entradaId) {
       botoes.push(`<button type="button" class="secondary" data-ver-entrada="${escapeHtml(doc.id)}">Ver entrada</button>`);
+      // EXCLUIR E REFAZER A ENTRADA (16/10/2026, pedido do usuário). Quem não
+      // tem Compras › excluir recebe a recusa do servidor com o motivo.
+      if ((state.user?.allowedModules || []).includes('purchases')) {
+        botoes.push(`<button type="button" class="secondary" data-refazer-entrada="${escapeHtml(doc.id)}">Refazer</button>`);
+        botoes.push(`<button type="button" class="secondary is-danger" data-excluir-entrada="${escapeHtml(doc.id)}">Excluir</button>`);
+      }
     }
     return botoes.length ? botoes.join(' ') : '<span class="muted">-</span>';
   }
@@ -486,6 +492,41 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   }
 
   /**
+   * EXCLUIR A ENTRADA, ou EXCLUIR E DAR ENTRADA DE NOVO (16/10/2026, pedido do
+   * usuário: "dois comandos para excluir a nf de entrada, e a permissão para
+   * refazê-la"). O servidor desfaz tudo de uma vez ou recusa dizendo por quê
+   * (escriturada no SPED, conta a pagar com baixa, estoque que já saiu) — ver
+   * excluirEntradaDeNfe. A nota volta a "pendente"; Refazer já abre o Dar
+   * entrada dela.
+   */
+  async function excluirEntrada(documentoId, { refazer }) {
+    const doc = dados.documentos.find((d) => d.id === documentoId);
+    if (!doc || !doc.entradaId || tela.ocupado) return;
+    const numero = numeroDaNota(doc.chave) || '';
+    const pergunta = `${refazer ? 'Refazer' : 'Excluir'} a entrada da NF-e ${numero} de ${doc.emitenteNome || ''}?
+
+`
+      + 'O estoque que ela lançou é estornado, as contas a pagar em aberto são canceladas e a ordem de compra ligada volta a aberta.'
+      + (refazer ? ' Em seguida abre o Dar entrada desta nota.' : ' A nota volta a ficar pendente para dar entrada de novo.');
+    if (!await confirmModal(pergunta)) return;
+    tela.ocupado = true;
+    try {
+      const r = await api(`/api/purchases/entrada-nfe/${encodeURIComponent(doc.entradaId)}`, { method: 'DELETE' });
+      showToast(`Entrada da ${r.nota} excluída: ${r.movimentosEstornados} movimento(s) de estoque estornado(s), ${r.titulosCancelados} conta(s) a pagar cancelada(s).`, 'success');
+      doc.entradaId = '';
+      tela.ocupado = false;
+      if (refazer) {
+        darEntrada(documentoId);
+        return;
+      }
+      await carregar();
+    } catch (erro) {
+      tela.ocupado = false;
+      showToast(erro.message || 'Não foi possível excluir a entrada.', 'error', 8000);
+    }
+  }
+
+  /**
    * "Dar entrada": abre Compras › Entrada de NF-e com o XML desta nota, para
    * conferir itens, depósito e contas a pagar antes de lançar. Ao lançar, a
    * tela de entrada liga a entrada a este documento (ver entrada_nfe.js).
@@ -647,6 +688,12 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
     });
     document.querySelectorAll('[data-ver-entrada]').forEach((botao) => {
       botao.addEventListener('click', () => verEntrada(botao.dataset.verEntrada, botao));
+    });
+    document.querySelectorAll('[data-excluir-entrada]').forEach((botao) => {
+      botao.addEventListener('click', () => excluirEntrada(botao.dataset.excluirEntrada, { refazer: false }));
+    });
+    document.querySelectorAll('[data-refazer-entrada]').forEach((botao) => {
+      botao.addEventListener('click', () => excluirEntrada(botao.dataset.refazerEntrada, { refazer: true }));
     });
     // Fora da janela fecha (Cancelar também).
     document.getElementById('dfeManifestacaoModal')?.addEventListener('click', (e) => {
