@@ -3486,6 +3486,23 @@ async function credenciadorasDaRequisicao(data) {
   return porId;
 }
 
+/**
+ * A MATRIZ OU FILIAL DO PEDIDO (17/10/2026, pedido do usuário: a Edição de
+ * Título depois da aprovação "já puxar diretamente a filial ou matriz de que
+ * se trata aquele pedido"). É o estabelecimento do CNPJ da empresa do pedido
+ * (campo Empresa) — o mesmo critério da NFC-e, que sai da empresa do pedido.
+ * Sem empresa, ou sem estabelecimento com esse CNPJ, fica vazio como antes.
+ */
+async function estabelecimentoDoPedido(data, record) {
+  const empresas = (data.companies && data.companies.length ? data.companies : loadData().companies) || [];
+  const empresa = empresas.find((c) => c.id === record.companyId);
+  const cnpj = String((empresa && empresa.document) || '').replace(/\D/g, '');
+  if (cnpj.length !== 14) return '';
+  const estabelecimentos = await fiscalDb.getEstabelecimentos().catch(() => []);
+  const doCnpj = estabelecimentos.find((e) => String(e.cnpj || '').replace(/\D/g, '') === cnpj);
+  return doCnpj ? doCnpj.id : '';
+}
+
 async function transitionOrderFinanceEffect(data, { record, wasApplied, willApply, user }) {
   if (wasApplied === willApply) return { criadas: 0, canceladas: 0, mantidas: 0 };
 
@@ -3540,6 +3557,7 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
   });
   // Fase EF: a categoria financeira (plano de contas) vem da categoria de venda.
   const categoriaFinanceira = (await regraDaCategoriaDoPedido(record.category)).financialCategoryId || '';
+  const estabelecimentoId = await estabelecimentoDoPedido(data, record);
   for (const parcela of parcelas) {
     const entry = await db.createFinancialEntry({
       type: 'RECEITA',
@@ -3558,6 +3576,9 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
       // A forma da parcela do pedido vira a forma do título (fase EN).
       paymentMethodId: parcela.methodId || '',
       paymentMethodName: parcela.methodId ? ((formasPorId.get(parcela.methodId) || {}).name || '') : '',
+      estabelecimentoId,
+      // A Observação da linha de pagamento do pedido (17/10/2026).
+      note: parcela.note || '',
       status: 'pending',
       // A TAXA DA MAQUININHA E QUEM PROCESSA (fase BX). `amount` continua
       // sendo o bruto; isto e o que a conciliacao precisa para casar o
