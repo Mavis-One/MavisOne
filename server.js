@@ -21544,6 +21544,113 @@ async function tratarRequisicao(req, res) {
     }
   }
 
+  // PARCELAR UM TÍTULO EM ABERTO (17/10/2026, pedido do usuário: "abrir opção
+  // no Financeiro contas a pagar, para parcelar pagamento de NF-e, quando o
+  // vencimento das parcelas não está no XML"). Nota sem duplicatas vira UMA
+  // conta a pagar, vencendo na emissão; aqui ela se divide nas parcelas que o
+  // fornecedor combinou. O título vira a parcela 1 e as outras nascem com tudo
+  // dele (fornecedor, nota, empresa, plano de contas, conta, forma, vínculo
+  // com a entrada); só vencimento, valor e o "Parcela i/N" da descrição mudam.
+  // A soma fecha com o valor do título, ao centavo. Só título em aberto e sem
+  // baixa.
+  if (/^\/api\/finance\/entries\/[^/]+\/parcelar$/.test(pathname) && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      const data = loadData();
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [id])
+      ]);
+      const entry = data.finance.find((item) => item.id === id);
+      if (!entry) return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
+      if (entry.status !== 'pending' || getFinanceEntryPayments(data, id).length) {
+        return sendJson(res, { error: 'Só título em aberto, sem baixa, pode ser parcelado.' }, 400);
+      }
+      if (classifyFinanceEntry(entry) === 'transferencia') {
+        return sendJson(res, { error: 'Transferência entre contas não se parcela.' }, 400);
+      }
+      const body = await readBody(req);
+      const dia = /^\d{4}-\d{2}-\d{2}$/;
+      const parcelas = (Array.isArray(body.parcelas) ? body.parcelas : []).map((p) => ({
+        dueDate: String((p && p.dueDate) || '').slice(0, 10),
+        centavos: Math.round(Number((p && p.amount) || 0) * 100)
+      }));
+      if (parcelas.length < 2 || parcelas.length > 120) {
+        return sendJson(res, { error: 'Informe de 2 a 120 parcelas.' }, 400);
+      }
+      if (parcelas.some((p) => !dia.test(p.dueDate) || !(p.centavos > 0))) {
+        return sendJson(res, { error: 'Cada parcela precisa de vencimento e de valor maior que zero.' }, 400);
+      }
+      const totalDoTitulo = Math.round(Number(entry.amount || 0) * 100);
+      const somaDasParcelas = parcelas.reduce((s, p) => s + p.centavos, 0);
+      if (somaDasParcelas !== totalDoTitulo) {
+        const reais = (c) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        return sendJson(res, { error: `A soma das parcelas (${reais(somaDasParcelas)}) tem de fechar com o valor do título (${reais(totalDoTitulo)}).` }, 400);
+      }
+
+      // "Compra · NF-e 123" -> "Compra · NF-e 123 · Parcela 2/3". Título que já
+      // era parcela de outro conjunto guarda a marca dele e ganha "Parte i/N".
+      const base = String(entry.description || '').trim();
+      const jaEraParcela = /Parcela \d+\/\d+/.test(base);
+      const descricaoDa = (i) => `${base}${base ? descricaoLancamento.SEPARADOR || ' · ' : ''}${jaEraParcela ? 'Parte' : 'Parcela'} ${i}/${parcelas.length}`;
+      const documentoExterno = lancamentoCodigo.referencia(entry.code, entry.document);
+
+      const agora = new Date().toISOString();
+      entry.amount = parcelas[0].centavos / 100;
+      entry.dueDate = parcelas[0].dueDate;
+      entry.description = descricaoDa(1);
+      entry.updatedAt = agora;
+      await db.updateFinancialEntry(entry.id, { amount: entry.amount, dueDate: entry.dueDate, description: entry.description });
+      const novas = [];
+      for (let i = 1; i < parcelas.length; i += 1) {
+        const nova = await db.createFinancialEntry({
+          type: entry.type,
+          category: entry.category || '',
+          costCenter: entry.costCenter || '',
+          date: entry.date,
+          dueDate: parcelas[i].dueDate,
+          amount: parcelas[i].centavos / 100,
+          description: descricaoDa(i + 1),
+          document: documentoExterno,
+          note: entry.note || '',
+          clientSupplierId: entry.clientSupplierId || '',
+          clientSupplierName: entry.clientSupplierName || '',
+          referenceId: entry.referenceId || '',
+          nfeId: entry.nfeId || '',
+          bankAccountId: entry.bankAccountId || '',
+          paymentMethodId: entry.paymentMethodId || '',
+          paymentMethodName: entry.paymentMethodName || '',
+          estabelecimentoId: entry.estabelecimentoId || '',
+          status: 'pending',
+          createdBy: user.id,
+          createdByName: user.name
+        });
+        data.finance.push(nova);
+        novas.push(nova);
+      }
+      await addFinanceAuditLog(data, {
+        action: 'parcelarLancamento',
+        entry,
+        byId: user.id,
+        byName: user.name,
+        details: { parcelas: parcelas.length, novas: novas.map((n) => n.id) }
+      });
+      saveData(data);
+      return sendJson(res, {
+        success: true,
+        entries: [entry, ...novas].map((e) => serializeFinanceEntry(e, data))
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao parcelar o lançamento', 400);
+    }
+  }
+
   if (/^\/api\/finance\/entries\/[^/]+\/cancelar$/.test(pathname) && req.method === 'POST') {
     try {
       const user = await getCurrentUser(req);

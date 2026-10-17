@@ -1400,6 +1400,8 @@ function criarTelaDeLancamentos(telaChave) {
     const canPay = entry.rawStatus === 'pending' || entry.rawStatus === 'parcial';
     const canCancel = entry.rawStatus !== 'paid' && entry.rawStatus !== 'cancelado';
     const canEstorno = entry.payments.length > 0;
+    // Parcelar: título em aberto, sem baixa, que não é transferência.
+    const podeParcelar = entry.rawStatus === 'pending' && !entry.payments.length && entry.type !== 'transferencia';
     // O saldo da regra da baixa (fase EI): juros, multa e desconto das baixas
     // anteriores entram. Previsto − realizado só para resposta sem o campo.
     const saldoRestante = entry.emAberto != null
@@ -1512,8 +1514,30 @@ function criarTelaDeLancamentos(telaChave) {
           </form>
         ` : ''}
 
+        ${podeParcelar ? `
+          <!-- PARCELAR (17/10/2026, pedido do usuário): a nota sem duplicatas no
+               XML vira um título só; aqui ele se divide nas parcelas combinadas. -->
+          <div id="financeParcelar" class="finance-parcelar" hidden>
+            <h4>Parcelar</h4>
+            <div class="row">
+              <label>Parcelas<input type="number" min="2" max="120" step="1" id="financeParcelarQtd" value="2" /></label>
+              <label>1º vencimento<input type="date" id="financeParcelarPrimeiro" value="${escapeHtml(String(entry.dueDate || '').slice(0, 10))}" /></label>
+              <label>Intervalo (dias)<input type="number" min="0" max="365" step="1" id="financeParcelarIntervalo" value="30" /></label>
+            </div>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Parcela</th><th>Vencimento</th><th class="col-valor">Valor</th></tr></thead>
+                <tbody id="financeParcelarLinhas"></tbody>
+                <tfoot><tr><th colspan="2">Soma (título: ${financeFormatBRL(entry.amountPrevisto)})</th><th class="col-valor" id="financeParcelarSoma"></th></tr></tfoot>
+              </table>
+            </div>
+            <button type="button" id="financeParcelarConfirmar">Confirmar parcelamento</button>
+          </div>
+        ` : ''}
+
         <div class="finance-modal-actions">
           ${entry.rawStatus === 'pending' ? `<button type="button" class="secondary" id="financeModalEdit">${entry.editable ? 'Editar' : 'Editar vencimento e classificação'}</button>` : ''}
+          ${podeParcelar ? '<button type="button" class="secondary" id="financeModalParcelar">Parcelar</button>' : ''}
           ${canEstorno ? `<button type="button" class="secondary" id="financeModalEstorno">Estornar última baixa</button>` : ''}
           ${canCancel ? `<button type="button" class="btn-danger" id="financeModalCancel">Cancelar lançamento</button>` : ''}
         </div>
@@ -1587,6 +1611,75 @@ function criarTelaDeLancamentos(telaChave) {
         await load();
       } catch (error) {
         showToast(error.message || 'Erro ao cancelar lançamento.', 'error');
+      }
+    });
+
+    // PARCELAR: as linhas saem de quantidade, 1º vencimento e intervalo (o
+    // centavo que sobra da divisão vai na 1ª); vencimento e valor de cada uma
+    // continuam editáveis, e a soma tem de fechar com o título.
+    const totalEmCentavos = Math.round(Number(entry.amountPrevisto || 0) * 100);
+    const linhasDoParcelamento = () => [...document.querySelectorAll('#financeParcelarLinhas tr')].map((tr) => ({
+      dueDate: tr.querySelector('[data-parcela-vencimento]').value,
+      amount: Number(tr.querySelector('[data-parcela-valor]').value || 0)
+    }));
+    const atualizarSoma = () => {
+      const soma = linhasDoParcelamento().reduce((s, p) => s + Math.round(p.amount * 100), 0);
+      const celula = document.getElementById('financeParcelarSoma');
+      if (!celula) return;
+      celula.textContent = financeFormatBRL(soma / 100);
+      celula.classList.toggle('finance-negative', soma !== totalEmCentavos);
+    };
+    const montarParcelas = () => {
+      const qtd = Math.min(120, Math.max(2, Math.floor(Number(document.getElementById('financeParcelarQtd').value) || 2)));
+      const primeiro = document.getElementById('financeParcelarPrimeiro').value || financeHojeLocal();
+      const intervalo = Math.max(0, Math.floor(Number(document.getElementById('financeParcelarIntervalo').value) || 0));
+      const base = Math.floor(totalEmCentavos / qtd);
+      const [ano, mes, dia] = primeiro.split('-').map(Number);
+      const corpo = document.getElementById('financeParcelarLinhas');
+      corpo.innerHTML = Array.from({ length: qtd }, (_, i) => {
+        const data = new Date(Date.UTC(ano, mes - 1, dia + i * intervalo)).toISOString().slice(0, 10);
+        const centavos = i === 0 ? totalEmCentavos - base * (qtd - 1) : base;
+        return `<tr>
+          <td>${i + 1}/${qtd}</td>
+          <td><input type="date" data-parcela-vencimento value="${data}" /></td>
+          <td class="col-valor"><input type="number" step="0.01" min="0.01" data-parcela-valor value="${(centavos / 100).toFixed(2)}" /></td>
+        </tr>`;
+      }).join('');
+      corpo.querySelectorAll('[data-parcela-valor]').forEach((campo) => campo.addEventListener('input', atualizarSoma));
+      atualizarSoma();
+    };
+    document.getElementById('financeModalParcelar')?.addEventListener('click', () => {
+      const quadro = document.getElementById('financeParcelar');
+      quadro.hidden = !quadro.hidden;
+      if (!quadro.hidden) {
+        montarParcelas();
+        quadro.scrollIntoView({ block: 'nearest' });
+      }
+    });
+    ['financeParcelarQtd', 'financeParcelarPrimeiro', 'financeParcelarIntervalo'].forEach((idDoCampo) => {
+      document.getElementById(idDoCampo)?.addEventListener('change', montarParcelas);
+    });
+    document.getElementById('financeParcelarConfirmar')?.addEventListener('click', async (evento) => {
+      const parcelas = linhasDoParcelamento();
+      const soma = parcelas.reduce((s, p) => s + Math.round(p.amount * 100), 0);
+      if (soma !== totalEmCentavos) {
+        showToast(`A soma das parcelas (${financeFormatBRL(soma / 100)}) tem de fechar com o valor do título (${financeFormatBRL(totalEmCentavos / 100)}).`, 'warning');
+        return;
+      }
+      if (parcelas.some((p) => !p.dueDate || !(p.amount > 0))) {
+        showToast('Cada parcela precisa de vencimento e de valor maior que zero.', 'warning');
+        return;
+      }
+      evento.currentTarget.disabled = true;
+      try {
+        await api(`/api/finance/entries/${encodeURIComponent(entry.id)}/parcelar`, { method: 'POST', body: JSON.stringify({ parcelas }) });
+        showToast(`Título parcelado em ${parcelas.length}.`, 'success');
+        closeEntryModal();
+        await load();
+      } catch (error) {
+        showToast(error.message || 'Erro ao parcelar o lançamento.', 'error');
+        const botao = document.getElementById('financeParcelarConfirmar');
+        if (botao) botao.disabled = false;
       }
     });
 

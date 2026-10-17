@@ -354,6 +354,9 @@ const PARCIAIS = {
     '/api/finance/entries/:id/payments POST',
     '/api/finance/entries/:id/estorno POST',
     '/api/finance/entries/:id/cancelar POST',
+    // 17/10/2026: parcelar UM título — ele, as baixas dele (tem de não ter) e
+    // os cadastros do Financeiro, como cancelar.
+    '/api/finance/entries/:id/parcelar POST',
     // Fase EI. Exportar: os do filtro (ou os selecionados) inteiros, com as
     // baixas, e serializados um a um — a mesma leitura da página, sem limite.
     // Lote: os selecionados e as baixas deles, as mesmas regras de baixar e
