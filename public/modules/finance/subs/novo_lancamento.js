@@ -922,6 +922,15 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           abrirProximoDaFila();
           return;
         }
+        // O ÚLTIMO TÍTULO DA APROVAÇÃO VOLTA SOZINHO (17/10/2026, pedido do
+        // usuário: "pedido > aprova pedido > edita título financeiro > salva >
+        // volta para pedido aprovado"). Antes parava numa tela com o botão
+        // "Voltar ao pedido". A fila da entrada de NF-e segue com o resumo.
+        if (filaDaEntrada && filaDaEntrada.volta && filaDaEntrada.volta.module === 'sales') {
+          showToast(filaDaEntrada.ids.length > 1 ? `${filaDaEntrada.ids.length} títulos salvos.` : 'Título salvo.', 'success');
+          await voltarDaFila();
+          return;
+        }
         showToast(editEntry ? 'Lançamento atualizado com sucesso.'
           : (quantas > 1 ? `${quantas} parcelas lançadas.` : 'Lançamento criado com sucesso.'), 'success');
         renderSuccess(result.entry, result.entries);

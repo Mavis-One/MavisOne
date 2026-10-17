@@ -82,6 +82,13 @@ check('  e o último volta ao pedido aberto',
 // Queixa do usuário (16/10/2026, depois do commit): a Edição de Título não
 // abria. Aprovar pela LISTA (seleciona e "Aprovar") ia ao lote do servidor e
 // voltava para a lista; só o Aprovar de dentro do pedido abria a fila.
+// 17/10/2026, pedido do usuário: "pedido > aprova pedido > edita título
+// financeiro > salva > volta para pedido aprovado". Provado com o pedido 16354
+// (dinheiro + boleto): título 1 de 2, título 2 de 2, e de volta ao pedido
+// Pré-Faturado sem clicar em nada; o dinheiro recebido só depois de salvo.
+check('o último título salvo volta sozinho ao pedido (a fila da entrada segue com o resumo)',
+  /if \(filaDaEntrada && filaDaEntrada\.volta && filaDaEntrada\.volta\.module === 'sales'\) \{[\s\S]{0,200}await voltarDaFila\(\);\s*return;/.test(titulo));
+
 console.log('\n--- 4b. aprovar pela lista também abre os títulos ---');
 check('o lote devolve os títulos que cada troca criou',
   /const antes = new Set\(doPedido\(\)\);\s*await mudarStatusSalesRecord\(registro, acao\.destino\(registro\), data, user\);\s*resultados\.push\(\{ id: registro\.id, code: registro\.code, titulos: doPedido\(\)\.filter\(\(tituloId\) => !antes\.has\(tituloId\)\) \}\);/.test(servidor));
