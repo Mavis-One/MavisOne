@@ -2108,6 +2108,20 @@ tr[data-detail] { cursor: pointer; }
 .dfe-filtros label { display: grid; gap: 6px; }
 .dfe-filtros-acoes { display: flex; gap: 8px; }
 .dfe-contagem { margin: 0 0 10px; }
+/* Notas contra CNPJ inteira na tela (16/10/2026): as colunas longas quebram
+   linha (a regra geral de .table td é nowrap), a chave sai em duas linhas de
+   22 dígitos e as colunas ficam mais juntas. */
+.dfe-tabela th, .dfe-tabela td { padding-left: 7px; padding-right: 7px; }
+.dfe-tabela td.dfe-parte { white-space: normal; min-width: 150px; max-width: 230px; }
+.dfe-tabela td.dfe-chave code { display: block; max-width: 23ch; white-space: normal; word-break: break-all; font-size: 0.72rem; line-height: 1.35; }
+.dfe-tabela td.dfe-tipo { white-space: normal; min-width: 130px; max-width: 180px; }
+.dfe-tabela td.dfe-data { white-space: normal; max-width: 92px; }
+/* Ver entrada, Refazer e Excluir (16/10/2026) cabem na coluna Ações. Os
+   botões numa caixa DENTRO da célula: a célula flex saía da grade da linha. */
+.dfe-tabela td.dfe-acoes { width: auto; min-width: 118px; }
+.dfe-tabela td.dfe-acoes .finance-extrato-actions { justify-content: flex-end; gap: 4px; max-width: 170px; margin-left: auto; }
+.dfe-tabela td.dfe-acoes button { padding: 5px 9px; font-size: 0.78rem; }
+.dfe-tabela td.dfe-acoes button.is-danger { color: var(--danger-text); }
 .dfe-parte strong { display: block; font-weight: 600; }
 .dfe-parte .muted { display: block; font-size: 0.8rem; }
 /* Ordenar e "Atualizar todas as empresas" (15/10/2026). */

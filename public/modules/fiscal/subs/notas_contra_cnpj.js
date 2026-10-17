@@ -331,7 +331,10 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         ${blocoBusca()}
         ${blocoPesquisa(total, docs.length)}
         <div class="table-scroll">
-          <table class="table table-actions">
+          <!-- TUDO NA TELA (16/10/2026, pedido do usuário: "ajuste o tamanho para
+               fazer caber tudo na tela"): nomes, chave e tipo da manifestação
+               quebram linha, e a coluna Ações não fica mais fora da vista. -->
+          <table class="table table-actions dfe-tabela">
             <thead>
               <tr>
                 <!-- De quem é a nota e para quem vai (15/10/2026, pedido do usuário). -->
@@ -346,16 +349,16 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
                   <td class="dfe-parte"><strong>${escapeHtml(doc.emitenteNome || '-')}</strong><span class="muted">${cnpjFormatado(doc.emitenteDocumento)}</span></td>
                   <td class="dfe-parte"><strong>${escapeHtml(nomeDaFilial(doc))}</strong><span class="muted">${cnpjFormatado(doc.cnpjDestinatario)}</span></td>
                   <td>${escapeHtml(numeroDaNota(doc.chave) || '-')}</td>
-                  <td><code>${escapeHtml(doc.chave)}</code></td>
-                  <td>${dataHora(doc.dataEmissao)}</td>
+                  <td class="dfe-chave"><code>${escapeHtml(doc.chave)}</code></td>
+                  <td class="dfe-data">${dataHora(doc.dataEmissao).replace(' - ', '<br />')}</td>
                   <td>${dinheiro(doc.valorTotal)}</td>
                   <td>${doc.nsu == null ? '-' : doc.nsu}</td>
                   <td>${badgeManifestado(doc)}</td>
-                  <td>${doc.manifestacaoCodigo
+                  <td class="dfe-tipo">${doc.manifestacaoCodigo
                       ? `${escapeHtml(doc.manifestacaoCodigo)} - ${escapeHtml(catalogo.rotulo(doc.manifestacaoCodigo))}${manifestadaNaSefaz(doc) ? '<br /><span class="muted">já manifestada na SEFAZ</span>' : ''}`
                       : '<span class="muted">-</span>'}</td>
                   <td>${colunaEntrada(doc)}</td>
-                  <td class="finance-extrato-actions">${acoesDaNota(doc)}</td>
+                  <td class="dfe-acoes"><div class="finance-extrato-actions">${acoesDaNota(doc)}</div></td>
                 </tr>
               `).join('') : (total
                 ? '<tr><td colspan="12" class="muted">Nenhuma nota com essa pesquisa ou filtros.</td></tr>'
