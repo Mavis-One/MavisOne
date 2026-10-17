@@ -4548,6 +4548,9 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   cursor: pointer;
   text-decoration: underline;
 }
+/* Excluir a entrada (17/10/2026) e o título cancelado no financeiro dela. */
+.entrada-link.is-danger { color: var(--danger-text); }
+.dfe-resumo tr.is-cancelado td { color: var(--muted); text-decoration: line-through; }
 
 .entrada-avisos { display: grid; gap: 8px; margin-bottom: 16px; }
 .entrada-aviso {

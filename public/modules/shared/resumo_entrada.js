@@ -101,6 +101,61 @@
       </div>`;
   }
 
+  // O FINANCEIRO DA ENTRADA (17/10/2026, pedido do usuário: "em Compras, Notas
+  // de Entrada, criar uma opção de consultar o financeiro das mesmas, deve
+  // constar parcelas, valores e vencimentos"). Vem de GET .../financeiro: as
+  // contas a pagar como estão no Financeiro, com o que já foi pago.
+  function desenharFinanceiro(r) {
+    const e = r.entrada;
+    const valores = r.comValores !== false;
+    const cancelado = (t) => t.status === 'cancelado';
+    return `
+      <div class="modal modal-lg dfe-resumo" role="dialog" aria-modal="true" aria-labelledby="resumoEntradaTitulo">
+        <h3 id="resumoEntradaTitulo">Financeiro da NF-e ${esc(e.numero)}/${esc(e.serie)}</h3>
+        <p class="muted">${esc(e.emitenteNome)} · ${esc(documentoBr(e.emitenteDocumento))} · emissão ${esc(diaBr(e.dataEmissao))}${valores && e.valorTotal !== null ? ` · total da nota ${moeda(e.valorTotal)}` : ''}</p>
+        ${r.titulos.length ? `
+        <div class="table-scroll">
+          <table class="table">
+            <thead><tr><th>Parcela</th><th>Código</th><th>Vencimento</th>${valores ? '<th class="col-valor">Valor</th><th class="col-valor">Pago</th><th class="col-valor">Em aberto</th>' : ''}<th>Situação</th><th>Pago em</th><th>Forma</th><th>Conta</th></tr></thead>
+            <tbody>
+              ${r.titulos.map((t) => `<tr class="${cancelado(t) ? 'is-cancelado' : ''}">
+                <td>${esc(t.parcela)}</td>
+                <td>${esc(t.codigo || '-')}</td>
+                <td>${esc(diaBr(t.vencimento))}</td>
+                ${valores ? `<td class="col-valor">${moeda(t.valor)}</td><td class="col-valor">${moeda(t.pago)}</td><td class="col-valor">${moeda(t.emAberto)}</td>` : ''}
+                <td>${esc(String(t.situacao || '').replace(/^./, (l) => l.toUpperCase()))}</td>
+                <td>${esc(t.pagoEm ? diaBr(t.pagoEm) : '-')}</td>
+                <td>${esc(t.forma || '-')}</td>
+                <td>${esc(t.conta || '-')}</td>
+              </tr>`).join('')}
+            </tbody>
+            ${valores && r.totais ? `<tfoot><tr><th colspan="3">Total</th><th class="col-valor">${moeda(r.totais.valor)}</th><th class="col-valor">${moeda(r.totais.pago)}</th><th class="col-valor">${moeda(r.totais.emAberto)}</th><th colspan="4"></th></tr></tfoot>` : ''}
+          </table>
+        </div>` : `<p class="muted">${e.gerouFinanceiro ? 'Nenhuma conta a pagar encontrada.' : 'Esta entrada não gerou contas a pagar.'}</p>`}
+        <div class="modal-actions">
+          <button type="button" class="btn-muted" id="resumoEntradaFechar">Fechar</button>
+        </div>
+      </div>`;
+  }
+
+  /** Mostra a janela e resolve quando ela fecha. */
+  function mostrar(html) {
+    document.getElementById('resumoEntradaModal')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'resumoEntradaModal';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = html;
+    return new Promise((resolve) => {
+      const fechar = () => { overlay.remove(); document.removeEventListener('keydown', aoTeclar); resolve(); };
+      const aoTeclar = (ev) => { if (ev.key === 'Escape') fechar(); };
+      document.addEventListener('keydown', aoTeclar);
+      overlay.addEventListener('click', (ev) => { if (ev.target === overlay) fechar(); });
+      document.body.appendChild(overlay);
+      overlay.querySelector('#resumoEntradaFechar').addEventListener('click', fechar);
+      overlay.querySelector('#resumoEntradaFechar').focus();
+    });
+  }
+
   /**
    * Abre a janela. `api` e `showToast` são os da tela que chama. Resolve quando
    * a janela fecha (ou na hora, se não deu para abrir).
@@ -114,23 +169,23 @@
       if (typeof showToast === 'function') showToast(erro.message || 'Não consegui abrir o resumo da entrada.', 'error');
       return;
     }
-    document.getElementById('resumoEntradaModal')?.remove();
-    const overlay = document.createElement('div');
-    overlay.id = 'resumoEntradaModal';
-    overlay.className = 'modal-overlay';
-    overlay.innerHTML = desenhar(r);
-    await new Promise((resolve) => {
-      const fechar = () => { overlay.remove(); document.removeEventListener('keydown', aoTeclar); resolve(); };
-      const aoTeclar = (ev) => { if (ev.key === 'Escape') fechar(); };
-      document.addEventListener('keydown', aoTeclar);
-      overlay.addEventListener('click', (ev) => { if (ev.target === overlay) fechar(); });
-      document.body.appendChild(overlay);
-      overlay.querySelector('#resumoEntradaFechar').addEventListener('click', fechar);
-      overlay.querySelector('#resumoEntradaFechar').focus();
-    });
+    await mostrar(desenhar(r));
   }
 
-  const modulo = { abrir, desenhar };
+  /** O financeiro da entrada, na mesma janela. */
+  async function abrirFinanceiro({ api, showToast, entradaId }) {
+    if (!entradaId) return;
+    let r;
+    try {
+      r = await api(`/api/purchases/entrada-nfe/${encodeURIComponent(entradaId)}/financeiro`);
+    } catch (erro) {
+      if (typeof showToast === 'function') showToast(erro.message || 'Não consegui abrir o financeiro da entrada.', 'error');
+      return;
+    }
+    await mostrar(desenharFinanceiro(r));
+  }
+
+  const modulo = { abrir, abrirFinanceiro, desenhar, desenharFinanceiro };
   if (typeof module !== 'undefined' && module.exports) module.exports = modulo;
   if (raiz) raiz.MavisResumoEntrada = modulo;
 })(typeof window !== 'undefined' ? window : null);

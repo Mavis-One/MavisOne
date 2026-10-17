@@ -31,10 +31,14 @@ console.log('--- 1. o servidor desfaz tudo ou nada ---');
 check('a rota DELETE existe (e o portão cobra Compras › excluir)',
   /const rotaExcluirEntrada = pathname\.match\(\/\^\\\/api\\\/purchases\\\/entrada-nfe\\\/\(\[\^\/\]\+\)\$\/\);\s*if \(rotaExcluirEntrada && req\.method === 'DELETE'\)/.test(servidor)
   && /DELETE: 'excluir'/.test(fs.readFileSync(path.join(__dirname, '..', 'lib/permissoes.js'), 'utf8')));
-check('o documento recebido fica: sem o XML na nota recebida, recusa',
-  /select 1 from nfe_entrada where id = \$1 and coalesce\(xml, ''\) <> ''/.test(funcao)
-  && /select 1 from nfe_distribuicao where chave = \$1 and coalesce\(xml, ''\) <> '' limit 1/.test(funcao)
-  && !/delete from nfe_distribuicao/.test(funcao));
+// 17/10/2026: a lançada por upload também sai (Notas de Entrada); para o
+// Refazer, a resposta traz a nota recebida da chave e, ao administrador, o XML.
+check('a nota recebida fica; o Refazer recebe a nota recebida e o XML (só administrador)',
+  !/delete from nfe_distribuicao/.test(funcao)
+  && /select id from nfe_distribuicao where chave = \$1 limit 1/.test(funcao)
+  && /const xml = devolverXml\s*\?/.test(funcao)
+  && /return \{ nota, chave: entrada\.chave, dfeId, xml,/.test(funcao)
+  && /excluirEntradaDeNfe\(decodeURIComponent\(rotaExcluirEntrada\[1\]\), user, \{ devolverXml: await ehAdmin\(user\) \}\)/.test(servidor));
 check('recusa entrada escriturada no SPED', /select 1 from fiscal_documentos where nfe_entrada_id = \$1/.test(funcao) && /já está escriturada nos documentos fiscais \(SPED\)/.test(funcao));
 check('recusa conta a pagar com baixa', /estorne a baixa antes de excluir a entrada/.test(funcao));
 check('acha as movimentações novas e as antigas (como o resumo)',

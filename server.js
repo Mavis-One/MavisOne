@@ -4973,25 +4973,26 @@ async function addFinanceAuditLog(_data, { action, entry, byId, byName, details 
  * o registro da entrada sai. Recusa, sem mexer em nada, quando a entrada já
  * está escriturada no SPED, quando alguma conta a pagar dela tem baixa, ou
  * quando o estoque que ela lançou já saiu (nenhum depósito fica negativo).
+ * Desde 17/10/2026 também em Compras › Notas de Entrada ("permitir excluir
+ * uma NF-e de entrada lançada errada, para lançar a mesma novamente certa"),
+ * inclusive a lançada por upload.
  * O custo dos produtos não volta: dar entrada de novo o grava outra vez.
  */
-async function excluirEntradaDeNfe(id, user) {
+async function excluirEntradaDeNfe(id, user, { devolverXml = false } = {}) {
   const recusa = (status, mensagem) => Object.assign(new Error(mensagem), { status });
   const entrada = await entradaNfeDb.obterEntrada(id);
   if (!entrada) throw recusa(404, 'Entrada não encontrada.');
   const nota = `NF-e ${entrada.numero}/${entrada.serie}`;
 
-  // O DOCUMENTO RECEBIDO NÃO SE APAGA: sai o lançamento, e o XML continua na
-  // nota recebida (nfe_distribuicao). Se só a entrada o guarda (nota lançada
-  // por upload), excluí-la apagaria o documento — recusa.
-  const { rows: comXml } = await consultarBanco("select 1 from nfe_entrada where id = $1 and coalesce(xml, '') <> ''", [id]);
-  if (comXml.length) {
-    const { rows: guardado } = await consultarBanco(
-      "select 1 from nfe_distribuicao where chave = $1 and coalesce(xml, '') <> '' limit 1", [entrada.chave]);
-    if (!guardado.length) {
-      throw recusa(409, `O XML da ${nota} só está guardado nesta entrada: excluí-la apagaria o documento recebido. Busque a nota em Notas contra CNPJ antes de excluir.`);
-    }
-  }
+  // PARA REFAZER (17/10/2026, Notas de Entrada): a nota recebida da mesma
+  // chave, se houver, e o XML da entrada — este só para o administrador, que é
+  // quem vê valores. A nota recebida (nfe_distribuicao) nunca é apagada; a
+  // lançada por upload leva o XML junto (para relançar, envia-se o arquivo).
+  const { rows: recebida } = await consultarBanco('select id from nfe_distribuicao where chave = $1 limit 1', [entrada.chave]);
+  const dfeId = recebida[0] ? recebida[0].id : '';
+  const xml = devolverXml
+    ? String(((await consultarBanco('select xml from nfe_entrada where id = $1', [id])).rows[0] || {}).xml || '')
+    : '';
   const { rows: escriturada } = await consultarBanco('select 1 from fiscal_documentos where nfe_entrada_id = $1 limit 1', [id]);
   if (escriturada.length) {
     throw recusa(409, `A entrada da ${nota} já está escriturada nos documentos fiscais (SPED) e não pode ser excluída.`);
@@ -5076,7 +5077,7 @@ async function excluirEntradaDeNfe(id, user) {
     byName: user.name,
     details: { chave: entrada.chave, emitente: entrada.emitenteNome || '', movimentosEstornados: estornos.length, titulosCancelados, ordensReabertas }
   });
-  return { nota, chave: entrada.chave, movimentosEstornados: estornos.length, titulosCancelados, ordensReabertas };
+  return { nota, chave: entrada.chave, dfeId, xml, movimentosEstornados: estornos.length, titulosCancelados, ordensReabertas };
 }
 
 async function resumoDaEntrada(id, { comValores = true } = {}) {
@@ -18054,7 +18055,7 @@ async function tratarRequisicao(req, res) {
       if (!user || !user.allowedModules.includes('purchases')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
-      const feito = await excluirEntradaDeNfe(decodeURIComponent(rotaExcluirEntrada[1]), user);
+      const feito = await excluirEntradaDeNfe(decodeURIComponent(rotaExcluirEntrada[1]), user, { devolverXml: await ehAdmin(user) });
       return sendJson(res, { success: true, ...feito });
     } catch (error) {
       return sendErro(res, traduzirErroDaEntrada(error), 'Erro ao excluir a entrada', 400);
@@ -18106,6 +18107,63 @@ async function tratarRequisicao(req, res) {
 
   // O resumo de uma entrada lançada (15/10/2026) — ver resumoDaEntrada. Antes
   // da rota genérica /api/purchases/entrada-nfe/:id, que também é GET.
+  // O FINANCEIRO DE UMA ENTRADA (17/10/2026, pedido do usuário: "em Compras,
+  // Notas de Entrada, criar uma opção de consultar o financeiro das mesmas,
+  // deve constar parcelas, valores e vencimentos"). As contas a pagar da nota
+  // como estão no Financeiro: parcela, vencimento, valor, pago, em aberto,
+  // situação, forma, conta e a data do último pagamento. Valores para quem é
+  // administrador ou tem o Financeiro (que os vê lá de qualquer jeito).
+  if (pathname.startsWith('/api/purchases/entrada-nfe/') && pathname.endsWith('/financeiro') && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('purchases')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.replace('/api/purchases/entrada-nfe/', '').replace(/\/financeiro$/, ''));
+      const entrada = await entradaNfeDb.obterEntrada(id);
+      if (!entrada) return sendJson(res, { error: 'Entrada não encontrada' }, 404);
+      const comValores = (await ehAdmin(user)) || user.allowedModules.includes('finance');
+      const [lancamentos, contas] = await Promise.all([db.getFinancialEntriesPorReferencia([id]), db.getBankAccounts()]);
+      const baixas = lancamentos.length ? await db.getFinancialPaymentsDosLancamentos(lancamentos.map((l) => l.id)) : [];
+      const baixasDe = (entryId) => baixas.filter((b) => b.entryId === entryId);
+      const ordenados = lancamentos.slice().sort((a, b) => String(financeEntryDueDate(a) || '').localeCompare(String(financeEntryDueDate(b) || ''))
+        || Number(a.code || 0) - Number(b.code || 0));
+      const vivos = ordenados.filter((l) => l.status !== 'cancelado');
+      const titulos = ordenados.map((l) => {
+        const dele = baixasDe(l.id);
+        const posicao = vivos.indexOf(l);
+        return {
+          id: l.id,
+          codigo: lancamentoCodigo.formatar(l.code),
+          parcela: posicao >= 0 ? `${posicao + 1}/${vivos.length}` : '-',
+          vencimento: financeEntryDueDate(l),
+          valor: comValores ? Number(l.amount || 0) : null,
+          pago: comValores ? realizadoDoLancamento(l, dele) : null,
+          emAberto: comValores ? financeEntryEmAberto(l, dele) : null,
+          situacao: financeEntryStatusLabel(l),
+          status: l.status,
+          forma: l.paymentMethodName || '',
+          conta: resolveById(contas, l.bankAccountId),
+          pagoEm: dele.map((b) => String(b.date || '').slice(0, 10)).sort().pop() || ''
+        };
+      });
+      const soma = (campo) => Math.round(titulos.filter((t) => t.status !== 'cancelado').reduce((s, t) => s + Number(t[campo] || 0), 0) * 100) / 100;
+      return sendJson(res, {
+        entrada: {
+          id: entrada.id, numero: entrada.numero, serie: entrada.serie,
+          emitenteNome: entrada.emitenteNome, emitenteDocumento: entrada.emitenteDocumento,
+          dataEmissao: entrada.dataEmissao, valorTotal: comValores ? Number(entrada.valorTotal || 0) : null,
+          gerouFinanceiro: entrada.gerouFinanceiro
+        },
+        comValores,
+        titulos,
+        totais: comValores ? { valor: soma('valor'), pago: soma('pago'), emAberto: soma('emAberto') } : null
+      });
+    } catch (error) {
+      return sendErro(res, traduzirErroDaEntrada(error), 'Erro ao consultar o financeiro da entrada', 400);
+    }
+  }
+
   if (pathname.startsWith('/api/purchases/entrada-nfe/') && pathname.endsWith('/resumo') && req.method === 'GET') {
     try {
       const user = await getCurrentUser(req);

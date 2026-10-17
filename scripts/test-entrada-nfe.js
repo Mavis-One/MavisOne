@@ -264,9 +264,10 @@ check('  grava auditoria', /entrada-nfe-lancada/.test(rotaLancar));
 // 16/10/2026 (pedido do usuário) a ENTRADA pode ser excluída para refazer, mas
 // só o lançamento: o XML fica na nota recebida, e sem ele lá a exclusão recusa
 // (test-excluir-entrada.js).
-check('excluir a entrada não apaga o documento recebido',
-  !/delete from nfe_distribuicao/.test(servidor)
-  && /O XML da \$\{nota\} só está guardado nesta entrada: excluí-la apagaria o documento recebido\./.test(servidor));
+// 17/10/2026: também a lançada por upload ("permitir excluir uma NF-e de
+// entrada lançada errada, para lançar a mesma novamente certa"); a nota
+// recebida (nfe_distribuicao) segue intocada.
+check('excluir a entrada não apaga a nota recebida', !/delete from nfe_distribuicao/.test(servidor));
 const dbEntrada = ler('lib/db/entrada-nfe.js');
 check('nem função de exclusão na camada de dados', !/function excluir|function deletar|function remover/.test(dbEntrada));
 // A coluna xml tem o documento inteiro; num `select *` a lista viraria

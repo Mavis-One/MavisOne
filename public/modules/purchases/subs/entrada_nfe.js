@@ -431,7 +431,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           <div class="table-scroll">
             <table class="table">
               <thead>
-                <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th>${veValores ? '<th class="entrada-col-num">Total</th>' : ''}<th>Situação</th><th>Resumo</th>${veValores ? '<th>XML</th>' : ''}</tr>
+                <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th>${veValores ? '<th class="entrada-col-num">Total</th>' : ''}<th>Situação</th><th>Consultar</th>${veValores ? '<th>XML</th>' : ''}<th>Corrigir</th></tr>
               </thead>
               <tbody>
                 ${tela.entradas.map((e) => `
@@ -447,8 +447,16 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                       ${e.movimentouEstoque ? '<span class="finance-badge finance-badge-muted">estoque</span>' : ''}
                       ${e.gerouFinanceiro ? '<span class="finance-badge finance-badge-muted">financeiro</span>' : ''}
                     </td>
-                    <td><button type="button" class="entrada-link" data-resumo-entrada="${escapeHtml(e.id)}">ver resumo</button></td>
+                    <td>
+                      <button type="button" class="entrada-link" data-resumo-entrada="${escapeHtml(e.id)}">ver resumo</button><br />
+                      <button type="button" class="entrada-link" data-financeiro-entrada="${escapeHtml(e.id)}">financeiro</button>
+                    </td>
                     ${veValores ? `<td><button type="button" class="entrada-link" data-baixar-xml="${escapeHtml(e.id)}">baixar XML</button></td>` : ''}
+                    <!-- Lançada errada (17/10/2026): excluir, ou excluir e lançar de novo. -->
+                    <td>
+                      <button type="button" class="entrada-link" data-refazer-entrada="${escapeHtml(e.id)}">refazer</button><br />
+                      <button type="button" class="entrada-link is-danger" data-excluir-entrada="${escapeHtml(e.id)}">excluir</button>
+                    </td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -522,6 +530,23 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         botao.addEventListener('click', () => baixarXml(botao.dataset.baixarXml));
       });
       document.getElementById('entradaPlanilha')?.addEventListener('click', baixarPlanilha);
+      // O financeiro da entrada (17/10/2026): parcelas, valores e vencimentos.
+      content.querySelectorAll('[data-financeiro-entrada]').forEach((botao) => {
+        botao.addEventListener('click', async () => {
+          botao.disabled = true;
+          try {
+            await window.MavisResumoEntrada.abrirFinanceiro({ api, showToast, entradaId: botao.dataset.financeiroEntrada });
+          } finally {
+            botao.disabled = false;
+          }
+        });
+      });
+      content.querySelectorAll('[data-excluir-entrada]').forEach((botao) => {
+        botao.addEventListener('click', () => excluirEntrada(botao.dataset.excluirEntrada, { refazer: false }));
+      });
+      content.querySelectorAll('[data-refazer-entrada]').forEach((botao) => {
+        botao.addEventListener('click', () => excluirEntrada(botao.dataset.refazerEntrada, { refazer: true }));
+      });
       // O resumo da entrada (15/10/2026): a mesma janela das Notas contra CNPJ.
       content.querySelectorAll('[data-resumo-entrada]').forEach((botao) => {
         botao.addEventListener('click', async () => {
@@ -610,6 +635,48 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
     // A PLANILHA (16/10/2026, pedido do usuário: "um botão para baixar uma
     // planilha já formatada"): todas as entradas e os itens, num .xlsx — ver
     // lib/planilha-entradas.js. O nome do arquivo vem do servidor, com a data.
+    /**
+     * EXCLUIR A ENTRADA LANÇADA ERRADA, OU EXCLUIR E LANÇAR DE NOVO (17/10/2026,
+     * pedido do usuário: "permitir excluir uma NF-e de entrada lançada errada,
+     * para lançar a mesma novamente certa"). O servidor desfaz tudo ou recusa
+     * dizendo por quê (excluirEntradaDeNfe). Refazer abre a conferência de novo
+     * com o XML: o da nota recebida, se ela está nas Notas contra CNPJ; senão o
+     * da própria entrada (administrador). Sem nenhum dos dois, pede o arquivo.
+     */
+    async function excluirEntrada(entradaId, { refazer }) {
+      const e = tela.entradas.find((x) => x.id === entradaId);
+      if (!e || tela.excluindo) return;
+      const pergunta = `${refazer ? 'Refazer' : 'Excluir'} a entrada da NF-e ${e.numero}/${e.serie} de ${e.emitenteNome || ''}?
+
+`
+        + 'O estoque que ela lançou é estornado, as contas a pagar em aberto são canceladas e a ordem de compra ligada volta a aberta.'
+        + (refazer ? ' Em seguida a nota abre de novo para conferir e lançar.' : '');
+      if (!await confirmModal(pergunta)) return;
+      tela.excluindo = true;
+      let r;
+      try {
+        r = await api(`/api/purchases/entrada-nfe/${encodeURIComponent(entradaId)}`, { method: 'DELETE' });
+      } catch (erro) {
+        tela.excluindo = false;
+        showToast(erro.message || 'Não foi possível excluir a entrada.', 'error', 8000);
+        return;
+      }
+      tela.excluindo = false;
+      showToast(`Entrada da ${r.nota} excluída: ${r.movimentosEstornados} movimento(s) de estoque estornado(s), ${r.titulosCancelados} conta(s) a pagar cancelada(s).`, 'success');
+      if (refazer && r.dfeId && state) {
+        state.entradaNfeDoDfe = { dfeId: r.dfeId, chave: r.chave };
+        ctx.loadModule('purchases');
+        return;
+      }
+      await carregarEntradas();
+      if (refazer && r.xml) {
+        await analisarXml(r.xml);
+        return;
+      }
+      if (refazer) showToast('Envie o XML da nota para lançar de novo.', 'warning', 8000);
+      desenhar();
+    }
+
     async function baixarPlanilha() {
       const botao = document.getElementById('entradaPlanilha');
       if (botao) botao.disabled = true;
