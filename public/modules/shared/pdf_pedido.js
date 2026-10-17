@@ -94,20 +94,25 @@
 
   // --------------------------------------------------------------- páginas
   const A4 = { largura: 595.28, altura: 841.89 };
+  // Deitada (17/10/2026): o PDF de relatório (pdf_relatorio.js), de muitas
+  // colunas. O pedido continua em pé.
+  const A4_DEITADA = { largura: A4.altura, altura: A4.largura };
   const MARGEM = 34;
 
-  function novoDocumento() {
+  function novoDocumento({ paisagem = false } = {}) {
+    const pagina = paisagem ? A4_DEITADA : A4;
     const paginas = [];
     let atual = null;
     let y = 0;
     const doc = {
       get y() { return y; },
       set y(v) { y = v; },
-      larguraUtil: A4.largura - 2 * MARGEM,
+      larguraUtil: pagina.largura - 2 * MARGEM,
+      pagina,
       novaPagina() {
         atual = [];
         paginas.push(atual);
-        y = A4.altura - MARGEM;
+        y = pagina.altura - MARGEM;
       },
       /** Garante `altura` pontos livres; senão, página nova. */
       caber(altura) {
@@ -135,7 +140,7 @@
   }
 
   /** Monta o arquivo PDF a partir das listas de comandos de cada página. */
-  function serializar(paginas) {
+  function serializar(paginas, pagina = A4) {
     const objetos = [];
     const adicionar = (conteudo) => { objetos.push(conteudo); return objetos.length; };
     const catalogo = adicionar(null);
@@ -146,7 +151,7 @@
     for (const comandos of paginas) {
       const fluxo = comandos.join('\n');
       const conteudo = adicionar(`<< /Length ${fluxo.length} >>\nstream\n${fluxo}\nendstream`);
-      kids.push(adicionar(`<< /Type /Page /Parent ${arvore} 0 R /MediaBox [0 0 ${A4.largura} ${A4.altura}] `
+      kids.push(adicionar(`<< /Type /Page /Parent ${arvore} 0 R /MediaBox [0 0 ${pagina.largura} ${pagina.altura}] `
         + `/Resources << /Font << /F1 ${fonte1} 0 R /F2 ${fonte2} 0 R >> >> /Contents ${conteudo} 0 R >>`));
     }
     objetos[catalogo - 1] = `<< /Type /Catalog /Pages ${arvore} 0 R >>`;
@@ -311,7 +316,8 @@
     return String(valor || '');
   }
 
-  const api = { montarPdfDoPedido, mascaraDocumento, quebrar, largura, codigoWinAnsi };
+  // As peças do motor vão junto para o PDF de relatório (pdf_relatorio.js).
+  const api = { montarPdfDoPedido, mascaraDocumento, quebrar, largura, codigoWinAnsi, novoDocumento, serializar, tabela, MARGEM };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (raiz) raiz.MavisPdfPedido = api;
 })(typeof window !== 'undefined' ? window : null);

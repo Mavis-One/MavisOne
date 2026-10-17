@@ -135,6 +135,7 @@ window.MavisRelatoriosCatalogo = (function () {
             <button type="button" class="secondary" id="relCatAtualizar">Atualizar</button></div>
           <div>
             <button type="button" class="secondary" id="relCatExportar" title="Planilha do Excel formatada, pronta para imprimir">Exportar Excel</button>
+            <button type="button" class="secondary" id="relCatPdf">Salvar PDF</button>
             <button type="button" class="secondary" id="relCatImprimir">Imprimir</button>
           </div>
         </div>
@@ -168,8 +169,9 @@ window.MavisRelatoriosCatalogo = (function () {
       </section>`;
   }
 
-  async function exportar(ctx, def, filtros) {
-    return baixar(ctx, `/api/reports/catalogo/${encodeURIComponent(def.key)}/export?${query(filtros)}`, `${def.key}.xlsx`);
+  async function exportar(ctx, def, filtros, formato = 'xlsx') {
+    const extra = formato === 'pdf' ? '&formato=pdf' : '';
+    return baixar(ctx, `/api/reports/catalogo/${encodeURIComponent(def.key)}/export?${query(filtros)}${extra}`, `${def.key}.${formato}`);
   }
 
   /** Baixa o CSV que o servidor montou. O Personalizado usa o mesmo caminho. */
@@ -234,6 +236,8 @@ window.MavisRelatoriosCatalogo = (function () {
     content.querySelector('#relCatAtualizar')?.addEventListener('click', () => loadModule('reports'));
     content.querySelector('#relCatImprimir')?.addEventListener('click', () => window.print());
     content.querySelector('#relCatExportar')?.addEventListener('click', () => { ler(); exportar(ctx, def, filtros); });
+    // O PDF (17/10/2026): o mesmo relatório, com todas as linhas, como a planilha.
+    content.querySelector('#relCatPdf')?.addEventListener('click', () => { ler(); exportar(ctx, def, filtros, 'pdf'); });
   }
 
   return { lista, relatorio, comVolta, formatar, tabela, baixar, query, LIMITE_NA_TELA };

@@ -307,6 +307,7 @@ window.MavisRelatoriosPersonalizados = (function () {
               ${salvo.podeEditar ? '<button type="button" class="secondary" id="relPersEditar">Editar</button>' : ''}</div>
             <div>
               <button type="button" class="secondary" id="relPersExportar" title="Planilha do Excel formatada, pronta para imprimir">Exportar Excel</button>
+              <button type="button" class="secondary" id="relPersPdf">Salvar PDF</button>
               <button type="button" class="secondary" id="relPersImprimir">Imprimir</button>
             </div>
           </div>
@@ -326,6 +327,12 @@ window.MavisRelatoriosPersonalizados = (function () {
     content.querySelector('#relPersExportar').addEventListener('click', () => {
       ler();
       catalogo.baixar(ctx, `/api/reports/personalizados/${encodeURIComponent(salvo.id)}/executar/export?${catalogo.query(st.periodo)}`, 'relatorio-personalizado.xlsx');
+    });
+    // O PDF (17/10/2026), como no catálogo.
+    content.querySelector('#relPersPdf').addEventListener('click', () => {
+      ler();
+      const q = catalogo.query(st.periodo);
+      catalogo.baixar(ctx, `/api/reports/personalizados/${encodeURIComponent(salvo.id)}/executar/export?${q}${q ? '&' : ''}formato=pdf`, 'relatorio-personalizado.pdf');
     });
   }
 

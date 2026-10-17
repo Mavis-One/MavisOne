@@ -12804,6 +12804,17 @@ async function tratarRequisicao(req, res) {
     const emitidoEm = new Intl.DateTimeFormat('pt-BR', {
       timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
     }).format(new Date()).replace(',', ' às');
+    // O PDF (17/10/2026): o mesmo resultado da planilha, desenhado.
+    if (url.searchParams.get('formato') === 'pdf') {
+      const pdf = motorDeRelatorios.paraPdf(resultado, { emitidoEm });
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${motorDeRelatorios.nomeDoArquivo(resultado, 'pdf')}"`,
+        'Content-Length': pdf.length,
+        'Cache-Control': 'no-store'
+      });
+      return res.end(pdf);
+    }
     const arquivo = motorDeRelatorios.paraXlsx(resultado, { emitidoEm });
     res.writeHead(200, {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
