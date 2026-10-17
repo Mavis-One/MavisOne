@@ -148,8 +148,12 @@ check('  só quando a transação É o líquido',
 check('  e a baixa da conciliação a usa', /discount: taxaDoCartao,/.test(src));
 // O débito quita na hora e TAMBÉM tem taxa: baixar pelo bruto creditava na
 // conta um dinheiro que não chegou.
+// Desde 16/10/2026 a baixa sai de baixaDaVendaAVista, também na confirmação da
+// Edição de Título (test-a-vista-na-confirmacao.js) — pelo líquido, nos dois.
 check('a baixa automática entra pelo líquido',
-  /amount: parcela\.netAmount == null \? parcela\.amount : parcela\.netAmount,/.test(src));
+  /valor: parcela\.netAmount == null \? parcela\.amount : parcela\.netAmount,/.test(src)
+  && /valor: entry\.netAmount == null \? entry\.amount : entry\.netAmount,/.test(src)
+  && /async function baixaDaVendaAVista\(data, \{ entryId, valor, taxa, percentual, date, bankAccountId \}, user\) \{\s*const desconto = taxa == null \? 0 : Number\(taxa\);/.test(src));
 
 console.log('--- 7. a migração e o que a tela mostra ---');
 const migracao = ler('banco/migrations/fase-bx-titulo-de-cartao.sql');

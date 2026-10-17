@@ -43,7 +43,7 @@ check('a transição cria os títulos por criaTitulos',
   /const vaiGerarFinanceiro = tipoNovo === 'order' && salesStatus\.criaTitulos\(statusNovo\)\s*&& \(eraFaturado \|\| regraCategoria\.geraFinanceiro\);/.test(servidor));
 check('  a criação já aprovada também', /const geraFinanceiroAgora = type === 'order' && salesStatus\.criaTitulos\(status\) && regraCategoria\.geraFinanceiro;/.test(servidor));
 check('  a autorização da nota não cria de novo (já aplicado = nada a fazer)',
-  /async function transitionOrderFinanceEffect\(data, \{ record, wasApplied, willApply, user \}\) \{\s*if \(wasApplied === willApply\) return/.test(servidor));
+  /async function transitionOrderFinanceEffect\(data, \{ record, wasApplied, willApply, user, adiarAVista = false \}\) \{\s*if \(wasApplied === willApply\) return/.test(servidor));
 check('  e põe o número da nota nos títulos da aprovação',
   /await mudarStatusSalesRecord\(\{ id: pedido\.id, code: pedido\.code \}, 'pedido-faturado', dataVendas, quemFatura\);\s*if \(pedido\.financeApplied\) await anotarNotaNoFinanceiroDoPedido\(dataVendas, pedido, nfe\.numero\);/.test(servidor));
 const pedido = { id: 'o1', code: 16346, date: '2026-10-16', totalAmount: 15, amount: 15, payments: [{ methodId: 'b', amount: 10 }, { methodId: 'd', amount: 5 }] };

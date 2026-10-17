@@ -3486,7 +3486,9 @@ async function credenciadorasDaRequisicao(data) {
   return porId;
 }
 
-async function transitionOrderFinanceEffect(data, { record, wasApplied, willApply, user }) {
+// `adiarAVista` (16/10/2026): na aprovação, o título à vista nasce em aberto e
+// espera a confirmação da Edição de Título (ver baixaDaVendaAVista).
+async function transitionOrderFinanceEffect(data, { record, wasApplied, willApply, user, adiarAVista = false }) {
   if (wasApplied === willApply) return { criadas: 0, canceladas: 0, mantidas: 0 };
 
   if (!willApply) {
@@ -3561,7 +3563,7 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
       // A forma da parcela do pedido vira a forma do título (fase EN).
       paymentMethodId: parcela.methodId || '',
       paymentMethodName: parcela.methodId ? ((formasPorId.get(parcela.methodId) || {}).name || '') : '',
-      status: parcela.quitaNaHora ? 'paid' : 'pending',
+      status: parcela.quitaNaHora && !adiarAVista ? 'paid' : 'pending',
       // A TAXA DA MAQUININHA E QUEM PROCESSA (fase BX). `amount` continua
       // sendo o bruto; isto e o que a conciliacao precisa para casar o
       // extrato, que traz o LIQUIDO.
@@ -3580,38 +3582,95 @@ async function transitionOrderFinanceEffect(data, { record, wasApplied, willAppl
     // A BAIXA TAMBÉM, e não só o status. Sem a linha em financial_payments o
     // painel continua somando R$ 0,00 em "realizado" e o extrato da conta não
     // enxerga o dinheiro — o problema só teria mudado de lugar.
-    if (parcela.quitaNaHora) {
-      // A BAIXA AUTOMATICA ENTRA PELO LIQUIDO (fase BX).
-      //
-      // O debito quita na hora e TAMBEM tem taxa. Baixar pelo bruto creditava
-      // na conta bancaria um dinheiro que nao chegou: o extrato traz o
-      // liquido, e a diferenca era exatamente a taxa, em toda venda no
-      // debito. A taxa vai no campo `discount` da baixa — que ja existia e
-      // ja aparece no historico —, entao o titulo fecha pelo bruto e a conta
-      // recebe o que recebeu de verdade.
-      const taxa = parcela.feeAmount == null ? 0 : parcela.feeAmount;
-      const baixa = await db.createFinancialPayment({
+    if (parcela.quitaNaHora && !adiarAVista) {
+      await baixaDaVendaAVista(data, {
         entryId: entry.id,
-        amount: parcela.netAmount == null ? parcela.amount : parcela.netAmount,
+        valor: parcela.netAmount == null ? parcela.amount : parcela.netAmount,
+        taxa: parcela.feeAmount,
+        percentual: parcela.feePercent,
         date: record.date,
-        bankAccountId: parcela.bankAccountId || '',
-        discount: taxa,
-        // A marca que o cancelamento procura — ver a migração fase-au. É coluna,
-        // e não o texto da observação: regra que depende de uma frase ensina a
-        // mudar a frase.
-        origem: 'automatica',
-        note: taxa > 0
-          ? `Baixa automática: venda à vista. Taxa da forma de pagamento (${parcela.feePercent}%) no desconto.`
-          : 'Baixa automática: venda à vista.',
-        createdBy: user?.id,
-        createdByName: user?.name
-      });
-      data.financialPayments = data.financialPayments || [];
-      data.financialPayments.push(baixa);
+        bankAccountId: parcela.bankAccountId
+      }, user);
       quitadas += 1;
     }
   }
   return { criadas: parcelas.length, canceladas: 0, mantidas: 0, quitadas };
+}
+
+/**
+ * A BAIXA DA VENDA À VISTA (dinheiro, PIX, débito: formaPagamento.quitaNaHora).
+ *
+ * PELO LÍQUIDO (fase BX). O débito quita na hora e TAMBÉM tem taxa. Baixar
+ * pelo bruto creditava na conta bancária um dinheiro que não chegou: o extrato
+ * traz o líquido, e a diferença era exatamente a taxa, em toda venda no
+ * débito. A taxa vai no campo `discount` da baixa — que já existia e já
+ * aparece no histórico —, então o título fecha pelo bruto e a conta recebe o
+ * que recebeu de verdade.
+ *
+ * Desde 16/10/2026 (pedido do usuário: o título à vista não pode nascer
+ * recebido "antes de eu fazer a aprovação de lançamento de título na edição de
+ * títulos") a baixa do título criado na APROVAÇÃO sai na confirmação da Edição
+ * de Título, na conta escolhida ali; sem confirmação, na autorização da nota
+ * (quitarAVistaPendentes).
+ */
+async function baixaDaVendaAVista(data, { entryId, valor, taxa, percentual, date, bankAccountId }, user) {
+  const desconto = taxa == null ? 0 : Number(taxa);
+  const baixa = await db.createFinancialPayment({
+    entryId,
+    amount: Number(valor || 0),
+    date,
+    bankAccountId: bankAccountId || '',
+    discount: desconto,
+    // A marca que o cancelamento procura — ver a migração fase-au. É coluna,
+    // e não o texto da observação: regra que depende de uma frase ensina a
+    // mudar a frase.
+    origem: 'automatica',
+    note: desconto > 0
+      ? `Baixa automática: venda à vista. Taxa da forma de pagamento (${percentual}%) no desconto.`
+      : 'Baixa automática: venda à vista.',
+    createdBy: user?.id,
+    createdByName: user?.name
+  });
+  data.financialPayments = data.financialPayments || [];
+  data.financialPayments.push(baixa);
+  return baixa;
+}
+
+/** Título à vista de pedido, em aberto e sem baixa: o que espera a confirmação (16/10/2026). */
+function aVistaAguardando(data, entry) {
+  if (!entry || !entry.referenceId || entry.type !== 'RECEITA' || entry.status !== 'pending') return false;
+  const forma = (data.paymentMethods || []).find((f) => f.id === entry.paymentMethodId);
+  return Boolean(forma) && formaPagamento.quitaNaHora(forma.type) && !getFinanceEntryPayments(data, entry.id).length;
+}
+
+/** Dá a baixa no título à vista que esperava confirmação; ele passa a recebido. */
+async function confirmarAVista(data, entry, user) {
+  await baixaDaVendaAVista(data, {
+    entryId: entry.id,
+    valor: entry.netAmount == null ? entry.amount : entry.netAmount,
+    taxa: entry.feeAmount,
+    percentual: entry.feePercent,
+    date: entry.date,
+    bankAccountId: entry.bankAccountId
+  }, user);
+  entry.status = 'paid';
+  entry.updatedAt = new Date().toISOString();
+  await db.updateFinancialEntry(entry.id, { status: 'paid' });
+}
+
+/**
+ * NA AUTORIZAÇÃO DA NOTA, o que ninguém confirmou (16/10/2026): quem aprovou
+ * sem acesso ao Financeiro, ou fechou a Edição de Título no meio. Sem isto a
+ * venda à vista ficaria "a receber" para sempre — o problema da fase AU.
+ */
+async function quitarAVistaPendentes(data, record, user) {
+  let quitadas = 0;
+  for (const entry of (data.finance || []).filter((e) => e.referenceId === record.id)) {
+    if (!aVistaAguardando(data, entry)) continue;
+    await confirmarAVista(data, entry, user);
+    quitadas += 1;
+  }
+  return quitadas;
 }
 
 /**
@@ -4409,8 +4468,14 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
   // que carrega o total e as parcelas atuais. Também roda sempre — um
   // pedido faturado que vira orçamento precisa ter as parcelas canceladas.
   const efeitoFinanceiro = await transitionOrderFinanceEffect(data, {
-    record: updated, wasApplied: eraFaturado, willApply: vaiGerarFinanceiro, user
+    record: updated, wasApplied: eraFaturado, willApply: vaiGerarFinanceiro, user,
+    adiarAVista: statusNovo === 'pedido-pre-faturado'
   });
+  // Faturou (a nota foi autorizada): o à vista que ninguém confirmou na Edição
+  // de Título recebe a baixa agora.
+  if (vaiGerarFinanceiro && salesStatus.geraFinanceiro(statusNovo)) {
+    efeitoFinanceiro.quitadas = Number(efeitoFinanceiro.quitadas || 0) + await quitarAVistaPendentes(data, updated, user);
+  }
   return { updated, efeitoFinanceiro };
 }
 
@@ -13958,7 +14023,7 @@ async function tratarRequisicao(req, res) {
         // o id dele, e um lançamento apontando para pedido que falhou ao salvar
         // seria dinheiro no financeiro sem venda por trás.
         if (record.financeApplied) {
-          await transitionOrderFinanceEffect(data, { record, wasApplied: false, willApply: true, user });
+          await transitionOrderFinanceEffect(data, { record, wasApplied: false, willApply: true, user, adiarAVista: status === 'pedido-pre-faturado' });
         }
       } else if (type === 'nfe') {
         // O NÚMERO É EXIGIDO, e não inventado (fase DK).
@@ -21641,6 +21706,10 @@ async function tratarRequisicao(req, res) {
         // Mesmo caminho de persistência da edição livre, logo abaixo: registro
         // inteiro no banco, auditoria e só então o arquivo local.
         await db.updateFinancialEntry(entry.id, entry);
+        // SALVAR CONFIRMA A VENDA À VISTA (16/10/2026): o título em dinheiro,
+        // PIX ou débito criado na aprovação recebe a baixa agora, na conta que
+        // ficou escolhida aqui (ver baixaDaVendaAVista).
+        if (vinculadoAoPedido && aVistaAguardando(data, entry)) await confirmarAVista(data, entry, user);
         await addFinanceAuditLog(data, {
           action: 'editarLancamentoVinculado',
           entry,
