@@ -146,14 +146,12 @@ check('a taxa fecha o título na conciliação', /function descontoDaTaxaDoCarta
 check('  só quando a transação É o líquido',
   /if \(Math\.abs\(liquido - Number\(valorDaTransacao \|\| 0\)\) > 0\.01\) return 0;/.test(src));
 check('  e a baixa da conciliação a usa', /discount: taxaDoCartao,/.test(src));
-// O débito quita na hora e TAMBÉM tem taxa: baixar pelo bruto creditava na
-// conta um dinheiro que não chegou.
-// Desde 16/10/2026 a baixa sai de baixaDaVendaAVista, também na confirmação da
-// Edição de Título (test-a-vista-na-confirmacao.js) — pelo líquido, nos dois.
-check('a baixa automática entra pelo líquido',
-  /valor: parcela\.netAmount == null \? parcela\.amount : parcela\.netAmount,/.test(src)
-  && /valor: entry\.netAmount == null \? entry\.amount : entry\.netAmount,/.test(src)
-  && /async function baixaDaVendaAVista\(data, \{ entryId, valor, taxa, percentual, date, bankAccountId \}, user\) \{\s*const desconto = taxa == null \? 0 : Number\(taxa\);/.test(src));
+// O débito também tem taxa. Até 17/10/2026 a venda à vista nascia quitada,
+// com baixa automática pelo líquido; desde então todo título de pedido nasce
+// em aberto (conciliação; test-titulos-do-pedido-em-aberto.js), e o líquido e a
+// taxa ficam no título para a conciliação casar com o extrato.
+check('o título guarda o líquido e a taxa para a conciliação',
+  /feeAmount: parcela\.feeAmount,\s*netAmount: parcela\.netAmount,/.test(src));
 
 console.log('--- 7. a migração e o que a tela mostra ---');
 const migracao = ler('banco/migrations/fase-bx-titulo-de-cartao.sql');
