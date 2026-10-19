@@ -254,7 +254,7 @@ function relBarraDeFiltros(ctx, rel) {
  * "Limpar"; os outros dois não têm filtro para aplicar). Atualizar, exportar e
  * imprimir são de todos.
  */
-function relAcoes(antes) {
+function relAcoes(antes, { pdf = false } = {}) {
   return `
     <div class="rel-filtros-acoes">
       <div>
@@ -267,6 +267,7 @@ function relAcoes(antes) {
              significaria que os dados já teriam saído do servidor antes de
              alguém checar se podiam sair. -->
         <button type="button" class="secondary" id="relExportar">Excel (CSV)</button>
+        ${pdf ? '<button type="button" class="secondary" id="relPdf">Salvar PDF</button>' : ''}
         <button type="button" class="secondary" id="relImprimir">Imprimir</button>
       </div>
     </div>
@@ -853,12 +854,15 @@ window.MavisRelatoriosEspeciais.financeiro = async function relFinanceiro(ctx) {
         </div>
       </section>
 
-      ${relAcoes('')}
+      ${relAcoes('', { pdf: true })}
     </div>
   `;
   relLigarPeriodo(ctx);
   relLigarAcoes(ctx, `/api/reports/financeiro/export?granularity=${encodeURIComponent(ctx.granularidade || 'month')}`,
     'financeiro', 'Exportação gerada com o mesmo recorte de período da tela.');
+  // O PDF (19/10/2026): os cartões e o fluxo período a período, na ordem da tela.
+  content.querySelector('#relPdf')?.addEventListener('click', () => window.MavisRelatoriosCatalogo.baixar(ctx,
+    `/api/reports/financeiro/export?granularity=${encodeURIComponent(ctx.granularidade || 'month')}&formato=pdf`, 'sintese-financeira.pdf'));
 };
 
 // --- Relatório de Estoque --------------------------------------------------

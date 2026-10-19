@@ -34,7 +34,9 @@
     611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584];
 
   // Fora do Latin-1, os poucos que o WinAnsi tem; o resto vira "?".
-  const WIN_ANSI = { '€': 0x80, '‚': 0x82, '…': 0x85, '‘': 0x91, '’': 0x92, '“': 0x93, '”': 0x94, '•': 0x95, '–': 0x96, '—': 0x97, '™': 0x99 };
+  // O sinal de menos tipográfico (U+2212, o "(−)" das despesas na DRE) não
+  // existe no WinAnsi: vai como o hífen, e não como "?" (19/10/2026).
+  const WIN_ANSI = { '€': 0x80, '‚': 0x82, '…': 0x85, '‘': 0x91, '’': 0x92, '“': 0x93, '”': 0x94, '•': 0x95, '–': 0x96, '—': 0x97, '™': 0x99, '−': 0x2d };
 
   function codigoWinAnsi(ch) {
     const c = ch.codePointAt(0);
@@ -53,6 +55,7 @@
     const b = base.codePointAt(0);
     if (base !== ch && b >= 32 && b <= 126) return tabela[b - 32];
     if (ch === '—') return 1000;
+    if (ch === '−') return tabela[45 - 32];
     if (ch === '–') return 556;
     return 556;
   }

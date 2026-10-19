@@ -23,6 +23,7 @@ const check = (nome, cond, det) => {
 };
 const ler = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const texto = (bytes) => Buffer.from(bytes).toString('latin1');
+const montarLinhasDeTexto = (cols, ls) => ls.map((l) => cols.map((c) => formatar(c.tipo, l[c.campo])));
 
 console.log('--- 1. o PDF ---');
 const colunas = [
@@ -67,6 +68,34 @@ check('  a pagar ou a receber', def && JSON.stringify(def.escolhas) === JSON.str
   const r = await def.executar(falso);
   check('  só pagas, pela data do pagamento, do tipo escolhido', pedido && pedido[2] === 'RECEITA' && pedido[3] === true && pedido[5] === 'pago', JSON.stringify(pedido));
   check('  sem Situação e Em aberto, com a data do pagamento', !r.colunas.some((c) => c.campo === 'situacao' || c.campo === 'emAberto') && r.colunas.some((c) => c.campo === 'dataPagamento'));
+
+  // 19/10/2026, pedido do usuário: "todos os relatórios [do Financeiro] com uma
+  // opção de baixar em PDF, de forma ordenada como o sistema". Provado com os
+  // 17 do catálogo e a Síntese no banco local: Contas a Pagar de 75 para 44
+  // páginas, a DRE Anual sem número partido (sem "R$" nas células, "(R$)" no
+  // título), o cabeçalho das colunas em toda página.
+  console.log('\n--- 4. ordenado como o sistema ---');
+  const { planejarColunas } = require('../public/modules/shared/pdf_relatorio');
+  const motorPdf = require('../public/modules/shared/pdf_pedido');
+  const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez', 'Total 2026', 'Total 2025', 'Diferença'];
+  const colunasDre = [{ campo: 'categoria', rotulo: 'Categoria', tipo: 'texto' }, ...meses.map((m, i) => ({ campo: `m${i}`, rotulo: m, tipo: 'moeda' }))];
+  const linhaDre = (cat) => Object.fromEntries([['categoria', cat], ...meses.map((_, i) => [`m${i}`, -1611453.39 * (i % 2 ? 1 : 8.33)])]);
+  const dre = texto(montarPdfDoRelatorio({ titulo: 'DRE Anual', colunas: colunasDre, linhas: Array.from({ length: 80 }, (_, i) => linhaDre(`(−) CATEGORIA ${i}`)) }));
+  check('tabela larga demais: o "R$" sai das células e vai para o título', dre.includes('(Jan \\(R$\\))') && !/\(R\$ 13/.test(dre) && /\(-13\.423\.406,74\)/.test(dre));
+  check('  e o menos da DRE sai como hífen, não "?"', dre.includes('\\(-\\) CATEGORIA 0') && !dre.includes('\\(?\\)'));
+  check('o cabeçalho das colunas se repete em toda página',
+    (dre.match(/\(Categoria\) Tj/g) || []).length === (dre.match(/\/Type \/Page /g) || []).length && (dre.match(/\/Type \/Page /g) || []).length > 1);
+  const plano = planejarColunas(colunas, montarLinhasDeTexto(colunas, linhas), 773.89);
+  check('a fonte é a maior em que tudo cabe', plano.coube === true && plano.tamanho === 7.5);
+  check('o texto longo para em duas linhas, com reticências', (() => {
+    const longo = texto(montarPdfDoRelatorio({ titulo: 'X', colunas: colunas.slice(0, 4), linhas: [{ ...linhas[0], descricao: 'palavra '.repeat(200) }] }));
+    return (longo.match(/\(palavra/g) || []).length === 2 && /…|\x85/.test(longo);
+  })());
+  check('o menos tipográfico vale um hífen no PDF', motorPdf.codigoWinAnsi('−') === 45);
+  check('a Síntese Financeira também sai em PDF, com os números dos cartões',
+    /if \(qual === 'financeiro' && url\.searchParams\.get\('formato'\) === 'pdf'\) \{/.test(servidor) && /`A receber \$\{brl\(receber\.total\)\}/.test(servidor)
+    && /id="relPdf">Salvar PDF<\/button>/.test(ler('public/modules/reports/subs/relatorios.js'))
+    && /relAcoes\('', \{ pdf: true \}\)/.test(ler('public/modules/reports/subs/relatorios.js')));
 
   console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
   process.exit(falhas ? 1 : 0);

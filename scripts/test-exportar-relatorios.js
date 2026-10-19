@@ -129,9 +129,10 @@ const exportacao = trecho('const exportacaoGeral = ', '\n  }\n');
 check('  e a exportação também',
   exportacao.indexOf('portaDosRelatoriosGerais(req)') > -1
   && exportacao.indexOf('portaDosRelatoriosGerais(req)') < exportacao.indexOf('baseFinanceiraDosRelatorios('));
-// DUAS chamadas de cada base: a do overview e a da exportação.
+// DUAS chamadas de cada base: a do overview e a da exportação (TRÊS na
+// Síntese desde 19/10/2026: a exportação em PDF também sai da mesma base).
 check('a tela e o arquivo da Síntese saem da mesma base',
-  (servidor.match(/baseFinanceiraDosRelatorios\(url\.searchParams\)/g) || []).length === 2);
+  (servidor.match(/baseFinanceiraDosRelatorios\(url\.searchParams\)/g) || []).length === 3);
 check('a tela e o arquivo do Estoque saem da mesma base',
   (servidor.match(/await baseDeEstoqueDosRelatorios\(\)/g) || []).length === 1
   // Desde 14/10/2026 o Valor em Estoque também não é calculado para quem não é
@@ -165,7 +166,7 @@ const tela = ler('public/modules/reports/subs/relatorios.js');
 // A LINHA DE AÇÕES TEM UM DONO. Estava dentro da barra de filtros de Vendas, e
 // era por isso que dar o botão aos outros dois exigiria arrastar os filtros de
 // vendedor, cliente e produto junto.
-check('relAcoes existe', /function relAcoes\(antes\)/.test(tela));
+check('relAcoes existe', /function relAcoes\(antes, \{ pdf = false \} = \{\}\)/.test(tela));
 check('  e os três relatórios a usam',
   (tela.match(/\$\{relAcoes\(/g) || []).length === 3,
   'vendas (com Aplicar/Limpar), financeiro e estoque');

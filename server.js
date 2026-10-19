@@ -195,6 +195,8 @@ const formaPagamento = require('./public/modules/shared/forma_pagamento');
 // Fase ET (19/10/2026): o simulador da venda no cartão e as tabelas dele.
 const cartaoSimulador = require('./public/modules/shared/cartao_simulador');
 const cartaoDb = require('./lib/db/cartao');
+// O PDF dos relatórios (a Síntese Financeira usa direto; o catálogo, pelo motor).
+const pdfRelatorio = require('./public/modules/shared/pdf_relatorio');
 // Fase CY: modFrete sai do "Meio de Envio" da aba Entrega, e nao do valor do
 // frete. A tela de emissao usa o mesmo modulo.
 const modalidadeFrete = require('./public/modules/shared/modalidade_frete');
@@ -13668,6 +13670,54 @@ async function tratarRequisicao(req, res) {
       const qual = exportacaoGeral[1];
       const porta = await portaDosRelatoriosGerais(req);
       if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
+
+      // O PDF DA SÍNTESE FINANCEIRA (19/10/2026, pedido do usuário: "todos os
+      // relatórios [do Financeiro] com uma opção de baixar em PDF, de forma
+      // ordenada como o sistema"). A tela na ordem dela: os quatro números dos
+      // cartões e o fluxo período a período, com o total.
+      if (qual === 'financeiro' && url.searchParams.get('formato') === 'pdf') {
+        const base = await baseFinanceiraDosRelatorios(url.searchParams);
+        const serie = base.serieFinanceiro || [];
+        const r2 = (v) => Math.round(Number(v || 0) * 100) / 100;
+        const linhas = serie.map((ponto) => ({
+          periodo: ponto.label || '', de: ponto.from || '', ate: ponto.to || '',
+          receitas: r2(ponto.receitas), despesas: r2(ponto.despesas), saldo: r2(Number(ponto.receitas || 0) - Number(ponto.despesas || 0))
+        }));
+        const soma = (campo) => r2(linhas.reduce((s, l) => s + l[campo], 0));
+        const brl = (v) => pdfRelatorio.formatar('moeda', v);
+        const dia = (v) => pdfRelatorio.formatar('data', v);
+        const pagar = (base.contas || {}).contasAPagar || {};
+        const receber = (base.contas || {}).contasAReceber || {};
+        const pdf = pdfRelatorio.montarPdfDoRelatorio({
+          titulo: 'Síntese Financeira',
+          subtitulo: linhas.length ? `Período: ${dia(linhas[0].de)} a ${dia(linhas[linhas.length - 1].ate)}` : '',
+          emitidoEm: new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+          }).format(new Date()).replace(',', ' às'),
+          resumo: [
+            `A receber ${brl(receber.total)} (vencidas ${brl(receber.vencidas)})`,
+            `A pagar ${brl(pagar.total)} (vencidas ${brl(pagar.vencidas)})`,
+            `Recebido ${brl(receber.recebidas)}`,
+            `Pago ${brl(pagar.pagas)}`
+          ],
+          colunas: [
+            { campo: 'periodo', rotulo: 'Período', tipo: 'texto' },
+            { campo: 'de', rotulo: 'De', tipo: 'data' },
+            { campo: 'ate', rotulo: 'Até', tipo: 'data' },
+            { campo: 'receitas', rotulo: 'Receitas', tipo: 'moeda' },
+            { campo: 'despesas', rotulo: 'Despesas', tipo: 'moeda' },
+            { campo: 'saldo', rotulo: 'Saldo', tipo: 'moeda' }
+          ],
+          linhas,
+          totais: { receitas: soma('receitas'), despesas: soma('despesas'), saldo: soma('saldo') }
+        });
+        res.writeHead(200, {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="sintese-financeira-${new Date().toISOString().slice(0, 10)}.pdf"`,
+          'Cache-Control': 'no-store'
+        });
+        return res.end(Buffer.from(pdf));
+      }
 
       let conteudo;
       if (qual === 'financeiro') {
