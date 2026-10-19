@@ -417,6 +417,17 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     return Math.round(Number(item.quantidade || 0) * Number(item.valorUnitario || 0) * 100) / 100;
   }
 
+  // O TOTAL DO ITEM DIGITADO (19/10/2026, pedido do usuário: "o campo de valor
+  // total possa ser alterado"). O unitário sai dele, com até 10 casas — o
+  // máximo do vUnCom —, para quantidade × unitário dar o total ao centavo
+  // (a SEFAZ confere vProd contra essa conta). A tela mostra o unitário com
+  // duas casas; a nota leva todas.
+  function unitarioDoTotal(total, quantidade) {
+    const q = Number(quantidade || 0);
+    if (!(q > 0)) return null;
+    return Math.round((Number(total || 0) / q) * 1e10) / 1e10;
+  }
+
   // O total dos ITENS, sem o que vem do pedido.
   function totalDosItens() {
     return itens.reduce((sum, item) => sum + itemTotal(item), 0);
@@ -511,7 +522,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         <td><input data-field="unidadeComercial" data-index="${index}" value="${escapeHtml(item.unidadeComercial)}" style="width:70px;" /></td>
         <!-- ICMS % e cBenef POR ITEM saíram daqui em 13/10/2026: estão no bloco
              Impostos, junto com o resto dos valores fiscais editáveis. -->
-        <td class="nfe-item-total" data-row-total="${index}">${financeFormatBRL(itemTotal(item))}</td>
+        <td><input type="number" step="0.01" min="0" data-field="valorTotal" data-index="${index}" value="${itemTotal(item)}" style="width:110px;" /></td>
         <td><button type="button" class="icon-button" data-remove-item="${index}" title="Remover item" ${itens.length <= 1 ? 'disabled' : ''}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6"></path></svg>
         </button></td>
@@ -1058,10 +1069,31 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       input.addEventListener('input', () => {
         const index = Number(input.dataset.index);
         const field = input.dataset.field;
+        const campoDaLinha = (nome) => document.querySelector(`#nfeFocusItemsBody input[data-field="${nome}"][data-index="${index}"]`);
+        // Total digitado: muda o unitário, não a quantidade. Sem quantidade
+        // não há unitário a tirar dele, e o total volta a ser quantidade × unitário.
+        if (field === 'valorTotal') {
+          const unitario = unitarioDoTotal(input.value, itens[index].quantidade);
+          if (unitario !== null) {
+            itens[index].valorUnitario = unitario;
+            const campoUnitario = campoDaLinha('valorUnitario');
+            if (campoUnitario) campoUnitario.value = unitario;
+          }
+          refreshGrandTotal();
+          return;
+        }
         itens[index][field] = field === 'quantidade' || field === 'valorUnitario' ? Number(input.value || 0) : input.value;
-        const totalCell = document.querySelector(`[data-row-total="${index}"]`);
-        if (totalCell) totalCell.textContent = financeFormatBRL(itemTotal(itens[index]));
+        const campoTotal = campoDaLinha('valorTotal');
+        if (campoTotal) campoTotal.value = itemTotal(itens[index]);
         refreshGrandTotal();
+      });
+    });
+    // Ao sair do total, ele mostra o que a nota vai levar (sem quantidade, o
+    // digitado não vale).
+    document.querySelectorAll('#nfeFocusItemsBody input[data-field="valorTotal"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const item = itens[Number(input.dataset.index)];
+        if (item) input.value = itemTotal(item);
       });
     });
     // Escolher o produto preenche a linha a partir do cadastro. Redesenha a
