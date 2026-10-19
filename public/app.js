@@ -5450,6 +5450,9 @@ async function loadModule(moduleName) {
           // Quem CRIOU fica parado; quem alterou acompanha cada gravação.
           const criadoPor = isEditing ? (editRecord.createdByName || '') : (state.user?.name || '');
           const dataAlteracao = formatarDataHora(editRecord?.updatedAt || editRecord?.createdAt);
+          // A coluna Condição só com produto que controla montagem (fase ER) —
+          // com o controle desligado (fase EV, 19/10/2026), ela some.
+          const comMontagem = items.some((item) => Boolean(produtoDoItem(item)?.controlaMontagem));
 
           content.innerHTML = `
             <div class="cadastro-page-head">
@@ -5575,7 +5578,7 @@ async function loadModule(moduleName) {
                                    preço ou quantidade. É o número que vai para a
                                    nota fiscal e para o registro do equipamento. -->
                               <th>Chassi</th>
-                              <th>Condição</th>
+                              ${comMontagem ? '<th>Condição</th>' : ''}
                               <th>Disponível</th>
                               <th>Preço cadastrado</th>
                               <th>Qtd.</th>
@@ -5628,7 +5631,7 @@ async function loadModule(moduleName) {
                                       ? '<span class="sales-item-chassi-aviso">1 chassi para ' + salesFormatQty(item.quantity) + ' unidades — separe em linhas.</span>'
                                       : ''}
                                   </td>
-                                  <td>
+                                  ${comMontagem ? `<td>
                                     <!-- Fase ER: produto que controla montagem
                                          sai do saldo MONTADO ou DESMONTADO
                                          (shared/venda_obrigatorios.js). -->
@@ -5638,7 +5641,7 @@ async function loadModule(moduleName) {
                                         <option value="montado" ${item.condicao === 'montado' ? 'selected' : ''}>Montado</option>
                                         <option value="desmontado" ${item.condicao === 'desmontado' ? 'selected' : ''}>Desmontado</option>
                                       </select>` : '<span class="muted">—</span>'}
-                                  </td>
+                                  </td>` : ''}
                                   <td class="sales-item-readonly ${faltaSaldo ? 'is-alerta' : ''}"
                                       title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (saldoDesconhecido ? (produto.movimentaEstoque === false ? 'Serviço: não controla estoque.' : 'Saldo desta cor ainda não carregado.') : `Disponível para este ${title.toLowerCase()}: ${qtdVisivel(livre)}.${faltaSaldo ? ' O faturamento será recusado até o estoque entrar.' : ''}`)}">
                                     ${semCadastro || saldoDesconhecido ? '-' : qtdVisivel(livre)}
