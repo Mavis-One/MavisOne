@@ -6854,6 +6854,47 @@ function planoDoLote(acao, entry, baixas) {
   return { valor, desconto };
 }
 
+/**
+ * De onde vem cada título (Map id -> texto), para a prévia da exclusão avisar
+ * o vínculo: o pedido, a entrada de NF-e ou o contrato da referência, e a nota
+ * emitida. Referência que não é nenhum dos três: "outro documento".
+ */
+async function vinculosDosLancamentos(lancamentos) {
+  const resultado = new Map();
+  const refs = [...new Set(lancamentos.map((l) => l.referenceId).filter(Boolean))];
+  const notas = [...new Set(lancamentos.map((l) => l.nfeId).filter(Boolean))];
+  if (!refs.length && !notas.length) return resultado;
+  const consultar = (sql, lista) => (lista.length
+    ? consultarBanco(sql, [lista]).then((r) => r.rows).catch(() => [])
+    : Promise.resolve([]));
+  const [pedidos, entradas, contratos, nfes] = await Promise.all([
+    consultar('select id, type, code from orders where id = any($1)', refs),
+    consultar('select id, numero, serie, emitente_nome from nfe_entrada where id = any($1)', refs),
+    consultar('select id, code from contracts where id = any($1)', refs),
+    consultar('select id, numero, serie, modelo from nfe where id = any($1)', notas)
+  ]);
+  const porId = (linhas) => new Map(linhas.map((r) => [String(r.id), r]));
+  const [pedido, entrada, contrato, nfe] = [pedidos, entradas, contratos, nfes].map(porId);
+  for (const l of lancamentos) {
+    const partes = [];
+    const ref = String(l.referenceId || '');
+    if (ref) {
+      const p = pedido.get(ref);
+      const e = entrada.get(ref);
+      const c = contrato.get(ref);
+      if (p) partes.push(`${p.type === 'quote' ? 'Orçamento' : 'Pedido'} ${p.code || ''}`.trim());
+      else if (e) partes.push(`Entrada da NF-e ${e.numero}/${e.serie}${e.emitente_nome ? ` de ${e.emitente_nome}` : ''}`);
+      else if (c) partes.push(`Contrato ${c.code || ''}`.trim());
+      else partes.push('Outro documento');
+    }
+    const n = l.nfeId ? nfe.get(String(l.nfeId)) : null;
+    if (n) partes.push(`${String(n.modelo) === '65' ? 'NFC-e' : 'NF-e'} ${n.numero}/${n.serie}`);
+    else if (l.nfeId && !ref) partes.push('Nota fiscal');
+    if (partes.length) resultado.set(l.id, partes.join(' · '));
+  }
+  return resultado;
+}
+
 function situacaoPorUrgencia(entry) {
   const rotulo = financeEntryStatusLabel(entry);
   if (rotulo === 'parcial' && financeEntryDueDate(entry) < toDateStr(getTodayLocal())) return 1.5;
@@ -21908,7 +21949,9 @@ async function tratarRequisicao(req, res) {
       }
       const body = await readBody(req);
       const acao = String(body.acao || '');
-      if (!Object.prototype.hasOwnProperty.call(listaDeLancamentos.ACOES, acao)) {
+      // Excluir tem caminho próprio (DELETE /api/finance/entries), que o portão
+      // cobra como finance.excluir; por aqui seria cobrado como criar.
+      if (!Object.prototype.hasOwnProperty.call(listaDeLancamentos.ACOES, acao) || acao === 'excluir') {
         return sendJson(res, { error: 'Ação em lote desconhecida.' }, 400);
       }
       const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).filter((id) => typeof id === 'string' && id))];
@@ -22031,6 +22074,125 @@ async function tratarRequisicao(req, res) {
       });
     } catch (error) {
       return sendErro(res, error, 'Erro na ação em lote', 400);
+    }
+  }
+
+  // EXCLUIR LANÇAMENTOS (19/10/2026, pedido do usuário: "faça uma opção para
+  // excluir lançamentos financeiros"). Um ou vários, pelo mesmo caminho, com
+  // `previa: true` dizendo antes o que sai junto. DELETE de propósito: o
+  // portão cobra finance.excluir (lib/permissoes.js) — o módulo marcado na
+  // ficha dá ler/criar/editar, não excluir; o administrador pode sempre.
+  //
+  // Decisões do usuário, na mesma data: o lançamento com baixa sai COM as
+  // baixas, e a movimentação do extrato conciliada com ele volta a "Não
+  // conciliado"; título de pedido ou de nota também sai, com o vínculo dito na
+  // prévia. O pedido ou a nota continuam lá, sem o título.
+  //
+  // Diferente de Cancelar, não fica na lista: o que sai — o lançamento inteiro,
+  // as baixas e o motivo — fica na trilha de auditoria.
+  if (pathname === '/api/finance/entries' && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).filter((id) => typeof id === 'string' && id))];
+      if (!ids.length) {
+        return sendJson(res, { error: 'Selecione ao menos um lançamento.' }, 400);
+      }
+      if (ids.length > listaDeLancamentos.MAXIMO_DO_LOTE) {
+        return sendJson(res, { error: `No máximo ${listaDeLancamentos.MAXIMO_DO_LOTE} lançamentos por vez.` }, 400);
+      }
+      const previa = body.previa === true;
+      const motivo = String(body.motivo || '').trim();
+      if (!previa && motivo.length < 10) {
+        return sendJson(res, { error: 'Informe o motivo da exclusão (pelo menos 10 caracteres).' }, 400);
+      }
+
+      const data = loadData();
+      await Promise.all([syncFinanceCadastroData(data), syncLancamentosPorId(data, ids)]);
+      const conciliadasCom = (id) => (data.bankTransactions || []).filter((tx) => tx.matchedEntryId === id);
+
+      if (previa) {
+        const vinculos = await vinculosDosLancamentos(data.finance.filter((e) => ids.includes(e.id)));
+        const itens = ids.map((id) => {
+          const entry = data.finance.find((item) => item.id === id);
+          if (!entry) return { id, codigo: id, descricao: '', motivo: 'Lançamento não encontrado.' };
+          const baixas = getFinanceEntryPayments(data, id);
+          return {
+            id,
+            codigo: lancamentoCodigo.formatar(entry.code) || id,
+            descricao: entry.description || '',
+            valor: Number(entry.amount || 0),
+            baixas: baixas.length,
+            valorDasBaixas: Math.round(baixas.reduce((s, p) => s + Number(p.amount || 0), 0) * 100) / 100,
+            conciliadas: conciliadasCom(id).length,
+            vinculo: vinculos.get(id) || '',
+            motivo: ''
+          };
+        });
+        return sendJson(res, { previa: true, itens });
+      }
+
+      const processados = [];
+      const ignorados = [];
+      for (const id of ids) {
+        const doRetrato = data.finance.find((item) => item.id === id);
+        const codigo = (doRetrato && lancamentoCodigo.formatar(doRetrato.code)) || id;
+        // A mesma trava da baixa e do cancelamento: excluir no meio de uma
+        // baixa deixaria a baixa gravada num lançamento que não existe.
+        if (lancamentosEmGravacao.has(id)) {
+          ignorados.push({ id, codigo, motivo: 'Outra baixa, cancelamento ou exclusão deste lançamento está em andamento.' });
+          continue;
+        }
+        lancamentosEmGravacao.add(id);
+        try {
+          const [entry] = await db.getFinancialEntriesByIds([id]);
+          if (!entry) { ignorados.push({ id, codigo, motivo: 'Lançamento não encontrado.' }); continue; }
+          const baixas = await db.getFinancialPaymentsByEntries([id]);
+          const transacoes = conciliadasCom(id);
+          await db.deleteFinancialEntry(id);
+          const agora = new Date().toISOString();
+          for (const tx of transacoes) {
+            tx.status = 'nao_conciliado';
+            tx.matchedEntryId = '';
+            tx.matchedPaymentId = '';
+            tx.updatedAt = agora;
+          }
+          data.finance = data.finance.filter((item) => item.id !== id);
+          data.financialPayments = (data.financialPayments || []).filter((p) => p.entryId !== id);
+          await addFinanceAuditLog(data, {
+            action: 'excluirLancamento',
+            entry,
+            byId: user.id,
+            byName: user.name,
+            details: {
+              motivo,
+              ...(ids.length > 1 ? { lote: true } : {}),
+              lancamento: entry,
+              baixas,
+              ...(transacoes.length ? { transacoesDesconciliadas: transacoes.map((tx) => tx.id) } : {})
+            }
+          });
+          processados.push({ id, codigo });
+        } catch (erro) {
+          const resposta = respostaDeErro(erro, 'Não foi possível excluir este lançamento.');
+          if (resposta.codigo) console.error(`[erro ${resposta.codigo}] exclusão de lançamento (${id}):`, (erro && erro.stack) || erro);
+          ignorados.push({ id, codigo, motivo: resposta.mensagem });
+        } finally {
+          lancamentosEmGravacao.delete(id);
+        }
+      }
+      saveData(data);
+      return sendJson(res, {
+        success: true,
+        processados,
+        ignorados,
+        resumo: listaDeLancamentos.resumo(processados.length, ignorados.length)
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao excluir lançamentos', 400);
     }
   }
 

@@ -128,6 +128,13 @@
         if (s === 'paid' || s === 'parcial') return 'Tem baixa registrada: estorne antes de cancelar.';
         return true;
       }
+    },
+    // EXCLUIR (19/10/2026): qualquer situação — com baixa, as baixas saem
+    // junto (decisão do usuário). A permissão é finance.excluir, cobrada pelo
+    // portão na rota DELETE /api/finance/entries.
+    excluir: {
+      rotulo: 'Excluir',
+      elegivel: () => true
     }
   };
 

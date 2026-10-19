@@ -12,6 +12,7 @@ const ACCESS_AUDIT_ACTION_LABELS = {
   baixarLancamento: 'Baixa de lançamento',
   estornarLancamento: 'Estorno de baixa',
   cancelarLancamento: 'Cancelamento de lançamento',
+  excluirLancamento: 'Exclusão de lançamento',
   emitirNfe: 'Emissão de NF-e',
   cancelarNfe: 'Cancelamento de NF-e',
   emitirNfeFiscal: 'Emissão de NF-e (Focus)',

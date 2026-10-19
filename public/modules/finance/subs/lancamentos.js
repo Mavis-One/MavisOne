@@ -485,6 +485,7 @@ function criarTelaDeLancamentos(telaChave) {
         </span>
         ${botao('baixar', baixa, 'secondary')}
         ${botao('cancelar', cancela, 'btn-danger')}
+        ${podeExcluir() ? botao('excluir', Lista.avaliar('excluir', itens), 'btn-danger') : ''}
         <button type="button" class="secondary" data-lote="exportar">Exportar selecionados</button>
         <button type="button" class="secondary" data-lote="limpar">Limpar seleção</button>
       </div>`;
@@ -1115,6 +1116,8 @@ function criarTelaDeLancamentos(telaChave) {
           abrirBaixaEmLote();
         } else if (acao === 'cancelar') {
           cancelarEmLote();
+        } else if (acao === 'excluir') {
+          excluirLancamentos(selecionados().map((l) => l.id));
         }
       });
     });
@@ -1372,6 +1375,93 @@ function criarTelaDeLancamentos(telaChave) {
     }
   }
 
+  // EXCLUIR (19/10/2026, pedido do usuário): o administrador e quem tem
+  // Financeiro › excluir. O servidor confere de novo — o portão cobra a
+  // permissão na rota DELETE.
+  function podeExcluir() {
+    if (typeof usuarioEhAdmin === 'function' && usuarioEhAdmin()) return true;
+    return Boolean(state.user && Array.isArray(state.user.permissions) && state.user.permissions.includes('finance.excluir'));
+  }
+
+  // Um (da janela do lançamento) ou vários (da seleção), pelo mesmo caminho. A
+  // prévia diz o que sai junto — as baixas, a conciliação do extrato — e a que
+  // pedido ou nota o título está ligado, ANTES do motivo.
+  async function excluirLancamentos(ids, { doModal = false } = {}) {
+    if (loteEmAndamento || !ids.length) return;
+    if (ids.length > Lista.MAXIMO_DO_LOTE) {
+      showToast(`Exclua até ${Lista.MAXIMO_DO_LOTE} lançamentos por vez.`, 'warning');
+      return;
+    }
+    const mensagem = (erro, padrao) => (/finance\.excluir/.test(String(erro && erro.message))
+      ? 'Você não tem a permissão Financeiro › excluir.'
+      : ((erro && erro.message) || padrao));
+    let itens;
+    travarLote(true);
+    try {
+      const resposta = await api('/api/finance/entries', { method: 'DELETE', body: JSON.stringify({ ids, previa: true }) });
+      itens = resposta.itens || [];
+    } catch (erro) {
+      showToast(mensagem(erro, 'Não foi possível conferir os lançamentos.'), 'error');
+      return;
+    } finally {
+      travarLote(false);
+    }
+    const elegiveis = itens.filter((i) => !i.motivo);
+    const ignorados = itens.filter((i) => i.motivo);
+    if (!elegiveis.length) {
+      showToast(`Nenhum pode ser excluído agora: ${ignorados[0] ? ignorados[0].motivo : ''}`, 'warning');
+      return;
+    }
+    const um = elegiveis.length === 1 ? elegiveis[0] : null;
+    const plural = (n, s, p) => (n === 1 ? s : p);
+    const comBaixa = elegiveis.filter((i) => i.baixas > 0);
+    const conciliadas = elegiveis.reduce((s, i) => s + Number(i.conciliadas || 0), 0);
+    const vinculados = elegiveis.filter((i) => i.vinculo);
+    const avisos = [];
+    if (comBaixa.length) {
+      const soma = comBaixa.reduce((s, i) => s + Number(i.valorDasBaixas || 0), 0);
+      avisos.push(um
+        ? `${um.baixas} ${plural(um.baixas, 'baixa', 'baixas')} de ${brl(soma)} ${plural(um.baixas, 'sai', 'saem')} junto.`
+        : `${comBaixa.length} com baixa: as baixas (${brl(soma)}) saem junto.`);
+    }
+    if (conciliadas) avisos.push(`${conciliadas} ${plural(conciliadas, 'movimentação do extrato volta', 'movimentações do extrato voltam')} a Não conciliado.`);
+    if (vinculados.length) {
+      avisos.push(um
+        ? `Ligado a: ${um.vinculo}. Continua lá, sem este título.`
+        : `${vinculados.length} ${plural(vinculados.length, 'ligado', 'ligados')} a pedido ou nota (${vinculados[0].vinculo}${vinculados.length > 1 ? ' e outros' : ''}). Continuam lá, sem o título.`);
+    }
+    if (ignorados.length) avisos.push(`${ignorados.length} de fora: ${ignorados[0].motivo}`);
+    const motivo = await promptModal({
+      titulo: um ? `Excluir ${um.codigo}` : `Excluir ${elegiveis.length} lançamentos`,
+      descricao: [`${um ? 'O lançamento sai' : 'Os lançamentos saem'} da lista; o motivo fica na auditoria.`, ...avisos].join(' '),
+      rotulo: 'Motivo da exclusão',
+      placeholder: 'Ex.: lançado em duplicidade',
+      minimo: 10,
+      maximo: 300,
+      confirmar: um ? 'Excluir lançamento' : `Excluir ${elegiveis.length}`
+    });
+    if (!motivo || loteEmAndamento) return;
+    travarLote(true);
+    try {
+      const resposta = await api('/api/finance/entries', {
+        method: 'DELETE',
+        body: JSON.stringify({ ids: elegiveis.map((i) => i.id), motivo })
+      });
+      travarLote(false);
+      if (doModal) closeEntryModal();
+      if (um && (resposta.processados || []).length === 1 && !(resposta.ignorados || []).length) {
+        delete lista.selecao[um.id];
+        showToast('Lançamento excluído.', 'success');
+        await load();
+      } else {
+        await mostrarResultadoDoLote(resposta);
+      }
+    } catch (erro) {
+      travarLote(false);
+      showToast(mensagem(erro, 'Não foi possível excluir.'), 'error');
+    }
+  }
+
   async function openEntryModal(id, options) {
     let entry;
     try {
@@ -1540,6 +1630,7 @@ function criarTelaDeLancamentos(telaChave) {
           ${podeParcelar ? '<button type="button" class="secondary" id="financeModalParcelar">Parcelar</button>' : ''}
           ${canEstorno ? `<button type="button" class="secondary" id="financeModalEstorno">Estornar última baixa</button>` : ''}
           ${canCancel ? `<button type="button" class="btn-danger" id="financeModalCancel">Cancelar lançamento</button>` : ''}
+          ${podeExcluir() ? '<button type="button" class="btn-danger" id="financeModalExcluir">Excluir lançamento</button>' : ''}
         </div>
       </div>
     `;
@@ -1588,6 +1679,8 @@ function criarTelaDeLancamentos(telaChave) {
         showToast(error.message || 'Erro ao estornar baixa.', 'error');
       }
     });
+
+    document.getElementById('financeModalExcluir')?.addEventListener('click', () => excluirLancamentos([entry.id], { doModal: true }));
 
     document.getElementById('financeModalCancel')?.addEventListener('click', async () => {
       // MOTIVO, E NÃO SÓ "CONFIRMA?" (fase AX). O mesmo promptModal do

@@ -363,6 +363,10 @@ const PARCIAIS = {
     // cancelar UM; não serializa nada.
     '/api/finance/entries/exportar GET',
     '/api/finance/entries/lote POST',
+    // 19/10/2026: excluir — os selecionados e as baixas deles (a prévia conta
+    // e soma); o extrato conciliado vem do arquivo, sempre carregado. Não
+    // serializa nada.
+    '/api/finance/entries DELETE',
     '/api/finance/bank-transactions GET',
     '/api/finance/bank-transactions POST',
     // 15/10/2026: a resposta da importação também serializa as transações
