@@ -26,17 +26,31 @@
 // não está aqui usa `99 — Outros`, que é o que a própria tabela reserva para
 // isso — e acrescentar as que faltam é acrescentar UMA linha, neste arquivo.
 (function (raiz) {
+  // `chave` (fase ET, 19/10/2026): o nome da bandeira na tabela de taxas da
+  // credenciadora (cartao_taxas.bandeira). 11, 13 e 18 vieram com o script de
+  // taxas da Rede — conferidos na tabela da NT 2020.006 (Banes Card, Credz, JcB).
   const CATALOGO = [
-    { codigo: '01', nome: 'Visa' },
-    { codigo: '02', nome: 'Mastercard' },
-    { codigo: '03', nome: 'American Express' },
-    { codigo: '04', nome: 'Sorocred' },
-    { codigo: '05', nome: 'Diners Club' },
-    { codigo: '06', nome: 'Elo' },
-    { codigo: '07', nome: 'Hipercard' },
-    { codigo: '08', nome: 'Aura' },
-    { codigo: '09', nome: 'Cabal' },
-    { codigo: '99', nome: 'Outros' }
+    { codigo: '01', nome: 'Visa', chave: 'VISA' },
+    { codigo: '02', nome: 'Mastercard', chave: 'MASTERCARD' },
+    { codigo: '03', nome: 'American Express', chave: 'AMEX' },
+    { codigo: '04', nome: 'Sorocred', chave: 'SOROCRED' },
+    { codigo: '05', nome: 'Diners Club', chave: 'DINERS' },
+    { codigo: '06', nome: 'Elo', chave: 'ELO' },
+    { codigo: '07', nome: 'Hipercard', chave: 'HIPERCARD' },
+    { codigo: '08', nome: 'Aura', chave: 'AURA' },
+    { codigo: '09', nome: 'Cabal', chave: 'CABAL' },
+    { codigo: '11', nome: 'Banescard', chave: 'BANESCARD' },
+    { codigo: '13', nome: 'Credz', chave: 'CREDZ' },
+    { codigo: '18', nome: 'JCB', chave: 'JCB' },
+    { codigo: '99', nome: 'Outros', chave: 'OUTROS' }
+  ];
+
+  // As que vão no XML como 99 — Outros, mas têm taxa própria na Rede. Servem
+  // só para achar a taxa; o que vai para a SEFAZ continua sendo o 99.
+  const OUTRAS_DO_99 = [
+    { chave: 'SICREDI', nome: 'Sicredi' },
+    { chave: 'CREDSYSTEM', nome: 'Credsystem' },
+    { chave: 'CUP', nome: 'China UnionPay' }
   ];
 
   const porCodigo = new Map(CATALOGO.map((b) => [b.codigo, b]));
@@ -62,7 +76,20 @@
     return CATALOGO.filter((b) => marcadas.includes(b.codigo));
   }
 
-  const api = { CATALOGO, existe, nome, ofertadas };
+  /**
+   * A chave da bandeira na tabela de taxas (fase ET). No 99, a "outra" escolhida
+   * (Sicredi, Credsystem, China UnionPay); sem escolha, OUTROS — que não tem taxa.
+   */
+  function chaveDaTaxa(codigo, outraDo99) {
+    const c = String(codigo || '');
+    if (c === '99') {
+      const outra = OUTRAS_DO_99.find((o) => o.chave === String(outraDo99 || '').toUpperCase());
+      return outra ? outra.chave : 'OUTROS';
+    }
+    return (porCodigo.get(c) || {}).chave || '';
+  }
+
+  const api = { CATALOGO, OUTRAS_DO_99, existe, nome, ofertadas, chaveDaTaxa };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisBandeiraCartao = api;
 })(typeof window !== 'undefined' ? window : globalThis);

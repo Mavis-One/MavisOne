@@ -5265,3 +5265,12 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 /* Fase ES: a trava de pagamento da NF-e (pedido e tela de emissão). */
 .sales-liberacao-nfe { margin: 0 0 10px; }
 .liberacao-nfe-form { max-width: 520px; }
+
+/* Fase ET: o simulador da venda no cartão (linha de pagamento). */
+.sales-cartao-simulador { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin-top: 10px; }
+.sales-cartao-simulador label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85em; }
+.sales-cartao-escolha { margin: 8px 0 0; font-weight: 600; }
+.sales-cartao-opcoes { margin-top: 8px; }
+.sales-cartao-opcoes tr.is-escolhida td { background: rgba(var(--text-rgb), 0.06); }
+.sales-cartao-opcoes tr.is-indisponivel td { opacity: 0.6; }
+.cartao-fatores input, .cartao-taxas input { width: 110px; }

@@ -68,8 +68,15 @@
 
     const despesasGerais = naoNegativo(entrada.generalExpenses);
     const taxaMontagem = naoNegativo(entrada.assemblyFee);
+    // 7. O ACRÉSCIMO DO CARTÃO (fase ET, 19/10/2026): quando o cliente paga a
+    //    taxa, o cobrado no cartão passa do valor dos produtos, e a diferença
+    //    soma no total e vai como outras despesas na NF-e. Sai das linhas de
+    //    pagamento simuladas (shared/cartao_simulador.js).
+    const acrescimoCartao = cent((Array.isArray(entrada.payments) ? entrada.payments : [])
+      .filter((linha) => linha && linha.cartaoModalidade)
+      .reduce((soma, linha) => soma + naoNegativo(linha.cartaoAcrescimo), 0));
 
-    const totalAmount = cent(subtotal + freteCobrado + despesasGerais + taxaMontagem);
+    const totalAmount = cent(subtotal + freteCobrado + despesasGerais + taxaMontagem + acrescimoCartao);
 
     // Comissões incidem sobre o subtotal (após desconto, sem frete/despesas) —
     // é o que de fato entrou como venda.
@@ -92,6 +99,7 @@
       cobrarFreteDoComprador,
       despesasGerais,
       taxaMontagem,
+      acrescimoCartao,
       comissaoVendedor,
       comissaoRepresentacao,
       totalAmount,

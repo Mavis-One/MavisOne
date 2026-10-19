@@ -2340,7 +2340,9 @@ const moduleSubItems = {
     // O nome era "Extrato Open Finance" e escondia que a conciliação mora aqui
     // (12/10/2026). A chave fica: atalhos e favoritos salvos apontam para ela.
     { key: 'extrato_open_finance', label: 'Conciliação Bancária', desc: 'Extrato do banco (Open Finance, OFX ou CSV) conciliado com os lançamentos.' },
-    { key: 'bancos_conectados', label: 'Bancos Conectados', desc: 'Bancos ligados e situação de cada conexão.' }
+    { key: 'bancos_conectados', label: 'Bancos Conectados', desc: 'Bancos ligados e situação de cada conexão.' },
+    // Fase ET (19/10/2026): as tabelas do simulador da venda no cartão.
+    { key: 'taxas_cartao', label: 'Taxas de Cartão', desc: 'Taxas da credenciadora, fatores do simulador e PVs.' }
   ],
 
   // ABA: Fiscal
@@ -4250,6 +4252,44 @@ async function loadModule(moduleName) {
         const DOCUMENTOS_IMPRESSAO = ['Nenhum', 'Boleto', 'Carnê', 'Recibo', 'Duplicata'];
 
         let payments = (origem?.payments || []).map((linha) => ({ ...linha }));
+        // O SIMULADOR DO CARTÃO (fase ET, 19/10/2026; shared/cartao_simulador.js).
+        // As tabelas (taxas e fatores) vêm uma vez, quando a primeira linha de
+        // cartão pede, e ficam para a sessão. O servidor refaz a conta ao gravar.
+        const SimuladorCartao = window.MavisCartaoSimulador;
+        let linhaDoSimuladorAberta = null;
+        const carregarTabelasDoCartao = async () => {
+          if (!window.__tabelasDoCartao) window.__tabelasDoCartao = await api('/api/sales/cartao/tabelas');
+          return window.__tabelasDoCartao;
+        };
+        const CAMPOS_DO_SIMULADO = ['cartaoModalidade', 'cartaoParcelas', 'cartaoFator', 'cartaoTaxa', 'cartaoValorTaxa', 'cartaoAcrescimo', 'cartaoRepasse', 'cartaoTaxaPorParcela'];
+        const limparSimulacao = (linha) => {
+          if (linha.cartaoModalidade && Number(linha.cartaoBase) > 0) linha.amount = Number(linha.cartaoBase);
+          CAMPOS_DO_SIMULADO.forEach((campo) => { delete linha[campo]; });
+        };
+        const modalidadesDaForma = (forma) => (forma && forma.type === 'cartao-debito' ? ['debito']
+          : (forma && forma.type === 'cartao-credito' ? ['credito'] : ['debito', 'credito']));
+        const parametrosDoCartao = (linha) => ({
+          base: linha.cartaoBase,
+          canal: linha.cartaoCanal || 'maquininha',
+          bandeira: window.MavisBandeiraCartao.chaveDaTaxa(linha.cardBrand, linha.cartaoBandeiraOutra),
+          quemPaga: linha.cartaoQuemPaga || 'cliente',
+          empresaId: (typeof formState !== 'undefined' && formState.companyId) || '',
+          data: (typeof formState !== 'undefined' && formState.date) || new Date().toISOString().slice(0, 10),
+          tabelas: window.__tabelasDoCartao
+        });
+        // A conta da linha já simulada, com o que mudou (base, canal, bandeira,
+        // quem paga). Devolve a mensagem de erro, ou '' quando deu certo.
+        const refazerSimulacao = (linha) => {
+          if (!linha.cartaoModalidade || !window.__tabelasDoCartao) return '';
+          const r = SimuladorCartao.calcular({ ...parametrosDoCartao(linha), modalidade: linha.cartaoModalidade, parcelas: linha.cartaoParcelas });
+          if (r.erro) return r.erro;
+          Object.assign(linha, {
+            amount: r.cobrado, cartaoAcrescimo: r.acrescimo, cartaoFator: r.fator, cartaoTaxa: r.taxa,
+            cartaoValorTaxa: r.valorTaxa, cartaoRepasse: r.repasse, cartaoTaxaPorParcela: r.taxaPorParcela
+          });
+          if (r.repasse) linha.dueDate = r.repasse;
+          return '';
+        };
         let ignoreCreditLimit = Boolean(infoPagamento.ignoreCreditLimit);
         let showCteOptions = Boolean(infoEntrega.showCteOptions);
         // À vista e à prazo são exclusivos: um único valor, dois interruptores.
@@ -4425,6 +4465,8 @@ async function loadModule(moduleName) {
           chargeFreightToBuyer,
           generalExpenses,
           assemblyFee,
+          // Fase ET: o acréscimo do cartão sai das linhas simuladas.
+          payments,
           servicesAmount: 0,
           sellerCommissionPercent: Number(origem?.sellerCommissionPercent || 0),
           agentCommissionPercent: Number(origem?.agentCommissionPercent || 0)
@@ -5161,7 +5203,8 @@ async function loadModule(moduleName) {
               // sempre que havia frete, e toda entrega própria saía declarando
               // frete contratado de terceiro.
               meioDeEnvio: formState.shippingMethod || '',
-              outrasDespesas: (totaisDaNota.despesasGerais || 0) + (totaisDaNota.taxaMontagem || 0)
+              // Fase ET: o acréscimo do cartão também é outra despesa da nota.
+              outrasDespesas: (totaisDaNota.despesasGerais || 0) + (totaisDaNota.taxaMontagem || 0) + (totaisDaNota.acrescimoCartao || 0)
             };
             state.activeModule = 'finance';
             state.activeSub = 'nova_nfe_avulsa';
@@ -5671,6 +5714,10 @@ async function loadModule(moduleName) {
                 <label class="sales-total-field">Taxa de Montagem (R$)
                   <input name="assemblyFee" type="number" min="0" step="0.01" value="${assemblyFee}" />
                 </label>
+                ${totais.acrescimoCartao > 0 ? `
+                <label class="sales-total-field is-readonly">Acréscimo do Cartão (R$)
+                  <input value="${salesFormatBRL(totais.acrescimoCartao)}" disabled />
+                </label>` : ''}
                 <label class="sales-total-field is-readonly" title="O cadastro de produtos ainda não tem campo de peso.">Peso Total dos Produtos (KG)
                   <input value="${totais.pesoTotal}" disabled />
                 </label>
@@ -5828,7 +5875,7 @@ async function loadModule(moduleName) {
                                   </select>
                                 </td>
                                 <td><input type="date" class="sales-payment-due" data-index="${index}" value="${escapeHtml(linha.dueDate || '')}" /></td>
-                                <td><input type="number" min="0" step="0.01" class="sales-payment-amount" data-index="${index}" value="${Number(linha.amount || 0)}" style="width: 120px;" /></td>
+                                <td><input type="number" min="0" step="0.01" class="sales-payment-amount" data-index="${index}" value="${Number(linha.amount || 0)}" style="width: 120px;" ${linha.cartaoModalidade ? 'readonly title="Cobrado no cartão (simulador)"' : ''} /></td>
                                 <td><input class="sales-payment-note" data-index="${index}" value="${escapeHtml(linha.note || '')}" /></td>
                                 <td><button type="button" class="icon-button sales-remove-payment" data-index="${index}" title="Remover">×</button></td>
                               </tr>
@@ -5856,6 +5903,66 @@ async function loadModule(moduleName) {
                                              placeholder="Obrigatório" />
                                     </label>
                                   </div>
+                                  ${(() => {
+                                    // O SIMULADOR (fase ET): canal, quem paga a taxa, o valor
+                                    // dos produtos nesta linha e as opções de débito/crédito.
+                                    const quem = linha.cartaoQuemPaga || 'cliente';
+                                    const tabelas = window.__tabelasDoCartao;
+                                    const aberto = linhaDoSimuladorAberta === index && tabelas;
+                                    const verRetorno = Boolean(tabelas && tabelas.verRetorno);
+                                    const rotuloDaOpcao = (o) => (o.modalidade === 'debito' ? 'Débito' : (o.parcelas === 1 ? 'Crédito à vista' : `Crédito ${o.parcelas}x`));
+                                    const lista = aberto ? SimuladorCartao.opcoes({ ...parametrosDoCartao(linha), modalidades: modalidadesDaForma(formaDaLinha) }) : [];
+                                    const pct = (v) => `${(Number(v) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+                                    return `
+                                  <div class="sales-cartao-simulador">
+                                    <label>Canal
+                                      <select class="sales-cartao-canal" data-index="${index}">
+                                        ${SimuladorCartao.CANAIS.map((c) => `<option value="${c.id}" ${(linha.cartaoCanal || 'maquininha') === c.id ? 'selected' : ''}>${c.nome}</option>`).join('')}
+                                      </select>
+                                    </label>
+                                    <label>Quem paga a taxa
+                                      <select class="sales-cartao-quem" data-index="${index}">
+                                        ${SimuladorCartao.QUEM_PAGA.map((q) => `<option value="${q.id}" ${quem === q.id ? 'selected' : ''}>${q.nome}</option>`).join('')}
+                                      </select>
+                                    </label>
+                                    ${quem === 'loja' ? `<label>Campanha
+                                      <input class="sales-cartao-campanha" data-index="${index}" value="${escapeHtml(linha.cartaoCampanha || '')}" placeholder="Ex.: 12x sem juros" maxlength="120" />
+                                    </label>` : ''}
+                                    ${linha.cardBrand === '99' ? `<label>Qual bandeira (99)
+                                      <select class="sales-cartao-outra" data-index="${index}">
+                                        <option value="">Outra</option>
+                                        ${window.MavisBandeiraCartao.OUTRAS_DO_99.map((o) => `<option value="${o.chave}" ${String(linha.cartaoBandeiraOutra || '') === o.chave ? 'selected' : ''}>${escapeHtml(o.nome)}</option>`).join('')}
+                                      </select>
+                                    </label>` : ''}
+                                    <label>Valor dos produtos
+                                      <input type="number" min="0" step="0.01" class="sales-cartao-base" data-index="${index}" value="${Number(linha.cartaoBase || 0) || ''}" style="width: 120px;" />
+                                    </label>
+                                    <button type="button" class="secondary sales-cartao-simular" data-index="${index}">${aberto ? 'Fechar simulador' : 'Simular'}</button>
+                                  </div>
+                                  ${linha.cartaoModalidade ? `<p class="sales-cartao-escolha">
+                                    ${escapeHtml(rotuloDaOpcao({ modalidade: linha.cartaoModalidade, parcelas: Number(linha.cartaoParcelas || 1) }))}:
+                                    ${Number(linha.cartaoParcelas || 1)}x de ${salesFormatBRL(Math.round(Number(linha.amount || 0) * 100 / Number(linha.cartaoParcelas || 1)) / 100)}
+                                    · no cartão ${salesFormatBRL(linha.amount)}${Number(linha.cartaoAcrescimo || 0) > 0 ? ` · acréscimo ${salesFormatBRL(linha.cartaoAcrescimo)}` : ''}
+                                  </p>` : ''}
+                                  ${aberto ? (lista.length ? `
+                                  <div class="table-scroll">
+                                    <table class="table sales-cartao-opcoes">
+                                      <thead><tr><th>Opção</th><th>Parcelas</th><th>No cartão</th><th>Acréscimo</th>${verRetorno ? '<th>Taxa</th><th>Líquido</th><th>Retorno</th>' : ''}<th></th></tr></thead>
+                                      <tbody>
+                                        ${lista.map((o) => (o.erro ? `
+                                        <tr class="is-indisponivel"><td>${rotuloDaOpcao(o)}</td><td colspan="${verRetorno ? 7 : 4}" class="muted">${escapeHtml(o.erro)}</td></tr>` : `
+                                        <tr class="${linha.cartaoModalidade === o.modalidade && Number(linha.cartaoParcelas) === o.parcelas ? 'is-escolhida' : ''}">
+                                          <td>${rotuloDaOpcao(o)}</td>
+                                          <td>${o.parcelas}x de ${salesFormatBRL(o.parcela)}</td>
+                                          <td><strong>${salesFormatBRL(o.cobrado)}</strong></td>
+                                          <td>${salesFormatBRL(o.acrescimo)}</td>
+                                          ${verRetorno ? `<td>${pct(o.taxa)} (${salesFormatBRL(o.valorTaxa)})</td><td>${salesFormatBRL(o.liquido)}</td><td>${salesFormatBRL(o.retorno)}</td>` : ''}
+                                          <td><button type="button" class="sales-cartao-escolher" data-index="${index}" data-modalidade="${o.modalidade}" data-parcelas="${o.parcelas}">Escolher</button></td>
+                                        </tr>`)).join('')}
+                                      </tbody>
+                                    </table>
+                                  </div>` : `<p class="muted">${linha.cardBrand ? 'Sem taxa cadastrada para esta bandeira neste canal.' : 'Escolha a bandeira para simular.'}</p>`) : ''}`;
+                                  })()}
                                   ${faltaAutorizacao ? `<p class="sales-totals-alerta">
                                     Pagamento integrado exige o numero de autorizacao (NSU). Sem ele a nota nao pode
                                     sair declarando integracao — e declarar integracao sem os campos e a rejeicao 225.
@@ -6728,11 +6835,16 @@ async function loadModule(moduleName) {
               if (!linha.cardIntegration) linha.cardIntegration = '2';
               const aceitas = window.MavisBandeiraCartao.ofertadas(forma.cardAcquirerBrands).map((b) => b.codigo);
               if (linha.cardBrand && !aceitas.includes(linha.cardBrand)) linha.cardBrand = '';
+              // Fase ET: débito e crédito são formas diferentes — a simulação
+              // de uma não vale na outra.
+              if (linha.cartaoModalidade && !modalidadesDaForma(forma).includes(linha.cartaoModalidade)) limparSimulacao(linha);
               return;
             }
             delete linha.cardIntegration;
             delete linha.cardBrand;
             delete linha.cardAuthorization;
+            limparSimulacao(linha);
+            ['cartaoCanal', 'cartaoQuemPaga', 'cartaoBase', 'cartaoCampanha', 'cartaoBandeiraOutra', 'cartaoAprovadoPor'].forEach((campo) => { delete linha[campo]; });
           };
 
           document.getElementById('salesAddPaymentBtn')?.addEventListener('click', () => {
@@ -6778,6 +6890,72 @@ async function loadModule(moduleName) {
               renderForm();
             });
           });
+          // O SIMULADOR DO CARTÃO (fase ET).
+          content.querySelectorAll('.sales-cartao-simular').forEach((botao) => {
+            botao.addEventListener('click', async () => {
+              const indice = Number(botao.dataset.index);
+              const linha = payments[indice];
+              if (linhaDoSimuladorAberta === indice) {
+                linhaDoSimuladorAberta = null;
+                renderForm();
+                return;
+              }
+              try {
+                await carregarTabelasDoCartao();
+              } catch (erro) {
+                showToast(erro.message || 'Erro ao carregar as taxas do cartão.', 'error');
+                return;
+              }
+              syncFormState();
+              if (!(Number(linha.cartaoBase) > 0)) {
+                // O que falta pagar dos produtos, fora as outras linhas.
+                const t = computeTotals();
+                const outras = payments.reduce((soma, l, i) => (i === indice ? soma
+                  : soma + (l.cartaoModalidade ? Number(l.cartaoBase || 0) : Number(l.amount || 0))), 0);
+                linha.cartaoBase = Math.max(0, Math.round((t.totalAmount - t.acrescimoCartao - outras) * 100) / 100) || Number(linha.amount || 0);
+              }
+              linhaDoSimuladorAberta = indice;
+              renderForm();
+            });
+          });
+          content.querySelectorAll('.sales-cartao-escolher').forEach((botao) => {
+            botao.addEventListener('click', () => {
+              const linha = payments[Number(botao.dataset.index)];
+              linha.cartaoModalidade = botao.dataset.modalidade;
+              linha.cartaoParcelas = Number(botao.dataset.parcelas);
+              linha.cartaoCanal = linha.cartaoCanal || 'maquininha';
+              linha.cartaoQuemPaga = linha.cartaoQuemPaga || 'cliente';
+              const erro = refazerSimulacao(linha);
+              if (erro) {
+                limparSimulacao(linha);
+                showToast(erro, 'warning');
+              }
+              linhaDoSimuladorAberta = null;
+              syncFormState();
+              renderForm();
+            });
+          });
+          [
+            ['.sales-cartao-canal', (linha, valor) => { linha.cartaoCanal = valor; }],
+            ['.sales-cartao-quem', (linha, valor) => { linha.cartaoQuemPaga = valor; }],
+            ['.sales-cartao-campanha', (linha, valor) => { linha.cartaoCampanha = valor; }],
+            ['.sales-cartao-outra', (linha, valor) => { linha.cartaoBandeiraOutra = valor; }],
+            ['.sales-cartao-base', (linha, valor) => { linha.cartaoBase = Math.max(0, Number(valor || 0)); }]
+          ].forEach(([seletor, aplicar]) => {
+            content.querySelectorAll(seletor).forEach((campo) => {
+              campo.addEventListener('change', () => {
+                const linha = payments[Number(campo.dataset.index)];
+                aplicar(linha, campo.value);
+                const erro = refazerSimulacao(linha);
+                if (erro) {
+                  limparSimulacao(linha);
+                  showToast(`${erro} A simulação desta linha foi desfeita.`, 'warning');
+                }
+                syncFormState();
+                renderForm();
+              });
+            });
+          });
           const camposLinhaPagamento = [
             ['.sales-payment-due', (linha, valor) => { linha.dueDate = valor; }],
             ['.sales-payment-amount', (linha, valor) => { linha.amount = Math.max(0, Number(valor || 0)); }],
@@ -6791,7 +6969,16 @@ async function loadModule(moduleName) {
           camposLinhaPagamento.forEach(([seletor, aplicar]) => {
             content.querySelectorAll(seletor).forEach((campo) => {
               campo.addEventListener('change', () => {
-                aplicar(payments[Number(campo.dataset.index)], campo.value);
+                const linha = payments[Number(campo.dataset.index)];
+                aplicar(linha, campo.value);
+                // Trocou a bandeira de uma linha simulada: a taxa é outra (fase ET).
+                if (seletor === '.sales-payment-brand' && linha.cartaoModalidade) {
+                  const erro = refazerSimulacao(linha);
+                  if (erro) {
+                    limparSimulacao(linha);
+                    showToast(`${erro} A simulação desta linha foi desfeita.`, 'warning');
+                  }
+                }
                 syncFormState();
                 renderForm();
               });

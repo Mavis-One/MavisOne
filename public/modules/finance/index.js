@@ -2,7 +2,7 @@ window.MavisModuleRegistry = window.MavisModuleRegistry || {};
 window.MavisSubscreenRegistry = window.MavisSubscreenRegistry || {};
 window.MavisSubscreenRegistry.finance = window.MavisSubscreenRegistry.finance || {};
 
-const FINANCE_SUB_KEYS = ['dashboard', 'contas_a_pagar', 'contas_a_receber', 'lancamentos', 'novo_lancamento', 'edicao_titulo', 'centros_de_custo', 'plano_de_contas', 'nfe_emitidas', 'nova_nfe_avulsa', 'extrato_open_finance', 'emitir_nfe_focus', 'bancos_conectados'];
+const FINANCE_SUB_KEYS = ['dashboard', 'contas_a_pagar', 'contas_a_receber', 'lancamentos', 'novo_lancamento', 'edicao_titulo', 'centros_de_custo', 'plano_de_contas', 'nfe_emitidas', 'nova_nfe_avulsa', 'extrato_open_finance', 'emitir_nfe_focus', 'bancos_conectados', 'taxas_cartao'];
 
 const FINANCE_ROADMAP = {};
 

@@ -192,6 +192,9 @@ const bandeiraCartao = require('./public/modules/shared/bandeira_cartao');
 // traduzir a linha do pedido — montar a nota no servidor sem ele faria duas
 // traducoes do mesmo de-para, e uma envelheceria.
 const formaPagamento = require('./public/modules/shared/forma_pagamento');
+// Fase ET (19/10/2026): o simulador da venda no cartão e as tabelas dele.
+const cartaoSimulador = require('./public/modules/shared/cartao_simulador');
+const cartaoDb = require('./lib/db/cartao');
 // Fase CY: modFrete sai do "Meio de Envio" da aba Entrega, e nao do valor do
 // frete. A tela de emissao usa o mesmo modulo.
 const modalidadeFrete = require('./public/modules/shared/modalidade_frete');
@@ -3098,10 +3101,102 @@ function salesPaymentLines(body) {
       //   autorizacao   — cAut vai ate 128 caracteres
       cardBrand: bandeiraCartao.existe(linha.cardBrand) ? String(linha.cardBrand) : '',
       cardIntegration: ['1', '2'].includes(String(linha.cardIntegration || '')) ? String(linha.cardIntegration) : '',
-      cardAuthorization: texto200(linha.cardAuthorization).slice(0, 128)
+      cardAuthorization: texto200(linha.cardAuthorization).slice(0, 128),
+      ...linhaDoSimuladorDeCartao(linha)
     }))
     .filter((linha) => linha.amount > 0 || linha.methodName)
     .slice(0, 120);
+}
+
+/**
+ * OS CAMPOS DO SIMULADOR DE CARTÃO NA LINHA DE PAGAMENTO (fase ET). Só a linha
+ * simulada (com modalidade) os leva. Os números (fator, taxa, acréscimo,
+ * repasse) vêm de simularCartoesDoPedido, que já recalculou pelas tabelas.
+ */
+function linhaDoSimuladorDeCartao(linha) {
+  if (!linha || !cartaoSimulador.MODALIDADES[linha.cartaoModalidade]) return {};
+  const numero = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  return {
+    cartaoCanal: linha.cartaoCanal === 'link' ? 'link' : 'maquininha',
+    cartaoModalidade: linha.cartaoModalidade,
+    cartaoParcelas: Math.min(24, Math.max(1, Math.round(numero(linha.cartaoParcelas) || 1))),
+    cartaoQuemPaga: linha.cartaoQuemPaga === 'loja' ? 'loja' : 'cliente',
+    cartaoBase: Math.max(0, Math.round(numero(linha.cartaoBase) * 100) / 100),
+    cartaoBandeiraOutra: texto200(linha.cartaoBandeiraOutra).toUpperCase().slice(0, 20),
+    cartaoCampanha: texto200(linha.cartaoCampanha),
+    cartaoAprovadoPor: texto200(linha.cartaoAprovadoPor),
+    cartaoFator: numero(linha.cartaoFator) || 1,
+    cartaoTaxa: numero(linha.cartaoTaxa),
+    cartaoValorTaxa: numero(linha.cartaoValorTaxa),
+    cartaoAcrescimo: Math.max(0, numero(linha.cartaoAcrescimo)),
+    cartaoRepasse: texto200(linha.cartaoRepasse).slice(0, 10),
+    cartaoTaxaPorParcela: linha.cartaoTaxaPorParcela === true
+  };
+}
+
+/**
+ * O SERVIDOR REFAZ O SIMULADOR (fase ET) — e não confia no número da tela. Para
+ * cada linha de cartão simulada: o cobrado, o acréscimo, a taxa e o repasse
+ * saem das tabelas vigentes na data do pedido (cartao_simulador.js, a mesma
+ * conta da tela). "Loja assume" só com campanha informada ou com um
+ * administrador gravando (decisão do usuário). Mexe em `body.payments`, antes
+ * dos totais e da conferência dos obrigatórios.
+ */
+async function simularCartoesDoPedido(body, user) {
+  const linhas = Array.isArray(body.payments) ? body.payments : [];
+  const simuladas = linhas.filter((l) => l && cartaoSimulador.MODALIDADES[l.cartaoModalidade]);
+  if (!simuladas.length) return;
+  const tabelas = await cartaoDb.lerTabelas();
+  const formas = loadData().paymentMethods || [];
+  const admin = await ehAdmin(user);
+  for (const linha of simuladas) {
+    const posicao = linhas.indexOf(linha) + 1;
+    const forma = formas.find((f) => f.id === linha.methodId);
+    if (!forma || !formaPagamento.ehCartao(forma.type)) {
+      delete linha.cartaoModalidade;
+      continue;
+    }
+    const resultado = cartaoSimulador.calcular({
+      base: linha.cartaoBase,
+      canal: linha.cartaoCanal === 'link' ? 'link' : 'maquininha',
+      bandeira: bandeiraCartao.chaveDaTaxa(linha.cardBrand, linha.cartaoBandeiraOutra),
+      modalidade: linha.cartaoModalidade,
+      parcelas: linha.cartaoParcelas,
+      quemPaga: linha.cartaoQuemPaga === 'loja' ? 'loja' : 'cliente',
+      empresaId: body.companyId || '',
+      data: body.date || new Date().toISOString().slice(0, 10),
+      tabelas
+    });
+    if (resultado.erro) {
+      const err = new Error(`Pagamento ${posicao} (cartão): ${resultado.erro}`);
+      err.status = 400;
+      throw err;
+    }
+    if (resultado.quemPaga === 'loja') {
+      const campanha = String(linha.cartaoCampanha || '').trim();
+      if (!campanha && !admin) {
+        const err = new Error(`Pagamento ${posicao} (cartão): "Loja assume" a taxa só com a campanha informada (ex.: 12x sem juros) ou com um administrador aprovando.`);
+        err.status = 400;
+        throw err;
+      }
+      linha.cartaoAprovadoPor = campanha ? '' : user.name;
+    } else {
+      linha.cartaoCampanha = '';
+      linha.cartaoAprovadoPor = '';
+    }
+    Object.assign(linha, {
+      amount: resultado.cobrado,
+      cartaoParcelas: resultado.parcelas,
+      cartaoFator: resultado.fator,
+      cartaoTaxa: resultado.taxa,
+      cartaoValorTaxa: resultado.valorTaxa,
+      cartaoAcrescimo: resultado.acrescimo,
+      cartaoRepasse: resultado.repasse,
+      cartaoTaxaPorParcela: resultado.taxaPorParcela
+    });
+    // O título do cartão vence quando a credenciadora paga.
+    if (resultado.repasse) linha.dueDate = resultado.repasse;
+  }
 }
 
 function salesDelivery(body) {
@@ -3139,7 +3234,9 @@ function computeSalesTotals(items, body = {}) {
     assemblyFee: body.assemblyFee,
     servicesAmount: body.servicesAmount,
     sellerCommissionPercent: body.sellerCommissionPercent,
-    agentCommissionPercent: body.agentCommissionPercent
+    agentCommissionPercent: body.agentCommissionPercent,
+    // Fase ET: o acréscimo do cartão sai das linhas de pagamento simuladas.
+    payments: body.payments
   });
 }
 
@@ -8044,7 +8141,9 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
     // transporte") para uma entrega que aconteceu. Fica `undefined` quando o
     // meio de envio nao responde ("Outro"), e ai o builder volta a palpitar.
     modalidadeFrete: modalidadeFrete.paraNota(pedido.delivery && pedido.delivery.shippingMethod),
-    outrasDespesas: (totais.despesasGerais || 0) + (totais.taxaMontagem || 0)
+    // Fase ET: o acréscimo do cartão (cliente paga a taxa) também é outra
+    // despesa da nota — decisão do usuário.
+    outrasDespesas: (totais.despesasGerais || 0) + (totais.taxaMontagem || 0) + (totais.acrescimoCartao || 0)
   };
 }
 
@@ -8427,8 +8526,11 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   // A entrega em domicílio (indPres 4) tem regras de transporte próprias, e a
   // documentação da NFC-e na Focus não traz esses campos — antes de inventá-los,
   // a venda com entrega sai em NF-e.
+  // (Fase ET: o acréscimo do cartão é despesa acessória também. O campo dela
+  // na NFC-e da Focus não está na documentação pública — até ser confirmado,
+  // a venda com acréscimo sai em NF-e.)
   if (nfce && (Number(body.frete || 0) > 0 || Number(body.seguro || 0) > 0 || Number(body.outrasDespesas || 0) > 0)) {
-    const err = new Error('Este pedido tem frete, seguro ou despesa acessória (taxa de montagem, despesas gerais). A NFC-e é a venda de balcão: emita NF-e para ele.');
+    const err = new Error('Este pedido tem frete, seguro ou despesa acessória (taxa de montagem, despesas gerais ou acréscimo do cartão). A NFC-e é a venda de balcão: emita NF-e para ele.');
     err.status = 400;
     throw err;
   }
@@ -13778,6 +13880,26 @@ async function tratarRequisicao(req, res) {
     return sendJson(res, resposta);
   }
 
+  // AS TABELAS DO SIMULADOR DE CARTÃO (fase ET) para a tela de venda: taxas e
+  // fatores (o PV não entra na conta). Pedidas só quando há linha de cartão —
+  // são ~450 linhas, e a maioria das vendas não precisa delas.
+  if (pathname === '/api/sales/cartao/tabelas' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const { taxas, fatores } = await cartaoDb.lerTabelas();
+      return sendJson(res, {
+        taxas: taxas.map(({ canal, bandeira, modalidade, parcelas, taxa, prazoDias, prazoDiasUteis, taxaPorParcela, vigencia }) =>
+          ({ canal, bandeira, modalidade, parcelas, taxa, prazoDias, prazoDiasUteis, taxaPorParcela, vigencia })),
+        fatores: fatores.map(({ empresaId, canal, modalidade, parcelas, fator, vigencia }) => ({ empresaId, canal, modalidade, parcelas, fator, vigencia })),
+        // O "retorno" do simulador é margem da loja: só o administrador vê.
+        verRetorno: await ehAdmin(user)
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao ler as tabelas do cartão', 500);
+    }
+  }
+
   if (pathname === '/api/sales/meta' && req.method === 'GET') {
     const data = loadData();
     // UMA ONDA, E NÃO SETE IDAS EM FILA (fase DS).
@@ -14414,6 +14536,8 @@ async function tratarRequisicao(req, res) {
         if (!body.clientSupplierId && !String(body.clientSupplierName || '').trim()) {
           return sendJson(res, { error: 'Selecione o cliente/fornecedor do pedido/orçamento' }, 400);
         }
+        // Fase ET: o servidor refaz o simulador do cartão antes dos totais.
+        await simularCartoesDoPedido(body, user);
         // A categoria decide se o pagamento é obrigatório (transferência não é).
         // A soma dos pagamentos fecha com o total (mesma conta da tela).
         const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: type, ncmDoItem: await ncmDosItensDaVenda(body.items), montagemDoItem: await montagemDosItensDaVenda(body.items) });
@@ -15248,6 +15372,8 @@ async function tratarRequisicao(req, res) {
       // tela: o que faltar precisa ser preenchido antes. Menos para CANCELAR —
       // um pedido incompleto tem de poder ser cancelado como está.
       const vaiCancelar = salesStatus.ehCancelado(salesStatus.normalizar(body.status || current.status, undefined));
+      // Fase ET: o servidor refaz o simulador do cartão (o aprovado não muda).
+      if (!travadoPorAprovacao) await simularCartoesDoPedido(body, user);
       const obrigatorioQueFalta = vaiCancelar || travadoPorAprovacao ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: current.type, ncmDoItem: await ncmDosItensDaVenda(body.items), montagemDoItem: await montagemDosItensDaVenda(body.items) });
       if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
       // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
@@ -22177,6 +22303,78 @@ async function tratarRequisicao(req, res) {
   // com a entrada); só vencimento, valor e o "Parcela i/N" da descrição mudam.
   // A soma fecha com o valor do título, ao centavo. Só título em aberto e sem
   // baixa.
+  // ==========================================================================
+  // TAXAS DE CARTÃO (fase ET, 19/10/2026): as tabelas do simulador — taxas da
+  // credenciadora, fatores da loja e PVs. Ler: quem tem o Financeiro. Gravar:
+  // o administrador. Gravar é acrescentar uma vigência (hoje); ver lib/db/cartao.js.
+  // ==========================================================================
+  if (pathname === '/api/finance/cartao' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const tabelas = await cartaoDb.lerTabelas();
+      return sendJson(res, {
+        ...tabelas,
+        empresas: opcoesDeEmpresa(loadData().companies),
+        bandeiras: [
+          ...bandeiraCartao.CATALOGO.filter((b) => b.codigo !== '99').map((b) => ({ chave: b.chave, nome: b.nome })),
+          ...bandeiraCartao.OUTRAS_DO_99.map((b) => ({ chave: b.chave, nome: `${b.nome} (99)` }))
+        ],
+        podeEditar: await ehAdmin(user)
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao ler as taxas de cartão', 500);
+    }
+  }
+
+  const rotaCartao = pathname.match(/^\/api\/finance\/cartao\/(fatores|taxas|pvs)(?:\/([^/]+))?$/);
+  if (rotaCartao && req.method === 'PUT') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      if (!(await ehAdmin(user))) return sendJson(res, { error: 'Só o administrador muda as taxas de cartão.' }, 403);
+      const body = await readBody(req);
+      const hoje = new Date().toISOString().slice(0, 10);
+      const canalOk = (c) => ['maquininha', 'link'].includes(c);
+      const parcelasOk = (n) => Number.isInteger(Number(n)) && Number(n) >= 1 && Number(n) <= 24;
+      if (rotaCartao[1] === 'fatores') {
+        const lista = Array.isArray(body.fatores) ? body.fatores : [];
+        for (const f of lista) {
+          if (!canalOk(f.canal) || !['debito', 'credito'].includes(f.modalidade) || !parcelasOk(f.parcelas)
+            || (f.modalidade === 'debito' && Number(f.parcelas) !== 1) || !(Number(f.fator) >= 1 && Number(f.fator) < 3)) {
+            return sendJson(res, { error: 'Fator inválido: vai de 1,000000 a 2,999999, e o débito é só 1x.' }, 400);
+          }
+        }
+        await cartaoDb.gravarFatores(lista.map((f) => ({ ...f, parcelas: Number(f.parcelas), fator: Number(f.fator) })),
+          { empresaId: String(body.empresaId || ''), vigencia: hoje, usuario: user.name });
+      } else if (rotaCartao[1] === 'taxas') {
+        const lista = Array.isArray(body.taxas) ? body.taxas : [];
+        const chaves = new Set([...bandeiraCartao.CATALOGO.map((b) => b.chave), ...bandeiraCartao.OUTRAS_DO_99.map((b) => b.chave)]);
+        for (const t of lista) {
+          if (!canalOk(t.canal) || !chaves.has(t.bandeira) || !cartaoSimulador.MODALIDADES[t.modalidade] || !parcelasOk(t.parcelas)
+            || !(Number(t.taxa) >= 0 && Number(t.taxa) < 1)) {
+            return sendJson(res, { error: 'Taxa inválida: confira canal, bandeira, modalidade, parcelas (1 a 24) e a taxa (0% a 99,99%).' }, 400);
+          }
+        }
+        await cartaoDb.gravarTaxas(lista.map((t) => ({ ...t, parcelas: Number(t.parcelas), taxa: Number(t.taxa) })),
+          { vigencia: hoje, usuario: user.name, credenciadoraCnpj: String(body.credenciadoraCnpj || '').replace(/\D/g, '') });
+      } else {
+        const pv = decodeURIComponent(rotaCartao[2] || '');
+        if (!(await cartaoDb.gravarPv(pv, { empresaId: body.empresaId, ativo: body.ativo }))) {
+          return sendJson(res, { error: 'PV não encontrado.' }, 404);
+        }
+      }
+      await registrarAuditoria({
+        action: `cartao.${rotaCartao[1]}`, targetId: rotaCartao[2] || hoje, targetUsername: user.name,
+        byId: user.id, byName: user.name,
+        details: { quantos: (body.fatores || body.taxas || []).length || 1, empresaId: body.empresaId || '' }
+      });
+      return sendJson(res, { success: true, ...(await cartaoDb.lerTabelas()) });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao gravar as taxas de cartão', 400);
+    }
+  }
+
   if (/^\/api\/finance\/entries\/[^/]+\/parcelar$/.test(pathname) && req.method === 'POST') {
     try {
       const user = await getCurrentUser(req);

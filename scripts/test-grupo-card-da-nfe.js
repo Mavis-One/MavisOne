@@ -78,13 +78,14 @@ const primeira = (pagamentos) => linhas(pagamentos)[0];
 const paga = (p) => buildNfePayload({ ...BASE, pagamentos: [p] });
 
 console.log('--- 1. o catálogo de bandeiras é um só ---');
-check('a tabela tBand está no catálogo compartilhado', bandeiras.CATALOGO.length === 10, `${bandeiras.CATALOGO.length} bandeiras`);
+// (13 desde a fase ET: Banescard 11, Credz 13 e JCB 18, da tabela da Rede.)
+check('a tabela tBand está no catálogo compartilhado', bandeiras.CATALOGO.length === 13, `${bandeiras.CATALOGO.length} bandeiras`);
 check('  com código de dois dígitos', bandeiras.CATALOGO.every((b) => /^\d{2}$/.test(b.codigo)));
 // Bandeira desconhecida devolve '' e não '99': dizer "Outros" no lugar de "não
 // sei" seria inventar informação para a SEFAZ.
 check('bandeira desconhecida não vira "Outros"', bandeiras.nome('ZZ') === '');
 // O cadastro promete em texto que não marcar nenhuma não restringe.
-check('credenciadora sem bandeira marcada não restringe', bandeiras.ofertadas([]).length === 10);
+check('credenciadora sem bandeira marcada não restringe', bandeiras.ofertadas([]).length === 13);
 check('  e com bandeiras marcadas oferece só elas', bandeiras.ofertadas(['01', '06']).map((b) => b.codigo).join(',') === '01,06');
 check('  ignorando código que não existe', bandeiras.ofertadas(['01', 'ZZ']).length === 1);
 // A duplicata que esta fase desfez: a lista estava escrita em lib/db/adquirentes.js

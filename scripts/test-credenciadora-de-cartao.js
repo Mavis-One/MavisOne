@@ -58,7 +58,8 @@ check('vazio é recusado', !adquirentes.cnpjValido(''));
 console.log('--- 2. as bandeiras usam o código da SEFAZ ---');
 // Guardar o código oficial, e não um nome interno, evita tradução no meio do
 // caminho: o que está no cadastro é o que vai no XML.
-check('a tabela tBand está declarada', adquirentes.BANDEIRAS.length === 10, `${adquirentes.BANDEIRAS.length} bandeiras`);
+// (13 desde a fase ET: Banescard 11, Credz 13 e JCB 18, da tabela da Rede.)
+check('a tabela tBand está declarada', adquirentes.BANDEIRAS.length === 13, `${adquirentes.BANDEIRAS.length} bandeiras`);
 check('  com código de dois dígitos', adquirentes.BANDEIRAS.every((b) => /^\d{2}$/.test(b.codigo)));
 check('  Visa é 01', adquirentes.BANDEIRAS.find((b) => b.nome === 'Visa').codigo === '01');
 check('  Elo é 06', adquirentes.BANDEIRAS.find((b) => b.nome === 'Elo').codigo === '06');
