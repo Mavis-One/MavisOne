@@ -60,7 +60,8 @@ check('o estado da tela inteira vai junto (itens, transporte, cobrança, campos)
   tela.includes('itens, complemento, informacoesEditadas, notaDoPedido, observacoes,')
   && tela.includes('transportadoraId, transporte, cobrancaEditada, cobranca'));
 check('ao abrir, volta antes do primeiro desenho e os campos depois',
-  /camposDoRascunho = aplicarEstadoSalvo\(resposta\.rascunho\.dados\);[\s\S]*?renderForm\(\);\s*if \(camposDoRascunho\) \{\s*preencherCamposSalvos\(camposDoRascunho\);/.test(tela));
+  // (19/10/2026: entre os dois, o ponto de partida da gravação automática.)
+  /camposDoRascunho = aplicarEstadoSalvo\(resposta\.rascunho\.dados\);[\s\S]*?renderForm\(\);[\s\S]{0,200}if \(camposDoRascunho\) \{\s*preencherCamposSalvos\(camposDoRascunho\);/.test(tela));
 
 // 14/10/2026: o estado "Em edição" nas NF-e Emitidas. Provado no navegador:
 // uma avulsa e uma do pedido 16325 no topo da lista; o filtro "Em edição"

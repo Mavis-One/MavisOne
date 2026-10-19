@@ -5176,6 +5176,7 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 /* Salvar / Visualizar / Emitir no canto superior direito da emissão (14 e 15/10/2026):
    o Emitir saiu do rodapé do formulário e é o único da tela. */
 .nfe-acoes-topo { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.nfe-acoes-topo .nfe-salva-em { align-self: center; font-size: 12px; white-space: nowrap; }
 /* A emissão em uma página só, em blocos (15/10/2026), no visual dos blocos do
    cadastro de produto: um cartão por assunto, um embaixo do outro. */
 .nfe-em-blocos { display: grid; gap: 16px; }

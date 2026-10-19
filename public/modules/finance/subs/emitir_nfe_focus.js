@@ -598,7 +598,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       itens, complemento, informacoesEditadas, notaDoPedido, observacoes,
       desconto, frete, outrasDespesas, seguro,
       modalidadeEscolhida: modalidadeEscolhida === undefined ? null : modalidadeEscolhida,
-      transportadoraId, transporte, cobrancaEditada, cobranca
+      transportadoraId, transporte, cobrancaEditada, cobranca,
+      // A nota com erro que esta emissão corrige (fase EO). Sem isto, salvar
+      // a nota em edição durante a correção perdia o vínculo, e o Emitir
+      // criava outra nota em vez de reenviar a errada (19/10/2026).
+      ...(corrigindoNfe ? { corrigeNfe: corrigindoNfe } : {})
     };
   }
 
@@ -653,6 +657,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       });
       const primeiraVez = !rascunhoSalvoEm;
       rascunhoSalvoEm = (resposta.rascunho && resposta.rascunho.atualizadoEm) || new Date().toISOString();
+      ultimoEstadoSalvo = estadoEmTexto() || ultimoEstadoSalvo;
+      mostrarSalvaEm();
       showToast('Nota em edição salva. Ela volta assim quando esta emissão for aberta de novo.', 'success');
       // O "Descartar" aparece sem redesenhar a tela (redesenhar perderia a aba aberta).
       if (primeiraVez && botao && !document.getElementById('nfeFocusDescartarRascunho')) {
@@ -665,6 +671,97 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       if (botao) botao.disabled = false;
     }
   }
+
+  // A NOTA EM EDIÇÃO SE SALVA SOZINHA (19/10/2026, pedido do usuário: "ainda
+  // estou tendo problema de dados se manter após eu fechar uma aba"). Só o
+  // botão "Salvar nota em edição" gravava: quem preenchia e fechava a aba
+  // perdia tudo. Agora grava 2 s depois de cada mudança, a cada 15 s se algo
+  // mudou por botão (item, produto, impostos em massa), e na hora em que a aba
+  // some (fechar, trocar de aba) — esta última com keepalive, que o navegador
+  // entrega mesmo com a página indo embora.
+  //
+  // Só depois de a pessoa MEXER na tela: abrir a emissão não cria nota em
+  // edição (os blocos que se refazem sozinhos mudam o estado sem ninguém
+  // digitar). Parou de vez quando a nota vai para a SEFAZ: o servidor apaga a
+  // salva quando ela é aceita, e uma gravação atrasada a traria de volta.
+  let ultimoEstadoSalvo = '';
+  let pessoaMexeu = false;
+  let emissaoEnviada = false;
+  let esperaDaGravacao = null;
+  let gravacaoEmCurso = null;
+  // Esta tela, e não a próxima emissão aberta: os ouvintes de aba escondida
+  // ficam no documento e, sem a marca, gravariam o formulário de outra nota.
+  const idDaTela = Math.random().toString(36).slice(2);
+  const formDestaTela = () => document.querySelector(`#nfeFocusForm[data-tela="${idDaTela}"]`);
+  const enderecoDoRascunho = () => `/api/fiscal/nfe/rascunho?pedido=${encodeURIComponent(orderIdOrigem || '')}`;
+  const estadoEmTexto = () => (formDestaTela() ? JSON.stringify(estadoDaTela()) : null);
+
+  function mostrarSalvaEm() {
+    const marca = document.getElementById('nfeFocusSalvaEm');
+    if (marca && rascunhoSalvoEm) marca.textContent = `Salva às ${new Date(rascunhoSalvoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+
+  async function gravarSozinho({ aoSair = false } = {}) {
+    if (emissaoEnviada || !pessoaMexeu) return;
+    const texto = estadoEmTexto();
+    if (!texto || texto === ultimoEstadoSalvo) return;
+    const corpo = `{"dados":${texto}}`;
+    if (aoSair) {
+      // keepalive tem teto de 64 KB por pedido: nota maior fica com a última
+      // gravação (no máximo 2 s antes).
+      if (corpo.length > 60000) return;
+      try {
+        fetch(enderecoDoRascunho(), {
+          method: 'PUT', keepalive: true, body: corpo,
+          headers: { 'Content-Type': 'application/json', 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' }
+        });
+        ultimoEstadoSalvo = texto;
+      } catch (_) { /* a página está indo embora */ }
+      return;
+    }
+    gravacaoEmCurso = (async () => {
+      try {
+        const resposta = await api(enderecoDoRascunho(), { method: 'PUT', body: corpo });
+        ultimoEstadoSalvo = texto;
+        rascunhoSalvoEm = (resposta.rascunho && resposta.rascunho.atualizadoEm) || new Date().toISOString();
+        mostrarSalvaEm();
+      } catch (_) {
+        // Silencioso: o botão "Salvar nota em edição" continua lá e avisa.
+      }
+    })();
+    await gravacaoEmCurso;
+    gravacaoEmCurso = null;
+  }
+
+  function agendarGravacao() {
+    pessoaMexeu = true;
+    clearTimeout(esperaDaGravacao);
+    esperaDaGravacao = setTimeout(() => gravarSozinho(), 2000);
+  }
+
+  // O formulário é refeito a cada desenho: os ouvintes vão nele, e não num
+  // elemento que sobrevive à troca de tela.
+  function ligarGravacaoAutomatica() {
+    const form = formDestaTela();
+    if (!form) return;
+    ['input', 'change'].forEach((tipo) => form.addEventListener(tipo, agendarGravacao));
+    form.addEventListener('click', (evento) => { if (evento.target.closest('button')) agendarGravacao(); });
+  }
+
+  // Saiu da tela: a vigia para e os ouvintes do documento saem junto.
+  const aoEsconder = () => { if (document.visibilityState === 'hidden') gravarSozinho({ aoSair: true }); };
+  const aoSairDaPagina = () => gravarSozinho({ aoSair: true });
+  const vigiaDaGravacao = setInterval(() => {
+    if (!formDestaTela()) {
+      clearInterval(vigiaDaGravacao);
+      document.removeEventListener('visibilitychange', aoEsconder);
+      window.removeEventListener('pagehide', aoSairDaPagina);
+      return;
+    }
+    gravarSozinho();
+  }, 15000);
+  document.addEventListener('visibilitychange', aoEsconder);
+  window.addEventListener('pagehide', aoSairDaPagina);
 
   // VISUALIZAR A NF ANTES DE EMITIR (14/10/2026): a DANFE de pré-visualização
   // da Focus, montada com o que está na tela (a mesma montagem da emissão). Sem
@@ -715,6 +812,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     try {
       await api(`/api/fiscal/nfe/rascunho?pedido=${encodeURIComponent(orderIdOrigem || '')}`, { method: 'DELETE' });
       rascunhoSalvoEm = '';
+      // Descartada, ela só volta se a pessoa mexer de novo.
+      pessoaMexeu = false;
+      ultimoEstadoSalvo = estadoEmTexto() || '';
+      const marca = document.getElementById('nfeFocusSalvaEm');
+      if (marca) marca.textContent = '';
       botao?.remove();
       showToast('Nota salva descartada. O que está na tela continua aqui até você sair.', 'success');
     } catch (erro) {
@@ -738,6 +840,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                apenas um geral no canto superior direito" — fora do <form>, ligado
                a ele pelo atributo form (o envio e a validação são os mesmos). -->
           <div class="cadastro-list-actions nfe-acoes-topo">
+            <span class="muted nfe-salva-em" id="nfeFocusSalvaEm"></span>
             ${rascunhoSalvoEm ? '<button type="button" class="secondary" id="nfeFocusDescartarRascunho">Descartar nota salva</button>' : ''}
             ${ehComplemento() ? '' : '<button type="button" class="secondary" id="nfeFocusVisualizar">Visualizar NF</button>'}
             <button type="button" id="nfeFocusSalvarRascunho">Salvar nota em edição</button>
@@ -756,7 +859,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
              ordem delas, e Impostos, Totais, Transporte e Pagamento se refazem
              sozinhos quando itens, destinatário ou totais mudam (ver
              agendarBlocosDependentes). -->
-        <form id="nfeFocusForm" class="form-grid nfe-em-blocos">
+        <form id="nfeFocusForm" class="form-grid nfe-em-blocos" data-tela="${idDaTela}">
           <section class="nfe-bloco" data-bloco="emitente">
             <h4 class="nfe-bloco-titulo">Emitente</h4>
             <div class="row">
@@ -989,6 +1092,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     `;
 
     attachHandlers();
+    ligarGravacaoAutomatica();
+    mostrarSalvaEm();
     // Máscara e validação de CPF/CNPJ, iguais às do Cadastro de Pessoas.
     window.MavisDocumento?.ligarTodos(content);
 
@@ -2510,6 +2615,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // nota", ou acompanha o processamento). Só fica aqui o que não virou nota
       // (recusa da montagem, antes de ir à Focus): o motivo em popup.
       let notaEmitida = null;
+      // A gravação automática para aqui: aceita, a nota salva é apagada pelo
+      // servidor, e uma gravação atrasada a traria de volta.
+      clearTimeout(esperaDaGravacao);
+      if (gravacaoEmCurso) await gravacaoEmCurso;
+      emissaoEnviada = true;
       try {
         const result = await api('/api/fiscal/nfe/emitir', { method: 'POST', body: JSON.stringify(body) });
         notaEmitida = result.nfe || null;
@@ -2531,7 +2641,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         loadModule(state.activeModule);
         return;
       }
-      // Não virou nota: a tela continua, para corrigir.
+      // Não virou nota: a tela continua, para corrigir (e a gravar sozinha).
+      emissaoEnviada = false;
       await loadNotasRecentes();
       ultimoResultado = notasRecentes[0] || ultimoResultado;
       renderForm();
@@ -2558,12 +2669,15 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   }
   if (selectedEstabelecimentoId) await loadNotasRecentes();
   renderForm();
+  // O ponto de partida da gravação automática: só o que mudar daqui em diante.
+  const marcarPontoDePartida = () => { ultimoEstadoSalvo = estadoEmTexto() || ''; };
   if (camposDoRascunho) {
     preencherCamposSalvos(camposDoRascunho);
     showToast(corrigindoNfe
       ? `Corrigindo a NF-e com erro (${corrigindoNfe.referencia || 'sem referência'}). Emitir reenvia esta mesma nota.`
       : `Nota em edição recuperada (salva em ${new Date(rascunhoSalvoEm).toLocaleString('pt-BR')}).`, 'info', corrigindoNfe ? 8000 : undefined);
   }
+  marcarPontoDePartida();
   // CADASTROU EM OUTRA ABA, APARECE AQUI (15/10/2026, ver modules/shared/
   // dados_ao_vivo.js): destinatário, produto e transportadora vêm de novo, e a
   // tela volta como estava — pelo mesmo caminho da nota em edição salva, no
