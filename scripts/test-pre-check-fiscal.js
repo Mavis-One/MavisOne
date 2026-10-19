@@ -55,7 +55,8 @@ console.log('--- 1. a conferência é UMA SÓ ---');
 check('a validação virou função própria', /async function prepararNfeParaTransmitir\(body, opcoes = \{\}\) \{/.test(src));
 // Se a emissão voltar a validar por conta própria, o pré-check passa a conferir
 // outra coisa — e é exatamente isso que este teste existe para impedir.
-check('a emissão a chama', /\} = await prepararNfeParaTransmitir\(body, \{ modelo: opcoes\.modelo \}\);/.test(src));
+// (Fase ES: e passa "Emitir mesmo assim", já conferido, à trava de pagamento.)
+check('a emissão a chama', /\} = await prepararNfeParaTransmitir\(body, \{ modelo: opcoes\.modelo, liberarSemPagamento \}\);/.test(src));
 // `{ leituras }` só troca DE ONDE as leituras vêm (uma vez por requisição),
 // nunca O QUE se confere: a função é a mesma da emissão.
 check('o pré-check chama a MESMA', /await prepararNfeParaTransmitir\(corpo(, \{ leituras \})?\);/.test(src));

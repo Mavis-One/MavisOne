@@ -70,7 +70,7 @@ check('totais: ICMS, PIS e total da nota', r.totais.icms === 120 && r.totais.pis
 console.log('\n--- 5. servidor e tela ---');
 const servidor = ler('server.js');
 check('a rota da prévia monta pela MESMA preparação da emissão',
-  /pathname === '\/api\/fiscal\/nfe\/previa' && req\.method === 'POST'[\s\S]{0,200}await prepararNfeParaTransmitir\(body\);[\s\S]{0,80}resumoFiscalDaPrevia\(payload\)/.test(servidor));
+  /pathname === '\/api\/fiscal\/nfe\/previa' && req\.method === 'POST'[\s\S]{0,200}await prepararNfeParaTransmitir\(body, \{ semTravaDePagamento: true \}\);[\s\S]{0,80}resumoFiscalDaPrevia\(payload\)/.test(servidor));
 check('  e exige a permissão de emitir', /pathname === '\/api\/fiscal\/nfe\/previa'\) return 'emitir';/.test(servidor));
 check('NCM e origem editados escolhem a regra', /item\.fiscal = limparEdicaoFiscal\(bruto\.fiscal\);\s*if \(item\.fiscal\.ncm\) item\.ncm/.test(servidor));
 check('sem regra, CFOP e CST digitados bastam', /const digitouOEssencial = item\.fiscal\.cfop && \(item\.fiscal\.cstIcms \|\| item\.fiscal\.csosn\);/.test(servidor));

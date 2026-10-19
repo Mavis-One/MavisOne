@@ -622,6 +622,17 @@ function botaoDaNotaDoPedido(r) {
     title="Ver a ${escapeHtml(rotulo)}" aria-label="Ver a ${escapeHtml(rotulo)}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="13" y2="17"></line></svg></button>`;
 }
 
+// O SELO DA TRAVA DE PAGAMENTO (fase ES, lib/faturamento-gate.js): ao lado do
+// status do pedido aprovado, e na aba de títulos. Os números ficam no `title`.
+function seloDePagamento(liberacao) {
+  if (!liberacao || !liberacao.aplica) return '';
+  const reais = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const dica = `Recebido ${reais(liberacao.recebido)} de ${reais(liberacao.total)}`;
+  return liberacao.liberado
+    ? ` <span class="finance-badge finance-badge-success" title="${escapeHtml(dica)}">Pagamento confirmado</span>`
+    : ` <span class="finance-badge finance-badge-warning" title="${escapeHtml(dica)}">Aguardando pagamento</span>`;
+}
+
 // As ações do "Mais Ações" que o vendedor não faz (16/10/2026; ver
 // lib/venda-do-vendedor.js, soCria). As do pedido estão em
 // sales_record_actions.js (SO_QUEM_NAO_E_VENDEDOR).
@@ -632,7 +643,9 @@ const SALES_COLUNAS = [
   { chave: 'type', rotulo: 'Tipo', ordenavel: false, valor: (r) => (r.type === 'quote' ? 'Orçamento' : 'Pedido') },
   { chave: 'date', rotulo: 'Data', ordenavel: true, valor: (r, f) => f.data(r.date) },
   { chave: 'updatedAt', rotulo: 'Data de Alteração', ordenavel: true, valor: (r, f) => (r.updatedAt ? f.data(String(r.updatedAt).slice(0, 10)) : '-') },
-  { chave: 'status', rotulo: 'Status do Sistema', ordenavel: true, valor: (r, f) => f.badge(r.status) },
+  // Fase ES: o pedido aprovado que espera a NF-e diz se o pagamento já foi
+  // confirmado (o servidor manda `liberacaoNfe` só para esses).
+  { chave: 'status', rotulo: 'Status do Sistema', ordenavel: true, valor: (r, f) => f.badge(r.status) + seloDePagamento(r.liberacaoNfe) },
   { chave: 'companyName', rotulo: 'Empresa', ordenavel: true, valor: (r) => escapeHtml(r.companyName || '-') },
   { chave: 'customer', rotulo: 'Cliente', ordenavel: true, valor: (r) => escapeHtml(r.customer || '-') },
   { chave: 'nfeNumero', rotulo: 'NF-e', ordenavel: true, valor: (r) => escapeHtml(r.nfeNumero || '-') },
@@ -2498,7 +2511,10 @@ const moduleSubItems = {
     // quem cobra quanto de quem --, e nao de cadastro nem de operacao. Escrever
     // exige administrador; ler e' liberado a quem ve relatorios, porque o
     // vendedor precisa saber qual e' a meta dele.
-    { key: 'metas', label: 'Metas de Venda', desc: 'Alvo de faturamento por loja e por vendedor, mês a mês.' }
+    { key: 'metas', label: 'Metas de Venda', desc: 'Alvo de faturamento por loja e por vendedor, mês a mês.' },
+    // Fase ES (19/10/2026): quanto do pedido precisa estar recebido para a
+    // NF-e sair (lib/faturamento-gate.js). Gravar exige administrador.
+    { key: 'liberacao_nfe', label: 'Liberação da NF-e', desc: 'Quanto do pedido precisa estar recebido para a NF-e sair.' }
   ],
 
   // ABA: Cadastros
@@ -6527,7 +6543,13 @@ async function loadModule(moduleName) {
                 return ano && mes && d ? `${d}/${mes}/${ano}` : '-';
               };
               const abreTitulo = (state.user?.allowedModules || []).includes('finance');
-              alvo.innerHTML = titulos.length ? `
+              // Fase ES: se a NF-e deste pedido já pode sair.
+              const liberacao = await api(`/api/sales/records/${encodeURIComponent(editRecord.id)}/liberacao-nfe`).catch(() => null);
+              const l = liberacao && liberacao.liberacao;
+              const linhaDaNfe = l && l.aplica && editRecord.status === 'pedido-pre-faturado'
+                ? `<p class="sales-liberacao-nfe">${seloDePagamento(l)} Recebido ${salesFormatBRL(l.recebido)} de ${salesFormatBRL(l.total)}${l.liberado ? '' : ` · falta ${salesFormatBRL(l.falta)} para a NF-e`}</p>`
+                : '';
+              alvo.innerHTML = linhaDaNfe + (titulos.length ? `
                 <div class="table-scroll">
                   <table class="table">
                     <thead><tr><th>Título</th><th>Descrição</th><th>Forma</th><th>Conta</th><th>Plano de contas</th><th>Vencimento</th><th class="col-valor">Valor</th><th class="col-valor">Recebido</th><th class="col-valor">Em aberto</th><th>Situação</th></tr></thead>
@@ -6547,7 +6569,7 @@ async function loadModule(moduleName) {
                         </tr>`).join('')}
                     </tbody>
                   </table>
-                </div>` : '<p class="muted">Nenhum lançamento financeiro.</p>';
+                </div>` : '<p class="muted">Nenhum lançamento financeiro.</p>');
               if (!abreTitulo) return;
               alvo.querySelectorAll('[data-titulo]').forEach((linha) => {
                 linha.addEventListener('click', () => {

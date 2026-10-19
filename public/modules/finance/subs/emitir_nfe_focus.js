@@ -160,6 +160,53 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     tipoOperacao = doPedido.tipoOperacao;
   }
   let orderIdOrigem = doPedido ? doPedido.orderId || '' : '';
+  // A TRAVA DE PAGAMENTO (fase ES, 19/10/2026): ao abrir pelo pedido, a tela já
+  // diz se a NF-e pode sair. Quem recusa de verdade é o servidor, na emissão.
+  let liberacaoDoPedido = null;
+  const htmlDaTrava = () => {
+    const l = liberacaoDoPedido && liberacaoDoPedido.liberacao;
+    if (!l || !l.aplica || l.liberado) return '';
+    return `<p class="form-error nfe-trava-pagamento">${escapeHtml(liberacaoDoPedido.mensagem || '')}</p>`;
+  };
+  if (orderIdOrigem) {
+    api(`/api/sales/records/${encodeURIComponent(orderIdOrigem)}/liberacao-nfe`).then((resposta) => {
+      liberacaoDoPedido = resposta;
+      const alvo = document.getElementById('nfeTravaPagamento');
+      if (alvo) alvo.innerHTML = htmlDaTrava();
+    }).catch(() => {});
+  }
+  // "EMITIR MESMO ASSIM" (fase ES): só para quem pode (administrador ou a chave
+  // na ficha do usuário), com o motivo — venda a prazo é o caso. O motivo vai à
+  // auditoria. Devolve a nota emitida, ou null.
+  async function emitirMesmoAssim(corpo, erro) {
+    const dados = erro.dados || {};
+    if (!dados.podeEmitirSemPagamento) {
+      if (window.MavisErroNfe) window.MavisErroNfe.mostrar({ titulo: 'Pagamento não confirmado', motivos: [erro.message], podeCorrigir: false });
+      else showToast(erro.message, 'error');
+      return null;
+    }
+    const motivo = await promptModal({
+      titulo: 'Pagamento não confirmado',
+      aviso: erro.message,
+      rotulo: 'Motivo para emitir mesmo assim',
+      placeholder: 'Ex.: venda a prazo no boleto',
+      minimo: 5,
+      maximo: 300,
+      confirmar: 'Emitir mesmo assim',
+      tom: 'danger'
+    });
+    if (!motivo) return null;
+    try {
+      const result = await api('/api/fiscal/nfe/emitir', {
+        method: 'POST', body: JSON.stringify({ ...corpo, emitirSemPagamento: true, motivoSemPagamento: motivo })
+      });
+      return result.nfe || null;
+    } catch (erroForcado) {
+      if (window.MavisErroNfe) window.MavisErroNfe.mostrar({ titulo: 'A NF-e não foi emitida', motivos: [erroForcado.message || 'Erro ao emitir NF-e.'], podeCorrigir: false });
+      else showToast(erroForcado.message || 'Erro ao emitir NF-e.', 'error');
+      return null;
+    }
+  }
   // FASE BQ: desconto, frete cobrado e despesas do PEDIDO. Zero na nota
   // avulsa, que não tem pedido por trás. O servidor já sabia recebê-los (o
   // montador do payload tem os três campos); era esta tela que não os mandava,
@@ -686,6 +733,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <button type="submit" form="nfeFocusForm" id="nfeFocusSubmitBtn">Emitir NF-e</button>
           </div>` : ''}
         </div>
+
+        <div id="nfeTravaPagamento">${htmlDaTrava()}</div>
 
         ${!estabelecimentos.length ? `
           <p class="form-error">Nenhum estabelecimento habilitado para emitir NF-e. Cadastre um em Configurações → Integrações → Empresas e estabelecimentos.</p>
@@ -2434,8 +2483,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         notaEmitida = result.nfe || null;
         ultimoResultado = notaEmitida;
       } catch (error) {
-        if (window.MavisErroNfe) window.MavisErroNfe.mostrar({ titulo: 'A NF-e não foi emitida', motivos: [error.message || 'Erro ao emitir NF-e.'], podeCorrigir: false });
-        else showToast(error.message || 'Erro ao emitir NF-e.', 'error');
+        if (error.dados && error.dados.travaDePagamento) {
+          notaEmitida = await emitirMesmoAssim(body, error);
+          ultimoResultado = notaEmitida || ultimoResultado;
+        } else if (window.MavisErroNfe) {
+          window.MavisErroNfe.mostrar({ titulo: 'A NF-e não foi emitida', motivos: [error.message || 'Erro ao emitir NF-e.'], podeCorrigir: false });
+        } else {
+          showToast(error.message || 'Erro ao emitir NF-e.', 'error');
+        }
       }
       if (notaEmitida && notaEmitida.id) {
         state.nfeAposEmissao = { id: notaEmitida.id, status: notaEmitida.status, numero: notaEmitida.numero || '' };

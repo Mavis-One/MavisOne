@@ -186,6 +186,13 @@ async function renderSettingsUserForm(ctx, mode) {
                administrador já mexe em todas). É permissão, então a cópia leva. -->
           ${chave(`<input type="checkbox" name="podeAlterarVendasDeOutros" ${(editUser || modelo)?.podeAlterarVendasDeOutros === true ? 'checked' : ''} />`,
             'Pode alterar vendas de outros vendedores')}
+          <!-- FASE ES (19/10/2026, pedido do usuário): a NF-e de um pedido só
+               sai com o pagamento confirmado (lib/faturamento-gate.js). Com
+               esta chave, a pessoa pode "Emitir mesmo assim" — venda a prazo —
+               informando o motivo, que fica na auditoria. O administrador pode
+               sempre. É permissão, então a cópia leva. -->
+          ${chave(`<input type="checkbox" name="podeEmitirNfeSemPagamento" ${(editUser || modelo)?.podeEmitirNfeSemPagamento === true ? 'checked' : ''} />`,
+            'Pode emitir NF-e sem pagamento confirmado')}
 
           ${chave(`<input type="checkbox" name="active" ${editUser?.active === false ? '' : 'checked'} ${ehOProprio ? 'disabled' : ''} />`, 'Ativo')}
 
@@ -495,6 +502,7 @@ async function renderSettingsUserForm(ctx, mode) {
       estabelecimentoId: principal,
       podeTrocarEstabelecimento: todasAsEmpresas,
       podeAlterarVendasDeOutros: formData.get('podeAlterarVendasDeOutros') === 'on',
+      podeEmitirNfeSemPagamento: formData.get('podeEmitirNfeSemPagamento') === 'on',
       estabelecimentosLiberados: [...liberados].filter((id) => id !== principal),
       blockedSubs: telasBloqueadas,
       // O próprio usuário vem com a chave travada (e o disabled some do

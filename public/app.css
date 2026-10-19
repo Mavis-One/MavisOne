@@ -5261,3 +5261,7 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .pcp-montagem-baixa { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .pcp-montagem-baixa label { display: flex; flex-direction: column; gap: 4px; }
 .pcp-montagem-modal tr.is-cancelado td { color: var(--muted); text-decoration: line-through; }
+
+/* Fase ES: a trava de pagamento da NF-e (pedido e tela de emissão). */
+.sales-liberacao-nfe { margin: 0 0 10px; }
+.liberacao-nfe-form { max-width: 520px; }

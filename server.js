@@ -118,6 +118,8 @@ const salesBulk = require('./public/modules/shared/sales_bulk_actions');
 const escopoLib = require('./lib/relatorios-escopo');
 // A venda é do vendedor que a fez: vendedor gravado e quem pode mexer nela.
 const vendaDoVendedor = require('./lib/venda-do-vendedor');
+// Fase ES (19/10/2026): a NF-e do pedido só sai com o pagamento confirmado.
+const faturamentoGate = require('./lib/faturamento-gate');
 // O código do produto novo sai da sequência (16/10/2026).
 const codigoDoProduto = require('./lib/codigo-do-produto');
 const filtroPainelVendedor = require('./lib/filtro-painel-vendedor');
@@ -3916,6 +3918,28 @@ function buscaDeVendasSemFiltro(searchParams) {
 async function origensDoFiltroDeVendas(url) {
   if (url.searchParams.get('meta') === '0') return undefined;
   return (await origensVendaDb.listar()).map((o) => o.name);
+}
+
+/**
+ * A LISTA DE VENDAS COM O SELO DE PAGAMENTO (fase ES). Só o pedido aprovado
+ * que ainda espera a nota (Pré-Faturado) recebe `liberacaoNfe`: é o único em
+ * que "aguardando pagamento" diz alguma coisa. Uma consulta para a página
+ * inteira; falhando, a lista sai sem o selo em vez de não sair.
+ */
+async function enviarListaDeVendas(res, resposta) {
+  const aguardandoNota = (resposta.records || []).filter((r) => r && r.status === 'pedido-pre-faturado');
+  if (aguardandoNota.length) {
+    try {
+      const liberacoes = await liberacaoDaNfeDosPedidos(aguardandoNota.map((r) => r.id));
+      for (const registro of aguardandoNota) {
+        const liberacao = liberacoes.get(String(registro.id));
+        if (liberacao && liberacao.aplica) registro.liberacaoNfe = liberacao;
+      }
+    } catch (erro) {
+      console.warn('Selo de pagamento da lista de vendas indisponível:', erro.message);
+    }
+  }
+  return sendJson(res, resposta);
 }
 
 function montarRespostaDeVendas({ records, total, page, limit, contagens, data, url, origens, vendedor }) {
@@ -8261,6 +8285,60 @@ function rotuloDaEmpresaDoPedido(empresa, cnpj) {
   return `${(empresa && (empresa.tradeName || empresa.name)) || 'empresa do pedido'} (CNPJ ${cnpj})`;
 }
 
+/**
+ * A TRAVA DE PAGAMENTO DA NF-e (fase ES, 19/10/2026) — o lado do banco. A regra
+ * é lib/faturamento-gate.js; aqui se leem a política e os títulos.
+ *
+ * Sem a migração (tabela ausente) vale o padrão, integral: a trava existe no
+ * código desde o deploy, e a configuração só muda a exigência.
+ */
+async function configuracaoDoFaturamento() {
+  try {
+    const { rows } = await consultarBanco('select politica, percentual from faturamento_config where id = 1');
+    return faturamentoGate.normalizarPolitica(rows[0] ? { politica: rows[0].politica, percentual: Number(rows[0].percentual) } : null);
+  } catch (erro) {
+    return faturamentoGate.normalizarPolitica(null);
+  }
+}
+
+/**
+ * A decisão da trava para cada pedido (Map id -> resultado de avaliarLiberacao).
+ * Os títulos são os do pedido (referência + RECEITA), com as baixas — da
+ * conciliação ou do Financeiro, as duas contam (decisão do usuário). O desconto
+ * da baixa entra no recebido: é a taxa do cartão abatida na conciliação, e o
+ * título foi quitado com ela. Cartão com NSU conta inteiro.
+ */
+async function liberacaoDaNfeDosPedidos(pedidoIds) {
+  const ids = [...new Set((pedidoIds || []).filter(Boolean).map(String))];
+  const resultado = new Map();
+  if (!ids.length) return resultado;
+  const [config, lancamentos] = await Promise.all([configuracaoDoFaturamento(), db.getFinancialEntriesPorReferencia(ids)]);
+  const titulos = lancamentos.filter((l) => String(l.type || '').toUpperCase() === 'RECEITA');
+  const baixas = await db.getFinancialPaymentsDosLancamentos(titulos.map((l) => l.id));
+  const baixasPorTitulo = new Map();
+  for (const baixa of baixas) {
+    const lista = baixasPorTitulo.get(baixa.entryId);
+    if (lista) lista.push(baixa); else baixasPorTitulo.set(baixa.entryId, [baixa]);
+  }
+  for (const id of ids) {
+    const doPedido = titulos.filter((l) => l.referenceId === id).map((l) => ({
+      valor: Number(l.amount || 0),
+      recebido: (baixasPorTitulo.get(l.id) || []).reduce((s, p) => s + Number(p.amount || 0) + Number(p.discount || 0), 0),
+      quitado: isFinanceEntryRealized(l),
+      cancelado: isFinanceEntryCancelled(l),
+      cartaoComNsu: Boolean(String(l.cardAuthorization || '').trim()),
+      vencimento: financeEntryDueDate(l)
+    }));
+    resultado.set(id, faturamentoGate.avaliarLiberacao({ titulos: doPedido, config }));
+  }
+  return resultado;
+}
+
+/** Quem pode "Emitir mesmo assim": o administrador e quem tem a chave (fase ES). */
+async function podeEmitirNfeSemPagamento(user) {
+  return Boolean(user) && ((await ehAdmin(user)) || user.podeEmitirNfeSemPagamento === true);
+}
+
 async function prepararNfeParaTransmitir(body, opcoes = {}) {
   // AS LEITURAS VÊM DE FORA SÓ NO PRÉ-CHECK (leiturasDaConferencia). Os três
   // nomes abaixo SOMBREIAM os do módulo de propósito: o corpo desta função
@@ -8376,6 +8454,8 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   const pedidoDaNota = body.orderId || body.saleId || '';
   // O código do pedido vai ao rodapé da nota (15/10/2026; textoNfe.linhaDoPedido).
   let codigoDoPedido = '';
+  // Fase ES: a trava que "Emitir mesmo assim" passou por cima (vai à auditoria).
+  let travaDePagamentoForcada = null;
   if (pedidoDaNota) {
     const jaEmitidas = await fiscalDb.getNfesPorPedido(pedidoDaNota);
     const viva = jaEmitidas.find((n) => !['ERRO', 'CANCELADO', 'DENEGADO'].includes(String(n.status || '').toUpperCase()));
@@ -8402,6 +8482,23 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
       );
       err.status = 400;
       throw err;
+    }
+    // A TRAVA DE PAGAMENTO (fase ES, 19/10/2026). Só a NF-e (a NFC-e do balcão
+    // sai na hora) e só aqui, antes de transmitir: o pre-check mostra a mesma
+    // recusa antes do clique. A prévia e a DANFE de prévia não transmitem nada
+    // e passam (`semTravaDePagamento`). "Emitir mesmo assim" chega como
+    // `liberarSemPagamento`, já conferido em emitirNfeFiscal (permissão e motivo).
+    if (!nfce && pedido && !opcoes.semTravaDePagamento) {
+      const liberacao = (await liberacaoDaNfeDosPedidos([pedidoDaNota])).get(String(pedidoDaNota));
+      if (liberacao && liberacao.aplica && !liberacao.liberado) {
+        if (!opcoes.liberarSemPagamento) {
+          const err = new Error(faturamentoGate.mensagemDaTrava(liberacao));
+          err.status = 422;
+          err.travaDePagamento = liberacao;
+          throw err;
+        }
+        travaDePagamentoForcada = liberacao;
+      }
     }
   }
 
@@ -8689,7 +8786,8 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   return {
     estabelecimento, destinatario, payload, referencia, naturezaOperacao,
     tipoDocumento, finalidadeEmissao, dataEmissao, tipoOperacao, valorTotal,
-    valorIcmsComplementar, chaveOriginal, pedidoDaNota, modelo: nfce ? 65 : 55
+    valorIcmsComplementar, chaveOriginal, pedidoDaNota, modelo: nfce ? 65 : 55,
+    travaDePagamentoForcada
   };
 }
 
@@ -8979,13 +9077,37 @@ async function recusarVendedorNaNotaDoPedido(user, temPedido) {
 
 async function emitirNfeFiscal(body, user, opcoes = {}) {
   await recusarVendedorNaNotaDoPedido(user, Boolean(body.orderId || body.saleId));
+  // "EMITIR MESMO ASSIM" (fase ES): só quem pode, e com o motivo — venda a
+  // prazo é o caso. Pedido sem permissão é recusado aqui, antes de montar.
+  const motivoSemPagamento = String(body.motivoSemPagamento || '').trim();
+  let liberarSemPagamento = false;
+  if (body.emitirSemPagamento === true) {
+    if (!(await podeEmitirNfeSemPagamento(user))) {
+      const err = new Error('Você não tem permissão para emitir a NF-e sem o pagamento confirmado. Peça ao administrador.');
+      err.status = 403;
+      throw err;
+    }
+    if (motivoSemPagamento.length < 5) {
+      const err = new Error('Informe o motivo para emitir sem o pagamento confirmado (ex.: venda a prazo no boleto).');
+      err.status = 400;
+      throw err;
+    }
+    liberarSemPagamento = true;
+  }
   // A MESMA conferencia que o pre-check roda. Ver prepararNfeParaTransmitir.
   const {
     estabelecimento, destinatario, payload, referencia, naturezaOperacao,
     tipoDocumento, finalidadeEmissao, dataEmissao, tipoOperacao, valorTotal,
-    valorIcmsComplementar, chaveOriginal, pedidoDaNota, modelo
-  } = await prepararNfeParaTransmitir(body, { modelo: opcoes.modelo });
+    valorIcmsComplementar, chaveOriginal, pedidoDaNota, modelo, travaDePagamentoForcada
+  } = await prepararNfeParaTransmitir(body, { modelo: opcoes.modelo, liberarSemPagamento });
   const nfce = modelo === 65;
+  if (travaDePagamentoForcada) {
+    await registrarAuditoria({
+      action: 'nfe.emitidaSemPagamento', targetId: String(pedidoDaNota || ''), targetUsername: motivoSemPagamento,
+      byId: user && user.id, byName: user && user.name,
+      details: { motivo: motivoSemPagamento, ...travaDePagamentoForcada }
+    }).catch((erro) => console.warn('Auditoria da NF-e sem pagamento falhou:', erro.message));
+  }
 
   const nfeExistente = await encontrarNfeIdempotente(estabelecimento.id, payload);
   if (nfeExistente) {
@@ -14144,7 +14266,7 @@ async function tratarRequisicao(req, res) {
       // cabeçalho dela explica por que a pergunta é feita pelos parâmetros
       // INERTES e não pelos filtros.
     if (listaSemFiltro) {
-        return sendJson(res, montarRespostaDeVendas({
+        return enviarListaDeVendas(res, montarRespostaDeVendas({
           origens: await origensDoFiltroDeVendas(url),
           records: pagina.registros.map((r) => serializeSalesRecord(r, data)),
           total: pagina.totais.orders + pagina.totais.quotes,
@@ -14193,7 +14315,7 @@ async function tratarRequisicao(req, res) {
       // Ver relerPaginaDeVendas: o que acontece se alguém gravou entre os dois
       // passos, e por que sem gravação a página é a mesma.
       const registrosDaPagina = await relerPaginaDeVendas(daPagina, tabelaDe, (ids) => db.getVendasPorIds(ids));
-      return sendJson(res, montarRespostaDeVendas({
+      return enviarListaDeVendas(res, montarRespostaDeVendas({
         origens: await origensDoFiltroDeVendas(url),
         // A página relida passa de novo pelo MESMO filtro, agora sobre o
         // registro completo, como o caminho antigo filtrava numa leitura só.
@@ -14569,6 +14691,33 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { titulos });
     } catch (error) {
       return sendErro(res, error, 'Erro ao ler os títulos do pedido', 500);
+    }
+  }
+
+  // A TRAVA DE PAGAMENTO DO PEDIDO (fase ES): quanto foi recebido, o que a
+  // política exige e se a NF-e já pode sair — para o pedido e para a tela de
+  // emissão avisarem antes do clique. E se quem pergunta pode "Emitir mesmo
+  // assim". Antes do GET genérico, como os títulos logo acima.
+  const rotaLiberacao = pathname.match(/^\/api\/sales\/records\/([^/]+)\/liberacao-nfe$/);
+  if (rotaLiberacao && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('sales')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(rotaLiberacao[1]);
+      const pedido = await db.getOrderById(id);
+      if (!pedido) return sendJson(res, { error: 'Pedido não encontrado' }, 404);
+      const escopoDeQuemAbre = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
+      if (!vendaDoVendedor.podeVerVenda(escopoDeQuemAbre, pedido.sellerId, pedido.createdBy, user.id)) {
+        return sendJson(res, { error: 'Pedido não encontrado' }, 404);
+      }
+      const liberacao = (await liberacaoDaNfeDosPedidos([id])).get(id);
+      return sendJson(res, {
+        liberacao,
+        mensagem: liberacao && liberacao.aplica && !liberacao.liberado ? faturamentoGate.mensagemDaTrava(liberacao) : '',
+        podeEmitirSemPagamento: await podeEmitirNfeSemPagamento(user)
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao ler a liberação da NF-e', 500);
     }
   }
 
@@ -17141,7 +17290,7 @@ async function tratarRequisicao(req, res) {
       // recusas também: destinatário incompleto, item sem regra, sem estoque.
       if (pathname === '/api/fiscal/nfe/previa' && req.method === 'POST') {
         const body = await readBody(req);
-        const { payload } = await prepararNfeParaTransmitir(body);
+        const { payload } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true });
         return sendJson(res, resumoFiscalDaPrevia(payload));
       }
 
@@ -17151,7 +17300,7 @@ async function tratarRequisicao(req, res) {
       // FISCAL: nada vai à SEFAZ, nenhum número é consumido, nada é gravado.
       if (pathname === '/api/fiscal/nfe/danfe-previa' && req.method === 'POST') {
         const body = await readBody(req);
-        const { payload, estabelecimento } = await prepararNfeParaTransmitir(body);
+        const { payload, estabelecimento } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true });
         const client = await focusNfe.forEstabelecimento(estabelecimento.id);
         const pdf = await client.previsualizarDanfe(payload);
         res.writeHead(200, {
@@ -17168,6 +17317,15 @@ async function tratarRequisicao(req, res) {
         try {
           nfe = await emitirNfeFiscal(body, user);
         } catch (erroDaEmissao) {
+          // A TRAVA DE PAGAMENTO (fase ES) volta com os números e com o que a
+          // pessoa pode fazer: a tela mostra "Emitir mesmo assim" só a quem pode.
+          if (erroDaEmissao.travaDePagamento) {
+            return sendJson(res, {
+              error: faturamentoGate.mensagemDaTrava(erroDaEmissao.travaDePagamento),
+              travaDePagamento: erroDaEmissao.travaDePagamento,
+              podeEmitirSemPagamento: await podeEmitirNfeSemPagamento(user)
+            }, 422);
+          }
           // Falhou DEPOIS de gravar a nota (Focus recusou, rede): a resposta é
           // a própria nota, com status ERRO e o motivo gravado nela. Falha
           // ANTES (montagem, validação) não tem nota: segue como erro.
@@ -23595,6 +23753,8 @@ async function tratarRequisicao(req, res) {
           podeTrocarEstabelecimento: entry.podeTrocarEstabelecimento === true,
           // Fase EQ, pelo mesmo motivo.
           podeAlterarVendasDeOutros: entry.podeAlterarVendasDeOutros === true,
+          // Fase ES, pelo mesmo motivo.
+          podeEmitirNfeSemPagamento: entry.podeEmitirNfeSemPagamento === true,
           // Fase DR: a ficha abre com o que já está gravado, pelo mesmo motivo.
           estabelecimentosLiberados: entry.estabelecimentosLiberados || [],
           active: entry.active !== false
@@ -23659,6 +23819,8 @@ async function tratarRequisicao(req, res) {
           podeTrocarEstabelecimento: body.payload.podeTrocarEstabelecimento === true,
           // Fase EQ: vendedor que pode mexer nas vendas dos colegas.
           podeAlterarVendasDeOutros: body.payload.podeAlterarVendasDeOutros === true,
+          // Fase ES: pode emitir a NF-e antes do pagamento confirmado.
+          podeEmitirNfeSemPagamento: body.payload.podeEmitirNfeSemPagamento === true,
           estabelecimentosLiberados: await sanitizarEstabelecimentosLiberados(
             body.payload.estabelecimentosLiberados, body.payload.estabelecimentoId
           ),
@@ -23717,6 +23879,42 @@ async function tratarRequisicao(req, res) {
   // porque quem tem a caixa Configuracoes marcada nao necessariamente decide
   // quem alcanca o dinheiro de qual unidade.
   // ---------------------------------------------------------------------
+  // A POLÍTICA DA TRAVA DE PAGAMENTO DA NF-e (fase ES). Ler: quem vê
+  // Configurações. Gravar: o administrador — é quem decide quando a nota sai.
+  if (pathname === '/api/settings/faturamento' && (req.method === 'GET' || req.method === 'PUT')) {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('settings')) return sendJson(res, { error: 'Sem permissão' }, 403);
+      if (req.method === 'GET') {
+        return sendJson(res, { config: await configuracaoDoFaturamento(), podeEditar: await ehAdmin(user) });
+      }
+      if (!(await ehAdmin(user))) return sendJson(res, { error: 'Só o administrador muda a liberação da NF-e.' }, 403);
+      const body = await readBody(req);
+      const politica = String(body.politica || '');
+      if (!faturamentoGate.POLITICAS.includes(politica)) {
+        return sendJson(res, { error: 'Escolha a política: integral, entrada ou percentual.' }, 400);
+      }
+      const percentual = politica === 'percentual' ? Number(body.percentual) : 100;
+      if (!(percentual > 0 && percentual <= 100)) {
+        return sendJson(res, { error: 'O percentual vai de 1 a 100.' }, 400);
+      }
+      await consultarBanco(
+        `insert into faturamento_config (id, politica, percentual, atualizado_em, atualizado_por_nome)
+         values (1, $1, $2, now(), $3)
+         on conflict (id) do update set politica = excluded.politica, percentual = excluded.percentual,
+           atualizado_em = now(), atualizado_por_nome = excluded.atualizado_por_nome`,
+        [politica, percentual, user.name || '']
+      );
+      await registrarAuditoria({
+        action: 'faturamento.politicaDaNfe', targetId: politica, targetUsername: String(percentual),
+        byId: user.id, byName: user.name, details: { politica, percentual }
+      });
+      return sendJson(res, { success: true, config: await configuracaoDoFaturamento() });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao gravar a liberação da NF-e', 400);
+    }
+  }
+
   if (pathname === '/api/settings/contas-por-estabelecimento' && req.method === 'GET') {
     try {
       const user = await getCurrentUser(req);
@@ -24039,6 +24237,9 @@ async function tratarRequisicao(req, res) {
         // Fase EQ, a mesma distinção: ausente não mexe.
         podeAlterarVendasDeOutros: body.podeAlterarVendasDeOutros === undefined
           ? undefined : body.podeAlterarVendasDeOutros === true,
+        // Fase ES, a mesma distinção.
+        podeEmitirNfeSemPagamento: body.podeEmitirNfeSemPagamento === undefined
+          ? undefined : body.podeEmitirNfeSemPagamento === true,
         // Fase DR. O principal que vale para tirá-lo da lista é o que está
         // sendo gravado agora, e não o de antes.
         estabelecimentosLiberados: body.estabelecimentosLiberados === undefined
