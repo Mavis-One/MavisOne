@@ -5422,11 +5422,88 @@ async function xmlDaNotaRecebida(documento) {
 //      empresa tem (PLUS, ELECTRIC, KACCAU, BLUMENAU) — tirada dos cadastros,
 //      sem lista fixa. Empresa com várias filiais (Plus) sai pela razão social
 //      e a raiz do CNPJ; com um CNPJ só, sai com ele.
-// Só para a página que a lista mostra.
+// Para a página que a lista mostra — e, desde 19/10/2026, para o filtro de
+// empresa da lista inteira (filtrarPorEmpresaDoTitulo), pela MESMA regra: o
+// título que a coluna diz ser da Electric é o que o filtro da Electric mostra.
 async function empresasDosTitulos(entries, data) {
-  const soDigitosLocal = (v) => String(v || '').replace(/\D/g, '');
   const resultado = new Map();
   if (!entries.length) return resultado;
+  const empresaDe = await resolvedorDeEmpresas(entries, data);
+  entries.forEach((e) => {
+    const empresa = empresaDe(e);
+    if (empresa && (empresa.nome || empresa.cnpj)) resultado.set(e.id, empresa);
+  });
+  return resultado;
+}
+
+/**
+ * O FILTRO DE EMPRESA DE CONTAS A PAGAR / A RECEBER (19/10/2026, pedido do
+ * usuário: "escolher a empresa referente que eu quero ver os títulos e não
+ * mostrar tudo embaralhado"). `empresa` é a raiz do CNPJ (a Plus com todas as
+ * filiais); `filial`, o CNPJ inteiro. O título antigo sem empresa gravada entra
+ * pela conta bancária (decisão do usuário) — e, como a conta diz só a empresa,
+ * ele aparece no filtro da empresa, não no de uma filial.
+ */
+async function filtrarPorEmpresaDoTitulo(entries, query, data) {
+  const raiz = String(query.get('empresa') || '').replace(/\D/g, '').slice(0, 8);
+  const filial = String(query.get('filial') || '').replace(/\D/g, '');
+  if (!raiz && !filial) return entries;
+  const empresaDe = await resolvedorDeEmpresas(entries, data);
+  return entries.filter((e) => {
+    const cnpj = String((empresaDe(e) || {}).cnpj || '');
+    return filial ? cnpj === filial : cnpj.slice(0, 8) === raiz;
+  });
+}
+
+/**
+ * As empresas do seletor: uma por raiz de CNPJ, com as filiais (CNPJ inteiro).
+ * Dos estabelecimentos e das empresas do cadastro — os mesmos de onde a coluna
+ * tira o nome. A matriz (0001) primeiro.
+ */
+function empresasParaOFiltro(estabelecimentos, companhias) {
+  const digitos = (v) => String(v || '').replace(/\D/g, '');
+  const porCnpj = new Map();
+  (estabelecimentos || []).forEach((e) => {
+    const cnpj = digitos(e.cnpj);
+    if (cnpj.length === 14) porCnpj.set(cnpj, { cnpj, nome: e.nomeFantasia || e.razaoSocial || cnpj, razao: e.razaoSocial || '' });
+  });
+  (companhias || []).forEach((c) => {
+    const cnpj = digitos(c.document);
+    if (cnpj.length !== 14) return;
+    const atual = porCnpj.get(cnpj) || {};
+    porCnpj.set(cnpj, { cnpj, nome: c.tradeName || c.name || atual.nome || cnpj, razao: atual.razao || c.name || '' });
+  });
+  const porRaiz = new Map();
+  [...porCnpj.values()].forEach((f) => {
+    const raiz = f.cnpj.slice(0, 8);
+    if (!porRaiz.has(raiz)) porRaiz.set(raiz, []);
+    porRaiz.get(raiz).push(f);
+  });
+  const ehMatriz = (f) => f.cnpj.slice(8, 12) === '0001';
+  // Nomes curtos, para caberem no campo: a empresa sem "COMERCIO LTDA"; a
+  // filial pelo que vem entre parênteses ("SAL INFINITY PLUS (TIMBO)" -> TIMBO).
+  const curto = (razao) => String(razao || '').replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(/\b(COMERCIO|LTDA|EIRELI|EPP|ME|S\/A|SA)\b\.?/gi, '').replace(/\s+/g, ' ').trim();
+  const daFilial = (f) => {
+    const entre = /\(([^)]+)\)\s*$/.exec(f.nome || '');
+    return entre ? entre[1].trim() : (ehMatriz(f) ? 'MATRIZ' : f.nome);
+  };
+  return [...porRaiz.entries()].map(([raiz, filiais]) => {
+    filiais.sort((a, b) => (ehMatriz(b) - ehMatriz(a)) || a.cnpj.localeCompare(b.cnpj));
+    const razao = (filiais.find(ehMatriz) || filiais[0]).razao || filiais[0].nome;
+    return {
+      raiz,
+      nome: curto(razao) || razao,
+      filiais: filiais.map((f) => ({ cnpj: f.cnpj, nome: daFilial(f) }))
+    };
+  }).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+// A REGRA DA EMPRESA DE UM TÍTULO, montada uma vez para um lote: as consultas
+// (notas, pedidos, contas ligadas) são de todos os títulos do lote juntos, e o
+// que se devolve responde um título por vez, sem ir ao banco.
+async function resolvedorDeEmpresas(entries, data) {
+  const soDigitosLocal = (v) => String(v || '').replace(/\D/g, '');
   const estabelecimentos = await fiscalDb.getEstabelecimentos().catch(() => []);
   const companhias = Array.isArray(data.companies) ? data.companies : [];
   const doEstab = (e) => (e ? { nome: e.nomeFantasia || e.razaoSocial || '', cnpj: soDigitosLocal(e.cnpj) } : null);
@@ -5480,15 +5557,20 @@ async function empresasDosTitulos(entries, data) {
     return unica ? empresaDaRaiz([...unica][0]) : null;
   };
 
-  entries.forEach((e) => {
-    const empresa = doEstab(estabPorId.get(String(e.estabelecimentoId || '')))
-      || doEstab(estabPorId.get(String(estabDaNfe.get(String(e.nfeId || '')) || '')))
-      || daCompanhia(companhias.find((c) => c.id === companhiaDoPedido.get(String(e.referenceId || ''))))
-      || doEstab(estabPorId.get(String(estabDaConta.get(String(e.bankAccountId || '')) || '')))
-      || pelaConta(e.bankAccountId);
-    if (empresa && (empresa.nome || empresa.cnpj)) resultado.set(e.id, empresa);
-  });
-  return resultado;
+  // A da conta pelo nome, uma vez por conta: o filtro pergunta por milhares de
+  // títulos, e as contas são poucas.
+  const daContaPeloNome = new Map();
+  const pelaContaUmaVez = (contaId) => {
+    const chave = String(contaId || '');
+    if (!daContaPeloNome.has(chave)) daContaPeloNome.set(chave, pelaConta(chave));
+    return daContaPeloNome.get(chave);
+  };
+  const companhiaPorId = new Map(companhias.map((c) => [c.id, c]));
+  return (e) => doEstab(estabPorId.get(String(e.estabelecimentoId || '')))
+    || doEstab(estabPorId.get(String(estabDaNfe.get(String(e.nfeId || '')) || '')))
+    || daCompanhia(companhiaPorId.get(companhiaDoPedido.get(String(e.referenceId || ''))))
+    || doEstab(estabPorId.get(String(estabDaConta.get(String(e.bankAccountId || '')) || '')))
+    || pelaContaUmaVez(e.bankAccountId);
 }
 
 // O VALOR REALIZADO DE UM LANÇAMENTO. Entradas antigas de vendas/compras
@@ -21720,6 +21802,8 @@ async function tratarRequisicao(req, res) {
         .filter((e) => e.ativo !== false)
         .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia })),
       contasPorEstabelecimento: vinculosMeta,
+      // O seletor de empresa de Contas a Pagar / a Receber (19/10/2026).
+      empresas: empresasParaOFiltro(estabelecimentosMeta, data.companies),
       // As formas de pagamento para o campo do título (fase EN). Só as ativas:
       // o título que já tem uma inativa a mostra pelo nome que guardou.
       formasDePagamento: (data.paymentMethods || [])
@@ -21910,7 +21994,9 @@ async function tratarRequisicao(req, res) {
       // pelo id), e filter não mexe nela.
       const semSituacao = new URLSearchParams(url.searchParams);
       semSituacao.delete('status');
-      const todos = filtrarListaDeLancamentos(data, parciais, semSituacao);
+      // O filtro de empresa (19/10/2026) roda aqui, antes de tudo: as abas e os
+      // totais contam só os títulos da empresa escolhida.
+      const todos = filtrarListaDeLancamentos(data, await filtrarPorEmpresaDoTitulo(parciais, url.searchParams, data), semSituacao);
       const situacao = url.searchParams.get('status');
       const filtered = situacao
         ? filterFinanceEntries({ ...data, finance: todos }, new URLSearchParams({ status: situacao }))
@@ -21973,7 +22059,7 @@ async function tratarRequisicao(req, res) {
       ]);
       const ids = selecionados.length
         ? selecionados
-        : filtrarListaDeLancamentos(data, parciais, url.searchParams).map((entry) => entry.id);
+        : filtrarListaDeLancamentos(data, await filtrarPorEmpresaDoTitulo(parciais, url.searchParams, data), url.searchParams).map((entry) => entry.id);
       await syncLancamentosPorId(data, ids);
       // Os do filtro já vêm na ordem da lista (syncLancamentosPorId devolve na
       // ordem dos ids); os selecionados, que podem ser de várias páginas, são

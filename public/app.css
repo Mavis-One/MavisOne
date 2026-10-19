@@ -1818,7 +1818,9 @@ button.success:hover { background: var(--success-hover); }
    --------------------------------------------------------------------------- */
 .finance-lista-busca {
   display: grid;
-  grid-template-columns: minmax(240px, 3fr) minmax(140px, 1fr) minmax(170px, 1fr) auto;
+  /* --campos: quantos seletores a tela tem ao lado da busca (tipo, vencimento,
+     empresa, filial — 19/10/2026). */
+  grid-template-columns: minmax(200px, 2fr) repeat(var(--campos, 2), minmax(150px, 1fr)) auto;
   gap: 12px;
   align-items: end;
   margin-bottom: 12px;

@@ -175,7 +175,9 @@ const FINANCE_COLUNAS_NOVAS = ['empresa'];
 
 const financeFiltrosVazios = () => ({
   search: '', type: '', status: '', periodo: '', clientSupplierId: '', category: '', costCenter: '', bankAccountId: '',
-  dateFrom: '', dateTo: '', dueFrom: '', dueTo: '', amountMin: '', amountMax: ''
+  dateFrom: '', dateTo: '', dueFrom: '', dueTo: '', amountMin: '', amountMax: '',
+  // A empresa (raiz do CNPJ) e a filial (CNPJ inteiro) — 19/10/2026.
+  empresa: '', filial: ''
 });
 
 // TRÊS TELAS, UMA LISTA (14/10/2026). Pedido do usuário: separar em duas
@@ -315,6 +317,39 @@ function criarTelaDeLancamentos(telaChave) {
     else state.preferences = Object.assign({}, state.preferences || {}, { finance_lancamentos: valor });
   }
 
+  // A EMPRESA DOS TÍTULOS (19/10/2026, pedido do usuário: "escolher a empresa
+  // referente que eu quero ver os títulos e não mostrar tudo embaralhado").
+  // As empresas vêm do meta (uma por raiz de CNPJ, com as filiais); a regra de
+  // qual título é de qual empresa é a da coluna Empresa, no servidor.
+  function empresaEscolhida() {
+    return (meta.empresas || []).find((e) => e.raiz === lista.filtros.empresa) || null;
+  }
+  function filiaisDaEmpresa() {
+    const empresa = empresaEscolhida();
+    return empresa ? empresa.filiais || [] : [];
+  }
+  function opcoesDeEmpresa() {
+    const f = lista.filtros;
+    const empresas = meta.empresas || [];
+    // A escolhida antes de o meta chegar continua escolhida (pela raiz).
+    const semNome = f.empresa && !empresas.some((e) => e.raiz === f.empresa)
+      ? `<option value="${escapeHtml(f.empresa)}" selected>${escapeHtml(f.empresa)}</option>` : '';
+    return `<option value="">Todas</option>${semNome}${empresas.map((e) => `<option value="${escapeHtml(e.raiz)}" ${f.empresa === e.raiz ? 'selected' : ''}>${escapeHtml(e.nome)}</option>`).join('')}`;
+  }
+  function opcoesDeFilial() {
+    const f = lista.filtros;
+    return `<option value="">Todas as filiais</option>${filiaisDaEmpresa().map((fl) => `<option value="${escapeHtml(fl.cnpj)}" ${f.filial === fl.cnpj ? 'selected' : ''}>${escapeHtml(fl.nome)}</option>`).join('')}`;
+  }
+  // O meta chega depois da primeira pintura (fase DS): as empresas entram no
+  // campo quando ele chegar, sem redesenhar a lista.
+  metaPronto.then(() => {
+    const campo = document.getElementById('financeEmpresaRapida');
+    if (!campo || !telaAtiva()) return;
+    // Com a empresa já escolhida, o campo da filial só existe agora.
+    if (filiaisDaEmpresa().length > 1 && !document.getElementById('financeFilialRapida')) redesenhar();
+    else campo.innerHTML = opcoesDeEmpresa();
+  });
+
   // A PERGUNTA AO SERVIDOR. `paginado: false` é a exportação: mesmos filtros
   // e mesma ordem, sem página.
   function consulta({ paginado = true } = {}) {
@@ -324,7 +359,7 @@ function criarTelaDeLancamentos(telaChave) {
       params.set('page', String(lista.page));
       params.set('limit', String(porPagina()));
     }
-    ['search', 'type', 'status', 'clientSupplierId', 'category', 'costCenter', 'bankAccountId', 'dateFrom', 'dateTo', 'amountMin', 'amountMax']
+    ['search', 'type', 'status', 'clientSupplierId', 'category', 'costCenter', 'bankAccountId', 'dateFrom', 'dateTo', 'amountMin', 'amountMax', 'empresa', 'filial']
       .forEach((campo) => { if (f[campo]) params.set(campo, f[campo]); });
     // Contas a Pagar / a Receber: o tipo vai sempre, e não é um filtro que a
     // pessoa limpa (não entra em `lista.filtros`).
@@ -788,7 +823,7 @@ function criarTelaDeLancamentos(telaChave) {
 
       ${lista.showColunas ? painelDeColunas(colunas) : ''}
 
-      <form id="financeQuickSearchForm" class="finance-lista-busca" role="search">
+      <form id="financeQuickSearchForm" class="finance-lista-busca" role="search" style="--campos: ${(tipoFixo ? 0 : 1) + 2 + (filiaisDaEmpresa().length > 1 ? 1 : 0)};">
         <label class="cadastro-field">
           <span>Busca</span>
           <input id="financeQuickSearch" type="search" name="search" value="${escapeHtml(f.search)}" autocomplete="off"
@@ -807,6 +842,14 @@ function criarTelaDeLancamentos(telaChave) {
             ${FINANCE_VENCIMENTOS.map((p) => `<option value="${p.chave}" ${(f.periodo || '') === p.chave ? 'selected' : ''}>${escapeHtml(p.rotulo)}</option>`).join('')}
           </select>
         </label>
+        <label class="cadastro-field">
+          <span>Empresa</span>
+          <select id="financeEmpresaRapida">${opcoesDeEmpresa()}</select>
+        </label>
+        ${filiaisDaEmpresa().length > 1 ? `<label class="cadastro-field">
+          <span>Filial</span>
+          <select id="financeFilialRapida">${opcoesDeFilial()}</select>
+        </label>` : ''}
         <div style="align-self: end;"><button type="submit" class="secondary">Buscar</button></div>
         ${dica ? `<p class="muted finance-busca-dica">${dica}</p>` : ''}
       </form>
@@ -946,6 +989,13 @@ function criarTelaDeLancamentos(telaChave) {
     });
     document.getElementById('financeTipoRapido')?.addEventListener('change', (event) => {
       mudarFiltro({ type: event.target.value });
+    });
+    // Trocar a empresa recomeça a filial: a da empresa anterior não vale nesta.
+    document.getElementById('financeEmpresaRapida')?.addEventListener('change', (event) => {
+      mudarFiltro({ empresa: event.target.value, filial: '' });
+    });
+    document.getElementById('financeFilialRapida')?.addEventListener('change', (event) => {
+      mudarFiltro({ filial: event.target.value });
     });
     document.getElementById('financeVencimentoRapido')?.addEventListener('change', async (event) => {
       const chave = event.target.value;

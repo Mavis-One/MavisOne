@@ -25,7 +25,9 @@ const tela = ler('public/modules/finance/subs/lancamentos.js');
 const funcao = servidor.slice(servidor.indexOf('async function empresasDosTitulos'), servidor.indexOf('// `baixasDoLancamento` (fase EI)'));
 
 check('a empresa sai na ordem: título, NF-e, pedido, conta ligada, nome da conta',
-  /doEstab\(estabPorId\.get\(String\(e\.estabelecimentoId[\s\S]{0,120}estabDaNfe[\s\S]{0,160}companhiaDoPedido[\s\S]{0,160}estabDaConta[\s\S]{0,80}pelaConta\(e\.bankAccountId\)/.test(funcao));
+  // (19/10/2026: a regra virou resolvedorDeEmpresas, que o filtro de empresa
+  // também usa; o nome da conta é lembrado por conta — pelaContaUmaVez.)
+  /doEstab\(estabPorId\.get\(String\(e\.estabelecimentoId[\s\S]{0,120}estabDaNfe[\s\S]{0,160}companhiaDoPedido[\s\S]{0,160}estabDaConta[\s\S]{0,80}pelaContaUmaVez\(e\.bankAccountId\)/.test(funcao));
 check('  pelo nome da conta: a palavra da razão social que só uma empresa tem (sem lista fixa)',
   funcao.includes('.find((r) => r && r.size === 1)') && !/['"]PLUS['"]|['"]KACCAU['"]/.test(funcao));
 check('  empresa de várias filiais sai pela razão social e a raiz do CNPJ', funcao.includes('return { nome: razao, cnpj: raiz };'));
