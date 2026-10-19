@@ -206,6 +206,7 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
               ${chave('controlaEstoque', 'Controla Estoque', !servico, servico ? 'disabled' : '')}
               ${chave('podeVender', 'Pode Vender', !current || current.podeVender !== false)}
               ${chave('materiaPrima', 'Matéria-Prima', Boolean(current && current.materiaPrima))}
+              ${chave('controlaMontagem', 'Controla Montagem', Boolean(current && current.controlaMontagem))}
             </div>
 
             <!-- Sem NCM e origem preenchidos, a emissão de NF-e não acha a regra
@@ -370,6 +371,18 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
   campo('controlaEstoque')?.addEventListener('change', () => {
     if (campo('servico')) campo('servico').checked = !campo('controlaEstoque').checked;
   });
+  // Fase ER: no produto novo, a chave acompanha o NCM (8711 marca) até a
+  // pessoa mexer nela.
+  campo('controlaMontagem')?.addEventListener('change', () => {
+    campo('controlaMontagem').dataset.mexido = '1';
+  });
+  if (!current) {
+    campo('ncm')?.addEventListener('input', () => {
+      const chaveMontagem = campo('controlaMontagem');
+      if (!chaveMontagem || chaveMontagem.dataset.mexido) return;
+      chaveMontagem.checked = /^8711/.test(String(campo('ncm').value || '').replace(/\D/g, ''));
+    });
+  }
 
   // MARGEM, como no print: "→" põe no preço à vista o custo + margem; "←"
   // tira a margem do preço. Embaixo, a margem sobre o custo e sobre a venda de
@@ -543,6 +556,11 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
       movimentaEstoque: !servicoMarcado,
       podeVender: Boolean(campo('podeVender')?.checked),
       materiaPrima: Boolean(campo('materiaPrima')?.checked),
+      // Fase ER: saldo em Desmontado e Montado. No produto novo, sem mexer na
+      // chave, quem decide é o NCM (8711 nasce marcado, no servidor).
+      controlaMontagem: current || campo('controlaMontagem')?.dataset.mexido
+        ? Boolean(campo('controlaMontagem')?.checked)
+        : undefined,
       costPrice: Number(formData.get('costPrice') || 0),
       salePrice: Number(formData.get('salePrice') || 0),
       // Vazio = sem preço a prazo / sem mínimo (não é zero).

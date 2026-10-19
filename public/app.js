@@ -2572,12 +2572,15 @@ const LUPA_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" st
  * o histórico de verdade.
  */
 function depositosDaLoja(meta, companyId, depositoAtual) {
-  const todos = meta.deposits || [];
+  const atual = String(depositoAtual || '').trim();
+  // Depósito inativo (o "Depósito Matriz - Montados", unido ao Depósito Matriz
+  // na fase ER) não se oferece — só aparece no pedido que já o tem.
+  const todos = (meta.deposits || [])
+    .filter((d) => String(d.status || 'ativo').toLowerCase() !== 'inativo' || d.id === atual);
   const escolhida = String(companyId || '').trim();
   const doGrupo = escolhida
     ? todos.filter((d) => !d.companyId || d.companyId === escolhida)
     : todos;
-  const atual = String(depositoAtual || '').trim();
   if (atual && !doGrupo.some((d) => d.id === atual)) {
     const achado = todos.find((d) => d.id === atual);
     if (achado) return [{ ...achado, name: `${achado.name} (de outra loja)` }, ...doGrupo];
@@ -2594,17 +2597,18 @@ function depositosDaLoja(meta, companyId, depositoAtual) {
  * diferença aparece no inventário.
  */
 //
-// A MATRIZ TEM DOIS (fase EE): Desmontados e Montados. Decisão do usuário
-// (13/10/2026): a venda da matriz sai do de MONTADOS por padrão — peça ou
-// caixa fechada a pessoa troca na hora. Depósito inativo não é sugerido.
+// A MATRIZ TINHA DOIS (fase EE: Desmontados e Montados); desde a fase ER
+// (17/10/2026) é um só, o de montagem, e o montado/desmontado é escolhido no
+// item. Com mais de um, o de montagem é o sugerido. Depósito inativo não é
+// sugerido.
 function depositoSugeridoDaLoja(meta, companyId) {
   const escolhida = String(companyId || '').trim();
   if (!escolhida) return '';
   const daLoja = (meta.deposits || [])
     .filter((d) => d.companyId === escolhida && String(d.status || 'ativo').toLowerCase() !== 'inativo');
   if (daLoja.length === 1) return daLoja[0].id;
-  const montados = daLoja.find((d) => d.classificacao === 'montados');
-  return montados ? montados.id : '';
+  const deMontagem = daLoja.find((d) => d.classificacao === 'montagem');
+  return deMontagem ? deMontagem.id : '';
 }
 
 /**
@@ -3990,10 +3994,12 @@ async function loadModule(moduleName) {
          * ainda, e mostrar o total no lugar dele seria mostrar justamente o
          * numero que enganava. Quem chama decide o que fazer com o null.
          */
-        const saldoNoDepositoEscolhido = (productId, classValueId) => {
+        // Fase ER: com `condicao` (montado/desmontado), a chave ganha a quarta
+        // parte — o saldo daquela condição no depósito.
+        const saldoNoDepositoEscolhido = (productId, classValueId, condicao) => {
           const deposito = String((typeof formState !== 'undefined' ? formState.depositId : '') || '').trim();
           if (!deposito) return null;
-          const chave = `${productId}|${deposito}|${classValueId || ''}`;
+          const chave = `${productId}|${deposito}|${classValueId || ''}${condicao ? `|${condicao}` : ''}`;
           return Number((meta.saldosPorDeposito || {})[chave] || 0);
         };
         // O RÓTULO DA BUSCA É SÓ NOME E CÓDIGO (14/10/2026, pedido do usuário:
@@ -4121,8 +4127,12 @@ async function loadModule(moduleName) {
           // sai, e e' o saldo de la' que o servidor confere no commit. Isto vale
           // tanto para item com cor quanto sem: a chave do saldo por deposito ja
           // separa as duas coisas.
-          const noDeposito = saldoNoDepositoEscolhido(item.productId, item.classValueId);
+          // Produto que controla montagem (fase ER): o saldo da condição da
+          // linha; sem condição escolhida, o do depósito inteiro.
+          const condicao = produto.controlaMontagem ? String(item.condicao || '') : '';
+          const noDeposito = saldoNoDepositoEscolhido(item.productId, item.classValueId, condicao);
           if (noDeposito !== null) return noDeposito;
+          if (condicao) return null;
           // Sem deposito escolhido a baixa cai no "nao alocado" e a guarda
           // confere o total do produto — entao o numero mostrado e o total.
           if (!item.classValueId) return Number(produto.stockQuantity || 0);
@@ -4480,6 +4490,7 @@ async function loadModule(moduleName) {
               classValueId: item.classValueId || '',
               classValueName: item.classValueName || '',
               chassi: item.chassi || '',
+              condicao: item.condicao || '',
               quantity: item.quantity,
               unitPrice: item.unitPrice
             })),
@@ -5505,6 +5516,7 @@ async function loadModule(moduleName) {
                                    preço ou quantidade. É o número que vai para a
                                    nota fiscal e para o registro do equipamento. -->
                               <th>Chassi</th>
+                              <th>Condição</th>
                               <th>Disponível</th>
                               <th>Preço cadastrado</th>
                               <th>Qtd.</th>
@@ -5557,6 +5569,17 @@ async function loadModule(moduleName) {
                                       ? '<span class="sales-item-chassi-aviso">1 chassi para ' + salesFormatQty(item.quantity) + ' unidades — separe em linhas.</span>'
                                       : ''}
                                   </td>
+                                  <td>
+                                    <!-- Fase ER: produto que controla montagem
+                                         sai do saldo MONTADO ou DESMONTADO
+                                         (shared/venda_obrigatorios.js). -->
+                                    ${produto && produto.controlaMontagem ? `
+                                      <select class="sales-item-condicao ${item.condicao ? '' : 'is-obrigatorio'}" data-index="${index}">
+                                        <option value="" ${item.condicao ? '' : 'selected'}>Escolha</option>
+                                        <option value="montado" ${item.condicao === 'montado' ? 'selected' : ''}>Montado</option>
+                                        <option value="desmontado" ${item.condicao === 'desmontado' ? 'selected' : ''}>Desmontado</option>
+                                      </select>` : '<span class="muted">—</span>'}
+                                  </td>
                                   <td class="sales-item-readonly ${faltaSaldo ? 'is-alerta' : ''}"
                                       title="${semCadastro ? 'Produto não está mais no cadastro de Estoque.' : (saldoDesconhecido ? (produto.movimentaEstoque === false ? 'Serviço: não controla estoque.' : 'Saldo desta cor ainda não carregado.') : `Disponível para este ${title.toLowerCase()}: ${qtdVisivel(livre)}.${faltaSaldo ? ' O faturamento será recusado até o estoque entrar.' : ''}`)}">
                                     ${semCadastro || saldoDesconhecido ? '-' : qtdVisivel(livre)}
@@ -5579,7 +5602,7 @@ async function loadModule(moduleName) {
                                     <button type="button" class="icon-button sales-remove-item" data-index="${index}" title="Remover">×</button>
                                   </td>
                                 </tr>
-                              `; }).join('') : '<tr><td colspan="8" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
+                              `; }).join('') : '<tr><td colspan="9" class="muted">Nenhum produto adicionado ainda.</td></tr>'}
                             </tbody>
                           </table>
                         </div>
@@ -6343,6 +6366,8 @@ async function loadModule(moduleName) {
               // equipamento, e digitá-lo antes de escolher o produto seria
               // preencher na ordem errada.
               chassi: '',
+              // Fase ER: escolhida na linha (Montado/Desmontado).
+              condicao: '',
               quantity,
               unitPrice: Number(product.salePrice || 0)
             });
@@ -6421,6 +6446,13 @@ async function loadModule(moduleName) {
               syncFormState();
               // E vai para a linha CHASSI: das observações (15/10/2026).
               levarChassiParaObservacoes();
+              renderForm();
+            });
+          });
+          content.querySelectorAll('.sales-item-condicao').forEach((select) => {
+            select.addEventListener('change', () => {
+              items[Number(select.dataset.index)].condicao = select.value;
+              syncFormState();
               renderForm();
             });
           });
@@ -6812,13 +6844,14 @@ async function loadModule(moduleName) {
             // aqui é para dizer qual falta e levar até ele, na aba certa. Sem o
             // atributo `required` de propósito: campo obrigatório numa aba
             // escondida trava o envio sem mensagem nenhuma.
-            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload, { categorias: meta.salesCategories || [], total: computeTotals().totalAmount, formas: meta.paymentMethods || [], tipoRegistro: recordType, ncmDoItem: (item) => produtoDoItem(item)?.ncm });
+            const obrigatorioQueFalta = window.MavisVendaObrigatorios.faltando(payload, { categorias: meta.salesCategories || [], total: computeTotals().totalAmount, formas: meta.paymentMethods || [], tipoRegistro: recordType, ncmDoItem: (item) => produtoDoItem(item)?.ncm, montagemDoItem: (item) => produtoDoItem(item)?.controlaMontagem === true });
             if (obrigatorioQueFalta) {
               showToast(obrigatorioQueFalta.mensagem, 'warning');
               abrirAba(obrigatorioQueFalta.aba || 'dados');
               if (obrigatorioQueFalta.foco) document.getElementById(obrigatorioQueFalta.foco)?.focus();
               if (obrigatorioQueFalta.linha !== undefined) content.querySelector(`.sales-payment-auth[data-index="${obrigatorioQueFalta.linha}"]`)?.focus();
               if (obrigatorioQueFalta.itemSemChassi !== undefined) content.querySelector(`.sales-item-chassi[data-index="${obrigatorioQueFalta.itemSemChassi}"]`)?.focus();
+              if (obrigatorioQueFalta.itemSemCondicao !== undefined) content.querySelector(`.sales-item-condicao[data-index="${obrigatorioQueFalta.itemSemCondicao}"]`)?.focus();
               return;
             }
             if (botaoSalvar) botaoSalvar.disabled = true;
@@ -7874,7 +7907,7 @@ async function loadModule(moduleName) {
               </div>
               ${depositDraft.daMatriz ? `
               <div class="cadastro-grid cadastro-grid-3">
-                ${selectField('Classificação (montagem PCP)', 'classificacao', depositDraft.classificacao || '', [{ value: '', label: 'Nenhuma' }, { value: 'desmontados', label: 'Desmontados' }, { value: 'montados', label: 'Montados' }])}
+                ${selectField('Classificação (montagem PCP)', 'classificacao', depositDraft.classificacao || '', [{ value: '', label: 'Nenhuma' }, { value: 'montagem', label: 'Depósito de montagem' }])}
               </div>` : ''}
               ${depositDraft.error ? `<p class="form-error">${escapeHtml(depositDraft.error)}</p>` : ''}
             `)}
@@ -7979,7 +8012,7 @@ async function loadModule(moduleName) {
                       <tr>
                         <td>${escapeHtml(deposit.name || '-')}</td>
                         <td>${escapeHtml(deposit.code || '-')}</td>
-                        <td>${deposit.classificacao === 'desmontados' ? '<span class="badge warning">Desmontados</span>' : (deposit.classificacao === 'montados' ? '<span class="badge success">Montados</span>' : '-')}</td>
+                        <td>${deposit.classificacao === 'montagem' ? '<span class="badge success">Montagem</span>' : '-'}</td>
                         <td>${escapeHtml([deposit.city, deposit.state].filter(Boolean).join('/') || '-')}</td>
                         <td>${escapeHtml(deposit.manager || '-')}</td>
                         <td>${escapeHtml(deposit.status || 'ativo')}</td>

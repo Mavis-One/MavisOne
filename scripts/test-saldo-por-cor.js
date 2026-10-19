@@ -107,7 +107,7 @@ check('  sem ler o razao por fora', !/razaoEstoque\.listarMovimentos\(/.test(con
 console.log('--- 2. o movimento nasce no depósito de quem o originou ---');
 
 const registrar = corpoDe('registrarMovimentoEstoque');
-check('registrarMovimentoEstoque aceita depositId', /classValueId, depositId \}\)/.test(registrar));
+check('registrarMovimentoEstoque aceita depositId', /classValueId, depositId, condicao \}\)/.test(registrar));
 // A ordem é a regra: o depósito do documento é uma ESCOLHA de quem vendeu ou
 // comprou; o padrão do produto é só um palpite de cadastro.
 check('  o depósito informado vem ANTES do padrão do produto',
@@ -117,7 +117,9 @@ check('  a baixa da venda leva o depósito do pedido',
 
 console.log('--- 3. o estorno volta para onde a baixa saiu ---');
 
-const origem = corpoDe('depositoDoMovimentoDeOrigem');
+// Fase ER: a busca mora em movimentoDeOrigem (o depósito E a condição saem
+// dela); depositoDoMovimentoDeOrigem só lê o depósito.
+const origem = corpoDe('movimentoDeOrigem');
 check('depositoDoMovimentoDeOrigem existe', origem.length > 0);
 check('  pergunta ao razão, casando documento, produto, cor e motivo',
   /m\.referenceType === referenceType/.test(origem)
@@ -127,7 +129,7 @@ check('  pergunta ao razão, casando documento, produto, cor e motivo',
   && /m\.motivo === motivo/.test(origem));
 // Documento movimentado antes desta fase não tem depósito em movimento nenhum;
 // devolver '' deixa quem chama decidir, em vez de inventar um depósito.
-check('  devolve vazio quando não acha, em vez de chutar', /return movimento \? movimento\.depositId \|\| '' : '';/.test(origem));
+check('  devolve vazio quando não acha, em vez de chutar', /return movimento \? movimento\.depositId \|\| '' : '';/.test(corpoDe('depositoDoMovimentoDeOrigem')));
 check('o estorno do pedido usa a origem do razão, e o pedido só como reserva',
   /type: 'estorno',[\s\S]{0,1000}?depositoDoMovimentoDeOrigem\(data, \{[\s\S]{0,200}?motivo: 'venda',[\s\S]{0,200}?\}\) \|\| record\.depositId,/.test(transicao));
 // A compra não tem para onde cair: a tabela `purchases` não tem coluna de

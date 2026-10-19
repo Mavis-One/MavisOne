@@ -97,6 +97,7 @@ window.MavisSubscreenRegistry.stock.receive_transfer = async function renderRece
                   <td>
                     ${S.escape(l.productName)}${l.productSku ? ` <span class="muted">(${S.escape(l.productSku)})</span>` : ''}
                     ${S.corBadge(cores, l.classValueId)}
+                    ${l.condicao ? S.badge(l.condicao === 'montado' ? 'Montado' : 'Desmontado', l.condicao === 'montado' ? 'success' : 'warning') : ''}
                   </td>
                   <td>${S.formatQty(l.quantity)}</td>
                   <td>${S.formatQty(l.receivedQuantity)}</td>

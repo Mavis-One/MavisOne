@@ -338,9 +338,9 @@ window.MavisCadastros = window.MavisCadastros || {};
                           <tr>
                             ${config.columns.map((c) => `<td>${c.render(item, meta, items)}</td>`).join('')}
                             <td>
-                              ${(config.rowActions || []).map((acao, indice) => `
+                              ${(config.rowActions || []).map((acao, indice) => (typeof acao.visivel === 'function' && !acao.visivel(item) ? '' : `
                                 <button type="button" class="icon-button ${acao.tone || 'edit'}" data-acao="${indice}" data-acao-id="${C.escape(item.id)}" title="${C.escape(acao.title)}">${acao.icon}</button>
-                              `).join('')}
+                              `)).join('')}
                               <button type="button" class="icon-button edit" data-edit="${item.id}" title="Editar">${C.editIcon}</button>
                               <button type="button" class="icon-button" data-delete="${item.id}" title="Excluir">${C.trashIcon}</button>
                             </td>

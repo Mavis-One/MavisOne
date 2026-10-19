@@ -117,7 +117,8 @@ check('saldosDoDeposito é UMA consulta, não uma por par',
   /product_id = any\(\$2\)/.test(dbModulo) && /group by product_id, class_value_id/.test(dbModulo),
   'milhares de idas ao banco com a trava na mao seriam milhares de latencias');
 
-check('recontar é um upsert', /on conflict \(count_id, product_id, class_value_id\) do update set/.test(dbModulo));
+// Fase ER: a condição (montado/desmontado) entrou na chave.
+check('recontar é um upsert', /on conflict \(count_id, product_id, class_value_id, condicao\) do update set/.test(dbModulo));
 check('e regrava o expected_quantity', /expected_quantity = excluded\.expected_quantity/.test(dbModulo),
   'ao recontar, a divergencia e contra o saldo de AGORA');
 

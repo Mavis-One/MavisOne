@@ -62,6 +62,113 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     return C.escape(window.MavisRotuloProduto ? window.MavisRotuloProduto.rotulo(p) : p.name);
   };
 
+  // ORDEM DE MONTAGEM (fase ER, 17/10/2026): OP de tipo 'montagem', do produto
+  // que controla montagem. Não consome a ficha técnica: cada baixa troca
+  // DESMONTADO por MONTADO no depósito de montagem, e a ordem conclui sozinha
+  // quando a quantidade fecha.
+  const TIPOS_OP = [
+    { id: 'producao', name: 'Produção' },
+    { id: 'montagem', name: 'Montagem' }
+  ];
+  const ICONE_MONTAGEM = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>';
+
+  async function abrirMontagemDaOrdem(ordem, ctx) {
+    const { api, showToast, meta, recarregar } = ctx;
+    let baixas = [];
+    let mudou = false;
+    const fechar = () => {
+      document.getElementById('pcpMontagemModal')?.remove();
+      if (mudou) recarregar();
+    };
+    const carregar = async () => {
+      baixas = (await api(`/api/pcp/baixas?ordemId=${encodeURIComponent(ordem.id)}`)).baixas || [];
+    };
+    const desenhar = () => {
+      const ativas = baixas.filter((b) => !b.estornada);
+      const montado = ativas.reduce((s, b) => s + Number(b.quantidade || 0), 0);
+      const falta = Math.max(0, Number(ordem.quantity || 0) - montado);
+      const overlay = document.getElementById('pcpMontagemModal');
+      overlay.innerHTML = `
+        <div class="modal pcp-montagem-modal">
+          <h3>Montagem — OM ${C.escape(String(ordem.code || ordem.id.slice(-6)))}</h3>
+          <div class="pcp-montagem-resumo">
+            <div><span class="muted">Produto</span><strong>${rotuloProduto(meta, ordem.productId)}</strong></div>
+            <div><span class="muted">Cor</span><strong>${nomeDe(meta.cores, ordem.classValueId)}</strong></div>
+            <div><span class="muted">Previsto</span><strong>${qtd(ordem.quantity)}</strong></div>
+            <div><span class="muted">Montado</span><strong>${qtd(montado)}</strong></div>
+            <div><span class="muted">Falta</span><strong>${qtd(falta)}</strong></div>
+          </div>
+          ${falta > 0 && ordem.status !== 'cancelada' ? `
+            <form id="pcpMontagemForm" class="pcp-montagem-baixa">
+              <label>Quantidade montada<input type="number" name="quantidade" min="0.0001" step="0.0001" value="${falta}" required /></label>
+              <button type="submit">Dar baixa</button>
+            </form>` : ''}
+          <div class="table-scroll">
+            <table class="table table-actions">
+              <thead><tr><th>Data</th><th>Quantidade</th><th>Por</th><th>Situação</th><th></th></tr></thead>
+              <tbody>
+                ${baixas.length ? baixas.map((b) => `
+                  <tr${b.estornada ? ' class="is-cancelado"' : ''}>
+                    <td>${C.formatDate(b.date)}</td>
+                    <td>${qtd(b.quantidade)}</td>
+                    <td>${C.escape(b.criadoPor || '-')}</td>
+                    <td>${b.estornada ? C.badge('Desfeita', 'muted') : C.badge('Ativa', 'success')}</td>
+                    <td>${b.estornada ? '' : `<button type="button" class="secondary" data-desfazer-baixa="${C.escape(b.id)}">Desfazer</button>`}</td>
+                  </tr>`).join('') : '<tr><td colspan="5" class="muted">Nenhuma baixa.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+          <div class="modal-actions"><button type="button" class="btn-muted" id="pcpMontagemFechar">Fechar</button></div>
+        </div>`;
+      overlay.querySelector('#pcpMontagemFechar')?.addEventListener('click', fechar);
+      overlay.querySelector('#pcpMontagemForm')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const botao = event.target.querySelector('button[type="submit"]');
+        const quantidade = Number(new FormData(event.target).get('quantidade') || 0);
+        if (!(quantidade > 0)) { showToast('Informe quantas foram montadas.', 'warning'); return; }
+        botao.disabled = true;
+        try {
+          await api('/api/pcp/baixas', { method: 'POST', body: JSON.stringify({ ordemId: ordem.id, quantidade }) });
+          mudou = true;
+          showToast(`Baixa de ${qtd(quantidade)} feita: saiu do desmontado e entrou no montado.`, 'success');
+          await carregar();
+          desenhar();
+        } catch (erro) {
+          botao.disabled = false;
+          showToast(erro.message || 'Erro ao dar baixa.', 'error');
+        }
+      });
+      overlay.querySelectorAll('[data-desfazer-baixa]').forEach((botao) => {
+        botao.addEventListener('click', async () => {
+          botao.disabled = true;
+          try {
+            await api(`/api/pcp/baixas/${encodeURIComponent(botao.dataset.desfazerBaixa)}`, { method: 'DELETE' });
+            mudou = true;
+            showToast('Baixa desfeita: voltou para o desmontado.', 'success');
+            await carregar();
+            desenhar();
+          } catch (erro) {
+            botao.disabled = false;
+            showToast(erro.message || 'Erro ao desfazer a baixa.', 'error');
+          }
+        });
+      });
+    };
+    try {
+      await carregar();
+    } catch (erro) {
+      showToast(erro.message || 'Erro ao carregar as baixas.', 'error');
+      return;
+    }
+    document.getElementById('pcpMontagemModal')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'pcpMontagemModal';
+    overlay.className = 'modal-overlay';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (event) => { if (event.target === overlay) fechar(); });
+    desenhar();
+  }
+
   // ------------------------------------------------------ Ordens de produção
   R.ordens = C.makeListScreen({
     ...baseComRepresentantes,
@@ -74,7 +181,15 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     editStateKey: 'pcpEditOrderId',
     searchFields: ['notes'],
     searchPlaceholder: 'Observação',
+    rowActions: [{
+      icon: ICONE_MONTAGEM,
+      title: 'Montagem: dar baixa e ver as baixas',
+      tone: 'edit',
+      visivel: (item) => item.tipo === 'montagem',
+      run: abrirMontagemDaOrdem
+    }],
     filters: [
+      { name: 'tipo', label: 'Tipo', type: 'select', options: TIPOS_OP },
       { name: 'status', label: 'Etapa', type: 'select', options: ETAPAS_OP },
       { name: 'sectorId', label: 'Setor', type: 'select', options: (meta) => meta.sectors || [] },
       { name: 'statusId', label: 'Status', type: 'select', options: (meta) => meta.statuses || [] },
@@ -82,7 +197,8 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     ],
     columns: [
       { label: 'OP', render: (i) => `<strong>${C.escape(i.code || i.id.slice(-6))}</strong>` },
-      { label: 'Produto', render: nomeProduto },
+      { label: 'Tipo', render: (i) => (i.tipo === 'montagem' ? C.badge('Montagem', 'warning') : C.badge('Produção', 'info')) },
+      { label: 'Produto', render: (i, meta) => `${nomeProduto(i, meta)}${i.classValueId ? ` <span class="muted">· ${nomeDe(meta.cores, i.classValueId)}</span>` : ''}` },
       { label: 'Setor', render: (i, meta) => nomeDe(meta.sectors, i.sectorId) },
       { label: 'Representante', render: (i, meta) => nomeDe(meta.representantes, i.representanteId) },
       { label: 'Previsto', render: (i) => qtd(i.quantity) },
@@ -120,7 +236,9 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         title: 'Ordem',
         fields: [
           { name: 'code', label: 'Número da OP', type: 'number', min: 1 },
+          { name: 'tipo', label: 'Tipo', type: 'select', empty: null, default: 'producao', options: TIPOS_OP },
           { name: 'productId', label: 'Produto', type: 'select', required: true, options: (meta) => meta.products || [] },
+          { name: 'classValueId', label: 'Cor (montagem)', type: 'select', empty: 'Sem cor', options: (meta) => meta.cores || [] },
           { name: 'sectorId', label: 'Setor', type: 'select', empty: 'Sem setor', options: (meta) => meta.sectors || [] },
           { name: 'representanteId', label: 'Representante', type: 'select', empty: 'Sem representante', options: (meta) => meta.representantes || [] }
         ]

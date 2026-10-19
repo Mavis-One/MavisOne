@@ -62,6 +62,16 @@
       .findIndex((item) => item && ehVeiculo(ncmDoItem(item)) && !String(item.chassi || '').trim());
   }
 
+  // MONTADO OU DESMONTADO NO PRODUTO QUE CONTROLA MONTAGEM (fase ER,
+  // 17/10/2026): o item diz de qual saldo sai. `montagemDoItem(item)` diz se o
+  // produto da linha controla montagem; sem ele, não confere.
+  const CONDICOES = ['desmontado', 'montado'];
+  function itemSemCondicao(itens, montagemDoItem) {
+    if (typeof montagemDoItem !== 'function') return -1;
+    return (Array.isArray(itens) ? itens : [])
+      .findIndex((item) => item && montagemDoItem(item) && !CONDICOES.includes(String(item.condicao || '').trim().toLowerCase()));
+  }
+
   /**
    * O primeiro campo obrigatório que falta, ou null.
    *
@@ -73,8 +83,11 @@
    * 'quote'): com eles, cartão sem NSU/Autorização também falta.
    *
    * `ncmDoItem`: com ele, veículo sem chassi também falta.
+   *
+   * `montagemDoItem`: com ele, item de produto que controla montagem sem
+   * Montado/Desmontado também falta.
    */
-  function faltando(registro, { categorias = [], total, formas, tipoRegistro, ncmDoItem } = {}) {
+  function faltando(registro, { categorias = [], total, formas, tipoRegistro, ncmDoItem, montagemDoItem } = {}) {
     const r = registro || {};
     for (const def of CAMPOS) {
       if (!String(r[def.campo] == null ? '' : r[def.campo]).trim()) return def;
@@ -87,6 +100,16 @@
         mensagem: `Informe o chassi de ${String(r.items[semChassi].name || 'veículo').trim()} (item ${semChassi + 1}).`,
         aba: 'dados',
         itemSemChassi: semChassi
+      };
+    }
+    const semCondicao = itemSemCondicao(r.items, montagemDoItem);
+    if (semCondicao >= 0) {
+      return {
+        campo: 'items',
+        rotulo: 'Condição',
+        mensagem: `Escolha se ${String(r.items[semCondicao].name || 'o produto').trim()} (item ${semCondicao + 1}) sai montado ou desmontado.`,
+        aba: 'dados',
+        itemSemCondicao: semCondicao
       };
     }
     const exige = categoriaVenda && typeof categoriaVenda.exigePagamento === 'function'
@@ -128,7 +151,7 @@
     return null;
   }
 
-  const api = { CAMPOS, faltando, temPagamento, cartaoSemNsu, ehVeiculo, itemSemChassi };
+  const api = { CAMPOS, faltando, temPagamento, cartaoSemNsu, ehVeiculo, itemSemChassi, itemSemCondicao };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisVendaObrigatorios = api;
 })(typeof window !== 'undefined' ? window : globalThis);

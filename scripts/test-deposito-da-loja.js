@@ -119,7 +119,9 @@ check('  redesenha o formulário (religa o depósito e atualiza o saldo)', /form
 // O erro corrigido: conferir contra depositosDaLoja(meta, loja, ATUAL) — que
 // devolve o atual como "(de outra loja)" — fazia o depósito antigo nunca sair.
 check('  confere contra os depósitos DA LOJA, sem o atual', /const daLojaNova = depositosDaLoja\(meta, valor, ''\);/.test(onSelect));
-check('matriz com dois depósitos: sugere o de montados (decisão do usuário)', /const montados = daLoja\.find\(\(d\) => d\.classificacao === 'montados'\);/.test(appSrc));
+// Fase ER (17/10/2026): os dois depósitos da matriz viraram um, o de montagem
+// — com mais de um na loja, é ele o sugerido.
+check('matriz com mais de um depósito: sugere o de montagem', /const deMontagem = daLoja\.find\(\(d\) => d\.classificacao === 'montagem'\);/.test(appSrc));
 check('  e depósito inativo não é sugerido', /String\(d\.status \|\| 'ativo'\)\.toLowerCase\(\) !== 'inativo'/.test(appSrc));
 // Trocar um deposito que JA serve a loja nova seria desfazer escolha do usuario.
 check('  e só troca se o atual não serve à loja nova', /precisaTrocar/.test(onSelect));

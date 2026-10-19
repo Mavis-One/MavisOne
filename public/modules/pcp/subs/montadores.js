@@ -27,7 +27,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
     let itensTodos = [];
     let jornadas = [];
     // Fase ED: os depósitos da baixa e as baixas do dia (para "desfazer").
-    let config = { depositoDesmontadasId: '', depositoMontadasId: '' };
+    let config = { depositoMontagemId: '', depositoMontagemNome: '' };
     let baixas = [];
     try {
       const [m, p, j, c, b] = await Promise.all([
@@ -55,7 +55,9 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       return window.MavisRotuloProduto ? window.MavisRotuloProduto.rotulo(p) : p.name;
     };
     const nomeOp = (id) => ((meta.orders || []).find((o) => o.id === id) || {}).name || '';
-    const depositosProntos = Boolean(config.depositoDesmontadasId && config.depositoMontadasId);
+    // Fase ER: um depósito só, o de montagem — a baixa troca desmontado por
+    // montado dentro dele.
+    const depositosProntos = Boolean(config.depositoMontagemId);
     // A última baixa ATIVA de cada linha — é a que o "Desfazer" estorna.
     const ultimaBaixa = (itemId) => baixas.filter((x) => x.programacaoId === itemId).slice(-1)[0] || null;
     const celulaBaixa = (l) => {
@@ -137,8 +139,8 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
           <div class="cadastro-section-body">
             <div class="pcp-mont-depositos" id="pcpMontDepositos">
               ${depositosProntos
-                ? `<span class="muted">Baixa:</span> <strong>${C.escape(config.depositoDesmontadasNome)}</strong> <span class="badge warning">desmontados</span> <span class="muted">→</span> <strong>${C.escape(config.depositoMontadasNome)}</strong> <span class="badge success">montados</span>`
-                : `<span class="pcp-montador-passou">Os depósitos de desmontados e montados da matriz não estão classificados.</span> <button type="button" class="secondary" id="pcpMontIrDepositos">Classificar em Cadastros › Depósitos</button>`}
+                ? `<span class="muted">Baixa em</span> <strong>${C.escape(config.depositoMontagemNome)}</strong>: <span class="badge warning">desmontado</span> <span class="muted">→</span> <span class="badge success">montado</span>`
+                : `<span class="pcp-montador-passou">O depósito de montagem da matriz não está classificado.</span> <button type="button" class="secondary" id="pcpMontIrDepositos">Classificar em Cadastros › Depósitos</button>`}
             </div>
             <form id="pcpMontForm" class="form-grid pcp-mont-novo">
               <label class="cadastro-field"><span>Dia</span>
@@ -276,7 +278,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         // o clique não fazia nada e o motivo só aparecia passando o mouse — no
         // celular, nem isso. Agora diz o que falta e leva até o campo.
         if (!depositosProntos) {
-          showToast('Antes de dar baixa, classifique os depósitos de desmontados e montados da matriz em Cadastros › Depósitos.', 'warning');
+          showToast('Antes de dar baixa, classifique o depósito de montagem da matriz em Cadastros › Depósitos.', 'warning');
           document.getElementById('pcpMontDepositos')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
           return;
         }
@@ -287,7 +289,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
         botao.disabled = true;
         try {
           await api('/api/pcp/baixas', { method: 'POST', body: JSON.stringify({ programacaoId: itemId, quantidade }) });
-          showToast(`Baixa de ${qtd(quantidade)} feita: saiu das desmontadas e entrou nas montadas.`, 'success');
+          showToast(`Baixa de ${qtd(quantidade)} feita: saiu do desmontado e entrou no montado.`, 'success');
           recarregar();
         } catch (erro) {
           botao.disabled = false;
@@ -299,7 +301,7 @@ window.MavisSubscreenRegistry.pcp = window.MavisSubscreenRegistry.pcp || {};
       botao.addEventListener('click', async () => {
         try {
           await api(`/api/pcp/baixas/${encodeURIComponent(botao.dataset.desfazer)}`, { method: 'DELETE' });
-          showToast('Baixa desfeita: voltou para as desmontadas.', 'success');
+          showToast('Baixa desfeita: voltou para o desmontado.', 'success');
           recarregar();
         } catch (erro) {
           showToast(erro.message || 'Erro ao desfazer a baixa.', 'error');

@@ -33,11 +33,13 @@ check('o depósito lê e grava a classificação', /classificacao: row\.classifi
 console.log('\n--- 2. servidor ---');
 const server = semComentarios(ler('server.js'));
 check('matriz = SAL INFINITY PLUS 43.792.899/0001-35', /const CNPJ_MATRIZ_DA_MONTAGEM = '43792899000135';/.test(server));
-check('classificação recusada fora da matriz', /if \(!ehEmpresaMatriz\(companyId\)\) return 'A classificação de montados e desmontados só vale para depósito da matriz/.test(server));
-check('  e uma de cada', /O depósito de \$\{classificacao\} já é o/.test(server));
+// Fase ER (17/10/2026): a classificação passou a ser uma só, 'montagem' — o
+// depósito onde o desmontado vira montado.
+check('classificação recusada fora da matriz', /if \(!ehEmpresaMatriz\(companyId\)\) return 'O depósito de montagem só pode ser da matriz/.test(server));
+check('  e um só', /O depósito de montagem já é o/.test(server));
 check('criar e editar depósito conferem', (server.match(/recusaDaClassificacao\(classificacao, companyId, deposits, (null|id)\)/g) || []).length === 2);
 check('a lista diz quais são da matriz', /daMatriz: ehEmpresaMatriz\(d\.companyId\)/.test(server));
-check('a baixa usa os depósitos classificados', /const \{ depositoDesmontadasId: origem, depositoMontadasId: destino \} = await depositosDaMontagem\(\);/.test(server));
+check('a baixa usa o depósito classificado', /const \{ depositoMontagemId \} = await depositoDaMontagem\(\);/.test(server));
 check('  e não há mais como escolher outros pela API', !/insert into pcp_config/.test(server) && !/from pcp_config/.test(server));
 
 console.log('\n--- 3. telas ---');
@@ -45,7 +47,7 @@ const app = ler('public/app.js');
 check('Cadastros › Depósitos: campo de classificação só no depósito da matriz', /\$\{depositDraft\.daMatriz \? `[\s\S]{0,200}Classificação \(montagem PCP\)/.test(app));
 check('  e coluna "Montagem" na lista', /<th>Montagem<\/th>/.test(app));
 const mont = semComentarios(ler('public/modules/pcp/subs/montadores.js'));
-check('Montadores do Dia mostra de onde sai e para onde vai', /config\.depositoDesmontadasNome/.test(mont) && /config\.depositoMontadasNome/.test(mont));
+check('Montadores do Dia mostra onde a baixa acontece', /config\.depositoMontagemNome/.test(mont));
 check('  sem classificação: avisa e leva a Cadastros › Depósitos', /state\.activeSub = 'deposits';/.test(mont));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);

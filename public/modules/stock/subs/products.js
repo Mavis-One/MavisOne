@@ -110,6 +110,16 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
     return `<div class="stock-quebra-cor">${partes.join(' · ')}</div>`;
   }
 
+  // Fase ER: o produto que controla montagem mostra o montado e o desmontado.
+  function quebraPorCondicao(product) {
+    const c = product.conditionBalances;
+    if (!c) return '';
+    const partes = [['montado', 'Montado'], ['desmontado', 'Desmontado']]
+      .filter(([chave]) => Number(c[chave] || 0) > 0)
+      .map(([chave, rotulo]) => `${rotulo} ${S.formatQty(c[chave])}`);
+    return partes.length ? `<div class="stock-quebra-cor">${partes.join(' · ')}</div>` : '';
+  }
+
   async function fetchProducts() {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
@@ -335,7 +345,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
                     ${veCusto ? `<td>${S.formatBRL(product.costPrice)}</td>` : ''}
                     <td>${S.formatBRL(product.salePrice)}</td>
                     ${veCusto ? `<td>${Number(product.margin || 0).toFixed(1)}%</td>` : ''}
-                    <td>${S.qtdVisivel(product.stockQuantity)}${transitoDoProduto(product)}${quebraPorCor(product)}</td>
+                    <td>${S.qtdVisivel(product.stockQuantity)}${transitoDoProduto(product)}${quebraPorCor(product)}${quebraPorCondicao(product)}</td>
                     <td>${S.situationBadge(product.situation)}</td>
                     <td>${S.statusBadge(product.status)}</td>
                     <td>

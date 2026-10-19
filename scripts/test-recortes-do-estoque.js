@@ -80,8 +80,9 @@ check('  e as fábricas repassam `semProdutos`',
 const rotaMeta = pedacoDaRota("pathname === '/api/stock/meta' && req.method === 'GET'");
 check('a rota lê `produtos=0`', /const querProdutos = url\.searchParams\.get\('produtos'\) !== '0';/.test(rotaMeta));
 check('  sem o contexto inteiro (razão, pessoas, select *)', !/loadStockContext\(/.test(rotaMeta) && !/syncCadastroData/.test(rotaMeta));
-check('  com o produto em cinco colunas, na ordem de getProducts',
-  /querProdutos \? db\.getProductsResumidos\('id, name, sku, cost_price, sale_price'\) : \[\]/.test(rotaMeta));
+// (Seis desde a fase ER: controla_montagem, para Montado/Desmontado.)
+check('  com o produto em seis colunas, na ordem de getProducts',
+  /querProdutos \? db\.getProductsResumidos\('id, name, sku, cost_price, sale_price, controla_montagem'\) : \[\]/.test(rotaMeta));
 
 // ---------------------------------------------------------------------------
 console.log('\n--- 1b. PCP e Contratos: o mesmo, nos metas genéricos ---');
@@ -117,7 +118,7 @@ const metaGenerico = servidor.slice(servidor.indexOf("if (nomeRecurso === 'meta'
 // O SKU entrou em 12/10/2026 (fase EB): é o código do modelo, e o campo de
 // busca mostra e procura por ele. Continua sendo um recorte, não `select *`.
 check('o servidor do PCP lê `produtos=0` e manda id, nome e SKU',
-  /url\.searchParams\.get\('produtos'\) !== '0'/.test(metaGenerico) && /db\.getProductsResumidos\('id, name, sku'\)/.test(metaGenerico)
+  /url\.searchParams\.get\('produtos'\) !== '0'/.test(metaGenerico) && /db\.getProductsResumidos\('id, name, sku, controla_montagem'\)/.test(metaGenerico)
   && !/db\.getProducts\(\)/.test(metaGenerico));
 // O campo Cadastro do Novo Contrato vira busca pelo NOME (campo_de_busca.js) e
 // grava o id. Os outros nove campos do diretório não tinham leitor.

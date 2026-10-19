@@ -74,7 +74,7 @@ const servidor = ler('server.js');
 // pedido aprovado, que não se altera (test-chassi-obrigatorio.js,
 // test-titulos-na-aprovacao.js).
 check('na criação e na edição, com as categorias cadastradas',
-  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \|\| travadoPorAprovacao \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\), total: computeSalesTotals\(items, body\)\.totalAmount, formas: loadData\(\)\.paymentMethods \|\| \[\], tipoRegistro: (?:type|current\.type), ncmDoItem: await ncmDosItensDaVenda\(body\.items\) \}\);/g) || []).length === 2);
+  (servidor.match(/const obrigatorioQueFalta = (?:vaiCancelar \|\| travadoPorAprovacao \? null : )?vendaObrigatorios\.faltando\(body, \{ categorias: await categoriasDaVendaParaRegra\(\), total: computeSalesTotals\(items, body\)\.totalAmount, formas: loadData\(\)\.paymentMethods \|\| \[\], tipoRegistro: (?:type|current\.type), ncmDoItem: await ncmDosItensDaVenda\(body\.items\), montagemDoItem: await montagemDosItensDaVenda\(body\.items\) \}\);/g) || []).length === 2);
 check('  menos para cancelar um pedido incompleto',
   /const vaiCancelar = salesStatus\.ehCancelado\(/.test(servidor) && /vaiCancelar \|\| travadoPorAprovacao \? null : vendaObrigatorios\.faltando\(body, /.test(servidor));
 
@@ -84,7 +84,7 @@ const app = ler('public/app.js');
   check(`rótulo "${rotulo}"`, app.includes(`<label>${rotulo}`) || app.includes(`campo-somente-leitura">${rotulo}`));
 });
 check('confere antes de salvar e leva à aba do campo',
-  /window\.MavisVendaObrigatorios\.faltando\(payload, \{ categorias: meta\.salesCategories \|\| \[\], total: computeTotals\(\)\.totalAmount, formas: meta\.paymentMethods \|\| \[\], tipoRegistro: recordType, ncmDoItem: \(item\) => produtoDoItem\(item\)\?\.ncm \}\)/.test(app) && /abrirAba\(obrigatorioQueFalta\.aba \|\| 'dados'\)/.test(app));
+  /window\.MavisVendaObrigatorios\.faltando\(payload, \{ categorias: meta\.salesCategories \|\| \[\], total: computeTotals\(\)\.totalAmount, formas: meta\.paymentMethods \|\| \[\], tipoRegistro: recordType, ncmDoItem: \(item\) => produtoDoItem\(item\)\?\.ncm, montagemDoItem: \(item\) => produtoDoItem\(item\)\?\.controlaMontagem === true \}\)/.test(app) && /abrirAba\(obrigatorioQueFalta\.aba \|\| 'dados'\)/.test(app));
 const html = ler('public/index.html');
 check('o script carrega antes do app.js',
   html.indexOf('shared/venda_obrigatorios.js') > 0 && html.indexOf('shared/venda_obrigatorios.js') < html.indexOf('src="/app.js"'));

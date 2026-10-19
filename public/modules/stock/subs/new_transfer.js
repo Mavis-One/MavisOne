@@ -67,22 +67,42 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
   // O saldo que importa é o DA COR escolhida no depósito de ORIGEM. Saber que
   // há 12 no Galpão A não diz se algum deles é preto — e transferir do depósito
   // errado só seria recusado no envio, com a lista inteira já montada.
-  function saldoNaOrigem(productId, classValueId) {
+  function saldoNaOrigem(productId, classValueId, condicao) {
     const info = cacheProduto.get(productId);
     const origem = origemSelecionada();
     if (!info?.detail || !origem) return null;
     const balance = (info.detail.balances || []).find((b) => b.depositId === origem);
     if (!balance) return 0;
+    // Fase ER: no produto que controla montagem, o saldo da condição.
+    if (condicao && balance.condicoes) return Number(balance.condicoes[condicao] || 0);
     if (!classValueId) return balance.quantity;
     const linha = (balance.classes || []).find((c) => c.classValueId === classValueId);
     return linha ? linha.quantity : 0;
   }
 
+  const ROTULO_CONDICAO = { montado: 'Montado', desmontado: 'Desmontado' };
+  // Fase ER: o produto que controla montagem viaja montado OU desmontado, e
+  // chega na mesma condição.
+  function campoCondicaoDoNovoItem(info) {
+    if (!info?.detail?.controlaMontagem) return '';
+    return `
+      <label class="transfer-item-classe">Condição
+        <select id="transferItemCondicao" required>
+          <option value="">Selecione</option>
+          ${['montado', 'desmontado'].map((c) => {
+            const saldo = saldoNaOrigem(produtoAtual, '', c);
+            const rotulo = saldo === null ? ROTULO_CONDICAO[c] : `${ROTULO_CONDICAO[c]} — ${S.formatQty(saldo)} disponível`;
+            return `<option value="${c}">${S.escape(rotulo)}</option>`;
+          }).join('')}
+        </select>
+      </label>`;
+  }
+
   function campoClasseDoNovoItem() {
     const info = produtoAtual ? cacheProduto.get(produtoAtual) : null;
-    if (!info?.classe) return '';
+    if (!info?.classe) return campoCondicaoDoNovoItem(info);
     const obrigatoria = info.classe.required !== false;
-    return `
+    return campoCondicaoDoNovoItem(info) + `
       <label class="transfer-item-classe">${S.escape(info.classe.name)}${obrigatoria ? '' : ' <span class="muted">(opcional)</span>'}
         <select id="transferItemClasse" ${obrigatoria ? 'required' : ''}>
           <option value="">${obrigatoria ? 'Selecione' : `Sem ${S.escape(info.classe.name.toLowerCase())}`}</option>
@@ -111,14 +131,14 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
           <thead><tr><th>Produto</th><th>Variação</th><th>Quantidade</th><th>Saldo na origem</th><th></th></tr></thead>
           <tbody>
             ${itens.map((item, indice) => {
-              const saldo = saldoNaOrigem(item.productId, item.classValueId);
+              const saldo = saldoNaOrigem(item.productId, item.classValueId, item.condicao);
               // Avisar aqui, e não só no envio: com a lista montada, um erro
               // genérico do servidor não diz QUAL linha está sem saldo.
               const falta = saldo !== null && item.quantity > saldo;
               return `
                 <tr${falta ? ' class="transfer-linha-alerta"' : ''}>
                   <td>${S.escape(item.productName)}</td>
-                  <td>${item.classLabel ? S.escape(item.classLabel) : '<span class="muted">—</span>'}</td>
+                  <td>${[item.classLabel, ROTULO_CONDICAO[item.condicao]].filter(Boolean).map(S.escape).join(' · ') || '<span class="muted">—</span>'}</td>
                   <td>${S.formatQty(item.quantity)}</td>
                   <td>${saldo === null ? '<span class="muted">—</span>' : `${S.formatQty(saldo)}${falta ? ' <span class="finance-badge finance-badge-danger">insuficiente</span>' : ''}`}</td>
                   <td><button type="button" class="icon-button transfer-remover" data-indice="${indice}" title="Remover item" aria-label="Remover item">${S.trashIcon}</button></td>
@@ -174,12 +194,17 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
       showToast(`Selecione ${info.classe.name.toLowerCase()} deste produto.`, 'warning');
       return;
     }
+    const condicao = info?.detail?.controlaMontagem ? (document.getElementById('transferItemCondicao')?.value || '') : '';
+    if (info?.detail?.controlaMontagem && !condicao) {
+      showToast('Selecione se vai montado ou desmontado.', 'warning');
+      return;
+    }
 
-    // Mesma regra do servidor: produto + cor repetidos SOMAM. Duas linhas do
-    // mesmo item passariam nas duas validações contra o saldo inteiro e
-    // deixariam a origem negativa — e, na tela, duas linhas iguais só fazem
+    // Mesma regra do servidor: produto + cor (+ condição) repetidos SOMAM. Duas
+    // linhas do mesmo item passariam nas duas validações contra o saldo inteiro
+    // e deixariam a origem negativa — e, na tela, duas linhas iguais só fazem
     // quem confere contar duas vezes.
-    const existente = itens.find((i) => i.productId === productId && i.classValueId === classValueId);
+    const existente = itens.find((i) => i.productId === productId && i.classValueId === classValueId && (i.condicao || '') === condicao);
     if (existente) {
       existente.quantity += quantidade;
       showToast('Produto já estava na lista — as quantidades foram somadas.', 'info');
@@ -190,6 +215,7 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
         classId: classValueId ? (info?.classe?.classId || '') : '',
         classValueId,
         classLabel: classValueId ? (cores.get(classValueId)?.name || '') : '',
+        condicao,
         quantity: quantidade
       });
     }
@@ -269,7 +295,11 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
     });
 
     // O saldo é sempre relativo à origem: trocá-la muda a coluna inteira.
-    document.getElementById('transferOrigem')?.addEventListener('change', pintarItens);
+    document.getElementById('transferOrigem')?.addEventListener('change', () => {
+      pintarItens();
+      // O saldo de cada condição na linha de adicionar é o da origem (fase ER).
+      pintarCampoClasse();
+    });
     document.getElementById('transferAdicionar')?.addEventListener('click', adicionarItem);
 
     // Enter na quantidade adiciona, como em qualquer grade de itens. Sem isto o
@@ -312,7 +342,8 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
           productId: item.productId,
           quantity: item.quantity,
           classId: item.classId,
-          classValueId: item.classValueId
+          classValueId: item.classValueId,
+          condicao: item.condicao || ''
         }))
       };
       try {

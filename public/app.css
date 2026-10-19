@@ -4475,6 +4475,9 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 /* Veículo sem chassi (16/10/2026): obrigatório, e a borda mostra qual linha. */
 .sales-item-chassi.is-obrigatorio:placeholder-shown { border-color: var(--warning); }
+/* Montado/Desmontado (fase ER): sem escolha, a borda mostra qual linha. */
+.sales-item-condicao { min-width: 120px; }
+.sales-item-condicao.is-obrigatorio { border-color: var(--warning); }
 /* Nome do item editável no pedido (14/10/2026). */
 .sales-item-nome { width: 100%; min-width: 220px; }
 .sales-item-nome + .muted { display: block; margin-top: 2px; font-size: 0.8em; }
@@ -5079,6 +5082,15 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
      e a coluna parece torta. */
   font-variant-numeric: tabular-nums;
 }
+/* Fase ER: o saldo do depósito em montado e desmontado. */
+.estoque-card-condicao {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .estoque-card.tem-saldo {
   background: var(--success);
   color: var(--on-primary);
@@ -5236,3 +5248,16 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 .table .sales-ver-nota:hover { background: rgba(var(--text-rgb), 0.08); }
 .table .sales-ver-nota.is-cancelada { color: var(--muted); }
+
+/* Fase ER (17/10/2026): a janela da Ordem de Montagem (PCP › Ordens). */
+.pcp-montagem-modal { width: min(720px, calc(100vw - 32px)); }
+.pcp-montagem-resumo { display: grid; grid-template-columns: minmax(200px, 2fr) repeat(4, minmax(64px, 1fr)); gap: 10px; margin: 8px 0 14px; }
+@media (max-width: 600px) {
+  .pcp-montagem-resumo { grid-template-columns: repeat(2, 1fr); }
+  .pcp-montagem-resumo div:first-child { grid-column: span 2; }
+}
+.pcp-montagem-resumo div { display: flex; flex-direction: column; gap: 2px; }
+.pcp-montagem-resumo .muted { font-size: 0.8em; }
+.pcp-montagem-baixa { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.pcp-montagem-baixa label { display: flex; flex-direction: column; gap: 4px; }
+.pcp-montagem-modal tr.is-cancelado td { color: var(--muted); text-decoration: line-through; }

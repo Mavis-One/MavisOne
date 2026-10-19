@@ -224,11 +224,12 @@ check('e o motivo está escrito', /Varre o RAZÃO, e não a lista de valores/.te
 console.log('\n--- §21.3 e §21.4: saída não pode furar o saldo DA COR ---');
 // Validar só o total deixaria vender 10 pretos existindo 2 pretos e 8 brancos:
 // o total fecharia e o preto ficaria negativo.
-check('a saída valida o saldo da cor', /const disponivel = stockCore\.classValueBalance\(data, productId, classValueId, depositId\)/.test(serverSrc));
-check('e o erro nomeia a cor', /Saldo insuficiente de \$\{nome\} em \$\{deposit\.name\}/.test(serverSrc));
+// Fase ER: a mesma conferência, com a condição (montado/desmontado) quando há.
+check('a saída valida o saldo da cor', /const disponivel = stockCore\.classValueBalance\(data, productId, classValueId, depositId, cond\)/.test(serverSrc));
+check('e o erro nomeia a cor', /Saldo insuficiente de \$\{nome\}\$\{rotuloCond\} em \$\{deposit\.name\}/.test(serverSrc));
 check('o motivo está no código', /existindo 2 pretos e 8 brancos/.test(serverSrc));
 // Produto sem classe continua validando pelo total, como sempre (§9).
-check('sem cor, valida o total como antes', /const available = stockCore\.depositBalance\(data, productId, depositId\)/.test(serverSrc));
+check('sem cor, valida o total como antes', /const available = stockCore\.depositBalance\(data, productId, depositId, cond\)/.test(serverSrc));
 
 console.log('\n--- valor precisa ser um que o produto oferece ---');
 // Um id qualquer criaria saldo de uma cor que o produto não tem — e o total
@@ -245,12 +246,12 @@ console.log('\n--- §18: a cor atravessa a transferência ---');
 // vários produtos), então a cor vem de `item`, e não mais de `body`. O que estes
 // dois checks garantem é o mesmo de antes: a cor entra nos dois movimentos e é
 // ela que o saldo da origem confere.
-check('os dois movimentos levam a cor', /classId: item\.classId \|\| '',\s*\n\s*classValueId: item\.classValueId \|\| ''\s*\n\s*\};/.test(serverSrc));
+check('os dois movimentos levam a cor', /classId: item\.classId \|\| '',\s*\n\s*classValueId: item\.classValueId \|\| '',\s*\n\s*condicao: item\.condicao \|\| ''\s*\n\s*\};/.test(serverSrc));
 check('a transferência valida o saldo da cor na origem', /type: 'saida',\s*\n\s*quantity: item\.quantity,\s*\n\s*classValueId: item\.classValueId/.test(serverSrc));
 // Com vários itens na mesma movimentação, o mesmo produto+cor em duas linhas
 // seria conferido duas vezes contra o saldo INTEIRO: com 5 pretos, duas linhas
 // de 3 passariam nas duas validações e a origem terminaria negativa.
-check('  e itens repetidos somam antes de conferir', /const chave = `\$\{productId\}::\$\{classValueId\}`;/.test(serverSrc));
+check('  e itens repetidos somam antes de conferir', /const chave = `\$\{productId\}::\$\{classValueId\}::\$\{condicao\}`;/.test(serverSrc));
 // Validar-e-gravar item a item deixaria o quinto item sem saldo depois de os
 // quatro primeiros já terem saído da origem: meia movimentação.
 // A ancora mudou com a fase AP: a gravacao deixou de ser um push em array e
@@ -267,7 +268,7 @@ check('o registro da transferência guarda a cor', /tela de transferências list
 console.log('\n--- estorno respeita a cor ---');
 // Estornar a entrada de 10 pretos quando 8 já saíram deixaria o preto em -8,
 // mesmo com o total do produto positivo por causa das outras cores.
-check('estorno usa o saldo da cor', /movement\.classValueId\s*\n?\s*\? stockCore\.classValueBalance\(data, movement\.productId, movement\.classValueId, movement\.depositId\)/.test(serverSrc));
+check('estorno usa o saldo da cor', /movement\.classValueId\s*\n?\s*\? stockCore\.classValueBalance\(data, movement\.productId, movement\.classValueId, movement\.depositId, movement\.condicao\)/.test(serverSrc));
 
 console.log('\n--- §9: produto sem classe não muda ---');
 const semClasse = {
@@ -324,14 +325,14 @@ check('mas só o Estoque altera', /req\.method !== 'GET' && !user\.allowedModule
 console.log('\n--- §14: o faturamento baixa DA COR ---');
 // A projeção por produto deixaria faturar 3 pretos existindo 10 no total e 2
 // pretos: o total fecharia e o preto ficaria em -1.
-check('a projeção é por produto + cor', /const chaveItem = \(item\) => `\$\{item\.productId\}\|\$\{item\.classValueId \|\| ''\}`;/.test(serverSrc));
-check('e parte do saldo da cor', /item\.classValueId\s*\n\s*\? stockCore\.classValueBalance\(data, item\.productId, item\.classValueId\)/.test(serverSrc));
+check('a projeção é por produto + cor', /const chaveItem = \(item\) => `\$\{item\.productId\}\|\$\{item\.classValueId \|\| ''\}\|\$\{condDe\(item\)\}`;/.test(serverSrc));
+check('e parte do saldo da cor', /item\.classValueId\s*\n\s*\? stockCore\.classValueBalance\(data, item\.productId, item\.classValueId, undefined, cond\)/.test(serverSrc));
 check('o erro nomeia a cor', /\$\{cor \? ` \(\$\{cor\}\)` : ''\}/.test(serverSrc));
 // Item sem cor continua projetando pelo total — é todo produto sem classe.
-check('sem cor, projeta pelo total como antes', /: Number\(produtos\.get\(item\.productId\)\?\.stockQuantity \|\| 0\)\);/.test(serverSrc));
+check('sem cor, projeta pelo total como antes', /: Number\(produtos\.get\(item\.productId\)\?\.stockQuantity \|\| 0\)\)\);/.test(serverSrc));
 // O movimento gerado pela venda precisa levar a cor, senão a baixa some da
 // quebra e o produto perde 3 sem nenhuma cor perder nada.
-check('o movimento da venda leva a cor', /classId: classId \|\| '',\s*\n\s*classValueId: classValueId \|\| '',\s*\n\s*quantity: Math\.abs\(delta\)/.test(serverSrc));
+check('o movimento da venda leva a cor', /classId: classId \|\| '',\s*\n\s*classValueId: classValueId \|\| '',[\s\S]{0,160}quantity: Math\.abs\(delta\)/.test(serverSrc));
 // Estornar para o saldo sem cor deixaria a cor devendo para sempre.
 check('o estorno devolve para a mesma cor', /O estorno devolve para a MESMA cor/.test(serverSrc));
 
@@ -342,7 +343,7 @@ const movSrc = ler('public/modules/stock/subs/new_movement.js');
 check('a movimentação envia a cor de cada item', /classValueId: item\.classValueId/.test(movSrc));
 // O saldo por cor é por depósito: "8 pretos" que estão em outro galpão faria a
 // saída ser recusada depois de preenchida.
-check('o saldo da cor segue o depósito escolhido', /const deposito = depositoEscolhido\(\);[\s\S]{0,300}const linha = \(balance\.classes \|\| \[\]\)\.find\(\(c\) => c\.classValueId === classValueId\);/.test(movSrc));
+check('o saldo da cor segue o depósito escolhido', /const deposito = depositoEscolhido\(\);[\s\S]{0,450}const linha = \(balance\.classes \|\| \[\]\)\.find\(\(c\) => c\.classValueId === classValueId\);/.test(movSrc));
 check('e trocar de depósito repinta a cor e a lista', /getElementById\('movementDeposit'\)\?\.addEventListener\('change', \(\) => \{\s*pintarCampoClasse\(\);\s*pintarItens\(\);/.test(movSrc));
 // Na entrada não há nada a decidir pelo saldo; o número só polui o rótulo.
 check('o saldo só aparece na saída', /const saldo = type === 'saida' \? saldoNoDeposito\(produtoAtual, valor\.id\) : null;/.test(movSrc)

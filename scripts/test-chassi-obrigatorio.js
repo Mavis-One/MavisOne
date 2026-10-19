@@ -42,12 +42,12 @@ console.log('\n--- 2. o servidor recusa na gravação ---');
 const servidor = ler('server.js');
 check('o NCM vem só dos produtos da venda',
   /async function ncmDosItensDaVenda\(itens\) \{[\s\S]{0,200}const produtos = await db\.getProductsEmMapaPorIds\(ids\);/.test(servidor));
-check('  na criação e na alteração', (servidor.match(/ncmDoItem: await ncmDosItensDaVenda\(body\.items\) \}\);/g) || []).length === 2);
+check('  na criação e na alteração', (servidor.match(/ncmDoItem: await ncmDosItensDaVenda\(body\.items\), montagemDoItem: await montagemDosItensDaVenda\(body\.items\) \}\);/g) || []).length === 2);
 check('  e cancelar continua sem conferir', /const obrigatorioQueFalta = vaiCancelar(?: \|\| travadoPorAprovacao)? \? null : vendaObrigatorios\.faltando\(/.test(servidor));
 
 console.log('\n--- 3. a tela ---');
 const app = ler('public/app.js');
-check('confere antes de salvar, com o NCM do catálogo', /tipoRegistro: recordType, ncmDoItem: \(item\) => produtoDoItem\(item\)\?\.ncm \}\);/.test(app));
+check('confere antes de salvar, com o NCM do catálogo', /tipoRegistro: recordType, ncmDoItem: \(item\) => produtoDoItem\(item\)\?\.ncm, montagemDoItem: /.test(app));
 check('  e leva ao chassi que falta', /if \(obrigatorioQueFalta\.itemSemChassi !== undefined\) content\.querySelector\(`\.sales-item-chassi\[data-index="\$\{obrigatorioQueFalta\.itemSemChassi\}"\]`\)\?\.focus\(\);/.test(app));
 check('o campo do veículo diz "Obrigatório"', /placeholder="\$\{window\.MavisVendaObrigatorios\.ehVeiculo\(produto\?\.ncm\) \? 'Obrigatório' : '—'\}"/.test(app));
 check('  e a borda marca o vazio', /\.sales-item-chassi\.is-obrigatorio:placeholder-shown \{ border-color: var\(--warning\); \}/.test(fs.readFileSync(path.join(__dirname, '..', 'public/app.css'), 'utf8')));

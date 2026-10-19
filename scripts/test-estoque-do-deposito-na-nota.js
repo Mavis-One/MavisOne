@@ -39,8 +39,14 @@ const contexto = {
   regraDaCategoriaDoPedido: async (cat) => ({ alteraEstoque: cat !== 'BONIFICACAO' }),
   loadData: () => ({}),
   sincronizarRazao: async () => {},
-  db: { getProductById: async (id) => produtos[id] || null },
-  stockCore: { classValueBalance: (_d, id, cor) => (id === 'P2' && cor === 'PRETO' ? 6 : 0) },
+  // Fase ER: os produtos do pedido numa ida só, e a condição de montagem (estes
+  // não controlam: condição vazia, a conta de antes).
+  db: {
+    getProductById: async (id) => produtos[id] || null,
+    getProdutosPorIds: async (ids) => new Map(ids.filter((id) => produtos[id]).map((id) => [id, produtos[id]]))
+  },
+  condicaoDoItemDaVenda: () => '',
+  stockCore: { classValueBalance: (_d, id, cor) => (id === 'P2' && cor === 'PRETO' ? 6 : 0), ROTULO_CONDICAO: {} },
   consultarBanco: async (sql, params) => ({ rows: /from deposits/.test(sql) ? [{ name: params[0] === 'LOJA-B' ? 'Depósito Marcolla' : 'Loja A' }] : [] }),
   razaoEstoque: {
     saldosPorDeposito: async (_c, pares) => new Map(pares.map((p) => {

@@ -63,7 +63,7 @@ console.log('\n--- 5. servidor ---');
 const server = semComentarios(ler('server.js'));
 check('mensagem em português antes do UNIQUE/CHECK (criar e editar)', (server.match(/await recusaDoPlanejamentoPcp\(recurso, corpo, (null|id)\)/g) || []).length === 2);
 check('  segundo tempo para o mesmo produto é recusado', /Este produto já tem tempo de produção cadastrado/.test(server));
-check('meta do PCP leva SKU, tempos e a jornada do setor', /getProductsResumidos\('id, name, sku'\)/.test(server) && /apoio\.tempos = tempos\.map/.test(server) && /jornadaHoras: s\.jornadaHoras/.test(server));
+check('meta do PCP leva SKU, tempos e a jornada do setor', /getProductsResumidos\('id, name, sku, controla_montagem'\)/.test(server) && /apoio\.tempos = tempos\.map/.test(server) && /jornadaHoras: s\.jornadaHoras/.test(server));
 
 console.log('\n--- 6. telas ---');
 const app = ler('public/app.js');

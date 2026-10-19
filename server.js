@@ -2932,6 +2932,10 @@ function normalizeSalesItems(rawItems) {
         // "9BW123" são o mesmo chassi, e guardar os dois formatos faria a busca
         // por chassi não achar metade das vendas.
         chassi: String(item.chassi || '').replace(/\s+/g, '').toUpperCase().slice(0, 25),
+        // Fase ER (17/10/2026): do saldo MONTADO ou DESMONTADO, no produto que
+        // controla montagem. Vazio nos outros.
+        condicao: ['desmontado', 'montado'].includes(String(item.condicao || '').trim().toLowerCase())
+          ? String(item.condicao).trim().toLowerCase() : '',
         quantity,
         unitPrice,
         total: Math.round(quantity * unitPrice * 100) / 100
@@ -2964,6 +2968,16 @@ async function ncmDosItensDaVenda(itens) {
   return (item) => {
     const produto = item && produtos.get(item.productId);
     return produto ? produto.ncm : '';
+  };
+}
+
+/** Fase ER: se o produto de cada item controla montagem (Montado/Desmontado obrigatório). */
+async function montagemDosItensDaVenda(itens) {
+  const ids = (Array.isArray(itens) ? itens : []).map((item) => item && item.productId).filter(Boolean);
+  const produtos = await db.getProductsEmMapaPorIds(ids);
+  return (item) => {
+    const produto = item && produtos.get(item.productId);
+    return Boolean(produto && produto.controlaMontagem);
   };
 }
 
@@ -3140,7 +3154,7 @@ function computeSalesTotals(items, body = {}) {
 //
 // `motivo` guarda a semântica antiga ('venda'/'compra'/'estorno'), que se
 // perderia no mapeamento para entrada/saída.
-function registrarMovimentoEstoque(data, { productId, productName, type, quantityDelta, referenceType, referenceId, note, user, classId, classValueId, depositId }) {
+function registrarMovimentoEstoque(data, { productId, productName, type, quantityDelta, referenceType, referenceId, note, user, classId, classValueId, depositId, condicao }) {
   const delta = Number(quantityDelta || 0);
   // FASE BD: O DEPÓSITO DE QUEM ORIGINOU O MOVIMENTO VEM PRIMEIRO.
   //
@@ -3171,6 +3185,8 @@ function registrarMovimentoEstoque(data, { productId, productName, type, quantit
     // fecharia: o produto perderia 3 unidades e nenhuma cor perderia nada.
     classId: classId || '',
     classValueId: classValueId || '',
+    // Fase ER: de qual saldo sai (ou para qual volta) — montado ou desmontado.
+    condicao: stockCore.normalizarCondicao(condicao),
     quantity: Math.abs(delta),
     unitCost: 0,
     categoryId: '',
@@ -3203,13 +3219,27 @@ function registrarMovimentoEstoque(data, { productId, productName, type, quantit
  * nenhum movimento de venda ou compra guardava depósito. Quem chama cai no
  * depósito do documento.
  */
-function depositoDoMovimentoDeOrigem(data, { referenceType, referenceId, productId, classValueId, motivo }) {
-  const movimento = (data.stockMovements || []).find((m) => m.referenceType === referenceType
+function movimentoDeOrigem(data, { referenceType, referenceId, productId, classValueId, motivo }) {
+  return (data.stockMovements || []).find((m) => m.referenceType === referenceType
     && m.referenceId === referenceId
     && m.productId === productId
     && String(m.classValueId || '') === String(classValueId || '')
-    && m.motivo === motivo);
+    && m.motivo === motivo) || null;
+}
+function depositoDoMovimentoDeOrigem(data, filtro) {
+  const movimento = movimentoDeOrigem(data, filtro);
   return movimento ? movimento.depositId || '' : '';
+}
+
+/**
+ * A condição de que o item da venda sai (fase ER): a escolhida no item; no
+ * produto que controla montagem e item gravado sem ela (antes de 17/10/2026),
+ * MONTADO — é o que todo saldo de antes virou, por decisão do usuário. '' no
+ * produto que não controla.
+ */
+function condicaoDoItemDaVenda(item, produto) {
+  if (!produto || !produto.controlaMontagem) return '';
+  return stockCore.normalizarCondicao(item.condicao) || 'montado';
 }
 
 // Estoque só é afetado de verdade quando um PEDIDO (não orçamento — orçamento
@@ -3264,14 +3294,20 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
   // Item sem cor continua projetando contra o saldo TOTAL do produto — é o caso
   // de todo produto que não usa classe, e também dos itens gravados antes de
   // este controle existir.
-  const chaveItem = (item) => `${item.productId}|${item.classValueId || ''}`;
+  // Fase ER: e por CONDIÇÃO, no produto que controla montagem — vender 2
+  // desmontados existindo 5 montados e nenhum desmontado é recusado.
+  const condDe = (item) => condicaoDoItemDaVenda(item, produtos.get(item.productId));
+  const chaveItem = (item) => `${item.productId}|${item.classValueId || ''}|${condDe(item)}`;
   const projetado = new Map();
   const semear = (item) => {
     const chave = chaveItem(item);
+    const cond = condDe(item);
     if (!projetado.has(chave)) {
       projetado.set(chave, item.classValueId
-        ? stockCore.classValueBalance(data, item.productId, item.classValueId)
-        : Number(produtos.get(item.productId)?.stockQuantity || 0));
+        ? stockCore.classValueBalance(data, item.productId, item.classValueId, undefined, cond)
+        : (cond
+          ? stockCore.conditionBalances(data, item.productId)[cond]
+          : Number(produtos.get(item.productId)?.stockQuantity || 0)));
     }
     return chave;
   };
@@ -3289,7 +3325,8 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
       const disponivel = projetado.get(chave);
       const restante = disponivel - Number(item.quantity || 0);
       if (restante < 0) {
-        const cor = item.classValueName || item.classValueId;
+        const cor = [item.classValueName || item.classValueId, condDe(item) ? stockCore.ROTULO_CONDICAO[condDe(item)].toLowerCase() : '']
+          .filter(Boolean).join(', ');
         const err = new Error(`Estoque insuficiente para "${item.name}"${cor ? ` (${cor})` : ''} (disponível: ${disponivel}, necessário: ${item.quantity}).`);
         err.status = 400;
         throw err;
@@ -3323,6 +3360,11 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
           referenceType: 'order', referenceId: record.id, motivo: 'venda',
           productId: item.productId, classValueId: item.classValueId
         }) || record.depositId,
+        // E para a MESMA condição (fase ER): a de que a venda saiu, pelo razão.
+        condicao: (movimentoDeOrigem(data, {
+          referenceType: 'order', referenceId: record.id, motivo: 'venda',
+          productId: item.productId, classValueId: item.classValueId
+        }) || {}).condicao || condicaoDoItemDaVenda(item, produto),
         note: `Estorno do pedido ${record.code || record.id}`, user
       });
     }
@@ -3345,6 +3387,7 @@ async function transitionOrderStockEffect(data, { oldItems, newItems, wasApplied
         // O depósito escolhido no pedido. Sem isto a baixa nascia "não
         // alocada" e o depósito seguia com o saldo cheio (fase BD).
         depositId: record.depositId,
+        condicao: condicaoDoItemDaVenda(item, produtoAtual),
         note: `Pedido ${record.code || record.id}`, user
       });
     }
@@ -5030,7 +5073,7 @@ async function excluirEntradaDeNfe(id, user, { devolverXml = false } = {}) {
   // de antes, pelo documento "NF-e n/s" — o mesmo critério de resumoDaEntrada.
   const idsProdutos = [...new Set(entrada.itens.map((i) => i.produtoId).filter(Boolean))];
   const { rows: movimentos } = await consultarBanco(
-    `select product_id, deposit_id, class_id, class_value_id, quantity, unit_cost from stock_movements
+    `select product_id, deposit_id, class_id, class_value_id, condicao, quantity, unit_cost from stock_movements
       where type = 'entrada'
         and (reference_id = $1
              or (reference_id = '' and origin = 'entrada-nfe' and document = $2
@@ -5047,6 +5090,8 @@ async function excluirEntradaDeNfe(id, user, { devolverXml = false } = {}) {
     depositId: m.deposit_id,
     classId: m.class_id || '',
     classValueId: m.class_value_id || '',
+    // Fase ER: sai da condição em que a nota entrou (desmontado).
+    condicao: m.condicao || '',
     quantity: Number(m.quantity || 0),
     unitCost: Number(m.unit_cost || 0),
     document: nota,
@@ -7156,6 +7201,9 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
       quantityDelta: arredondado,
       referenceType: 'producao',
       referenceId: ordem.id,
+      // Fase ER: o produzido sai pronto (montado); o componente que controla
+      // montagem é consumido do desmontado. O commit limpa nos outros.
+      condicao: produtoId === ordem.productId ? 'montado' : 'desmontado',
       note: produtoId === ordem.productId
         ? `Produção da OP ${ordem.code || ordem.id.slice(-6)}`
         : `Consumo na OP ${ordem.code || ordem.id.slice(-6)}`,
@@ -7194,7 +7242,9 @@ async function aplicarConsumoDeProducao(data, { ordem, delta, user }) {
  * a SAL INFINITY PLUS 43.792.899/0001-35; as empresas moram no data/db.json.
  */
 const CNPJ_MATRIZ_DA_MONTAGEM = '43792899000135';
-const CLASSIFICACOES_DE_DEPOSITO = ['desmontados', 'montados'];
+// Fase ER (17/10/2026): os dois depósitos viraram UM, o DE MONTAGEM — o
+// desmontado e o montado moram no mesmo lugar, e a condição é do saldo.
+const CLASSIFICACOES_DE_DEPOSITO = ['montagem'];
 
 function ehEmpresaMatriz(companyId) {
   if (!companyId) return false;
@@ -7205,24 +7255,51 @@ function ehEmpresaMatriz(companyId) {
 /** '' quando aceita; senão a mensagem. Um depósito de cada classificação. */
 function recusaDaClassificacao(classificacao, companyId, depositos, idAtual) {
   if (!classificacao) return '';
-  if (!CLASSIFICACOES_DE_DEPOSITO.includes(classificacao)) return 'Classificação inválida: use desmontados ou montados.';
-  if (!ehEmpresaMatriz(companyId)) return 'A classificação de montados e desmontados só vale para depósito da matriz (SAL INFINITY PLUS 43.792.899/0001-35).';
+  if (!CLASSIFICACOES_DE_DEPOSITO.includes(classificacao)) return 'Classificação inválida: use montagem.';
+  if (!ehEmpresaMatriz(companyId)) return 'O depósito de montagem só pode ser da matriz (SAL INFINITY PLUS 43.792.899/0001-35).';
   const outro = (depositos || []).find((d) => d.classificacao === classificacao && d.id !== idAtual);
-  if (outro) return `O depósito de ${classificacao} já é o "${outro.name}". Tire a classificação dele antes.`;
+  if (outro) return `O depósito de montagem já é o "${outro.name}". Tire a classificação dele antes.`;
   return '';
 }
 
-/** Os depósitos que a baixa de montagem usa (origem e destino). */
-async function depositosDaMontagem() {
+/**
+ * O depósito onde a baixa de montagem troca DESMONTADO por MONTADO (fase ER).
+ * Antes eram dois (origem e destino); a união deixou um só.
+ */
+async function depositoDaMontagem() {
   const depositos = await db.getDeposits();
-  const desm = depositos.find((d) => d.classificacao === 'desmontados') || null;
-  const mont = depositos.find((d) => d.classificacao === 'montados') || null;
-  return {
-    depositoDesmontadasId: desm ? desm.id : '',
-    depositoDesmontadasNome: desm ? desm.name : '',
-    depositoMontadasId: mont ? mont.id : '',
-    depositoMontadasNome: mont ? mont.name : ''
-  };
+  const dep = depositos.find((d) => d.classificacao === 'montagem' && String(d.status || 'ativo') !== 'inativo') || null;
+  return { depositoMontagemId: dep ? dep.id : '', depositoMontagemNome: dep ? dep.name : '' };
+}
+
+/**
+ * A ORDEM DE MONTAGEM (fase ER): OP de tipo 'montagem', de produto que controla
+ * montagem. '' quando aceita; senão a mensagem. `atual` é a ordem gravada (no
+ * PUT o corpo pode trazer só parte dos campos).
+ */
+async function recusaDaOrdemDeMontagem(corpo, atual) {
+  const valor = (campo) => (corpo[campo] === undefined ? atual?.[campo] : corpo[campo]);
+  const tipo = String(valor('tipo') || 'producao');
+  const feito = Number(atual?.quantityDone || 0);
+  if (atual && atual.tipo === 'montagem' && tipo !== 'montagem' && feito > 0) {
+    return 'Esta ordem de montagem já tem baixa: desfaça as baixas antes de trocar o tipo.';
+  }
+  if (tipo !== 'montagem') return '';
+  const produto = await db.getProductById(String(valor('productId') || ''));
+  if (!produto) return 'Escolha o produto.';
+  if (!produto.controlaMontagem) {
+    return `"${produto.name}" não controla montagem: marque "Controla montagem" no cadastro do produto, ou use uma ordem de produção.`;
+  }
+  if (Number(valor('quantity') || 0) + 1e-9 < feito) {
+    return `Esta ordem já tem ${feito.toLocaleString('pt-BR')} montadas: a quantidade não pode ficar abaixo disso.`;
+  }
+  if (atual && feito > 0 && String(valor('status') || '') === 'cancelada') {
+    return 'Ordem de montagem com baixa não se cancela: desfaça as baixas antes.';
+  }
+  if (atual && feito > 0 && String(valor('classValueId') || '') !== String(atual.classValueId || '')) {
+    return 'Esta ordem de montagem já tem baixa: a cor não muda mais.';
+  }
+  return '';
 }
 
 /**
@@ -7299,6 +7376,11 @@ async function ordemAceitaApontamento(ordemId) {
   if (!ordemId) return '';
   const ordem = await modulosDb.obter('pcp/orders', ordemId);
   if (!ordem) return '';
+  // Fase ER: na ordem de montagem, o apontamento é a baixa de montagem (troca
+  // desmontado por montado), não o consumo da ficha técnica.
+  if (ordem.tipo === 'montagem') {
+    return `A ordem ${ordem.code || ordemId} é de montagem: aponte pela baixa de montagem, na lista de ordens.`;
+  }
   const status = String(ordem.status || '').toLowerCase();
   if (status === 'cancelada') {
     return `A ordem ${ordem.code || ordemId} está cancelada e não aceita apontamento. `
@@ -8072,11 +8154,15 @@ async function itensSemEstoqueParaFaturar(pedido) {
   const regra = await regraDaCategoriaDoPedido(pedido.category);
   if (!regra.alteraEstoque) return [];
   const data = loadData();
+  // Fase ER: a condição entra na chave (o montado e o desmontado são saldos
+  // diferentes). O produto vem antes para saber se controla montagem.
+  const produtosDoPedido = await db.getProdutosPorIds((pedido.items || []).map((item) => item.productId));
   const precisa = new Map();
   for (const item of pedido.items || []) {
     if (!item.productId) continue;
-    const chave = `${item.productId}|${item.classValueId || ''}`;
-    const atual = precisa.get(chave) || { item, quantidade: 0 };
+    const condicao = condicaoDoItemDaVenda(item, produtosDoPedido.get(item.productId));
+    const chave = `${item.productId}|${item.classValueId || ''}|${condicao}`;
+    const atual = precisa.get(chave) || { item, quantidade: 0, condicao };
     atual.quantidade += Number(item.quantity || 0);
     precisa.set(chave, atual);
   }
@@ -8084,18 +8170,19 @@ async function itensSemEstoqueParaFaturar(pedido) {
   await sincronizarRazao(data);
   const faltando = [];
   const cobertos = [];
-  for (const { item, quantidade } of precisa.values()) {
-    const produto = await db.getProductById(item.productId);
+  for (const { item, quantidade, condicao } of precisa.values()) {
+    const produto = produtosDoPedido.get(item.productId);
     if (!produto || produto.movimentaEstoque === false) continue;
     const disponivel = item.classValueId
-      ? stockCore.classValueBalance(data, item.productId, item.classValueId)
-      : Number(produto.stockQuantity || 0);
-    const cor = item.classValueName || item.classValueId;
+      ? stockCore.classValueBalance(data, item.productId, item.classValueId, undefined, condicao)
+      : (condicao ? stockCore.conditionBalances(data, item.productId)[condicao] : Number(produto.stockQuantity || 0));
+    const cor = [item.classValueName || item.classValueId, condicao ? stockCore.ROTULO_CONDICAO[condicao].toLowerCase() : '']
+      .filter(Boolean).join(', ');
     const nome = `${item.name || produto.name}${cor ? ` (${cor})` : ''}`;
     if (disponivel < quantidade) {
       faltando.push({ nome, disponivel: Math.max(0, disponivel), quantidade });
     } else {
-      cobertos.push({ item, quantidade, nome, nomeDoProduto: item.name || produto.name });
+      cobertos.push({ item, quantidade, nome, nomeDoProduto: item.name || produto.name, condicao });
     }
   }
 
@@ -8116,13 +8203,14 @@ async function itensSemEstoqueParaFaturar(pedido) {
         atual.quantidade += quantidade;
         precisaNoDeposito.set(chave, atual);
       };
-      for (const { item, quantidade, nome, nomeDoProduto } of cobertos) {
-        somar(`${item.productId}|${deposito}|`, quantidade, nomeDoProduto);
-        if (item.classValueId) somar(`${item.productId}|${deposito}|${item.classValueId}`, quantidade, nome);
+      for (const { item, quantidade, nome, nomeDoProduto, condicao } of cobertos) {
+        const cond = condicao ? `|${condicao}` : '';
+        somar(`${item.productId}|${deposito}|${cond}`, quantidade, condicao ? nome : nomeDoProduto);
+        if (item.classValueId) somar(`${item.productId}|${deposito}|${item.classValueId}${cond}`, quantidade, nome);
       }
       const pares = [...precisaNoDeposito.keys()].map((chave) => {
-        const [produtoId, depositoId, classValueId] = chave.split('|');
-        return { produtoId, depositoId, classValueId };
+        const [produtoId, depositoId, classValueId, condicao] = chave.split('|');
+        return { produtoId, depositoId, classValueId, condicao: condicao || '' };
       });
       const saldos = await razaoEstoque.saldosPorDeposito(cliente, pares);
       const nomeDoDeposito = await consultarBanco('select name from deposits where id = $1', [deposito])
@@ -9935,6 +10023,8 @@ async function estornarRecebimentoDeCompra(data, { documento, novoStatus, user, 
       unitCost: item.unitCost,
       classId: item.classId,
       classValueId: item.classValueId,
+      // Fase ER: a compra recebida entra desmontada; o estorno tira de lá.
+      condicao: 'desmontado',
       referenceType: 'purchase-order-estorno',
       referenceId: documento.id,
       document: 'Ordem de Compra ' + (documento.code || documento.id),
@@ -10225,6 +10315,36 @@ async function commitStockMovements(data, movements, productsById, opcoes = {}) 
     for (const productId of [...deltaByProduct.keys()].sort()) {
       await razaoEstoque.travarProduto(cliente, productId);
     }
+    // ---------------------------------------------------------------
+    // FASE ER (17/10/2026): O DEPÓSITO UNIDO E A CONDIÇÃO DE MONTAGEM.
+    //
+    // Depósito unido a outro (o "Depósito Matriz - Montados", que virou o
+    // Depósito Matriz): o movimento novo que ainda aponte para ele — o estorno
+    // de uma venda feita de lá, o padrão de um produto — vai para o que vale.
+    // Aqui, e não em cada chamador, pelo mesmo motivo da guarda abaixo.
+    //
+    // Produto que controla montagem: todo movimento diz DESMONTADO ou MONTADO.
+    // Entrada sem condição é recebimento e entra desmontada (regra do 006);
+    // saída sem condição é recusada — tirar sem dizer de qual saldo é tirar de
+    // lugar nenhum. Nos outros produtos a condição é sempre vazia.
+    // ---------------------------------------------------------------
+    const unidos = await razaoEstoque.depositosUnidos(cliente);
+    const comMontagem = await razaoEstoque.produtosQueControlamMontagem(cliente,
+      [...deltaByProduct.keys(), ...transferencias.map((t) => t.productId)]);
+    for (const movimento of movements) {
+      if (unidos.has(movimento.depositId)) movimento.depositId = unidos.get(movimento.depositId);
+      if (!comMontagem.has(movimento.productId)) { movimento.condicao = ''; continue; }
+      const condicao = stockCore.normalizarCondicao(movimento.condicao);
+      if (condicao) { movimento.condicao = condicao; continue; }
+      if (movimento.type === 'entrada') { movimento.condicao = 'desmontado'; continue; }
+      const nome = movimento.productName || (productsById && productsById.get(movimento.productId)?.name) || movimento.productId;
+      throw stockCore.stockError(`"${nome}" controla montagem: informe se sai montado ou desmontado.`, 400);
+    }
+    for (const transferencia of transferencias) {
+      if (unidos.has(transferencia.originDepositId)) transferencia.originDepositId = unidos.get(transferencia.originDepositId);
+      if (unidos.has(transferencia.destinationDepositId)) transferencia.destinationDepositId = unidos.get(transferencia.destinationDepositId);
+      transferencia.condicao = comMontagem.has(transferencia.productId) ? stockCore.normalizarCondicao(transferencia.condicao) : '';
+    }
     for (const movimento of movements) {
       if (!movimento.code) movimento.code = await razaoEstoque.proximoCodigo(cliente, 'stock_movements_code_seq', 'MOV');
     }
@@ -10295,8 +10415,11 @@ async function commitStockMovements(data, movements, productsById, opcoes = {}) 
       const deposito = String(movimento.depositId || '').trim();
       if (!deposito) continue;
       const delta = stockCore.movementSignedQuantity(movimento);
-      const chaves = [`${movimento.productId}|${deposito}|`];
-      if (movimento.classValueId) chaves.push(`${movimento.productId}|${deposito}|${movimento.classValueId}`);
+      // Com condição (fase ER), cada uma é um saldo: o montado não cobre a
+      // venda do desmontado. As chaves ganham a quarta parte.
+      const cond = movimento.condicao ? `|${movimento.condicao}` : '';
+      const chaves = [`${movimento.productId}|${deposito}|${cond}`];
+      if (movimento.classValueId) chaves.push(`${movimento.productId}|${deposito}|${movimento.classValueId}${cond}`);
       for (const chave of chaves) {
         const atual = deltaPorDeposito.get(chave) || { delta: 0, movimento };
         deltaPorDeposito.set(chave, { delta: atual.delta + delta, movimento });
@@ -10306,8 +10429,8 @@ async function commitStockMovements(data, movements, productsById, opcoes = {}) 
     const aConferir = [...deltaPorDeposito.entries()].filter(([, v]) => v.delta < 0);
     if (aConferir.length) {
       const pares = aConferir.map(([chave]) => {
-        const [produtoId, depositoId, classValueId] = chave.split('|');
-        return { produtoId, depositoId, classValueId };
+        const [produtoId, depositoId, classValueId, condicao] = chave.split('|');
+        return { produtoId, depositoId, classValueId, condicao: condicao || '' };
       });
       const saldos = await razaoEstoque.saldosPorDeposito(cliente, pares);
       for (const [chave, { delta, movimento }] of aConferir) {
@@ -10317,7 +10440,9 @@ async function commitStockMovements(data, movements, productsById, opcoes = {}) 
         const nomeDoDeposito = (data.deposits || [])
           .find((d) => d.id === chave.split('|')[1]);
         const cor = chave.split('|')[2];
-        const nomeDaCor = cor ? ` (${movimento.classValueName || cor})` : '';
+        const condicaoDaChave = chave.split('|')[3] || '';
+        const nomeDaCor = (cor ? ` (${movimento.classValueName || cor})` : '')
+          + (condicaoDaChave ? ` ${stockCore.ROTULO_CONDICAO[condicaoDaChave].toLowerCase()}` : '');
         throw stockCore.stockError(
           `Estoque insuficiente em ${nomeDoDeposito ? nomeDoDeposito.name : 'depósito'}`
           + ` para "${movimento.productName || movimento.productId}"${nomeDaCor}:`
@@ -10375,7 +10500,7 @@ async function descarregarMovimentosPendentes(data, productsById) {
   await commitStockMovements(data, pendentes, productsById, { jaEmMemoria: true });
 }
 
-function buildMovementRecord(data, { type, productId, depositId, quantity, unitCost, categoryId, date, document, note, transferId, origin, classId, classValueId, referenceType, referenceId }, user) {
+function buildMovementRecord(data, { type, productId, depositId, quantity, unitCost, categoryId, date, document, note, transferId, origin, classId, classValueId, referenceType, referenceId, condicao, estornoDe }, user) {
   return {
     id: stockCore.createId('mov'),
     // Vazio de proposito: quem numera e' a sequence do banco, dentro da
@@ -10390,6 +10515,10 @@ function buildMovementRecord(data, { type, productId, depositId, quantity, unitC
     // outro caminho e livre para discordar deste razão.
     classId: classId || '',
     classValueId: classValueId || '',
+    // Fase ER: desmontado/montado (só no produto que controla montagem — o
+    // commit limpa nos outros) e, no estorno, o movimento que ele desfaz.
+    condicao: stockCore.normalizarCondicao(condicao),
+    estornoDe: estornoDe || '',
     quantity: stockCore.toNumber(quantity),
     unitCost: stockCore.toNumber(unitCost),
     categoryId: categoryId || '',
@@ -10411,11 +10540,17 @@ function buildMovementRecord(data, { type, productId, depositId, quantity, unitC
 }
 
 // Valida produto/depósito/quantidade e, na saída, o saldo do depósito.
-function assertMovementIsPossible(data, productsById, { productId, depositId, type, quantity, classValueId, classesDoProduto }) {
+function assertMovementIsPossible(data, productsById, { productId, depositId, type, quantity, classValueId, classesDoProduto, condicao }) {
   const product = productsById.get(productId);
   if (!product) throw stockCore.stockError('Produto não encontrado.', 404);
-  const deposit = (data.deposits || []).find((d) => d.id === depositId);
+  let deposit = (data.deposits || []).find((d) => d.id === depositId);
   if (!deposit) throw stockCore.stockError('Depósito não encontrado.', 404);
+  // Depósito unido a outro (fase ER): o saldo que vale é o do que ficou — é
+  // para lá que o commitStockMovements manda o movimento.
+  if (deposit.unidoA) {
+    const alvo = (data.deposits || []).find((d) => d.id === deposit.unidoA);
+    if (alvo) { deposit = alvo; depositId = alvo.id; }
+  }
   const qty = stockCore.toNumber(quantity);
   if (!(qty > 0)) throw stockCore.stockError('Informe uma quantidade maior que zero.');
 
@@ -10437,24 +10572,32 @@ function assertMovementIsPossible(data, productsById, { productId, depositId, ty
     }
   }
 
+  // ---- condição de montagem (fase ER) -----------------------------------
+  const cond = product.controlaMontagem ? stockCore.normalizarCondicao(condicao) : '';
+  if (product.controlaMontagem && !cond && type === 'saida') {
+    throw stockCore.stockError(`"${product.name}" controla montagem: informe se sai montado ou desmontado.`);
+  }
+  const rotuloCond = cond ? ` ${stockCore.ROTULO_CONDICAO[cond].toLowerCase()}` : '';
+
   if (type === 'saida') {
     // Com cor, o saldo que limita é o DAQUELA cor. Validar só o total deixaria
     // vender 10 pretos existindo 2 pretos e 8 brancos — o total fecharia e o
-    // saldo do preto ficaria negativo (§21.3 e §21.4).
+    // saldo do preto ficaria negativo (§21.3 e §21.4). E com condição, o
+    // daquela condição (fase ER).
     if (classValueId) {
-      const disponivel = stockCore.classValueBalance(data, productId, classValueId, depositId);
+      const disponivel = stockCore.classValueBalance(data, productId, classValueId, depositId, cond);
       if (qty > disponivel) {
         const nome = classes.flatMap((c) => c.valores).find((v) => v.id === classValueId)?.name || 'valor';
-        throw stockCore.stockError(`Saldo insuficiente de ${nome} em ${deposit.name}: disponível ${disponivel}, solicitado ${qty}.`);
+        throw stockCore.stockError(`Saldo insuficiente de ${nome}${rotuloCond} em ${deposit.name}: disponível ${disponivel}, solicitado ${qty}.`);
       }
     } else {
-      const available = stockCore.depositBalance(data, productId, depositId);
+      const available = stockCore.depositBalance(data, productId, depositId, cond);
       if (qty > available) {
-        throw stockCore.stockError(`Saldo insuficiente em ${deposit.name}: disponível ${available}, solicitado ${qty}.`);
+        throw stockCore.stockError(`Saldo insuficiente${rotuloCond} em ${deposit.name}: disponível ${available}, solicitado ${qty}.`);
       }
     }
   }
-  return { product, deposit, quantity: qty };
+  return { product, deposit, quantity: qty, condicao: cond };
 }
 
 function filterStockMovements(data, params, productsById) {
@@ -11969,12 +12112,12 @@ async function tratarRequisicao(req, res) {
     try {
       const usuario = await getCurrentUser(req);
       if (!usuario || !usuario.allowedModules.includes('pcp')) return sendJson(res, { error: 'Sem permissão' }, 403);
-      // Fase EE: os depósitos da baixa são os CLASSIFICADOS (desmontados e
-      // montados, só na matriz) — não há mais escolha nesta tela.
+      // Fase ER: o depósito da baixa é o CLASSIFICADO como de montagem (só na
+      // matriz) — não há escolha nesta tela.
       if (req.method === 'GET') {
-        return sendJson(res, { config: await depositosDaMontagem() });
+        return sendJson(res, { config: await depositoDaMontagem() });
       }
-      return sendJson(res, { error: 'Os depósitos da baixa vêm da classificação em Cadastros › Depósitos.' }, 405);
+      return sendJson(res, { error: 'O depósito da baixa vem da classificação em Cadastros › Depósitos.' }, 405);
     } catch (erro) {
       return sendErro(res, erro, 'Erro na configuração do PCP', 400);
     }
@@ -11989,87 +12132,141 @@ async function tratarRequisicao(req, res) {
 
       if (req.method === 'GET' && !baixaId) {
         const dia = String(url.searchParams.get('date') || '').slice(0, 10);
+        const daOrdem = String(url.searchParams.get('ordemId') || '').trim();
         const { rows } = await consultarBanco(
-          `select id, programacao_id, date::text as date, product_id, quantidade, montador_id, origem_deposit_id, destino_deposit_id,
-                  estornada_em, created_by_name, created_at
-             from pcp_baixas where ($1 = '' or date = $1::date) order by created_at`,
-          [/^\d{4}-\d{2}-\d{2}$/.test(dia) ? dia : '']
+          `select id, programacao_id, ordem_id, date::text as date, product_id, quantidade, montador_id, origem_deposit_id, destino_deposit_id,
+                  class_value_id, estornada_em, estornada_por_nome, created_by_name, created_at
+             from pcp_baixas where ($1 = '' or date = $1::date) and ($2 = '' or ordem_id = $2) order by created_at`,
+          [/^\d{4}-\d{2}-\d{2}$/.test(dia) ? dia : '', daOrdem]
         );
         return sendJson(res, {
           baixas: rows.map((b) => ({
-            id: b.id, programacaoId: b.programacao_id, date: b.date, productId: b.product_id, quantidade: Number(b.quantidade),
+            id: b.id, programacaoId: b.programacao_id, ordemId: b.ordem_id || '', date: b.date, productId: b.product_id, quantidade: Number(b.quantidade),
             montadorId: b.montador_id || '', origemDepositId: b.origem_deposit_id, destinoDepositId: b.destino_deposit_id,
-            estornada: Boolean(b.estornada_em), criadoPor: b.created_by_name || '', criadoEm: b.created_at
+            classValueId: b.class_value_id || '',
+            estornada: Boolean(b.estornada_em), estornadaPor: b.estornada_por_nome || '', criadoPor: b.created_by_name || '', criadoEm: b.created_at
           }))
         });
       }
 
+      // BAIXA DE MONTAGEM (fase ER): no MESMO depósito, sai do DESMONTADO e
+      // entra no MONTADO — mesmo produto, mesma cor, total igual. Vem de uma
+      // linha da programação dos montadores (`programacaoId`) ou de uma ordem
+      // de montagem (`ordemId`); a linha da programação que aponta uma ordem de
+      // montagem conta nas duas.
       if (req.method === 'POST' && !baixaId) {
         const corpo = await readBody(req);
-        const item = await modulosDb.obter('pcp/programacao', String(corpo.programacaoId || ''));
-        if (!item) return sendJson(res, { error: 'Item da programação não encontrado.' }, 404);
         const quantidade = Number(corpo.quantidade);
-        const falta = Number(item.quantidade || 0) - Number(item.quantidadeMontada || 0);
         if (!(quantidade > 0)) return sendJson(res, { error: 'Informe quantas foram montadas (maior que zero).' }, 400);
-        if (quantidade > falta + 1e-9) {
-          return sendJson(res, { error: `Só faltam ${falta.toLocaleString('pt-BR')} para montar nesta linha.` }, 400);
+        const item = corpo.programacaoId ? await modulosDb.obter('pcp/programacao', String(corpo.programacaoId)) : null;
+        if (corpo.programacaoId && !item) return sendJson(res, { error: 'Item da programação não encontrado.' }, 404);
+        const idDaOrdem = String(corpo.ordemId || (item && item.orderId) || '').trim();
+        let ordem = idDaOrdem ? await modulosDb.obter('pcp/orders', idDaOrdem) : null;
+        if (ordem && ordem.tipo !== 'montagem') ordem = null;
+        if (!item && !ordem) return sendJson(res, { error: 'Informe a linha da programação ou a ordem de montagem.' }, 400);
+        // A OM sem número se diz "esta ordem de montagem" — o id não diz nada.
+        const nomeDaOrdem = (o) => (o.code ? `A ordem de montagem ${o.code}` : 'Esta ordem de montagem');
+        if (ordem && ['concluida', 'cancelada'].includes(String(ordem.status || ''))) {
+          if (!item) return sendJson(res, { error: `${nomeDaOrdem(ordem)} está ${ordem.status === 'concluida' ? 'concluída' : 'cancelada'}.` }, 409);
+          ordem = null;
         }
-        const { depositoDesmontadasId: origem, depositoMontadasId: destino } = await depositosDaMontagem();
-        if (!origem || !destino) {
-          return sendJson(res, { error: 'Classifique os depósitos da matriz (desmontados e montados) em Cadastros › Depósitos antes de dar baixa.' }, 400);
+        if (item) {
+          const falta = Number(item.quantidade || 0) - Number(item.quantidadeMontada || 0);
+          if (quantidade > falta + 1e-9) {
+            return sendJson(res, { error: `Só faltam ${falta.toLocaleString('pt-BR')} para montar nesta linha.` }, 400);
+          }
+        }
+        if (ordem) {
+          const faltaNaOrdem = Number(ordem.quantity || 0) - Number(ordem.quantityDone || 0);
+          if (quantidade > faltaNaOrdem + 1e-9) {
+            return sendJson(res, { error: `${nomeDaOrdem(ordem)}: só faltam ${Math.max(0, faltaNaOrdem).toLocaleString('pt-BR')} para montar.` }, 400);
+          }
+        }
+        const productId = item ? item.productId : ordem.productId;
+        const { depositoMontagemId } = await depositoDaMontagem();
+        const deposito = (ordem && ordem.depositId) || depositoMontagemId;
+        if (!deposito) {
+          return sendJson(res, { error: 'Classifique o depósito de montagem da matriz em Cadastros › Depósitos antes de dar baixa.' }, 400);
         }
 
-        const { data, productsById } = await loadStockContextDosProdutos([item.productId]);
+        const { data, productsById } = await loadStockContextDosProdutos([productId]);
+        const produto = productsById.get(productId);
+        if (produto && !produto.controlaMontagem) {
+          return sendJson(res, { error: `"${produto.name}" não controla montagem: marque "Controla montagem" no cadastro do produto antes de dar baixa.` }, 400);
+        }
         let classesDoProduto = [];
         try {
-          classesDoProduto = (await classesDb.classesDosProdutos([item.productId])).get(item.productId) || [];
+          classesDoProduto = (await classesDb.classesDosProdutos([productId])).get(productId) || [];
         } catch (erroClasses) {
           classesDoProduto = [];
           console.warn('[pcp] classes do produto indisponíveis na baixa:', erroClasses.message);
         }
-        const classValueId = String(corpo.classValueId || '').trim();
-        if (!(data.deposits || []).some((d) => d.id === destino)) return sendJson(res, { error: 'Depósito de montadas não encontrado.' }, 404);
+        const classValueId = String(corpo.classValueId || (ordem && ordem.classValueId) || '').trim();
         assertMovementIsPossible(data, productsById, {
-          productId: item.productId, depositId: origem, type: 'saida', quantity: quantidade, classValueId, classesDoProduto
+          productId, depositId: deposito, type: 'saida', quantity: quantidade, classValueId, classesDoProduto, condicao: 'desmontado'
         });
 
         const id = createId('baixa');
-        const dia = String(item.date || '').slice(0, 10) || stockCore.todayStr();
+        const dia = String((item && item.date) || '').slice(0, 10) || stockCore.todayStr();
         const comum = {
-          productId: item.productId, quantity: quantidade, date: stockCore.todayStr(),
-          document: `PCP ${dia}`, origin: 'montagem-pcp', referenceType: 'pcp-baixa', referenceId: id,
+          productId, quantity: quantidade, date: stockCore.todayStr(), depositId: deposito,
+          document: ordem ? `OM ${ordem.code || ordem.id.slice(-6)}` : `PCP ${dia}`,
+          origin: 'montagem-pcp', referenceType: 'pcp-baixa', referenceId: id,
           classValueId, classId: classValueId ? ((classesDoProduto.find((c) => c.valores.some((v) => v.id === classValueId)) || {}).id || '') : ''
         };
-        const saida = buildMovementRecord(data, { ...comum, type: 'saida', depositId: origem, note: 'Montagem PCP (saiu das desmontadas)' }, usuario);
-        const entrada = buildMovementRecord(data, { ...comum, type: 'entrada', depositId: destino, note: 'Montagem PCP (entrou nas montadas)' }, usuario);
+        const saida = buildMovementRecord(data, { ...comum, type: 'saida', condicao: 'desmontado', note: 'Montagem PCP (saiu do desmontado)' }, usuario);
+        const entrada = buildMovementRecord(data, { ...comum, type: 'entrada', condicao: 'montado', note: 'Montagem PCP (entrou no montado)' }, usuario);
         await commitStockMovements(data, [saida, entrada], productsById, {
           tambemNaTransacao: async (cliente) => {
             await cliente.query(
-              `insert into pcp_baixas (id, programacao_id, date, product_id, quantidade, montador_id, origem_deposit_id, destino_deposit_id,
+              `insert into pcp_baixas (id, programacao_id, ordem_id, date, product_id, quantidade, montador_id, origem_deposit_id, destino_deposit_id,
                                        class_value_id, movimento_saida_id, movimento_entrada_id, created_by, created_by_name)
-               values ($1, $2, $3::date, $4, $5, nullif($6, ''), $7, $8, nullif($9, ''), $10, $11, $12, $13)`,
-              [id, item.id, dia, item.productId, quantidade, item.montadorId || '', origem, destino, classValueId, saida.id, entrada.id, usuario.id, usuario.name]
+               values ($1, nullif($2, ''), nullif($3, ''), $4::date, $5, $6, nullif($7, ''), $8, $8, nullif($9, ''), $10, $11, $12, $13)`,
+              [id, item ? item.id : '', ordem ? ordem.id : '', dia, productId, quantidade, (item && item.montadorId) || '', deposito,
+                classValueId, saida.id, entrada.id, usuario.id, usuario.name]
             );
             // A soma é do banco, sob a trava da linha: duas baixas ao mesmo
             // tempo não passam juntas do programado.
-            const r = await cliente.query(
-              `update pcp_programacao set quantidade_montada = quantidade_montada + $2
-                where id = $1 and quantidade_montada + $2 <= quantidade + 0.000001`,
-              [item.id, quantidade]
-            );
-            if (!r.rowCount) {
-              const erro = new Error('Outra baixa desta linha entrou agora; recarregue a tela e confira o que falta.');
-              erro.status = 409;
-              throw erro;
+            if (item) {
+              const r = await cliente.query(
+                `update pcp_programacao set quantidade_montada = quantidade_montada + $2
+                  where id = $1 and quantidade_montada + $2 <= quantidade + 0.000001`,
+                [item.id, quantidade]
+              );
+              if (!r.rowCount) {
+                const erro = new Error('Outra baixa desta linha entrou agora; recarregue a tela e confira o que falta.');
+                erro.status = 409;
+                throw erro;
+              }
+            }
+            // A ordem de montagem conclui sozinha quando a quantidade fecha.
+            if (ordem) {
+              const r = await cliente.query(
+                `update pcp_orders
+                    set quantity_done = quantity_done + $2,
+                        status = case when quantity_done + $2 >= quantity - 0.000001 then 'concluida' else 'em_producao' end
+                  where id = $1 and status not in ('concluida', 'cancelada') and quantity_done + $2 <= quantity + 0.000001`,
+                [ordem.id, quantidade]
+              );
+              if (!r.rowCount) {
+                const erro = new Error('Outra baixa desta ordem entrou agora; recarregue a tela e confira o que falta.');
+                erro.status = 409;
+                throw erro;
+              }
             }
           }
         });
         saveData(data);
         await registrarAuditoria({
           action: 'pcp.baixa.montagem', targetId: id, targetUsername: String(quantidade),
-          byId: usuario.id, byName: usuario.name, details: { programacaoId: item.id, productId: item.productId, quantidade, origem, destino }
+          byId: usuario.id, byName: usuario.name,
+          details: { programacaoId: item ? item.id : '', ordemId: ordem ? ordem.id : '', productId, quantidade, deposito }
         });
-        return sendJson(res, { success: true, baixa: { id, quantidade }, montada: Number(item.quantidadeMontada || 0) + quantidade }, 201);
+        return sendJson(res, {
+          success: true, baixa: { id, quantidade },
+          montada: item ? Number(item.quantidadeMontada || 0) + quantidade : undefined,
+          ordem: ordem ? { id: ordem.id, quantityDone: Number(ordem.quantityDone || 0) + quantidade } : undefined
+        }, 201);
       }
 
       if (req.method === 'DELETE' && baixaId) {
@@ -12089,9 +12286,18 @@ async function tratarRequisicao(req, res) {
           classesDoProduto = [];
           console.warn('[pcp] classes do produto indisponíveis na baixa:', erroClasses.message);
         }
+        // O CONTRÁRIO DOS DOIS MOVIMENTOS DA BAIXA, com a condição de cada um
+        // (fase ER): a baixa nova volta do montado ao desmontado; a de antes da
+        // união (dois depósitos) volta de um depósito ao outro.
+        const { rows: originais } = await consultarBanco(
+          'select id, condicao from stock_movements where id = any($1::text[])',
+          [[baixa.movimento_saida_id, baixa.movimento_entrada_id].filter(Boolean)]);
+        const condicaoDe = (idDoMovimento, padrao) => (originais.find((m) => m.id === idDoMovimento) || {}).condicao || padrao;
+        const condicaoDaEntrada = condicaoDe(baixa.movimento_entrada_id, 'montado');
+        const condicaoDaSaida = condicaoDe(baixa.movimento_saida_id, 'desmontado');
         assertMovementIsPossible(data, productsById, {
           productId: baixa.product_id, depositId: baixa.destino_deposit_id, type: 'saida', quantity: quantidade,
-          classValueId: baixa.class_value_id || '', classesDoProduto
+          classValueId: baixa.class_value_id || '', classesDoProduto, condicao: condicaoDaEntrada
         });
         const comum = {
           productId: baixa.product_id, quantity: quantidade, date: stockCore.todayStr(),
@@ -12099,8 +12305,14 @@ async function tratarRequisicao(req, res) {
           origin: 'montagem-pcp-estorno', referenceType: 'pcp-baixa', referenceId: baixa.id,
           classValueId: baixa.class_value_id || ''
         };
-        const saida = buildMovementRecord(data, { ...comum, type: 'saida', depositId: baixa.destino_deposit_id, note: 'Estorno de montagem PCP (saiu das montadas)' }, usuario);
-        const entrada = buildMovementRecord(data, { ...comum, type: 'entrada', depositId: baixa.origem_deposit_id, note: 'Estorno de montagem PCP (voltou às desmontadas)' }, usuario);
+        const saida = buildMovementRecord(data, {
+          ...comum, type: 'saida', depositId: baixa.destino_deposit_id, condicao: condicaoDaEntrada,
+          estornoDe: baixa.movimento_entrada_id || '', note: 'Estorno de montagem PCP (saiu do montado)'
+        }, usuario);
+        const entrada = buildMovementRecord(data, {
+          ...comum, type: 'entrada', depositId: baixa.origem_deposit_id, condicao: condicaoDaSaida,
+          estornoDe: baixa.movimento_saida_id || '', note: 'Estorno de montagem PCP (voltou ao desmontado)'
+        }, usuario);
         await commitStockMovements(data, [saida, entrada], productsById, {
           tambemNaTransacao: async (cliente) => {
             const r = await cliente.query(
@@ -12112,10 +12324,22 @@ async function tratarRequisicao(req, res) {
               erro.status = 409;
               throw erro;
             }
-            await cliente.query(
-              'update pcp_programacao set quantidade_montada = greatest(0, quantidade_montada - $2) where id = $1',
-              [baixa.programacao_id, quantidade]
-            );
+            if (baixa.programacao_id) {
+              await cliente.query(
+                'update pcp_programacao set quantidade_montada = greatest(0, quantidade_montada - $2) where id = $1',
+                [baixa.programacao_id, quantidade]
+              );
+            }
+            // A ordem de montagem devolve a quantidade e reabre.
+            if (baixa.ordem_id) {
+              await cliente.query(
+                `update pcp_orders
+                    set quantity_done = greatest(0, quantity_done - $2),
+                        status = case when greatest(0, quantity_done - $2) <= 0.000001 then 'aberta' else 'em_producao' end
+                  where id = $1`,
+                [baixa.ordem_id, quantidade]
+              );
+            }
           }
         });
         saveData(data);
@@ -12365,7 +12589,7 @@ async function tratarRequisicao(req, res) {
           const [produtos, ordens, setores, statuses, pessoal, tempos] = await Promise.all([
             // O SKU vai junto (fase EB): é o código do modelo ("RUNNER é o
             // 100128"), e o campo de busca mostra e procura por ele.
-            querProdutos ? db.getProductsResumidos('id, name, sku') : [],
+            querProdutos ? db.getProductsResumidos('id, name, sku, controla_montagem') : [],
             modulosDb.listar('pcp/orders'),
             modulosDb.listar('pcp/sectors'),
             modulosDb.listar('pcp/statuses'),
@@ -12375,8 +12599,23 @@ async function tratarRequisicao(req, res) {
             modulosDb.listar('hr/employees'),
             modulosDb.listar('pcp/tempos')
           ]);
-          apoio.products = produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '' }));
-          apoio.orders = ordens.map((o) => ({ id: o.id, name: `OP ${o.code || o.id.slice(-6)}`, productId: o.productId, quantity: o.quantity }));
+          apoio.products = produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', controlaMontagem: p.controlaMontagem === true }));
+          apoio.orders = ordens.map((o) => ({
+            id: o.id, name: `${o.tipo === 'montagem' ? 'OM' : 'OP'} ${o.code || o.id.slice(-6)}`,
+            productId: o.productId, quantity: o.quantity, tipo: o.tipo || 'producao'
+          }));
+          // Fase ER: as cores para a ordem de montagem (uma classe, a COR) e o
+          // depósito onde ela acontece.
+          try {
+            const classes = await classesDb.listarClasses();
+            const valores = await Promise.all(classes.map((c) => classesDb.listarValores(c.id)));
+            apoio.cores = classes.flatMap((c, i) => (valores[i] || []).map((v) => ({
+              id: v.id, name: classes.length > 1 ? `${c.name}: ${v.name}` : v.name
+            })));
+          } catch (erroCores) {
+            apoio.cores = [];
+          }
+          apoio.depositoMontagem = await depositoDaMontagem();
           // Minutos de UMA unidade de cada produto (fase EB): a lista de OPs
           // mostra o tempo da ordem e a Programação do Dia soma o dia.
           apoio.tempos = tempos.map((t) => ({ productId: t.productId, minutos: Number(t.minutos) }));
@@ -12469,6 +12708,14 @@ async function tratarRequisicao(req, res) {
           const recusa = recusaDeFichaTecnica(corpo, null);
           if (recusa) return sendJson(res, { error: recusa }, 400);
         }
+        if (recurso === 'pcp/orders') {
+          // Fase ER: a ordem de montagem nasce no depósito de montagem, e o
+          // feito é só das baixas.
+          delete corpo.quantityDone;
+          const recusa = await recusaDaOrdemDeMontagem(corpo, null);
+          if (recusa) return sendJson(res, { error: recusa }, 400);
+          if (corpo.tipo === 'montagem' && !corpo.depositId) corpo.depositId = (await depositoDaMontagem()).depositoMontagemId;
+        }
         const recusaDoPlano = await recusaDoPlanejamentoPcp(recurso, corpo, null);
         if (recusaDoPlano) return sendJson(res, { error: recusaDoPlano }, 400);
         // Estoque ANTES de gravar o apontamento: faltando componente, nada é
@@ -12491,6 +12738,16 @@ async function tratarRequisicao(req, res) {
         if (recurso === 'pcp/bom') {
           const recusa = recusaDeFichaTecnica(corpo, await modulosDb.obter(recurso, id));
           if (recusa) return sendJson(res, { error: recusa }, 400);
+        }
+        if (recurso === 'pcp/orders') {
+          const atual = await modulosDb.obter(recurso, id);
+          // O feito da ordem de montagem é das baixas, não do formulário.
+          if (atual && (atual.tipo === 'montagem' || corpo.tipo === 'montagem')) delete corpo.quantityDone;
+          const recusa = await recusaDaOrdemDeMontagem(corpo, atual);
+          if (recusa) return sendJson(res, { error: recusa }, 400);
+          if (corpo.tipo === 'montagem' && !(corpo.depositId || (atual && atual.depositId))) {
+            corpo.depositId = (await depositoDaMontagem()).depositoMontagemId;
+          }
         }
         const recusaDoPlano = await recusaDoPlanejamentoPcp(recurso, corpo, id);
         if (recusaDoPlano) return sendJson(res, { error: recusaDoPlano }, 400);
@@ -12564,6 +12821,13 @@ async function tratarRequisicao(req, res) {
         // a um já estorna, e é o caminho em que a pessoa vê o que está desfazendo.
         // Estornar em cascata esconderia a mesma decisão atrás de um clique.
         if (recurso === 'pcp/orders') {
+          // Fase ER: a ordem de montagem com baixa ativa não sai — o estoque
+          // já trocou de condição por ela.
+          const { rows: baixasAtivas } = await consultarBanco(
+            'select count(*)::int as n from pcp_baixas where ordem_id = $1 and estornada_em is null', [id]);
+          if (baixasAtivas[0] && baixasAtivas[0].n > 0) {
+            return sendJson(res, { error: `Esta ordem de montagem tem ${baixasAtivas[0].n} baixa(s). Desfaça as baixas antes de excluí-la.` }, 409);
+          }
           const apontamentos = (await modulosDb.listar('pcp/entries'))
             .filter((entrada) => entrada.orderId === id);
           if (apontamentos.length) {
@@ -13480,6 +13744,16 @@ async function tratarRequisicao(req, res) {
           const daCor = `${m.productId}|${deposito}|${m.classValueId}`;
           saldosPorDeposito[daCor] = (saldosPorDeposito[daCor] || 0) + delta;
         }
+        // Fase ER: e por condição (quarta parte da chave), no produto que
+        // controla montagem — a coluna Disponível mostra a da linha.
+        if (m.condicao) {
+          const daCondicao = `${m.productId}|${deposito}||${m.condicao}`;
+          saldosPorDeposito[daCondicao] = (saldosPorDeposito[daCondicao] || 0) + delta;
+          if (m.classValueId) {
+            const daCorECondicao = `${m.productId}|${deposito}|${m.classValueId}|${m.condicao}`;
+            saldosPorDeposito[daCorECondicao] = (saldosPorDeposito[daCorECondicao] || 0) + delta;
+          }
+        }
       }
     } catch (erroRazao) {
       // Sem o razao a tela cai no comportamento antigo (saldo total do produto)
@@ -14020,7 +14294,7 @@ async function tratarRequisicao(req, res) {
         }
         // A categoria decide se o pagamento é obrigatório (transferência não é).
         // A soma dos pagamentos fecha com o total (mesma conta da tela).
-        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: type, ncmDoItem: await ncmDosItensDaVenda(body.items) });
+        const obrigatorioQueFalta = vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: type, ncmDoItem: await ncmDosItensDaVenda(body.items), montagemDoItem: await montagemDosItensDaVenda(body.items) });
         if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
         const totais = computeSalesTotals(items, body);
         record = {
@@ -14825,7 +15099,7 @@ async function tratarRequisicao(req, res) {
       // tela: o que faltar precisa ser preenchido antes. Menos para CANCELAR —
       // um pedido incompleto tem de poder ser cancelado como está.
       const vaiCancelar = salesStatus.ehCancelado(salesStatus.normalizar(body.status || current.status, undefined));
-      const obrigatorioQueFalta = vaiCancelar || travadoPorAprovacao ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: current.type, ncmDoItem: await ncmDosItensDaVenda(body.items) });
+      const obrigatorioQueFalta = vaiCancelar || travadoPorAprovacao ? null : vendaObrigatorios.faltando(body, { categorias: await categoriasDaVendaParaRegra(), total: computeSalesTotals(items, body).totalAmount, formas: loadData().paymentMethods || [], tipoRegistro: current.type, ncmDoItem: await ncmDosItensDaVenda(body.items), montagemDoItem: await montagemDosItensDaVenda(body.items) });
       if (obrigatorioQueFalta) return sendJson(res, { error: obrigatorioQueFalta.mensagem }, 400);
       // O status novo pode trocar o TIPO do documento (orçamento -> pedido e
       // vice-versa). Normaliza sem passar o tipo atual de propósito: passá-lo
@@ -18573,6 +18847,11 @@ async function tratarRequisicao(req, res) {
               referenceType: 'purchase', referenceId: purchase.id, motivo: 'compra',
               productId: purchase.productId, classValueId: ''
             }),
+            // Fase ER: da condição em que a compra entrou (desmontado).
+            condicao: (movimentoDeOrigem(data, {
+              referenceType: 'purchase', referenceId: purchase.id, motivo: 'compra',
+              productId: purchase.productId, classValueId: ''
+            }) || {}).condicao || 'desmontado',
             note: `Cancelamento da compra de ${purchase.supplier}`, user
           });
         }
@@ -18651,7 +18930,7 @@ async function tratarRequisicao(req, res) {
         // A MESMA lista e a MESMA ordem do loadStockContext (por nome, sem os
         // itens só fiscais) — ver getProductsResumidos —, com as colunas que
         // saem daqui.
-        querProdutos ? db.getProductsResumidos('id, name, sku, cost_price, sale_price') : []
+        querProdutos ? db.getProductsResumidos('id, name, sku, cost_price, sale_price, controla_montagem') : []
       ]);
       return sendJson(res, {
         deposits: depositos,
@@ -18684,7 +18963,9 @@ async function tratarRequisicao(req, res) {
         // era 98 KB da resposta. Os cinco que ficaram são os que os seletores
         // usam: id, o rótulo nome·SKU e os dois preços (Novo Catálogo e Nova
         // Tabela de Preços).
-        products: produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice, salePrice: p.salePrice }))
+        // `controlaMontagem` (fase ER): a movimentação, a transferência e a
+        // contagem pedem Montado/Desmontado nesses.
+        products: produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice, salePrice: p.salePrice, controlaMontagem: p.controlaMontagem === true }))
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao carregar dados do estoque', 500);
@@ -19168,6 +19449,34 @@ async function tratarRequisicao(req, res) {
       });
       const product = codigoAutomatico ? await codigoDoProduto.umPorVez(gravarProduto) : await gravarProduto();
 
+      // CONTROLA MONTAGEM (fase ER, 17/10/2026). Fora do upsert, numa transação
+      // própria: ligar num produto que já tem saldo classifica o saldo sem
+      // condição como MONTADO (a mesma regra da migração — decisão do usuário),
+      // e as duas coisas mudam juntas ou nenhuma. Desligar não mexe no razão:
+      // o histórico guarda a condição que teve, e o movimento novo sai sem.
+      // Produto novo sem a escolha na tela: o de NCM 8711 nasce marcado.
+      const controlavaMontagem = Boolean(existing && existing.controlaMontagem);
+      const controlaMontagem = body.controlaMontagem === undefined
+        ? (existing ? controlavaMontagem : /^8711/.test(String(body.ncm || '').replace(/\D/g, '')))
+        : body.controlaMontagem === true;
+      if (controlaMontagem !== controlavaMontagem) {
+        const classificados = await emTransacao(async (cliente) => {
+          await cliente.query('update products set controla_montagem = $2 where id = $1', [product.id, controlaMontagem]);
+          if (!controlaMontagem) return 0;
+          const r = await cliente.query(
+            "update stock_movements set condicao = 'montado' where product_id = $1 and condicao = ''", [product.id]);
+          await cliente.query(
+            "update stock_transfers set condicao = 'montado' where product_id = $1 and condicao = ''", [product.id]);
+          return r.rowCount;
+        });
+        product.controlaMontagem = controlaMontagem;
+        await registrarAuditoria({
+          action: 'produto.controla-montagem', targetId: product.id, targetUsername: product.name,
+          byId: user.id, byName: user.name,
+          details: { controlaMontagem, movimentosClassificadosComoMontado: classificados }
+        });
+      }
+
       await auditarPrecoDoProduto(user, existing, product, 'Cadastro do produto');
       data.productMeta[product.id] = stockCore.buildProductMeta(body, stockCore.productMeta(data, product.id));
 
@@ -19265,7 +19574,9 @@ async function tratarRequisicao(req, res) {
         quantity: item.quantity,
         unitCost: item.unitCost,
         classId: item.classId || '',
-        classValueId: item.classValueId || ''
+        classValueId: item.classValueId || '',
+        // Fase ER: montado ou desmontado (produto que controla montagem).
+        condicao: stockCore.normalizarCondicao(item.condicao ?? body.condicao)
       }));
       if (linhas.length > 200) {
         return sendJson(res, { error: 'No máximo 200 itens por movimentação.' }, 400);
@@ -19293,7 +19604,7 @@ async function tratarRequisicao(req, res) {
       // saldo 8 passariam uma a uma e deixariam o depósito negativo.
       const somadas = new Map();
       for (const linha of linhas) {
-        const chave = `${linha.productId}|${linha.classValueId}`;
+        const chave = `${linha.productId}|${linha.classValueId}|${linha.condicao}`;
         const atual = somadas.get(chave) || { ...linha, quantity: 0 };
         atual.quantity = Number(atual.quantity || 0) + Number(linha.quantity || 0);
         somadas.set(chave, atual);
@@ -19312,7 +19623,8 @@ async function tratarRequisicao(req, res) {
             type,
             quantity: linha.quantity,
             classValueId: linha.classValueId,
-            classesDoProduto: classesPorProduto.get(linha.productId) || []
+            classesDoProduto: classesPorProduto.get(linha.productId) || [],
+            condicao: linha.condicao
           });
         } catch (erroDaLinha) {
           // Com vários itens, a recusa diz QUAL produto.
@@ -19332,6 +19644,7 @@ async function tratarRequisicao(req, res) {
         unitCost: linha.unitCost,
         classId: linha.classId,
         classValueId: linha.classValueId,
+        condicao: linha.condicao,
         categoryId: body.categoryId,
         date: body.date,
         document: body.document,
@@ -19360,31 +19673,52 @@ async function tratarRequisicao(req, res) {
       if (movement.transferId) {
         return sendJson(res, { error: 'Esta movimentação faz parte de uma transferência. Estorne pela tela Entre Depósitos.' }, 409);
       }
+      // FASE ER: O ESTORNO É OUTRO MOVIMENTO, e o original fica no razão.
+      // Antes a linha era apagada — o banco agora recusa (gatilho
+      // stock_movements_imutavel). Estorno não se estorna, e o mesmo movimento
+      // não se estorna duas vezes.
+      if (movement.estornoDe) {
+        return sendJson(res, { error: 'Este movimento já é um estorno.' }, 409);
+      }
+      if (stockCore.estornadosDoRazao(data).has(movement.id)) {
+        return sendJson(res, { error: 'Esta movimentação já foi estornada.' }, 409);
+      }
       // Estornar uma entrada não pode deixar o saldo negativo. Com cor, o que
       // limita é o saldo DAQUELA cor: estornar a entrada de 10 pretos quando
       // 8 já saíram deixaria o preto em -8, mesmo com o total do produto
-      // ainda positivo por causa das outras cores.
+      // ainda positivo por causa das outras cores. E com condição, o dela.
       if (movement.type === 'entrada') {
         const available = movement.classValueId
-          ? stockCore.classValueBalance(data, movement.productId, movement.classValueId, movement.depositId)
-          : stockCore.depositBalance(data, movement.productId, movement.depositId);
+          ? stockCore.classValueBalance(data, movement.productId, movement.classValueId, movement.depositId, movement.condicao)
+          : stockCore.depositBalance(data, movement.productId, movement.depositId, movement.condicao);
         if (stockCore.toNumber(movement.quantity) > available) {
           return sendJson(res, { error: `Não é possível estornar: o saldo ficaria negativo (disponível ${available}).` }, 409);
         }
       }
-      // Fase AP: apagar a linha e corrigir o total viram uma coisa so. Antes
-      // eram duas escritas em lugares diferentes — o total ia para o Postgres e
-      // a remocao para o db.json —, e um processo morto entre elas deixava o
-      // total ja corrigido com o movimento ainda no razao.
-      const reversal = { ...movement, type: movement.type === 'entrada' ? 'saida' : 'entrada' };
-      const delta = stockCore.movementSignedQuantity(reversal);
-      await emTransacao(async (cliente) => {
-        await razaoEstoque.travarProduto(cliente, movement.productId);
-        await razaoEstoque.apagarMovimento(cliente, id);
-        if (delta !== 0) await razaoEstoque.somarNoTotalDoProduto(cliente, movement.productId, delta);
-      });
-      data.stockMovements = data.stockMovements.filter((m) => m.id !== id);
-      return sendJson(res, { success: true });
+      // O contrário, com os mesmos números (custo, cor, condição, depósito),
+      // pelo commitStockMovements: a guarda de saldo e o total do produto são
+      // os de qualquer movimento.
+      const contrario = buildMovementRecord(data, {
+        type: movement.type === 'entrada' ? 'saida' : 'entrada',
+        productId: movement.productId,
+        depositId: movement.depositId,
+        quantity: movement.quantity,
+        unitCost: movement.unitCost,
+        categoryId: movement.categoryId,
+        document: movement.document || movement.code,
+        note: `Estorno de ${movement.code}${movement.note ? ` (${movement.note})` : ''}`,
+        origin: 'estorno',
+        classId: movement.classId,
+        classValueId: movement.classValueId,
+        condicao: movement.condicao,
+        referenceType: movement.referenceType,
+        referenceId: movement.referenceId,
+        estornoDe: movement.id
+      }, user);
+      contrario.productName = movement.productName || '';
+      contrario.motivo = 'estorno';
+      await commitStockMovements(data, [contrario], productsById);
+      return sendJson(res, { success: true, estorno: stockCore.serializeMovement(contrario, data, productsById) });
     } catch (error) {
       return sendErro(res, error, 'Erro ao estornar movimentação');
     }
@@ -19455,7 +19789,7 @@ async function tratarRequisicao(req, res) {
       // tela seria trocar um problema de forma por um de funcionamento.
       const itensBrutos = Array.isArray(body.items) && body.items.length
         ? body.items
-        : [{ productId: body.productId, quantity: body.quantity, classId: body.classId, classValueId: body.classValueId }];
+        : [{ productId: body.productId, quantity: body.quantity, classId: body.classId, classValueId: body.classValueId, condicao: body.condicao }];
       if (!itensBrutos.length) return sendJson(res, { error: 'Adicione ao menos um produto à movimentação.' }, 400);
       if (itensBrutos.length > 200) return sendJson(res, { error: 'Máximo de 200 itens por movimentação.' }, 400);
 
@@ -19469,8 +19803,10 @@ async function tratarRequisicao(req, res) {
       for (const item of itensBrutos) {
         const productId = String(item?.productId || '').trim();
         const classValueId = String(item?.classValueId || '').trim();
+        // Fase ER: montado ou desmontado atravessa a transferência, como a cor.
+        const condicao = stockCore.normalizarCondicao(item?.condicao);
         if (!productId) return sendJson(res, { error: 'Há um item sem produto na movimentação.' }, 400);
-        const chave = `${productId}::${classValueId}`;
+        const chave = `${productId}::${classValueId}::${condicao}`;
         const anterior = porChave.get(chave);
         if (anterior) {
           anterior.quantity = stockCore.toNumber(anterior.quantity) + stockCore.toNumber(item.quantity);
@@ -19478,6 +19814,7 @@ async function tratarRequisicao(req, res) {
           porChave.set(chave, {
             productId,
             classValueId,
+            condicao,
             classId: String(item?.classId || '').trim(),
             quantity: stockCore.toNumber(item.quantity)
           });
@@ -19512,7 +19849,8 @@ async function tratarRequisicao(req, res) {
           type: 'saida',
           quantity: item.quantity,
           classValueId: item.classValueId,
-          classesDoProduto
+          classesDoProduto,
+          condicao: item.condicao
         });
         validados.push({ ...item, quantity });
       }
@@ -19546,7 +19884,8 @@ async function tratarRequisicao(req, res) {
           // produto continuaria certo, e o preto teria sumido de um depósito
           // sem aparecer no outro.
           classId: item.classId || '',
-          classValueId: item.classValueId || ''
+          classValueId: item.classValueId || '',
+          condicao: item.condicao || ''
         };
         const out = buildMovementRecord(data, {
           ...shared, type: 'saida', depositId: originDepositId,
@@ -19592,6 +19931,7 @@ async function tratarRequisicao(req, res) {
           // para descobrir qual cor foi transferida.
           classId: item.classId || '',
           classValueId: item.classValueId || '',
+          condicao: item.condicao || '',
           quantity: item.quantity,
           note: body.note || '',
           movementOutId: out.id,
@@ -19695,8 +20035,8 @@ async function tratarRequisicao(req, res) {
       for (const { linha, quantidade } of conferidos) {
         const cor = linha.classValueId || '';
         const noTransito = cor
-          ? stockCore.classValueBalance(data, linha.productId, cor, stockCore.DEPOSITO_EM_TRANSITO)
-          : stockCore.transitBalance(data, linha.productId);
+          ? stockCore.classValueBalance(data, linha.productId, cor, stockCore.DEPOSITO_EM_TRANSITO, linha.condicao)
+          : stockCore.depositBalance(data, linha.productId, stockCore.DEPOSITO_EM_TRANSITO, linha.condicao);
         if (quantidade > noTransito + 0.00005) {
           const produto = productsById.get(linha.productId);
           return sendJson(res, {
@@ -19716,6 +20056,7 @@ async function tratarRequisicao(req, res) {
           transferId: linha.id,
           origin: 'transferencia',
           classId: linha.classId || '', classValueId: linha.classValueId || '',
+          condicao: linha.condicao || '',
           note: `Conferência da carga ${linha.code || batchId} (saiu do trânsito)`
         }, user));
         movimentos.push(buildMovementRecord(data, {
@@ -19726,6 +20067,7 @@ async function tratarRequisicao(req, res) {
           transferId: linha.id,
           origin: 'transferencia',
           classId: linha.classId || '', classValueId: linha.classValueId || '',
+          condicao: linha.condicao || '',
           note: `Conferência da carga ${linha.code || batchId} (entrada no destino)`
         }, user));
       }
@@ -19788,9 +20130,17 @@ async function tratarRequisicao(req, res) {
       const user = await getCurrentUser(req);
       if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
       const id = decodeURIComponent(pathname.replace('/api/stock/transfers/', ''));
-      const { data } = await loadStockContext();
+      const { data, productsById } = await loadStockContext();
       const transfer = (data.stockTransfers || []).find((t) => t.id === id);
       if (!transfer) return sendJson(res, { error: 'Transferência não encontrada' }, 404);
+      if (String(transfer.status || '') === 'estornada') {
+        return sendJson(res, { error: 'Esta transferência já foi estornada.' }, 409);
+      }
+      // A união dos depósitos da matriz (fase ER) não se desfaz por aqui: o
+      // depósito de origem não existe mais como lugar.
+      if (transfer.batchId === 'lot-fase-er') {
+        return sendJson(res, { error: 'Esta transferência é a união dos depósitos da matriz e não se estorna.' }, 409);
+      }
       // O SALDO CONFERIDO E' O DA COR, quando a transferencia tem cor (fase BO).
       //
       // depositBalance soma o deposito INTEIRO, sem olhar classValueId. Com 10
@@ -19824,11 +20174,13 @@ async function tratarRequisicao(req, res) {
         }, 409);
       }
       const emTransito = status === 'enviada';
-      const depositoDeOnde = emTransito ? stockCore.DEPOSITO_EM_TRANSITO : transfer.destinationDepositId;
+      const destinoQueVale = ((data.deposits || []).find((d) => d.id === transfer.destinationDepositId) || {}).unidoA
+        || transfer.destinationDepositId;
+      const depositoDeOnde = emTransito ? stockCore.DEPOSITO_EM_TRANSITO : destinoQueVale;
       const cor = transfer.classValueId || '';
       const available = cor
-        ? stockCore.classValueBalance(data, transfer.productId, cor, depositoDeOnde)
-        : stockCore.depositBalance(data, transfer.productId, depositoDeOnde);
+        ? stockCore.classValueBalance(data, transfer.productId, cor, depositoDeOnde, transfer.condicao)
+        : stockCore.depositBalance(data, transfer.productId, depositoDeOnde, transfer.condicao);
       if (stockCore.toNumber(transfer.quantity) > available) {
         // Nomear a cor: "disponivel 0" num deposito visivelmente cheio nao
         // explica nada a quem esta olhando a tela.
@@ -19838,14 +20190,39 @@ async function tratarRequisicao(req, res) {
             + `ficaria negativo${nomeDaCor} (disponível ${available}).`
         }, 409);
       }
-      // Os dois (ou quatro) movimentos e o registro saem juntos. O total do
-      // produto NAO muda: a transferencia moveu entre depositos, nao criou nem
-      // consumiu -- e o mesmo vale para a perna do transito.
-      await emTransacao(async (cliente) => {
-        await razaoEstoque.apagarTransferencia(cliente, id);
+      // FASE ER: O ESTORNO GRAVA O CONTRÁRIO, e a transferência fica marcada
+      // 'estornada' (antes os movimentos e a linha eram apagados — o banco agora
+      // recusa). Sai de onde a mercadoria está (destino ou trânsito) e volta à
+      // origem, com a mesma cor e condição. O total do produto NÃO muda.
+      const comum = {
+        productId: transfer.productId,
+        quantity: transfer.quantity,
+        date: stockCore.todayStr(),
+        transferId: transfer.id,
+        origin: 'transferencia-estorno',
+        classId: transfer.classId || '',
+        classValueId: cor,
+        condicao: transfer.condicao || '',
+        document: transfer.code || ''
+      };
+      const saidaDoDestino = buildMovementRecord(data, {
+        ...comum, type: 'saida', depositId: depositoDeOnde,
+        estornoDe: emTransito ? transfer.movementTransitInId : transfer.movementInId,
+        note: `Estorno da transferência ${transfer.code || ''} (${emTransito ? 'saiu do trânsito' : 'saiu do destino'})`
+      }, user);
+      const voltaNaOrigem = buildMovementRecord(data, {
+        ...comum, type: 'entrada', depositId: transfer.originDepositId,
+        estornoDe: transfer.movementOutId,
+        note: `Estorno da transferência ${transfer.code || ''} (voltou à origem)`
+      }, user);
+      await commitStockMovements(data, [saidaDoDestino, voltaNaOrigem], productsById, {
+        tambemNaTransacao: async (cliente) => {
+          if (!(await razaoEstoque.marcarTransferenciaEstornada(cliente, id, user))) {
+            throw stockCore.stockError('Esta transferência acabou de ser estornada por outra pessoa.', 409);
+          }
+        }
       });
-      data.stockMovements = data.stockMovements.filter((m) => m.transferId !== id);
-      data.stockTransfers = data.stockTransfers.filter((t) => t.id !== id);
+      transfer.status = 'estornada';
       return sendJson(res, { success: true });
     } catch (error) {
       return sendErro(res, error, 'Erro ao estornar transferência');
@@ -20090,8 +20467,8 @@ async function tratarRequisicao(req, res) {
           ...item,
           saldoAtual: contagem.status === 'aberta'
             ? (item.classValueId
-              ? stockCore.classValueBalance(data, item.productId, item.classValueId, contagem.depositId)
-              : stockCore.depositBalance(data, item.productId, contagem.depositId))
+              ? stockCore.classValueBalance(data, item.productId, item.classValueId, contagem.depositId, item.condicao)
+              : stockCore.depositBalance(data, item.productId, contagem.depositId, item.condicao))
             : item.expectedQuantity,
           productMissing: !productsById.has(item.productId)
         }))
@@ -20161,9 +20538,15 @@ async function tratarRequisicao(req, res) {
         }, 409);
       }
 
+      // Fase ER: o produto que controla montagem é contado por condição — o
+      // montado e o desmontado são saldos diferentes, e a folha afirma cada um.
+      const condicao = product.controlaMontagem ? stockCore.normalizarCondicao(body.condicao) : '';
+      if (product.controlaMontagem && !condicao) {
+        return sendJson(res, { error: `"${product.name}" controla montagem: conte o montado e o desmontado em linhas separadas (escolha a condição).` }, 400);
+      }
       const esperado = classValueId
-        ? stockCore.classValueBalance(data, productId, classValueId, contagem.depositId)
-        : stockCore.depositBalance(data, productId, contagem.depositId);
+        ? stockCore.classValueBalance(data, productId, classValueId, contagem.depositId, condicao)
+        : stockCore.depositBalance(data, productId, contagem.depositId, condicao);
 
       const item = await contagemDb.salvarItem({
         id: stockCore.createId('cni'),
@@ -20172,6 +20555,7 @@ async function tratarRequisicao(req, res) {
         productName: product.name,
         classId,
         classValueId,
+        condicao,
         countedQuantity: counted,
         expectedQuantity: esperado,
         note: String(body.note || ''),
@@ -20266,8 +20650,8 @@ async function tratarRequisicao(req, res) {
           continue;
         }
         const saldo = item.classValueId
-          ? stockCore.classValueBalance(data, item.productId, item.classValueId, contagem.depositId)
-          : stockCore.depositBalance(data, item.productId, contagem.depositId);
+          ? stockCore.classValueBalance(data, item.productId, item.classValueId, contagem.depositId, item.condicao)
+          : stockCore.depositBalance(data, item.productId, contagem.depositId, item.condicao);
         const delta = item.countedQuantity - saldo;
         if (delta === 0) {
           ajustes.push({ itemId: item.id, adjustment: 0, movementId: '' });
@@ -20293,6 +20677,7 @@ async function tratarRequisicao(req, res) {
           origin: 'contagem',
           classId: item.classId,
           classValueId: item.classValueId,
+          condicao: item.condicao,
           referenceType: 'stock_count',
           referenceId: contagem.id
         }, user);
@@ -20351,9 +20736,11 @@ async function tratarRequisicao(req, res) {
             cliente, contagem.depositId, itens.map((i) => i.productId)
           );
           for (const item of itens) {
-            const resultado = item.classValueId
-              ? (saldos.porCor.get(`${item.productId}|${item.classValueId}`) || 0)
-              : (saldos.porProduto.get(item.productId) || 0);
+            const resultado = item.condicao
+              ? (saldos.porCondicao.get(`${item.productId}|${item.classValueId || ''}|${item.condicao}`) || 0)
+              : item.classValueId
+                ? (saldos.porCor.get(`${item.productId}|${item.classValueId}`) || 0)
+                : (saldos.porProduto.get(item.productId) || 0);
             // Epsilon de meia unidade da última casa: numeric(18,4) não sofre
             // do erro de ponto flutuante, mas a aritmética do delta acontece em
             // JS, onde 0,1 + 0,2 não é 0,3. Comparar com `!==` faria uma

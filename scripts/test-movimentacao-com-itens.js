@@ -36,7 +36,8 @@ check('a rota existe', ini > 0 && rota.length > 500);
 check('aceita `items`, e sem ele o formato de antes', /\(Array\.isArray\(body\.items\) && body\.items\.length \? body\.items : \[body\]\)\.map/.test(rota));
 check('limite de 200 itens', /if \(linhas\.length > 200\)/.test(rota));
 check('carrega o razão só dos produtos da movimentação', /loadStockContextDosProdutos\(idsDosProdutos\)/.test(rota));
-check('produto + cor repetidos somam antes de conferir', /const chave = `\$\{linha\.productId\}\|\$\{linha\.classValueId\}`;[\s\S]{0,200}atual\.quantity = Number\(atual\.quantity \|\| 0\) \+ Number\(linha\.quantity \|\| 0\);/.test(rota));
+// Fase ER: e a condição (montado/desmontado) entra na chave.
+check('produto + cor repetidos somam antes de conferir', /const chave = `\$\{linha\.productId\}\|\$\{linha\.classValueId\}\|\$\{linha\.condicao\}`;[\s\S]{0,200}atual\.quantity = Number\(atual\.quantity \|\| 0\) \+ Number\(linha\.quantity \|\| 0\);/.test(rota));
 check('confere TODAS as linhas antes de gravar qualquer uma', rota.indexOf('assertMovementIsPossible(') < rota.indexOf('commitStockMovements('));
 check('a recusa diz qual produto', /erroDaLinha\.message = `\$\{produto\.name\}: \$\{erroDaLinha\.message\}`;/.test(rota));
 check('grava todas numa transação só', (rota.match(/commitStockMovements\(/g) || []).length === 1 && /await commitStockMovements\(data, movements, productsById\);/.test(rota));
@@ -48,7 +49,7 @@ const tela = semComentarios(fs.readFileSync(path.join(RAIZ, 'public/modules/stoc
 check('lista de itens com produto, cor, quantidade e custo', /<h3>Itens da movimentação<\/h3>/.test(tela) && /id="movementItemQtd"/.test(tela) && /id="movementItemCusto"/.test(tela) && /id="movementAdicionar"/.test(tela));
 check('envia os itens', /items: itens\.map\(\(item\) => \(\{\s*productId: item\.productId,\s*quantity: item\.quantity,\s*unitCost: item\.unitCost,/.test(tela));
 check('não envia sem item', /if \(!itens\.length\) \{\s*showToast\('Adicione ao menos um produto à movimentação\.'/.test(tela));
-check('o mesmo produto e cor somam na lista', /const existente = itens\.find\(\(i\) => i\.productId === productId && i\.classValueId === classValueId\);/.test(tela));
+check('o mesmo produto e cor somam na lista', /const existente = itens\.find\(\(i\) => i\.productId === productId && i\.classValueId === classValueId && \(i\.condicao \|\| ''\) === condicao\);/.test(tela));
 check('na saída, a linha sem saldo no depósito avisa', /const falta = type === 'saida' && saldo !== null && item\.quantity > saldo;/.test(tela));
 check('Enter na quantidade adiciona, não envia', /\['movementItemQtd', 'movementItemCusto'\]\.forEach/.test(tela));
 check('trocar entrada/saída não apaga a lista', /type = btn\.dataset\.movType;[\s\S]{0,400}pintarItens\(\);/.test(tela) && !/data-mov-type[\s\S]{0,300}render\(\)/.test(tela));

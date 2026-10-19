@@ -227,11 +227,11 @@ console.log('--- 5. a transferência confere o depósito de ORIGEM ---');
 const servidor = semComentarios(ler('server.js'));
 const css = ler('public/app.css');
 check('há recusa por saldo do depósito de origem',
-  /Saldo insuficiente em \$\{deposit\.name\}: dispon[íi]vel \$\{available\}, solicitado \$\{qty\}\./.test(servidor));
+  /Saldo insuficiente\$\{rotuloCond\} em \$\{deposit\.name\}: dispon[íi]vel \$\{available\}, solicitado \$\{qty\}\./.test(servidor));
 // A mesma recusa, por cor: transferir 3 pretos de um galpão que tem 2 pretos e
 // 10 no total não pode passar.
 check('  e por cor dentro do depósito',
-  /Saldo insuficiente de \$\{nome\} em \$\{deposit\.name\}/.test(servidor));
+  /Saldo insuficiente de \$\{nome\}\$\{rotuloCond\} em \$\{deposit\.name\}/.test(servidor));
 
 console.log('--- 6. o filtro da lista por depósito ---');
 check('a lista de produtos filtra por depósito',
@@ -361,9 +361,9 @@ console.log('--- 11. a tela de venda avisa ANTES ---');
 // ouvido "sim".
 check('a meta de vendas manda o saldo por deposito', /saldosPorDeposito,/.test(servidor));
 check('o seletor de produto le o deposito escolhido',
-  /const saldoNoDepositoEscolhido = \(productId, classValueId\) =>/.test(app));
+  /const saldoNoDepositoEscolhido = \(productId, classValueId, condicao\) =>/.test(app));
 check('  e a linha do item tambem',
-  /const noDeposito = saldoNoDepositoEscolhido\(item\.productId, item\.classValueId\);/.test(app));
+  /const noDeposito = saldoNoDepositoEscolhido\(item\.productId, item\.classValueId, condicao\);/.test(app));
 // 14/10/2026: o rotulo da busca passou a ser so nome e codigo, a pedido do
 // usuario. O saldo do deposito fica na coluna Saldo Estoque do item.
 check('o rotulo da busca e so nome e codigo',

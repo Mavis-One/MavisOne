@@ -82,6 +82,7 @@ window.MavisStock = window.MavisStock || {};
    */
   Stock.quantidadesPorEstoque = function quantidadesPorEstoque(product) {
     const cartoes = (product.balances || [])
+      .filter((saldo) => !(saldo.inativo && !Number(saldo.quantity || 0)))
       .slice()
       .sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0))
       .map((saldo) => {
@@ -99,6 +100,7 @@ window.MavisStock = window.MavisStock || {};
             <span class="estoque-card-texto">
               <span class="estoque-card-nome">${Stock.escape(saldo.depositName)}</span>
               <span class="estoque-card-qtd">${Stock.formatQty(qtd)}</span>
+              ${saldo.condicoes && (Number(saldo.condicoes.montado || 0) || Number(saldo.condicoes.desmontado || 0)) ? `<span class="estoque-card-condicao">Montado ${Stock.formatQty(Math.max(0, Number(saldo.condicoes.montado || 0)))} · Desmontado ${Stock.formatQty(Math.max(0, Number(saldo.condicoes.desmontado || 0)))}</span>` : ''}
             </span>
           </div>`;
       });

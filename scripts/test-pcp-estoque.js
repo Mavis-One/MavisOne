@@ -80,7 +80,8 @@ check('  nomeando a classe e o caminho alternativo',
 check('  e degrada se a consulta de classes falhar', /catch \(erroClasses\) \{\s*\n\s*classes = \[\];/.test(consumo));
 
 console.log('--- 2. excluir a ordem com apontamento é recusado ---');
-check('o DELETE trata pcp/orders', /if \(recurso === 'pcp\/orders'\) \{[\s\S]{0,300}?apontamentos\.length/.test(src));
+// (Desde a fase ER o bloco recusa antes a ordem de montagem com baixa ativa.)
+check('o DELETE trata pcp/orders', /if \(recurso === 'pcp\/orders'\) \{[\s\S]{0,1000}?apontamentos\.length/.test(src));
 check('  recusando com 409', /ou cancele a ordem em vez de excluí-la\.'\s*\n\s*\}, 409\);/.test(src));
 check('  e dizendo quanto já foi produzido', /\(\$\{total\} produzido\)/.test(src));
 

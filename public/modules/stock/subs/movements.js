@@ -31,13 +31,22 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
     // Fase CU. Sem esta linha o ajuste de uma contagem apareceria como
     // "Manual" -- que e exatamente o rotulo errado de que fala o comentario
     // acima: mandaria procurar quem "lancou na mao" o que a folha gerou.
-    contagem: ['Contagem', 'warning']
+    contagem: ['Contagem', 'warning'],
+    // Fase ER — o estorno é outro movimento, e a baixa de montagem troca a
+    // condição (desmontado -> montado).
+    estorno: ['Estorno', 'danger'],
+    'montagem-pcp': ['Montagem', 'success'],
+    'montagem-pcp-estorno': ['Estorno de montagem', 'danger']
   };
   function seloDeOrigem(movement) {
-    if (movement.transferId) return S.badge('Transferência', 'info');
+    if (movement.transferId) return S.badge(movement.origin === 'transferencia-estorno' ? 'Estorno de transferência' : 'Transferência', movement.origin === 'transferencia-estorno' ? 'danger' : 'info');
     const achado = ORIGENS[movement.origin];
     return achado ? S.badge(achado[0], achado[1]) : S.badge('Manual', 'muted');
   }
+  // Fase ER: montado / desmontado, ao lado do produto (como a cor).
+  const seloDeCondicao = (movement) => (movement.condicao
+    ? ` ${S.badge(movement.condicao === 'montado' ? 'Montado' : 'Desmontado', movement.condicao === 'montado' ? 'success' : 'warning')}`
+    : '');
 
   const eyeIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
 
@@ -75,6 +84,8 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
             ${detailItem('Produto', `${S.escape(movement.productName)}${movement.productSku ? ` <span class="muted">(${S.escape(movement.productSku)})</span>` : ''}`)}
             ${detailItem('Depósito', S.escape(movement.depositName || '-'))}
             ${movement.classValueId ? detailItem(cores.get(movement.classValueId)?.className || 'Classe', S.corBadge(cores, movement.classValueId)) : ''}
+            ${movement.condicao ? detailItem('Condição', seloDeCondicao(movement)) : ''}
+            ${movement.estornado ? detailItem('Situação', S.badge('Estornado', 'danger')) : ''}
             ${detailItem('Quantidade', `${movement.type === 'entrada' ? '+' : '-'}${S.formatQty(movement.quantity)}`)}
             ${veCusto ? detailItem('Custo unitário', S.formatBRL(movement.unitCost)) : ''}
             ${veCusto ? detailItem('Custo total', S.formatBRL(movement.totalCost)) : ''}
@@ -191,7 +202,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
                   <!-- A cor entra ao lado do produto, não numa coluna própria:
                        a tabela já tem 11 colunas, e a maioria dos produtos não
                        tem cor nenhuma para mostrar. -->
-                  <td>${S.escape(movement.productName)}${movement.productSku ? ` <span class="muted">(${S.escape(movement.productSku)})</span>` : ''}${S.corBadge(cores, movement.classValueId)}</td>
+                  <td>${S.escape(movement.productName)}${movement.productSku ? ` <span class="muted">(${S.escape(movement.productSku)})</span>` : ''}${S.corBadge(cores, movement.classValueId)}${seloDeCondicao(movement)}${movement.estornado ? ` ${S.badge('Estornado', 'danger')}` : ''}</td>
                   <td>${S.escape(movement.depositName || '-')}</td>
                   <td>${movement.type === 'entrada' ? '+' : '-'}${S.formatQty(movement.quantity)}</td>
                   ${veCusto ? `<td>${S.formatBRL(movement.unitCost)}</td>` : ''}
@@ -200,7 +211,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
                   <td>${seloDeOrigem(movement)}</td>
                   <td>
                     <button type="button" class="icon-button" data-detail-btn="${movement.id}" title="Ver observação">${eyeIcon}</button>
-                    <button type="button" class="icon-button" data-delete="${movement.id}" title="Estornar" ${movement.transferId ? 'disabled' : ''}>${S.trashIcon}</button>
+                    <button type="button" class="icon-button" data-delete="${movement.id}" title="Estornar" ${movement.transferId || movement.estornado || movement.estornoDe ? 'disabled' : ''}>${S.trashIcon}</button>
                   </td>
                 </tr>
               `).join('')}
@@ -257,7 +268,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
 
     content.querySelectorAll('[data-delete]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const confirmed = await confirmModal('Estornar esta movimentação? O saldo do produto será recalculado.');
+        const confirmed = await confirmModal('Estornar esta movimentação? Um movimento contrário será lançado e o saldo do produto será recalculado.');
         if (!confirmed) return;
         try {
           await api(`/api/stock/movements/${btn.dataset.delete}`, { method: 'DELETE' });

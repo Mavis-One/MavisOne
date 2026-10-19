@@ -148,6 +148,7 @@ window.MavisSubscreenRegistry.stock.new_count = async function renderNewCount(ct
       <tr${item.productMissing ? ' class="transfer-linha-alerta"' : ''}>
         <td>
           ${S.escape(item.productName || item.productId)}${S.corBadge(cores, item.classValueId)}
+          ${item.condicao ? ` ${S.badge(item.condicao === 'montado' ? 'Montado' : 'Desmontado', item.condicao === 'montado' ? 'success' : 'warning')}` : ''}
           ${item.productMissing ? ' <span class="muted">(produto removido do cadastro)</span>' : ''}
         </td>
         <td>${S.formatQty(base)}</td>
@@ -175,14 +176,25 @@ window.MavisSubscreenRegistry.stock.new_count = async function renderNewCount(ct
     }).length;
 
     const info = produtoAtual ? cacheClasses.get(produtoAtual) : null;
-    const campoClasse = info?.classe ? `
+    const campoClasse = (info?.classe ? `
       <label>${S.escape(info.classe.name)}${info.classe.required === false ? ' <span class="muted">(opcional)</span>' : ''}
         <select id="countItemClasse" ${info.classe.required !== false ? 'required' : ''}>
           <option value="">${info.classe.required !== false ? 'Selecione' : 'Sem ' + S.escape(info.classe.name.toLowerCase())}</option>
           ${info.classe.valores.map((v) => `<option value="${S.escape(v.id)}">${S.escape(v.name)}</option>`).join('')}
         </select>
       </label>
-    ` : '';
+    ` : '')
+      // Fase ER: o produto que controla montagem conta o montado e o
+      // desmontado em leituras separadas.
+      + ((meta.products || []).find((p) => p.id === produtoAtual)?.controlaMontagem ? `
+      <label>Condição
+        <select id="countItemCondicao" required>
+          <option value="">Selecione</option>
+          <option value="montado">Montado</option>
+          <option value="desmontado">Desmontado</option>
+        </select>
+      </label>
+    ` : '');
 
     content.innerHTML = `
       <div class="panel">
@@ -304,6 +316,7 @@ window.MavisSubscreenRegistry.stock.new_count = async function renderNewCount(ct
             productId,
             classId: classe ? classe.id : '',
             classValueId: document.getElementById('countItemClasse')?.value || '',
+            condicao: document.getElementById('countItemCondicao')?.value || '',
             countedQuantity: Number(bruto),
             note: formData.get('note') || ''
           })

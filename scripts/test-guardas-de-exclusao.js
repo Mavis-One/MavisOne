@@ -93,9 +93,9 @@ const rotaEstorno = src.slice(src.indexOf("if (/^\\/api\\/stock\\/transfers\\/[^
 const trecho = rotaEstorno.slice(0, rotaEstorno.indexOf('await emTransacao('));
 check('achei o estorno de transferência', trecho.length > 100, `${trecho.length} caracteres`);
 check('confere o saldo DA COR quando há cor',
-  /const available = cor\s*\n\s*\? stockCore\.classValueBalance\(data, transfer\.productId, cor, depositoDeOnde\)/.test(trecho));
+  /const available = cor\s*\n\s*\? stockCore\.classValueBalance\(data, transfer\.productId, cor, depositoDeOnde, transfer\.condicao\)/.test(trecho));
 check('  e o do depósito quando não há',
-  /: stockCore\.depositBalance\(data, transfer\.productId, depositoDeOnde\);/.test(trecho));
+  /: stockCore\.depositBalance\(data, transfer\.productId, depositoDeOnde, transfer\.condicao\);/.test(trecho));
 // FASE CZ: O DEPÓSITO CONFERIDO DEPENDE DE ONDE A MERCADORIA ESTÁ.
 //
 // Estes dois checks pediam `transfer.destinationDepositId` fixo, e era o certo
@@ -104,7 +104,7 @@ check('  e o do depósito quando não há',
 // chegou olharia um saldo sem relação nenhuma com o estorno — a recusa (ou a
 // liberação) sairia pelo motivo errado.
 check('  e o lugar é o trânsito quando a carga não chegou',
-  /const depositoDeOnde = emTransito \? stockCore\.DEPOSITO_EM_TRANSITO : transfer\.destinationDepositId;/.test(trecho));
+  /const depositoDeOnde = emTransito \? stockCore\.DEPOSITO_EM_TRANSITO : destinoQueVale;/.test(trecho));
 check('  com emTransito vindo do status da linha',
   /const emTransito = status === 'enviada';/.test(trecho));
 // Parte no destino e parte no trânsito: um estorno só teria de escolher de onde

@@ -28,13 +28,16 @@ async function renderTransfers(ctx, situacaoInicial) {
 
   const SITUACOES = [
     { id: 'enviada', name: 'Em trânsito (aguardando conferência)' },
-    { id: 'recebida', name: 'Recebida' }
+    { id: 'recebida', name: 'Recebida' },
+    // Fase ER: o estorno marca a linha (e grava os movimentos contrários).
+    { id: 'estornada', name: 'Estornada' }
   ];
 
   // A situação da LINHA, já sabendo do parcial: "Em trânsito" sozinho não
   // distingue a carga que nem começou a chegar da que chegou pela metade, e é
   // essa diferença que decide se alguém precisa ir ao balcão procurar caixa.
   function badgeSituacao(t) {
+    if (t.status === 'estornada') return S.badge('Estornada', 'danger');
     if (t.status !== 'enviada') return S.badge('Recebida', 'success');
     if (Number(t.receivedQuantity || 0) > 0) {
       return S.badge(`Parcial — faltam ${S.formatQty(t.pendingQuantity)}`, 'warning');
@@ -91,7 +94,7 @@ async function renderTransfers(ctx, situacaoInicial) {
                 <tr>
                   <td>${S.escape(transfer.code)}</td>
                   <td>${S.formatDate(transfer.date)}</td>
-                  <td>${S.escape(transfer.productName)}${transfer.productSku ? ` <span class="muted">(${S.escape(transfer.productSku)})</span>` : ''}${S.corBadge(cores, transfer.classValueId)}</td>
+                  <td>${S.escape(transfer.productName)}${transfer.productSku ? ` <span class="muted">(${S.escape(transfer.productSku)})</span>` : ''}${S.corBadge(cores, transfer.classValueId)}${transfer.condicao ? ` ${S.badge(transfer.condicao === 'montado' ? 'Montado' : 'Desmontado', transfer.condicao === 'montado' ? 'success' : 'warning')}` : ''}</td>
                   <td>${S.escape(transfer.originDepositName || '-')}</td>
                   <td>${S.escape(transfer.destinationDepositName || '-')}</td>
                   <td>${S.formatQty(transfer.quantity)}</td>
@@ -100,7 +103,7 @@ async function renderTransfers(ctx, situacaoInicial) {
                   <td>${S.escape(transfer.createdByName || '-')}</td>
                   <td class="cadastro-list-actions">
                     ${transfer.status === 'enviada' ? `<button type="button" class="secondary" data-receive="${transfer.id}">Conferir</button>` : ''}
-                    <button type="button" class="icon-button" data-delete="${transfer.id}" title="Estornar">${S.trashIcon}</button>
+                    <button type="button" class="icon-button" data-delete="${transfer.id}" title="Estornar" ${transfer.status === 'estornada' ? 'disabled' : ''}>${S.trashIcon}</button>
                   </td>
                 </tr>
               `).join('')}
@@ -155,7 +158,7 @@ async function renderTransfers(ctx, situacaoInicial) {
         const confirmed = await confirmModal(alvo && alvo.status === 'enviada'
           ? 'Estornar esta carga? A mercadoria volta do trânsito para o depósito de origem, '
             + 'como se nunca tivesse saído.'
-          : 'Estornar esta transferência? As movimentações geradas serão removidas.');
+          : 'Estornar esta transferência? A mercadoria volta do destino para o depósito de origem.');
         if (!confirmed) return;
         try {
           await api(`/api/stock/transfers/${btn.dataset.delete}`, { method: 'DELETE' });
