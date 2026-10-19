@@ -11233,6 +11233,18 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
   const vaiMovimentar = decisoes.some((d) => d.movimentarEstoque);
   const status = decisoes.some((d) => !d.produtoId) ? 'REVISAR' : 'LANCADA';
 
+  // AS PARCELAS DEFINIDAS NA CONFERÊNCIA (19/10/2026), conferidas AQUI, com o
+  // banco intacto: recusadas lá embaixo, a nota e o estoque já estariam
+  // gravados. Com duplicatas no XML, valem as do XML (entradaNfe.parcelasDaEntrada).
+  let parcelasDaNota = [];
+  if (querFinanceiro) {
+    try {
+      parcelasDaNota = entradaNfe.parcelasDaEntrada(nota, body.parcelas);
+    } catch (erroParcelas) {
+      return sendErro(res, erroParcelas, 'Parcelas inválidas.', 400);
+    }
+  }
+
   // ---- a nota --------------------------------------------------------
   const entrada = await entradaNfeDb.criarEntrada({
     entrada: {
@@ -11433,9 +11445,9 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
       const estabDestino = docDestino
         ? (await fiscalDb.getEstabelecimentos().catch(() => [])).find((e) => entradaNfe.digitos(e.cnpj) === docDestino)
         : null;
-      const parcelas = nota.duplicatas.length
-        ? nota.duplicatas
-        : [{ numero: '001', vencimento: nota.dataEmissao, valor: nota.totais.nota || 0 }];
+      // As do XML; sem elas, as da conferência ou uma só na emissão (conferidas
+      // lá em cima, antes de gravar).
+      const parcelas = parcelasDaNota;
       for (let i = 0; i < parcelas.length; i += 1) {
         const parcela = parcelas[i];
         const lancamento = await db.createFinancialEntry({

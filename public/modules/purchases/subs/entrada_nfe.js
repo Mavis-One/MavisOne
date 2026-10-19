@@ -105,6 +105,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       escolhas: new Map(), // numero do item -> { produtoId, movimentarEstoque }
       depositoId: '',
       gerarFinanceiro: true,
+      // As parcelas da conta a pagar quando o XML não traz vencimentos.
+      parcelamento: { qtd: 1, primeiro: '', intervalo: 30 },
+      parcelas: [],
       atualizarCusto: true,
       // Fase AQ: qual ordem de compra esta nota fecha. Vazio = nenhuma.
       ordemCompraId: '',
@@ -317,6 +320,94 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       `;
     }
 
+    // AS PARCELAS QUANDO O XML NÃO TRAZ VENCIMENTOS (19/10/2026, pedido do
+    // usuário: "parcelar pagamento de NFE, quando o vencimento das parcelas não
+    // está no XML" — na própria entrada, antes de lançar). As linhas saem de
+    // quantidade, 1º vencimento e intervalo, como no Parcelar de Contas a
+    // Pagar; vencimento e valor de cada uma continuam editáveis. Quem não vê
+    // valores escolhe só os vencimentos: o servidor divide o total em partes
+    // iguais (entradaNfe.parcelasDaEntrada).
+    function montarParcelasDaEntrada(qtd, primeiro, intervalo) {
+      const total = Math.round(Number(tela.conferencia.nota.totais.nota || 0) * 100);
+      const n = Math.min(120, Math.max(1, Math.floor(Number(qtd) || 1)));
+      const dias = Math.max(0, Math.floor(Number(intervalo) || 0));
+      const base = Math.floor(total / n);
+      const [ano, mes, dia] = String(primeiro || '').split('-').map(Number);
+      tela.parcelamento = { qtd: n, primeiro: primeiro || '', intervalo: dias };
+      tela.parcelas = Array.from({ length: n }, (_, i) => ({
+        vencimento: ano ? new Date(Date.UTC(ano, mes - 1, dia + i * dias)).toISOString().slice(0, 10) : '',
+        valor: (i === 0 ? total - base * (n - 1) : base) / 100
+      }));
+    }
+
+    function somaDasParcelas() {
+      return tela.parcelas.reduce((s, p) => s + Math.round(Number(p.valor || 0) * 100), 0);
+    }
+
+    function blocoParcelas(total) {
+      const p = tela.parcelamento;
+      const totalEmCentavos = Math.round(Number(total || 0) * 100);
+      const soma = somaDasParcelas();
+      return `
+        <div id="entradaParcelas">
+          <div class="cadastro-filter-grid-5">
+            <label class="cadastro-field"><span>Parcelas</span>
+              <input type="number" min="1" max="120" step="1" id="entradaParcelasQtd" value="${p.qtd}" /></label>
+            <label class="cadastro-field"><span>1º vencimento</span>
+              <input type="date" id="entradaParcelasPrimeiro" value="${escapeHtml(p.primeiro)}" /></label>
+            <label class="cadastro-field"><span>Intervalo (dias)</span>
+              <input type="number" min="0" max="365" step="1" id="entradaParcelasIntervalo" value="${p.intervalo}" /></label>
+          </div>
+          <div class="table-scroll">
+            <table class="table entrada-duplicatas">
+              <thead><tr><th>Parcela</th><th>Vencimento</th>${veValores ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
+              <tbody>
+                ${tela.parcelas.map((parcela, i) => `
+                  <tr>
+                    <td>${i + 1}/${tela.parcelas.length}</td>
+                    <td><input type="date" data-parcela-vencimento="${i}" value="${escapeHtml(parcela.vencimento)}" /></td>
+                    ${veValores ? `<td class="entrada-col-num"><input type="number" step="0.01" min="0.01" data-parcela-valor="${i}" value="${Number(parcela.valor).toFixed(2)}" /></td>` : ''}
+                  </tr>
+                `).join('')}
+              </tbody>
+              ${veValores ? `<tfoot><tr><th colspan="2">Soma (nota: ${moeda(total)})</th>
+                <th class="entrada-col-num ${soma === totalEmCentavos ? '' : 'finance-negative'}" id="entradaParcelasSoma">${moeda(soma / 100)}</th></tr></tfoot>` : ''}
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function ligarParcelas() {
+      const quadro = document.getElementById('entradaParcelas');
+      if (!quadro) return;
+      const refazer = () => {
+        montarParcelasDaEntrada(
+          document.getElementById('entradaParcelasQtd').value,
+          document.getElementById('entradaParcelasPrimeiro').value,
+          document.getElementById('entradaParcelasIntervalo').value
+        );
+        quadro.outerHTML = blocoParcelas(tela.conferencia.nota.totais.nota);
+        ligarParcelas();
+      };
+      ['entradaParcelasQtd', 'entradaParcelasPrimeiro', 'entradaParcelasIntervalo'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('change', refazer);
+      });
+      quadro.querySelectorAll('[data-parcela-vencimento]').forEach((campo) => {
+        campo.addEventListener('input', () => { tela.parcelas[Number(campo.dataset.parcelaVencimento)].vencimento = campo.value; });
+      });
+      quadro.querySelectorAll('[data-parcela-valor]').forEach((campo) => {
+        campo.addEventListener('input', () => {
+          tela.parcelas[Number(campo.dataset.parcelaValor)].valor = Number(campo.value || 0);
+          const celula = document.getElementById('entradaParcelasSoma');
+          if (!celula) return;
+          const soma = somaDasParcelas();
+          celula.textContent = moeda(soma / 100);
+          celula.classList.toggle('finance-negative', soma !== Math.round(Number(tela.conferencia.nota.totais.nota || 0) * 100));
+        });
+      });
+    }
+
     function blocoFinanceiro() {
       const duplicatas = tela.conferencia.nota.duplicatas;
       const total = tela.conferencia.nota.totais.nota;
@@ -338,12 +429,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                 </tbody>
               </table>
             </div>
-          ` : `
-            <p class="muted">
-              A nota não traz duplicatas. Se você mandar gerar o financeiro, sai uma parcela
-              única${veValores ? ` de ${moeda(total)}` : ''} vencendo na data de emissão.
-            </p>
-          `}
+          ` : blocoParcelas(total)}
           <label class="entrada-opcao">
             <input type="checkbox" id="entradaGerarFinanceiro" ${tela.gerarFinanceiro ? 'checked' : ''} />
             <span>Gerar contas a pagar a partir desta nota</span>
@@ -603,6 +689,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       document.getElementById('entradaGerarFinanceiro')?.addEventListener('change', (e) => {
         tela.gerarFinanceiro = e.target.checked;
       });
+      ligarParcelas();
       // Fase AQ. Sem redesenhar a tela: trocar a ordem escolhida nao muda mais
       // nada do que esta em volta, e um redesenho aqui perderia os vinculos de
       // item que a pessoa acabou de fazer na mao.
@@ -761,6 +848,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       // transferência entre filiais (pedido do usuário: a Edição de Título em
       // todos os tipos de lançamento).
       tela.gerarFinanceiro = true;
+      // Sem vencimentos no XML: começa numa parcela só, na emissão (o que
+      // sempre foi), e a pessoa parcela no quadro da conferência.
+      montarParcelasDaEntrada(1, String(resposta.nota.dataEmissao || '').slice(0, 10), 30);
       tela.produtos = resposta.produtos || [];
       tela.depositos = resposta.depositos || [];
       tela.permissoes = resposta.permissoes || {};
@@ -851,6 +941,19 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       const pergunta = semProduto
         ? `${semProduto} ${semProduto === 1 ? 'item ficará sem produto vinculado' : 'itens ficarão sem produto vinculado'} e a entrada será marcada como “a revisar”. Lançar assim mesmo?`
         : 'Lançar esta entrada? Nota fiscal não pode ser apagada depois — correção se faz por devolução.';
+      // As parcelas da conferência só valem sem duplicatas no XML (19/10/2026).
+      const semDuplicatas = !(tela.conferencia.nota.duplicatas || []).length;
+      if (tela.gerarFinanceiro && semDuplicatas) {
+        if (tela.parcelas.some((p) => !p.vencimento)) {
+          showToast('Informe o vencimento de cada parcela.', 'warning');
+          return;
+        }
+        const total = Math.round(Number(tela.conferencia.nota.totais.nota || 0) * 100);
+        if (veValores && somaDasParcelas() !== total) {
+          showToast(`A soma das parcelas (${moeda(somaDasParcelas() / 100)}) tem de fechar com o valor da nota (${moeda(total / 100)}).`, 'warning');
+          return;
+        }
+      }
       if (!await confirmModal(pergunta)) return;
 
       try {
@@ -863,7 +966,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             depositoId: tela.depositoId,
             gerarFinanceiro: tela.gerarFinanceiro,
             atualizarCusto: tela.atualizarCusto,
-            purchaseOrderId: tela.ordemCompraId
+            purchaseOrderId: tela.ordemCompraId,
+            // Quem não vê valores manda só os vencimentos (o servidor divide).
+            ...(semDuplicatas ? { parcelas: tela.parcelas.map((p) => (veValores ? { vencimento: p.vencimento, valor: p.valor } : { vencimento: p.vencimento })) } : {})
           })
         });
         const partes = [`Entrada lançada (${resposta.status === 'LANCADA' ? 'completa' : 'a revisar'})`];
