@@ -321,33 +321,32 @@ function criarTelaDeLancamentos(telaChave) {
   // referente que eu quero ver os títulos e não mostrar tudo embaralhado").
   // As empresas vêm do meta (uma por raiz de CNPJ, com as filiais); a regra de
   // qual título é de qual empresa é a da coluna Empresa, no servidor.
-  function empresaEscolhida() {
-    return (meta.empresas || []).find((e) => e.raiz === lista.filtros.empresa) || null;
-  }
-  function filiaisDaEmpresa() {
-    const empresa = empresaEscolhida();
-    return empresa ? empresa.filiais || [] : [];
-  }
+  //
+  // UM CAMPO SÓ (19/10/2026, pedido do usuário: "está faltando empresas aqui"
+  // — as lojas da Plus ficavam num segundo campo, que só aparecia depois de
+  // escolher a Plus). Cada empresa e, logo abaixo da que tem várias, as lojas
+  // dela. O valor diz qual das duas: a raiz (8 dígitos) é a empresa inteira; o
+  // CNPJ (14), a loja.
   function opcoesDeEmpresa() {
     const f = lista.filtros;
     const empresas = meta.empresas || [];
-    // A escolhida antes de o meta chegar continua escolhida (pela raiz).
-    const semNome = f.empresa && !empresas.some((e) => e.raiz === f.empresa)
-      ? `<option value="${escapeHtml(f.empresa)}" selected>${escapeHtml(f.empresa)}</option>` : '';
-    return `<option value="">Todas</option>${semNome}${empresas.map((e) => `<option value="${escapeHtml(e.raiz)}" ${f.empresa === e.raiz ? 'selected' : ''}>${escapeHtml(e.nome)}</option>`).join('')}`;
-  }
-  function opcoesDeFilial() {
-    const f = lista.filtros;
-    return `<option value="">Todas as filiais</option>${filiaisDaEmpresa().map((fl) => `<option value="${escapeHtml(fl.cnpj)}" ${f.filial === fl.cnpj ? 'selected' : ''}>${escapeHtml(fl.nome)}</option>`).join('')}`;
+    const marcada = f.filial || f.empresa;
+    const opcao = (valor, texto) => `<option value="${escapeHtml(valor)}" ${marcada === valor ? 'selected' : ''}>${texto}</option>`;
+    // A escolhida antes de o meta chegar continua escolhida.
+    const conhecida = empresas.some((e) => e.raiz === marcada || (e.filiais || []).some((fl) => fl.cnpj === marcada));
+    const semNome = marcada && !conhecida ? opcao(marcada, escapeHtml(marcada)) : '';
+    return `<option value="">Todas</option>${semNome}${empresas.map((e) => {
+      const lojas = e.filiais || [];
+      if (lojas.length <= 1) return opcao(e.raiz, escapeHtml(e.nome));
+      return opcao(e.raiz, `${escapeHtml(e.nome)} (todas)`)
+        + lojas.map((fl) => opcao(fl.cnpj, `\u00a0\u00a0\u00a0\u00a0${escapeHtml(fl.nome)}`)).join('');
+    }).join('')}`;
   }
   // O meta chega depois da primeira pintura (fase DS): as empresas entram no
   // campo quando ele chegar, sem redesenhar a lista.
   metaPronto.then(() => {
     const campo = document.getElementById('financeEmpresaRapida');
-    if (!campo || !telaAtiva()) return;
-    // Com a empresa já escolhida, o campo da filial só existe agora.
-    if (filiaisDaEmpresa().length > 1 && !document.getElementById('financeFilialRapida')) redesenhar();
-    else campo.innerHTML = opcoesDeEmpresa();
+    if (campo && telaAtiva()) campo.innerHTML = opcoesDeEmpresa();
   });
 
   // A PERGUNTA AO SERVIDOR. `paginado: false` é a exportação: mesmos filtros
@@ -823,7 +822,7 @@ function criarTelaDeLancamentos(telaChave) {
 
       ${lista.showColunas ? painelDeColunas(colunas) : ''}
 
-      <form id="financeQuickSearchForm" class="finance-lista-busca" role="search" style="--campos: ${(tipoFixo ? 0 : 1) + 2 + (filiaisDaEmpresa().length > 1 ? 1 : 0)};">
+      <form id="financeQuickSearchForm" class="finance-lista-busca" role="search" style="--campos: ${(tipoFixo ? 0 : 1) + 2};">
         <label class="cadastro-field">
           <span>Busca</span>
           <input id="financeQuickSearch" type="search" name="search" value="${escapeHtml(f.search)}" autocomplete="off"
@@ -846,10 +845,6 @@ function criarTelaDeLancamentos(telaChave) {
           <span>Empresa</span>
           <select id="financeEmpresaRapida">${opcoesDeEmpresa()}</select>
         </label>
-        ${filiaisDaEmpresa().length > 1 ? `<label class="cadastro-field">
-          <span>Filial</span>
-          <select id="financeFilialRapida">${opcoesDeFilial()}</select>
-        </label>` : ''}
         <div style="align-self: end;"><button type="submit" class="secondary">Buscar</button></div>
         ${dica ? `<p class="muted finance-busca-dica">${dica}</p>` : ''}
       </form>
@@ -990,12 +985,10 @@ function criarTelaDeLancamentos(telaChave) {
     document.getElementById('financeTipoRapido')?.addEventListener('change', (event) => {
       mudarFiltro({ type: event.target.value });
     });
-    // Trocar a empresa recomeça a filial: a da empresa anterior não vale nesta.
+    // 8 dígitos: a empresa inteira; 14: uma loja dela.
     document.getElementById('financeEmpresaRapida')?.addEventListener('change', (event) => {
-      mudarFiltro({ empresa: event.target.value, filial: '' });
-    });
-    document.getElementById('financeFilialRapida')?.addEventListener('change', (event) => {
-      mudarFiltro({ filial: event.target.value });
+      const valor = String(event.target.value || '');
+      mudarFiltro(valor.length === 14 ? { empresa: valor.slice(0, 8), filial: valor } : { empresa: valor, filial: '' });
     });
     document.getElementById('financeVencimentoRapido')?.addEventListener('change', async (event) => {
       const chave = event.target.value;

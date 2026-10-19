@@ -59,8 +59,14 @@ check('vão no meta do Financeiro', /empresas: empresasParaOFiltro\(estabelecime
 console.log('\n--- a tela ---');
 check('Empresa e Filial nos filtros e na consulta', /empresa: '', filial: ''/.test(tela) && /'amountMin', 'amountMax', 'empresa', 'filial'\]/.test(tela));
 check('o campo Empresa na barra de busca', /<span>Empresa<\/span>\s*<select id="financeEmpresaRapida">\$\{opcoesDeEmpresa\(\)\}<\/select>/.test(tela));
-check('  a Filial só com empresa de mais de um CNPJ', /\$\{filiaisDaEmpresa\(\)\.length > 1 \? `<label class="cadastro-field">\s*<span>Filial<\/span>/.test(tela));
-check('  trocar a empresa recomeça a filial', /mudarFiltro\(\{ empresa: event\.target\.value, filial: '' \}\)/.test(tela));
+// 19/10/2026, depois de ver no VPS ("está faltando empresas aqui"): as lojas
+// da Plus entram NO MESMO campo, logo abaixo dela — o campo Filial separado só
+// aparecia depois de escolher a Plus, e parecia que faltavam empresas.
+check('  as lojas no mesmo campo, abaixo da empresa que tem várias',
+  /if \(lojas\.length <= 1\) return opcao\(e\.raiz, escapeHtml\(e\.nome\)\);\s*return opcao\(e\.raiz, `\$\{escapeHtml\(e\.nome\)\} \(todas\)`\)\s*\+ lojas\.map\(\(fl\) => opcao\(fl\.cnpj,/.test(tela)
+  && !/financeFilialRapida/.test(tela));
+check('  8 dígitos = a empresa inteira; 14 = a loja', /mudarFiltro\(valor\.length === 14 \? \{ empresa: valor\.slice\(0, 8\), filial: valor \} : \{ empresa: valor, filial: '' \}\);/.test(tela));
+check('  a escolhida aparece marcada (a loja, se houver)', /const marcada = f\.filial \|\| f\.empresa;/.test(tela));
 check('  as empresas entram quando o meta chega', /metaPronto\.then\(\(\) => \{\s*const campo = document\.getElementById\('financeEmpresaRapida'\);/.test(tela));
 check('a barra de busca cabe os campos', /repeat\(var\(--campos, 2\), minmax\(150px, 1fr\)\)/.test(ler('public/app.css')));
 
