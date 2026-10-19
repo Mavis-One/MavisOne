@@ -4367,6 +4367,19 @@ async function recarregarCategoriasDosRelatorios() {
   }
 }
 
+/**
+ * A transição vale para o gatilho do banco (sales_status_transicao_valida)?
+ * true/false; null quando não deu para perguntar — aí quem decide é a gravação.
+ */
+async function transicaoValidaNoBanco(de, para) {
+  try {
+    const { rows } = await consultarBanco('select sales_status_transicao_valida($1, $2) as ok', [String(de || ''), String(para || '')]);
+    return rows[0] ? rows[0].ok === true : null;
+  } catch (erro) {
+    return null;
+  }
+}
+
 async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo, tipoNovo, isOrder, data, user }) {
   // O VENDEDOR SÓ CRIA (16/10/2026; ver vendaDoVendedor.soCria). Aqui, porque
   // por este ponto passam a gravação do pedido E as ações em lote: o vendedor
@@ -4507,6 +4520,21 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
       erro.status = 409;
       throw erro;
     }
+  }
+
+  // O BANCO TAMBÉM CONFERE, E É PERGUNTADO ANTES (19/10/2026). O gatilho
+  // orders_status_guarda recusa a transição na gravação do pedido — DEPOIS do
+  // estoque, que é gravado logo abaixo. Com a lista do banco atrasada (ver a
+  // fase-eu), o cancelamento de uma NF-e devolveu o estoque e o pedido seguiu
+  // faturado (VPS, 17/10). Perguntada antes, a recusa chega sem efeito nenhum.
+  if (isOrder === (tipoNovo === 'order')
+    && salesStatus.normalizar(current.status) !== salesStatus.normalizar(statusNovo)
+    && await transicaoValidaNoBanco(current.status, statusNovo) === false) {
+    const rotulo = (s) => salesStatus.meta(s).label;
+    const erro = new Error(`${salesStatus.motivoDaRecusa(current.status, statusNovo)
+      || `O banco não aceita passar de "${rotulo(current.status)}" para "${rotulo(statusNovo)}".`} Nada foi alterado.`);
+    erro.status = 409;
+    throw erro;
   }
 
   // ANTES DE QUALQUER EFEITO: as linhas de pagamento têm de caber no total.
@@ -7940,7 +7968,7 @@ async function notaQueSustentaOFaturamento(pedido) {
  * mudanca e' recusada e a recusa vira registro de auditoria aqui embaixo — que
  * e' a resposta certa: duas notas para um pedido e caso de gente olhar.
  */
-async function desfaturarPedidoDaNota(nfe, user) {
+async function desfaturarPedidoDaNota(nfe, user, { refazendo = false } = {}) {
   const pedidoId = nfe && nfe.orderId;
   if (!pedidoId) return;
   if (String(nfe.status || '').toUpperCase() !== 'CANCELADO') return;
@@ -7978,16 +8006,91 @@ async function desfaturarPedidoDaNota(nfe, user) {
     // cancelamento falhou, e a proxima tentativa bateria numa nota que a SEFAZ
     // ja' nao aceita cancelar de novo.
     console.error('NF-e cancelada, mas nao consegui desfaturar o pedido', pedidoId, erro.message);
-    await registrarAuditoria({
-      action: 'falhaAoDesfaturarPedidoDaNota',
-      targetId: pedidoId,
-      targetUsername: String(nfe.numero || nfe.referencia || nfe.id || ''),
-      byId: quemDesfatura.id,
-      byName: quemDesfatura.name,
-      details: { erro: erro.message, nfeId: nfe.id || '' }
-    });
+    // Refazendo (ao subir), a falha já está na trilha: registrar de novo a
+    // cada reinício só empilharia a mesma linha.
+    if (!refazendo) {
+      await registrarAuditoria({
+        action: 'falhaAoDesfaturarPedidoDaNota',
+        targetId: pedidoId,
+        targetUsername: String(nfe.numero || nfe.referencia || nfe.id || ''),
+        byId: quemDesfatura.id,
+        byName: quemDesfatura.name,
+        details: { erro: erro.message, nfeId: nfe.id || '' }
+      });
+    }
   } finally {
     await limparNumero();
+  }
+}
+
+/**
+ * O DESFATURAMENTO QUE FALHOU, REFEITO AO SUBIR (19/10/2026).
+ *
+ * Em 17/10, no VPS, uma NF-e foi cancelada e o gatilho do banco recusou a volta
+ * do pedido a "Pedido Não Faturado" (lista de transições atrasada; ver a
+ * fase-eu). O estoque já tinha voltado — ele é gravado antes do pedido — e o
+ * pedido ficou faturado, com as contas a receber em aberto.
+ *
+ * Refaz os que ficaram na trilha (falhaAoDesfaturarPedidoDaNota) pelo mesmo
+ * desfaturarPedidoDaNota, com as mesmas guardas: a nota tem de estar
+ * cancelada, o pedido ainda faturado e sem outra nota viva. Fora disso não
+ * mexe — reemitido ou cancelado depois, já foi resolvido por outro caminho.
+ *
+ * O RAZÃO DECIDE O ESTOQUE: se o que o pedido tirou já voltou, o pedido é
+ * marcado sem estoque aplicado ANTES de desfaturar, e o estoque não volta
+ * duas vezes. Com o problema resolvido, a próxima subida não acha nada a
+ * fazer (o pedido já não está faturado).
+ */
+async function refazerDesfaturamentosQueFalharam() {
+  let falhas = [];
+  try {
+    ({ rows: falhas } = await consultarBanco(
+      "select distinct target_id as pedido, details->>'nfeId' as nfe from audit_logs where action = 'falhaAoDesfaturarPedidoDaNota'"
+    ));
+  } catch (erro) {
+    return;
+  }
+  for (const { pedido: pedidoId, nfe: nfeId } of falhas) {
+    try {
+      if (!pedidoId || !nfeId) continue;
+      const nfe = await fiscalDb.getNfeById(nfeId).catch(() => null);
+      if (!nfe || String(nfe.status || '').toUpperCase() !== 'CANCELADO') continue;
+      const pedido = await db.getOrderById(pedidoId);
+      if (!pedido || salesStatus.normalizar(pedido.status) !== 'pedido-faturado') continue;
+      if (await notaQueSustentaOFaturamento(pedido)) continue;
+      let estoqueJaTinhaVoltado = false;
+      if (pedido.stockApplied) {
+        const { rows } = await consultarBanco(
+          `select coalesce(sum(case when type = 'saida' then quantity else 0 end), 0)
+                - coalesce(sum(case when type = 'entrada' then quantity else 0 end), 0) as fora
+             from stock_movements where reference_type = 'order' and reference_id = $1`, [pedidoId]
+        );
+        if (Number(rows[0] && rows[0].fora) <= 0) {
+          estoqueJaTinhaVoltado = true;
+          await consultarBanco('update orders set stock_applied = false where id = $1', [pedidoId]);
+        }
+      }
+      await desfaturarPedidoDaNota({ ...nfe, orderId: pedidoId }, null, { refazendo: true });
+      const depois = await db.getOrderById(pedidoId);
+      if (depois && salesStatus.normalizar(depois.status) === 'pedido-nao-faturado') {
+        console.log(`Pedido ${pedido.code || pedidoId}: desfaturamento da NF-e ${nfe.numero || nfeId} refeito.`);
+        await registrarAuditoria({
+          action: 'desfaturamentoRefeito',
+          targetId: pedidoId,
+          targetUsername: String(pedido.code || pedidoId),
+          byId: '',
+          byName: 'Sistema (ao subir)',
+          details: { nfeId, numeroDaNota: nfe.numero || '', estoqueJaTinhaVoltado }
+        });
+      } else if (estoqueJaTinhaVoltado) {
+        // Não desfaturou: o pedido volta a dizer que o estoque está aplicado,
+        // como estava — o razão já tem a devolução, e a próxima tentativa
+        // chega à mesma conta.
+        await consultarBanco('update orders set stock_applied = true where id = $1', [pedidoId]);
+      }
+    } catch (erro) {
+      console.error('Nao consegui refazer o desfaturamento do pedido', pedidoId, erro.message);
+    }
   }
 }
 
@@ -24817,6 +24920,8 @@ function startServer(port, retriesLeft) {
     operacoesFiscaisDb.carregar();
     // A finalidade das categorias de venda, para os relatórios (fase EF).
     recarregarCategoriasDosRelatorios();
+    // O pedido que ficou faturado com a nota cancelada (19/10/2026).
+    refazerDesfaturamentosQueFalharam().catch((erro) => console.error('refazerDesfaturamentosQueFalharam:', erro.message));
   });
 
   server.once('error', (error) => {

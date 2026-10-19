@@ -2,6 +2,11 @@
 // Gera banco/migrations/fase-aj-transicoes-de-status.sql A PARTIR de
 // TRANSICOES em public/modules/shared/sales_status.js.
 //
+// ATENÇÃO (19/10/2026): regerar a fase-aj só vale para banco NOVO. Banco que
+// já rodou a fase-aj não a roda de novo — foi assim que o par faturado -> não
+// faturado ficou fora do VPS. Mudou a lista: migração nova com a lista
+// inteira, como a fase-eu; o teste compara com a migração mais nova.
+//
 // A lista de transicoes nao e redigitada em lugar nenhum: mudou no modulo,
 // roda-se este script e o SQL sai igual. scripts/test-transicoes-status.js
 // confere par a par que o arquivo no disco corresponde ao modulo -- se

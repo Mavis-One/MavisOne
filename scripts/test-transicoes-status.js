@@ -63,15 +63,25 @@ destinos.forEach((d) => {
 
 console.log('\n--- o BANCO tem exatamente a mesma lista ---');
 const sql = ler('banco/migrations/fase-aj-transicoes-de-status.sql');
-const doSql = new Set([...sql.matchAll(/^\s*\('([a-z-]+)', '([a-z-]+)'\)/gm)].map((m) => `${m[1]}>${m[2]}`));
+// A LISTA QUE VALE É A DA MIGRAÇÃO MAIS NOVA que a grava (19/10/2026). Editar
+// a fase-aj depois de ela rodar não chegou aos bancos: o par faturado -> não
+// faturado (fase BF) ficou fora do VPS e do local, e o cancelamento de uma
+// NF-e não desfaturou o pedido. Lista mudou -> migração nova (ver a fase-eu).
+const ordemDaFase = (nome) => { const f = (nome.match(/^fase-([a-z]+)-/) || [])[1] || ''; return [f.length, f]; };
+const comLista = fs.readdirSync(path.join(RAIZ, 'banco/migrations'))
+  .filter((n) => n.endsWith('.sql') && /insert into sales_status_transicao/.test(ler(`banco/migrations/${n}`)))
+  .sort((a, b) => { const [la, fa] = ordemDaFase(a); const [lb, fb] = ordemDaFase(b); return la - lb || fa.localeCompare(fb); });
+const maisNova = comLista[comLista.length - 1];
+check('a lista vale pela migração mais nova que a grava', maisNova !== 'fase-aj-transicoes-de-status.sql', maisNova);
+const doSql = new Set([...ler(`banco/migrations/${maisNova}`).matchAll(/^\s*\('([a-z-]+)', '([a-z-]+)'\)/gm)].map((m) => `${m[1]}>${m[2]}`));
 const doModulo = new Set();
 Object.entries(S.TRANSICOES).forEach(([de, lista]) => lista.forEach((para) => doModulo.add(`${de}>${para}`)));
 console.log(`    pares no módulo: ${doModulo.size} | no SQL: ${doSql.size}`);
 const soNoModulo = [...doModulo].filter((p) => !doSql.has(p));
 const soNoSql = [...doSql].filter((p) => !doModulo.has(p));
-// Se isto falhar: rode `node scripts/gerar-transicoes-sql.js`.
+// Se isto falhar: migração NOVA com a lista inteira (como a fase-eu).
 check('nenhum par existe só no módulo', soNoModulo.length === 0,
-  soNoModulo.length ? 'FALTA NO SQL (rode scripts/gerar-transicoes-sql.js): ' + soNoModulo.join(', ') : 'ok');
+  soNoModulo.length ? `FALTA EM ${maisNova} (crie uma migração nova com a lista; editar uma que já rodou não chega aos bancos): ` + soNoModulo.join(', ') : 'ok');
 check('nenhum par existe só no SQL', soNoSql.length === 0,
   soNoSql.length ? 'SOBRANDO NO SQL: ' + soNoSql.join(', ') : 'ok');
 // O mapa de legados também tem de estar nos dois lados, senão o pedido antigo

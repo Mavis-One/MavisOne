@@ -55,7 +55,7 @@ check('pedido: estoque e financeiro pela categoria, sem desfazer o já aplicado'
   && /salesStatus\.criaTitulos\(statusNovo\)\s*&& \(eraFaturado \|\| regraCategoria\.geraFinanceiro\)/.test(server));
 check('  também no pedido que já nasce faturado', /const geraFinanceiroAgora = type === 'order' && salesStatus\.criaTitulos\(status\) && regraCategoria\.geraFinanceiro;/.test(server));
 check('financeiro: conta a receber com a categoria financeira', /category: categoriaFinanceira,/.test(server));
-check('relatórios em memória recarregam ao subir e ao mudar o cadastro', (server.match(/await recarregarCategoriasDosRelatorios\(\);/g) || []).length === 3 && /recarregarCategoriasDosRelatorios\(\);\s*\}\);/.test(server));
+check('relatórios em memória recarregam ao subir e ao mudar o cadastro', (server.match(/await recarregarCategoriasDosRelatorios\(\);/g) || []).length === 3 && /\n    recarregarCategoriasDosRelatorios\(\);\n/.test(server.slice(server.indexOf('server.listen(port, HOST'))));
 const filial = ler('lib/filial-da-venda.js');
 check('relatórios: cadastrada decide pela finalidade, a outra pelo texto', /if \(regra\.cadastrada\) return !regra\.contaComoVenda;/.test(filial));
 const comum = ler('lib/relatorios/comum.js');
