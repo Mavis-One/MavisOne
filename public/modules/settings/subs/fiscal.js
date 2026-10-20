@@ -26,6 +26,7 @@ const FISCAL_TIPO_OPERACAO_OPTIONS = [
   { value: 'RETORNO', label: 'Retorno' },
   { value: 'DEVOLUCAO', label: 'Devolução' },
   { value: 'BONIFICACAO', label: 'Bonificação' },
+  { value: 'GARANTIA', label: 'Garantia' },
   { value: 'ENTRADA_IMPORTACAO', label: 'Entrada de importação' }
 ];
 

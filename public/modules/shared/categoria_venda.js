@@ -44,7 +44,10 @@
     { id: 'REMESSA', name: 'Remessa' },
     { id: 'RETORNO', name: 'Retorno' },
     { id: 'DEVOLUCAO', name: 'Devolução' },
-    { id: 'BONIFICACAO', name: 'Bonificação' }
+    { id: 'BONIFICACAO', name: 'Bonificação' },
+    // 20/10/2026: a operação nova. A categoria "Garantia" não muda sozinha:
+    // quem escolhe a operação de cada categoria é o usuário.
+    { id: 'GARANTIA', name: 'Garantia' }
   ];
 
   const chave = (nome) => String(nome || '').normalize('NFD').replace(/\p{M}/gu, '')

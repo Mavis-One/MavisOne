@@ -37,6 +37,7 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     { value: 'RETORNO', label: 'Retorno' },
     { value: 'DEVOLUCAO', label: 'Devolução' },
     { value: 'BONIFICACAO', label: 'Bonificação' },
+    { value: 'GARANTIA', label: 'Garantia' },
     { value: 'ENTRADA_IMPORTACAO', label: 'Entrada de importação' }
   ];
   const ROTULO_OPERACAO = Object.fromEntries(TIPOS_OPERACAO.map((t) => [t.value, t.label]));

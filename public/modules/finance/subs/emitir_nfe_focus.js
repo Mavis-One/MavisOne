@@ -25,8 +25,10 @@ const NFE_FOCUS_TIPO_OPERACAO_OPTIONS = [
   { value: 'TRANSFERENCIA', label: 'Transferência', natureza: 'TRANSFERENCIA DE MERCADORIA' },
   { value: 'REMESSA', label: 'Remessa' },
   { value: 'RETORNO', label: 'Retorno' },
-  { value: 'DEVOLUCAO', label: 'Devolução' },
+  { value: 'DEVOLUCAO', label: 'Devolução', natureza: 'DEVOLUCAO DE COMPRA PARA COMERCIALIZACAO' },
   { value: 'BONIFICACAO', label: 'Bonificação' },
+  // 20/10/2026: a peça/produto que vai ao cliente em garantia (refere a venda).
+  { value: 'GARANTIA', label: 'Garantia', natureza: 'REMESSA EM GARANTIA' },
   // Complemento de ICMS não é venda: não entrega mercadoria, não baixa estoque
   // e não gera recebível. A tela muda de forma ao escolhê-lo.
   { value: 'COMPLEMENTO_ICMS', label: 'Complemento de ICMS' }
@@ -36,6 +38,9 @@ const NFE_FOCUS_TIPO_OPERACAO_OPTIONS = [
 // precisa saber para se comportar; quem valida de verdade é o servidor — o
 // front some numa aba fechada, o servidor não.
 const NFE_FOCUS_COMPLEMENTO = 'COMPLEMENTO_ICMS';
+// As que referem a nota original pela chave (operacaoFiscal: exigeReferencia):
+// a devolução, a nota devolvida; a garantia (20/10/2026), a nota de venda.
+const NFE_FOCUS_REFERE_NOTA = { DEVOLUCAO: 'Chave de acesso da NF-e devolvida', GARANTIA: 'Chave de acesso da NF-e de venda' };
 
 const NFE_FOCUS_STATUS_BADGE = {
   RASCUNHO: 'finance-badge-muted',
@@ -776,7 +781,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     if (!form) return;
     const formData = new FormData(form);
     const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
-    const referencias = formData.get('tipoOperacao') === 'DEVOLUCAO' && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
+    const referencias = NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')] && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
     // A janela abre já, no clique: aberta depois da resposta, o navegador a
     // trataria como pop-up e bloquearia.
     const janela = window.open('', '_blank');
@@ -875,8 +880,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                 </select>
               </label>
             </div>
-            ${tipoOperacao === 'DEVOLUCAO' ? `
-            <label>Chave de acesso da NF-e devolvida *
+            ${NFE_FOCUS_REFERE_NOTA[tipoOperacao] ? `
+            <label>${NFE_FOCUS_REFERE_NOTA[tipoOperacao]} *
               <input name="devolucaoChave" required inputmode="numeric" maxlength="44" placeholder="44 dígitos" />
             </label>` : ''}
             <label>Natureza da operação<input name="naturezaOperacao" required value="${escapeHtml((NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).natureza || (NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).label || '')}" /></label>
@@ -1609,7 +1614,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     previaAguardando = '';
     const formData = new FormData(form);
     const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
-    const referencias = formData.get('tipoOperacao') === 'DEVOLUCAO' && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
+    const referencias = NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')] && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
     previaCarregando = true;
     renderImpostos(); renderTotais();
     try {
@@ -2590,10 +2595,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // (operacaoFiscal: exigeReferencia), e até 02/10/2026 a tela não a
       // pedia nem mandava — toda devolução emitida por aqui seria recusada.
       let referenciasDevolucao;
-      if (formData.get('tipoOperacao') === 'DEVOLUCAO') {
+      if (NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')]) {
         const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
         if (chave.length !== 44) {
-          showToast('Informe a chave de acesso da NF-e devolvida (44 dígitos).', 'error');
+          showToast(`Informe a ${NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')].toLowerCase()} (44 dígitos).`, 'error');
           if (submitBtn) submitBtn.disabled = false;
           return;
         }
