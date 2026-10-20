@@ -22039,6 +22039,46 @@ async function tratarRequisicao(req, res) {
     }
   }
 
+  // EXCLUIR O CENTRO DE CUSTO (20/10/2026, pedido do usuário: "um botão de
+  // exclusão de centro de custos"). Os lançamentos dele ficam sem centro de
+  // custo (decisão do usuário) — a tela pergunta antes, dizendo quantos (a
+  // rota /uso). DELETE: o portão cobra finance.excluir, como o lançamento.
+  if (/^\/api\/finance\/cost-centers\/[^/]+\/uso$/.test(pathname) && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      return sendJson(res, { lancamentos: await db.lancamentosDoCentroDeCusto(id) });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao conferir o centro de custo', 400);
+    }
+  }
+
+  if (/^\/api\/finance\/cost-centers\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      const feito = await db.deleteCostCenter(id);
+      if (!feito) return sendJson(res, { error: 'Centro de custo não encontrado' }, 404);
+      await registrarAuditoria({
+        action: 'excluirCentroDeCusto',
+        targetId: id,
+        targetUsername: feito.centro.name || id,
+        byId: user.id,
+        byName: user.name,
+        details: { centro: feito.centro, lancamentosSemCentro: feito.lancamentos }
+      });
+      return sendJson(res, { success: true, lancamentos: feito.lancamentos });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao excluir o centro de custo', 400);
+    }
+  }
+
   if (pathname === '/api/finance/bank-accounts' && req.method === 'POST') {
     try {
       // Fase DS: sem loadData nem syncFinanceData. A rota só cria um registro

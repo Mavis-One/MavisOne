@@ -6,7 +6,11 @@ window.MavisSubscreenRegistry.finance = window.MavisSubscreenRegistry.finance ||
 // em que ele vale. No lançamento, o campo Centro de custo mostra os centros da
 // empresa do lançamento (e os sem empresa, que valem para todas).
 window.MavisSubscreenRegistry.finance.centros_de_custo = async function renderCentrosDeCusto(ctx) {
-  const { content, api, showToast, escapeHtml, state } = ctx;
+  const { content, api, showToast, escapeHtml, state, confirmModal } = ctx;
+  // Excluir (20/10/2026): o administrador e quem tem Financeiro › excluir; o
+  // servidor confere de novo (portão).
+  const podeExcluir = (typeof usuarioEhAdmin === 'function' && usuarioEhAdmin())
+    || Boolean(state.user && Array.isArray(state.user.permissions) && state.user.permissions.includes('finance.excluir'));
   // Veio do "+" do lançamento: abre já no formulário de novo, com a empresa
   // do lançamento marcada, e ao salvar (ou cancelar) volta para ele.
   const vindoDoLancamento = window.MavisRascunhoLancamento && window.MavisRascunhoLancamento.espera(state, 'costCenter');
@@ -87,7 +91,7 @@ window.MavisSubscreenRegistry.finance.centros_de_custo = async function renderCe
                   <td>${(c.estabelecimentoIds || []).length
                     ? c.estabelecimentoIds.map((id) => escapeHtml(nomePorId(id))).join(', ')
                     : '<span class="muted">Todas</span>'}</td>
-                  <td><button type="button" class="secondary" data-cc-editar="${escapeHtml(c.id)}">Editar</button></td>
+                  <td class="cc-acoes"><button type="button" class="secondary" data-cc-editar="${escapeHtml(c.id)}">Editar</button>${podeExcluir ? ` <button type="button" class="btn-danger" data-cc-excluir="${escapeHtml(c.id)}">Excluir</button>` : ''}</td>
                 </tr>`).join('') : '<tr><td colspan="3" class="muted">Nenhum centro de custo cadastrado.</td></tr>'}
             </tbody>
           </table>
@@ -107,6 +111,31 @@ window.MavisSubscreenRegistry.finance.centros_de_custo = async function renderCe
         editando = { ...(centros.find((c) => c.id === btn.dataset.ccEditar) || {}) };
         desenhar();
         document.getElementById('ccForm')?.scrollIntoView({ block: 'center' });
+      });
+    });
+    // EXCLUIR (20/10/2026, pedido do usuário): os lançamentos do centro ficam
+    // sem centro de custo (decisão dele). A pergunta diz quantos são.
+    content.querySelectorAll('[data-cc-excluir]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const centro = centros.find((c) => c.id === btn.dataset.ccExcluir);
+        if (!centro || btn.disabled) return;
+        btn.disabled = true;
+        try {
+          const { lancamentos } = await api(`/api/finance/cost-centers/${encodeURIComponent(centro.id)}/uso`);
+          const pergunta = `Excluir o centro de custo "${centro.name}"?`
+            + (lancamentos ? `
+
+${lancamentos} lançamento${lancamentos === 1 ? ' fica' : 's ficam'} sem centro de custo.` : '');
+          const confirma = typeof confirmModal === 'function' ? await confirmModal(pergunta) : window.confirm(pergunta);
+          if (!confirma) { btn.disabled = false; return; }
+          await api(`/api/finance/cost-centers/${encodeURIComponent(centro.id)}`, { method: 'DELETE' });
+          showToast('Centro de custo excluído.', 'success');
+          if (editando && editando.id === centro.id) editando = null;
+          if (await carregar()) desenhar();
+        } catch (erro) {
+          showToast(/finance.excluir/.test(String(erro.message)) ? 'Você não tem a permissão Financeiro › excluir.' : (erro.message || 'Não foi possível excluir o centro de custo.'), 'error');
+          btn.disabled = false;
+        }
       });
     });
     document.getElementById('ccCancelar')?.addEventListener('click', () => {

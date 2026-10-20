@@ -13,6 +13,7 @@ const ACCESS_AUDIT_ACTION_LABELS = {
   estornarLancamento: 'Estorno de baixa',
   cancelarLancamento: 'Cancelamento de lançamento',
   excluirLancamento: 'Exclusão de lançamento',
+  excluirCentroDeCusto: 'Exclusão de centro de custo',
   falhaAoDesfaturarPedidoDaNota: 'Falha ao desfaturar pedido (NF-e cancelada)',
   desfaturamentoRefeito: 'Desfaturamento refeito',
   emitirNfe: 'Emissão de NF-e',
