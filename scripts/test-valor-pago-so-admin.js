@@ -60,7 +60,8 @@ console.log('\n--- 2. o servidor ---');
 const servidor = ler('server.js');
 check('respostas de Compras passam pelo filtro do valor pago',
   servidor.includes("if (pathname.startsWith('/api/purchases')) res.__ocultarValorPago = true;")
-  && servidor.includes('if (res.__ocultarValorPago && statusCode < 400) payload = custoOculto.semValorPago(payload);'));
+  && servidor.includes('if (res.__ocultarValorPago && statusCode < 400) {')
+  && servidor.includes('const semValor = custoOculto.semValorPago(payload);'));
 check('o XML da nota de entrada fica só para administrador',
   servidor.includes("'O XML da nota traz o valor pago: só administrador.'"));
 check('o comum edita a ordem sem zerar custo, frete, despesas e desconto',

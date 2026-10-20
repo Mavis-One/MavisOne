@@ -52,9 +52,9 @@ check('sem duplicatas, o quadro de parcelas', /` : blocoParcelas\(total\)\}/.tes
 check('  abre com 1 parcela na emissão', /montarParcelasDaEntrada\(1, String\(resposta\.nota\.dataEmissao \|\| ''\)\.slice\(0, 10\), 30\);/.test(tela));
 check('  parcelas, 1º vencimento e intervalo refazem as linhas', /\['entradaParcelasQtd', 'entradaParcelasPrimeiro', 'entradaParcelasIntervalo'\]\.forEach/.test(tela));
 const lancar = tela.slice(tela.indexOf('async function lancar()'));
-check('  o Lançar confere vencimento e soma antes de perguntar', /if \(veValores && somaDasParcelas\(\) !== total\)/.test(lancar)
+check('  o Lançar confere vencimento e soma antes de perguntar', /if \(veParcelas\(\) && somaDasParcelas\(\) !== total\)/.test(lancar)
   && lancar.indexOf('somaDasParcelas() !== total') < lancar.indexOf('if (!await confirmModal(pergunta)) return;'));
-check('  quem não vê valores manda só os vencimentos', /veValores \? \{ vencimento: p\.vencimento, valor: p\.valor \} : \{ vencimento: p\.vencimento \}/.test(tela));
+check('  quem não vê valores manda só os vencimentos', /veParcelas\(\) \? \{ vencimento: p\.vencimento, valor: p\.valor \} : \{ vencimento: p\.vencimento \}/.test(tela));
 check('  só sem duplicatas no XML', /\.\.\.\(semDuplicatas \? \{ parcelas:/.test(tela));
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);

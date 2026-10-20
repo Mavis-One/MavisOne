@@ -1448,7 +1448,10 @@ function sendJson(res, payload, statusCode = 200) {
   // Quem não é administrador não recebe o custo do produto em resposta
   // nenhuma (14/10/2026). A marca é posta no começo de tratarRequisicao.
   if (res.__ocultarCusto && statusCode < 400) payload = custoOculto.semCusto(payload);
-  if (res.__ocultarValorPago && statusCode < 400) payload = custoOculto.semValorPago(payload);
+  if (res.__ocultarValorPago && statusCode < 400) {
+    const semValor = custoOculto.semValorPago(payload);
+    payload = res.__valoresDasParcelas ? custoOculto.comValoresDasParcelas(payload, semValor) : semValor;
+  }
   const corpo = Buffer.from(JSON.stringify(payload), 'utf8');
   const cabecalhos = { 'Content-Type': 'application/json' };
 
@@ -18959,6 +18962,10 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'Envie o XML da NF-e.' }, 400);
       }
       const { conferencia, data, produtos } = await conferirEntradaDeNfe(body.xml);
+      // Os valores das parcelas para quem acessa o Financeiro (20/10/2026,
+      // decisão do usuário). Ver custoOculto.comValoresDasParcelas.
+      const valoresDasParcelas = user.allowedModules.includes('finance');
+      if (valoresDasParcelas) res.__valoresDasParcelas = true;
       // AS ORDENS EM ABERTO DESTE FORNECEDOR (fase AQ).
       //
       // Vai junto da analise porque e aqui que o sistema descobre de QUEM e a
@@ -18995,7 +19002,8 @@ async function tratarRequisicao(req, res) {
         ),
         permissoes: {
           cadastrarFornecedor: user.allowedModules.includes('cadastros'),
-          cadastrarProduto: user.allowedModules.includes('stock')
+          cadastrarProduto: user.allowedModules.includes('stock'),
+          valoresDasParcelas
         }
       });
     } catch (error) {

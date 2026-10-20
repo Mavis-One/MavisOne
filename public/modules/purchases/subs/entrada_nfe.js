@@ -330,6 +330,15 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       `;
     }
 
+    // OS VALORES DAS PARCELAS (20/10/2026, decisão do usuário: "os valores das
+    // parcelas não estão aparecendo mais"). Desde 14/10 só o administrador via;
+    // agora vê também quem acessa o Financeiro, que encontra esses mesmos
+    // números em Contas a Pagar logo depois. O custo e o unitário dos itens
+    // continuam só do administrador (o servidor manda só o que cada um vê).
+    function veParcelas() {
+      return veValores || Boolean(tela.permissoes && tela.permissoes.valoresDasParcelas);
+    }
+
     // AS PARCELAS QUANDO O XML NÃO TRAZ VENCIMENTOS (19/10/2026, pedido do
     // usuário: "parcelar pagamento de NFE, quando o vencimento das parcelas não
     // está no XML" — na própria entrada, antes de lançar). As linhas saem de
@@ -370,17 +379,17 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           </div>
           <div class="table-scroll">
             <table class="table entrada-duplicatas">
-              <thead><tr><th>Parcela</th><th>Vencimento</th>${veValores ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
+              <thead><tr><th>Parcela</th><th>Vencimento</th>${veParcelas() ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
               <tbody>
                 ${tela.parcelas.map((parcela, i) => `
                   <tr>
                     <td>${i + 1}/${tela.parcelas.length}</td>
                     <td><input type="date" data-parcela-vencimento="${i}" value="${escapeHtml(parcela.vencimento)}" /></td>
-                    ${veValores ? `<td class="entrada-col-num"><input type="number" step="0.01" min="0.01" data-parcela-valor="${i}" value="${Number(parcela.valor).toFixed(2)}" /></td>` : ''}
+                    ${veParcelas() ? `<td class="entrada-col-num"><input type="number" step="0.01" min="0.01" data-parcela-valor="${i}" value="${Number(parcela.valor).toFixed(2)}" /></td>` : ''}
                   </tr>
                 `).join('')}
               </tbody>
-              ${veValores ? `<tfoot><tr><th colspan="2">Soma (nota: ${moeda(total)})</th>
+              ${veParcelas() ? `<tfoot><tr><th colspan="2">Soma (nota: ${moeda(total)})</th>
                 <th class="entrada-col-num ${soma === totalEmCentavos ? '' : 'finance-negative'}" id="entradaParcelasSoma">${moeda(soma / 100)}</th></tr></tfoot>` : ''}
             </table>
           </div>
@@ -428,13 +437,13 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           ${doViper.length ? `
             <div class="table-scroll">
               <table class="table entrada-duplicatas">
-                <thead><tr><th>Já lançado no Viper</th><th>Vencimento</th>${veValores ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
+                <thead><tr><th>Já lançado no Viper</th><th>Vencimento</th>${veParcelas() ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
                 <tbody>
                   ${doViper.map((t) => `
                     <tr>
                       <td>${escapeHtml(t.codigo)}</td>
                       <td>${dataBr(t.vencimento)}</td>
-                      ${veValores ? `<td class="entrada-col-num">${moeda(t.valor)}</td>` : ''}
+                      ${veParcelas() ? `<td class="entrada-col-num">${moeda(t.valor)}</td>` : ''}
                     </tr>
                   `).join('')}
                 </tbody>
@@ -444,13 +453,13 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           ${duplicatas.length ? `
             <div class="table-scroll">
               <table class="table entrada-duplicatas">
-                <thead><tr><th>Parcela</th><th>Vencimento</th>${veValores ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
+                <thead><tr><th>Parcela</th><th>Vencimento</th>${veParcelas() ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
                 <tbody>
                   ${duplicatas.map((d) => `
                     <tr>
                       <td>${escapeHtml(d.numero)}</td>
                       <td>${dataBr(d.vencimento)}</td>
-                      ${veValores ? `<td class="entrada-col-num">${moeda(d.valor)}</td>` : ''}
+                      ${veParcelas() ? `<td class="entrada-col-num">${moeda(d.valor)}</td>` : ''}
                     </tr>
                   `).join('')}
                 </tbody>
@@ -995,7 +1004,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           return;
         }
         const total = Math.round(Number(tela.conferencia.nota.totais.nota || 0) * 100);
-        if (veValores && somaDasParcelas() !== total) {
+        if (veParcelas() && somaDasParcelas() !== total) {
           showToast(`A soma das parcelas (${moeda(somaDasParcelas() / 100)}) tem de fechar com o valor da nota (${moeda(total / 100)}).`, 'warning');
           return;
         }
@@ -1014,7 +1023,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             atualizarCusto: tela.atualizarCusto,
             purchaseOrderId: tela.ordemCompraId,
             // Quem não vê valores manda só os vencimentos (o servidor divide).
-            ...(semDuplicatas ? { parcelas: tela.parcelas.map((p) => (veValores ? { vencimento: p.vencimento, valor: p.valor } : { vencimento: p.vencimento })) } : {})
+            ...(semDuplicatas ? { parcelas: tela.parcelas.map((p) => (veParcelas() ? { vencimento: p.vencimento, valor: p.valor } : { vencimento: p.vencimento })) } : {})
           })
         });
         const partes = [`Entrada lançada (${resposta.status === 'LANCADA' ? 'completa' : 'a revisar'})`];
