@@ -13,9 +13,11 @@ window.MavisSubscreenRegistry.settings.liberacao_nfe = async function renderLibe
     content.innerHTML = `<div class="panel"><p class="muted">${escapeHtml(error.message || 'Erro ao carregar a liberação da NF-e.')}</p></div>`;
     return;
   }
-  const config = dados.config || { politica: 'integral', percentual: 100 };
+  const config = dados.config || { politica: 'desligada', percentual: 100 };
   const podeEditar = dados.podeEditar === true;
   const OPCOES = [
+    // 20/10/2026 (fase EX): o padrão. A NF-e sai sem conferir o pagamento.
+    { valor: 'desligada', rotulo: 'Desligada — a NF-e sai sem conferir o pagamento' },
     { valor: 'integral', rotulo: 'Integral — o pedido inteiro recebido' },
     { valor: 'entrada', rotulo: 'Entrada — a 1ª parcela recebida' },
     { valor: 'percentual', rotulo: 'Percentual — parte do pedido recebida' }

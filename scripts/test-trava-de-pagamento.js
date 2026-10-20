@@ -34,16 +34,24 @@ const servidor = semComentarios(ler('server.js'));
 console.log('\n--- 1. a regra (lib/faturamento-gate.js) ---');
 const g = require('../lib/faturamento-gate');
 const t = (valor, recebido, extra = {}) => ({ valor, recebido, ...extra });
+// Desde 20/10/2026 (fase EX) o padrão é DESLIGADA: os casos da trava dizem a política.
+const integral = { politica: 'integral' };
+check('desligada (o padrão): não se aplica a pedido nenhum, nada aparece', (() => {
+  const padrao = g.avaliarLiberacao({ titulos: [t(100, 0)] });
+  const gravada = g.avaliarLiberacao({ titulos: [t(100, 0)], config: { politica: 'desligada' } });
+  return !padrao.aplica && padrao.liberado && padrao.politica === 'desligada' && !gravada.aplica && gravada.liberado;
+})());
 check('integral: nada recebido trava, e diz quanto falta', (() => {
-  const r = g.avaliarLiberacao({ titulos: [t(100, 0)] });
+  const r = g.avaliarLiberacao({ titulos: [t(100, 0)], config: integral });
   return r.aplica && !r.liberado && r.falta === 100 && r.estagio === 'aguardando_pagamento';
 })());
-check('  um centavo a menos trava; o arredondamento (3 x 33,33) não', !g.avaliarLiberacao({ titulos: [t(100, 99.99)] }).liberado
-  && g.avaliarLiberacao({ titulos: [t(33.33, 33.33), t(33.33, 33.33), t(33.34, 33.34)] }).liberado);
-check('  título quitado conta inteiro', g.avaliarLiberacao({ titulos: [t(100, 0, { quitado: true })] }).liberado);
-check('cartão com NSU conta como recebido', g.avaliarLiberacao({ titulos: [t(60, 0, { cartaoComNsu: true }), t(40, 40)] }).liberado);
-check('título cancelado não entra na conta', g.avaliarLiberacao({ titulos: [t(100, 100), t(50, 0, { cancelado: true })] }).liberado);
-check('pedido sem título não é travado (não aplica)', (() => { const r = g.avaliarLiberacao({ titulos: [] }); return !r.aplica && r.liberado; })());
+check('  um centavo a menos trava; o arredondamento (3 x 33,33) não', !g.avaliarLiberacao({ titulos: [t(100, 99.99)], config: integral }).liberado
+  && g.avaliarLiberacao({ titulos: [t(33.33, 33.33), t(33.33, 33.33), t(33.34, 33.34)], config: integral }).liberado);
+check('  título quitado conta inteiro', g.avaliarLiberacao({ titulos: [t(100, 0, { quitado: true })], config: integral }).liberado);
+check('cartão com NSU conta como recebido', g.avaliarLiberacao({ titulos: [t(60, 0, { cartaoComNsu: true }), t(40, 40)], config: integral }).liberado
+  && !g.avaliarLiberacao({ titulos: [t(60, 0), t(40, 40)], config: integral }).liberado);
+check('título cancelado não entra na conta', g.avaliarLiberacao({ titulos: [t(100, 100), t(50, 0, { cancelado: true })], config: integral }).liberado);
+check('pedido sem título não é travado (não aplica)', (() => { const r = g.avaliarLiberacao({ titulos: [], config: integral }); return !r.aplica && r.liberado; })());
 check('entrada: a parcela que vence primeiro recebida libera', g.avaliarLiberacao({
   titulos: [t(50, 0, { vencimento: '2026-11-19' }), t(50, 50, { vencimento: '2026-10-19' })], config: { politica: 'entrada' }
 }).liberado && !g.avaliarLiberacao({
@@ -52,8 +60,8 @@ check('entrada: a parcela que vence primeiro recebida libera', g.avaliarLiberaca
 check('percentual: 40 de 100 libera com 40% e trava com 50%',
   g.avaliarLiberacao({ titulos: [t(100, 40)], config: { politica: 'percentual', percentual: 40 } }).liberado
   && !g.avaliarLiberacao({ titulos: [t(100, 40)], config: { politica: 'percentual', percentual: 50 } }).liberado);
-check('política desconhecida vira integral', g.normalizarPolitica({ politica: 'x' }).politica === 'integral' && g.normalizarPolitica({ politica: 'percentual', percentual: 0 }).percentual === 100);
-check('a mensagem traz recebido, total e o que falta', /recebido R\$\s0,00 de R\$\s100,00; a NF-e exige o pedido inteiro recebido \(falta R\$\s100,00\)/.test(g.mensagemDaTrava(g.avaliarLiberacao({ titulos: [t(100, 0)] }))));
+check('política desconhecida vira desligada (o padrão)', g.normalizarPolitica({ politica: 'x' }).politica === 'desligada' && g.normalizarPolitica({ politica: 'percentual', percentual: 0 }).percentual === 100);
+check('a mensagem traz recebido, total e o que falta', /recebido R\$\s0,00 de R\$\s100,00; a NF-e exige o pedido inteiro recebido \(falta R\$\s100,00\)/.test(g.mensagemDaTrava(g.avaliarLiberacao({ titulos: [t(100, 0)], config: integral }))));
 
 console.log('\n--- 2. o banco (fase ES) ---');
 const mig = ler('banco/migrations/fase-es-trava-de-pagamento-da-nfe.sql');
