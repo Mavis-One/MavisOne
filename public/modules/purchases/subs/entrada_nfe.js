@@ -236,6 +236,14 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       ];
     }
 
+    // O CÓDIGO DO PRODUTO NO ESTOQUE (20/10/2026, pedido do usuário: "preciso
+    // que o código do produto apareça nessa tela"). O da nota é do fornecedor;
+    // este é o nosso, do produto vinculado ao item — e muda com a escolha.
+    function codigoDoProduto(produtoId) {
+      const produto = produtoId ? tela.produtos.find((p) => p.id === produtoId) : null;
+      return produto && produto.sku ? produto.sku : '—';
+    }
+
     function escolhaDoItem(item) {
       const guardada = tela.escolhas.get(item.numero);
       if (guardada) return guardada;
@@ -263,6 +271,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
               <thead>
                 <tr>
                   <th>#</th>
+                  <th>Código</th>
                   <th>Descrição na nota</th>
                   <th>NCM / CFOP</th>
                   <th class="entrada-col-num">Qtd</th>
@@ -279,6 +288,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                   return `
                     <tr>
                       <td>${item.numero}</td>
+                      <td class="entrada-col-codigo" data-codigo-item="${item.numero}">${escapeHtml(codigoDoProduto(escolha.produtoId))}</td>
                       <td>
                         <strong>${escapeHtml(item.descricao)}</strong>
                         <span class="muted entrada-item-codigo">
@@ -686,6 +696,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           onSelect: (valor) => {
             const escolha = escolhaDoItem(item);
             escolha.produtoId = valor || '';
+            const celula = document.querySelector(`[data-codigo-item="${item.numero}"]`);
+            if (celula) celula.textContent = codigoDoProduto(escolha.produtoId);
             // Sem produto não há estoque a movimentar: desmarca e desliga a
             // caixa, em vez de deixar marcada uma opção que o servidor
             // recusaria depois.
