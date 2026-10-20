@@ -109,6 +109,8 @@ const anexosDb = require('./lib/db/anexos');
 const entradaNfe = require('./lib/entradaNfe');
 const entradaNfeDb = require('./lib/db/entrada-nfe');
 const entradaManual = require('./lib/entrada-manual');
+// A nota de entrada que já tem conta a pagar do Viper (19/10/2026).
+const titulosDoViper = require('./lib/titulos-do-viper');
 const rascunhoEmissaoDb = require('./lib/db/rascunho-emissao');
 // Ações em lote da lista. Mesmo arquivo que o navegador carrega: é ele que diz
 // quem é elegível, e a tela e o servidor precisam responder igual.
@@ -11524,6 +11526,78 @@ async function conferirEntradaDeNfe(xml) {
  * A conferência de uma nota já lida (do XML) ou montada (entrada manual).
  * `pre` reaproveita o que quem chama já carregou.
  */
+/**
+ * O ÍNDICE DOS TÍTULOS DO VIPER DE NOTAS DE ENTRADA (19/10/2026; ver
+ * lib/titulos-do-viper.js). Uma consulta para todos — ~5 mil títulos — guardada
+ * por um minuto: a conferência de uma nota e a lista de Notas de Entrada
+ * perguntam pela mesma coisa.
+ */
+let indiceDoViper = null;
+let indiceDoViperEm = 0;
+async function indiceDosTitulosDoViper() {
+  if (indiceDoViper && Date.now() - indiceDoViperEm < 60000) return indiceDoViper;
+  const { rows } = await consultarBanco(
+    `select f.id, f.code, f.amount, f.due_date::text as due_date, f.description, f.note, f.client_supplier_name,
+            regexp_replace(coalesce(p.document, c.document, ''), '\\D', '', 'g') as documento
+       from financial_entries f
+       left join people p on p.id = f.client_supplier_id
+       left join cnpjs c on c.id = f.client_supplier_id
+      where f.type = 'DESPESA' and f.status <> 'cancelado'
+        and (f.description ilike '%NF DE ENTRADA%' or f.note like 'Importado do Viper em %')`
+  );
+  indiceDoViper = titulosDoViper.montarIndice(rows);
+  indiceDoViperEm = Date.now();
+  return indiceDoViper;
+}
+
+/**
+ * AS ENTRADAS QUE DUPLICARAM (19/10/2026, decisão do usuário: "listar para eu
+ * resolver"). Três marcas, para a lista de Notas de Entrada:
+ *   - titulosDoViper: a nota também tem conta a pagar do Viper (lançada lá);
+ *   - repetidaCom: outra entrada do MESMO emitente, número e série (com chave
+ *     diferente — a mesma chave o banco não aceita duas vezes);
+ *   - titulosRepetidos: títulos desta entrada com o mesmo vencimento e valor.
+ * Falhando, a lista sai sem as marcas.
+ */
+async function marcarDuplicidadesDasEntradas(entradas) {
+  if (!entradas.length) return entradas;
+  try {
+    const ids = entradas.map((e) => e.id);
+    const [indice, mesmas, repetidos] = await Promise.all([
+      indiceDosTitulosDoViper(),
+      consultarBanco(
+        `select a.id, array_agg(b.id) as outras
+           from nfe_entrada a
+           join nfe_entrada b on b.id <> a.id and b.emitente_documento = a.emitente_documento
+                             and ltrim(coalesce(b.numero, ''), '0') = ltrim(coalesce(a.numero, ''), '0')
+                             and coalesce(b.serie, '') = coalesce(a.serie, '')
+          where a.id = any($1::text[])
+          group by a.id`, [ids]
+      ).then((r) => r.rows),
+      consultarBanco(
+        `select reference_id, count(*)::int as vezes from financial_entries
+          where reference_id = any($1::text[]) and status <> 'cancelado'
+          group by reference_id, due_date, amount having count(*) > 1`, [ids]
+      ).then((r) => r.rows)
+    ]);
+    const outrasDe = new Map(mesmas.map((r) => [r.id, r.outras]));
+    const repetidosDe = new Map();
+    repetidos.forEach((r) => repetidosDe.set(r.reference_id, (repetidosDe.get(r.reference_id) || 0) + r.vezes - 1));
+    return entradas.map((e) => {
+      const doViper = titulosDoViper.titulosDaNota(indice, { numero: e.numero, emitenteDocumento: e.emitenteDocumento, emitenteNome: e.emitenteNome });
+      return {
+        ...e,
+        titulosDoViper: doViper.map((t) => lancamentoCodigo.formatar(t.code) || t.id),
+        repetidaCom: outrasDe.get(e.id) || [],
+        titulosRepetidos: repetidosDe.get(e.id) || 0
+      };
+    });
+  } catch (erro) {
+    console.error('Não consegui marcar as entradas duplicadas', erro.message);
+    return entradas;
+  }
+}
+
 async function conferirNotaDeEntrada(nota, pre = {}) {
   const data = pre.data || loadData();
   // O razão vem junto porque quem chama grava a entrada com este mesmo
@@ -11550,6 +11624,28 @@ async function conferirNotaDeEntrada(nota, pre = {}) {
     documentosProprios: estabelecimentos.map((e) => e.cnpj),
     entradaExistente
   });
+
+  // A NOTA JÁ LANÇADA NO VIPER (19/10/2026, decisão do usuário: avisar e vir
+  // com financeiro e estoque desmarcados — a nota fica registrada sem
+  // duplicar; a pessoa marca de volta se for o caso). Falhar aqui não impede a
+  // conferência.
+  try {
+    const existentes = titulosDoViper.titulosDaNota(await indiceDosTitulosDoViper(), {
+      numero: nota.numero,
+      emitenteDocumento: nota.emitente && nota.emitente.documento,
+      emitenteNome: nota.emitente && nota.emitente.nome
+    });
+    if (existentes.length) {
+      conferencia.titulosDoViper = existentes.map((t) => ({ id: t.id, codigo: lancamentoCodigo.formatar(t.code) || t.id, vencimento: t.dueDate, valor: t.amount }));
+      conferencia.avisos.push({
+        chave: 'viper',
+        mensagem: `Esta nota já tem conta a pagar lançada no Viper (${conferencia.titulosDoViper.map((t) => t.codigo).join(', ')}). `
+          + 'Para não duplicar, "Gerar contas a pagar" e a entrada no estoque vêm desmarcados.'
+      });
+    }
+  } catch (erroViper) {
+    console.error('Não consegui conferir os títulos do Viper da nota', nota.chave, erroViper.message);
+  }
 
   return { conferencia, data, produtos };
 }
@@ -18906,7 +19002,7 @@ async function tratarRequisicao(req, res) {
       if (!user || !user.allowedModules.includes('purchases')) {
         return sendJson(res, { error: 'Sem permissão' }, 403);
       }
-      return sendJson(res, { entradas: await entradaNfeDb.listarEntradas({}) });
+      return sendJson(res, { entradas: await marcarDuplicidadesDasEntradas(await entradaNfeDb.listarEntradas({})) });
     } catch (error) {
       const traduzido = traduzirErroDaEntrada(error);
       return sendErro(res, traduzido, 'Erro ao listar entradas', 400);

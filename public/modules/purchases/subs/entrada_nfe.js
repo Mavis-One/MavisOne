@@ -241,7 +241,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       if (guardada) return guardada;
       const inicial = {
         produtoId: item.vinculo ? item.vinculo.produtoId : '',
-        movimentarEstoque: Boolean(item.vinculo)
+        movimentarEstoque: Boolean(item.vinculo) && !tela.jaNoViper
       };
       tela.escolhas.set(item.numero, inicial);
       return inicial;
@@ -411,9 +411,26 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
     function blocoFinanceiro() {
       const duplicatas = tela.conferencia.nota.duplicatas;
       const total = tela.conferencia.nota.totais.nota;
+      const doViper = tela.conferencia.titulosDoViper || [];
       return `
         <section class="panel">
           <h4>Contas a pagar</h4>
+          ${doViper.length ? `
+            <div class="table-scroll">
+              <table class="table entrada-duplicatas">
+                <thead><tr><th>Já lançado no Viper</th><th>Vencimento</th>${veValores ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
+                <tbody>
+                  ${doViper.map((t) => `
+                    <tr>
+                      <td>${escapeHtml(t.codigo)}</td>
+                      <td>${dataBr(t.vencimento)}</td>
+                      ${veValores ? `<td class="entrada-col-num">${moeda(t.valor)}</td>` : ''}
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
           ${duplicatas.length ? `
             <div class="table-scroll">
               <table class="table entrada-duplicatas">
@@ -508,10 +525,16 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           </section>
         `;
       }
+      // AS DUPLICADAS (19/10/2026, decisão do usuário: "listar para eu
+      // resolver"): marca na linha e um filtro. Ver marcarDuplicidadesDasEntradas.
+      const duplicada = (e) => (e.titulosDoViper || []).length || (e.repetidaCom || []).length || e.titulosRepetidos;
+      const quantasDuplicadas = tela.entradas.filter(duplicada).length;
+      const visiveis = tela.soDuplicadas ? tela.entradas.filter(duplicada) : tela.entradas;
       return `
         <section class="panel">
           <div class="panel-header">
             <h4>Últimas entradas</h4>
+            ${quantasDuplicadas || tela.soDuplicadas ? `<button type="button" class="${tela.soDuplicadas ? '' : 'secondary'}" id="entradaSoDuplicadas">${tela.soDuplicadas ? 'Mostrar todas' : `Duplicadas (${quantasDuplicadas})`}</button>` : ''}
             <button type="button" class="secondary" id="entradaPlanilha">Baixar planilha</button>
           </div>
           <div class="table-scroll">
@@ -520,7 +543,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                 <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th>${veValores ? '<th class="entrada-col-num">Total</th>' : ''}<th>Situação</th><th>Consultar</th>${veValores ? '<th>XML</th>' : ''}<th>Corrigir</th></tr>
               </thead>
               <tbody>
-                ${tela.entradas.map((e) => `
+                ${visiveis.map((e) => `
                   <tr>
                     <td>${escapeHtml(e.numero)}/${escapeHtml(e.serie)}</td>
                     <td>${escapeHtml(e.emitenteNome)}<br /><span class="muted">${escapeHtml(mascaraDocumento(e.emitenteDocumento))}</span></td>
@@ -532,6 +555,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                       </span>
                       ${e.movimentouEstoque ? '<span class="finance-badge finance-badge-muted">estoque</span>' : ''}
                       ${e.gerouFinanceiro ? '<span class="finance-badge finance-badge-muted">financeiro</span>' : ''}
+                      ${(e.titulosDoViper || []).length ? `<span class="finance-badge finance-badge-danger" title="Também lançada no Viper: ${escapeHtml(e.titulosDoViper.join(', '))}">também no Viper</span>` : ''}
+                      ${(e.repetidaCom || []).length ? '<span class="finance-badge finance-badge-danger" title="Outra entrada do mesmo fornecedor, número e série">nota repetida</span>' : ''}
+                      ${e.titulosRepetidos ? `<span class="finance-badge finance-badge-danger" title="Títulos com o mesmo vencimento e valor">título repetido</span>` : ''}
                     </td>
                     <td>
                       <button type="button" class="entrada-link" data-resumo-entrada="${escapeHtml(e.id)}">ver resumo</button><br />
@@ -616,6 +642,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         botao.addEventListener('click', () => baixarXml(botao.dataset.baixarXml));
       });
       document.getElementById('entradaPlanilha')?.addEventListener('click', baixarPlanilha);
+      document.getElementById('entradaSoDuplicadas')?.addEventListener('click', () => {
+        tela.soDuplicadas = !tela.soDuplicadas;
+        desenhar();
+      });
       // O financeiro da entrada (17/10/2026): parcelas, valores e vencimentos.
       content.querySelectorAll('[data-financeiro-entrada]').forEach((botao) => {
         botao.addEventListener('click', async () => {
@@ -841,13 +871,17 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         body: JSON.stringify({ xml })
       });
       tela.xml = xml;
-      tela.conferencia = { nota: resposta.nota, fornecedor: resposta.fornecedor, itens: resposta.itens, bloqueios: resposta.bloqueios, avisos: resposta.avisos, transferencia: Boolean(resposta.transferencia) };
+      tela.conferencia = { nota: resposta.nota, fornecedor: resposta.fornecedor, itens: resposta.itens, bloqueios: resposta.bloqueios, avisos: resposta.avisos, transferencia: Boolean(resposta.transferencia), titulosDoViper: resposta.titulosDoViper || [] };
       // A CADA NOTA (15/10/2026): marcado. Desligado numa nota, o "Gerar contas
       // a pagar" seguia desligado nas seguintes, e sem conta a pagar a Edição
       // de Título não abria depois de lançar. Desde 16/10/2026 vale também na
       // transferência entre filiais (pedido do usuário: a Edição de Título em
       // todos os tipos de lançamento).
       tela.gerarFinanceiro = true;
+      // JÁ LANÇADA NO VIPER (19/10/2026, decisão do usuário): financeiro e
+      // estoque vêm desmarcados — a nota fica registrada sem duplicar.
+      tela.jaNoViper = tela.conferencia.titulosDoViper.length > 0;
+      if (tela.jaNoViper) tela.gerarFinanceiro = false;
       // Sem vencimentos no XML: começa numa parcela só, na emissão (o que
       // sempre foi), e a pessoa parcela no quadro da conferência.
       montarParcelasDaEntrada(1, String(resposta.nota.dataEmissao || '').slice(0, 10), 30);

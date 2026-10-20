@@ -116,7 +116,8 @@ check('  valores só para administrador', rota.includes('comValores: await ehAdm
 check('  responde .xlsx com o nome datado', rota.includes("'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'")
   && rota.includes('filename="notas-de-entrada-${hoje}.xlsx"'));
 const tela = semComentarios(fs.readFileSync(path.join(RAIZ, 'public/modules/purchases/subs/entrada_nfe.js'), 'utf8'));
-check('botão "Baixar planilha" nas últimas entradas', /<h4>Últimas entradas<\/h4>\s*<button type="button" class="secondary" id="entradaPlanilha">Baixar planilha<\/button>/.test(tela));
+// (19/10/2026: entre o título e o botão, o filtro "Duplicadas".)
+check('botão "Baixar planilha" nas últimas entradas', /<h4>Últimas entradas<\/h4>[\s\S]{0,400}<button type="button" class="secondary" id="entradaPlanilha">Baixar planilha<\/button>/.test(tela));
 check('  baixa pela rota, com o token', /fetch\('\/api\/purchases\/entrada-nfe\/planilha', \{\s*headers: \{ 'x-auth-token': getSessionToken\(\) \|\| '' \}/.test(tela));
 check('"é administrador?" decidido ao abrir a tela, não ao carregar o arquivo',
   /let veValores = false;/.test(tela) && /renderEntradaNfe\(ctx\) \{\s*const \{[^}]*\} = ctx;\s*veValores = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin\(\);/.test(tela));
