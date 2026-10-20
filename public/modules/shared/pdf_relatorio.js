@@ -102,13 +102,53 @@
       // Cada uma no seu mínimo; o que sobra vai para as de texto, na medida do
       // que elas ainda queriam (a descrição fica com a maior parte).
       const querem = colunas.map((c, i) => (ehTexto(c) ? Math.max(0, naturais[i] - minimas[i]) : 0));
-      const somaQuerem = querem.reduce((s, q) => s + q, 0);
-      const sobra = larguraUtil - somaMinima;
-      larguras = minimas.map((m, i) => m + (somaQuerem > 0 ? Math.min(querem[i], sobra * (querem[i] / somaQuerem)) : 0));
+      // A SOBRA VAI PRIMEIRO PARA QUEM QUER POUCO (20/10/2026). Na proporção, a
+      // coluna curta (a Empresa, "SAL INFINITY ELECTRIC") ganhava uma fatia e
+      // quebrava em toda linha, dobrando a altura da tabela, enquanto a longa
+      // (fornecedor, descrição) levava quase tudo. Agora cada uma, da que quer
+      // menos para a que quer mais, recebe o que falta até a sua parte igual do
+      // que ainda sobra: a curta fica numa linha, a longa quebra no que faltar.
+      // A coluna marcada `larga` (o fornecedor de Contas a Pagar, 20/10/2026:
+      // "o fornecedor com um campo maior na coluna da atual descrição") vale
+      // por TRÊS nessa divisão: as curtas continuam inteiras numa linha, e do
+      // que as longas disputam ela fica com a maior parte.
+      // Em duas etapas: primeiro as CURTAS (querem até a parte igual da
+      // sobra), inteiras; depois as longas dividem o resto, com a larga valendo
+      // por três.
+      // Antes de tudo, a marcada `inteira` (a Empresa: "SAL INFINITY ELECTRIC"
+      // quebrando em toda linha dobrava a tabela) recebe o que precisa para
+      // caber numa linha.
+      const peso = (i) => (colunas[i].larga ? 3 : 1);
+      larguras = minimas.slice();
+      let restante = larguraUtil - somaMinima;
+      colunas.forEach((c, i) => {
+        if (!c.inteira || !(querem[i] > 0)) return;
+        const parte = Math.min(querem[i], restante);
+        larguras[i] += parte;
+        restante -= parte;
+        querem[i] = 0;
+      });
+      const querendo = colunas.map((_, i) => i).filter((i) => querem[i] > 0);
+      const parteIgual = restante / Math.max(1, querendo.length);
+      const curtas = querendo.filter((i) => !colunas[i].larga && querem[i] <= parteIgual).sort((a, b) => querem[a] - querem[b]);
+      curtas.forEach((i) => {
+        const parte = Math.min(querem[i], restante);
+        larguras[i] += parte;
+        restante -= parte;
+      });
+      const longas = querendo.filter((i) => !curtas.includes(i)).sort((a, b) => querem[a] / peso(a) - querem[b] / peso(b));
+      let pesoRestante = longas.reduce((s, i) => s + peso(i), 0);
+      longas.forEach((i) => {
+        const parte = Math.min(querem[i], restante * peso(i) / pesoRestante);
+        larguras[i] += parte;
+        restante -= parte;
+        pesoRestante -= peso(i);
+      });
       // Ainda sobrou (tudo coube no natural): reparte entre as de texto.
       const resto = larguraUtil - larguras.reduce((s, l) => s + l, 0);
-      const quantasDeTexto = colunas.filter(ehTexto).length;
-      if (resto > 0 && quantasDeTexto) larguras = larguras.map((l, i) => (ehTexto(colunas[i]) ? l + resto / quantasDeTexto : l));
+      const quemGanha = colunas.some((c) => c.larga && ehTexto(c)) ? (c) => c.larga && ehTexto(c) : ehTexto;
+      const quantas = colunas.filter(quemGanha).length;
+      if (resto > 0 && quantas) larguras = larguras.map((l, i) => (quemGanha(colunas[i]) ? l + resto / quantas : l));
     }
     return { coube: somaMinima <= larguraUtil, fracoes: larguras.map((l) => l / larguraUtil) };
   }

@@ -13756,7 +13756,15 @@ async function tratarRequisicao(req, res) {
       sql: async (texto, parametros) => (await consultarBanco(texto, parametros)).rows,
       // db.json: tarefas, agendamentos, contatos e metadados de produto ainda moram lá.
       data: loadData(),
-      vendedores: escopoLib.vendedoresPermitidos(escopo, filtros.vendedorId)
+      vendedores: escopoLib.vendedoresPermitidos(escopo, filtros.vendedorId),
+      // A empresa de cada título (20/10/2026: coluna Empresa de Contas a Pagar
+      // e a Receber), pela mesma regra da lista — com as contas bancárias, que
+      // o nome da conta também decide.
+      empresaDosTitulos: async (titulos) => {
+        const dados = loadData();
+        await syncFinanceCadastroData(dados);
+        return resolvedorDeEmpresas(titulos, dados);
+      }
     });
     return { resultado };
   }
