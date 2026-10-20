@@ -286,6 +286,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           <p class="prompt-aviso">
             <strong>${escapeHtml((filaDaEntrada.tituloDe && filaDaEntrada.tituloDe[editEntry.id]) || filaDaEntrada.titulo || `Entrada da ${filaDaEntrada.nota}`)} · título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length}.</strong>
             ${escapeHtml(filaDaEntrada.aviso || 'Valor, data, descrição e fornecedor vêm da nota.')}
+            ${filaDaEntrada.copiadoDoPrimeiro && posicaoNaFila > 0
+              ? 'Conta, plano de contas, centro de custo e forma de pagamento vieram do título 1: troque aqui se este for diferente.'
+              : ''}
           </p>` : vinculado ? `
           <p class="prompt-aviso">
             <strong>Lançamento gerado ${editEntry.vinculo === 'nfe' ? 'por uma NF-e' : 'por um pedido'}.</strong>
@@ -499,6 +502,34 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     state.financeEditEntryId = proximoDaFila;
     state.activeSub = 'edicao_titulo';
     renderFinanceNovoLancamento(ctx);
+  }
+
+  // A 1ª PARCELA DÁ O PADRÃO DAS OUTRAS (20/10/2026, pedido do usuário: "quero
+  // que os títulos sejam copiados as informações de alteração padrão que a
+  // primeira parcela, porém se houver edição o usuário tem que alterar de forma
+  // manual antes da finalização"). Só na fila de uma entrada de NF-e: salvar o
+  // 1º título grava a conta bancária, o plano de contas, o centro de custo e a
+  // forma de pagamento dele nos demais; a fila segue abrindo cada um, já com
+  // isso, e o que for diferente a pessoa troca à mão. Um que o servidor recuse
+  // (já baixado, por exemplo) fica como estava, e o aviso diz quantos.
+  async function copiarPadraoParaAFila(payload) {
+    const padrao = {
+      bankAccountId: payload.bankAccountId,
+      category: payload.category,
+      costCenter: payload.costCenter,
+      paymentMethodId: payload.paymentMethodId
+    };
+    const demais = filaDaEntrada.ids.slice(1);
+    let falhas = 0;
+    for (const id of demais) {
+      try {
+        await api(`/api/finance/entries/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(padrao) });
+      } catch (error) {
+        falhas += 1;
+      }
+    }
+    filaDaEntrada.copiadoDoPrimeiro = true;
+    return { copiados: demais.length - falhas, falhas };
   }
 
   async function voltarDaFila() {
@@ -918,7 +949,15 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         const quantas = Array.isArray(result.entries) ? result.entries.length : 1;
         // Na fila da entrada, salvar já abre o título seguinte.
         if (filaDaEntrada && proximoDaFila) {
-          showToast(`Título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length} salvo.`, 'success');
+          if (filaDaEntrada.entradaId && posicaoNaFila === 0 && formType !== 'TRANSFERENCIA') {
+            const { copiados, falhas } = await copiarPadraoParaAFila(payload);
+            showToast(`Título 1 de ${filaDaEntrada.ids.length} salvo. Conta, plano de contas, centro de custo e forma de pagamento `
+              + `copiados para ${copiados === 1 ? 'o outro título' : `os outros ${copiados}`} — troque no que for diferente.`
+              + (falhas ? ` ${falhas} não ${falhas === 1 ? 'aceitou' : 'aceitaram'} a cópia: confira ${falhas === 1 ? 'esse' : 'esses'} à mão.` : ''),
+            falhas ? 'warning' : 'success');
+          } else {
+            showToast(`Título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length} salvo.`, 'success');
+          }
           abrirProximoDaFila();
           return;
         }
