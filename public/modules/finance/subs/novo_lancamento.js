@@ -285,10 +285,18 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         ${filaDaEntrada ? `
           <p class="prompt-aviso">
             <strong>${escapeHtml((filaDaEntrada.tituloDe && filaDaEntrada.tituloDe[editEntry.id]) || filaDaEntrada.titulo || `Entrada da ${filaDaEntrada.nota}`)} · título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length}.</strong>
-            ${escapeHtml(filaDaEntrada.aviso || 'Valor, data, descrição e fornecedor vêm da nota.')}
+            ${escapeHtml(filaDaEntrada.aviso || (editEntry.vinculo === 'entrada'
+              ? 'Data, descrição e fornecedor vêm da nota; o valor pode ser ajustado ao que a fatura cobra.'
+              : 'Valor, data, descrição e fornecedor vêm da nota.'))}
             ${filaDaEntrada.copiadoDoPrimeiro && posicaoNaFila > 0
               ? 'Conta, plano de contas, centro de custo e forma de pagamento vieram do título 1: troque aqui se este for diferente.'
               : ''}
+          </p>` : editEntry && editEntry.vinculo === 'entrada' ? `
+          <p class="prompt-aviso">
+            <strong>Lançamento gerado por uma entrada de NF-e.</strong>
+            Data, descrição e fornecedor vêm da nota e aparecem travados aqui. O valor
+            pode ser ajustado ao que a fatura cobra; vencimento, conta bancária, plano de
+            contas, centro de custo, documento e observação você ajusta normalmente.
           </p>` : vinculado ? `
           <p class="prompt-aviso">
             <strong>Lançamento gerado ${editEntry.vinculo === 'nfe' ? 'por uma NF-e' : 'por um pedido'}.</strong>
@@ -886,7 +894,10 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           // seria pedir para divergir por formato de data ou arredondamento.
           dueDate: formData.get('dueDate'),
           document: formData.get('document'),
-          note: formData.get('note')
+          note: formData.get('note'),
+          // Título de entrada de NF-e (21/10/2026): o valor da fatura pode ser
+          // outro que o da nota, e o servidor libera o campo (camposTravados).
+          ...(travado('amount') ? {} : { amount: Number(formData.get('amount')) })
         }
         : {
           type: formType,

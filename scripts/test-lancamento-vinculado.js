@@ -54,7 +54,9 @@ check('  document é gravado no lançamento vinculado, com o número na frente',
 console.log('\n--- e recusa o que ela possui, em vez de ignorar calado ---');
 // Aceitar e manter o valor antigo seria pior do que negar: a tela diria
 // "salvo" e o número continuaria o outro.
-check('valor é protegido', /\['valor', mudou\('amount'/.test(put));
+// Desde 21/10/2026, menos no título de entrada de NF-e, onde o valor da
+// fatura pode ser outro (ver test-valor-do-titulo-da-entrada.js).
+check('valor é protegido', /\['valor', !valorEditavel && mudou\('amount'/.test(put));
 check('data é protegida', /\['data', mudou\('date'/.test(put));
 check('descrição é protegida', /\['descrição', mudou\('description'/.test(put));
 check('cliente é protegido', /\['cliente', mudou\('clientSupplierId'/.test(put));

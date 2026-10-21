@@ -8157,6 +8157,24 @@ async function estornarPedidoSemTitulos(pedidoId, user) {
   }
 }
 
+/**
+ * O VALOR DO TÍTULO DE ENTRADA DE NF-e SE EDITA (21/10/2026, pedido do usuário:
+ * "muitas vezes a NFE é emitida por um valor, mas o valor cobrado na fatura é
+ * outro"). A nota é do fornecedor e não muda aqui; o que se paga é o que a
+ * fatura cobra. Só o título da entrada de NF-e (referenceId de nfe_entrada) —
+ * no de pedido e no de NF-e emitida o valor segue travado, porque ali ele vem
+ * de um documento nosso. Data, descrição e fornecedor seguem da nota.
+ */
+async function tituloDeEntradaDeNfe(referenceId) {
+  if (!referenceId) return false;
+  try {
+    const { rows } = await consultarBanco('select 1 from nfe_entrada where id = $1', [String(referenceId)]);
+    return rows.length > 0;
+  } catch (erro) {
+    return false;
+  }
+}
+
 /** A frase que vai junto do resumo da exclusão/cancelamento. */
 function fraseDosPedidosEstornados(codigos) {
   if (!codigos.length) return '';
@@ -23342,8 +23360,11 @@ async function tratarRequisicao(req, res) {
       if (vinculadoAoPedido || vinculadoANfe) {
         const mudou = (campo, comparar) => body[campo] !== undefined && comparar(body[campo]);
         const texto = (v) => String(v == null ? '' : v).trim();
+        // O VALOR DO TÍTULO DE ENTRADA DE NF-e SE EDITA (ver tituloDeEntradaDeNfe).
+        const valorEditavel = !vinculadoANfe && await tituloDeEntradaDeNfe(entry.referenceId);
+        const valorAnterior = Number(entry.amount || 0);
         const protegidos = [
-          ['valor', mudou('amount', (v) => Number(v || 0) !== Number(entry.amount || 0))],
+          ['valor', !valorEditavel && mudou('amount', (v) => Number(v || 0) !== Number(entry.amount || 0))],
           ['data', mudou('date', (v) => texto(v) !== texto(entry.date))],
           ['descrição', mudou('description', (v) => texto(v) !== texto(entry.description))],
           ['cliente', mudou('clientSupplierId', (v) => texto(v) !== texto(entry.clientSupplierId))
@@ -23364,7 +23385,9 @@ async function tratarRequisicao(req, res) {
           }, 400);
         }
 
-        // Só o que o pedido/NF-e não possui.
+        // Só o que o pedido/NF-e não possui — e, na entrada de NF-e, o valor.
+        // Positivo: validarLancamentoFinanceiro já o conferiu em `proposto`.
+        if (valorEditavel && body.amount !== undefined) entry.amount = Math.round(Number(body.amount) * 100) / 100;
         if (body.dueDate !== undefined) entry.dueDate = body.dueDate;
         // Fase AY: o numero volta na frente mesmo que o usuario o apague do campo —
         // e' o que faz "padronizado" valer tambem depois da edicao. `documento`
@@ -23390,7 +23413,12 @@ async function tratarRequisicao(req, res) {
           entry,
           byId: user.id,
           byName: user.name,
-          details: { referenceId: entry.referenceId || '', nfeId: entry.nfeId || '' }
+          details: {
+            referenceId: entry.referenceId || '',
+            nfeId: entry.nfeId || '',
+            // O valor da nota e o da fatura: na trilha fica de quanto para quanto.
+            ...(Number(entry.amount || 0) !== valorAnterior ? { valorAnterior, valorNovo: Number(entry.amount || 0) } : {})
+          }
         });
         saveData(data);
         return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
@@ -23452,7 +23480,13 @@ async function tratarRequisicao(req, res) {
     if (!entry) {
       return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
     }
-    return sendJson(res, { entry: serializeFinanceEntry(entry, data) });
+    const serializado = serializeFinanceEntry(entry, data);
+    // Título de entrada de NF-e: o valor se edita (ver tituloDeEntradaDeNfe).
+    if (!entry.nfeId && await tituloDeEntradaDeNfe(entry.referenceId)) {
+      serializado.vinculo = 'entrada';
+      serializado.camposTravados = (serializado.camposTravados || []).filter((campo) => campo !== 'amount');
+    }
+    return sendJson(res, { entry: serializado });
   }
 
   if (pathname === '/api/finance/nfe' && req.method === 'GET') {
