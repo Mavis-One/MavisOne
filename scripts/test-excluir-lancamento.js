@@ -55,7 +55,9 @@ check('lê do banco na hora, não do retrato', /const \[entry\] = await db\.getF
 check('o extrato conciliado volta a Não conciliado', /for \(const tx of transacoes\) \{\s*tx\.status = 'nao_conciliado';\s*tx\.matchedEntryId = '';\s*tx\.matchedPaymentId = '';/.test(rota));
 check('a auditoria guarda o lançamento, as baixas e o motivo',
   /action: 'excluirLancamento',[\s\S]{0,200}details: \{\s*motivo,[\s\S]{0,80}lancamento: entry,\s*baixas,/.test(rota));
-check('grava o extrato no fim', /saveData\(data\);\s*return sendJson\(res, \{\s*success: true,\s*processados,/.test(rota));
+// Entre gravar e responder, desde 21/10/2026, o estorno do pedido que ficou sem
+// títulos (estornarPedidoSemTitulos; ver test-estorno-do-pedido.js).
+check('grava o extrato no fim', /saveData\(data\);\s*(?:\/\/[^\n]*\n\s*)?const pedidosEstornados = \[\];[\s\S]{0,400}?return sendJson\(res, \{\s*success: true,\s*processados,/.test(rota));
 check('o vínculo: pedido, entrada de NF-e, contrato e a nota',
   /from orders where id = any\(\$1\)[\s\S]{0,200}from nfe_entrada where id = any\(\$1\)[\s\S]{0,200}from contracts where id = any\(\$1\)[\s\S]{0,200}from nfe where id = any\(\$1\)/.test(servidor));
 

@@ -36,11 +36,24 @@ check('a conferência mora em aplicarEfeitosDeStatus (PUT e lote passam por ela)
   && (server.match(/await aplicarEfeitosDeStatus\(\{/g) || []).length === 2);
 check('só ao ENTRAR em Pré-Faturado (pedido)', /if \(tipoNovo === 'order' && statusNovo === 'pedido-pre-faturado'\s*&& salesStatus\.normalizar\(current\.status, undefined\) !== 'pedido-pre-faturado'\) \{/.test(efeitos));
 check('com a conta do faturamento, sobre os itens e o depósito que vão ser gravados',
-  /const faltando = await itensSemEstoqueParaFaturar\(\{ \.\.\.current, \.\.\.updated, items: items \|\| updated\.items \|\| current\.items \}\);/.test(efeitos));
-check('recusa com 400 e diz o que falta', /`Sem estoque para aprovar: \$\{faltando\.map/.test(efeitos) && /erro\.status = 400;\s*throw erro;/.test(efeitos));
-const posConferencia = efeitos.indexOf('Sem estoque para aprovar');
+  /await recusarAprovacaoSemEstoque\(\{ \.\.\.current, \.\.\.updated, items: items \|\| updated\.items \|\| current\.items \}\);/.test(efeitos));
+const recusa = (server.match(/async function recusarAprovacaoSemEstoque\(pedido\) \{[\s\S]*?\n\}/) || [''])[0];
+check('recusa com 400 e diz o que falta', /const faltando = await itensSemEstoqueParaFaturar\(pedido\);/.test(recusa)
+  && /`Sem estoque para aprovar: \$\{faltando\.map/.test(recusa) && /erro\.status = 400;\s*throw erro;/.test(recusa));
+const posConferencia = efeitos.indexOf('recusarAprovacaoSemEstoque(');
 check('antes de mexer em estoque e de gravar o pedido', posConferencia > 0
   && posConferencia < efeitos.indexOf('transitionOrderStockEffect(') && posConferencia < efeitos.indexOf('db.updateOrder('));
+
+// O PEDIDO QUE JÁ NASCE APROVADO (21/10/2026, pedido do usuário: "pedidos não
+// podem ser aprovados com produtos sem estoque"). O POST não passava por
+// aplicarEfeitosDeStatus: um pedido criado em Pré-Faturado nascia aprovado,
+// com títulos, sem conferir nada. Provado na 3099: POST em Pré-Faturado com
+// um produto zerado → 400 "Sem estoque para aprovar: "CAPA DE MURO 19CM"
+// (disponível 0, necessário 1)"; o mesmo pedido como "Pedido" grava.
+const criar = server.slice(server.indexOf("pathname === '/api/sales/records' && req.method === 'POST'"));
+const posNoPost = criar.indexOf("if (type === 'order' && status === 'pedido-pre-faturado') await recusarAprovacaoSemEstoque(record);");
+check('o pedido que já nasce aprovado (POST) confere do mesmo jeito', posNoPost > 0
+  && posNoPost < criar.indexOf('await db.createOrder(record)') && posNoPost < criar.indexOf('transitionOrderFinanceEffect('));
 
 console.log('\n--- e a emissão continua conferindo ---');
 check('NF-e: prepararNfeParaTransmitir', /const faltando = pedido \? await itensSemEstoqueParaFaturar\(pedido\) : \[\];/.test(server));

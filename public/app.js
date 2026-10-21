@@ -195,7 +195,7 @@ function telaDoEndereco(hash = window.location.hash) {
  * lista de vendas guarda no endereço.
  */
 function gravarTelaNoEndereco(modulo, sub, { substituir = false } = {}) {
-  const alvo = enderecoDaTela(modulo, sub);
+  const alvo = enderecoDaTela(modulo, sub) + sufixoDoPedido(modulo, sub);
   const atual = window.location.pathname + window.location.hash;
   const passo = Number((window.history.state && window.history.state.mavisPasso) || 0);
   try {
@@ -208,6 +208,59 @@ function gravarTelaNoEndereco(modulo, sub, { substituir = false } = {}) {
     // Navegador recusou (limite de chamadas): a tela abre do mesmo jeito.
   }
 }
+
+// O PEDIDO SOBREVIVE AO F5 (21/10/2026, pedido do usuário: "quando estou
+// dentro de um pedido e aperto F5 ele não pode simplesmente sumir as
+// informações"). O pedido aberto vivia só em state.salesDraft.editRecord, e o
+// F5 abria uma Nova Venda vazia. Agora são duas partes:
+//   - o pedido aberto vai no endereço (#/sales/new_sale/<id>): F5, Voltar e
+//     link colado reabrem o mesmo pedido, relido do servidor;
+//   - o que foi digitado e ainda não salvo fica nesta aba (sessionStorage, que
+//     sobrevive ao F5 e é só desta aba) e volta sobre o formulário depois do F5.
+//     Só depois do F5: abrir o pedido por outro caminho começa do gravado.
+const PEDIDO_EM_EDICAO_KEY = 'mavisone:pedido-em-edicao';
+
+/** O terceiro pedaço do endereço (#/sales/new_sale/<id>), ou ''. */
+function registroDoEndereco(hash = window.location.hash) {
+  const texto = String(hash || '');
+  if (!texto.startsWith(PREFIXO_DA_TELA)) return '';
+  const registro = texto.slice(PREFIXO_DA_TELA.length).split('/')[2];
+  try {
+    return registro ? decodeURIComponent(registro) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function sufixoDoPedido(modulo, sub) {
+  const aberto = modulo === 'sales' && sub === 'new_sale' && state.salesDraft && state.salesDraft.editRecord;
+  return aberto && aberto.id ? `/${encodeURIComponent(aberto.id)}` : '';
+}
+
+/** A tela do pedido corrige o endereço para o pedido que ela abriu (ou nenhum). */
+function acertarPedidoNoEndereco(registroId) {
+  const doEndereco = telaDoEndereco();
+  if (!doEndereco || doEndereco.module !== 'sales' || doEndereco.sub !== 'new_sale') return;
+  const hashAlvo = `${PREFIXO_DA_TELA}sales/new_sale${registroId ? `/${encodeURIComponent(registroId)}` : ''}`;
+  if (window.location.hash === hashAlvo) return;
+  try {
+    window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search + hashAlvo);
+  } catch (_) {
+    // Navegador recusou: o pedido segue aberto, só o F5 não o acha.
+  }
+}
+
+// Gravar o que está digitado: alguns instantes depois de cada mudança no
+// formulário do pedido, e na hora de sair da página (o F5). A tela do pedido
+// deixa em window.__mavisGuardarPedidoNaAba a função que sabe o que guardar;
+// sem o formulário na tela, ela não faz nada.
+let pedidoNaAbaAgendado = null;
+['input', 'change'].forEach((tipo) => document.addEventListener(tipo, (evento) => {
+  if (!evento.target || !evento.target.closest || !evento.target.closest('#salesRecordForm')) return;
+  clearTimeout(pedidoNaAbaAgendado);
+  pedidoNaAbaAgendado = setTimeout(() => window.__mavisGuardarPedidoNaAba?.(), 400);
+}, true));
+window.addEventListener('pagehide', () => window.__mavisGuardarPedidoNaAba?.());
 
 /** Há tela do sistema antes desta no histórico da guia? */
 function temTelaAnteriorNoHistorico() {
@@ -244,6 +297,8 @@ function aplicarTelaDoEndereco() {
   state.activeModule = doEndereco.module;
   state.activeSub = doEndereco.sub;
   state.selectedModule = getSecondarySidebarConfig(doEndereco.module) ? doEndereco.module : null;
+  // O pedido do endereço ('' = venda nova): a tela do pedido o lê uma vez.
+  if (doEndereco.module === 'sales' && doEndereco.sub === 'new_sale') state.pedidoDoEndereco = registroDoEndereco();
   return true;
 }
 
@@ -253,7 +308,10 @@ window.addEventListener('popstate', () => {
   if (!state.user) return;
   const doEndereco = telaDoEndereco();
   if (!doEndereco) return;
-  if (doEndereco.module === state.activeModule && (doEndereco.sub || null) === (state.activeSub || null)) return;
+  // Na tela do pedido, outro pedido no endereço também é outra tela.
+  const pedidoAberto = (state.salesDraft && state.salesDraft.editRecord && state.salesDraft.editRecord.id) || '';
+  const mesmoPedido = !(doEndereco.module === 'sales' && doEndereco.sub === 'new_sale') || registroDoEndereco() === pedidoAberto;
+  if (doEndereco.module === state.activeModule && (doEndereco.sub || null) === (state.activeSub || null) && mesmoPedido) return;
   state.isNavigatingBack = true;
   if (!aplicarTelaDoEndereco()) gravarTelaNoEndereco(state.activeModule, state.activeSub, { substituir: true });
   renderApp();
@@ -3925,8 +3983,32 @@ async function loadModule(moduleName) {
       // pedido. Trocar o status na tela troca o tipo — inclusive de um registro
       // já salvo, que o servidor move de tabela (ver PUT /api/sales/records).
       if (sub === 'new_sale') {
+        // O PEDIDO DO ENDEREÇO (21/10/2026, ver PEDIDO_EM_EDICAO_KEY): depois do
+        // F5, do Voltar ou de um link colado, o endereço diz qual pedido estava
+        // aberto, e ele é relido aqui; endereço sem pedido é venda nova. Lido
+        // uma vez: depois quem manda é a tela (acertarPedidoNoEndereco).
+        if (typeof state.pedidoDoEndereco === 'string') {
+          const pedidoId = state.pedidoDoEndereco;
+          state.pedidoDoEndereco = null;
+          const aberto = state.salesDraft.editRecord;
+          if (!pedidoId) {
+            if (aberto) state.salesDraft.editRecord = null;
+          } else if (!aberto || aberto.id !== pedidoId) {
+            try {
+              const resposta = await api(`/api/sales/records/${encodeURIComponent(pedidoId)}`);
+              state.salesDraft.editRecord = resposta.record || null;
+            } catch (error) {
+              state.salesDraft.editRecord = null;
+              showToast(error.message || 'Não foi possível reabrir o pedido deste endereço.', 'warning');
+            }
+          }
+        }
+        // Só a primeira tela depois do F5 recupera o que estava digitado.
+        const recuperarDaAba = Boolean(state.recuperarPedidoDaAba);
+        state.recuperarPedidoDaAba = false;
         const editRecord = state.salesDraft?.editRecord || null;
         const isEditing = Boolean(editRecord);
+        acertarPedidoNoEndereco(editRecord ? editRecord.id : '');
 
         // Se /api/sales/meta falhar, o formulário ainda abre — mas cada lista
         // precisa existir vazia aqui, senão o .map() do select derruba a tela.
@@ -4428,6 +4510,56 @@ async function loadModule(moduleName) {
             formState[campo] = form.querySelector(`[name="${campo}"]`)?.value ?? formState[campo];
           });
         };
+
+        // O QUE ESTÁ DIGITADO, GUARDADO NESTA ABA (21/10/2026, ver
+        // PEDIDO_EM_EDICAO_KEY): cabeçalho e abas, itens, pagamentos, descontos
+        // e frete — tudo o que o salvar manda. Com o pedido e a versão gravada
+        // dele, para só voltar sobre o MESMO pedido, como estava no servidor.
+        const fotoDoPedido = () => ({
+          registroId: editRecord ? editRecord.id : '',
+          versao: editRecord ? String(editRecord.updatedAt || '') : '',
+          formState, items, payments, discountAmount, discountPercent, freight, generalExpenses, assemblyFee,
+          freightFixed, chargeFreightToBuyer, generateServiceOrder, ignoreCreditLimit, showCteOptions, paymentTerm, abaAtiva
+        });
+        const guardarPedidoNaAba = () => {
+          if (!document.getElementById('salesRecordForm')) return;
+          try {
+            sessionStorage.setItem(PEDIDO_EM_EDICAO_KEY, JSON.stringify(fotoDoPedido()));
+          } catch (_) {
+            // Aba sem armazenamento: o F5 reabre o pedido como está gravado.
+          }
+        };
+        window.__mavisGuardarPedidoNaAba = () => {
+          syncFormState();
+          guardarPedidoNaAba();
+        };
+        if (recuperarDaAba && !duplicado) {
+          let guardado = null;
+          try {
+            guardado = JSON.parse(sessionStorage.getItem(PEDIDO_EM_EDICAO_KEY) || 'null');
+          } catch (_) {
+            guardado = null;
+          }
+          const doMesmoPedido = guardado && guardado.formState && Array.isArray(guardado.items)
+            && guardado.registroId === (editRecord ? editRecord.id : '')
+            && (!editRecord || guardado.versao === String(editRecord.updatedAt || ''));
+          if (doMesmoPedido) {
+            // A aba e a hora de abertura não contam como "algo digitado".
+            const conteudo = (foto) => JSON.stringify({ ...foto, abaAtiva: undefined, formState: { ...foto.formState, registrationTime: undefined } });
+            abaAtiva = guardado.abaAtiva || abaAtiva;
+            if (conteudo(guardado) !== conteudo(fotoDoPedido())) {
+              Object.assign(formState, guardado.formState);
+              items = guardado.items;
+              payments = Array.isArray(guardado.payments) ? guardado.payments : payments;
+              ({ discountAmount, discountPercent, freight, generalExpenses, assemblyFee, freightFixed,
+                chargeFreightToBuyer, generateServiceOrder, ignoreCreditLimit, showCteOptions, paymentTerm } = guardado);
+              derivarTipo();
+              showToast(editRecord
+                ? 'As alterações que ainda não tinham sido salvas voltaram. Salve para gravá-las.'
+                : 'A venda que estava sendo digitada voltou. Ela ainda não foi salva.', 'info');
+            }
+          }
+        }
 
         // O CHASSI DOS ITENS VAI SOZINHO PARA AS OBSERVAÇÕES (15/10/2026, pedido
         // do usuário: "pegue o chassi que aparece logo após o produto ser
@@ -7105,6 +7237,8 @@ async function loadModule(moduleName) {
               showToast(error.message || `Erro ao salvar ${title.toLowerCase()}.`, 'error');
             }
           });
+          // Item, pagamento ou aba mudou (todo mexer redesenha): guarda na aba.
+          guardarPedidoNaAba();
         };
 
         renderForm();
@@ -9706,6 +9840,9 @@ async function abrirSessaoExistente() {
   adotarUsuarioDaSessao(response.user);
   // O endereço manda (guia nova, link, F5); sem tela nele, a última aberta.
   if (!aplicarTelaDoEndereco()) restoreLastRoute();
+  // Recarregou a página NA TELA DO PEDIDO: o que estava digitado nesta aba
+  // volta (ver PEDIDO_EM_EDICAO_KEY). Consumido pela tela do pedido.
+  state.recuperarPedidoDaAba = state.activeModule === 'sales' && state.activeSub === 'new_sale';
   gravarTelaNoEndereco(state.activeModule, state.activeSub, { substituir: true });
   const moduleHistory = ensureModuleRouteHistory(state.activeModule);
   moduleHistory.currentRouteKey = getRouteKey(state.activeModule, state.activeSub);

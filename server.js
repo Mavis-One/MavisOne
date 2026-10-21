@@ -29,7 +29,8 @@ const {
   conferirDestinatarioDaNota,
   conferirCobrancaDaNota,
   limparEdicaoFiscal,
-  resumoFiscalDaPrevia
+  resumoFiscalDaPrevia,
+  semPagamento
 } = require('./lib/nfePayloadBuilder');
 // Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
 const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
@@ -4437,15 +4438,7 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
   // sair (outra venda, transferência) entre aprovar e emitir.
   if (tipoNovo === 'order' && statusNovo === 'pedido-pre-faturado'
     && salesStatus.normalizar(current.status, undefined) !== 'pedido-pre-faturado') {
-    const faltando = await itensSemEstoqueParaFaturar({ ...current, ...updated, items: items || updated.items || current.items });
-    if (faltando.length) {
-      const erro = new Error(
-        `Sem estoque para aprovar: ${faltando.map((f) => `"${f.nome}" (disponível ${f.disponivel}, necessário ${f.quantidade})`).join('; ')}. `
-        + 'Dê entrada no estoque, ou ajuste o depósito do pedido, e aprove de novo.'
-      );
-      erro.status = 400;
-      throw erro;
-    }
+    await recusarAprovacaoSemEstoque({ ...current, ...updated, items: items || updated.items || current.items });
   }
 
   // FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
@@ -8111,6 +8104,96 @@ async function desfaturarPedidoDaNota(nfe, user, { refazendo = false } = {}) {
 }
 
 /**
+ * O TÍTULO SAIU, O PEDIDO É ESTORNADO (21/10/2026, pedido do usuário, no print
+ * do pedido 16570 em Pré-Faturado: "esse pedido precisa ser estornado, quero
+ * que essa função seja implementada a partir do momento que eu excluo ou
+ * estorno o título da mesma").
+ *
+ * Desde 16/10 aprovar o pedido cria os títulos a receber e o leva a
+ * Pré-Faturado. Excluir ou cancelar esses títulos deixava o pedido aprovado sem
+ * nada a receber — e travado, porque pedido aprovado não se altera. Agora,
+ * quando um pedido Pré-Faturado fica SEM NENHUM título valendo (todos excluídos
+ * ou cancelados), ele volta a "Pedido Não Faturado": a mesma porta de volta do
+ * cancelamento da NF-e, por mudarStatusSalesRecord (as mesmas regras). Dali
+ * ele é corrigido e aprovado de novo, e a aprovação cria os títulos outra vez.
+ *
+ * Só o Pré-Faturado: o faturado tem NF-e por trás, e quem o desfaz é o
+ * cancelamento da nota. Com algum título ainda valendo (uma parcela de três
+ * excluída, ou o título parcelado), o pedido fica como está.
+ *
+ * Devolve o código do pedido estornado, ou ''. A falha não sobe: o título já
+ * saiu, e a resposta da exclusão não pode dizer que ela falhou.
+ */
+async function estornarPedidoSemTitulos(pedidoId, user) {
+  if (!pedidoId) return '';
+  try {
+    const pedido = await db.getOrderById(pedidoId);
+    if (!pedido || salesStatus.normalizar(pedido.status) !== 'pedido-pre-faturado') return '';
+    const { rows } = await consultarBanco(
+      "select count(*)::int as valendo from financial_entries where reference_id = $1 and coalesce(status, '') <> 'cancelado'",
+      [pedidoId]
+    );
+    if (Number(rows[0] && rows[0].valendo) > 0) return '';
+    // Só este pedido e os lançamentos dele, como a gravação do pedido (fase DS).
+    const dataVendas = loadData();
+    await Promise.all([
+      syncSalesDataDosIds(dataVendas, [pedidoId]),
+      syncCadastroData(dataVendas),
+      syncFinanceDataDosPedidos(dataVendas, [pedidoId])
+    ]);
+    await mudarStatusSalesRecord({ id: pedido.id, code: pedido.code }, 'pedido-nao-faturado', dataVendas, user);
+    await registrarAuditoria({
+      action: 'pedidoEstornadoSemTitulos',
+      targetId: pedido.id,
+      targetUsername: String(pedido.code || pedido.id),
+      byId: user.id || '',
+      byName: user.name || '',
+      details: { de: pedido.status, para: 'pedido-nao-faturado' }
+    });
+    return String(pedido.code || pedido.id);
+  } catch (erro) {
+    console.error('Título excluído ou cancelado, mas não consegui estornar o pedido', pedidoId, erro.message);
+    return '';
+  }
+}
+
+/** A frase que vai junto do resumo da exclusão/cancelamento. */
+function fraseDosPedidosEstornados(codigos) {
+  if (!codigos.length) return '';
+  return codigos.length === 1
+    ? `O pedido ${codigos[0]} ficou sem títulos e voltou a "Pedido Não Faturado".`
+    : `Os pedidos ${codigos.join(', ')} ficaram sem títulos e voltaram a "Pedido Não Faturado".`;
+}
+
+/**
+ * OS QUE JÁ FICARAM SEM TÍTULO, ESTORNADOS AO SUBIR (21/10/2026). O pedido
+ * 16570 teve o título excluído antes desta regra existir. Ao subir, todo pedido
+ * Pré-Faturado sem título valendo E cujo título foi cancelado ou excluído (a
+ * trilha da exclusão guarda o lançamento inteiro) passa pelo mesmo
+ * estornarPedidoSemTitulos. Pré-Faturado que nunca teve título (categoria sem
+ * financeiro, aprovado antes de 16/10) não entra: não houve título que saísse.
+ */
+async function estornarPedidosQueFicaramSemTitulos() {
+  let pedidos = [];
+  try {
+    ({ rows: pedidos } = await consultarBanco(
+      `select o.id from orders o
+        where o.status = 'pedido-pre-faturado'
+          and not exists (select 1 from financial_entries f where f.reference_id = o.id and coalesce(f.status, '') <> 'cancelado')
+          and (exists (select 1 from financial_entries f where f.reference_id = o.id and f.status = 'cancelado')
+               or exists (select 1 from audit_logs a where a.action = 'excluirLancamento'
+                           and a.details->'lancamento'->>'referenceId' = o.id))`
+    ));
+  } catch (erro) {
+    return;
+  }
+  for (const { id } of pedidos) {
+    const codigo = await estornarPedidoSemTitulos(id, { id: '', name: 'Sistema (ao subir)' });
+    if (codigo) console.log(`Pedido ${codigo}: sem títulos, voltou a "Pedido Não Faturado".`);
+  }
+}
+
+/**
  * O DESFATURAMENTO QUE FALHOU, REFEITO AO SUBIR (19/10/2026).
  *
  * Em 17/10, no VPS, uma NF-e foi cancelada e o gatilho do banco recusou a volta
@@ -8505,6 +8588,23 @@ function leiturasDaConferencia() {
  * categoria que não altera estoque não baixa nada — recusar a nota deles
  * seria travar um faturamento que nunca falharia.
  */
+/**
+ * Recusa (400) a aprovação do pedido com item sem saldo — ver "APROVAR O PEDIDO
+ * CONFERE O ESTOQUE" em aplicarEfeitosDeStatus. Também na criação do pedido
+ * que já nasce aprovado (21/10/2026, pedido do usuário: "pedidos não podem ser
+ * aprovados com produtos sem estoque"): o POST não passava por aqui.
+ */
+async function recusarAprovacaoSemEstoque(pedido) {
+  const faltando = await itensSemEstoqueParaFaturar(pedido);
+  if (!faltando.length) return;
+  const erro = new Error(
+    `Sem estoque para aprovar: ${faltando.map((f) => `"${f.nome}" (disponível ${f.disponivel}, necessário ${f.quantidade})`).join('; ')}. `
+    + 'Dê entrada no estoque, ou ajuste o depósito do pedido, e aprove de novo.'
+  );
+  erro.status = 400;
+  throw erro;
+}
+
 async function itensSemEstoqueParaFaturar(pedido) {
   if (pedido.stockApplied) return [];
   const regra = await regraDaCategoriaDoPedido(pedido.category);
@@ -9498,7 +9598,10 @@ async function emitirNfeFiscal(body, user, opcoes = {}) {
     // Só na nota AVULSA que gera financeiro. Numa operação que não gera
     // (complemento, transferência, bonificação), gravar a condição faria o
     // recebível nascer na autorização — exatamente o que a operação proíbe.
+    // Nem na nota SEM PAGAMENTO (forma 90, 21/10/2026): ela não tem o que
+    // receber, e o usuário pediu para emiti-la "sem ter que adicionar título".
     condicaoPagamento: (body.orderId || body.saleId) || !operacaoFiscal.deveGerarFinanceiro({ tipoOperacao })
+      || semPagamento(body.pagamentos)
       ? null
       : condicaoPagamentoDoBody(body),
     tipoOperacaoFiscal: tipoOperacao,
@@ -14983,6 +15086,8 @@ async function tratarRequisicao(req, res) {
         // Fase EF: a categoria da venda decide se baixa estoque e se gera
         // financeiro (ver aplicarEfeitosDeStatus).
         const regraCategoria = await regraDaCategoriaDoPedido(record.category);
+        // Nascer aprovado é aprovar: a mesma conferência de estoque.
+        if (type === 'order' && status === 'pedido-pre-faturado') await recusarAprovacaoSemEstoque(record);
         const geraFinanceiroAgora = type === 'order' && salesStatus.criaTitulos(status) && regraCategoria.geraFinanceiro;
         if (geraFinanceiroAgora) {
           const pagamentosInvalidos = pagamentosCabemNoPedido(record);
@@ -22361,6 +22466,8 @@ async function tratarRequisicao(req, res) {
 
       const processados = [];
       const ignorados = [];
+      // Os pedidos dos títulos cancelados (ver estornarPedidoSemTitulos).
+      const referenciasCanceladas = new Set();
       for (const id of ids) {
         const doRetrato = data.finance.find((item) => item.id === id);
         const codigo = (doRetrato && lancamentoCodigo.formatar(doRetrato.code)) || id;
@@ -22412,6 +22519,7 @@ async function tratarRequisicao(req, res) {
               cancelledByName: user.name || ''
             });
             await addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name, details: { motivo, lote: true } });
+            if (entry.referenceId) referenciasCanceladas.add(entry.referenceId);
           }
           processados.push({ id, codigo });
         } catch (erro) {
@@ -22425,11 +22533,18 @@ async function tratarRequisicao(req, res) {
         }
       }
       saveData(data);
+      // Pedido Pré-Faturado que ficou sem título volta (estornarPedidoSemTitulos).
+      const pedidosEstornados = [];
+      for (const referencia of referenciasCanceladas) {
+        const codigoDoPedido = await estornarPedidoSemTitulos(referencia, user);
+        if (codigoDoPedido) pedidosEstornados.push(codigoDoPedido);
+      }
       return sendJson(res, {
         success: true,
         processados,
         ignorados,
-        resumo: listaDeLancamentos.resumo(processados.length, ignorados.length)
+        pedidosEstornados,
+        resumo: [listaDeLancamentos.resumo(processados.length, ignorados.length), fraseDosPedidosEstornados(pedidosEstornados)].filter(Boolean).join(' ')
       });
     } catch (error) {
       return sendErro(res, error, 'Erro na ação em lote', 400);
@@ -22496,6 +22611,8 @@ async function tratarRequisicao(req, res) {
 
       const processados = [];
       const ignorados = [];
+      // Os pedidos dos títulos excluídos (ver estornarPedidoSemTitulos).
+      const referenciasExcluidas = new Set();
       for (const id of ids) {
         const doRetrato = data.finance.find((item) => item.id === id);
         const codigo = (doRetrato && lancamentoCodigo.formatar(doRetrato.code)) || id;
@@ -22534,6 +22651,7 @@ async function tratarRequisicao(req, res) {
               ...(transacoes.length ? { transacoesDesconciliadas: transacoes.map((tx) => tx.id) } : {})
             }
           });
+          if (entry.referenceId) referenciasExcluidas.add(entry.referenceId);
           processados.push({ id, codigo });
         } catch (erro) {
           const resposta = respostaDeErro(erro, 'Não foi possível excluir este lançamento.');
@@ -22544,11 +22662,18 @@ async function tratarRequisicao(req, res) {
         }
       }
       saveData(data);
+      // Pedido Pré-Faturado que ficou sem título volta (estornarPedidoSemTitulos).
+      const pedidosEstornados = [];
+      for (const referencia of referenciasExcluidas) {
+        const codigoDoPedido = await estornarPedidoSemTitulos(referencia, user);
+        if (codigoDoPedido) pedidosEstornados.push(codigoDoPedido);
+      }
       return sendJson(res, {
         success: true,
         processados,
         ignorados,
-        resumo: listaDeLancamentos.resumo(processados.length, ignorados.length)
+        pedidosEstornados,
+        resumo: [listaDeLancamentos.resumo(processados.length, ignorados.length), fraseDosPedidosEstornados(pedidosEstornados)].filter(Boolean).join(' ')
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao excluir lançamentos', 400);
@@ -23116,7 +23241,13 @@ async function tratarRequisicao(req, res) {
       // a leitura, onde quem abre o lançamento procura. Ver a migração fase-ax.
       await addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name, details: { motivo } });
       saveData(data);
-      return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
+      // Pedido Pré-Faturado que ficou sem título volta (estornarPedidoSemTitulos).
+      const pedidoEstornado = await estornarPedidoSemTitulos(entry.referenceId, user);
+      return sendJson(res, {
+        success: true,
+        entry: serializeFinanceEntry(entry, data),
+        ...(pedidoEstornado ? { pedidoEstornado, aviso: fraseDosPedidosEstornados([pedidoEstornado]) } : {})
+      });
     } catch (error) {
       return sendErro(res, error, 'Erro ao cancelar lançamento', 400);
     }
@@ -25178,6 +25309,8 @@ function startServer(port, retriesLeft) {
     recarregarCategoriasDosRelatorios();
     // O pedido que ficou faturado com a nota cancelada (19/10/2026).
     refazerDesfaturamentosQueFalharam().catch((erro) => console.error('refazerDesfaturamentosQueFalharam:', erro.message));
+    // O pedido Pré-Faturado que ficou sem título (21/10/2026, o 16570).
+    estornarPedidosQueFicaramSemTitulos().catch((erro) => console.error('estornarPedidosQueFicaramSemTitulos:', erro.message));
   });
 
   server.once('error', (error) => {

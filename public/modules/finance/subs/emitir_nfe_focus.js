@@ -673,6 +673,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         else el.value = valor;
       });
     });
+    // A forma de pagamento salva pode ser "90 — Sem pagamento".
+    aplicarSemPagamento();
   }
 
   async function salvarNotaEmEdicao(botao) {
@@ -821,7 +823,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       const resposta = await fetch('/api/fiscal/nfe/danfe-previa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' },
-        body: JSON.stringify(montarCorpoDaNota(formData, referencias))
+        body: JSON.stringify(montarCorpoDaNota(formData, referencia.referencias))
       });
       if (!resposta.ok) {
         const corpo = await resposta.json().catch(() => ({}));
@@ -904,14 +906,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                   ${NFE_FOCUS_TIPO_OPERACAO_OPTIONS.map((o) => `<option value="${o.value}" ${o.value === tipoOperacao ? 'selected' : ''}>${o.label}</option>`).join('')}
                 </select>
               </label>
-            </div>
-            ${!orderIdOrigem ? `
+              ${!orderIdOrigem ? `
               <label>Tipo da NF-e
                 <select name="tipoDocumento">
                   <option value="0" ${tipoDocumento === 0 ? 'selected' : ''}>Entrada</option>
                   <option value="1" ${tipoDocumento === 1 ? 'selected' : ''}>Saída</option>
                 </select>
               </label>` : ''}
+            </div>
             ${NFE_FOCUS_REFERE_NOTA[tipoOperacao] ? `
             <label>${NFE_FOCUS_REFERE_NOTA[tipoOperacao]} *
               <input name="devolucaoChave" required inputmode="numeric" maxlength="44" placeholder="44 dígitos" />
@@ -1075,7 +1077,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                   ${NFE_FORMAS_PAGAMENTO.map((f) => `<option value="${f.value}" ${f.value === '99' ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
                 </select>
               </label>`}
-              <label>Condição
+              <label id="nfeFocusCondicao">Condição
                 <select name="paymentType" id="nfeFocusPaymentType">
                   <option value="avista" selected>À vista</option>
                   <option value="parcelado">Parcelado</option>
@@ -2027,7 +2029,28 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
    * credenciadora, não o cliente. Da avulsa: o parcelamento escolhido, na
    * mesma divisão do contas a receber (centavos na última).
    */
+  // NOTA SEM PAGAMENTO (21/10/2026, rejeição 904 e pedido do usuário: "quero
+  // poder emitir uma NF sem pagamento (sem ter que adicionar título)"). Com a
+  // forma "90 — Sem pagamento" a nota vai sem valor pago, sem cobrança e sem
+  // contas a receber (lib/nfePayloadBuilder.js, SEM_PAGAMENTO): a condição, as
+  // parcelas e as duplicatas saem da tela.
+  function notaSemPagamento() {
+    if (pagamentosDoPedido.length) return pagamentosDoPedido.every((linha) => String(linha.forma) === '90');
+    const campo = document.querySelector('#nfeFocusForm [name="formaPagamento"]');
+    return Boolean(campo && campo.value === '90');
+  }
+
+  function aplicarSemPagamento() {
+    const sem = notaSemPagamento();
+    const condicao = document.getElementById('nfeFocusPaymentType');
+    if (sem && condicao) condicao.value = 'avista';
+    document.getElementById('nfeFocusCondicao')?.classList.toggle('hidden', sem);
+    document.getElementById('nfeFocusInstallmentFields')?.classList.toggle('hidden', sem || (condicao && condicao.value !== 'parcelado'));
+    atualizarCobrancaSugerida();
+  }
+
   function duplicatasSugeridas() {
+    if (notaSemPagamento()) return [];
     const hoje = hojeLocal();
     if (pagamentosDoPedido.length) {
       return pagamentosDoPedido
@@ -2057,6 +2080,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
 
   /** O grupo que vai no corpo, ou null quando não há parcela. */
   function cobrancaDaNota() {
+    if (notaSemPagamento()) return null;
     const duplicatas = cobranca.duplicatas.filter((d) => Number(d.valor || 0) > 0);
     if (!duplicatas.length) return null;
     return {
@@ -2069,6 +2093,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   function renderCobranca() {
     const caixa = document.getElementById('nfeFocusCobranca');
     if (!caixa) return;
+    if (notaSemPagamento()) {
+      caixa.innerHTML = '<p class="muted">Nota sem pagamento: vai sem valor de pagamento e sem cobrança, e não gera contas a receber.</p>';
+      return;
+    }
     const devolverFoco = guardarFoco(caixa);
     const liquido = somaDasDuplicatas();
     const descontoFatura = Number(cobranca.valorDesconto || 0);
@@ -2409,6 +2437,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     document.querySelector('[name="tipoDocumento"]')?.addEventListener('change', (evento) => {
       tipoDocumento = Number(evento.target.value);
     });
+    // "90 — Sem pagamento" tira condição, parcelas e cobrança (notaSemPagamento).
+    document.querySelector('#nfeFocusForm [name="formaPagamento"]')?.addEventListener('change', aplicarSemPagamento);
+    aplicarSemPagamento();
 
     // Trocar de operação redesenha a tela: no complemento não há aba de itens
     // nem de pagamento, e há uma de nota original. Esconder por CSS deixaria

@@ -1472,6 +1472,10 @@ function criarTelaDeLancamentos(telaChave) {
       avisos.push(um
         ? `Ligado a: ${um.vinculo}. Continua lá, sem este título.`
         : `${vinculados.length} ${plural(vinculados.length, 'ligado', 'ligados')} a pedido ou nota (${vinculados[0].vinculo}${vinculados.length > 1 ? ' e outros' : ''}). Continuam lá, sem o título.`);
+      // 21/10/2026: o pedido aprovado (Pré-Faturado) sem nenhum título volta.
+      if (vinculados.some((i) => /^Pedido /.test(i.vinculo))) {
+        avisos.push('Pedido Pré-Faturado que ficar sem nenhum título volta a "Pedido Não Faturado".');
+      }
     }
     if (ignorados.length) avisos.push(`${ignorados.length} de fora: ${ignorados[0].motivo}`);
     const motivo = await promptModal({
@@ -1495,6 +1499,8 @@ function criarTelaDeLancamentos(telaChave) {
       if (um && (resposta.processados || []).length === 1 && !(resposta.ignorados || []).length) {
         delete lista.selecao[um.id];
         showToast('Lançamento excluído.', 'success');
+        // Era o último título de um pedido Pré-Faturado: ele voltou (21/10/2026).
+        if ((resposta.pedidosEstornados || []).length) showToast(resposta.resumo, 'info', 8000);
         await load();
       } else {
         await mostrarResultadoDoLote(resposta);
@@ -1741,8 +1747,10 @@ function criarTelaDeLancamentos(telaChave) {
       });
       if (!motivo) return;
       try {
-        await api(`/api/finance/entries/${entry.id}/cancelar`, { method: 'POST', body: JSON.stringify({ motivo }) });
+        const resposta = await api(`/api/finance/entries/${entry.id}/cancelar`, { method: 'POST', body: JSON.stringify({ motivo }) });
         showToast('Lançamento cancelado.', 'success');
+        // Era o último título de um pedido Pré-Faturado: ele voltou (21/10/2026).
+        if (resposta && resposta.aviso) showToast(resposta.aviso, 'info', 8000);
         closeEntryModal();
         await load();
       } catch (error) {
