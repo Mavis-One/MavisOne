@@ -8672,6 +8672,13 @@ async function podeEmitirNfeSemPagamento(user) {
 }
 
 async function prepararNfeParaTransmitir(body, opcoes = {}) {
+  const tipoDocumentoInformado = body.tipoDocumento;
+  const tipoDocumento = tipoDocumentoInformado === undefined ? 1 : Number(tipoDocumentoInformado);
+  if (tipoDocumentoInformado !== undefined && !['0', '1'].includes(String(tipoDocumentoInformado).trim())) {
+    const err = new Error('Tipo da NF-e inválido. Selecione Entrada ou Saída.');
+    err.status = 400;
+    throw err;
+  }
   // AS LEITURAS VÊM DE FORA SÓ NO PRÉ-CHECK (leiturasDaConferencia). Os três
   // nomes abaixo SOMBREIAM os do módulo de propósito: o corpo desta função
   // continua escrito com fiscalDb/db/pagamentosComCredenciadora, igual para a
@@ -8980,7 +8987,6 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     (sum, item) => sum + Number(item.valorIcms || 0), 0) * 100) / 100;
 
   const referencia = createId('nfe');
-  const tipoDocumento = body.tipoDocumento !== undefined ? Number(body.tipoDocumento) : 1;
   const finalidadeEmissao = operacaoFiscal.finalidadeDaOperacao(tipoOperacao, body.finalidadeEmissao);
   const naturezaOperacao = body.naturezaOperacao
     || operacaoFiscal.naturezaDaOperacao(tipoOperacao);

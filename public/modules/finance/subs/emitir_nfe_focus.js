@@ -88,6 +88,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // ICMS não há mercadoria a listar nem pagamento a informar — há uma nota
   // original a referenciar e um imposto a destacar.
   let tipoOperacao = 'VENDA';
+  let tipoDocumento = 1;
   const ehComplemento = () => tipoOperacao === NFE_FOCUS_COMPLEMENTO;
   const complemento = { chave: '', numero: '', serie: '', baseIcms: 0, aliquota: 0, valorIcms: 0, informacoes: '' };
   // Editado à mão? Então parar de sobrescrever com o texto sugerido.
@@ -618,7 +619,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     return {
       versao: 1,
       campos: camposDoFormulario(),
-      selectedEstabelecimentoId, selectedClienteId, tipoOperacao,
+      selectedEstabelecimentoId, selectedClienteId, tipoOperacao, tipoDocumento,
       itens, complemento, informacoesEditadas, notaDoPedido, observacoes,
       desconto, frete, outrasDespesas, seguro,
       modalidadeEscolhida: modalidadeEscolhida === undefined ? null : modalidadeEscolhida,
@@ -636,6 +637,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     if (d.selectedEstabelecimentoId) selectedEstabelecimentoId = emitenteDoPedido || d.selectedEstabelecimentoId;
     if (d.selectedClienteId !== undefined) selectedClienteId = d.selectedClienteId;
     if (d.tipoOperacao) tipoOperacao = d.tipoOperacao;
+    if (d.tipoDocumento !== undefined) tipoDocumento = Number(d.tipoDocumento);
+    else if (d.campos && d.campos.tipoDocumento !== undefined) tipoDocumento = Number(d.campos.tipoDocumento);
     if (Array.isArray(d.itens) && d.itens.length) itens = d.itens;
     if (d.complemento) Object.assign(complemento, d.complemento);
     informacoesEditadas = Boolean(d.informacoesEditadas);
@@ -902,6 +905,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
                 </select>
               </label>
             </div>
+            ${!orderIdOrigem ? `
+              <label>Tipo da NF-e
+                <select name="tipoDocumento">
+                  <option value="0" ${tipoDocumento === 0 ? 'selected' : ''}>Entrada</option>
+                  <option value="1" ${tipoDocumento === 1 ? 'selected' : ''}>Saída</option>
+                </select>
+              </label>` : ''}
             ${NFE_FOCUS_REFERE_NOTA[tipoOperacao] ? `
             <label>${NFE_FOCUS_REFERE_NOTA[tipoOperacao]} *
               <input name="devolucaoChave" required inputmode="numeric" maxlength="44" placeholder="44 dígitos" />
@@ -2139,6 +2149,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     return {
       estabelecimentoId: selectedEstabelecimentoId,
       tipoOperacao: formData.get('tipoOperacao'),
+      tipoDocumento: Number(formData.get('tipoDocumento') ?? 1),
       ...(referenciasDevolucao ? { referencias: referenciasDevolucao } : {}),
       naturezaOperacao: formData.get('naturezaOperacao'),
       dataEmissao: formData.get('dataEmissao') ? new Date(formData.get('dataEmissao')).toISOString() : undefined,
@@ -2395,6 +2406,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     });
     // Número de parcelas e intervalo refazem as duplicatas enquanto ninguém as editou.
     document.getElementById('nfeFocusInstallmentFields')?.addEventListener('change', atualizarCobrancaSugerida);
+    document.querySelector('[name="tipoDocumento"]')?.addEventListener('change', (evento) => {
+      tipoDocumento = Number(evento.target.value);
+    });
 
     // Trocar de operação redesenha a tela: no complemento não há aba de itens
     // nem de pagamento, e há uma de nota original. Esconder por CSS deixaria
@@ -2558,6 +2572,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         const corpo = {
           estabelecimentoId: selectedEstabelecimentoId,
           tipoOperacao: NFE_FOCUS_COMPLEMENTO,
+          tipoDocumento: Number(formData.get('tipoDocumento') ?? 1),
           naturezaOperacao: formData.get('naturezaOperacao') || 'Complemento de ICMS',
           dataEmissao: formData.get('dataEmissao') ? new Date(formData.get('dataEmissao')).toISOString() : undefined,
           destinatario: lerDestinatario(formData),

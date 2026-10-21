@@ -132,6 +132,11 @@ const semPagamento = montar([item({ cfop: '5102', csosn: '102' })]);
 check('sai um pagamento mesmo sem nada informado', Array.isArray(semPagamento.formas_pagamento) && semPagamento.formas_pagamento.length === 1);
 check('e ele cobre o total da nota', semPagamento.formas_pagamento[0].valor_pagamento === 1000, String(semPagamento.formas_pagamento[0].valor_pagamento));
 check('forma padrão é 99 (Outros)', semPagamento.formas_pagamento[0].forma_pagamento === '99');
+const notaDeEntrada = buildNfePayload({
+  estabelecimento: ESTAB, empresa: EMPRESA, destinatario: DEST, itens: [item({ cfop: '1102', csosn: '102' })],
+  naturezaOperacao: 'Entrada', tipoDocumento: 0, finalidadeEmissao: 1, dataEmissao: '2026-08-10T10:00:00'
+});
+check('NF-e de entrada preserva tipo_documento 0', notaDeEntrada.tipo_documento === 0, String(notaDeEntrada.tipo_documento));
 const comPagamento = buildNfePayload({
   estabelecimento: ESTAB, empresa: EMPRESA, destinatario: DEST, itens: [item({ cfop: '5102', csosn: '102' })],
   naturezaOperacao: 'Venda', tipoDocumento: 1, finalidadeEmissao: 1, dataEmissao: '2026-08-10T10:00:00',
