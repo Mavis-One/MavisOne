@@ -2040,6 +2040,23 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     return Boolean(campo && campo.value === '90');
   }
 
+  // A FORMA DE PAGAMENTO SOBREVIVE AO REDESENHO (21/10/2026). Trocar o
+  // emitente ou a operação redesenha a tela, e a forma escolhida voltava a
+  // "99 — Outros" sem aviso: com "90 — Sem pagamento", a nota voltava a ter
+  // condição e cobrança. Os outros campos são refeitos do estado da tela; os
+  // do pagamento, que só existem no formulário, são guardados e devolvidos.
+  const CAMPOS_DO_PAGAMENTO = ['formaPagamento', 'paymentType', 'installmentsCount', 'installmentIntervalDays'];
+  function redesenharGuardandoPagamento() {
+    const form = document.getElementById('nfeFocusForm');
+    const guardados = {};
+    CAMPOS_DO_PAGAMENTO.forEach((nome) => {
+      const campo = form && form.querySelector(`[name="${nome}"]`);
+      if (campo) guardados[nome] = campo.value;
+    });
+    renderForm();
+    preencherCamposSalvos(guardados);
+  }
+
   function aplicarSemPagamento() {
     const sem = notaSemPagamento();
     const condicao = document.getElementById('nfeFocusPaymentType');
@@ -2331,7 +2348,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // que veio do pedido continua no fim do texto: quem troca é a base.
       if (observacoes === anterior) observacoes = padraoAtual();
       await loadNotasRecentes();
-      renderForm();
+      redesenharGuardandoPagamento();
     });
 
     // A busca e a escolha do cliente num campo só (fase DS). O corpo do
@@ -2446,7 +2463,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // campos `required` invisíveis travando o submit sem dizer onde.
     document.querySelector('[name="tipoOperacao"]')?.addEventListener('change', (evento) => {
       tipoOperacao = evento.target.value;
-      renderForm();
+      redesenharGuardandoPagamento();
     });
 
     // ICMS = base × alíquota, recalculado a cada digitação — mas o campo do

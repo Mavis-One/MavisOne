@@ -66,5 +66,14 @@ check('  ao trocar a forma e ao recuperar a nota em edição',
   /\[name="formaPagamento"\]'\)\?\.addEventListener\('change', aplicarSemPagamento\);/.test(tela)
   && /\/\/ A forma de pagamento salva pode ser "90 — Sem pagamento"\.\s*aplicarSemPagamento\(\);/.test(tela));
 
+// 21/10/2026, à tarde: trocar o emitente ou a operação redesenhava a tela e a
+// forma voltava a "99" sem aviso. Provado na 3099: com "90", trocar emitente,
+// Entrada/Saída e operação manteve o 90, sem condição e sem cobrança.
+check('a forma escolhida sobrevive à troca de emitente e de operação',
+  /const CAMPOS_DO_PAGAMENTO = \['formaPagamento', 'paymentType', 'installmentsCount', 'installmentIntervalDays'\];/.test(tela)
+  && /renderForm\(\);\s*preencherCamposSalvos\(guardados\);/.test(tela)
+  && /await loadNotasRecentes\(\);\s*redesenharGuardandoPagamento\(\);/.test(tela)
+  && /tipoOperacao = evento\.target\.value;\s*redesenharGuardandoPagamento\(\);/.test(tela));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);

@@ -237,7 +237,9 @@ check('bloco próprio do complemento', /data-bloco="complemento"/.test(telaSrc))
 check('pede a chave da original', /name="complementoChave"/.test(telaSrc));
 check('pede base, alíquota e valor', /name="complementoBase"/.test(telaSrc) && /name="complementoAliquota"/.test(telaSrc) && /name="complementoValor"/.test(telaSrc));
 check('informações complementares obrigatórias', /name="complementoInformacoes"[\s\S]{0,80}required/.test(telaSrc));
-check('trocar de operação redesenha', /tipoOperacao = evento\.target\.value;\s*\n\s*renderForm\(\)/.test(telaSrc));
+// Desde 21/10/2026 pelo redesenharGuardandoPagamento (a forma escolhida fica).
+check('trocar de operação redesenha', /tipoOperacao = evento\.target\.value;\s*\n\s*redesenharGuardandoPagamento\(\)/.test(telaSrc)
+  && /function redesenharGuardandoPagamento\(\) \{[\s\S]*?renderForm\(\);/.test(telaSrc));
 // O texto sugerido para de se atualizar depois de editado à mão.
 check('texto sugerido respeita a edição', /if \(!campo \|\| informacoesEditadas\) return;/.test(telaSrc));
 check('o texto cita a nota original', /NF-E COMPLEMENTAR DE ICMS REFERENTE À NF-E/.test(telaSrc));
