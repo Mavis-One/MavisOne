@@ -78,7 +78,9 @@ check('a edição fica na auditoria', /action: 'nfe\.valoresFiscaisEditados'/.te
 const tela = ler('public/modules/finance/subs/emitir_nfe_focus.js');
 // Blocos desde 15/10/2026 (eram abas): a página da emissão é uma só.
 check('blocos Impostos e Totais', /data-bloco="impostos"/.test(tela) && /data-bloco="totais"/.test(tela));
-check('a prévia e o envio usam o MESMO corpo', /montarCorpoDaNota\(formData, referencias\)/.test(tela) && /const body = montarCorpoDaNota\(formData, referenciasDevolucao\);/.test(tela));
+// Desde 21/10/2026 a prévia passa as referências já conferidas
+// (validarReferenciaDaNota): referencia.referencias.
+check('a prévia e o envio usam o MESMO corpo', /montarCorpoDaNota\(formData, referencia\.referencias\)/.test(tela) && /const body = montarCorpoDaNota\(formData, referenciasDevolucao\);/.test(tela));
 check('o item leva o que foi editado', /fiscal: \{ \.\.\.item\.fiscal \}/.test(tela));
 check('frete, seguro, desconto e outras editáveis no bloco Totais', ['frete', 'seguro', 'desconto', 'outrasDespesas'].every((c) => tela.includes(`data-total-campo="${c}"`)));
 

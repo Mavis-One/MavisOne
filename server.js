@@ -8772,6 +8772,11 @@ async function podeEmitirNfeSemPagamento(user) {
 }
 
 async function prepararNfeParaTransmitir(body, opcoes = {}) {
+  // AS LEITURAS VÊM DE FORA SÓ NO PRÉ-CHECK (leiturasDaConferencia). Os três
+  // nomes abaixo SOMBREIAM os do módulo de propósito: o corpo desta função
+  // continua escrito com fiscalDb/db/pagamentosComCredenciadora, igual para a
+  // emissão — que não passa `leituras` e lê direto, como sempre leu.
+  const { fiscalDb, db, pagamentosComCredenciadora } = opcoes.leituras || LEITURAS_DIRETAS;
   const tipoDocumentoInformado = body.tipoDocumento;
   const tipoDocumento = tipoDocumentoInformado === undefined ? 1 : Number(tipoDocumentoInformado);
   if (tipoDocumentoInformado !== undefined && !['0', '1'].includes(String(tipoDocumentoInformado).trim())) {
@@ -8779,11 +8784,6 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     err.status = 400;
     throw err;
   }
-  // AS LEITURAS VÊM DE FORA SÓ NO PRÉ-CHECK (leiturasDaConferencia). Os três
-  // nomes abaixo SOMBREIAM os do módulo de propósito: o corpo desta função
-  // continua escrito com fiscalDb/db/pagamentosComCredenciadora, igual para a
-  // emissão — que não passa `leituras` e lê direto, como sempre leu.
-  const { fiscalDb, db, pagamentosComCredenciadora } = opcoes.leituras || LEITURAS_DIRETAS;
   const nfce = Number(opcoes.modelo) === 65;
   const estabelecimento = await fiscalDb.getEstabelecimentoById(body.estabelecimentoId);
   if (!estabelecimento) {
