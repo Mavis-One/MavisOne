@@ -2248,6 +2248,16 @@ function indiceDoCadastro(data) {
   if (guardado && guardado.people === data.people && guardado.cnpjs === data.cnpjs) return guardado;
 
   const project = (record, kind) => ({
+    // O ENDEREÇO INTEIRO NA IMPRESSÃO DO PEDIDO (21/10/2026, pedido do usuário:
+    // "nos pedidos não está aparecendo o endereço completo do cliente"). Saía
+    // só a rua, a cidade e o CEP: número, complemento e bairro ficam em chaves
+    // que variam com a tela que cadastrou (pessoa: streetNumber/neighborhood/
+    // addressComplement; empresa: addressNumber...). Lidos pela MESMA
+    // enderecoDaPessoa da NF-e, que conhece todas as variantes.
+    ...(() => {
+      const endereco = enderecoDaPessoa(record);
+      return { addressNumber: endereco.numero, complement: endereco.complemento, neighborhood: endereco.bairro };
+    })(),
     id: record.id,
     kind,
     name: record.name,

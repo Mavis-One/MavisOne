@@ -51,7 +51,8 @@ function recortar(nome) {
 // ---------------------------------------------------------------------------
 console.log('--- 1. o resumo do painel dá os mesmos números do painel completo ---');
 const NOMES = [
-  'CACHE_DIRETORIO', 'indiceDoCadastro', 'acharNoCadastro', 'getCadastroDirectory', 'getSellersDirectory',
+  // enderecoDaPessoa: o endereço inteiro do cliente (21/10/2026).
+  'enderecoDaPessoa', 'CACHE_DIRETORIO', 'indiceDoCadastro', 'acharNoCadastro', 'getCadastroDirectory', 'getSellersDirectory',
   'resolveById', 'CACHE_NOTAS', 'indiceDasNotas', 'codigoDoRegistro',
   'texto200', 'salesPaymentInfo', 'salesPaymentLines', 'salesDelivery', 'serializeSalesRecord',
   'buildSalesDashboardSummary', 'valorDoRegistro', 'resumoDoPainelDeVendas', 'pedidosDoVendedorNoPainel'

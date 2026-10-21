@@ -51,7 +51,7 @@ function corpoDe(nome) {
 const NOMES = [
   'pad2', 'toDateStr', 'getTodayLocal', 'sanitizeDigits', 'normalizeText', 'parseDateOnly', 'sumBy',
   'classifyFinanceEntry', 'isFinanceEntryRealized', 'isFinanceEntryCancelled', 'financeEntryDueDate',
-  'financeEntryStatusLabel', 'sumFinanceAmount', 'indiceDoCadastro', 'acharNoCadastro',
+  'financeEntryStatusLabel', 'sumFinanceAmount', 'enderecoDaPessoa', 'indiceDoCadastro', 'acharNoCadastro',
   'resolveFinanceCounterparty', 'resolveFinanceCounterpartyDocument', 'filterFinanceEntries',
   'compararLancamentosDaLista', 'filtrarListaDeLancamentos', 'getFinanceEntryPayments',
   'financeEntryEffectiveDue', 'financeEntryPaidTotal', 'esperadoNoExtrato', 'scoreBankTransactionMatch',

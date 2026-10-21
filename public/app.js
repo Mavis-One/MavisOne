@@ -4184,6 +4184,24 @@ async function loadModule(moduleName) {
           }
           return clientesDetalhados.get(chave);
         };
+        // O ENDEREÇO INTEIRO DO CLIENTE NA IMPRESSÃO E NO PDF (21/10/2026,
+        // pedido do usuário: "nos pedidos não está aparecendo o endereço
+        // completo do cliente"): rua, número, complemento, bairro, cidade-UF e
+        // CEP. Cada parte só entra se a rua ainda não a traz — o endereço de
+        // empresa vindo da Receita às vezes já vem com número e bairro.
+        const enderecoCompletoDoCliente = (cliente) => {
+          if (!cliente) return '';
+          const jaTem = (texto, parte) => new RegExp(`(^|[\\s,])${parte.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([\\s,]|$)`, 'i').test(texto);
+          let rua = String(cliente.address || '').trim();
+          for (const parte of [cliente.addressNumber, cliente.complement, cliente.neighborhood]) {
+            const p = String(parte || '').trim();
+            if (p && !jaTem(rua, p)) rua = rua ? `${rua}, ${p}` : p;
+          }
+          const cidade = cliente.city && cliente.state ? `${cliente.city}-${cliente.state}` : (cliente.city || cliente.state || '');
+          const digitosDoCep = String(cliente.zipCode || '').replace(/\D/g, '');
+          const cep = digitosDoCep.length === 8 ? `${digitosDoCep.slice(0, 5)}-${digitosDoCep.slice(5)}` : String(cliente.zipCode || '').trim();
+          return [[rua, cidade].filter(Boolean).join(', '), cep].filter(Boolean).join(' - ');
+        };
         // O servidor recusa faturar sem saldo (transitionOrderStockEffect) —
         // avisar aqui evita descobrir isso só na hora de aprovar. Vale só para
         // pedido: orçamento não reserva nada.
@@ -4779,12 +4797,7 @@ async function loadModule(moduleName) {
             if (d.length === 11) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
             return String(valor || '');
           };
-          const enderecoDoCliente = () => {
-            if (!cliente) return '';
-            const linha = [cliente.address, cliente.city && cliente.state ? `${cliente.city}-${cliente.state}` : (cliente.city || cliente.state || '')]
-              .map((p) => String(p || '').trim()).filter(Boolean).join(', ');
-            return [linha, cliente.zipCode].filter(Boolean).join(' - ');
-          };
+          const enderecoDoCliente = () => enderecoCompletoDoCliente(cliente);
           const enderecoDoEmitente = () => {
             if (!emitente) return '';
             const rua = [emitente.logradouro, emitente.numero, emitente.complemento]
@@ -4967,8 +4980,7 @@ async function loadModule(moduleName) {
               nome: cliente.name || '',
               documento: cliente.document || '',
               telefone: cliente.phone || '',
-              endereco: [cliente.address, cliente.city && cliente.state ? `${cliente.city}-${cliente.state}` : (cliente.city || cliente.state || '')]
-                .map((p) => String(p || '').trim()).filter(Boolean).join(', ')
+              endereco: enderecoCompletoDoCliente(cliente)
             } : null,
             itens: items.map((i) => ({
               codigo: i.sku || '',
@@ -5067,9 +5079,7 @@ async function loadModule(moduleName) {
             const emitente = emitenteDaImpressao();
             const catalogo = new Map((meta.products || []).map((p) => [p.id, p]));
             const juntar = (partes, sep) => partes.map((p) => String(p || '').trim()).filter(Boolean).join(sep);
-            const enderecoCliente = cliente
-              ? juntar([juntar([cliente.address, cliente.city && cliente.state ? `${cliente.city}-${cliente.state}` : (cliente.city || cliente.state)], ', '), cliente.zipCode], ' - ')
-              : '';
+            const enderecoCliente = enderecoCompletoDoCliente(cliente);
             const outros = Number(totais.despesasGerais || 0) + Number(totais.taxaMontagem || 0);
             const qtd4 = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
             const bytes = P.montarPdfDoPedido({
