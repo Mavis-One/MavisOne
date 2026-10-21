@@ -42,6 +42,25 @@ const NFE_FOCUS_COMPLEMENTO = 'COMPLEMENTO_ICMS';
 // a devolução, a nota devolvida; a garantia (20/10/2026), a nota de venda.
 const NFE_FOCUS_REFERE_NOTA = { DEVOLUCAO: 'Chave de acesso da NF-e devolvida', GARANTIA: 'Chave de acesso da NF-e de venda' };
 
+function validarReferenciaDaNota(formData) {
+  const tipoOperacao = formData.get('tipoOperacao');
+  const rotulo = NFE_FOCUS_REFERE_NOTA[tipoOperacao];
+  const campo = tipoOperacao === NFE_FOCUS_COMPLEMENTO
+    ? 'complementoChave'
+    : (rotulo ? 'devolucaoChave' : '');
+  if (!campo) return { referencias: undefined };
+
+  const chave = String(formData.get(campo) || '').replace(/\D/g, '');
+  if (chave.length !== 44) {
+    return {
+      erro: tipoOperacao === NFE_FOCUS_COMPLEMENTO
+        ? 'Informe a chave de acesso da NF-e original (44 dígitos).'
+        : `Informe a ${rotulo.toLowerCase()} (44 dígitos).`
+    };
+  }
+  return { referencias: [{ chaveAcesso: chave }] };
+}
+
 const NFE_FOCUS_STATUS_BADGE = {
   RASCUNHO: 'finance-badge-muted',
   PROCESSANDO: 'finance-badge-info',
@@ -780,8 +799,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const form = document.getElementById('nfeFocusForm');
     if (!form) return;
     const formData = new FormData(form);
-    const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
-    const referencias = NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')] && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
+    const referencia = validarReferenciaDaNota(formData);
+    if (referencia.erro) {
+      showToast(referencia.erro, 'error');
+      return;
+    }
     // A janela abre já, no clique: aberta depois da resposta, o navegador a
     // trataria como pop-up e bloquearia.
     const janela = window.open('', '_blank');
@@ -1613,13 +1635,19 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     }
     previaAguardando = '';
     const formData = new FormData(form);
-    const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
-    const referencias = NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')] && chave.length === 44 ? [{ chaveAcesso: chave }] : undefined;
+    const referencia = validarReferenciaDaNota(formData);
+    if (referencia.erro) {
+      previa = null;
+      previaErro = referencia.erro;
+      previaCarregando = false;
+      renderImpostos(); renderTotais();
+      return;
+    }
     previaCarregando = true;
     renderImpostos(); renderTotais();
     try {
       const [resposta, tabelas] = await Promise.all([
-        api('/api/fiscal/nfe/previa', { method: 'POST', body: JSON.stringify(montarCorpoDaNota(formData, referencias)) }),
+        api('/api/fiscal/nfe/previa', { method: 'POST', body: JSON.stringify(montarCorpoDaNota(formData, referencia.referencias)) }),
         tabelasFiscais ? tabelasFiscais : api('/api/fiscal/tabelas').catch(() => null)
       ]);
       if (este !== pedidoDePrevia) return;
@@ -2596,13 +2624,13 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // pedia nem mandava — toda devolução emitida por aqui seria recusada.
       let referenciasDevolucao;
       if (NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')]) {
-        const chave = String(formData.get('devolucaoChave') || '').replace(/\D/g, '');
-        if (chave.length !== 44) {
-          showToast(`Informe a ${NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')].toLowerCase()} (44 dígitos).`, 'error');
+        const referencia = validarReferenciaDaNota(formData);
+        if (referencia.erro) {
+          showToast(referencia.erro, 'error');
           if (submitBtn) submitBtn.disabled = false;
           return;
         }
-        referenciasDevolucao = [{ chaveAcesso: chave }];
+        referenciasDevolucao = referencia.referencias;
       }
 
       const body = montarCorpoDaNota(formData, referenciasDevolucao);

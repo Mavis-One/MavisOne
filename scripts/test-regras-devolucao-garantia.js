@@ -45,7 +45,9 @@ const emissao = ler('public/modules/finance/subs/emitir_nfe_focus.js');
 check('a emissão oferece Garantia, com a natureza', /\{ value: 'GARANTIA', label: 'Garantia', natureza: 'REMESSA EM GARANTIA' \}/.test(emissao));
 check('  e pede a chave da NF-e de venda (a devolução, a da devolvida)',
   /const NFE_FOCUS_REFERE_NOTA = \{ DEVOLUCAO: 'Chave de acesso da NF-e devolvida', GARANTIA: 'Chave de acesso da NF-e de venda' \};/.test(emissao)
-  && (emissao.match(/NFE_FOCUS_REFERE_NOTA\[formData\.get\('tipoOperacao'\)\]/g) || []).length >= 3);
+  && /function validarReferenciaDaNota\(formData\)/.test(emissao)
+  && /tipoOperacao === NFE_FOCUS_COMPLEMENTO[\s\S]{0,160}complementoChave[\s\S]{0,100}devolucaoChave/.test(emissao)
+  && (emissao.match(/validarReferenciaDaNota\(formData\)/g) || []).length >= 3);
 check('Regras Fiscais e Configurações › Fiscal listam Garantia',
   /\{ value: 'GARANTIA', label: 'Garantia' \}/.test(ler('public/modules/fiscal/subs/regras.js')) && /\{ value: 'GARANTIA', label: 'Garantia' \}/.test(ler('public/modules/settings/subs/fiscal.js')));
 check('a categoria de venda pode usar Garantia (sem mudar sozinha)', /\{ id: 'GARANTIA', name: 'Garantia' \}/.test(ler('public/modules/shared/categoria_venda.js'))
