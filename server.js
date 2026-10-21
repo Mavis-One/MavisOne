@@ -5214,9 +5214,18 @@ async function excluirEntradaDeNfe(id, user, { devolverXml = false } = {}) {
   // lançada por upload leva o XML junto (para relançar, envia-se o arquivo).
   const { rows: recebida } = await consultarBanco('select id from nfe_distribuicao where chave = $1 limit 1', [entrada.chave]);
   const dfeId = recebida[0] ? recebida[0].id : '';
-  const xml = devolverXml
-    ? String(((await consultarBanco('select xml from nfe_entrada where id = $1', [id])).rows[0] || {}).xml || '')
-    : '';
+  const xmlDaEntrada = String(((await consultarBanco('select xml from nfe_entrada where id = $1', [id])).rows[0] || {}).xml || '');
+  const xml = devolverXml ? xmlDaEntrada : '';
+  // O XML COMPLETO NÃO SAI COM A ENTRADA (21/10/2026, queixa do usuário: o
+  // refazer de uma nota de 10/10 parou em "Esta nota já está manifestada, mas a
+  // SEFAZ ainda não entregou o XML completo dela"). A nota recebida às vezes só
+  // tem o resumo — a Focus não entregou o XML —, e a entrada, lançada pelo
+  // arquivo, tinha o completo, que a exclusão apagava. Guardado na nota
+  // recebida antes, o refazer e o "Dar entrada" o encontram (dfeDb.obterXml),
+  // para qualquer usuário. A que já tem XML fica como está.
+  if (dfeId && xmlDaEntrada.trim().startsWith('<') && !(await dfeDb.obterXml(dfeId).catch(() => null))) {
+    await dfeDb.guardarXml(dfeId, xmlDaEntrada).catch((erro) => console.warn('Não consegui guardar o XML da entrada na nota recebida:', erro.message));
+  }
   const { rows: escriturada } = await consultarBanco('select 1 from fiscal_documentos where nfe_entrada_id = $1 limit 1', [id]);
   if (escriturada.length) {
     throw recusa(409, `A entrada da ${nota} já está escriturada nos documentos fiscais (SPED) e não pode ser excluída.`);
@@ -5404,6 +5413,14 @@ async function xmlDaNotaRecebida(documento) {
       : (Buffer.isBuffer(conteudo) ? conteudo : Buffer.from(String(conteudo).replace(/^\\x/, ''), 'hex')).toString('utf8');
     if (xml.trim().startsWith('<')) return xml;
   } catch (erroPropria) { /* segue para a Focus */ }
+  // UMA ENTRADA JÁ LANÇADA COM ESTA CHAVE (21/10/2026): lançada pelo arquivo,
+  // ela tem o XML completo, que a Focus pode ainda não ter entregue.
+  try {
+    const { rows } = await consultarBanco(
+      "select xml from nfe_entrada where chave = $1 and coalesce(xml, '') <> '' limit 1", [chave]);
+    const daEntrada = String((rows[0] && rows[0].xml) || '');
+    if (daEntrada.trim().startsWith('<')) return daEntrada;
+  } catch (erroEntrada) { /* segue para a Focus */ }
   try {
     const cnpj = String(documento.cnpjDestinatario || '').replace(/\D/g, '');
     const estabelecimento = (await fiscalDb.getEstabelecimentos())
@@ -17179,7 +17196,8 @@ async function tratarRequisicao(req, res) {
           return sendJson(res, {
             error: documento && documento.manifestacaoCodigo
               ? 'Esta nota já está manifestada, mas a SEFAZ ainda não entregou o XML completo dela (só o resumo). '
-                + 'Costuma chegar em alguns minutos: tente "Dar entrada" de novo mais tarde.'
+                + 'Costuma chegar em alguns minutos: tente "Dar entrada" de novo mais tarde. Se você tem o arquivo XML '
+                + '(do e-mail do fornecedor), envie-o em Compras › Notas de Entrada.'
               : 'O XML completo desta nota ainda não foi liberado. Manifeste ciência ou confirmação para a SEFAZ liberá-lo.'
           }, 404);
         }

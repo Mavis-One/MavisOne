@@ -831,16 +831,21 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       }
       tela.excluindo = false;
       showToast(`Entrada da ${r.nota} excluída: ${r.movimentosEstornados} movimento(s) de estoque estornado(s), ${r.titulosCancelados} conta(s) a pagar cancelada(s).`, 'success');
+      // O XML QUE A EXCLUSÃO DEVOLVEU VEM PRIMEIRO (21/10/2026): buscar de novo
+      // na nota recebida parava em "a SEFAZ ainda não entregou o XML completo"
+      // quando ela só tinha o resumo. A relançada liga de novo à nota recebida.
+      if (refazer && r.xml) {
+        await carregarEntradas();
+        await analisarXml(r.xml);
+        if (r.dfeId) tela.dfeId = r.dfeId;
+        return;
+      }
       if (refazer && r.dfeId && state) {
         state.entradaNfeDoDfe = { dfeId: r.dfeId, chave: r.chave };
         ctx.loadModule('purchases');
         return;
       }
       await carregarEntradas();
-      if (refazer && r.xml) {
-        await analisarXml(r.xml);
-        return;
-      }
       if (refazer) showToast('Envie o XML da nota para lançar de novo.', 'warning', 8000);
       desenhar();
     }

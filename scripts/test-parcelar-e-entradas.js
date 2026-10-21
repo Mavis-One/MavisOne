@@ -74,9 +74,12 @@ check('a lista ganha Consultar (resumo, financeiro) e Corrigir (refazer, excluir
   && /data-financeiro-entrada="\$\{escapeHtml\(e\.id\)\}">financeiro<\/button>/.test(entrada)
   && /data-refazer-entrada="\$\{escapeHtml\(e\.id\)\}">refazer<\/button>/.test(entrada)
   && /data-excluir-entrada="\$\{escapeHtml\(e\.id\)\}">excluir<\/button>/.test(entrada));
-check('  refazer: pela nota recebida, senão pelo XML da entrada, senão pede o arquivo',
+// Desde 21/10/2026 o XML da entrada vem primeiro: a nota recebida pode ter só
+// o resumo (ver test-refazer-com-resumo.js).
+check('  refazer: pelo XML da entrada, senão pela nota recebida, senão pede o arquivo',
   /if \(refazer && r\.dfeId && state\) \{\s*state\.entradaNfeDoDfe = \{ dfeId: r\.dfeId, chave: r\.chave \};/.test(entrada)
-  && /if \(refazer && r\.xml\) \{\s*await analisarXml\(r\.xml\);/.test(entrada));
+  && /if \(refazer && r\.xml\) \{\s*await carregarEntradas\(\);\s*await analisarXml\(r\.xml\);/.test(entrada)
+  && entrada.indexOf('analisarXml(r.xml)') < entrada.indexOf('state.entradaNfeDoDfe = { dfeId: r.dfeId'));
 
 console.log('\n--- 3. o título da aprovação: estabelecimento e observação ---');
 check('o título nasce no estabelecimento do CNPJ da empresa do pedido',
