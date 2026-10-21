@@ -30,7 +30,8 @@ const {
   conferirCobrancaDaNota,
   limparEdicaoFiscal,
   resumoFiscalDaPrevia,
-  semPagamento
+  semPagamento,
+  conferirDifalDaNota
 } = require('./lib/nfePayloadBuilder');
 // Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
 const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
@@ -9247,6 +9248,15 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   const enderecoIncompleto = nfce ? null : conferirDestinatarioDaNota(payload);
   if (enderecoIncompleto) {
     const err = new Error(enderecoIncompleto);
+    err.status = 400;
+    throw err;
+  }
+
+  // E o DIFAL? Outro estado e não contribuinte sem o grupo da UF de destino
+  // volta como rejeição 694 (21/10/2026). Ver conferirDifalDaNota.
+  const difalFaltando = nfce ? '' : conferirDifalDaNota(payload);
+  if (difalFaltando) {
+    const err = new Error(difalFaltando);
     err.status = 400;
     throw err;
   }
