@@ -2381,12 +2381,15 @@ function resolveFinanceCounterparty(entry, data) {
     if (found) return found.name;
   }
   if (entry.clientSupplierName) return entry.clientSupplierName;
-  if (entry.type === 'sale') {
-    const sale = data.sales.find((item) => item.id === entry.referenceId);
+  // Pela classe, e não pelo texto 'sale'/'purchase': desde a fase EZ esses
+  // títulos estão gravados como RECEITA/DESPESA (21/10/2026).
+  const classe = classifyFinanceEntry(entry);
+  if (classe === 'receita' && entry.referenceId) {
+    const sale = (data.sales || []).find((item) => item.id === entry.referenceId);
     if (sale) return sale.customer;
   }
-  if (entry.type === 'purchase') {
-    const purchase = data.purchases.find((item) => item.id === entry.referenceId);
+  if (classe === 'despesa' && entry.referenceId) {
+    const purchase = (data.purchases || []).find((item) => item.id === entry.referenceId);
     if (purchase) return purchase.supplier;
   }
   return entry.clienteFornecedor || entry.counterpartyName || '-';
