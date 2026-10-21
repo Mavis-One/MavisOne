@@ -64,7 +64,9 @@ console.log('\n--- 3. a tela ---');
 const tela = ler('public/modules/purchases/subs/entrada_nfe.js');
 check('veParcelas: administrador ou quem o servidor liberou',
   /function veParcelas\(\) \{\s*return veValores \|\| Boolean\(tela\.permissoes && tela\.permissoes\.valoresDasParcelas\);\s*\}/.test(tela));
-const financeiro = tela.slice(tela.indexOf('function blocoFinanceiro()'), tela.indexOf('function blocoFinanceiro()') + 2500);
+// Desde 21/10/2026 a tabela das duplicatas mora em areaDoParcelamento, logo
+// acima de blocoFinanceiro ("Parcelar diferente da nota").
+const financeiro = tela.slice(tela.indexOf('function areaDoParcelamento()'), tela.indexOf('function blocoFinanceiro()') + 2500);
 check('as duplicatas do XML e os títulos do Viper com a coluna Valor',
   (financeiro.match(/\$\{veParcelas\(\) \? '<th class="entrada-col-num">Valor<\/th>' : ''\}/g) || []).length === 2
   && /veParcelas\(\) \? `<td class="entrada-col-num">\$\{moeda\(d\.valor\)\}<\/td>`/.test(financeiro)

@@ -107,6 +107,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       gerarFinanceiro: true,
       // As parcelas da conta a pagar quando o XML não traz vencimentos.
       parcelamento: { qtd: 1, primeiro: '', intervalo: 30 },
+      // Com duplicatas no XML: usar as parcelas da conferência no lugar delas.
+      parcelarDiferente: false,
       parcelas: [],
       atualizarCusto: true,
       // Fase AQ: qual ordem de compra esta nota fecha. Vazio = nenhuma.
@@ -427,9 +429,34 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       });
     }
 
+    // AS DUPLICATAS DO XML OU AS PARCELAS DA CONFERÊNCIA (21/10/2026, pedido do
+    // usuário: "essa NFE veio com vencimento único, porém a compra foi efetuada
+    // pelo Cartão de Crédito parcelada em 5 vezes, mas o sistema não permite
+    // fazer o parcelamento e vencimento"). Com duplicatas, valem as do XML — a
+    // menos que a pessoa marque "Parcelar diferente da nota": aí o mesmo quadro
+    // da nota sem vencimentos, começando nas duplicatas dela.
+    function areaDoParcelamento() {
+      const duplicatas = tela.conferencia.nota.duplicatas;
+      if (!duplicatas.length || tela.parcelarDiferente) return blocoParcelas(tela.conferencia.nota.totais.nota);
+      return `
+        <div class="table-scroll">
+          <table class="table entrada-duplicatas">
+            <thead><tr><th>Parcela</th><th>Vencimento</th>${veParcelas() ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
+            <tbody>
+              ${duplicatas.map((d) => `
+                <tr>
+                  <td>${escapeHtml(d.numero)}</td>
+                  <td>${dataBr(d.vencimento)}</td>
+                  ${veParcelas() ? `<td class="entrada-col-num">${moeda(d.valor)}</td>` : ''}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
     function blocoFinanceiro() {
       const duplicatas = tela.conferencia.nota.duplicatas;
-      const total = tela.conferencia.nota.totais.nota;
       const doViper = tela.conferencia.titulosDoViper || [];
       return `
         <section class="panel">
@@ -451,21 +478,11 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             </div>
           ` : ''}
           ${duplicatas.length ? `
-            <div class="table-scroll">
-              <table class="table entrada-duplicatas">
-                <thead><tr><th>Parcela</th><th>Vencimento</th>${veParcelas() ? '<th class="entrada-col-num">Valor</th>' : ''}</tr></thead>
-                <tbody>
-                  ${duplicatas.map((d) => `
-                    <tr>
-                      <td>${escapeHtml(d.numero)}</td>
-                      <td>${dataBr(d.vencimento)}</td>
-                      ${veParcelas() ? `<td class="entrada-col-num">${moeda(d.valor)}</td>` : ''}
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          ` : blocoParcelas(total)}
+            <label class="entrada-opcao">
+              <input type="checkbox" id="entradaParcelarDiferente" ${tela.parcelarDiferente ? 'checked' : ''} />
+              <span>Parcelar diferente da nota (ex.: pago no cartão em várias vezes)</span>
+            </label>` : ''}
+          <div id="entradaParcelamentoArea">${areaDoParcelamento()}</div>
           <label class="entrada-opcao">
             <input type="checkbox" id="entradaGerarFinanceiro" ${tela.gerarFinanceiro ? 'checked' : ''} />
             <span>Gerar contas a pagar a partir desta nota</span>
@@ -740,6 +757,19 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       document.getElementById('entradaGerarFinanceiro')?.addEventListener('change', (e) => {
         tela.gerarFinanceiro = e.target.checked;
       });
+      // Parcelar diferente da nota: troca SÓ a área das parcelas — redesenhar a
+      // tela inteira perderia os vínculos de item feitos à mão. O quadro começa
+      // nas duplicatas do XML (quantas, o 1º vencimento), a 30 dias.
+      document.getElementById('entradaParcelarDiferente')?.addEventListener('change', (e) => {
+        tela.parcelarDiferente = e.target.checked;
+        if (tela.parcelarDiferente) {
+          const duplicatas = tela.conferencia.nota.duplicatas;
+          montarParcelasDaEntrada(duplicatas.length || 1, String((duplicatas[0] && duplicatas[0].vencimento) || '').slice(0, 10), 30);
+        }
+        const area = document.getElementById('entradaParcelamentoArea');
+        if (area) area.innerHTML = areaDoParcelamento();
+        ligarParcelas();
+      });
       ligarParcelas();
       // Fase AQ. Sem redesenhar a tela: trocar a ordem escolhida nao muda mais
       // nada do que esta em volta, e um redesenho aqui perderia os vinculos de
@@ -903,6 +933,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       // estoque vêm desmarcados — a nota fica registrada sem duplicar.
       tela.jaNoViper = tela.conferencia.titulosDoViper.length > 0;
       if (tela.jaNoViper) tela.gerarFinanceiro = false;
+      // A cada nota, as duplicatas do XML de novo (21/10/2026).
+      tela.parcelarDiferente = false;
       // Sem vencimentos no XML: começa numa parcela só, na emissão (o que
       // sempre foi), e a pessoa parcela no quadro da conferência.
       montarParcelasDaEntrada(1, String(resposta.nota.dataEmissao || '').slice(0, 10), 30);
@@ -996,9 +1028,12 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       const pergunta = semProduto
         ? `${semProduto} ${semProduto === 1 ? 'item ficará sem produto vinculado' : 'itens ficarão sem produto vinculado'} e a entrada será marcada como “a revisar”. Lançar assim mesmo?`
         : 'Lançar esta entrada? Nota fiscal não pode ser apagada depois — correção se faz por devolução.';
-      // As parcelas da conferência só valem sem duplicatas no XML (19/10/2026).
+      // As parcelas da conferência valem sem duplicatas no XML (19/10/2026), ou
+      // com elas quando a pessoa marcou "Parcelar diferente da nota" (21/10/2026).
       const semDuplicatas = !(tela.conferencia.nota.duplicatas || []).length;
-      if (tela.gerarFinanceiro && semDuplicatas) {
+      const parcelarDiferente = !semDuplicatas && Boolean(tela.parcelarDiferente);
+      const usaAsParcelasDaTela = semDuplicatas || parcelarDiferente;
+      if (tela.gerarFinanceiro && usaAsParcelasDaTela) {
         if (tela.parcelas.some((p) => !p.vencimento)) {
           showToast('Informe o vencimento de cada parcela.', 'warning');
           return;
@@ -1023,7 +1058,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             atualizarCusto: tela.atualizarCusto,
             purchaseOrderId: tela.ordemCompraId,
             // Quem não vê valores manda só os vencimentos (o servidor divide).
-            ...(semDuplicatas ? { parcelas: tela.parcelas.map((p) => (veParcelas() ? { vencimento: p.vencimento, valor: p.valor } : { vencimento: p.vencimento })) } : {})
+            ...(usaAsParcelasDaTela ? { parcelas: tela.parcelas.map((p) => (veParcelas() ? { vencimento: p.vencimento, valor: p.valor } : { vencimento: p.vencimento })) } : {}),
+            ...(parcelarDiferente ? { parcelarDiferente: true } : {})
           })
         });
         const partes = [`Entrada lançada (${resposta.status === 'LANCADA' ? 'completa' : 'a revisar'})`];

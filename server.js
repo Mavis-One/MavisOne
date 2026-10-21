@@ -11387,11 +11387,12 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
 
   // AS PARCELAS DEFINIDAS NA CONFERÊNCIA (19/10/2026), conferidas AQUI, com o
   // banco intacto: recusadas lá embaixo, a nota e o estoque já estariam
-  // gravados. Com duplicatas no XML, valem as do XML (entradaNfe.parcelasDaEntrada).
+  // gravados. Com duplicatas no XML, valem as do XML (entradaNfe.parcelasDaEntrada)
+  // — a menos que a pessoa tenha marcado "Parcelar diferente da nota" (21/10/2026).
   let parcelasDaNota = [];
   if (querFinanceiro) {
     try {
-      parcelasDaNota = entradaNfe.parcelasDaEntrada(nota, body.parcelas);
+      parcelasDaNota = entradaNfe.parcelasDaEntrada(nota, body.parcelas, { substituirDuplicatas: body.parcelarDiferente === true });
     } catch (erroParcelas) {
       return sendErro(res, erroParcelas, 'Parcelas inválidas.', 400);
     }
