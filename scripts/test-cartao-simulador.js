@@ -82,8 +82,16 @@ const { parcelasDoPedido } = require('../lib/vendas-financeiro');
 const [titulo] = parcelasDoPedido({ id: 'o', code: 1, date: '2026-10-17', totalAmount: 8069.96, payments: [
   { methodId: 'cc', amount: 8069.96, dueDate: '2026-10-20', cartaoModalidade: 'credito', cartaoTaxa: 0.086, cartaoValorTaxa: 694.02 }] },
 new Map([['cc', { id: 'cc', type: 'cartao-credito', feePercent: 0 }]]), {});
-check('o título nasce no cobrado, com a taxa da tabela e o vencimento do repasse',
-  titulo.amount === 8069.96 && titulo.feePercent === 8.6 && titulo.feeAmount === 694.02 && titulo.netAmount === 7375.94 && titulo.dueDate === '2026-10-20');
+// Desde 22/10/2026 (decisão do usuário: o líquido no valor da linha e no
+// título) o título nasce no LÍQUIDO — no cartão menos a taxa da tabela —, sem
+// feeAmount/netAmount (senão a baixa descontaria a taxa de novo), com a conta
+// na observação; a linha segue no cobrado e não sobra "diferença".
+const todos = parcelasDoPedido({ id: 'o', code: 1, date: '2026-10-17', totalAmount: 8069.96, payments: [
+  { methodId: 'cc', amount: 8069.96, dueDate: '2026-10-20', cartaoModalidade: 'credito', cartaoTaxa: 0.086, cartaoValorTaxa: 694.02 }] },
+new Map([['cc', { id: 'cc', type: 'cartao-credito', feePercent: 0 }]]), {});
+check('o título nasce no líquido da tabela, com o vencimento do repasse e sem parcela de diferença',
+  titulo.amount === 7375.94 && titulo.feeAmount === undefined && titulo.netAmount === undefined && titulo.dueDate === '2026-10-20'
+  && /no cartão R\$ 8069,96, taxa R\$ 694,02; título pelo líquido/.test(titulo.note) && todos.length === 1);
 
 console.log('\n--- 3. o banco (fase ET) ---');
 const mig = ler('banco/migrations/fase-et-cartao-simulador.sql');
@@ -111,7 +119,11 @@ const app = ler('public/app.js');
 check('a linha de cartão: canal, quem paga, valor dos produtos e Simular', /class="sales-cartao-canal"/.test(app) && /class="sales-cartao-quem"/.test(app)
   && /class="sales-cartao-base"/.test(app) && /class="secondary sales-cartao-simular"/.test(app));
 check('  taxa, líquido e retorno só para o administrador', /verRetorno \? '<th>Taxa<\/th><th>Líquido<\/th><th>Retorno<\/th>' : ''/.test(app));
-check('  a linha simulada trava o valor e o total mostra o acréscimo', /readonly title="Cobrado no cartão \(simulador\)"/.test(app) && /Acréscimo do Cartão \(R\$\)/.test(app));
+check('  a linha simulada trava o valor e o total mostra o acréscimo', /'Cobrado no cartão \(simulador\)'/.test(app) && /Acréscimo do Cartão \(R\$\)/.test(app));
+check('  e o campo mostra o líquido ao administrador (o valor no cartão segue na linha)',
+  /value="\$\{valorDaLinhaNaTela\(linha\)\}"/.test(app)
+  && /const liquidoDoCartao = \(linha\) => \(linha && linha\.cartaoModalidade && Number\(linha\.cartaoValorTaxa\) > 0 && usuarioEhAdmin\(\)/.test(app)
+  && /\['\.sales-payment-amount', \(linha, valor\) => \{ if \(!linha\.cartaoModalidade\) linha\.amount =/.test(app));
 check('Financeiro › Taxas de Cartão', /key: 'taxas_cartao', label: 'Taxas de Cartão'/.test(app)
   && /'taxas_cartao'\]/.test(ler('public/modules/finance/index.js')) && /finance\/subs\/taxas_cartao\.js/.test(ler('public/index.html'))
   && /shared\/cartao_simulador\.js/.test(ler('public/index.html')));

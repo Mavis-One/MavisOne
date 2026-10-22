@@ -4366,6 +4366,20 @@ async function loadModule(moduleName) {
           if (linha.cartaoModalidade && Number(linha.cartaoBase) > 0) linha.amount = Number(linha.cartaoBase);
           CAMPOS_DO_SIMULADO.forEach((campo) => { delete linha[campo]; });
         };
+        // O LÍQUIDO DO CARTÃO NO VALOR DA LINHA (22/10/2026, decisão do usuário:
+        // "quero que o valor líquido apareça no campo de valor quando eu escolher
+        // um parcelamento pelo simulador"). A linha guarda o valor NO CARTÃO
+        // (`amount`, o que fecha com o total e vai na NF-e); o campo mostra o
+        // que a loja recebe, e o título a receber nasce com ele
+        // (lib/vendas-financeiro.js). Só para o administrador, que é quem vê a
+        // taxa no simulador (tabelas.verRetorno); os outros veem o valor no cartão.
+        const liquidoDoCartao = (linha) => (linha && linha.cartaoModalidade && Number(linha.cartaoValorTaxa) > 0 && usuarioEhAdmin()
+          ? Math.round((Number(linha.amount || 0) - Number(linha.cartaoValorTaxa)) * 100) / 100
+          : null);
+        const valorDaLinhaNaTela = (linha) => {
+          const liquido = liquidoDoCartao(linha);
+          return liquido !== null ? liquido : Number(linha.amount || 0);
+        };
         const modalidadesDaForma = (forma) => (forma && forma.type === 'cartao-debito' ? ['debito']
           : (forma && forma.type === 'cartao-credito' ? ['credito'] : ['debito', 'credito']));
         const parametrosDoCartao = (linha) => ({
@@ -6020,7 +6034,7 @@ async function loadModule(moduleName) {
                                   </select>
                                 </td>
                                 <td><input type="date" class="sales-payment-due" data-index="${index}" value="${escapeHtml(linha.dueDate || '')}" /></td>
-                                <td><input type="number" min="0" step="0.01" class="sales-payment-amount" data-index="${index}" value="${Number(linha.amount || 0)}" style="width: 120px;" ${linha.cartaoModalidade ? 'readonly title="Cobrado no cartão (simulador)"' : ''} /></td>
+                                <td><input type="number" min="0" step="0.01" class="sales-payment-amount" data-index="${index}" value="${valorDaLinhaNaTela(linha)}" style="width: 120px;" ${linha.cartaoModalidade ? `readonly title="${escapeHtml(liquidoDoCartao(linha) !== null ? `Líquido (o que a loja recebe) — no cartão ${salesFormatBRL(linha.amount)}` : 'Cobrado no cartão (simulador)')}"` : ''} /></td>
                                 <td><input class="sales-payment-note" data-index="${index}" value="${escapeHtml(linha.note || '')}" /></td>
                                 <td><button type="button" class="icon-button sales-remove-payment" data-index="${index}" title="Remover">×</button></td>
                               </tr>
@@ -6087,7 +6101,7 @@ async function loadModule(moduleName) {
                                   ${linha.cartaoModalidade ? `<p class="sales-cartao-escolha">
                                     ${escapeHtml(rotuloDaOpcao({ modalidade: linha.cartaoModalidade, parcelas: Number(linha.cartaoParcelas || 1) }))}:
                                     ${Number(linha.cartaoParcelas || 1)}x de ${salesFormatBRL(Math.round(Number(linha.amount || 0) * 100 / Number(linha.cartaoParcelas || 1)) / 100)}
-                                    · no cartão ${salesFormatBRL(linha.amount)}${Number(linha.cartaoAcrescimo || 0) > 0 ? ` · acréscimo ${salesFormatBRL(linha.cartaoAcrescimo)}` : ''}
+                                    · no cartão ${salesFormatBRL(linha.amount)}${Number(linha.cartaoAcrescimo || 0) > 0 ? ` · acréscimo ${salesFormatBRL(linha.cartaoAcrescimo)}` : ''}${liquidoDoCartao(linha) !== null ? ` · líquido ${salesFormatBRL(liquidoDoCartao(linha))} (taxa ${salesFormatBRL(linha.cartaoValorTaxa)})` : ''}
                                   </p>` : ''}
                                   ${aberto ? (lista.length ? `
                                   <div class="table-scroll">
@@ -7103,7 +7117,9 @@ async function loadModule(moduleName) {
           });
           const camposLinhaPagamento = [
             ['.sales-payment-due', (linha, valor) => { linha.dueDate = valor; }],
-            ['.sales-payment-amount', (linha, valor) => { linha.amount = Math.max(0, Number(valor || 0)); }],
+            // Na linha simulada o campo mostra o líquido e é só leitura: o valor
+            // no cartão (`amount`) vem do simulador e não do campo (22/10/2026).
+            ['.sales-payment-amount', (linha, valor) => { if (!linha.cartaoModalidade) linha.amount = Math.max(0, Number(valor || 0)); }],
             ['.sales-payment-note', (linha, valor) => { linha.note = valor; }],
             // Os três do cartão (fase BW). Vão para o grupo `card` da NF-e:
             // bandeira é tBand, integração é tpIntegra e a autorização é o cAut.
