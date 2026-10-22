@@ -503,6 +503,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // `let` e montadas por função: o cadastro feito em outra aba refaz as listas
   // com a tela aberta (ver o aoMudar no fim da tela).
   let opcoesDoCliente = [];
+  // `opcoesDeProduto` tem TODOS os produtos: é dela que a linha tira o nome
+  // do produto que já tem. A BUSCA (`opcoesDeProdutoComAvulso`) não tem os
+  // inativos (22/10/2026) — a nota vinda de um pedido antigo ainda mostra o
+  // item inativo, mas ninguém o escolhe de novo.
   let opcoesDeProduto = [];
   let opcoesDeProdutoComAvulso = [];
   function montarOpcoes() {
@@ -510,9 +514,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       .map((c) => ({ value: c.id, label: `${c.name}${c.document ? ` (${c.document})` : ''}` }));
     opcoesDeProduto = (meta.produtos || []).map((p) => ({
       value: p.id,
-      label: `${p.name}${p.sku ? ` (${p.sku})` : ''}${p.ncm ? '' : ' — SEM NCM'}`
+      label: `${p.name}${p.sku ? ` (${p.sku})` : ''}${p.ncm ? '' : ' — SEM NCM'}`,
+      inativo: p.inativo === true
     }));
-    opcoesDeProdutoComAvulso = [ITEM_AVULSO].concat(opcoesDeProduto);
+    opcoesDeProdutoComAvulso = [ITEM_AVULSO].concat(opcoesDeProduto.filter((o) => !o.inativo));
   }
 
   // Um produto cadastrado traz a própria classificação fiscal. Escolher pela

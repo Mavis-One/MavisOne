@@ -16,7 +16,9 @@ window.MavisSubscreenRegistry.purchases.entrada_nfe_manual = async function rend
   const produtosPorId = new Map(produtos.map((p) => [p.id, p]));
   const fornecedores = (data.directory || []).map((c) => ({ value: c.id, label: c.name }));
   const depositos = data.deposits || [];
-  const opcoesProduto = window.MavisRotuloProduto ? window.MavisRotuloProduto.opcoes(produtos) : produtos.map((p) => ({ value: p.id, label: p.name }));
+  // Produto inativo fica fora da busca (22/10/2026), como na entrada pelo XML.
+  const produtosAtivos = produtos.filter((p) => p.inativo !== true);
+  const opcoesProduto = window.MavisRotuloProduto ? window.MavisRotuloProduto.opcoes(produtosAtivos) : produtosAtivos.map((p) => ({ value: p.id, label: p.name }));
   const hoje = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
 
   const nota = {

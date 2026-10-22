@@ -198,7 +198,7 @@ console.log('\n--- 4. Compras nao manda o catalogo para quem nao o usa (fase DG)
 // recorte (3,9x), e 0 KB para as seis que nao usam.
 const indiceCompras = ler('public/modules/purchases/index.js');
 check('a rota corta o produto para os quatro campos da tela',
-  /products: products\.map\(\(p\) => \(\{\s*\n?\s*id: p\.id, name: p\.name, sku: p\.sku, costPrice: p\.costPrice/.test(servidor));
+  /products: marcarInativos\(products\.map\(\(p\) => \(\{\s*\n?\s*id: p\.id, name: p\.name, sku: p\.sku, costPrice: p\.costPrice/.test(servidor));
 // O mesmo corte da fase CJ, e pelo mesmo motivo: e um seletor, nao um cadastro.
 check('  e o diretorio para id e name',
   /getCadastroDirectory\(data\)\.map\(\(c\) => \(\{ id: c\.id, name: c\.name \}\)\)/.test(servidor));

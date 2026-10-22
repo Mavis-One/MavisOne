@@ -457,7 +457,26 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
           showToast('Produto excluído.', 'success');
           render();
         } catch (error) {
-          showToast(error.message || 'Erro ao excluir produto.', 'error');
+          // COM HISTÓRICO DE ESTOQUE NÃO SE EXCLUI — INATIVA (22/10/2026). A
+          // recusa já diz se dá para inativar; a lista oferece ali mesmo.
+          const dados = error.dados || {};
+          if (!dados.podeInativar) {
+            showToast(error.message || 'Erro ao excluir produto.', 'error');
+            return;
+          }
+          if (dados.inativo) {
+            showToast('Este produto tem histórico de estoque e não pode ser excluído. Ele já está inativo: não aparece nas buscas do pedido, da NF-e e da entrada.', 'info');
+            return;
+          }
+          const inativar = await confirmModal(`"${product ? product.name : 'Este produto'}" tem histórico de estoque e não pode ser excluído. Inativar? Ele sai das buscas do pedido, da NF-e e da entrada de NF-e; o histórico e os relatórios continuam.`);
+          if (!inativar) return;
+          try {
+            await api(`/api/stock/products/${btn.dataset.delete}/situacao`, { method: 'POST', body: JSON.stringify({ status: 'inativo' }) });
+            showToast('Produto inativado.', 'success');
+            render();
+          } catch (erroAoInativar) {
+            showToast(erroAoInativar.message || 'Erro ao inativar o produto.', 'error');
+          }
         }
       });
     });

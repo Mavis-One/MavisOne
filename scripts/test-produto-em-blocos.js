@@ -106,7 +106,7 @@ const venda = ler('lib/db/vendas-compras.js');
 const app = ler('public/app.js');
 check('a venda recebe o pode vender', venda.includes('podeVender: row.pode_vender !== false'));
 check('  e a busca do pedido não oferece quem não pode (mantém os itens do pedido)',
-  /\.filter\(\(p\) => p\.podeVender !== false \|\| produtosJaNoPedido\.has\(p\.id\)\)/.test(app));
+  /\.filter\(\(p\) => \(p\.podeVender !== false && p\.inativo !== true\) \|\| produtosJaNoPedido\.has\(p\.id\)\)/.test(app));
 check('matéria-prima sai com TIPO_ITEM 01 no SPED', ler('lib/db/sped-escrituracao.js').includes("case when prod.materia_prima then 'MATERIA_PRIMA' else pf.tipo_produto_fiscal end as pf_tipo"));
 
 console.log('\n--- CSS ---');

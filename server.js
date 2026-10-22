@@ -11783,6 +11783,17 @@ async function marcarDuplicidadesDasEntradas(entradas) {
   }
 }
 
+/**
+ * O PRODUTO INATIVO MARCADO NA LISTA (22/10/2026). As buscas do pedido e da
+ * emissão de NF-e o escondem pela marca; a lista o traz mesmo assim porque o
+ * pedido ou a nota antiga que já o tem precisa do nome na linha.
+ */
+function marcarInativos(produtos, data) {
+  const inativos = stockCore.produtosInativos(data);
+  if (!inativos.size) return produtos;
+  return produtos.map((p) => (inativos.has(p.id) ? { ...p, inativo: true } : p));
+}
+
 async function conferirNotaDeEntrada(nota, pre = {}) {
   const data = pre.data || loadData();
   // O razão vem junto porque quem chama grava a entrada com este mesmo
@@ -11801,10 +11812,15 @@ async function conferirNotaDeEntrada(nota, pre = {}) {
     estabelecimentos = [];
   }
 
+  // Produto inativo não é sugerido (22/10/2026): nem pelo de-para do
+  // fornecedor, nem por EAN ou nome. A gravação continua lendo o catálogo
+  // inteiro (`produtos`, devolvido abaixo) — quem refaz uma entrada antiga não
+  // é barrado por isso.
+  const inativos = stockCore.produtosInativos(data);
   const conferencia = entradaNfe.montarConferencia({
     nota,
     diretorio: getCadastroDirectory(data),
-    produtos,
+    produtos: inativos.size ? produtos.filter((p) => !inativos.has(p.id)) : produtos,
     vinculosAnteriores,
     documentosProprios: estabelecimentos.map((e) => e.cnpj),
     entradaExistente
@@ -14621,7 +14637,9 @@ async function tratarRequisicao(req, res) {
         const documento = String(c.document || '').replace(/\D/g, '');
         return documento ? { id: c.id, name: c.name, document: documento } : { id: c.id, name: c.name };
       }),
-      products,
+      // Inativo vai MARCADO, e não fora (22/10/2026): a busca do item o
+      // esconde, mas o pedido antigo que o tem ainda precisa do nome na linha.
+      products: marcarInativos(products, data),
       // O CABEÇALHO DA IMPRESSÃO (30/09/2026). Razão social, CNPJ, endereço,
       // e-mail e telefone de quem emite — é o que o modelo que o usuário quer
       // padronizar traz no topo, e o único cadastro que tem tudo isso é
@@ -19176,8 +19194,13 @@ async function tratarRequisicao(req, res) {
         // A tela precisa da lista para vincular item na mão. Vai daqui, e não
         // de /api/stock/products, para que quem tem só Compras consiga
         // conferir a nota inteira — cadastrar produto novo continua sendo
-        // do Estoque.
-        produtos: produtos.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', ean: p.ean || '' })),
+        // do Estoque. Sem os inativos (22/10/2026), como no pedido e na NF-e.
+        produtos: (() => {
+          const inativos = stockCore.produtosInativos(data);
+          return produtos
+            .filter((p) => !inativos.has(p.id))
+            .map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', ean: p.ean || '' }));
+        })(),
         depositos: (data.deposits || []).map((d) => ({ id: d.id, name: d.name })),
         // O do CNPJ que recebeu a nota (15/10/2026). Ver depositoDoDestinatario.
         depositoPadraoId: entradaNfe.depositoDoDestinatario(
@@ -19572,9 +19595,11 @@ async function tratarRequisicao(req, res) {
     // Fica sempre: são dezenas de linhas, não milhares.
     return sendJson(res, {
       purchases,
-      products: products.map((p) => ({
+      // Inativo vai marcado (22/10/2026): a entrada manual de NF-e o tira da
+      // busca do item.
+      products: marcarInativos(products.map((p) => ({
         id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice
-      })),
+      })), data),
       directory: querFormulario
         ? getCadastroDirectory(data).map((c) => ({ id: c.id, name: c.name }))
         : [],
@@ -20377,6 +20402,38 @@ async function tratarRequisicao(req, res) {
     }
   }
 
+  // SÓ A SITUAÇÃO DO PRODUTO, ativo ou inativo (22/10/2026). É a saída que a
+  // lixeira oferece ao produto com histórico de estoque, que não pode ser
+  // excluído: um clique, sem abrir o cadastro. Mexe só no meta — o resto do
+  // cadastro fica como está. Inativo sai das buscas do pedido, da emissão de
+  // NF-e e da entrada de NF-e (ver stockCore.produtosInativos).
+  if (/^\/api\/stock\/products\/[^/]+\/situacao$/.test(pathname) && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!userCanStock(user)) return sendJson(res, { error: 'Sem permissão' }, 403);
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      const body = await readBody(req);
+      const status = String(body.status || '').trim().toLowerCase();
+      if (!['ativo', 'inativo'].includes(status)) return sendJson(res, { error: 'Situação inválida: use ativo ou inativo.' }, 400);
+      const produto = await db.getProductById(id);
+      if (!produto) return sendJson(res, { error: 'Produto não encontrado' }, 404);
+      const data = loadData();
+      data.productMeta = data.productMeta || {};
+      const antes = stockCore.productMeta(data, id).status || 'ativo';
+      data.productMeta[id] = stockCore.buildProductMeta({ status }, stockCore.productMeta(data, id));
+      saveData(data);
+      if (antes !== status) {
+        await registrarAuditoria({
+          action: 'produto.situacao', targetId: id, targetUsername: produto.name,
+          byId: user.id, byName: user.name, details: { de: antes, para: status }
+        });
+      }
+      return sendJson(res, { success: true, status });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao mudar a situação do produto');
+    }
+  }
+
   if (/^\/api\/stock\/products\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
     try {
       const user = await getCurrentUser(req);
@@ -20385,7 +20442,12 @@ async function tratarRequisicao(req, res) {
       const { data, productsById } = await loadStockContext();
       if (!productsById.get(id)) return sendJson(res, { error: 'Produto não encontrado' }, 404);
       if ((data.stockMovements || []).some((m) => m.productId === id)) {
-        return sendJson(res, { error: 'Produto com movimentações não pode ser excluído. Zere o estoque e mantenha o cadastro inativo.' }, 409);
+        // `podeInativar` (22/10/2026): a lista oferece inativar ali mesmo.
+        return sendJson(res, {
+          error: 'Produto com movimentações de estoque não pode ser excluído: o histórico precisa dele. Inative o cadastro.',
+          podeInativar: true,
+          inativo: stockCore.productMeta(data, id).status === 'inativo'
+        }, 409);
       }
       if ((data.productCatalogs || []).some((c) => (c.productIds || []).includes(id))) {
         return sendJson(res, { error: 'Produto vinculado a um catálogo. Remova-o do catálogo antes de excluir.' }, 409);
@@ -22136,16 +22198,16 @@ async function tratarRequisicao(req, res) {
         // Fase DS: os campos que a emissão lê (emitir_nfe_focus.js). cest, ean
         // e unidadeTributavel ficam de fora: a tela não os lê, e o servidor
         // relê o produto pelo id na hora de emitir (emitirNfeFiscal).
-        produtos: (await db.getProducts()).map((p) => ({
+        produtos: marcarInativos((await db.getProducts()).map((p) => ({
           id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice,
           ncm: p.ncm, origem: p.origem, unidadeComercial: p.unidadeComercial
-        }))
+        })), data)
       } : {
-        produtos: (await db.getProducts()).map((p) => ({
+        produtos: marcarInativos((await db.getProducts()).map((p) => ({
           id: p.id, name: p.name, sku: p.sku, salePrice: p.salePrice,
           ncm: p.ncm, cest: p.cest, ean: p.ean, origem: p.origem,
           unidadeComercial: p.unidadeComercial, unidadeTributavel: p.unidadeTributavel
-        }))
+        })), data)
       })
     });
   }

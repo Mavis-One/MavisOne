@@ -4123,8 +4123,9 @@ async function loadModule(moduleName) {
         // índice de busca (ver indiceDeBuscaDe), que assim é montado uma vez.
         let opcoesDeProdutoGuardadas = { deposito: null, lista: null };
         // "Pode vender" desligado no cadastro (fase EP, 15/10/2026): o produto
-        // sai da busca. Os que este pedido JÁ tem continuam na lista — sem eles
-        // a linha do item abriria sem o nome do produto.
+        // sai da busca. O INATIVO também (22/10/2026). Os que este pedido JÁ
+        // tem continuam na lista — sem eles a linha do item abriria sem o nome
+        // do produto.
         const produtosJaNoPedido = new Set(items.map((item) => item.productId).filter(Boolean));
         const opcoesDeProduto = () => {
           const deposito = String((typeof formState !== 'undefined' ? formState.depositId : '') || '').trim();
@@ -4132,7 +4133,7 @@ async function loadModule(moduleName) {
             return opcoesDeProdutoGuardadas.lista;
           }
           const lista = meta.products
-            .filter((p) => p.podeVender !== false || produtosJaNoPedido.has(p.id))
+            .filter((p) => (p.podeVender !== false && p.inativo !== true) || produtosJaNoPedido.has(p.id))
             .map((p) => ({ value: p.id, label: rotuloProduto(p), product: p }));
           opcoesDeProdutoGuardadas = { deposito, lista };
           return lista;

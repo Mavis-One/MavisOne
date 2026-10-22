@@ -293,7 +293,7 @@ check('emitirNfeFiscal lê o produto por produtoId', /bruto\.produtoId \? await 
 check('NCM do cadastro tem precedência sobre o digitado', /ncm: produto\.ncm \|\| bruto\.ncm/.test(serverSrc));
 check('item sem NCM é recusado com mensagem que diz onde resolver',
   /está sem NCM[\s\S]{0,200}Estoque → Produtos/.test(serverSrc));
-check('/api/finance/meta expõe os produtos com classificação fiscal', /produtos: \(await db\.getProducts\(\)\)/.test(serverSrc));
+check('/api/finance/meta expõe os produtos com classificação fiscal', /produtos: marcarInativos\(\(await db\.getProducts\(\)\)/.test(serverSrc));
 
 console.log('\n--- o gate do Fiscal aceita quem tem o módulo Fiscal ---');
 // 'fiscal' é módulo escolhível na tela de Usuários; sem ele aqui, marcar o

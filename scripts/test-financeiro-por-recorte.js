@@ -193,7 +193,7 @@ console.log('\n--- 5. /api/finance/meta: inteiro sem parâmetro, recortado quand
 const rotaMeta = semComentarios(rotas.find((r) => /pathname === '\/api\/finance\/meta'/.test(r.cabeca)).corpo);
 check('não lê os lançamentos (só as três tabelas de nomes)', /syncFinanceCadastroData\(data\)/.test(rotaMeta) && !/syncFinanceData\(/.test(rotaMeta));
 check('sem parâmetro, os produtos levam os dez campos de sempre',
-  /produtos: \(await db\.getProducts\(\)\)\.map\(\(p\) => \(\{\s*id: p\.id, name: p\.name, sku: p\.sku, salePrice: p\.salePrice,\s*ncm: p\.ncm, cest: p\.cest, ean: p\.ean, origem: p\.origem,\s*unidadeComercial: p\.unidadeComercial, unidadeTributavel: p\.unidadeTributavel/.test(rotaMeta));
+  /produtos: marcarInativos\(\(await db\.getProducts\(\)\)\.map\(\(p\) => \(\{\s*id: p\.id, name: p\.name, sku: p\.sku, salePrice: p\.salePrice,\s*ncm: p\.ncm, cest: p\.cest, ean: p\.ean, origem: p\.origem,\s*unidadeComercial: p\.unidadeComercial, unidadeTributavel: p\.unidadeTributavel/.test(rotaMeta));
 const diretorioMeta = corpoDe('diretorioDoMetaFinanceiro');
 check('sem parâmetro, o diretório inteiro', /return diretorio;\s*\}$/.test(diretorioMeta.trim()));
 check('o recorte da NF-e leva documento, UF, município e IE',
