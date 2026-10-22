@@ -57,8 +57,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
   const ORIGEM_DO_VINCULO = {
     historico: { texto: 'já vinculado antes', classe: 'finance-badge-success' },
     gtin: { texto: 'código de barras', classe: 'finance-badge-success' },
-    codigo: { texto: 'código igual ao SKU', classe: 'finance-badge-info' },
+    // 'codigo' (código do fornecedor igual ao nosso SKU) saiu em 22/10/2026:
+    // fornecedores diferentes usam o mesmo código para produtos diferentes.
     descricao: { texto: 'só pela descrição', classe: 'finance-badge-warning' },
+    criado: { texto: 'criado agora', classe: 'finance-badge-success' },
     manual: { texto: 'escolhido por você', classe: 'finance-badge-info' }
   };
 
@@ -231,10 +233,14 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       `;
     }
 
+    // O CÓDIGO NA FRENTE (22/10/2026, pedido do usuário: "preciso que apareça o
+    // código no produto e no campo de pesquisa"). No fim do rótulo ele ficava
+    // cortado pela largura do campo; na frente, aparece sempre — e a busca
+    // acha pelo código do mesmo jeito.
     function opcoesDeProduto() {
       return [
         { value: '', label: '— sem produto —' },
-        ...tela.produtos.map((p) => ({ value: p.id, label: p.sku ? `${p.name} (${p.sku})` : p.name }))
+        ...tela.produtos.map((p) => ({ value: p.id, label: p.sku ? `${p.sku} — ${p.name}` : p.name }))
       ];
     }
 
@@ -310,12 +316,13 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                           placeholder: 'Buscar produto...'
                         })}
                         ${selo ? `<span class="finance-badge ${selo.classe} entrada-selo">${selo.texto}</span>` : ''}
-                        ${!item.vinculo && tela.permissoes.cadastrarProduto ? `
-                          <button type="button" class="btn btn-muted entrada-btn-produto" data-cadastrar-produto="${item.numero}">
-                            Cadastrar produto do XML
+                        ${tela.permissoes.cadastrarProduto ? `
+                          <button type="button" class="btn btn-muted entrada-btn-produto" data-cadastrar-produto="${item.numero}"
+                            ${escolha.produtoId ? 'hidden' : ''}>
+                            Criar produto
                           </button>
                         ` : ''}
-                        ${!item.vinculo && !tela.permissoes.cadastrarProduto ? '<span class="muted entrada-selo">sem produto — precisa do módulo Estoque para cadastrar</span>' : ''}
+                        ${!escolha.produtoId && !tela.permissoes.cadastrarProduto ? '<span class="muted entrada-selo">sem produto — precisa do módulo Estoque para cadastrar</span>' : ''}
                       </td>
                       <td class="entrada-col-check">
                         <input type="checkbox" data-mov-estoque="${item.numero}"
@@ -724,6 +731,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             escolha.produtoId = valor || '';
             const celula = document.querySelector(`[data-codigo-item="${item.numero}"]`);
             if (celula) celula.textContent = codigoDoProduto(escolha.produtoId);
+            // "Criar produto" aparece sempre que o item fica sem produto
+            // (22/10/2026) — inclusive ao limpar um palpite errado.
+            const criar = document.querySelector(`[data-cadastrar-produto="${item.numero}"]`);
+            if (criar) criar.hidden = Boolean(escolha.produtoId);
             // Sem produto não há estoque a movimentar: desmarca e desliga a
             // caixa, em vez de deixar marcada uma opção que o servidor
             // recusaria depois.
@@ -922,9 +933,13 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
     }
 
     async function analisarXml(xml) {
+      // `instante`: a guarda de gravação repetida devolve, por 3 s, a MESMA
+      // resposta a um POST de corpo igual — e a reanálise depois do "Criar
+      // produto" (mesmo XML) voltava com a lista sem o produto novo (22/10/2026).
+      // A análise só lê; cada uma vai como pedido novo.
       const resposta = await api('/api/purchases/entrada-nfe/analisar', {
         method: 'POST',
-        body: JSON.stringify({ xml })
+        body: JSON.stringify({ xml, instante: Date.now() })
       });
       tela.xml = xml;
       tela.conferencia = { nota: resposta.nota, fornecedor: resposta.fornecedor, itens: resposta.itens, bloqueios: resposta.bloqueios, avisos: resposta.avisos, transferencia: Boolean(resposta.transferencia), titulosDoViper: resposta.titulosDoViper || [] };
@@ -1009,10 +1024,23 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             stockQuantity: 0
           })
         });
-        showToast('Produto cadastrado.', 'success');
-        // Reanalisa: o produto novo entra na lista e o item volta já vinculado
-        // (casa pelo GTIN, ou pelo SKU que veio do código do fornecedor).
+        const novo = resposta && resposta.product;
+        showToast(`Produto cadastrado${novo && novo.sku ? ` com o código ${novo.sku}` : ''}.`, 'success');
+        // Reanalisa para o produto novo entrar na lista, e LIGA o item a ele —
+        // desde 22/10/2026 o código do fornecedor não casa sozinho com o nosso.
+        // O que já estava escolhido nos outros itens volta como estava.
+        const escolhidos = new Map([...tela.escolhas].map(([numero, e]) => [numero, { ...e }]));
+        const CAMPOS_DA_CONFERENCIA = ['depositoId', 'gerarFinanceiro', 'atualizarCusto', 'ordemCompraId', 'parcelarDiferente', 'parcelamento', 'parcelas', 'totalAPagar'];
+        const conferencia = Object.fromEntries(CAMPOS_DA_CONFERENCIA.map((campo) => [campo, tela[campo]]));
         await analisarXml(tela.xml);
+        Object.assign(tela, conferencia);
+        escolhidos.forEach((e, numero) => tela.escolhas.set(numero, e));
+        if (novo && novo.id) {
+          tela.escolhas.set(numeroItem, { produtoId: novo.id, movimentarEstoque: !tela.jaNoViper });
+          const doItem = tela.conferencia.itens.find((i) => i.numero === numeroItem);
+          if (doItem) doItem.vinculo = { produtoId: novo.id, por: 'criado', confianca: 'alta' };
+        }
+        desenhar();
       } catch (erro) {
         showToast(erro.message || 'Não consegui cadastrar o produto.', 'error');
       }

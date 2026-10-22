@@ -69,12 +69,19 @@ check('furo no meio da sequência não é reaproveitado', proximoCodigo([...faix
   check('a entrada de nota cadastra com o código da sequência e o do fornecedor em C.Fabricante',
     /sku: '',\s*codigoFabricante: s\.sku \|\| '',/.test(entrada) && !/Este item não tem código no XML/.test(entrada));
 
-  console.log('\n--- 5. a próxima nota acha o produto pelo C.Fabricante ---');
+  // Desde 22/10/2026 (pedido do usuário: "diferentes fornecedores têm códigos
+  // iguais para produtos diferentes") o código do fornecedor não casa mais
+  // com SKU nem com C.Fabricante de qualquer produto: a próxima nota DESTE
+  // fornecedor acha o produto pelo de-para dele (vinculosAnteriores). Provado
+  // na 3099: o produto criado na conferência voltou "já vinculado antes".
+  console.log('\n--- 5. a próxima nota acha o produto pelo de-para do fornecedor ---');
   const produtos = [{ id: 'p1', name: 'OUTRO', sku: '101298', codigoFabricante: 'ADASIN1009' }];
   const vinculo = entradaNfe.vincularItem({ codigo: 'adasin1009', descricao: 'TUBO' }, produtos, {});
-  check('cProd igual ao C.Fabricante', vinculo && vinculo.produtoId === 'p1' && vinculo.por === 'codigo', JSON.stringify(vinculo));
-  const peloSku = entradaNfe.vincularItem({ codigo: '101298', descricao: 'TUBO' }, [...produtos, { id: 'p2', name: 'X', sku: 'Z', codigoFabricante: '101298' }], {});
-  check('  o código do produto ainda vem antes', peloSku && peloSku.produtoId === 'p1', JSON.stringify(peloSku));
+  check('cProd igual ao C.Fabricante de um produto qualquer: não casa', vinculo === null, JSON.stringify(vinculo));
+  const peloSku = entradaNfe.vincularItem({ codigo: '101298', descricao: 'TUBO' }, produtos, {});
+  check('  nem igual ao SKU', peloSku === null, JSON.stringify(peloSku));
+  const doFornecedor = entradaNfe.vincularItem({ codigo: 'ADASIN1009', descricao: 'TUBO' }, produtos, { ADASIN1009: 'p1' });
+  check('  o de-para deste fornecedor casa', doFornecedor && doFornecedor.produtoId === 'p1' && doFornecedor.por === 'historico', JSON.stringify(doFornecedor));
 
   console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
   process.exit(falhas ? 1 : 0);

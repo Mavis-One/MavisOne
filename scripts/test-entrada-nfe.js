@@ -166,8 +166,14 @@ const PRODUTOS = [
 const conf = entrada.montarConferencia({ nota, diretorio: [], produtos: PRODUTOS });
 check('item 1 casa pelo código de barras', conf.itens[0].vinculo.produtoId === 'p-gtin' && conf.itens[0].vinculo.por === 'gtin');
 check('  e o GTIN é vínculo de confiança alta', conf.itens[0].vinculo.confianca === 'alta');
-// O item 2 casa por SKU E por descrição; o SKU tem de ganhar.
-check('item 2 prefere o código à descrição', conf.itens[1].vinculo.produtoId === 'p-sku', conf.itens[1].vinculo.por);
+// O CÓDIGO DO FORNECEDOR NÃO CASA COM O NOSSO SKU (22/10/2026, pedido do
+// usuário: fornecedores diferentes usam o mesmo código para produtos
+// diferentes). O item 2 tem cProd igual ao SKU de p-sku: fica no palpite da
+// descrição, e sem ela, sem produto.
+check('item 2: o código do fornecedor igual a um SKU nosso NÃO casa (fica na descrição)',
+  conf.itens[1].vinculo.produtoId === 'p-nome' && conf.itens[1].vinculo.por === 'descricao', conf.itens[1].vinculo.por);
+const soPeloCodigo = entrada.montarConferencia({ nota, diretorio: [], produtos: [PRODUTOS[1]] });
+check('  com só o código igual, o item fica sem produto', !soPeloCodigo.itens[1].vinculo);
 
 const soPorNome = entrada.montarConferencia({ nota, diretorio: [], produtos: [PRODUTOS[2]] });
 check('sem código, casa pela descrição', soPorNome.itens[1].vinculo.produtoId === 'p-nome');
