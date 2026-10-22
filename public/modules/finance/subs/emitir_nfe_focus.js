@@ -44,6 +44,15 @@ const NFE_FOCUS_REFERE_NOTA = { DEVOLUCAO: 'Chave de acesso da NF-e devolvida', 
 
 function validarReferenciaDaNota(formData) {
   const tipoOperacao = formData.get('tipoOperacao');
+  // O RETORNO pode referir a NF-e de remessa (fase FB, 22/10/2026): opcional,
+  // e obrigatória para o cliente cujas exigências pedem (a recusa é do
+  // servidor, shared/exigencias_nfe.js).
+  if (tipoOperacao === 'RETORNO') {
+    const chave = String(formData.get('retornoChave') || '').replace(/\D/g, '');
+    if (!chave) return { referencias: undefined };
+    if (chave.length !== 44) return { erro: 'A chave da NF-e de remessa tem 44 dígitos.' };
+    return { referencias: [{ chaveAcesso: chave }] };
+  }
   const rotulo = NFE_FOCUS_REFERE_NOTA[tipoOperacao];
   const campo = tipoOperacao === NFE_FOCUS_COMPLEMENTO
     ? 'complementoChave'
@@ -185,6 +194,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     tipoOperacao = doPedido.tipoOperacao;
   }
   let orderIdOrigem = doPedido ? doPedido.orderId || '' : '';
+  // O PEDIDO DE COMPRA DO CLIENTE (fase FB, 22/10/2026): o cabeçalho vem do
+  // pedido de venda; os campos de cada linha ficam nos itens. Só aparece (e
+  // só vale no servidor) para destinatário com exigências de NF-e.
+  const ExigenciasNfe = window.MavisExigenciasNfe;
+  let pedidoCliente = ExigenciasNfe ? ExigenciasNfe.normalizarPedido(doPedido && doPedido.pedidoCliente) : {};
   // A TRAVA DE PAGAMENTO (fase ES, 19/10/2026): ao abrir pelo pedido, a tela já
   // diz se a NF-e pode sair. Quem recusa de verdade é o servidor, na emissão.
   let liberacaoDoPedido = null;
@@ -384,7 +398,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         quantidade: Number(item.quantity || 0),
         valorUnitario: Number(item.unitPrice || 0),
         unidadeComercial: item.unit || 'UN',
-        origem: 0
+        origem: 0,
+        // Fase FB: o pedido de compra do cliente nesta linha.
+        itemPedidoCliente: item.itemPedidoCliente || '',
+        codigoMaterialCliente: item.codigoMaterialCliente || '',
+        unidadeCliente: item.unidadeCliente || ''
       }));
     }
     // `taxNotes` é o texto que o vendedor escreveu no pedido e confirmou copiar
@@ -626,7 +644,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       campos: camposDoFormulario(),
       selectedEstabelecimentoId, selectedClienteId, tipoOperacao, tipoDocumento,
       itens, complemento, informacoesEditadas, notaDoPedido, observacoes,
-      desconto, frete, outrasDespesas, seguro,
+      desconto, frete, outrasDespesas, seguro, pedidoCliente,
       modalidadeEscolhida: modalidadeEscolhida === undefined ? null : modalidadeEscolhida,
       transportadoraId, transporte, cobrancaEditada, cobranca,
       // A nota com erro que esta emissão corrige (fase EO). Sem isto, salvar
@@ -653,6 +671,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     if (d.frete !== undefined) frete = Number(d.frete || 0);
     if (d.outrasDespesas !== undefined) outrasDespesas = Number(d.outrasDespesas || 0);
     if (d.seguro !== undefined) seguro = Number(d.seguro || 0);
+    if (d.pedidoCliente && ExigenciasNfe) pedidoCliente = ExigenciasNfe.normalizarPedido(d.pedidoCliente);
     if (d.modalidadeEscolhida !== undefined) modalidadeEscolhida = d.modalidadeEscolhida === null ? undefined : d.modalidadeEscolhida;
     if (d.transportadoraId !== undefined) transportadoraId = d.transportadoraId;
     if (d.transporte) {
@@ -923,6 +942,10 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <label>${NFE_FOCUS_REFERE_NOTA[tipoOperacao]} *
               <input name="devolucaoChave" required inputmode="numeric" maxlength="44" placeholder="44 dígitos" />
             </label>` : ''}
+            ${tipoOperacao === 'RETORNO' ? `
+            <label>Chave da NF-e de remessa (se houver)
+              <input name="retornoChave" inputmode="numeric" maxlength="44" placeholder="44 dígitos" />
+            </label>` : ''}
             <label>Natureza da operação<input name="naturezaOperacao" required value="${escapeHtml((NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).natureza || (NFE_FOCUS_TIPO_OPERACAO_OPTIONS.find((o) => o.value === tipoOperacao) || {}).label || '')}" /></label>
             <label>Data de emissão<input type="date" name="dataEmissao" required value="${today}" /></label>
           </section>
@@ -1028,6 +1051,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <div style="margin: 10px 0;"><button type="button" class="secondary" id="nfeFocusAddItemBtn">+ Adicionar item</button></div>
             <p class="finance-negative" style="font-size: 1.1rem;">Valor total: <strong id="nfeFocusGrandTotal">${financeFormatBRL(grandTotal())}</strong></p>
           </section>
+
+          <!-- Fase FB: o pedido de compra do cliente com exigências de NF-e.
+               O bloco só existe para eles: renderPedidoCliente o desenha aqui
+               dentro (para os demais, o contêiner fica vazio). -->
+          <div id="nfeFocusPedidoCliente" hidden></div>
 
           <!-- Impostos e Totais (13/10/2026): desenhados por renderImpostos e
                renderTotais a partir da PRÉVIA do servidor, refeita quando a nota
@@ -1186,6 +1214,76 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     if (tbody) tbody.innerHTML = renderItemsRows();
     attachItemsHandlers();
     refreshGrandTotal();
+    renderPedidoCliente();
+  }
+
+  // O BLOCO "PEDIDO DO CLIENTE" (fase FB, 22/10/2026). Aparece quando o
+  // documento do destinatário tem perfil em Fiscal › Exigências de NF-e por
+  // Cliente (vem no meta). Os campos vêm do pedido de venda e se editam aqui;
+  // quem confere e recusa é o servidor, com shared/exigencias_nfe.js.
+  function perfilDoDestinatario() {
+    if (!ExigenciasNfe) return null;
+    const campo = document.querySelector('#nfeFocusForm [name="destDocumento"]');
+    return ExigenciasNfe.perfilDe(meta.exigenciasNfe, campo ? campo.value : destinatario.documento);
+  }
+  function renderPedidoCliente() {
+    const alvo = document.getElementById('nfeFocusPedidoCliente');
+    if (!alvo) return;
+    const perfil = perfilDoDestinatario();
+    alvo.hidden = !perfil;
+    if (!perfil) { alvo.innerHTML = ''; return; }
+    const asterisco = (...marcas) => (marcas.some((m) => perfil[m]) ? ' *' : '');
+    alvo.innerHTML = `<section class="nfe-bloco" data-bloco="pedidoCliente">
+      <h4 class="nfe-bloco-titulo">Pedido do cliente — ${escapeHtml(perfil.nome)}</h4>
+      <p class="muted">Este cliente exige estes dados na NF-e. A nota não é transmitida sem o que está marcado com *.</p>
+      <div class="row">
+        <label>Nº do pedido de compra${asterisco('exigeXpedItem', 'exigePedidoInfcpl')}
+          <input data-nfe-pedido-cliente="numero" maxlength="15" value="${escapeHtml(pedidoCliente.numero || '')}" />
+        </label>
+        <label>Condição de pagamento${asterisco('exigeCondPagto')}
+          <input data-nfe-pedido-cliente="condicaoPagamento" maxlength="60" value="${escapeHtml(pedidoCliente.condicaoPagamento || '')}" />
+        </label>
+        <label>Centro recebedor${asterisco('exigeCentro')}
+          <input data-nfe-pedido-cliente="centro" maxlength="60" value="${escapeHtml(pedidoCliente.centro || '')}" />
+        </label>
+        <label>Depósito recebedor${asterisco('exigeDeposito')}
+          <input data-nfe-pedido-cliente="deposito" maxlength="60" value="${escapeHtml(pedidoCliente.deposito || '')}" />
+        </label>
+      </div>
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr>
+            <th>Item</th>
+            <th>Item do pedido${asterisco('exigeNitempedItem')}</th>
+            <th>Código do material${asterisco('exigeCodigoMaterial')}</th>
+            <th>Unidade do pedido${asterisco('exigeUnidadePedido')}</th>
+          </tr></thead>
+          <tbody>
+            ${itens.map((item, index) => `
+              <tr>
+                <td>${index + 1}. ${escapeHtml(item.descricao || '')}</td>
+                <td><input data-nfe-item-pedido="${index}" data-campo="itemPedidoCliente" inputmode="numeric" maxlength="6" value="${escapeHtml(item.itemPedidoCliente || '')}" placeholder="${(index + 1) * 10}" style="width: 90px;" /></td>
+                <td><input data-nfe-item-pedido="${index}" data-campo="codigoMaterialCliente" maxlength="60" value="${escapeHtml(item.codigoMaterialCliente || '')}" /></td>
+                <td><input data-nfe-item-pedido="${index}" data-campo="unidadeCliente" maxlength="6" value="${escapeHtml(item.unidadeCliente || '')}" placeholder="${escapeHtml(item.unidadeComercial || 'UN')}" style="width: 80px;" /></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">Vai nas informações complementares: <strong id="nfeFocusPedidoClienteTexto">${escapeHtml(ExigenciasNfe.textoDoPedido(perfil, pedidoCliente) || '—')}</strong></p>
+    </section>`;
+    alvo.querySelectorAll('[data-nfe-pedido-cliente]').forEach((campo) => {
+      campo.addEventListener('input', () => {
+        pedidoCliente[campo.dataset.nfePedidoCliente] = campo.value;
+        const texto = document.getElementById('nfeFocusPedidoClienteTexto');
+        if (texto) texto.textContent = ExigenciasNfe.textoDoPedido(perfil, pedidoCliente) || '—';
+      });
+    });
+    alvo.querySelectorAll('[data-nfe-item-pedido]').forEach((campo) => {
+      campo.addEventListener('input', () => {
+        const item = itens[Number(campo.dataset.nfeItemPedido)];
+        if (item) item[campo.dataset.campo] = campo.dataset.campo === 'unidadeCliente' ? campo.value.toUpperCase() : campo.value;
+      });
+    });
   }
 
   function refreshGrandTotal() {
@@ -2238,8 +2336,14 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           : { codigoBeneficioFiscal: String(item.codigoBeneficioFiscal).trim() }),
         // O que foi editado na aba Impostos (13/10/2026). Vence a regra fiscal
         // no servidor (lib/nfePayloadBuilder.js, regraComEdicao).
-        ...(item.fiscal && Object.keys(item.fiscal).length ? { fiscal: { ...item.fiscal } } : {})
+        ...(item.fiscal && Object.keys(item.fiscal).length ? { fiscal: { ...item.fiscal } } : {}),
+        // Fase FB: o pedido de compra do cliente nesta linha. O servidor só o
+        // usa para destinatário com exigências de NF-e.
+        itemPedidoCliente: item.itemPedidoCliente || '',
+        codigoMaterialCliente: item.codigoMaterialCliente || '',
+        unidadeCliente: item.unidadeCliente || ''
       })),
+      pedidoCliente,
       // Grupo obrigatório do layout 4.0 — nota sem ele é rejeitada. Uma
       // parcela única com o total: o parcelamento é condição comercial e
       // vira contas a receber, não N formas de pagamento na nota.
@@ -2303,6 +2407,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     if (!ehComplemento()) carregarPrevia();
     // Destinatário (UF, contribuinte, IE) muda o imposto: refaz os dependentes.
     content.querySelector('[data-bloco="destinatario"]')?.addEventListener('change', agendarBlocosDependentes);
+    // Fase FB: o documento do destinatário decide se há bloco "Pedido do cliente".
+    content.querySelector('[data-bloco="destinatario"]')?.addEventListener('change', renderPedidoCliente);
+    renderPedidoCliente();
 
     // O BOTAO DE EMITIR MORRIA EM SILENCIO.
     //
@@ -2397,6 +2504,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       const cep = String(e.cep || '').replace(/\D/g, '');
       if (cep.length === 8 && !e.logradouro) buscarCep({ automatico: true });
       else ultimoCepConsultado = cep;
+      // Fase FB: o cliente escolhido pode ter exigências de NF-e.
+      renderPedidoCliente();
     }
 
     // O CEP PREENCHE O ENDEREÇO SOZINHO (14/10/2026). Só o botão consultava:
@@ -2691,7 +2800,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       // (operacaoFiscal: exigeReferencia), e até 02/10/2026 a tela não a
       // pedia nem mandava — toda devolução emitida por aqui seria recusada.
       let referenciasDevolucao;
-      if (NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')]) {
+      if (NFE_FOCUS_REFERE_NOTA[formData.get('tipoOperacao')] || formData.get('tipoOperacao') === 'RETORNO') {
         const referencia = validarReferenciaDaNota(formData);
         if (referencia.erro) {
           showToast(referencia.erro, 'error');

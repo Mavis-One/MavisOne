@@ -33,7 +33,8 @@ const appSrc = ler('public/app.js');
 // carregado. Extrair a função do texto é o que permite testá-la sem rede.
 const ini = serverSrc.indexOf('function normalizeSalesItems');
 const fim = serverSrc.indexOf('// Delega para o módulo compartilhado');
-const normalizar = new Function(`${serverSrc.slice(ini, fim)}\nreturn normalizeSalesItems;`)();
+// Fase FB: normalizeSalesItems leva o pedido de compra do cliente de cada linha.
+const normalizar = new Function('exigenciasNfe', `${serverSrc.slice(ini, fim)}\nreturn normalizeSalesItems;`)(require('../public/modules/shared/exigencias_nfe'));
 
 console.log('--- o chassi é código, não texto livre ---');
 const itens = normalizar([

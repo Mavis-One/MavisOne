@@ -205,7 +205,8 @@ const reais = (m) => moduleSubItems[m].filter((i) => !i.pendente).length;
 // 19 com "Análise Fiscal" (fase DO): o cadastro contra NCM e CEST oficiais.
 // 17 sem "Notas com Problema" e "Grupos Tributários", excluídas em 10/10/2026
 // a pedido do usuário: "não há necessidade delas".
-check('fiscal tem as 17 telas reais', reais('fiscal') === 17, `${reais('fiscal')} real(is)`);
+// 18 com "Exigências de NF-e por Cliente" (fase FB, 22/10/2026).
+check('fiscal tem as 18 telas reais', reais('fiscal') === 18, `${reais('fiscal')} real(is)`);
 // Sem nenhuma tela pendente em lugar nenhum, o menu não pode mais oferecer um
 // destino que não abre.
 const pendentesNoSistema = Object.entries(moduleSubItems)

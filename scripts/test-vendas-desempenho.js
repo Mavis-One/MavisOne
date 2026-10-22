@@ -62,6 +62,8 @@ const contexto = {
   filtroPainelVendedor: require(path.join(RAIZ, 'lib/filtro-painel-vendedor')),
   salesStatus: require(path.join(RAIZ, 'public/modules/shared/sales_status')),
   bandeiraCartao: require(path.join(RAIZ, 'public/modules/shared/bandeira_cartao')),
+  // Fase FB: salesDelivery normaliza o pedido de compra do cliente.
+  exigenciasNfe: require(path.join(RAIZ, 'public/modules/shared/exigencias_nfe')),
   console
 };
 let fontes = '';

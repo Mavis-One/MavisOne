@@ -172,7 +172,7 @@ check('a conferência do cartão roda ANTES do rascunho',
 const metaDeVendas = src.slice(src.indexOf("pathname === '/api/sales/meta'"), src.indexOf('// Tributos de um pedido'));
 check('o meta de vendas leva a credenciadora junto',
   /paymentMethods: await formasComCredenciadora\(data\),/.test(metaDeVendas)
-  || (/formasComCredenciadora\(data\)\s*\n\s*\]\);/.test(metaDeVendas) && /paymentMethods: formas,/.test(metaDeVendas)));
+  || (/formasComCredenciadora\(data\),?\s*\n[\s\S]{0,200}\]\);/.test(metaDeVendas) && /paymentMethods: formas,/.test(metaDeVendas)));
 // O CNPJ NÃO vai para o navegador — só nome e bandeiras.
 const helper = (/async function formasComCredenciadora\(data\) \{[\s\S]*?\n\}/.exec(src) || [''])[0];
 check('  mas sem o CNPJ', helper.includes('cardAcquirerName') && helper.includes('cardAcquirerBrands') && !helper.includes('cnpj'));

@@ -94,6 +94,10 @@ const salesStatus = require('./public/modules/shared/sales_status');
 // Empresa, categoria, depósito, vendedor e pagamento obrigatórios no pedido e
 // no orçamento (13/10/2026). A tela confere com o mesmo arquivo.
 const vendaObrigatorios = require('./public/modules/shared/venda_obrigatorios');
+// Exigências de NF-e por cliente (fase FB, 22/10/2026): a regra é a mesma da
+// tela; o perfil de cada cliente mora no banco.
+const exigenciasNfe = require('./public/modules/shared/exigencias_nfe');
+const exigenciasNfeDb = require('./lib/db/exigencias-nfe');
 // Custo do produto só para administrador (14/10/2026). Ver lib/custo-oculto.js.
 const custoOculto = require('./lib/custo-oculto');
 // As planilhas .xlsx das Notas de Entrada e dos Lançamentos (16/10/2026).
@@ -2963,6 +2967,10 @@ function normalizeSalesItems(rawItems) {
         // controla montagem. Vazio nos outros.
         condicao: ['desmontado', 'montado'].includes(String(item.condicao || '').trim().toLowerCase())
           ? String(item.condicao).trim().toLowerCase() : '',
+        // O pedido de compra do cliente nesta linha (fase FB, 22/10/2026): item
+        // do pedido (nItemPed), código do material e unidade. Só a tela de
+        // cliente com exigências de NF-e os preenche; vão para a nota.
+        ...exigenciasNfe.normalizarItem(item),
         quantity,
         unitPrice,
         total: Math.round(quantity * unitPrice * 100) / 100
@@ -3241,7 +3249,13 @@ function salesDelivery(body) {
     complement: texto200(entrega.complement),
     country: texto200(entrega.country) || 'Brasil',
     cityCode: texto200(entrega.cityCode),
-    stateCode: texto200(entrega.stateCode)
+    stateCode: texto200(entrega.stateCode),
+    // O PEDIDO DE COMPRA DO CLIENTE (fase FB, 22/10/2026): condição de
+    // pagamento, centro e depósito recebedor. O nº do pedido continua em
+    // customerPoCode ("Código Pedido/Ordem Compra do Cliente").
+    pedidoCliente: (({ condicaoPagamento, centro, deposito }) => ({ condicaoPagamento, centro, deposito }))(
+      exigenciasNfe.normalizarPedido(entrega.pedidoCliente)
+    )
   };
 }
 
@@ -7858,6 +7872,13 @@ function resolveFiscalPermission(pathname, method) {
   // classificar. Ler é 'visualizar': a Regra Fiscal oferece a lista.
   if (pathname === '/api/fiscal/grupos-tributarios') return 'visualizar';
 
+  // EXIGÊNCIAS DE NF-e POR CLIENTE (fase FB): o perfil decide o que a nota leva
+  // e quando ela é recusada — gravar é configuração fiscal. Reenviar o XML de
+  // uma nota ao cliente é coisa de quem emite.
+  if (pathname === '/api/fiscal/exigencias-cliente') return 'visualizar';
+  if (pathname.startsWith('/api/fiscal/exigencias-cliente/')) return 'configurar';
+  if (/^\/api\/fiscal\/nfe\/[^/]+\/email$/.test(pathname)) return method === 'GET' ? 'visualizar' : 'emitir';
+
   if (pathname === '/api/fiscal/regras') return method === 'GET' ? 'visualizar' : 'regras';
   // Simular é leitura: responde "qual regra se aplicaria", sem gravar nada.
   // Explícito antes do startsWith abaixo, senão cairia em 'regras' e quem só
@@ -8476,8 +8497,16 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
       codigoProduto: item.sku || item.code || '',
       quantidade: Number(item.quantity || 0),
       valorUnitario: Number(item.unitPrice || 0),
-      unidadeComercial: item.unit || 'UN'
+      unidadeComercial: item.unit || 'UN',
+      // Fase FB: o pedido de compra do cliente nesta linha.
+      ...exigenciasNfe.normalizarItem(item)
     })),
+    // Fase FB: o cabeçalho do pedido de compra do cliente. Só vale para cliente
+    // com perfil de exigências (prepararNfeParaTransmitir).
+    pedidoCliente: {
+      ...((pedido.delivery && pedido.delivery.pedidoCliente) || {}),
+      numero: pedido.customerPoCode || ''
+    },
     // As linhas reais do pedido, com o grupo `card` quando e' cartao — a mesma
     // traducao da fase BU/BW, agora no servidor.
     pagamentos: (Array.isArray(pedido.payments) ? pedido.payments : [])
@@ -8513,6 +8542,32 @@ function montarNfeDoPedido(pedido, estabelecimentoId, data) {
 }
 
 const LEITURAS_DIRETAS = { fiscalDb, db, pagamentosComCredenciadora };
+
+/**
+ * O PERFIL DE EXIGÊNCIAS DE NF-e DO DESTINATÁRIO (fase FB, 22/10/2026), ou
+ * null. Ativo, só. Não ler o perfil (tabela ainda sem migração, banco fora)
+ * não derruba a emissão: a nota segue como seguia antes do perfil existir, e
+ * o motivo fica no log.
+ */
+/** Os perfis ativos, sem e-mails e observações — o que as telas de venda e emissão leem. */
+function perfisParaAsTelas(perfis) {
+  return (perfis || []).filter((p) => p.ativo)
+    .map(({ observacoes, alteradoEm, alteradoPorNome, emailsXml, ...resto }) => ({ ...resto, temEmail: (emailsXml || []).length > 0 }));
+}
+
+async function perfilDeExigencias(documento, leituras) {
+  const d = String(documento || '').replace(/\D/g, '');
+  if (!d) return null;
+  try {
+    const perfil = leituras && leituras.perfisDeExigencia
+      ? exigenciasNfe.perfilDe(await leituras.perfisDeExigencia(), d)
+      : await exigenciasNfeDb.obter(d);
+    return perfil && perfil.ativo ? perfil : null;
+  } catch (erro) {
+    console.warn('Não consegui ler as exigências de NF-e do cliente', d, erro.message);
+    return null;
+  }
+}
 
 /**
  * AS LEITURAS DA CONFERÊNCIA, UMA VEZ POR REQUISIÇÃO (pré-check fiscal).
@@ -8578,6 +8633,8 @@ function leiturasDaConferencia() {
       formas: () => umaVez('formas', async () => loadData().paymentMethods || []),
       adquirentes: () => umaVez('adquirentes', () => adquirentesDb.listar())
     }),
+    // Fase FB: os perfis de exigências (poucos) lidos uma vez por conferência.
+    perfisDeExigencia: () => umaVez('perfis-de-exigencia', () => exigenciasNfeDb.listar()),
     // Produtos e notas de TODOS os pedidos numa consulta cada. Se falhar, os
     // mapas ficam vazios e cada pedido volta a ler sozinho — o erro, se houver,
     // aparece na linha do pedido, como hoje, e não como um 500 da lista.
@@ -9158,6 +9215,29 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     throw err;
   }
 
+  // AS EXIGÊNCIAS DO CLIENTE (fase FB, 22/10/2026; shared/exigencias_nfe.js).
+  // Só para cliente com perfil ativo em Fiscal › Exigências de NF-e por
+  // Cliente: o pedido de compra dele vai a cada item (xPed/nItemPed), o código
+  // do material ao texto do item, a unidade do pedido à unidade comercial, e o
+  // texto do modelo às informações complementares — acrescentado aqui, para a
+  // nota nunca sair sem ele por esquecimento. Sem perfil, nada disto vai.
+  const perfilDoCliente = nfce ? null : await perfilDeExigencias(destinatario.documento, opcoes.leituras);
+  const pedidoDoCliente = perfilDoCliente ? exigenciasNfe.normalizarPedido(body.pedidoCliente) : null;
+  if (perfilDoCliente) {
+    itens.forEach((item, i) => {
+      const doPedido = exigenciasNfe.normalizarItem(itensBody[i]);
+      Object.assign(item, doPedido);
+      if (pedidoDoCliente.numero) item.pedidoCompra = pedidoDoCliente.numero;
+      if (doPedido.itemPedidoCliente) item.numeroItemPedidoCompra = Number(doPedido.itemPedidoCliente);
+      item.textoDoMaterial = exigenciasNfe.textoDoMaterial(perfilDoCliente, doPedido.codigoMaterialCliente);
+      if (doPedido.unidadeCliente) item.unidadeComercial = doPedido.unidadeCliente;
+    });
+  }
+  const textoDoPedidoDoCliente = perfilDoCliente ? exigenciasNfe.textoDoPedido(perfilDoCliente, pedidoDoCliente) : '';
+  const informacoesAdicionais = textoDoPedidoDoCliente && !String(body.informacoesAdicionais || '').includes(textoDoPedidoDoCliente)
+    ? [String(body.informacoesAdicionais || '').trim(), textoDoPedidoDoCliente].filter(Boolean).join('\n')
+    : body.informacoesAdicionais;
+
   const payload = nfce ? buildNfcePayload({
     estabelecimento,
     destinatario,
@@ -9192,7 +9272,8 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     transporte: body.transporte,
     // Fatura e duplicatas (13/10/2026).
     cobranca: body.cobranca,
-    informacoesAdicionais: body.informacoesAdicionais,
+    // Com o texto do pedido do cliente, quando há perfil (fase FB).
+    informacoesAdicionais,
     // Quem manda é o ambiente EFETIVO (já considerando a trava de
     // homologação), não o que está salvo no estabelecimento: é ele que decide
     // se o nome do destinatário vai ser o texto obrigatório de teste.
@@ -9217,7 +9298,35 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   //
   // Aqui, e nao depois: passar deste ponto consome numeracao, e nota rejeitada
   // por texto longo nao se conserta — a numeracao ja foi.
-  const textoLongo = conferirLimitesDeTexto(payload, { informacoesAdicionais: body.informacoesAdicionais });
+  // AS EXIGÊNCIAS DO CLIENTE CONFERIDAS NA NOTA MONTADA (fase FB): o que
+  // falta vai TODO de uma vez, e a nota não sai — o cliente recusaria. A
+  // prévia automática do bloco Impostos não confere (`semExigencias`): ela
+  // roda enquanto o bloco "Pedido do cliente" ainda está sendo preenchido, e
+  // trocaria os impostos pela lista do que falta. A emissão, o pré-check e a
+  // pré-visualização da DANFE conferem.
+  if (perfilDoCliente && !opcoes.semExigencias) {
+    const problemas = exigenciasNfe.conferir({
+      perfil: perfilDoCliente,
+      pedido: pedidoDoCliente,
+      itens: itens.map((item) => ({
+        descricao: item.descricao,
+        itemPedidoCliente: item.itemPedidoCliente,
+        codigoMaterialCliente: item.codigoMaterialCliente,
+        unidadeCliente: item.unidadeCliente
+      })),
+      infCpl: payload.informacoes_adicionais_contribuinte,
+      tipoOperacao,
+      referencias
+    });
+    if (problemas.length) {
+      const err = new Error(`${perfilDoCliente.nome} exige na NF-e: ${problemas.map((p) => p.problema).join(' ')}`);
+      err.status = 400;
+      err.exigencias = problemas;
+      throw err;
+    }
+  }
+
+  const textoLongo = conferirLimitesDeTexto(payload, { informacoesAdicionais });
   if (textoLongo) {
     const err = new Error(textoLongo);
     err.status = 400;
@@ -10003,6 +10112,13 @@ async function aplicarRespostaFocusNaNfe(nfe, resposta, user) {
       console.error('Falha ao baixar XML/DANFE da NF-e', atualizada.id, error.message);
     });
 
+    // O XML POR E-MAIL PARA O CLIENTE QUE O EXIGE (fase FB, 22/10/2026). Melhor
+    // esforço, como o arquivo acima: o envio (ou o erro) fica em
+    // nfe_email_envio, e a autorização segue de qualquer jeito.
+    enviarXmlAoCliente(atualizada).catch((error) => {
+      console.error('Falha ao enviar o XML da NF-e por e-mail ao cliente', atualizada.id, error.message);
+    });
+
     // Nota avulsa (sem pedido) vira contas a receber agora, não na emissão:
     // recebível de nota rejeitada é pior do que recebível atrasado. Falhar
     // aqui NÃO desautoriza a nota — ela já existe para a SEFAZ, e o erro
@@ -10034,6 +10150,30 @@ async function aplicarRespostaFocusNaNfe(nfe, resposta, user) {
   }
 
   return atualizada;
+}
+
+/**
+ * O XML E A DANFE PELA FOCUS AOS E-MAILS DO PERFIL DO CLIENTE (fase FB). Só
+ * NF-e (a NFC-e é do consumidor) e só cliente com perfil ativo e e-mail. O
+ * sistema não tem servidor de e-mail: quem envia é a Focus
+ * (lib/focusnfe.js, enviarEmailNfe). Cada tentativa fica em nfe_email_envio.
+ * Devolve { emails } ou null quando não há o que enviar.
+ */
+async function enviarXmlAoCliente(nfe, { automatico = true, porNome = '' } = {}) {
+  if (!nfe || Number(nfe.modelo) === 65) return null;
+  const perfil = await perfilDeExigencias(nfe.destinatarioDocumento);
+  const emails = perfil ? perfil.emailsXml.slice(0, exigenciasNfe.LIMITE_DE_EMAILS) : [];
+  if (!emails.length) return null;
+  try {
+    const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
+    await client.enviarEmailNfe(nfe.referencia, emails);
+    await exigenciasNfeDb.registrarEnvio({ nfeId: nfe.id, referencia: nfe.referencia, emails, status: 'ENVIADO', automatico, porNome });
+    return { emails };
+  } catch (erro) {
+    await exigenciasNfeDb.registrarEnvio({ nfeId: nfe.id, referencia: nfe.referencia, emails, status: 'ERRO', erro: erro.message, automatico, porNome })
+      .catch((erroDoRegistro) => console.error('Nem o erro do e-mail da NF-e foi registrado', nfe.id, erroDoRegistro.message));
+    throw erro;
+  }
 }
 
 async function baixarEGuardarArquivosNfe(nfe) {
@@ -14520,7 +14660,7 @@ async function tratarRequisicao(req, res) {
     // Os pedidos da reserva e o razão continuam com o `catch` estreito de
     // antes, cada um no seu: sem eles a tela cai no saldo físico em vez de não
     // abrir. Os demais derrubam a rota, como sempre derrubaram.
-    const [, user, products, pedidosDaReserva, razaoCarregado, emitente, origensAtivas, categoriasAtivas, fiscaisDasEmpresas, formas] = await Promise.all([
+    const [, user, products, pedidosDaReserva, razaoCarregado, emitente, origensAtivas, categoriasAtivas, fiscaisDasEmpresas, formas, perfisDeExigencia] = await Promise.all([
       syncCadastroData(data),
       getCurrentUser(req),
       // Oito campos por produto, e não os vinte e três de getProducts() — ver
@@ -14540,7 +14680,9 @@ async function tratarRequisicao(req, res) {
       }),
       // Lê `data.paymentMethods`, que vem do db.json pelo loadData() — não
       // depende de nenhum sync desta onda.
-      formasComCredenciadora(data)
+      formasComCredenciadora(data),
+      // Fase FB: quem tem exigências de NF-e (o bloco "Pedido do cliente").
+      exigenciasNfeDb.listar().catch(() => [])
     ]);
     if (!user || !user.allowedModules.includes('sales')) {
       return sendJson(res, { error: 'Sem permissão' }, 403);
@@ -14651,6 +14793,9 @@ async function tratarRequisicao(req, res) {
       // Inativo vai MARCADO, e não fora (22/10/2026): a busca do item o
       // esconde, mas o pedido antigo que o tem ainda precisa do nome na linha.
       products: marcarInativos(products, data),
+      // Fase FB: os clientes com exigências de NF-e — o formulário mostra o
+      // bloco "Pedido do cliente" para eles.
+      exigenciasNfe: perfisParaAsTelas(perfisDeExigencia),
       // O CABEÇALHO DA IMPRESSÃO (30/09/2026). Razão social, CNPJ, endereço,
       // e-mail e telefone de quem emite — é o que o modelo que o usuário quer
       // padronizar traz no topo, e o único cadastro que tem tudo isso é
@@ -17611,6 +17756,53 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { grupos });
       }
 
+      // EXIGÊNCIAS DE NF-e POR CLIENTE (fase FB, 22/10/2026). A chave do perfil
+      // é o CNPJ/CPF; "novo" na URL cria. Trocar o documento de um perfil
+      // regrava na chave nova.
+      if (pathname === '/api/fiscal/exigencias-cliente' && req.method === 'GET') {
+        return sendJson(res, { perfis: await exigenciasNfeDb.listar(), marcas: exigenciasNfe.MARCAS });
+      }
+      const exigenciaMatch = pathname.match(/^\/api\/fiscal\/exigencias-cliente\/([^/]+)$/);
+      if (exigenciaMatch && req.method === 'PUT') {
+        const body = await readBody(req);
+        const { perfil, erros } = exigenciasNfe.normalizarPerfil(body);
+        if (erros.length) return sendJson(res, { error: erros.join(' ') }, 400);
+        const anterior = decodeURIComponent(exigenciaMatch[1]).replace(/\D/g, '');
+        if (anterior !== perfil.cnpjCpf && await exigenciasNfeDb.obter(perfil.cnpjCpf)) {
+          return sendJson(res, { error: 'Já existe um perfil de exigências para este CNPJ/CPF.' }, 409);
+        }
+        const salvo = await exigenciasNfeDb.salvar(perfil, { anterior, porNome: user.name });
+        await registrarAuditoria({
+          action: 'fiscal.exigencias-cliente', targetId: salvo.cnpjCpf, targetUsername: salvo.nome,
+          byId: user.id, byName: user.name, details: { anterior: anterior || null, ativo: salvo.ativo }
+        });
+        return sendJson(res, { success: true, perfil: salvo });
+      }
+      if (exigenciaMatch && req.method === 'DELETE') {
+        const documento = decodeURIComponent(exigenciaMatch[1]).replace(/\D/g, '');
+        const apagado = await exigenciasNfeDb.excluir(documento);
+        if (!apagado) return sendJson(res, { error: 'Perfil não encontrado.' }, 404);
+        await registrarAuditoria({
+          action: 'fiscal.exigencias-cliente.excluir', targetId: documento, targetUsername: documento,
+          byId: user.id, byName: user.name, details: {}
+        });
+        return sendJson(res, { success: true });
+      }
+      // O XML POR E-MAIL DE UMA NOTA (fase FB): os envios dela (GET) e o
+      // reenvio à mão (POST), para quando o automático falhou.
+      const emailMatch = pathname.match(/^\/api\/fiscal\/nfe\/([^/]+)\/email$/);
+      if (emailMatch && req.method === 'GET') {
+        return sendJson(res, { envios: await exigenciasNfeDb.enviosDaNota(decodeURIComponent(emailMatch[1])) });
+      }
+      if (emailMatch && req.method === 'POST') {
+        const nfe = await fiscalDb.getNfeById(decodeURIComponent(emailMatch[1]));
+        if (!nfe) return sendJson(res, { error: 'NF-e não encontrada.' }, 404);
+        if (String(nfe.status || '').toUpperCase() !== 'AUTORIZADO') return sendJson(res, { error: 'Só a nota autorizada vai por e-mail.' }, 400);
+        const enviado = await enviarXmlAoCliente(nfe, { automatico: false, porNome: user.name });
+        if (!enviado) return sendJson(res, { error: 'O cliente desta nota não tem e-mail para o XML em Fiscal › Exigências de NF-e por Cliente.' }, 400);
+        return sendJson(res, { success: true, emails: enviado.emails });
+      }
+
       if (pathname === '/api/fiscal/regras' && req.method === 'GET') {
         const empresaId = url.searchParams.get('empresaId') || undefined;
         const regras = await fiscalDb.getRegrasFiscais(empresaId);
@@ -18025,7 +18217,7 @@ async function tratarRequisicao(req, res) {
       // recusas também: destinatário incompleto, item sem regra, sem estoque.
       if (pathname === '/api/fiscal/nfe/previa' && req.method === 'POST') {
         const body = await readBody(req);
-        const { payload } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true });
+        const { payload } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true, semExigencias: true });
         return sendJson(res, resumoFiscalDaPrevia(payload));
       }
 
@@ -22208,6 +22400,9 @@ async function tratarRequisicao(req, res) {
       // As TRANSPORTADORAS com o que a aba Transporte da emissão preenche
       // (13/10/2026). Só no diretório da NF-e: as outras telas não as leem.
       ...(pedeDiretorio === 'nfe' ? { transportadoras: transportadorasParaNfe(data) } : {}),
+      // Fase FB: os clientes com exigências de NF-e, para a emissão mostrar o
+      // bloco "Pedido do cliente". Quem recusa a nota é o servidor.
+      ...(pedeDiretorio === 'nfe' ? { exigenciasNfe: perfisParaAsTelas(await exigenciasNfeDb.listar().catch(() => [])) } : {}),
       // Produtos com a classificação fiscal: é o que permite montar o item da
       // NF-e a partir do cadastro em vez de digitar NCM e origem a cada
       // emissão — digitado à mão, o NCM erra e a regra fiscal não casa.

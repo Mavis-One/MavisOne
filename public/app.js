@@ -2440,6 +2440,9 @@ const moduleSubItems = {
     // os CÓDIGOS, Operações são os TIPOS DE OPERAÇÃO, e Regras é quem casa um
     // com o outro. É consulta — ver o cabeçalho de subs/operacoes.js.
     { key: 'operacoes', label: 'Operações Fiscais', desc: 'O que cada operação faz: finalidade, estoque, financeiro e o que ela exige.' },
+    // Fase FB (22/10/2026): o que cada CLIENTE exige na nota (ex.: ARWEG) —
+    // ao lado das operações, porque é a outra metade de "o que a nota leva".
+    { key: 'exigencias_cliente', label: 'Exigências de NF-e por Cliente', desc: 'Pedido de compra, código do material, texto e e-mail do XML que cada cliente exige.' },
     // Fica depois de Logs e antes das telas de referência: é sobre os DOCUMENTOS
     // do período, como Eventos e Logs, e não sobre configuração.
     { key: 'arquivos', label: 'Arquivos Fiscais', desc: 'O XML de cada nota do período, em zip, para a contabilidade — e quais faltam.' },
@@ -4102,6 +4105,72 @@ async function loadModule(moduleName) {
           const chave = `${productId}|${deposito}|${classValueId || ''}${condicao ? `|${condicao}` : ''}`;
           return Number((meta.saldosPorDeposito || {})[chave] || 0);
         };
+        // O BLOCO "PEDIDO DO CLIENTE" (fase FB, 22/10/2026). Só para cliente com
+        // perfil em Fiscal › Exigências de NF-e por Cliente (ex.: ARWEG): o nº
+        // do pedido de compra dele, condição, centro e depósito, e em cada
+        // linha o item do pedido, o código do material e a unidade. Vão para
+        // a NF-e; a emissão recusa a nota em que faltar o que o perfil exige.
+        const ExigenciasNfe = typeof window !== 'undefined' ? window.MavisExigenciasNfe : null;
+        const perfilDoClienteDoPedido = () => {
+          const cliente = meta.directory.find((c) => c.id === formState.clientSupplierId);
+          return ExigenciasNfe && cliente ? ExigenciasNfe.perfilDe(meta.exigenciasNfe, cliente.document) : null;
+        };
+        const blocoPedidoDoCliente = () => {
+          const perfil = perfilDoClienteDoPedido();
+          if (!perfil) return '';
+          const asterisco = (...marcas) => (marcas.some((m) => perfil[m]) ? ' *' : '');
+          const pedido = {
+            numero: formState.customerPoCode || '',
+            condicaoPagamento: formState.pedidoClienteCondicao || '',
+            centro: formState.pedidoClienteCentro || '',
+            deposito: formState.pedidoClienteDeposito || ''
+          };
+          const textoDoPedido = ExigenciasNfe.textoDoPedido(perfil, pedido);
+          return `
+                <div class="cadastro-section sales-pedido-cliente">
+                  <div class="cadastro-section-header">
+                    <h4>Pedido do cliente — ${escapeHtml(perfil.nome)}</h4>
+                  </div>
+                  <div class="cadastro-section-body">
+                    <p class="muted">Este cliente exige estes dados na NF-e (Fiscal › Exigências de NF-e por Cliente). Eles vão para a nota, e a emissão recusa a que vier sem o que está marcado com *.</p>
+                    <div class="row">
+                      <label>Nº do pedido de compra${asterisco('exigeXpedItem', 'exigePedidoInfcpl')}
+                        <input data-pedido-cliente-numero maxlength="15" value="${escapeHtml(pedido.numero)}" placeholder="4519374627" />
+                      </label>
+                      <label>Condição de pagamento${asterisco('exigeCondPagto')}
+                        <input name="pedidoClienteCondicao" maxlength="60" value="${escapeHtml(pedido.condicaoPagamento)}" placeholder="10 dias" />
+                      </label>
+                      <label>Centro recebedor${asterisco('exigeCentro')}
+                        <input name="pedidoClienteCentro" maxlength="60" value="${escapeHtml(pedido.centro)}" />
+                      </label>
+                      <label>Depósito recebedor${asterisco('exigeDeposito')}
+                        <input name="pedidoClienteDeposito" maxlength="60" value="${escapeHtml(pedido.deposito)}" />
+                      </label>
+                    </div>
+                    ${items.length ? `
+                      <div class="table-scroll">
+                        <table class="table">
+                          <thead><tr>
+                            <th>Produto</th>
+                            <th>Item do pedido${asterisco('exigeNitempedItem')}</th>
+                            <th>Código do material${asterisco('exigeCodigoMaterial')}</th>
+                            <th>Unidade do pedido${asterisco('exigeUnidadePedido')}</th>
+                          </tr></thead>
+                          <tbody>
+                            ${items.map((item, index) => `
+                              <tr>
+                                <td>${escapeHtml(item.name || '')}${item.sku ? ` <small class="muted">(${escapeHtml(item.sku)})</small>` : ''}</td>
+                                <td><input data-item-pedido-cliente="${index}" data-campo="itemPedidoCliente" inputmode="numeric" maxlength="6" value="${escapeHtml(item.itemPedidoCliente || '')}" placeholder="${(index + 1) * 10}" style="width: 90px;" /></td>
+                                <td><input data-item-pedido-cliente="${index}" data-campo="codigoMaterialCliente" maxlength="60" value="${escapeHtml(item.codigoMaterialCliente || '')}" /></td>
+                                <td><input data-item-pedido-cliente="${index}" data-campo="unidadeCliente" maxlength="6" value="${escapeHtml(item.unidadeCliente || '')}" placeholder="UN" style="width: 80px;" /></td>
+                              </tr>`).join('')}
+                          </tbody>
+                        </table>
+                      </div>` : ''}
+                    ${textoDoPedido ? `<p class="muted">Nas informações complementares da nota: <strong data-pedido-cliente-texto>${escapeHtml(textoDoPedido)}</strong></p>` : ''}
+                  </div>
+                </div>`;
+        };
         // A condição com que a linha nova de produto que controla montagem
         // nasce (fase FA, 22/10/2026): Montado, a não ser que o depósito
         // escolhido não tenha montado e tenha desmontado.
@@ -4352,7 +4421,14 @@ async function loadModule(moduleName) {
           deliveryCountry: 'country', deliveryCityCode: 'cityCode', deliveryStateCode: 'stateCode'
         };
         const CAMPOS_ENTREGA = Object.keys(MAPA_ENTREGA);
-        const CAMPOS_FORM = [...CAMPOS_EXTRA, ...CAMPOS_PAGAMENTO, ...CAMPOS_ENTREGA, 'salesTerms'];
+        // O PEDIDO DE COMPRA DO CLIENTE (fase FB, 22/10/2026): campo na tela ->
+        // chave em delivery.pedidoCliente. O nº do pedido é o customerPoCode de
+        // sempre. Só o cliente com exigências de NF-e mostra estes campos.
+        const MAPA_PEDIDO_CLIENTE = {
+          pedidoClienteCondicao: 'condicaoPagamento', pedidoClienteCentro: 'centro', pedidoClienteDeposito: 'deposito'
+        };
+        const infoPedidoCliente = infoEntrega.pedidoCliente || {};
+        const CAMPOS_FORM = [...CAMPOS_EXTRA, ...CAMPOS_PAGAMENTO, ...CAMPOS_ENTREGA, 'salesTerms', ...Object.keys(MAPA_PEDIDO_CLIENTE)];
 
         const TIPOS_ENDERECO = ['Endereço Pessoa', 'Outro Endereço'];
         // A lista mora no módulo que traduz cada meio para o modFrete da NF-e
@@ -4512,6 +4588,7 @@ async function loadModule(moduleName) {
           ...Object.fromEntries(CAMPOS_EXTRA.map((campo) => [campo, origem?.[campo] ?? ''])),
           ...Object.fromEntries(CAMPOS_PAGAMENTO.map((campo) => [campo, infoPagamento[campo] ?? ''])),
           ...Object.fromEntries(CAMPOS_ENTREGA.map((campo) => [campo, infoEntrega[MAPA_ENTREGA[campo]] ?? ''])),
+          ...Object.fromEntries(Object.entries(MAPA_PEDIDO_CLIENTE).map(([campo, chave]) => [campo, infoPedidoCliente[chave] ?? ''])),
           salesTerms: origem?.salesTerms || '',
           // O PADRÃO SAI DO CADASTRO, e não de um nome escrito aqui: quem
           // renomear "Venda Direta" no cadastro não pode continuar recebendo o
@@ -4723,6 +4800,10 @@ async function loadModule(moduleName) {
               classValueName: item.classValueName || '',
               chassi: item.chassi || '',
               condicao: item.condicao || '',
+              // Fase FB: o pedido de compra do cliente nesta linha.
+              itemPedidoCliente: item.itemPedidoCliente || '',
+              codigoMaterialCliente: item.codigoMaterialCliente || '',
+              unidadeCliente: item.unidadeCliente || '',
               quantity: item.quantity,
               unitPrice: item.unitPrice
             })),
@@ -4746,7 +4827,11 @@ async function loadModule(moduleName) {
             payments: payments.map((linha) => ({ ...linha })),
             delivery: {
               ...Object.fromEntries(CAMPOS_ENTREGA.map((campo) => [MAPA_ENTREGA[campo], formData.get(campo) || ''])),
-              showCteOptions
+              showCteOptions,
+              // Fase FB. Do formState quando o bloco não está na tela (cliente
+              // sem perfil): trocar de aba não apaga o que foi digitado.
+              pedidoCliente: Object.fromEntries(Object.entries(MAPA_PEDIDO_CLIENTE)
+                .map(([campo, chave]) => [chave, formData.get(campo) ?? formState[campo] ?? '']))
             },
             salesTerms: formData.get('salesTerms') || '',
             note: formData.get('note') || '',
@@ -5289,8 +5374,20 @@ async function loadModule(moduleName) {
                 code: item.sku || '',
                 description: item.name,
                 quantity: Number(item.quantity || 0),
-                unitPrice: Number(item.unitPrice || 0)
+                unitPrice: Number(item.unitPrice || 0),
+                // Fase FB: o pedido de compra do cliente nesta linha.
+                itemPedidoCliente: item.itemPedidoCliente || '',
+                codigoMaterialCliente: item.codigoMaterialCliente || '',
+                unidadeCliente: item.unidadeCliente || ''
               })),
+              // Fase FB: o cabeçalho do pedido de compra do cliente. A emissão só
+              // o usa para cliente com exigências de NF-e.
+              pedidoCliente: {
+                numero: formState.customerPoCode || '',
+                condicaoPagamento: formState.pedidoClienteCondicao || '',
+                centro: formState.pedidoClienteCentro || '',
+                deposito: formState.pedidoClienteDeposito || ''
+              },
               taxNotes: copiarObservacoes ? formState.note : '',
               // A empresa do pedido escolhe o emitente na emissão (13/10/2026):
               // é do emitente que sai o termo, e sem ele a nota não o tinha.
@@ -5844,6 +5941,8 @@ async function loadModule(moduleName) {
                       </p>` : ''}
                   </div>
                 </div>
+
+                ${blocoPedidoDoCliente()}
 
                 <div class="sales-totals-panel">
                   <div class="sales-totals-grid">
@@ -6503,7 +6602,48 @@ async function loadModule(moduleName) {
           // Os dados de impressão do cliente vêm ao escolhê-lo, e já do que o
           // pedido aberto tiver — ver dadosDoCliente. Guardados: repetir a cada
           // redesenho não vai ao servidor de novo.
-          attachSearchableSelect({ id: 'salesClientSupplier', options: opcoesDeCliente(), onSelect: (value) => { dadosDoCliente(value); } });
+          attachSearchableSelect({
+            id: 'salesClientSupplier',
+            options: opcoesDeCliente(),
+            onSelect: (value) => {
+              dadosDoCliente(value);
+              // Fase FB: o bloco "Pedido do cliente" aparece (ou some) com o
+              // cliente — redesenha só quando isso muda.
+              const tinhaBloco = Boolean(content.querySelector('.sales-pedido-cliente'));
+              syncFormState();
+              if (Boolean(perfilDoClienteDoPedido()) !== tinhaBloco) renderForm();
+            }
+          });
+          // O bloco "Pedido do cliente" (fase FB). O nº do pedido é o mesmo
+          // campo de Informações Gerais ("Código Pedido/Ordem Compra do
+          // Cliente"): digitar aqui escreve lá. Os campos de cada linha vão
+          // direto para o item, sem redesenhar (o foco ficaria no caminho).
+          content.querySelector('[data-pedido-cliente-numero]')?.addEventListener('input', (evento) => {
+            formState.customerPoCode = evento.target.value;
+            const geral = content.querySelector('[name="customerPoCode"]');
+            if (geral) geral.value = evento.target.value;
+          });
+          content.querySelectorAll('[data-item-pedido-cliente]').forEach((campo) => {
+            campo.addEventListener('input', () => {
+              const item = items[Number(campo.dataset.itemPedidoCliente)];
+              if (!item) return;
+              item[campo.dataset.campo] = campo.dataset.campo === 'unidadeCliente' ? campo.value.toUpperCase() : campo.value;
+            });
+          });
+          // O texto das informações complementares acompanha o que se digita.
+          const blocoDoPedido = content.querySelector('.sales-pedido-cliente');
+          blocoDoPedido?.addEventListener('input', () => {
+            const alvo = blocoDoPedido.querySelector('[data-pedido-cliente-texto]');
+            const perfil = perfilDoClienteDoPedido();
+            if (!alvo || !perfil) return;
+            const valor = (seletor) => blocoDoPedido.querySelector(seletor)?.value || '';
+            alvo.textContent = ExigenciasNfe.textoDoPedido(perfil, {
+              numero: valor('[data-pedido-cliente-numero]'),
+              condicaoPagamento: valor('[name="pedidoClienteCondicao"]'),
+              centro: valor('[name="pedidoClienteCentro"]'),
+              deposito: valor('[name="pedidoClienteDeposito"]')
+            });
+          });
           dadosDoCliente(formState.clientSupplierId);
           // Fase AW: trocar a loja mexe no depósito. `onSelect` religa o campo
           // de depósito com as opções da loja nova e sugere a dela quando não
