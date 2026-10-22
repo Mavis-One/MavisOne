@@ -11412,7 +11412,13 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
   let parcelasDaNota = [];
   if (querFinanceiro) {
     try {
-      parcelasDaNota = entradaNfe.parcelasDaEntrada(nota, body.parcelas, { substituirDuplicatas: body.parcelarDiferente === true });
+      // O valor a pagar diferente do da nota (22/10/2026) só de quem vê os
+      // valores das parcelas: administrador ou quem acessa o Financeiro.
+      const podeAjustarTotal = (await ehAdmin(user)) || (user.allowedModules || []).includes('finance');
+      parcelasDaNota = entradaNfe.parcelasDaEntrada(nota, body.parcelas, {
+        substituirDuplicatas: body.parcelarDiferente === true,
+        totalAPagar: podeAjustarTotal ? Number(body.totalAPagar) || 0 : 0
+      });
     } catch (erroParcelas) {
       return sendErro(res, erroParcelas, 'Parcelas inválidas.', 400);
     }
@@ -11621,9 +11627,17 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
       // As do XML; sem elas, as da conferência ou uma só na emissão (conferidas
       // lá em cima, antes de gravar).
       const parcelas = parcelasDaNota;
+      // Valor a pagar diferente do da nota (22/10/2026): fica dito no título.
+      const centavosDosTitulos = parcelas.reduce((s, p) => s + Math.round(Number(p.valor || 0) * 100), 0);
+      const centavosDaNota = Math.round(Number((nota.totais && nota.totais.nota) || 0) * 100);
+      const reais = (c) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      const notaDoAjuste = centavosDosTitulos !== centavosDaNota
+        ? `Valor a pagar ajustado na entrada: a nota é de ${reais(centavosDaNota)}, os títulos somam ${reais(centavosDosTitulos)}.`
+        : '';
       for (let i = 0; i < parcelas.length; i += 1) {
         const parcela = parcelas[i];
         const lancamento = await db.createFinancialEntry({
+          ...(notaDoAjuste ? { note: notaDoAjuste } : {}),
           type: 'purchase',
           referenceId: entrada.id,
           date: nota.dataEmissao,

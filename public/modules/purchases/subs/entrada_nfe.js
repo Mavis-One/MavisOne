@@ -111,6 +111,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       parcelamento: { qtd: 1, primeiro: '', intervalo: 30 },
       // Com duplicatas no XML: usar as parcelas da conferência no lugar delas.
       parcelarDiferente: false,
+      // O valor a pagar, quando é outro que o da nota (22/10/2026). null = o da nota.
+      totalAPagar: null,
       parcelas: [],
       atualizarCusto: true,
       // Fase AQ: qual ordem de compra esta nota fecha. Vazio = nenhuma.
@@ -355,8 +357,19 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
     // Pagar; vencimento e valor de cada uma continuam editáveis. Quem não vê
     // valores escolhe só os vencimentos: o servidor divide o total em partes
     // iguais (entradaNfe.parcelasDaEntrada).
+    // O VALOR A PAGAR (22/10/2026, pedido do usuário: "preciso conseguir
+    // alterar valor total e fazer parcelas, com direito a alteração de data e
+    // valor"). Começa no total da nota; quem vê os valores o troca no quadro, e
+    // é com ele que as parcelas são divididas e conferidas.
+    function totalDaNota() {
+      return Number(tela.conferencia.nota.totais.nota || 0);
+    }
+    function totalAPagar() {
+      return tela.totalAPagar !== null && tela.totalAPagar !== undefined ? tela.totalAPagar : totalDaNota();
+    }
+
     function montarParcelasDaEntrada(qtd, primeiro, intervalo) {
-      const total = Math.round(Number(tela.conferencia.nota.totais.nota || 0) * 100);
+      const total = Math.round(totalAPagar() * 100);
       const n = Math.min(120, Math.max(1, Math.floor(Number(qtd) || 1)));
       const dias = Math.max(0, Math.floor(Number(intervalo) || 0));
       const base = Math.floor(total / n);
@@ -372,9 +385,11 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       return tela.parcelas.reduce((s, p) => s + Math.round(Number(p.valor || 0) * 100), 0);
     }
 
-    function blocoParcelas(total) {
+    function blocoParcelas() {
       const p = tela.parcelamento;
-      const totalEmCentavos = Math.round(Number(total || 0) * 100);
+      const total = totalAPagar();
+      const totalEmCentavos = Math.round(total * 100);
+      const ajustado = totalEmCentavos !== Math.round(totalDaNota() * 100);
       const soma = somaDasParcelas();
       return `
         <div id="entradaParcelas">
@@ -385,6 +400,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
               <input type="date" id="entradaParcelasPrimeiro" value="${escapeHtml(p.primeiro)}" /></label>
             <label class="cadastro-field"><span>Intervalo (dias)</span>
               <input type="number" min="0" max="365" step="1" id="entradaParcelasIntervalo" value="${p.intervalo}" /></label>
+            ${veParcelas() ? `<label class="cadastro-field"><span>Valor a pagar (R$)</span>
+              <input type="number" min="0.01" step="0.01" id="entradaParcelasTotal" value="${total.toFixed(2)}" /></label>` : ''}
           </div>
           <div class="table-scroll">
             <table class="table entrada-duplicatas">
@@ -398,7 +415,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                   </tr>
                 `).join('')}
               </tbody>
-              ${veParcelas() ? `<tfoot><tr><th colspan="2">Soma (nota: ${moeda(total)})</th>
+              ${veParcelas() ? `<tfoot><tr><th colspan="2">Soma (${ajustado ? `a pagar: ${moeda(total)} · nota: ${moeda(totalDaNota())}` : `nota: ${moeda(total)}`})</th>
                 <th class="entrada-col-num ${soma === totalEmCentavos ? '' : 'finance-negative'}" id="entradaParcelasSoma">${moeda(soma / 100)}</th></tr></tfoot>` : ''}
             </table>
           </div>
@@ -410,15 +427,20 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       const quadro = document.getElementById('entradaParcelas');
       if (!quadro) return;
       const refazer = () => {
+        const campoTotal = document.getElementById('entradaParcelasTotal');
+        if (campoTotal) {
+          const digitado = Math.round(Number(campoTotal.value || 0) * 100) / 100;
+          tela.totalAPagar = digitado > 0 && Math.round(digitado * 100) !== Math.round(totalDaNota() * 100) ? digitado : null;
+        }
         montarParcelasDaEntrada(
           document.getElementById('entradaParcelasQtd').value,
           document.getElementById('entradaParcelasPrimeiro').value,
           document.getElementById('entradaParcelasIntervalo').value
         );
-        quadro.outerHTML = blocoParcelas(tela.conferencia.nota.totais.nota);
+        quadro.outerHTML = blocoParcelas();
         ligarParcelas();
       };
-      ['entradaParcelasQtd', 'entradaParcelasPrimeiro', 'entradaParcelasIntervalo'].forEach((id) => {
+      ['entradaParcelasQtd', 'entradaParcelasPrimeiro', 'entradaParcelasIntervalo', 'entradaParcelasTotal'].forEach((id) => {
         document.getElementById(id)?.addEventListener('change', refazer);
       });
       quadro.querySelectorAll('[data-parcela-vencimento]').forEach((campo) => {
@@ -431,7 +453,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           if (!celula) return;
           const soma = somaDasParcelas();
           celula.textContent = moeda(soma / 100);
-          celula.classList.toggle('finance-negative', soma !== Math.round(Number(tela.conferencia.nota.totais.nota || 0) * 100));
+          celula.classList.toggle('finance-negative', soma !== Math.round(totalAPagar() * 100));
         });
       });
     }
@@ -444,7 +466,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
     // da nota sem vencimentos, começando nas duplicatas dela.
     function areaDoParcelamento() {
       const duplicatas = tela.conferencia.nota.duplicatas;
-      if (!duplicatas.length || tela.parcelarDiferente) return blocoParcelas(tela.conferencia.nota.totais.nota);
+      if (!duplicatas.length || tela.parcelarDiferente) return blocoParcelas();
       return `
         <div class="table-scroll">
           <table class="table entrada-duplicatas">
@@ -487,7 +509,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           ${duplicatas.length ? `
             <label class="entrada-opcao">
               <input type="checkbox" id="entradaParcelarDiferente" ${tela.parcelarDiferente ? 'checked' : ''} />
-              <span>Parcelar diferente da nota (ex.: pago no cartão em várias vezes)</span>
+              <span>Parcelar ou mudar o valor a pagar (diferente da nota — ex.: cartão em várias vezes)</span>
             </label>` : ''}
           <div id="entradaParcelamentoArea">${areaDoParcelamento()}</div>
           <label class="entrada-opcao">
@@ -953,8 +975,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       // estoque vêm desmarcados — a nota fica registrada sem duplicar.
       tela.jaNoViper = tela.conferencia.titulosDoViper.length > 0;
       if (tela.jaNoViper) tela.gerarFinanceiro = false;
-      // A cada nota, as duplicatas do XML de novo (21/10/2026).
+      // A cada nota, as duplicatas do XML de novo (21/10/2026), e o valor a
+      // pagar o da nota (22/10/2026).
       tela.parcelarDiferente = false;
+      tela.totalAPagar = null;
       // Sem vencimentos no XML: começa numa parcela só, na emissão (o que
       // sempre foi), e a pessoa parcela no quadro da conferência.
       montarParcelasDaEntrada(1, String(resposta.nota.dataEmissao || '').slice(0, 10), 30);
@@ -1071,9 +1095,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           showToast('Informe o vencimento de cada parcela.', 'warning');
           return;
         }
-        const total = Math.round(Number(tela.conferencia.nota.totais.nota || 0) * 100);
+        const total = Math.round(totalAPagar() * 100);
         if (veParcelas() && somaDasParcelas() !== total) {
-          showToast(`A soma das parcelas (${moeda(somaDasParcelas() / 100)}) tem de fechar com o valor da nota (${moeda(total / 100)}).`, 'warning');
+          showToast(`A soma das parcelas (${moeda(somaDasParcelas() / 100)}) tem de fechar com ${tela.totalAPagar !== null ? 'o valor a pagar' : 'o valor da nota'} (${moeda(total / 100)}).`, 'warning');
           return;
         }
       }
@@ -1092,7 +1116,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             purchaseOrderId: tela.ordemCompraId,
             // Quem não vê valores manda só os vencimentos (o servidor divide).
             ...(usaAsParcelasDaTela ? { parcelas: tela.parcelas.map((p) => (veParcelas() ? { vencimento: p.vencimento, valor: p.valor } : { vencimento: p.vencimento })) } : {}),
-            ...(parcelarDiferente ? { parcelarDiferente: true } : {})
+            ...(parcelarDiferente ? { parcelarDiferente: true } : {}),
+            ...(usaAsParcelasDaTela && tela.totalAPagar !== null ? { totalAPagar: tela.totalAPagar } : {})
           })
         });
         const partes = [`Entrada lançada (${resposta.status === 'LANCADA' ? 'completa' : 'a revisar'})`];
