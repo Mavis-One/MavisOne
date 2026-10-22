@@ -1246,6 +1246,47 @@ function criarTelaDeNotasEmitidas(telaChave) {
     };
   }
 
+  // O XML POR E-MAIL (fase FB, 22/10/2026). O cliente com exigências de NF-e
+  // (Fiscal › Exigências de NF-e por Cliente) recebe o XML e a DANFE pela Focus
+  // quando a nota é autorizada. Aqui aparecem os envios dela e o "Reenviar",
+  // para quando o automático falhou ou o cliente pediu de novo. Sem e-mail no
+  // perfil e sem envio, nada aparece. Sem a permissão fiscal, também não.
+  async function desenharEnviosPorEmail(nfeId) {
+    const alvo = document.getElementById('nfeModalEmail');
+    if (!alvo) return;
+    let dados;
+    try {
+      dados = await api(`/api/fiscal/nfe/${encodeURIComponent(nfeId)}/email`);
+    } catch (_) {
+      return;
+    }
+    const envios = dados.envios || [];
+    const emails = dados.emails || [];
+    if (!envios.length && !emails.length) { alvo.innerHTML = ''; return; }
+    const quando = (d) => (d ? new Date(d).toLocaleString('pt-BR') : '');
+    alvo.innerHTML = `
+      <h4>XML por e-mail</h4>
+      ${envios.length ? `<ul class="nfe-envios-email">${envios.map((e) => `
+        <li>${e.status === 'ENVIADO'
+          ? `<span class="finance-badge finance-badge-success">enviado</span> para ${escapeHtml(e.emails.join(', '))}`
+          : `<span class="finance-badge finance-badge-danger">erro</span> ${escapeHtml(e.erro || '')}`}
+          <span class="muted">— ${escapeHtml(quando(e.criadoEm))}${e.automatico ? ' (na autorização)' : (e.enviadoPorNome ? ` por ${escapeHtml(e.enviadoPorNome)}` : '')}</span></li>`).join('')}</ul>`
+        : '<p class="muted">Ainda não foi enviado.</p>'}
+      ${emails.length ? `<button type="button" class="secondary" id="nfeModalReenviarEmail">Reenviar XML por e-mail (${escapeHtml(emails.join(', '))})</button>` : ''}
+    `;
+    alvo.querySelector('#nfeModalReenviarEmail')?.addEventListener('click', async (evento) => {
+      const botao = evento.currentTarget;
+      botao.disabled = true;
+      try {
+        const res = await api(`/api/fiscal/nfe/${encodeURIComponent(nfeId)}/email`, { method: 'POST', body: JSON.stringify({ instante: Date.now() }) });
+        showToast(`XML enviado pela Focus para ${(res.emails || []).join(', ')}. Pode levar alguns minutos para chegar.`, 'success');
+      } catch (erro) {
+        showToast(erro.message || 'Não consegui enviar o XML por e-mail.', 'error');
+      }
+      desenharEnviosPorEmail(nfeId);
+    });
+  }
+
   function renderNfeModal(nfe) {
     closeNfeModal();
     // Mesma regra do botão da linha (fase EI); fora do prazo o motivo aparece
@@ -1311,6 +1352,9 @@ function criarTelaDeNotasEmitidas(telaChave) {
         ` : '<p class="muted">Nenhum lançamento vinculado.</p>'}
 
         ${bloqueioCancelar ? `<p class="muted">${escapeHtml(bloqueioCancelar)}</p>` : ''}
+        <!-- O XML por e-mail ao cliente com exigências de NF-e (fase FB).
+             Preenchido depois de abrir (desenharEnviosPorEmail). -->
+        <div id="nfeModalEmail"></div>
         <div class="finance-modal-actions">
           <button type="button" class="secondary" id="nfeModalPrint">Imprimir</button>
           ${nfe.status === 'autorizada' && nfe.origem !== 'importada' ? `<button type="button" class="btn-danger" id="nfeModalCancel"${bloqueioCancelar ? ` disabled title="${escapeHtml(bloqueioCancelar)}"` : ''}>Cancelar ${nomeDoDocumento}</button>` : ''}
@@ -1323,6 +1367,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
     document.getElementById('nfeModalClose')?.addEventListener('click', closeNfeModal);
     document.getElementById('nfeModalPrint')?.addEventListener('click', () => nfePrint(nfe));
     document.getElementById('nfeModalCancel')?.addEventListener('click', () => cancelNfe(nfe.id));
+    if (nfe.origem === 'fiscal' && nfe.status === 'autorizada' && nomeDoDocumento === 'NF-e') desenharEnviosPorEmail(nfe.id);
 
     overlay.querySelectorAll('[data-view-entry]').forEach((row) => {
       row.addEventListener('click', () => {

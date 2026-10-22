@@ -17792,7 +17792,12 @@ async function tratarRequisicao(req, res) {
       // reenvio à mão (POST), para quando o automático falhou.
       const emailMatch = pathname.match(/^\/api\/fiscal\/nfe\/([^/]+)\/email$/);
       if (emailMatch && req.method === 'GET') {
-        return sendJson(res, { envios: await exigenciasNfeDb.enviosDaNota(decodeURIComponent(emailMatch[1])) });
+        // Com os e-mails de HOJE do perfil do cliente: a tela só oferece o
+        // reenvio quando há para onde mandar.
+        const nfeId = decodeURIComponent(emailMatch[1]);
+        const [envios, nota] = await Promise.all([exigenciasNfeDb.enviosDaNota(nfeId), fiscalDb.getNfeById(nfeId)]);
+        const perfil = nota && Number(nota.modelo) !== 65 ? await perfilDeExigencias(nota.destinatarioDocumento) : null;
+        return sendJson(res, { envios, emails: perfil ? perfil.emailsXml : [] });
       }
       if (emailMatch && req.method === 'POST') {
         const nfe = await fiscalDb.getNfeById(decodeURIComponent(emailMatch[1]));

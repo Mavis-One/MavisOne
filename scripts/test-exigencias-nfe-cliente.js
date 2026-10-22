@@ -122,6 +122,16 @@ check('emissão: o bloco pelo documento do destinatário', /ExigenciasNfe\.perfi
 check('  o corpo leva o pedido e os campos de cada item', /unidadeCliente: item\.unidadeCliente \|\| ''\s*\}\)\),\s*pedidoCliente,/.test(nfe));
 check('  e a nota em edição guarda o pedido do cliente', /desconto, frete, outrasDespesas, seguro, pedidoCliente,/.test(nfe));
 check('retorno: a chave da remessa, opcional', /name="retornoChave"/.test(nfe) && /if \(tipoOperacao === 'RETORNO'\) \{/.test(nfe));
+// O "Reenviar XML por e-mail" no modal da NF-e autorizada (22/10/2026). Provado
+// com uma nota autorizada de teste: "Ainda não foi enviado" -> clique -> a Focus
+// (simulada) recebeu o e-mail do perfil e a linha "enviado ... por
+// Administrador" apareceu. Apagado depois.
+const emitidas = semComentarios(ler('public/modules/finance/subs/nfe_emitidas.js'));
+check('NF-e Emitidas: envios e "Reenviar" só na NF-e fiscal autorizada',
+  /if \(nfe\.origem === 'fiscal' && nfe\.status === 'autorizada' && nomeDoDocumento === 'NF-e'\) desenharEnviosPorEmail\(nfe\.id\);/.test(emitidas)
+  && /\/api\/fiscal\/nfe\/\$\{encodeURIComponent\(nfeId\)\}\/email`, \{ method: 'POST'/.test(emitidas));
+check('  e só quando há e-mail no perfil ou envio feito', /if \(!envios\.length && !emails\.length\) \{ alvo\.innerHTML = ''; return; \}/.test(emitidas)
+  && /return sendJson\(res, \{ envios, emails: perfil \? perfil\.emailsXml : \[\] \}\);/.test(servidor));
 const tela = semComentarios(ler('public/modules/fiscal/subs/exigencias_cliente.js'));
 check('a tela do Fiscal grava pela rota e confere antes com a mesma regra', /\/api\/fiscal\/exigencias-cliente\/\$\{encodeURIComponent\(editando\)\}`, \{ method: 'PUT'/.test(tela)
   && /Exigencias\.normalizarPerfil\(corpo\)/.test(tela));
