@@ -118,7 +118,9 @@ check('item de produto que controla montagem sem condição falta',
   && obrig.itemSemCondicao([{ productId: 'MOTO', condicao: 'montado' }], controla) === -1);
 const falta = obrig.faltando({ companyId: 'c', category: 'VENDA', depositId: 'd', sellerId: 's', items: [{ productId: 'MOTO', name: 'MOTO X', chassi: 'ABC' }], payments: [{ methodId: 'f', amount: 1 }] },
   { montagemDoItem: controla });
-check('  e a mensagem diz o item', falta && falta.rotulo === 'Condição' && /MOTO X \(item 1\) sai montado ou desmontado/.test(falta.mensagem));
+// Fase FA (22/10/2026): a condição não trava mais o pedido — sem ela, o item
+// sai do montado (ver test-montagem-religada.js).
+check('  mas não trava o pedido (fase FA)', falta === null, JSON.stringify(falta));
 check('o servidor confere na criação e na alteração', (servidor.match(/montagemDoItem: await montagemDosItensDaVenda\(body\.items\)/g) || []).length === 2);
 check('item gravado antes, sem condição, sai do MONTADO', /return stockCore\.normalizarCondicao\(item\.condicao\) \|\| 'montado';/.test(servidor));
 check('a baixa e o estorno da venda levam a condição', /condicao: condicaoDoItemDaVenda\(item, produtoAtual\),/.test(servidor)

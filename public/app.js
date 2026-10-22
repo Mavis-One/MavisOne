@@ -4102,6 +4102,14 @@ async function loadModule(moduleName) {
           const chave = `${productId}|${deposito}|${classValueId || ''}${condicao ? `|${condicao}` : ''}`;
           return Number((meta.saldosPorDeposito || {})[chave] || 0);
         };
+        // A condição com que a linha nova de produto que controla montagem
+        // nasce (fase FA, 22/10/2026): Montado, a não ser que o depósito
+        // escolhido não tenha montado e tenha desmontado.
+        const condicaoInicialDoItem = (productId, classValueId) => {
+          const montado = saldoNoDepositoEscolhido(productId, classValueId, 'montado');
+          const desmontado = saldoNoDepositoEscolhido(productId, classValueId, 'desmontado');
+          return !(Number(montado) > 0) && Number(desmontado) > 0 ? 'desmontado' : 'montado';
+        };
         // O RÓTULO DA BUSCA É SÓ NOME E CÓDIGO (14/10/2026, pedido do usuário:
         // "apenas nome e código de forma clean"). Preço e saldo saíram dele: o
         // preço entra no item ao escolher, e o saldo aparece na coluna Saldo
@@ -4247,8 +4255,9 @@ async function loadModule(moduleName) {
           // tanto para item com cor quanto sem: a chave do saldo por deposito ja
           // separa as duas coisas.
           // Produto que controla montagem (fase ER): o saldo da condição da
-          // linha; sem condição escolhida, o do depósito inteiro.
-          const condicao = produto.controlaMontagem ? String(item.condicao || '') : '';
+          // linha. Sem condição escolhida, o do MONTADO (fase FA, 22/10/2026):
+          // é de lá que o servidor baixa o item que vem sem.
+          const condicao = produto.controlaMontagem ? String(item.condicao || 'montado') : '';
           const noDeposito = saldoNoDepositoEscolhido(item.productId, item.classValueId, condicao);
           if (noDeposito !== null) return noDeposito;
           if (condicao) return null;
@@ -5793,9 +5802,11 @@ async function loadModule(moduleName) {
                                          sai do saldo MONTADO ou DESMONTADO
                                          (shared/venda_obrigatorios.js). -->
                                     ${produto && produto.controlaMontagem ? `
-                                      <select class="sales-item-condicao ${item.condicao ? '' : 'is-obrigatorio'}" data-index="${index}">
-                                        <option value="" ${item.condicao ? '' : 'selected'}>Escolha</option>
-                                        <option value="montado" ${item.condicao === 'montado' ? 'selected' : ''}>Montado</option>
+                                      <!-- Sem "Escolha" (fase FA, 22/10/2026):
+                                           a condição não trava mais o pedido, e
+                                           o item sem ela sai do montado. -->
+                                      <select class="sales-item-condicao" data-index="${index}">
+                                        <option value="montado" ${item.condicao !== 'desmontado' ? 'selected' : ''}>Montado</option>
                                         <option value="desmontado" ${item.condicao === 'desmontado' ? 'selected' : ''}>Desmontado</option>
                                       </select>` : '<span class="muted">—</span>'}
                                   </td>` : ''}
@@ -6649,8 +6660,10 @@ async function loadModule(moduleName) {
               // equipamento, e digitá-lo antes de escolher o produto seria
               // preencher na ordem errada.
               chassi: '',
-              // Fase ER: escolhida na linha (Montado/Desmontado).
-              condicao: '',
+              // Fase ER: escolhida na linha (Montado/Desmontado). Nasce
+              // Montado — ou Desmontado, quando o depósito só tem desmontado
+              // (fase FA, 22/10/2026). A pessoa troca na linha.
+              condicao: product.controlaMontagem ? condicaoInicialDoItem(product.id, classValueId) : '',
               quantity,
               unitPrice: Number(product.salePrice || 0)
             });

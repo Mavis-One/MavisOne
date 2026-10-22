@@ -65,6 +65,12 @@
   // MONTADO OU DESMONTADO NO PRODUTO QUE CONTROLA MONTAGEM (fase ER,
   // 17/10/2026): o item diz de qual saldo sai. `montagemDoItem(item)` diz se o
   // produto da linha controla montagem; sem ele, não confere.
+  //
+  // NÃO É MAIS OBRIGATÓRIO (fase FA, 22/10/2026, decisão do usuário: religar
+  // "sem travar a venda"). Exigido, ele parou as lojas em 19/10. Item sem
+  // condição sai do MONTADO (condicaoDoItemDaVenda, em server.js), e a tela já
+  // abre a linha nova em Montado. `faltando` não o confere; a função fica para
+  // quem quiser saber qual item veio sem.
   const CONDICOES = ['desmontado', 'montado'];
   function itemSemCondicao(itens, montagemDoItem) {
     if (typeof montagemDoItem !== 'function') return -1;
@@ -100,16 +106,6 @@
         mensagem: `Informe o chassi de ${String(r.items[semChassi].name || 'veículo').trim()} (item ${semChassi + 1}).`,
         aba: 'dados',
         itemSemChassi: semChassi
-      };
-    }
-    const semCondicao = itemSemCondicao(r.items, montagemDoItem);
-    if (semCondicao >= 0) {
-      return {
-        campo: 'items',
-        rotulo: 'Condição',
-        mensagem: `Escolha se ${String(r.items[semCondicao].name || 'o produto').trim()} (item ${semCondicao + 1}) sai montado ou desmontado.`,
-        aba: 'dados',
-        itemSemCondicao: semCondicao
       };
     }
     const exige = categoriaVenda && typeof categoriaVenda.exigePagamento === 'function'
