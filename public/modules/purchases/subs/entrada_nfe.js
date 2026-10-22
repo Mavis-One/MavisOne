@@ -114,6 +114,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       // O valor a pagar, quando é outro que o da nota (22/10/2026). null = o da nota.
       totalAPagar: null,
       parcelas: [],
+      // A forma de pagamento dos títulos (22/10/2026). '' = sem forma.
+      formaDePagamentoId: '',
+      formasDePagamento: [],
       atualizarCusto: true,
       // Fase AQ: qual ordem de compra esta nota fecha. Vazio = nenhuma.
       ordemCompraId: '',
@@ -484,6 +487,25 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         </div>`;
     }
 
+    // A FORMA DE PAGAMENTO DAS CONTAS A PAGAR (22/10/2026, pedido do usuário:
+    // "um campo para eu decidir a forma de pagamento dessas NFs"). Vale para
+    // todas as parcelas da nota e vai gravada em cada título — ex.: a nota diz
+    // boleto, mas a compra foi no cartão em 5 vezes. Começa na do XML.
+    function campoDaFormaDePagamento() {
+      const formas = tela.formasDePagamento || [];
+      const pagamentosDoXml = (tela.conferencia.nota.pagamentos || []).map((p) => p.forma).filter(Boolean);
+      return `
+        <div class="cadastro-filter-grid-5" style="margin-top:12px;">
+          <label class="cadastro-field"><span>Forma de pagamento</span>
+            <select id="entradaFormaPagamento">
+              <option value="">— Sem forma —</option>
+              ${formas.map((f) => `<option value="${escapeHtml(f.id)}" ${f.id === tela.formaDePagamentoId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        ${pagamentosDoXml.length ? `<p class="muted">Na nota: ${escapeHtml([...new Set(pagamentosDoXml)].join(', '))}.</p>` : ''}`;
+    }
+
     function blocoFinanceiro() {
       const duplicatas = tela.conferencia.nota.duplicatas;
       const doViper = tela.conferencia.titulosDoViper || [];
@@ -512,6 +534,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
               <span>Parcelar ou mudar o valor a pagar (diferente da nota — ex.: cartão em várias vezes)</span>
             </label>` : ''}
           <div id="entradaParcelamentoArea">${areaDoParcelamento()}</div>
+          ${campoDaFormaDePagamento()}
           <label class="entrada-opcao">
             <input type="checkbox" id="entradaGerarFinanceiro" ${tela.gerarFinanceiro ? 'checked' : ''} />
             <span>Gerar contas a pagar a partir desta nota</span>
@@ -790,6 +813,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       document.getElementById('entradaGerarFinanceiro')?.addEventListener('change', (e) => {
         tela.gerarFinanceiro = e.target.checked;
       });
+      document.getElementById('entradaFormaPagamento')?.addEventListener('change', (e) => {
+        tela.formaDePagamentoId = e.target.value || '';
+      });
       // Parcelar diferente da nota: troca SÓ a área das parcelas — redesenhar a
       // tela inteira perderia os vínculos de item feitos à mão. O quadro começa
       // nas duplicatas do XML (quantas, o 1º vencimento), a 30 dias.
@@ -979,6 +1005,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       // pagar o da nota (22/10/2026).
       tela.parcelarDiferente = false;
       tela.totalAPagar = null;
+      // A forma de pagamento começa na que o XML declara, quando ela casa com
+      // uma das formas cadastradas (22/10/2026); senão, vazia.
+      tela.formasDePagamento = resposta.formasDePagamento || [];
+      tela.formaDePagamentoId = resposta.formaDePagamentoSugeridaId || '';
       // Sem vencimentos no XML: começa numa parcela só, na emissão (o que
       // sempre foi), e a pessoa parcela no quadro da conferência.
       montarParcelasDaEntrada(1, String(resposta.nota.dataEmissao || '').slice(0, 10), 30);
@@ -1054,7 +1084,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         // desde 22/10/2026 o código do fornecedor não casa sozinho com o nosso.
         // O que já estava escolhido nos outros itens volta como estava.
         const escolhidos = new Map([...tela.escolhas].map(([numero, e]) => [numero, { ...e }]));
-        const CAMPOS_DA_CONFERENCIA = ['depositoId', 'gerarFinanceiro', 'atualizarCusto', 'ordemCompraId', 'parcelarDiferente', 'parcelamento', 'parcelas', 'totalAPagar'];
+        const CAMPOS_DA_CONFERENCIA = ['depositoId', 'gerarFinanceiro', 'atualizarCusto', 'ordemCompraId', 'parcelarDiferente', 'parcelamento', 'parcelas', 'totalAPagar', 'formaDePagamentoId'];
         const conferencia = Object.fromEntries(CAMPOS_DA_CONFERENCIA.map((campo) => [campo, tela[campo]]));
         await analisarXml(tela.xml);
         Object.assign(tela, conferencia);
@@ -1117,7 +1147,8 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             // Quem não vê valores manda só os vencimentos (o servidor divide).
             ...(usaAsParcelasDaTela ? { parcelas: tela.parcelas.map((p) => (veParcelas() ? { vencimento: p.vencimento, valor: p.valor } : { vencimento: p.vencimento })) } : {}),
             ...(parcelarDiferente ? { parcelarDiferente: true } : {}),
-            ...(usaAsParcelasDaTela && tela.totalAPagar !== null ? { totalAPagar: tela.totalAPagar } : {})
+            ...(usaAsParcelasDaTela && tela.totalAPagar !== null ? { totalAPagar: tela.totalAPagar } : {}),
+            ...(tela.gerarFinanceiro && tela.formaDePagamentoId ? { formaDePagamentoId: tela.formaDePagamentoId } : {})
           })
         });
         const partes = [`Entrada lançada (${resposta.status === 'LANCADA' ? 'completa' : 'a revisar'})`];

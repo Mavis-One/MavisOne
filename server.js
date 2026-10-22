@@ -11423,6 +11423,16 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
       return sendErro(res, erroParcelas, 'Parcelas inválidas.', 400);
     }
   }
+  // A FORMA DE PAGAMENTO DOS TÍTULOS (22/10/2026), escolhida na conferência e
+  // conferida aqui, antes de gravar. Vazia = os títulos nascem sem forma, como
+  // antes; quem quiser a põe depois na Edição de Título.
+  let formaDosTitulos = null;
+  if (querFinanceiro && String(body.formaDePagamentoId || '').trim()) {
+    formaDosTitulos = (data.paymentMethods || []).find((f) => f.id === String(body.formaDePagamentoId).trim()) || null;
+    if (!formaDosTitulos) {
+      return sendJson(res, { error: 'A forma de pagamento escolhida não existe mais. Escolha outra.' }, 400);
+    }
+  }
 
   // ---- a nota --------------------------------------------------------
   const entrada = await entradaNfeDb.criarEntrada({
@@ -11638,6 +11648,7 @@ async function lancarEntradaConferida(res, { conferencia, data, produtos, body, 
         const parcela = parcelas[i];
         const lancamento = await db.createFinancialEntry({
           ...(notaDoAjuste ? { note: notaDoAjuste } : {}),
+          ...(formaDosTitulos ? { paymentMethodId: formaDosTitulos.id, paymentMethodName: formaDosTitulos.name } : {}),
           type: 'purchase',
           referenceId: entrada.id,
           date: nota.dataEmissao,
@@ -19202,6 +19213,12 @@ async function tratarRequisicao(req, res) {
             .map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', ean: p.ean || '' }));
         })(),
         depositos: (data.deposits || []).map((d) => ({ id: d.id, name: d.name })),
+        // A forma de pagamento dos títulos (22/10/2026): as ativas, e a que o
+        // XML declara, quando casa com uma delas (entradaNfe.formaSugerida).
+        formasDePagamento: (data.paymentMethods || [])
+          .filter((f) => f.status !== 'inativo')
+          .map((f) => ({ id: f.id, name: f.name })),
+        formaDePagamentoSugeridaId: entradaNfe.formaSugerida(conferencia.nota && conferencia.nota.pagamentos, data.paymentMethods),
         // O do CNPJ que recebeu a nota (15/10/2026). Ver depositoDoDestinatario.
         depositoPadraoId: entradaNfe.depositoDoDestinatario(
           conferencia.nota && conferencia.nota.destinatario && conferencia.nota.destinatario.documento,
