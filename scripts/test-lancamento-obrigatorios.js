@@ -37,6 +37,12 @@ check('outra raiz (Electric 46.877.837): só a conta', campos({ type: 'DESPESA',
 check('sem estabelecimento conhecido: só a conta', campos({ type: 'DESPESA' }) === 'bankAccountId');
 check('a raiz é conferida com ou sem máscara', R.exigeCentroDeCusto('43792899000216') && R.exigeCentroDeCusto('43.792.899/0005-69') && !R.exigeCentroDeCusto('4379289'));
 check('com os dois, nada falta', R.faltando({ type: 'DESPESA', bankAccountId: 'b1', costCenter: 'c1', cnpjDoEstabelecimento: PLUS }).length === 0);
+// 24/10/2026, "não estou conseguindo mais faturar": sem nenhum centro liberado
+// para a empresa, exigir travava o título. Provado no servidor local: sem
+// centro cadastrado, e com centro só de outra loja, o título da matriz sem
+// centro gravou; com um centro válido para todas, foi recusado; e na tela,
+// escolher a matriz trouxe o único centro dela preenchido, com o asterisco.
+check('raiz 43.792.899 sem nenhum centro liberado: o centro fica opcional', campos({ type: 'DESPESA', bankAccountId: 'b1', cnpjDoEstabelecimento: PLUS, centroDisponivel: false }) === '');
 check('transferência fica fora (tem origem e destino, não tem centro)', R.faltando({ type: 'transferencia', cnpjDoEstabelecimento: PLUS }).length === 0);
 check('espaço em branco não conta como preenchido', R.faltando({ type: 'DESPESA', bankAccountId: ' ', costCenter: 'c1', cnpjDoEstabelecimento: PLUS }).length === 1);
 check('a mensagem junta os que faltam', R.mensagem(R.faltando({ type: 'DESPESA', cnpjDoEstabelecimento: PLUS })) === 'Informe a conta bancária e o centro de custo do lançamento.'
@@ -46,11 +52,13 @@ console.log('\n--- 2. o servidor ---');
 const servidor = semComentarios(ler('server.js'));
 const validar = servidor.slice(servidor.indexOf('function validarLancamentoFinanceiro('), servidor.indexOf('function recomputeFinanceEntryStatus('));
 check('o validador de sempre confere, com o CNPJ do estabelecimento',
-  validar.includes('const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter, cnpjDoEstabelecimento: cnpj });')
+  validar.includes('const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter, cnpjDoEstabelecimento: cnpj, centroDisponivel });')
   && validar.includes('if (faltam.length) return lancamentoObrigatorios.mensagem(faltam);'));
 check('  criar e editar resolvem o estabelecimento antes e mandam o CNPJ dele',
-  servidor.includes('validarLancamentoFinanceiro({ ...body, type, amount, cnpjDoEstabelecimento: await cnpjDoEstabelecimento(escolha.id) })')
-  && servidor.includes('validarLancamentoFinanceiro({ ...proposto, cnpjDoEstabelecimento: await cnpjDoEstabelecimento(escolhaPut.id) })'));
+  servidor.includes('validarLancamentoFinanceiro({ ...body, type, amount, ...(await regraDoCentroDeCusto(escolha.id)) })')
+  && servidor.includes('validarLancamentoFinanceiro({ ...proposto, ...(await regraDoCentroDeCusto(escolhaPut.id)) })'));
+check('  e se há centro liberado para ele (vazio = vale para todas)', servidor.includes('or $1 = any(estabelecimento_ids)) as ha')
+  && servidor.includes('return { cnpjDoEstabelecimento: cnpj, centroDisponivel };'));
 check('  editar (PUT) confere o resultado: o que veio, senão o gravado', /costCenter: body\.costCenter !== undefined \? body\.costCenter : entry\.costCenter/.test(servidor)
   && /bankAccountId: body\.bankAccountId !== undefined \? body\.bankAccountId : entry\.bankAccountId/.test(servidor));
 check('  o CNPJ sai do estabelecimento do título', /async function cnpjDoEstabelecimento\(estabelecimentoId\) \{[\s\S]{0,200}fiscalDb\.getEstabelecimentoById\(estabelecimentoId\)/.test(servidor));
@@ -59,11 +67,18 @@ check('  e a tela recebe o CNPJ de cada estabelecimento', servidor.includes('raz
 console.log('\n--- 3. a tela (Novo Lançamento / Edição de Título) ---');
 const tela = semComentarios(ler('public/modules/finance/subs/novo_lancamento.js'));
 check('conta com asterisco; o do centro conforme a empresa', tela.includes('<label>Conta bancária *')
-  && tela.includes("<label>Centro de custo<span data-centro-asterisco>${centroObrigatorioAqui() ? ' *' : ''}</span>")
+  && tela.includes("<label><span>Centro de custo<span data-centro-asterisco>${centroObrigatorioAqui() ? ' *' : ''}</span></span>")
   && tela.includes("asterisco.textContent = centroObrigatorioAqui() ? ' *' : '';"));
 check('salvar sem eles avisa, leva ao campo e não envia',
-  tela.includes('window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType, cnpjDoEstabelecimento: cnpjDoEstabelecimentoAtual() })')
+  tela.includes('window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType, cnpjDoEstabelecimento: cnpjDoEstabelecimentoAtual(), centroDisponivel: centroDisponivelAqui() })')
   && tela.includes('document.getElementById(faltamNoLancamento[0].foco)?.focus();'));
+check('um centro só liberado já vem escolhido', tela.includes('financeCostCenter: () => (editEntry && editEntry.costCenter) || centroUnicoAqui(),')
+  && tela.includes("refazerCampoDeBusca('financeCostCenter', aindaVale && escolhido ? escolhido : centroUnicoAqui());"));
+// 24/10/2026, "não está buscando": a busca só traz os centros liberados para a
+// empresa; sem nenhum, o campo diz isso e onde liberar (provado: título da
+// Barra só com centro da Vila Lalau mostrou o aviso; com um da Barra, achou).
+check('sem centro liberado para a empresa, o aviso diz onde liberar', tela.includes('Nenhum centro de custo liberado para ${nome}. Libere em Financeiro › Centros de Custo (ou crie pelo +).')
+  && tela.includes("avisoCentro.hidden = !avisoCentro.textContent;"));
 check('index.html carrega a regra', /shared\/lancamento_obrigatorios\.js/.test(ler('public/index.html')));
 
 console.log(falhas ? `\n${falhas} FALHA(S)` : '\nTudo certo.');

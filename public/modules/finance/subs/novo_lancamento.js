@@ -110,8 +110,27 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   // O CENTRO DE CUSTO SÓ É OBRIGATÓRIO NA RAIZ 43.792.899 (23/10/2026; ver
   // shared/lancamento_obrigatorios.js): quem decide é o CNPJ do estabelecimento.
   const cnpjDoEstabelecimentoAtual = () => ((meta.estabelecimentos || []).find((e) => e.id === estabelecimentoAtual) || {}).cnpj || '';
+  // E só quando há centro para escolher (24/10/2026, "não estou conseguindo mais
+  // faturar"): sem nenhum liberado para a empresa, exigir travava o título.
+  const centroDisponivelAqui = () => (meta.costCenters || []).some((c) => centroValeAqui(c));
   const centroObrigatorioAqui = () => Boolean(window.MavisLancamentoObrigatorios
-    && window.MavisLancamentoObrigatorios.exigeCentroDeCusto(cnpjDoEstabelecimentoAtual()));
+    && window.MavisLancamentoObrigatorios.exigeCentroDeCusto(cnpjDoEstabelecimentoAtual())
+    && centroDisponivelAqui());
+  // POR QUE A BUSCA NÃO ACHA (24/10/2026, "não está buscando"): a lista só
+  // traz os centros liberados para a empresa do título. Havendo centros, mas
+  // nenhum para ela, o campo diz isso e onde liberar — "Nenhum resultado"
+  // sozinho parecia defeito da busca.
+  const avisoDoCentro = () => {
+    if (!(meta.costCenters || []).length || centroDisponivelAqui() || !estabelecimentoAtual) return '';
+    const empresa = (meta.estabelecimentos || []).find((e) => e.id === estabelecimentoAtual) || {};
+    const nome = empresa.nomeFantasia || empresa.razaoSocial || 'esta empresa';
+    return `Nenhum centro de custo liberado para ${nome}. Libere em Financeiro › Centros de Custo (ou crie pelo +).`;
+  };
+  // Um centro só liberado para a empresa: já vem escolhido.
+  const centroUnicoAqui = () => {
+    const validos = (meta.costCenters || []).filter((c) => centroValeAqui(c));
+    return validos.length === 1 ? validos[0].id : '';
+  };
 
   let formType = editEntry ? String(editEntry.type).toUpperCase() : (tipoSugerido || 'DESPESA');
   // Vinculado a pedido/NF-e: dá para editar, mas só o que a origem não possui.
@@ -226,7 +245,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     financeTargetAccount: () => (editEntry ? editEntry.targetBankAccountId : ''),
     financeBankAccount: () => (editEntry ? editEntry.bankAccountId : ''),
     financeCategory: () => (editEntry ? editEntry.category : ''),
-    financeCostCenter: () => (editEntry ? editEntry.costCenter : ''),
+    financeCostCenter: () => (editEntry && editEntry.costCenter) || centroUnicoAqui(),
     financePaymentMethod: () => (editEntry ? editEntry.paymentMethodId : '')
   };
 
@@ -405,13 +424,17 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
                   <button type="button" class="icon-button edit" data-inline-add="category" data-inline-alvo="financeCategory" title="Nova categoria">+</button>
                 </div>
               </label>
-              <label>Centro de custo<span data-centro-asterisco>${centroObrigatorioAqui() ? ' *' : ''}</span>
+              <!-- O asterisco dentro do mesmo <span> do rótulo: solto, ele virava
+                   uma linha só dele (24/10/2026). -->
+              <label><span>Centro de custo<span data-centro-asterisco>${centroObrigatorioAqui() ? ' *' : ''}</span></span>
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeCostCenter')}
                   <button type="button" class="icon-button edit" data-inline-add="costCenter" data-inline-alvo="financeCostCenter" title="Novo centro de custo">+</button>
                 </div>
               </label>
             </div>
+            <!-- Fora da linha: dentro do campo, ele desalinhava as outras colunas. -->
+            <p class="muted" data-centro-aviso ${avisoDoCentro() ? '' : 'hidden'}>${escapeHtml(avisoDoCentro())}</p>
             <div class="row">
               <label>Forma de pagamento
                 <div class="finance-inline-select">
@@ -869,6 +892,11 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       // O asterisco do centro de custo acompanha a empresa (raiz 43.792.899).
       const asterisco = document.querySelector('[data-centro-asterisco]');
       if (asterisco) asterisco.textContent = centroObrigatorioAqui() ? ' *' : '';
+      const avisoCentro = document.querySelector('[data-centro-aviso]');
+      if (avisoCentro) {
+        avisoCentro.textContent = avisoDoCentro();
+        avisoCentro.hidden = !avisoCentro.textContent;
+      }
       const permitidas = contasDisponiveis();
       let perdeuAlguma = null;
       ['financeSourceAccount', 'financeTargetAccount', 'financeBankAccount'].forEach((id) => {
@@ -889,7 +917,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       if (document.getElementById('financeCostCenterWrapper')) {
         const escolhido = document.getElementById('financeCostCenterValue')?.value || '';
         const aindaVale = !escolhido || meta.costCenters.some((c) => c.id === escolhido && centroValeAqui(c));
-        refazerCampoDeBusca('financeCostCenter', aindaVale ? escolhido : '');
+        refazerCampoDeBusca('financeCostCenter', aindaVale && escolhido ? escolhido : centroUnicoAqui());
         if (!aindaVale) showToast('O centro de custo escolhido não é desta empresa. Escolha outro.', 'warning');
       }
     });
@@ -982,7 +1010,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       // usuário; shared/lancamento_obrigatorios.js — o servidor recusa com a
       // mesma regra). Avisa e leva ao primeiro que falta.
       const faltamNoLancamento = window.MavisLancamentoObrigatorios
-        ? window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType, cnpjDoEstabelecimento: cnpjDoEstabelecimentoAtual() })
+        ? window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType, cnpjDoEstabelecimento: cnpjDoEstabelecimentoAtual(), centroDisponivel: centroDisponivelAqui() })
         : [];
       if (faltamNoLancamento.length) {
         showToast(window.MavisLancamentoObrigatorios.mensagem(faltamNoLancamento), 'warning');

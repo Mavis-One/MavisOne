@@ -5071,7 +5071,30 @@ async function cnpjDoEstabelecimento(estabelecimentoId) {
   }
 }
 
-function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, costCenter, type, cnpjDoEstabelecimento: cnpj }) {
+/**
+ * O QUE DECIDE O CENTRO DE CUSTO DO TÍTULO: o CNPJ do estabelecimento (só a
+ * raiz 43.792.899 exige) e se há algum centro liberado para ele (24/10/2026,
+ * "não estou conseguindo mais faturar": sem nenhum para escolher, exigir
+ * travava o título e o faturamento). Ver shared/lancamento_obrigatorios.js.
+ */
+async function regraDoCentroDeCusto(estabelecimentoId) {
+  const cnpj = await cnpjDoEstabelecimento(estabelecimentoId);
+  let centroDisponivel = true;
+  if (estabelecimentoId && lancamentoObrigatorios.exigeCentroDeCusto(cnpj)) {
+    try {
+      const { rows } = await consultarBanco(
+        `select exists(select 1 from cost_centers
+                         where coalesce(array_length(estabelecimento_ids, 1), 0) = 0
+                            or $1 = any(estabelecimento_ids)) as ha`, [String(estabelecimentoId)]);
+      centroDisponivel = Boolean(rows[0] && rows[0].ha);
+    } catch (erro) {
+      centroDisponivel = true;
+    }
+  }
+  return { cnpjDoEstabelecimento: cnpj, centroDisponivel };
+}
+
+function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, costCenter, type, cnpjDoEstabelecimento: cnpj, centroDisponivel }) {
   if (!String(description == null ? '' : description).trim()) {
     return 'Informe a descrição do lançamento';
   }
@@ -5092,7 +5115,7 @@ function validarLancamentoFinanceiro({ description, amount, bankAccountId, targe
   // e o texto moram em shared/lancamento_obrigatorios.js, como na tela. O
   // centro só é obrigatório na raiz 43.792.899 — por isso o CNPJ do
   // estabelecimento do título.
-  const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter, cnpjDoEstabelecimento: cnpj });
+  const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter, cnpjDoEstabelecimento: cnpj, centroDisponivel });
   if (faltam.length) return lancamentoObrigatorios.mensagem(faltam);
   return '';
 }
@@ -23098,7 +23121,7 @@ async function tratarRequisicao(req, res) {
       // conferência desde 23/10/2026: o CNPJ dele decide o centro de custo.
       const escolha = estabelecimentoDaOperacao(user, await ehAdmin(user), body.estabelecimentoId);
       if (escolha.erro) throw escolha.erro;
-      const invalido = validarLancamentoFinanceiro({ ...body, type, amount, cnpjDoEstabelecimento: await cnpjDoEstabelecimento(escolha.id) });
+      const invalido = validarLancamentoFinanceiro({ ...body, type, amount, ...(await regraDoCentroDeCusto(escolha.id)) });
       if (invalido) return sendJson(res, { error: invalido }, 400);
 
       // PARCELAS (15/10/2026, pedido do usuário: "uma guia de impostos em 2x ou
@@ -23701,7 +23724,7 @@ async function tratarRequisicao(req, res) {
         body.estabelecimentoId !== undefined ? body.estabelecimentoId : entry.estabelecimentoId
       );
       if (escolhaPut.erro) throw escolhaPut.erro;
-      const invalido = validarLancamentoFinanceiro({ ...proposto, cnpjDoEstabelecimento: await cnpjDoEstabelecimento(escolhaPut.id) });
+      const invalido = validarLancamentoFinanceiro({ ...proposto, ...(await regraDoCentroDeCusto(escolhaPut.id)) });
       if (invalido) return sendJson(res, { error: invalido }, 400);
 
       // Fase CD, e sobre o estado PROPOSTO pelo mesmo motivo das linhas acima:

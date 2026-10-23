@@ -49,7 +49,8 @@ check('a tela cria e edita com nome e empresas', /name="estabelecimentoIds"/.tes
 const novo = ler('public/modules/finance/subs/novo_lancamento.js');
 check('o lançamento mostra os centros da empresa (e os de todas)', /return !ids\.length \|\| !estabelecimentoAtual \|\| ids\.includes\(estabelecimentoAtual\);/.test(novo));
 // 14/10/2026: o centro de custo virou campo de busca (refazerCampoDeBusca).
-check('  e refaz a lista ao trocar a empresa', /refazerCampoDeBusca\('financeCostCenter', aindaVale \? escolhido : ''\);/.test(novo));
+// 24/10/2026: sem centro escolhido, o único liberado para a empresa já vem.
+check('  e refaz a lista ao trocar a empresa', /refazerCampoDeBusca\('financeCostCenter', aindaVale && escolhido \? escolhido : centroUnicoAqui\(\)\);/.test(novo));
 // 14/10/2026: o "+" abre a tela de Centros de Custo com a empresa do lançamento marcada.
 check('o + do lançamento abre o novo centro já com a empresa escolhida',
   novo.includes("if (kind === 'costCenter') state.centroDeCustoNovo = { estabelecimentoIds: estabelecimentoAtual ? [estabelecimentoAtual] : [] };")

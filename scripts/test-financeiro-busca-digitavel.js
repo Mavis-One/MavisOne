@@ -41,7 +41,7 @@ check('o cadastro novo volta escolhido no campo do "+" clicado',
   novo.includes("const valor = id === r.alvo && r.criadoId ? r.criadoId : (r.campos || {})[CAMPOS_DE_BUSCA[id].name] || '';"));
 check('trocar a empresa refaz conta e centro sem redesenhar o formulário',
   novo.includes("refazerCampoDeBusca(id, aindaVale ? escolhida : '');")
-  && novo.includes("refazerCampoDeBusca('financeCostCenter', aindaVale ? escolhido : '');"));
+  && novo.includes("refazerCampoDeBusca('financeCostCenter', aindaVale && escolhido ? escolhido : centroUnicoAqui());"));
 check('texto digitado sem escolher não vai calado no envio',
   novo.includes('o texto digitado não foi escolhido na lista. Clique numa das opções.'));
 check('transferência exige as duas contas',

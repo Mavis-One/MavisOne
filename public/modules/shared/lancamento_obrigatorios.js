@@ -35,12 +35,16 @@
   /**
    * Os campos que faltam ({ campo, rotulo, foco }), ou lista vazia.
    * `cnpjDoEstabelecimento`: o do estabelecimento do título — decide o centro.
+   * `centroDisponivel`: false quando NENHUM centro de custo está liberado para
+   * esse estabelecimento (24/10/2026, "não estou conseguindo mais faturar"):
+   * exigir o que não dá para escolher travava a gravação do título — e, com
+   * ela, o faturamento. Sem centro para escolher, ele fica opcional.
    */
   function faltando(lancamento) {
     const l = lancamento || {};
     if (String(l.type || '').toUpperCase() === 'TRANSFERENCIA') return [];
     return CAMPOS
-      .filter((c) => c.campo !== 'costCenter' || exigeCentroDeCusto(l.cnpjDoEstabelecimento))
+      .filter((c) => c.campo !== 'costCenter' || (exigeCentroDeCusto(l.cnpjDoEstabelecimento) && l.centroDisponivel !== false))
       .filter((c) => !String(l[c.campo] == null ? '' : l[c.campo]).trim());
   }
 
