@@ -2007,7 +2007,18 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   }
 
   /** O grupo que vai no corpo, ou null quando nada foi preenchido. */
+  // A modalidade que a nota leva: a escolhida, ou o palpite (frete cobrado é
+  // 0 — por conta do emitente; sem frete, 9 — sem ocorrência de transporte).
+  const SEM_TRANSPORTE = 9;
+  function modalidadeDaNota() {
+    return modalidadeEscolhida === undefined ? (frete > 0 ? 0 : SEM_TRANSPORTE) : modalidadeEscolhida;
+  }
+
   function transporteDaNota() {
+    // Sem ocorrência de transporte (23/10/2026): transportador, veículo e
+    // volumes ficam fora da tela — e fora da nota. O digitado continua
+    // guardado e volta se a modalidade mudar.
+    if (modalidadeDaNota() === SEM_TRANSPORTE) return null;
     const preenchidos = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => String(v ?? '').trim()));
     const tr = preenchidos(transporte.transportador);
     const ve = preenchidos(transporte.veiculo);
@@ -2024,16 +2035,25 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     const caixa = document.getElementById('nfeFocusTransporte');
     if (!caixa) return;
     const devolverFoco = guardarFoco(caixa);
-    const modalidade = modalidadeEscolhida === undefined ? (frete > 0 ? 0 : 9) : modalidadeEscolhida;
+    const modalidade = modalidadeDaNota();
     const transportadoras = meta.transportadoras || [];
     const campo = (rotulo, attrs, valor) => `<label>${rotulo}<input ${attrs} value="${escapeHtml(String(valor ?? ''))}" /></label>`;
-    caixa.innerHTML = `
-      <div class="row">
+    const seletorDaModalidade = `
         <label>Modalidade do frete
           <select data-transporte-modalidade>
             ${MODALIDADES_FRETE.map(([v, rotulo]) => `<option value="${v}" ${v === modalidade ? 'selected' : ''}>${rotulo}</option>`).join('')}
           </select>
-        </label>
+        </label>`;
+    // SEM OCORRÊNCIA DE TRANSPORTE, SÓ A MODALIDADE (23/10/2026, pedido do
+    // usuário: "não quero que apareça os próximos campos, isso economiza tela").
+    if (modalidade === SEM_TRANSPORTE) {
+      caixa.innerHTML = `<div class="row">${seletorDaModalidade}</div>`;
+      devolverFoco();
+      return;
+    }
+    caixa.innerHTML = `
+      <div class="row">
+        ${seletorDaModalidade}
         <label>Transportadora
           <select data-transporte-cadastro>
             <option value="">Preencher manualmente</option>
@@ -2041,6 +2061,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           </select>
         </label>
       </div>
+      <div class="nfe-transporte-secoes">
       <div class="cadastro-section">
         <div class="cadastro-section-header"><h4>Transportador</h4></div>
         <div class="cadastro-section-body nfe-transporte-campos">
@@ -2071,6 +2092,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
           </div>
           <div style="margin-top: 8px;"><button type="button" class="secondary" data-volume-adicionar>+ Adicionar volume</button></div>
         </div>
+      </div>
       </div>`;
     devolverFoco();
   }
@@ -2080,7 +2102,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     if (!caixa) return;
     caixa.addEventListener('change', (evento) => {
       const alvo = evento.target;
-      if (alvo.matches('[data-transporte-modalidade]')) modalidadeEscolhida = Number(alvo.value);
+      // A modalidade redesenha: com "9 — Sem ocorrência" os demais campos somem.
+      if (alvo.matches('[data-transporte-modalidade]')) {
+        modalidadeEscolhida = Number(alvo.value);
+        renderTransporte();
+      }
       if (alvo.matches('[data-transporte-cadastro]')) {
         if (alvo.value) escolherTransportadora(alvo.value);
         else transportadoraId = '';

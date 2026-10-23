@@ -5205,6 +5205,9 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 /* Aba Transporte da emissão de NF-e (13/10/2026). */
 .nfe-transporte-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+/* Transportador, Veículo e Volumes com respiro entre si e abaixo dos dois
+   seletores — estavam colados (23/10/2026, pedido do usuário). */
+.nfe-transporte-secoes { display: grid; gap: 14px; margin-top: 14px; }
 .nfe-volumes { width: 100%; table-layout: fixed; min-width: 640px; }
 .nfe-volumes th:last-child { width: 100px; }
 .nfe-volumes input { width: 100%; min-width: 0; }

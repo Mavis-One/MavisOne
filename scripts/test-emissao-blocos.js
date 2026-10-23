@@ -118,5 +118,17 @@ check('e rearma para a próxima tentativa', /setTimeout\(\(\) => \{ jaAbriuAbaIn
 check('avisa na tela, com o nome do bloco', /bloco\.querySelector\('\.nfe-bloco-titulo'\)[\s\S]{0,200}Falta preencher em/.test(handlers));
 check('e devolve o foco ao campo', /evento\.target\.focus\(\)/.test(handlers));
 
+// SEM OCORRÊNCIA DE TRANSPORTE, SÓ A MODALIDADE (23/10/2026, pedido do
+// usuário: "não quero que apareça os próximos campos, isso economiza tela").
+// Provado no navegador: abrindo sem frete, só o seletor; em 0, Transportadora
+// e os três quadros, 14 px entre eles; de volta a 9, só o seletor; e em 1 o
+// nome digitado antes continuava lá.
+console.log('\n--- transporte ---');
+check('modalidade 9: só o seletor, sem transportadora nem quadros',
+  /if \(modalidade === SEM_TRANSPORTE\) \{\s*caixa\.innerHTML = `<div class="row">\$\{seletorDaModalidade\}<\/div>`;/.test(src));
+check('  e nada do transporte vai na nota', /if \(modalidadeDaNota\(\) === SEM_TRANSPORTE\) return null;/.test(src));
+check('trocar a modalidade redesenha o bloco', /modalidadeEscolhida = Number\(alvo\.value\);\s*renderTransporte\(\);/.test(src));
+check('os quadros têm espaço entre si', /<div class="nfe-transporte-secoes">/.test(src) && /\.nfe-transporte-secoes \{ display: grid; gap: 14px; margin-top: 14px; \}/.test(css));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
