@@ -107,6 +107,11 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   const mostrarEstab = Boolean(REGRA)
     && (meta.estabelecimentos || []).length > 0
     && (podeTrocarEstab || estabelecimentoAtual);
+  // O CENTRO DE CUSTO SÓ É OBRIGATÓRIO NA RAIZ 43.792.899 (23/10/2026; ver
+  // shared/lancamento_obrigatorios.js): quem decide é o CNPJ do estabelecimento.
+  const cnpjDoEstabelecimentoAtual = () => ((meta.estabelecimentos || []).find((e) => e.id === estabelecimentoAtual) || {}).cnpj || '';
+  const centroObrigatorioAqui = () => Boolean(window.MavisLancamentoObrigatorios
+    && window.MavisLancamentoObrigatorios.exigeCentroDeCusto(cnpjDoEstabelecimentoAtual()));
 
   let formType = editEntry ? String(editEntry.type).toUpperCase() : (tipoSugerido || 'DESPESA');
   // Vinculado a pedido/NF-e: dá para editar, mas só o que a origem não possui.
@@ -400,7 +405,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
                   <button type="button" class="icon-button edit" data-inline-add="category" data-inline-alvo="financeCategory" title="Nova categoria">+</button>
                 </div>
               </label>
-              <label>Centro de custo *
+              <label>Centro de custo<span data-centro-asterisco>${centroObrigatorioAqui() ? ' *' : ''}</span>
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeCostCenter')}
                   <button type="button" class="icon-button edit" data-inline-add="costCenter" data-inline-alvo="financeCostCenter" title="Novo centro de custo">+</button>
@@ -861,6 +866,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     // preenchimento e' justamente quando isso doeria mais.
     document.getElementById('financeEstabSelect')?.addEventListener('change', (evento) => {
       estabelecimentoAtual = evento.target.value || '';
+      // O asterisco do centro de custo acompanha a empresa (raiz 43.792.899).
+      const asterisco = document.querySelector('[data-centro-asterisco]');
+      if (asterisco) asterisco.textContent = centroObrigatorioAqui() ? ' *' : '';
       const permitidas = contasDisponiveis();
       let perdeuAlguma = null;
       ['financeSourceAccount', 'financeTargetAccount', 'financeBankAccount'].forEach((id) => {
@@ -974,7 +982,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       // usuário; shared/lancamento_obrigatorios.js — o servidor recusa com a
       // mesma regra). Avisa e leva ao primeiro que falta.
       const faltamNoLancamento = window.MavisLancamentoObrigatorios
-        ? window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType })
+        ? window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType, cnpjDoEstabelecimento: cnpjDoEstabelecimentoAtual() })
         : [];
       if (faltamNoLancamento.length) {
         showToast(window.MavisLancamentoObrigatorios.mensagem(faltamNoLancamento), 'warning');

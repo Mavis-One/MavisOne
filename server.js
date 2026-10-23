@@ -5060,7 +5060,18 @@ function financeEntryEmAberto(entry, payments) {
  * o corpo da requisição: um PUT que manda só `amount` precisa ser conferido
  * contra a descrição que já estava lá.
  */
-function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, costCenter, type }) {
+/** O CNPJ do estabelecimento do título — decide se o centro de custo é obrigatório. */
+async function cnpjDoEstabelecimento(estabelecimentoId) {
+  if (!estabelecimentoId) return '';
+  try {
+    const estab = await fiscalDb.getEstabelecimentoById(estabelecimentoId);
+    return estab ? String(estab.cnpj || '') : '';
+  } catch (erro) {
+    return '';
+  }
+}
+
+function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, costCenter, type, cnpjDoEstabelecimento: cnpj }) {
   if (!String(description == null ? '' : description).trim()) {
     return 'Informe a descrição do lançamento';
   }
@@ -5078,8 +5089,10 @@ function validarLancamentoFinanceiro({ description, amount, bankAccountId, targe
     return 'A conta de origem e a conta de destino da transferência não podem ser a mesma.';
   }
   // CONTA BANCÁRIA E CENTRO DE CUSTO (23/10/2026, pedido do usuário). A regra
-  // e o texto moram em shared/lancamento_obrigatorios.js, como na tela.
-  const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter });
+  // e o texto moram em shared/lancamento_obrigatorios.js, como na tela. O
+  // centro só é obrigatório na raiz 43.792.899 — por isso o CNPJ do
+  // estabelecimento do título.
+  const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter, cnpjDoEstabelecimento: cnpj });
   if (faltam.length) return lancamentoObrigatorios.mensagem(faltam);
   return '';
 }
@@ -22404,7 +22417,8 @@ async function tratarRequisicao(req, res) {
       bankAccounts: data.bankAccounts,
       estabelecimentos: estabelecimentosMeta
         .filter((e) => e.ativo !== false)
-        .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia })),
+        // O CNPJ (23/10/2026): a tela sabe se o centro de custo é obrigatório.
+        .map((e) => ({ id: e.id, tipo: e.tipo, ordem: e.ordem, razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia, cnpj: e.cnpj })),
       contasPorEstabelecimento: vinculosMeta,
       // O seletor de empresa de Contas a Pagar / a Receber (19/10/2026).
       empresas: empresasParaOFiltro(estabelecimentosMeta, data.companies),
@@ -23080,7 +23094,11 @@ async function tratarRequisicao(req, res) {
         return sendJson(res, { error: 'Tipo de lançamento inválido' }, 400);
       }
       const amount = Number(body.amount || 0);
-      const invalido = validarLancamentoFinanceiro({ ...body, type, amount });
+      // Fase CD: por qual estabelecimento esta pessoa pode lançar. Antes da
+      // conferência desde 23/10/2026: o CNPJ dele decide o centro de custo.
+      const escolha = estabelecimentoDaOperacao(user, await ehAdmin(user), body.estabelecimentoId);
+      if (escolha.erro) throw escolha.erro;
+      const invalido = validarLancamentoFinanceiro({ ...body, type, amount, cnpjDoEstabelecimento: await cnpjDoEstabelecimento(escolha.id) });
       if (invalido) return sendJson(res, { error: invalido }, 400);
 
       // PARCELAS (15/10/2026, pedido do usuário: "uma guia de impostos em 2x ou
@@ -23099,9 +23117,8 @@ async function tratarRequisicao(req, res) {
       }
 
       // Fase CD. Duas perguntas, nesta ordem: por qual estabelecimento esta
-      // pessoa pode lancar, e se as contas escolhidas servem para ele.
-      const escolha = estabelecimentoDaOperacao(user, await ehAdmin(user), body.estabelecimentoId);
-      if (escolha.erro) throw escolha.erro;
+      // pessoa pode lancar (lá em cima, antes da conferência), e se as contas
+      // escolhidas servem para ele.
       await conferirContasDoEstabelecimento({
         estabelecimentoId: escolha.id,
         contaIds: [body.bankAccountId, type === 'TRANSFERENCIA' ? body.targetBankAccountId : '']
@@ -23676,7 +23693,15 @@ async function tratarRequisicao(req, res) {
           ? body.targetBankAccountId : entry.targetBankAccountId,
         costCenter: body.costCenter !== undefined ? body.costCenter : entry.costCenter
       };
-      const invalido = validarLancamentoFinanceiro(proposto);
+      // O estabelecimento antes da conferência (23/10/2026): o CNPJ dele decide
+      // o centro de custo. A pergunta de quem pode trocar continua logo abaixo.
+      const escolhaPut = estabelecimentoDaOperacao(
+        user,
+        await ehAdmin(user),
+        body.estabelecimentoId !== undefined ? body.estabelecimentoId : entry.estabelecimentoId
+      );
+      if (escolhaPut.erro) throw escolhaPut.erro;
+      const invalido = validarLancamentoFinanceiro({ ...proposto, cnpjDoEstabelecimento: await cnpjDoEstabelecimento(escolhaPut.id) });
       if (invalido) return sendJson(res, { error: invalido }, 400);
 
       // Fase CD, e sobre o estado PROPOSTO pelo mesmo motivo das linhas acima:
@@ -23684,13 +23709,7 @@ async function tratarRequisicao(req, res) {
       // trava que se contorna gravando um lançamento qualquer e editando a
       // conta depois. O estabelecimento do lançamento é o que ele já tem, a não
       // ser que o PUT mande outro — e aí vale a mesma pergunta de quem pode
-      // trocar.
-      const escolhaPut = estabelecimentoDaOperacao(
-        user,
-        await ehAdmin(user),
-        body.estabelecimentoId !== undefined ? body.estabelecimentoId : entry.estabelecimentoId
-      );
-      if (escolhaPut.erro) throw escolhaPut.erro;
+      // trocar (a escolha foi feita antes da conferência, acima).
       await conferirContasDoEstabelecimento({
         estabelecimentoId: escolhaPut.id,
         contaIds: [proposto.bankAccountId, proposto.targetBankAccountId]

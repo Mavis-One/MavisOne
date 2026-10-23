@@ -60,12 +60,14 @@ check('validarLancamentoFinanceiro existe', fonte.length > 0);
 const validar = new Function('lancamentoObrigatorios', `${fonte}; return validarLancamentoFinanceiro;`)(
   require('../public/modules/shared/lancamento_obrigatorios'));
 
-const valido = { type: 'DESPESA', description: 'Conta de luz', amount: 250, bankAccountId: 'b1', costCenter: 'cc1' };
+// O centro só é obrigatório na raiz 43.792.899 (23/10/2026): o válido é de lá.
+const valido = { type: 'DESPESA', description: 'Conta de luz', amount: 250, bankAccountId: 'b1', costCenter: 'cc1', cnpjDoEstabelecimento: '43792899000135' };
 check('lançamento correto passa', validar(valido) === '', JSON.stringify(validar(valido)));
 check('sem conta bancária é recusado (23/10/2026)', validar({ ...valido, bankAccountId: '' }) === 'Informe a conta bancária do lançamento.');
 check('  sem centro de custo também', validar({ ...valido, costCenter: '  ' }) === 'Informe o centro de custo do lançamento.');
 check('  sem os dois, a mensagem diz os dois', validar({ ...valido, bankAccountId: '', costCenter: '' }) === 'Informe a conta bancária e o centro de custo do lançamento.');
 check('  receita também', /conta bancária/.test(validar({ ...valido, type: 'RECEITA', bankAccountId: '' })));
+check('  fora da raiz 43.792.899, o centro é opcional', validar({ ...valido, costCenter: '', cnpjDoEstabelecimento: '46877837000114' }) === '');
 check('descrição vazia é recusada', /descri/i.test(validar({ ...valido, description: '' })));
 check('  e só de espaços também', /descri/i.test(validar({ ...valido, description: '   ' })));
 check('valor zero é recusado', /maior que zero/.test(validar({ ...valido, amount: 0 })));
@@ -101,7 +103,8 @@ check('o PUT confere o estado PROPOSTO, com o registro atual por baixo',
   /const proposto = \{[\s\S]{0,600}?description: body\.description !== undefined \? body\.description : entry\.description,/.test(src));
 // Antes dos dois ramos: o vinculado deixa as contas bancárias editáveis.
 const put = src.slice(src.indexOf("if (pathname.startsWith('/api/finance/entries/') && req.method === 'PUT')"));
-const posValida = put.indexOf('const invalido = validarLancamentoFinanceiro(proposto)');
+// 23/10/2026: com o CNPJ do estabelecimento junto (centro de custo da raiz 43.792.899).
+const posValida = put.indexOf('const invalido = validarLancamentoFinanceiro({ ...proposto, cnpjDoEstabelecimento:');
 const posRamo = put.indexOf('const vinculadoAoPedido');
 check('  e confere ANTES de separar vinculado de livre',
   posValida >= 0 && posRamo >= 0 && posValida < posRamo);

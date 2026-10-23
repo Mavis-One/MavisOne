@@ -11,6 +11,12 @@
 // de custo. O título que o SISTEMA cria (pedido aprovado, entrada de NF-e) nasce
 // sem os dois; quem o abre na Edição de Título completa.
 //
+// O CENTRO DE CUSTO SÓ NA RAIZ 43.792.899 (23/10/2026, logo depois, pedido do
+// usuário: "a obrigatoriedade de centro de custo fique apenas na raiz do CNPJ
+// 43.792.899, pois os demais não têm; deixe como opcional"). É o estabelecimento
+// do título que decide; sem estabelecimento conhecido, o centro é opcional. A
+// conta bancária segue obrigatória em todos.
+//
 // FONTE ÚNICA, como shared/venda_obrigatorios.js: a tela avisa antes de salvar
 // e o servidor recusa com a mesma regra (validarLancamentoFinanceiro).
 (function (raiz) {
@@ -19,11 +25,23 @@
     { campo: 'costCenter', rotulo: 'o centro de custo', foco: 'financeCostCenterInput' }
   ];
 
-  /** Os campos que faltam ({ campo, rotulo, foco }), ou lista vazia. */
+  // As raízes de CNPJ (8 dígitos) em que o centro de custo é obrigatório.
+  const RAIZES_COM_CENTRO = ['43792899'];
+  function exigeCentroDeCusto(cnpjDoEstabelecimento) {
+    const raiz = String(cnpjDoEstabelecimento || '').replace(/\D/g, '').slice(0, 8);
+    return RAIZES_COM_CENTRO.includes(raiz);
+  }
+
+  /**
+   * Os campos que faltam ({ campo, rotulo, foco }), ou lista vazia.
+   * `cnpjDoEstabelecimento`: o do estabelecimento do título — decide o centro.
+   */
   function faltando(lancamento) {
     const l = lancamento || {};
     if (String(l.type || '').toUpperCase() === 'TRANSFERENCIA') return [];
-    return CAMPOS.filter((c) => !String(l[c.campo] == null ? '' : l[c.campo]).trim());
+    return CAMPOS
+      .filter((c) => c.campo !== 'costCenter' || exigeCentroDeCusto(l.cnpjDoEstabelecimento))
+      .filter((c) => !String(l[c.campo] == null ? '' : l[c.campo]).trim());
   }
 
   /** "Informe a conta bancária e o centro de custo do lançamento." */
@@ -32,7 +50,7 @@
     return `Informe ${faltam.map((c) => c.rotulo).join(' e ')} do lançamento.`;
   }
 
-  const api = { CAMPOS, faltando, mensagem };
+  const api = { CAMPOS, RAIZES_COM_CENTRO, exigeCentroDeCusto, faltando, mensagem };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisLancamentoObrigatorios = api;
 })(typeof window !== 'undefined' ? window : globalThis);
