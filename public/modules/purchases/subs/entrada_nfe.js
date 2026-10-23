@@ -1176,8 +1176,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         // usuário: "o lançamento pela tela notas contra o CNPJ deve abrir como
         // parte do processo de lançamento a tela de edição de títulos para
         // conseguirmos alterar a forma como vamos lançar financeiramente").
-        // Abre o primeiro título que a nota gerou; salvar passa ao seguinte, e
-        // o último volta para a tela de onde a nota veio. Ver
+        // Abre o primeiro título que a nota gerou; desde 23/10/2026 só ele:
+        // salvar copia a escolha (conta, plano, centro, forma) para os demais e
+        // encerra, com a volta para a tela de onde a nota veio. Ver
         // state.financeFilaDaEntrada em finance/subs/novo_lancamento.js.
         const titulos = (resposta.financeiro || []).map((l) => l && l.id).filter(Boolean);
         if (titulos.length && (state.user?.allowedModules || []).includes('finance')) {

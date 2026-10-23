@@ -73,7 +73,14 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     : null;
   if (!filaDaEntrada) state.financeFilaDaEntrada = null;
   const posicaoNaFila = filaDaEntrada ? filaDaEntrada.ids.indexOf(editEntry.id) : -1;
-  const proximoDaFila = filaDaEntrada ? filaDaEntrada.ids[posicaoNaFila + 1] || null : null;
+  // A ENTRADA DE NF-e SÓ ABRE A 1ª PARCELA (23/10/2026, pedido do usuário: "na
+  // primeira parcela seja feita a escolha do lançamento e se repita ao longo
+  // das outras; se necessário mudar algo, o usuário entra na parcela via
+  // módulo financeiro"). Salvar a 1ª copia a escolha para as demais e encerra
+  // (copiarPadraoParaAFila); não há "próximo título". A fila da aprovação do
+  // pedido (sem entradaId) continua passando por todos.
+  const soAPrimeiraParcela = Boolean(filaDaEntrada && filaDaEntrada.entradaId);
+  const proximoDaFila = filaDaEntrada && !soAPrimeiraParcela ? filaDaEntrada.ids[posicaoNaFila + 1] || null : null;
 
   // Fase EI: a data de HOJE no relógio de quem usa, e não em UTC. O
   // `toISOString()` dá a data de Greenwich: em SC (UTC-3), das 21h à meia-noite
@@ -290,6 +297,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
               : 'Valor, data, descrição e fornecedor vêm da nota.'))}
             ${filaDaEntrada.copiadoDoPrimeiro && posicaoNaFila > 0
               ? 'Conta, plano de contas, centro de custo e forma de pagamento vieram do título 1: troque aqui se este for diferente.'
+              : ''}
+            ${soAPrimeiraParcela && posicaoNaFila === 0 && filaDaEntrada.ids.length > 1
+              ? `Conta, plano de contas, centro de custo e forma de pagamento escolhidos aqui vão para as outras ${filaDaEntrada.ids.length - 1} parcelas ao salvar. Para mudar uma parcela específica, abra-a depois em Financeiro › Contas a Pagar.`
               : ''}
           </p>` : editEntry && editEntry.vinculo === 'entrada' ? `
           <p class="prompt-aviso">
@@ -958,17 +968,15 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           result = await api('/api/finance/entries', { method: 'POST', body: JSON.stringify(payload) });
         }
         const quantas = Array.isArray(result.entries) ? result.entries.length : 1;
-        // Na fila da entrada, salvar já abre o título seguinte.
+        // A 1ª parcela da entrada de NF-e dá a escolha das outras e encerra a
+        // fila (23/10/2026): copia, e segue para o fim (resumo da entrada).
+        let copiaDasParcelas = null;
+        if (soAPrimeiraParcela && posicaoNaFila === 0 && filaDaEntrada.ids.length > 1 && formType !== 'TRANSFERENCIA') {
+          copiaDasParcelas = await copiarPadraoParaAFila(payload);
+        }
+        // Na fila da aprovação do pedido, salvar já abre o título seguinte.
         if (filaDaEntrada && proximoDaFila) {
-          if (filaDaEntrada.entradaId && posicaoNaFila === 0 && formType !== 'TRANSFERENCIA') {
-            const { copiados, falhas } = await copiarPadraoParaAFila(payload);
-            showToast(`Título 1 de ${filaDaEntrada.ids.length} salvo. Conta, plano de contas, centro de custo e forma de pagamento `
-              + `copiados para ${copiados === 1 ? 'o outro título' : `os outros ${copiados}`} — troque no que for diferente.`
-              + (falhas ? ` ${falhas} não ${falhas === 1 ? 'aceitou' : 'aceitaram'} a cópia: confira ${falhas === 1 ? 'esse' : 'esses'} à mão.` : ''),
-            falhas ? 'warning' : 'success');
-          } else {
-            showToast(`Título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length} salvo.`, 'success');
-          }
+          showToast(`Título ${posicaoNaFila + 1} de ${filaDaEntrada.ids.length} salvo.`, 'success');
           abrirProximoDaFila();
           return;
         }
@@ -981,8 +989,16 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           await voltarDaFila();
           return;
         }
-        showToast(editEntry ? 'Lançamento atualizado com sucesso.'
-          : (quantas > 1 ? `${quantas} parcelas lançadas.` : 'Lançamento criado com sucesso.'), 'success');
+        if (copiaDasParcelas) {
+          const { copiados, falhas } = copiaDasParcelas;
+          showToast(`Parcela 1 salva. Conta, plano de contas, centro de custo e forma de pagamento copiados para `
+            + `${copiados === 1 ? 'a outra parcela' : `as outras ${copiados}`}. Para mudar uma delas, abra em Financeiro › Contas a Pagar.`
+            + (falhas ? ` ${falhas} não ${falhas === 1 ? 'aceitou' : 'aceitaram'} a cópia: confira ${falhas === 1 ? 'essa' : 'essas'} à mão.` : ''),
+          falhas ? 'warning' : 'success', 9000);
+        } else {
+          showToast(editEntry ? 'Lançamento atualizado com sucesso.'
+            : (quantas > 1 ? `${quantas} parcelas lançadas.` : 'Lançamento criado com sucesso.'), 'success');
+        }
         renderSuccess(result.entry, result.entries);
         // O ÚLTIMO TÍTULO DA ENTRADA FECHA O LANÇAMENTO (15/10/2026, pedido do
         // usuário): o resumo da entrada abre sozinho; ao fechá-lo, fica a volta
