@@ -389,7 +389,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
               <label>Nome livre (se não cadastrado)<input name="clientSupplierName" value="${editEntry && !editEntry.clientSupplierId ? escapeHtml(editEntry.clienteFornecedor || '') : ''}" ${travado('clientSupplierName')} /></label>
             </div>
             <div class="row">
-              <label>Conta bancária
+              <label>Conta bancária *
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeBankAccount')}
                   <button type="button" class="icon-button edit" data-inline-add="bankAccount" data-inline-alvo="financeBankAccount" title="Nova conta bancária">+</button>
@@ -401,7 +401,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
                   <button type="button" class="icon-button edit" data-inline-add="category" data-inline-alvo="financeCategory" title="Nova categoria">+</button>
                 </div>
               </label>
-              <label>Centro de custo
+              <label>Centro de custo *
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeCostCenter')}
                   <button type="button" class="icon-button edit" data-inline-add="costCenter" data-inline-alvo="financeCostCenter" title="Novo centro de custo">+</button>
@@ -944,6 +944,18 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           payload.clientSupplierId = formData.get('clientSupplierId') || '';
           payload.clientSupplierName = formData.get('clientSupplierName') || '';
         }
+      }
+      // CONTA BANCÁRIA E CENTRO DE CUSTO OBRIGATÓRIOS (23/10/2026, pedido do
+      // usuário; shared/lancamento_obrigatorios.js — o servidor recusa com a
+      // mesma regra). Avisa e leva ao primeiro que falta.
+      const faltamNoLancamento = window.MavisLancamentoObrigatorios
+        ? window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType })
+        : [];
+      if (faltamNoLancamento.length) {
+        showToast(window.MavisLancamentoObrigatorios.mensagem(faltamNoLancamento), 'warning');
+        document.getElementById(faltamNoLancamento[0].foco)?.focus();
+        if (submitBtn) submitBtn.disabled = false;
+        return;
       }
 
       // PARCELAS: duas ou mais vão juntas, e o servidor cria uma por uma

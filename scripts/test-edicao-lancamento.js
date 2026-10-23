@@ -56,10 +56,16 @@ console.log('--- 1. o validador existe e é função pura ---');
 const fonte = corpoDe('validarLancamentoFinanceiro');
 check('validarLancamentoFinanceiro existe', fonte.length > 0);
 // eslint-disable-next-line no-new-func
-const validar = new Function(`${fonte}; return validarLancamentoFinanceiro;`)();
+// 23/10/2026: conta bancária e centro de custo obrigatórios (shared/lancamento_obrigatorios.js).
+const validar = new Function('lancamentoObrigatorios', `${fonte}; return validarLancamentoFinanceiro;`)(
+  require('../public/modules/shared/lancamento_obrigatorios'));
 
-const valido = { type: 'DESPESA', description: 'Conta de luz', amount: 250 };
+const valido = { type: 'DESPESA', description: 'Conta de luz', amount: 250, bankAccountId: 'b1', costCenter: 'cc1' };
 check('lançamento correto passa', validar(valido) === '', JSON.stringify(validar(valido)));
+check('sem conta bancária é recusado (23/10/2026)', validar({ ...valido, bankAccountId: '' }) === 'Informe a conta bancária do lançamento.');
+check('  sem centro de custo também', validar({ ...valido, costCenter: '  ' }) === 'Informe o centro de custo do lançamento.');
+check('  sem os dois, a mensagem diz os dois', validar({ ...valido, bankAccountId: '', costCenter: '' }) === 'Informe a conta bancária e o centro de custo do lançamento.');
+check('  receita também', /conta bancária/.test(validar({ ...valido, type: 'RECEITA', bankAccountId: '' })));
 check('descrição vazia é recusada', /descri/i.test(validar({ ...valido, description: '' })));
 check('  e só de espaços também', /descri/i.test(validar({ ...valido, description: '   ' })));
 check('valor zero é recusado', /maior que zero/.test(validar({ ...valido, amount: 0 })));

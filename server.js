@@ -98,6 +98,8 @@ const vendaObrigatorios = require('./public/modules/shared/venda_obrigatorios');
 // tela; o perfil de cada cliente mora no banco.
 const exigenciasNfe = require('./public/modules/shared/exigencias_nfe');
 const exigenciasNfeDb = require('./lib/db/exigencias-nfe');
+// Conta bancária e centro de custo obrigatórios no lançamento (23/10/2026).
+const lancamentoObrigatorios = require('./public/modules/shared/lancamento_obrigatorios');
 // Custo do produto só para administrador (14/10/2026). Ver lib/custo-oculto.js.
 const custoOculto = require('./lib/custo-oculto');
 // As planilhas .xlsx das Notas de Entrada e dos Lançamentos (16/10/2026).
@@ -5056,7 +5058,7 @@ function financeEntryEmAberto(entry, payments) {
  * o corpo da requisição: um PUT que manda só `amount` precisa ser conferido
  * contra a descrição que já estava lá.
  */
-function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, type }) {
+function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, costCenter, type }) {
   if (!String(description == null ? '' : description).trim()) {
     return 'Informe a descrição do lançamento';
   }
@@ -5073,6 +5075,10 @@ function validarLancamentoFinanceiro({ description, amount, bankAccountId, targe
     && bankAccountId && targetBankAccountId && bankAccountId === targetBankAccountId) {
     return 'A conta de origem e a conta de destino da transferência não podem ser a mesma.';
   }
+  // CONTA BANCÁRIA E CENTRO DE CUSTO (23/10/2026, pedido do usuário). A regra
+  // e o texto moram em shared/lancamento_obrigatorios.js, como na tela.
+  const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter });
+  if (faltam.length) return lancamentoObrigatorios.mensagem(faltam);
   return '';
 }
 
@@ -23654,7 +23660,8 @@ async function tratarRequisicao(req, res) {
         amount: body.amount !== undefined ? body.amount : entry.amount,
         bankAccountId: body.bankAccountId !== undefined ? body.bankAccountId : entry.bankAccountId,
         targetBankAccountId: body.targetBankAccountId !== undefined
-          ? body.targetBankAccountId : entry.targetBankAccountId
+          ? body.targetBankAccountId : entry.targetBankAccountId,
+        costCenter: body.costCenter !== undefined ? body.costCenter : entry.costCenter
       };
       const invalido = validarLancamentoFinanceiro(proposto);
       if (invalido) return sendJson(res, { error: invalido }, 400);
