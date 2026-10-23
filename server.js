@@ -5683,9 +5683,12 @@ function serializeFinanceEntry(entry, data, baixasDoLancamento) {
     // de deixar preencher tudo e recusar no fim — que era o beco sem saída
     // relatado em 22/08/2026.
     vinculo: entry.nfeId ? 'nfe' : (entry.referenceId ? 'pedido' : ''),
-    camposTravados: (entry.referenceId || entry.nfeId)
+    // O VALOR do título de pedido se edita desde 23/10/2026 (pedido do
+    // usuário: "quero poder editar esses valores aqui após o lançamento do
+    // pedido"); só o de NF-e emitida (nfeId) segue com o valor travado.
+    camposTravados: entry.nfeId
       ? ['amount', 'date', 'description', 'clientSupplierId', 'clientSupplierName', 'type']
-      : [],
+      : (entry.referenceId ? ['date', 'description', 'clientSupplierId', 'clientSupplierName', 'type'] : []),
     // Fase EI: de qual pedido e de qual estabelecimento. A tela de edição
     // precisa dos dois: sem `estabelecimentoId` o campo abria em "Nenhum" (ou
     // no primeiro da lista) e salvar trocava o estabelecimento do lançamento
@@ -23712,8 +23715,12 @@ async function tratarRequisicao(req, res) {
       if (vinculadoAoPedido || vinculadoANfe) {
         const mudou = (campo, comparar) => body[campo] !== undefined && comparar(body[campo]);
         const texto = (v) => String(v == null ? '' : v).trim();
-        // O VALOR DO TÍTULO DE ENTRADA DE NF-e SE EDITA (ver tituloDeEntradaDeNfe).
-        const valorEditavel = !vinculadoANfe && await tituloDeEntradaDeNfe(entry.referenceId);
+        // O VALOR SE EDITA no título de entrada de NF-e (21/10/2026, ver
+        // tituloDeEntradaDeNfe) e, desde 23/10/2026, no de pedido (pedido do
+        // usuário: "quero poder editar esses valores aqui após o lançamento do
+        // pedido" — o cartão em 10x com juros, por exemplo). Só o título de NF-e
+        // emitida (nfeId) segue travado: o valor dele é o do documento fiscal.
+        const valorEditavel = !vinculadoANfe;
         const valorAnterior = Number(entry.amount || 0);
         const protegidos = [
           ['valor', !valorEditavel && mudou('amount', (v) => Number(v || 0) !== Number(entry.amount || 0))],
@@ -23747,6 +23754,12 @@ async function tratarRequisicao(req, res) {
         // nunca duplica o prefixo (ver shared/lancamento_codigo.js).
         if (body.document !== undefined) entry.document = lancamentoCodigo.documento(entry.code, body.document);
         if (body.note !== undefined) entry.note = body.note;
+        // O valor mudou: fica dito no próprio título (a trilha de auditoria
+        // também guarda), como o ajuste na baixa.
+        if (Math.abs(Number(entry.amount || 0) - valorAnterior) > 0.005) {
+          const reais = (v) => Number(v).toFixed(2).replace('.', ',');
+          entry.note = [entry.note, `Valor ajustado na edição de ${reais(valorAnterior)} para ${reais(entry.amount)} por ${user.name}`].filter(Boolean).join(' | ');
+        }
         if (body.category !== undefined) entry.category = body.category;
         if (body.costCenter !== undefined) entry.costCenter = body.costCenter;
         if (body.bankAccountId !== undefined) entry.bankAccountId = body.bankAccountId;

@@ -27,8 +27,9 @@ const servidor = ler('server.js');
 console.log('\n--- o servidor ---');
 check('é título de entrada quando a referência é uma nfe_entrada',
   /async function tituloDeEntradaDeNfe\(referenceId\) \{[\s\S]*?select 1 from nfe_entrada where id = \$1/.test(servidor));
-check('a edição libera só o valor, e só na entrada de NF-e',
-  /const valorEditavel = !vinculadoANfe && await tituloDeEntradaDeNfe\(entry\.referenceId\);/.test(servidor)
+// 23/10/2026: também no título de pedido; só o de NF-e emitida segue travado.
+check('a edição libera só o valor (entrada de NF-e e pedido; não a NF-e emitida)',
+  /const valorEditavel = !vinculadoANfe;/.test(servidor)
   && /\['valor', !valorEditavel && mudou\('amount'/.test(servidor)
   && /if \(valorEditavel && body\.amount !== undefined\) entry\.amount = Math\.round\(Number\(body\.amount\) \* 100\) \/ 100;/.test(servidor));
 check('  data, descrição e fornecedor seguem protegidos',

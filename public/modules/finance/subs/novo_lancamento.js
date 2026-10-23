@@ -310,10 +310,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           </p>` : vinculado ? `
           <p class="prompt-aviso">
             <strong>Lançamento gerado ${editEntry.vinculo === 'nfe' ? 'por uma NF-e' : 'por um pedido'}.</strong>
-            Valor, data, descrição e cliente vêm de lá e aparecem travados aqui —
             ${editEntry.vinculo === 'nfe'
-              ? 'corrigi-los exige cancelar a nota e emitir outra.'
-              : 'para mudá-los, corrija o pedido de origem e o financeiro acompanha.'}
+              ? 'Valor, data, descrição e cliente vêm da nota e aparecem travados aqui — corrigi-los exige cancelar a nota e emitir outra.'
+              : 'Data, descrição e cliente vêm do pedido e aparecem travados aqui. O valor pode ser ajustado (fica anotado no título quem mudou e de quanto para quanto).'}
             Vencimento, conta bancária, plano de contas, centro de custo, documento e
             observação você ajusta normalmente por aqui.
           </p>` : ''}

@@ -75,7 +75,9 @@ check('a gravação passa pelo mesmo caminho da edição livre', /await db\.upda
 
 console.log('\n--- a tela avisa ANTES, em vez de recusar no fim ---');
 check('o servidor informa o vínculo', /vinculo: entry\.nfeId \? 'nfe' : \(entry\.referenceId \? 'pedido' : ''\)/.test(serverSrc));
-check('e quais campos estão travados', /camposTravados: \(entry\.referenceId \|\| entry\.nfeId\)/.test(serverSrc));
+// 23/10/2026: o valor do título de pedido se edita; o de NF-e emitida, não.
+check('e quais campos estão travados (o valor só no de NF-e emitida)',
+  /camposTravados: entry\.nfeId\s*\? \['amount', 'date', 'description', 'clientSupplierId', 'clientSupplierName', 'type'\]\s*: \(entry\.referenceId \? \['date', 'description', 'clientSupplierId', 'clientSupplierName', 'type'\] : \[\]\),/.test(serverSrc));
 check('a tela sabe se é vinculado', /const vinculado = Boolean\(editEntry && editEntry\.vinculo\)/.test(telaSrc));
 check('mostra o aviso no topo', /Lançamento gerado \$\{editEntry\.vinculo === 'nfe' \? 'por uma NF-e' : 'por um pedido'\}/.test(telaSrc));
 ['amount', 'date', 'description'].forEach((campo) => {
