@@ -9341,9 +9341,17 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
     throw err;
   }
 
+  // AS TRÊS CONFERÊNCIAS DE PAGAMENTO E COBRANÇA FICAM FORA DAS PRÉVIAS
+  // (23/10/2026, pedido do usuário: "a parte dos impostos deve ser calculada a
+  // partir da geração da NF e não do pedido; quero que essa trava seja
+  // removida"). Os impostos saem da nota montada; pagamento que não fecha
+  // com o total não muda imposto nenhum, e a prévia sumia no lugar deles. A
+  // EMISSÃO e o pré-check continuam conferindo: a SEFAZ recusa a nota.
+  const conferePagamentos = !opcoes.semConferirPagamentos;
+
   // E os pagamentos fecham com o total? Mesma janela e mesmo motivo: passar
   // deste ponto consome numeracao, e a SEFAZ recusa vPag != vNF.
-  const pagamentosNaoFecham = conferirPagamentosDaNota(payload);
+  const pagamentosNaoFecham = conferePagamentos ? conferirPagamentosDaNota(payload) : '';
   if (pagamentosNaoFecham) {
     const err = new Error(pagamentosNaoFecham);
     err.status = 400;
@@ -9352,7 +9360,7 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
 
   // E o grupo do cartao esta INTEIRO? Mesma janela, mesmo motivo: e o grupo
   // `card` pela metade que volta como rejeicao 225, e a numeracao ja foi.
-  const cartaoIncompleto = conferirCartoesDaNota(payload);
+  const cartaoIncompleto = conferePagamentos ? conferirCartoesDaNota(payload) : '';
   if (cartaoIncompleto) {
     const err = new Error(cartaoIncompleto);
     err.status = 400;
@@ -9360,7 +9368,7 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   }
 
   // E as duplicatas cabem na nota? (13/10/2026)
-  const cobrancaExcede = conferirCobrancaDaNota(payload);
+  const cobrancaExcede = conferePagamentos ? conferirCobrancaDaNota(payload) : '';
   if (cobrancaExcede) {
     const err = new Error(cobrancaExcede);
     err.status = 400;
@@ -18230,7 +18238,7 @@ async function tratarRequisicao(req, res) {
       // recusas também: destinatário incompleto, item sem regra, sem estoque.
       if (pathname === '/api/fiscal/nfe/previa' && req.method === 'POST') {
         const body = await readBody(req);
-        const { payload } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true, semExigencias: true });
+        const { payload } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true, semExigencias: true, semConferirPagamentos: true });
         return sendJson(res, resumoFiscalDaPrevia(payload));
       }
 
@@ -18240,7 +18248,7 @@ async function tratarRequisicao(req, res) {
       // FISCAL: nada vai à SEFAZ, nenhum número é consumido, nada é gravado.
       if (pathname === '/api/fiscal/nfe/danfe-previa' && req.method === 'POST') {
         const body = await readBody(req);
-        const { payload, estabelecimento } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true });
+        const { payload, estabelecimento } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true, semConferirPagamentos: true });
         const client = await focusNfe.forEstabelecimento(estabelecimento.id);
         const pdf = await client.previsualizarDanfe(payload);
         res.writeHead(200, {

@@ -134,7 +134,11 @@ check('  e sem pagamento nenhum nao ha o que conferir',
 
 console.log('--- 4. onde as guardas ficam ---');
 const src = ler('server.js');
-const posConfere = src.indexOf('const pagamentosNaoFecham = conferirPagamentosDaNota(payload);');
+// 23/10/2026: as prévias (impostos e DANFE) pulam esta conferência
+// (semConferirPagamentos); a emissão continua conferindo.
+const posConfere = src.indexOf('const pagamentosNaoFecham = conferePagamentos ? conferirPagamentosDaNota(payload) : \'\';');
+check('a conferência só é pulada nas prévias', /const conferePagamentos = !opcoes\.semConferirPagamentos;/.test(src)
+  && (src.match(/semConferirPagamentos: true/g) || []).length === 2);
 // Desde 15/10/2026 o registro é criado OU reaberto (a nota com erro é
 // reenviada no mesmo registro): vale a primeira das duas gravações.
 const posRascunho = src.indexOf('nfe = await fiscalDb.reabrirNfeComErro(');

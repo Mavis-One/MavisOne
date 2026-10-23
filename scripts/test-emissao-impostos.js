@@ -70,7 +70,7 @@ check('totais: ICMS, PIS e total da nota', r.totais.icms === 120 && r.totais.pis
 console.log('\n--- 5. servidor e tela ---');
 const servidor = ler('server.js');
 check('a rota da prévia monta pela MESMA preparação da emissão',
-  /pathname === '\/api\/fiscal\/nfe\/previa' && req\.method === 'POST'[\s\S]{0,200}await prepararNfeParaTransmitir\(body, \{ semTravaDePagamento: true, semExigencias: true \}\);[\s\S]{0,80}resumoFiscalDaPrevia\(payload\)/.test(servidor));
+  /pathname === '\/api\/fiscal\/nfe\/previa' && req\.method === 'POST'[\s\S]{0,200}await prepararNfeParaTransmitir\(body, \{ semTravaDePagamento: true, semExigencias: true, semConferirPagamentos: true \}\);[\s\S]{0,80}resumoFiscalDaPrevia\(payload\)/.test(servidor));
 check('  e exige a permissão de emitir', /pathname === '\/api\/fiscal\/nfe\/previa'\) return 'emitir';/.test(servidor));
 check('NCM e origem editados escolhem a regra', /item\.fiscal = limparEdicaoFiscal\(bruto\.fiscal\);\s*if \(item\.fiscal\.ncm\) item\.ncm/.test(servidor));
 check('sem regra, CFOP e CST digitados bastam', /const digitouOEssencial = item\.fiscal\.cfop && \(item\.fiscal\.cstIcms \|\| item\.fiscal\.csosn\);/.test(servidor));
@@ -149,7 +149,7 @@ check('  a data da emissão é a de Brasília, não a UTC',
   B.grupoCobranca({ duplicatas: [{ vencimento: '2026-10-13', valor: 5 }] }, '2026-10-14T01:30:00Z').duplicatas.length === 1);
 check('duplicatas acima do total da nota são recusadas', /excedem/.test(B.conferirCobrancaDaNota({ valor_total: 100, duplicatas: [{ valor: 150 }] })));
 check('  abaixo (entrada à vista) passam', B.conferirCobrancaDaNota({ valor_total: 100, duplicatas: [{ valor: 60 }] }) === '');
-check('o servidor repassa e confere a cobrança', /cobranca: body\.cobranca,/.test(servidor) && /const cobrancaExcede = conferirCobrancaDaNota\(payload\);/.test(servidor));
+check('o servidor repassa e confere a cobrança', /cobranca: body\.cobranca,/.test(servidor) && /const cobrancaExcede = conferePagamentos \? conferirCobrancaDaNota\(payload\) : '';/.test(servidor));
 
 // Na nota avulsa, as duplicatas viram o contas a receber.
 const corpo = (nome) => (new RegExp(`function ${nome}\\([\\s\\S]*?\\n\\}`).exec(servidor) || [''])[0];
