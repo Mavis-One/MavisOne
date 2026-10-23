@@ -712,6 +712,28 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     const base = Math.floor(total / n);
     return Array.from({ length: n }, (_, i) => (i === n - 1 ? total - base * (n - 1) : base));
   }
+  // CONTA A PAGAR A PRAZO VENCE EM DIA ÚTIL (23/10/2026, pedido do usuário;
+  // shared/dia_util.js). Despesa que vence depois da data do lançamento, em
+  // sábado, domingo ou feriado nacional, vai para o próximo dia útil — a tela
+  // já mostra o dia que o título vai gravar (o servidor aplica a mesma regra).
+  // À vista e receita ficam como estão.
+  function vencimentoUtil(vencimento) {
+    const D = window.MavisDiaUtil;
+    const form = document.getElementById('financeEntryForm');
+    const data = (form && form.elements.namedItem('date') && form.elements.namedItem('date').value) || (editEntry && editEntry.date) || hojeLocal();
+    return D && vencimento ? D.vencimentoDoTitulo({ type: formType, date: data, dueDate: vencimento }) : vencimento;
+  }
+  function ajustarCampoDeVencimento(campo) {
+    if (!campo || !campo.value) return campo ? campo.value : '';
+    const util = vencimentoUtil(campo.value);
+    if (util !== campo.value) {
+      const br = (iso) => iso.split('-').reverse().join('/');
+      showToast(`Vencimento em ${window.MavisDiaUtil.motivo(campo.value)} (${br(campo.value)}): vai para o próximo dia útil, ${br(util)}.`, 'info');
+      campo.value = util;
+    }
+    return util;
+  }
+
   function gerarParcelas({ manterDatas = false } = {}) {
     const form = document.getElementById('financeEntryForm');
     const qtd = form && form.elements.namedItem('parcelasQtd');
@@ -722,7 +744,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     const total = centavos(form.elements.namedItem('amount')?.value);
     const valores = dividirCentavos(total, n);
     parcelas = valores.map((c, i) => ({
-      dueDate: manterDatas && parcelas.length === n && parcelas[i] ? parcelas[i].dueDate : dataDaParcela(primeira, i, intervalo),
+      dueDate: manterDatas && parcelas.length === n && parcelas[i] ? parcelas[i].dueDate : vencimentoUtil(dataDaParcela(primeira, i, intervalo)),
       amount: c / 100
     }));
     desenharParcelas();
@@ -757,6 +779,10 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   function ligarParcelas() {
     const form = document.getElementById('financeEntryForm');
     const caixa = document.getElementById('financeParcelas');
+    // Antes de tudo (e também na Edição de Título, que não tem parcelas): o
+    // vencimento digitado num fim de semana ou feriado vai ao dia útil — e só
+    // depois as parcelas saem dele.
+    form?.elements.namedItem('dueDate')?.addEventListener('change', (evento) => ajustarCampoDeVencimento(evento.target));
     if (!form || !caixa) return;
     ['parcelasQtd', 'parcelasIntervalo', 'dueDate'].forEach((nome) => {
       form.elements.namedItem(nome)?.addEventListener('change', () => gerarParcelas());
@@ -767,7 +793,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     caixa.addEventListener('change', (evento) => {
       const alvo = evento.target;
       if (alvo.dataset.parcelaData !== undefined) {
-        parcelas[Number(alvo.dataset.parcelaData)].dueDate = alvo.value;
+        parcelas[Number(alvo.dataset.parcelaData)].dueDate = ajustarCampoDeVencimento(alvo);
         return;
       }
       if (alvo.dataset.parcelaValor === undefined) return;

@@ -371,6 +371,20 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       return tela.totalAPagar !== null && tela.totalAPagar !== undefined ? tela.totalAPagar : totalDaNota();
     }
 
+    // CONTA A PAGAR A PRAZO VENCE EM DIA ÚTIL (23/10/2026, pedido do usuário;
+    // shared/dia_util.js). O vencimento em sábado, domingo ou feriado nacional
+    // aparece já no próximo dia útil — é o que o título vai gravar. O que
+    // vence no dia da emissão (à vista) fica como está.
+    function vencimentoUtil(vencimento) {
+      const D = window.MavisDiaUtil;
+      const emissao = String((tela.conferencia && tela.conferencia.nota && tela.conferencia.nota.dataEmissao) || '').slice(0, 10);
+      return D && vencimento ? D.vencimentoDoTitulo({ type: 'DESPESA', date: emissao, dueDate: vencimento }) : vencimento;
+    }
+    function avisarVencimentoMovido(original, util) {
+      if (!original || original === util || !window.MavisDiaUtil) return;
+      showToast(`Vencimento em ${window.MavisDiaUtil.motivo(original)} (${dataBr(original)}): vai para o próximo dia útil, ${dataBr(util)}.`, 'info');
+    }
+
     function montarParcelasDaEntrada(qtd, primeiro, intervalo) {
       const total = Math.round(totalAPagar() * 100);
       const n = Math.min(120, Math.max(1, Math.floor(Number(qtd) || 1)));
@@ -379,7 +393,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       const [ano, mes, dia] = String(primeiro || '').split('-').map(Number);
       tela.parcelamento = { qtd: n, primeiro: primeiro || '', intervalo: dias };
       tela.parcelas = Array.from({ length: n }, (_, i) => ({
-        vencimento: ano ? new Date(Date.UTC(ano, mes - 1, dia + i * dias)).toISOString().slice(0, 10) : '',
+        vencimento: ano ? vencimentoUtil(new Date(Date.UTC(ano, mes - 1, dia + i * dias)).toISOString().slice(0, 10)) : '',
         valor: (i === 0 ? total - base * (n - 1) : base) / 100
       }));
     }
@@ -448,6 +462,14 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       });
       quadro.querySelectorAll('[data-parcela-vencimento]').forEach((campo) => {
         campo.addEventListener('input', () => { tela.parcelas[Number(campo.dataset.parcelaVencimento)].vencimento = campo.value; });
+        // Digitado num fim de semana ou feriado: vai para o próximo dia útil.
+        campo.addEventListener('change', () => {
+          const util = vencimentoUtil(campo.value);
+          if (util === campo.value) return;
+          avisarVencimentoMovido(campo.value, util);
+          campo.value = util;
+          tela.parcelas[Number(campo.dataset.parcelaVencimento)].vencimento = util;
+        });
       });
       quadro.querySelectorAll('[data-parcela-valor]').forEach((campo) => {
         campo.addEventListener('input', () => {
@@ -478,7 +500,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
               ${duplicatas.map((d) => `
                 <tr>
                   <td>${escapeHtml(d.numero)}</td>
-                  <td>${dataBr(d.vencimento)}</td>
+                  <td>${dataBr(vencimentoUtil(d.vencimento))}${vencimentoUtil(d.vencimento) !== d.vencimento
+                    ? ` <small class="muted" title="Conta a pagar a prazo vence em dia útil">(na nota: ${dataBr(d.vencimento)}, ${escapeHtml(window.MavisDiaUtil.motivo(d.vencimento))})</small>`
+                    : ''}</td>
                   ${veParcelas() ? `<td class="entrada-col-num">${moeda(d.valor)}</td>` : ''}
                 </tr>
               `).join('')}

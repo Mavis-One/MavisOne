@@ -1781,7 +1781,10 @@ function criarTelaDeLancamentos(telaChave) {
       const [ano, mes, dia] = primeiro.split('-').map(Number);
       const corpo = document.getElementById('financeParcelarLinhas');
       corpo.innerHTML = Array.from({ length: qtd }, (_, i) => {
-        const data = new Date(Date.UTC(ano, mes - 1, dia + i * intervalo)).toISOString().slice(0, 10);
+        // Conta a pagar a prazo vence em dia útil (23/10/2026; shared/dia_util.js):
+        // a linha já mostra o dia que o título vai gravar.
+        const bruta = new Date(Date.UTC(ano, mes - 1, dia + i * intervalo)).toISOString().slice(0, 10);
+        const data = window.MavisDiaUtil ? window.MavisDiaUtil.vencimentoDoTitulo({ type: entry.type, date: entry.date, dueDate: bruta }) : bruta;
         const centavos = i === 0 ? totalEmCentavos - base * (qtd - 1) : base;
         return `<tr>
           <td>${i + 1}/${qtd}</td>

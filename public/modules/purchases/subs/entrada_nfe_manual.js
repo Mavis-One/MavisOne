@@ -220,7 +220,17 @@ window.MavisSubscreenRegistry.purchases.entrada_nfe_manual = async function rend
     content.querySelectorAll('[data-remover-parcela]').forEach((b) => b.addEventListener('click', () => {
       guardarCampos(); nota.parcelas.splice(Number(b.dataset.removerParcela), 1); desenhar();
     }));
-    content.querySelectorAll('.manual-parcela-venc').forEach((c) => c.addEventListener('change', () => { nota.parcelas[Number(c.dataset.index)].vencimento = c.value; }));
+    content.querySelectorAll('.manual-parcela-venc').forEach((c) => c.addEventListener('change', () => {
+      // Conta a pagar a prazo vence em dia útil (23/10/2026; shared/dia_util.js).
+      const D = window.MavisDiaUtil;
+      const util = D && c.value ? D.vencimentoDoTitulo({ type: 'DESPESA', date: nota.dataEmissao, dueDate: c.value }) : c.value;
+      if (util !== c.value) {
+        const br = (iso) => iso.split('-').reverse().join('/');
+        showToast(`Vencimento em ${D.motivo(c.value)} (${br(c.value)}): vai para o próximo dia útil, ${br(util)}.`, 'info');
+        c.value = util;
+      }
+      nota.parcelas[Number(c.dataset.index)].vencimento = util;
+    }));
     content.querySelectorAll('.manual-parcela-valor').forEach((c) => c.addEventListener('change', () => {
       guardarCampos(); nota.parcelas[Number(c.dataset.index)].valor = Number(c.value || 0); desenhar();
     }));

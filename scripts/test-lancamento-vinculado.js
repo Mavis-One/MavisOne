@@ -41,9 +41,13 @@ check('achei o trecho do PUT', put.length > 500, `${put.length} caracteres`);
 check('reconhece vínculo com pedido', /const vinculadoAoPedido = Boolean\(entry\.referenceId\)/.test(put));
 check('e vínculo com NF-e', /const vinculadoANfe = Boolean\(entry\.nfeId\)/.test(put));
 // Estes seis eram o passo seguinte do faturamento e estavam bloqueados.
-['dueDate', 'note', 'category', 'costCenter', 'bankAccountId'].forEach((campo) => {
+['note', 'category', 'costCenter', 'bankAccountId'].forEach((campo) => {
   check(`  ${campo} é gravado no lançamento vinculado`, new RegExp(`if \\(body\\.${campo} !== undefined\\) entry\\.${campo} = body\\.${campo}`).test(put));
 });
+// O vencimento também — pela regra do dia útil desde 23/10/2026 (conta a pagar
+// a prazo em fim de semana ou feriado vai ao próximo dia útil).
+check('  dueDate é gravado no lançamento vinculado (no dia útil, se for conta a pagar a prazo)',
+  /if \(body\.dueDate !== undefined\) entry\.dueDate = diaUtil\.vencimentoDoTitulo\(\{ \.\.\.entry, dueDate: body\.dueDate \}\);/.test(put));
 // O documento também é editável — o que mudou (fase AY) é que ele passa pelo
 // catálogo antes de ser gravado, para o número do lançamento voltar à frente
 // mesmo que o usuário apague o prefixo do campo. Continua sendo o valor que o

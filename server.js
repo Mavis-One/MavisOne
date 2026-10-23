@@ -100,6 +100,8 @@ const exigenciasNfe = require('./public/modules/shared/exigencias_nfe');
 const exigenciasNfeDb = require('./lib/db/exigencias-nfe');
 // Conta bancária e centro de custo obrigatórios no lançamento (23/10/2026).
 const lancamentoObrigatorios = require('./public/modules/shared/lancamento_obrigatorios');
+// Conta a pagar a prazo vence em dia útil (23/10/2026).
+const diaUtil = require('./public/modules/shared/dia_util');
 // Custo do produto só para administrador (14/10/2026). Ver lib/custo-oculto.js.
 const custoOculto = require('./lib/custo-oculto');
 // As planilhas .xlsx das Notas de Entrada e dos Lançamentos (16/10/2026).
@@ -23480,7 +23482,7 @@ async function tratarRequisicao(req, res) {
 
       const agora = new Date().toISOString();
       entry.amount = parcelas[0].centavos / 100;
-      entry.dueDate = parcelas[0].dueDate;
+      entry.dueDate = diaUtil.vencimentoDoTitulo({ ...entry, dueDate: parcelas[0].dueDate });
       entry.description = descricaoDa(1);
       entry.updatedAt = agora;
       await db.updateFinancialEntry(entry.id, { amount: entry.amount, dueDate: entry.dueDate, description: entry.description });
@@ -23730,7 +23732,8 @@ async function tratarRequisicao(req, res) {
         // Só o que o pedido/NF-e não possui — e, na entrada de NF-e, o valor.
         // Positivo: validarLancamentoFinanceiro já o conferiu em `proposto`.
         if (valorEditavel && body.amount !== undefined) entry.amount = Math.round(Number(body.amount) * 100) / 100;
-        if (body.dueDate !== undefined) entry.dueDate = body.dueDate;
+        // Conta a pagar a prazo vence em dia útil (23/10/2026; shared/dia_util.js).
+        if (body.dueDate !== undefined) entry.dueDate = diaUtil.vencimentoDoTitulo({ ...entry, dueDate: body.dueDate });
         // Fase AY: o numero volta na frente mesmo que o usuario o apague do campo —
         // e' o que faz "padronizado" valer tambem depois da edicao. `documento`
         // nunca duplica o prefixo (ver shared/lancamento_codigo.js).
@@ -23768,7 +23771,8 @@ async function tratarRequisicao(req, res) {
       if (body.description !== undefined) entry.description = String(body.description).trim();
       if (body.amount !== undefined) entry.amount = Number(body.amount || 0);
       if (body.date !== undefined) entry.date = body.date;
-      if (body.dueDate !== undefined) entry.dueDate = body.dueDate;
+      // Conta a pagar a prazo vence em dia útil (23/10/2026; shared/dia_util.js).
+      if (body.dueDate !== undefined) entry.dueDate = diaUtil.vencimentoDoTitulo({ ...entry, dueDate: body.dueDate });
       // Fase AY: o numero volta na frente mesmo que o usuario o apague do campo —
       // e' o que faz "padronizado" valer tambem depois da edicao. `documento`
       // nunca duplica o prefixo (ver shared/lancamento_codigo.js).
