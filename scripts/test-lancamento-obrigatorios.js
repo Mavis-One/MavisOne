@@ -57,11 +57,14 @@ check('o validador de sempre confere, com o CNPJ do estabelecimento',
 check('  criar e editar resolvem o estabelecimento antes e mandam o CNPJ dele',
   servidor.includes('validarLancamentoFinanceiro({ ...body, type, amount, ...(await regraDoCentroDeCusto(escolha.id)) })')
   && servidor.includes('validarLancamentoFinanceiro({ ...proposto, ...(await regraDoCentroDeCusto(escolhaPut.id)) })'));
-check('  e se há centro liberado para ele (vazio = vale para todas)', servidor.includes('or $1 = any(estabelecimento_ids)) as ha')
-  && servidor.includes('return { cnpjDoEstabelecimento: cnpj, centroDisponivel };'));
+check('  e consulta CNPJ e centro liberado em uma ida ao banco', servidor.includes('from estabelecimento e')
+  && servidor.includes('or $1 = any(estabelecimento_ids)')
+  && servidor.includes('return {\n      cnpjDoEstabelecimento: cnpj,')
+  && servidor.includes('lancamentoObrigatorios.RAIZES_COM_CENTRO'));
 check('  editar (PUT) confere o resultado: o que veio, senão o gravado', /costCenter: body\.costCenter !== undefined \? body\.costCenter : entry\.costCenter/.test(servidor)
   && /bankAccountId: body\.bankAccountId !== undefined \? body\.bankAccountId : entry\.bankAccountId/.test(servidor));
-check('  o CNPJ sai do estabelecimento do título', /async function cnpjDoEstabelecimento\(estabelecimentoId\) \{[\s\S]{0,200}fiscalDb\.getEstabelecimentoById\(estabelecimentoId\)/.test(servidor));
+check('  o CNPJ e disponibilidade do centro vêm da mesma consulta', /async function regraDoCentroDeCusto\(estabelecimentoId\) \{[\s\S]{0,1200}from estabelecimento e[\s\S]{0,500}centro_disponivel/.test(servidor)
+  && !servidor.includes('async function cnpjDoEstabelecimento('));
 check('  e a tela recebe o CNPJ de cada estabelecimento', servidor.includes('razaoSocial: e.razaoSocial, nomeFantasia: e.nomeFantasia, cnpj: e.cnpj }'));
 
 console.log('\n--- 3. a tela (Novo Lançamento / Edição de Título) ---');

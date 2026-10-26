@@ -5060,38 +5060,41 @@ function financeEntryEmAberto(entry, payments) {
  * o corpo da requisição: um PUT que manda só `amount` precisa ser conferido
  * contra a descrição que já estava lá.
  */
-/** O CNPJ do estabelecimento do título — decide se o centro de custo é obrigatório. */
-async function cnpjDoEstabelecimento(estabelecimentoId) {
-  if (!estabelecimentoId) return '';
-  try {
-    const estab = await fiscalDb.getEstabelecimentoById(estabelecimentoId);
-    return estab ? String(estab.cnpj || '') : '';
-  } catch (erro) {
-    return '';
-  }
-}
-
 /**
  * O QUE DECIDE O CENTRO DE CUSTO DO TÍTULO: o CNPJ do estabelecimento (só a
  * raiz 43.792.899 exige) e se há algum centro liberado para ele (24/10/2026,
  * "não estou conseguindo mais faturar": sem nenhum para escolher, exigir
- * travava o título e o faturamento). Ver shared/lancamento_obrigatorios.js.
+ * travava o título e o faturamento). Uma consulta resolve as duas informações;
+ * consultar o CNPJ pela API fiscal e depois voltar ao banco adicionava uma
+ * viagem de rede a cada criação e edição de título. Ver
+ * shared/lancamento_obrigatorios.js.
  */
 async function regraDoCentroDeCusto(estabelecimentoId) {
-  const cnpj = await cnpjDoEstabelecimento(estabelecimentoId);
-  let centroDisponivel = true;
-  if (estabelecimentoId && lancamentoObrigatorios.exigeCentroDeCusto(cnpj)) {
-    try {
-      const { rows } = await consultarBanco(
-        `select exists(select 1 from cost_centers
-                         where coalesce(array_length(estabelecimento_ids, 1), 0) = 0
-                            or $1 = any(estabelecimento_ids)) as ha`, [String(estabelecimentoId)]);
-      centroDisponivel = Boolean(rows[0] && rows[0].ha);
-    } catch (erro) {
-      centroDisponivel = true;
-    }
+  if (!estabelecimentoId) return { cnpjDoEstabelecimento: '', centroDisponivel: true };
+  try {
+    const { rows } = await consultarBanco(
+      `select e.cnpj,
+              case
+                when left(regexp_replace(coalesce(e.cnpj, ''), '[^0-9]', '', 'g'), 8) = any($2::text[])
+                then exists(select 1 from cost_centers
+                             where coalesce(array_length(estabelecimento_ids, 1), 0) = 0
+                                or $1 = any(estabelecimento_ids))
+                else true
+              end as centro_disponivel
+         from estabelecimento e
+        where e.id::text = $1
+        limit 1`,
+      [String(estabelecimentoId), lancamentoObrigatorios.RAIZES_COM_CENTRO]
+    );
+    const estabelecimento = rows[0];
+    const cnpj = estabelecimento ? String(estabelecimento.cnpj || '') : '';
+    return {
+      cnpjDoEstabelecimento: cnpj,
+      centroDisponivel: estabelecimento ? Boolean(estabelecimento.centro_disponivel) : true
+    };
+  } catch (erro) {
+    return { cnpjDoEstabelecimento: '', centroDisponivel: true };
   }
-  return { cnpjDoEstabelecimento: cnpj, centroDisponivel };
 }
 
 function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, costCenter, type, cnpjDoEstabelecimento: cnpj, centroDisponivel }) {
