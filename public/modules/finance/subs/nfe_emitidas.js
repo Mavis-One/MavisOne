@@ -427,6 +427,7 @@ function criarTelaDeNotasEmitidas(telaChave) {
       showToast,
       print: nfePrint,
       cancelar: cancelNfe,
+      retransmitir: retransmitirNfe,
       duplicar: duplicarNfe,
       irParaVenda: irParaVenda,
       baixarArquivo: baixarArquivoFiscal,
@@ -1165,6 +1166,31 @@ function criarTelaDeNotasEmitidas(telaChave) {
       await load();
     } catch (error) {
       showToast(error.message || 'Erro ao cancelar NF-e.', 'error');
+    }
+  }
+
+  async function retransmitirNfe(nfe) {
+    const confirmada = await confirmModal(
+      'A nota será enviada novamente à Focus NFe com a mesma referência e o mesmo XML. Se ela já estiver registrada lá, o sistema apenas atualizará o status e não criará outra nota. Deseja continuar?'
+    );
+    if (!confirmada) return;
+    try {
+      const resposta = await api(`/api/fiscal/nfe/${encodeURIComponent(nfe.id)}/retransmitir`, { method: 'POST' });
+      const situacao = ({
+        AUTORIZADO: 'autorizada',
+        PROCESSANDO: 'em processamento',
+        ERRO: 'com erro',
+        CANCELADO: 'cancelada',
+        DENEGADO: 'denegada',
+        INUTILIZADO: 'inutilizada'
+      })[resposta.nfe && resposta.nfe.status] || 'atualizada';
+      const mensagem = resposta.retransmitida
+        ? 'Tentativa de retransmissão concluída.'
+        : 'A referência já estava na Focus NFe; não foi feito um novo envio.';
+      showToast(`${mensagem} Situação atual: ${situacao}.`, situacao === 'com erro' ? 'error' : 'success');
+      await load();
+    } catch (error) {
+      showToast(error.message || 'Erro ao retransmitir a nota.', 'error');
     }
   }
 

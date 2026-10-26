@@ -4,9 +4,10 @@ const fs = require('fs');
 global.window = {};
 (0, eval)(fs.readFileSync(require('path').join(__dirname, '..', 'public/modules/finance/nfe_actions.js'), 'utf8'));
 const A = global.window.MavisNfeActions;
+const serverSrc = fs.readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8');
 
 const base = {
-  escapeHtml: (s) => s, showToast() {}, print() {}, cancelar() {}, duplicar() {}, irParaVenda() {},
+  escapeHtml: (s) => s, showToast() {}, print() {}, cancelar() {}, retransmitir() {}, duplicar() {}, irParaVenda() {},
   baixarArquivo() {}, baixarLote() {}, cartaCorrecao() {}, consultarStatus() {}, statusServico() {},
   limparSelecao() {}
 };
@@ -70,6 +71,24 @@ check('Baixar XML liberado para nota fiscal autorizada', comApi.includes('baixar
 check('Baixar DANFE liberado', comApi.includes('baixar_danfe'));
 check('Carta de Correção liberada', comApi.includes('carta_correcao'));
 check('Cancelamento extemporâneo liberado', comApi.includes('cancelamento_extemporaneo'));
+check('Retransmitir liberado para nota autorizada', comApi.includes('retransmitir'));
+check('Retransmitir liberado para nota em processamento',
+  liberadas({ selecionadas: [nfe({ status: 'processando' })], apiFiscalConfigurada: true }).includes('retransmitir'));
+check('Retransmitir liberado para nota com erro',
+  liberadas({ selecionadas: [nfe({ status: 'erro' })], apiFiscalConfigurada: true }).includes('retransmitir'));
+check('Retransmitir bloqueado sem API',
+  /API fiscal/.test(motivo('retransmitir', { selecionadas: [nfe()], apiFiscalConfigurada: false })));
+check('a rota exige permissão de emissão',
+  /pathname\.endsWith\('\/retransmitir'\)\) return 'emitir'/.test(serverSrc));
+const corpoRetransmissao = serverSrc.match(/async function retransmitirNfeFiscal[\s\S]*?\n\}/);
+check('a rota consulta antes e só envia se a Focus não encontrou a referência',
+  Boolean(corpoRetransmissao)
+  && corpoRetransmissao[0].indexOf('client.consultarNfe') < corpoRetransmissao[0].indexOf('client.emitirNfe')
+  && /Number\(erroConsulta\.status\) !== 404/.test(corpoRetransmissao[0]));
+check('o reenvio usa a mesma referência e o payload fiscal já salvo',
+  Boolean(corpoRetransmissao)
+  && /emitirNfe\(nfe\.referencia, nfe\.payloadEnviado\)/.test(corpoRetransmissao[0])
+  && /emitirNfce\(nfe\.referencia, nfe\.payloadEnviado\)/.test(corpoRetransmissao[0]));
 check('nenhuma ação sobrou sem handler', A.CATALOG.filter((a) => !a.run && !a.enabled).length === 0,
   A.CATALOG.filter((a) => !a.run && !a.enabled).map((a) => a.id).join(', ') || 'todas com run');
 check('Cancelar NFe liberado', comApi.includes('cancelar'));
@@ -80,6 +99,8 @@ check('Ir Para a Venda liberado com vínculo',
 console.log('\n--- 1 NF cancelada ---');
 const cancelada = { selecionadas: [nfe({ status: 'cancelada' })], apiFiscalConfigurada: true };
 check('Cancelar NFe bloqueado', /autorizada/.test(motivo('cancelar', cancelada)), motivo('cancelar', cancelada));
+check('Retransmitir bloqueado para nota cancelada',
+  /já transmitidas ou em processamento/.test(motivo('retransmitir', cancelada)));
 check('impressão continua liberada', liberadas(cancelada).includes('imprimir'));
 
 console.log('\n--- várias NFs selecionadas (comportamento das capturas) ---');
@@ -95,7 +116,7 @@ console.log('\n--- registro manual do Financeiro não é nota da SEFAZ ---');
 // do que dizer o motivo. E o motivo NÃO pode ser "só para autorizada": isso
 // mandaria a pessoa tentar autorizar algo que nunca vai à SEFAZ.
 const soManual = { selecionadas: [manual()], apiFiscalConfigurada: true };
-['baixar_xml', 'baixar_danfe', 'baixar_danfe_untrib', 'carta_correcao', 'cancelamento_extemporaneo'].forEach((id) => {
+['baixar_xml', 'baixar_danfe', 'baixar_danfe_untrib', 'carta_correcao', 'cancelamento_extemporaneo', 'retransmitir'].forEach((id) => {
   const m = motivo(id, soManual);
   check(`${id} bloqueado para nota manual`, Boolean(m), m || 'XX LIBEROU');
   check(`  e o motivo explica que ela não foi à SEFAZ`, /não foi transmitida à SEFAZ/.test(m || ''), (m || '').slice(0, 50));

@@ -89,6 +89,14 @@ window.MavisNfeActions = (function () {
       run: (ctx) => ctx.duplicar(ctx.nfe)
     },
     {
+      id: 'retransmitir', label: 'Retransmitir', icon: ICONS.arrow, scope: 'single',
+      needsApi: true, soFiscal: true,
+      enabled: (ctx) => ['autorizada', 'erro', 'processando'].includes(ctx.nfe.status)
+        ? true
+        : 'Disponível apenas para notas fiscais já transmitidas ou em processamento.',
+      run: (ctx) => ctx.retransmitir(ctx.nfe)
+    },
+    {
       id: 'xml_whatsapp', label: 'Enviar XML via WhatsApp', icon: ICONS.whatsapp, scope: 'single', tone: 'success',
       enabled: () => AGUARDA_INTEGRACAO
     },

@@ -7984,6 +7984,7 @@ function resolveFiscalPermission(pathname, method) {
   if (pathname === '/api/fiscal/acervo/zip') return 'xml';
   if (pathname === '/api/fiscal/acervo/buscar-faltantes') return 'xml';
   if (pathname === '/api/fiscal/nfe/emitir') return 'emitir';
+  if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/retransmitir')) return 'emitir';
   // A prévia é parte de emitir: mesma montagem, sem transmitir (13/10/2026).
   if (pathname === '/api/fiscal/nfe/previa') return 'emitir';
   // A nota em edição salva antes de emitir (fase EL): é parte de emitir.
@@ -9603,6 +9604,7 @@ async function corrigirNfeComErro(id, user, { substituir = false } = {}) {
 const CONSULTA_FOCUS_INTERVALO_MS = 5000;
 const ultimaConsultaFocus = new Map();
 const consultasEmCurso = new Set();
+const retransmissoesEmCurso = new Set();
 
 async function reconsultarNfeNaFocus(id, user) {
   if (consultasEmCurso.has(id)) return;
@@ -9635,6 +9637,69 @@ async function statusDasNfes(ids, user) {
     reconsultarNfeNaFocus(r.id, user).catch((e) => console.error('Falha ao reconsultar NF-e', r.id, e.message));
   });
   return rows.map((r) => ({ id: r.id, status: normalizeNfeStatus(r.status), numero: r.numero || '', serie: r.serie || '' }));
+}
+
+async function retransmitirNfeFiscal(id, user) {
+  const recusar = (mensagem, status = 400) => {
+    const err = new Error(mensagem);
+    err.status = status;
+    throw err;
+  };
+  if (retransmissoesEmCurso.has(id)) recusar('Esta nota já está sendo retransmitida. Aguarde alguns instantes.', 409);
+  retransmissoesEmCurso.add(id);
+  try {
+    let nfe = await fiscalDb.getNfeById(id);
+    if (!nfe) recusar('NF-e não encontrada.', 404);
+    if (!['PROCESSANDO', 'ERRO', 'AUTORIZADO'].includes(nfe.status)) {
+      recusar('Só é possível retransmitir uma nota em processamento, com erro ou autorizada.');
+    }
+    if (!nfe.referencia || !nfe.estabelecimentoId || !nfe.payloadEnviado
+      || typeof nfe.payloadEnviado !== 'object' || Array.isArray(nfe.payloadEnviado)) {
+      recusar('Esta nota não tem referência ou XML salvo para retransmissão.');
+    }
+
+    const nfce = Number(nfe.modelo) === 65;
+    const client = await focusNfe.forEstabelecimento(nfe.estabelecimentoId);
+    try {
+      const existente = nfce
+        ? await client.consultarNfce(nfe.referencia)
+        : await client.consultarNfe(nfe.referencia);
+      nfe = await aplicarRespostaFocusNaNfe(nfe, existente, user);
+      return { nfe, retransmitida: false };
+    } catch (erroConsulta) {
+      if (Number(erroConsulta.status) !== 404) throw erroConsulta;
+    }
+
+    let resposta;
+    try {
+      resposta = nfce
+        ? await client.emitirNfce(nfe.referencia, nfe.payloadEnviado)
+        : await client.emitirNfe(nfe.referencia, nfe.payloadEnviado);
+    } catch (erroDaFocus) {
+      const codigo = String((erroDaFocus.payload && erroDaFocus.payload.codigo) || '');
+      if (Number(erroDaFocus.status) !== 422 || !['already_processed', 'pending_operation'].includes(codigo)) {
+        throw nfce ? explicarErroDaNfce(erroDaFocus) : erroDaFocus;
+      }
+      resposta = nfce
+        ? await client.consultarNfce(nfe.referencia)
+        : await client.consultarNfe(nfe.referencia);
+      nfe = await aplicarRespostaFocusNaNfe(nfe, resposta, user);
+      return { nfe, retransmitida: false };
+    }
+
+    nfe = await aplicarRespostaFocusNaNfe(nfe, resposta, user);
+    await registrarAuditoria({
+      action: nfce ? 'nfe.retransmitidaNfceFiscal' : 'nfe.retransmitidaFiscal',
+      targetId: nfe.id,
+      targetUsername: nfe.referencia,
+      byId: user && user.id,
+      byName: user && user.name,
+      details: { modelo: nfe.modelo, status: nfe.status }
+    });
+    return { nfe, retransmitida: true };
+  } finally {
+    retransmissoesEmCurso.delete(id);
+  }
 }
 
 // EXCLUIR NF-e COM ERRO (14/10/2026, pedido do usuário: "permita o admin
@@ -18360,6 +18425,11 @@ async function tratarRequisicao(req, res) {
         const resultado = await corrigirNfeComErro(id, user, { substituir: body.substituir === true });
         if (resultado.jaHaNotaEmEdicao) return sendJson(res, { error: resultado.pergunta, jaHaNotaEmEdicao: true }, 409);
         return sendJson(res, resultado);
+      }
+
+      if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/retransmitir') && req.method === 'POST') {
+        const id = decodeURIComponent(pathname.replace('/api/fiscal/nfe/', '').replace('/retransmitir', ''));
+        return sendJson(res, await retransmitirNfeFiscal(id, user));
       }
 
       if (pathname.startsWith('/api/fiscal/nfe/') && pathname.endsWith('/cancelar') && req.method === 'POST') {
