@@ -36,7 +36,7 @@ check('o terceiro pedaço do endereço é o pedido',
   && contexto.registroDoEndereco('#/sales/new_sale/ord%2F9') === 'ord/9'
   && contexto.registroDoEndereco('#/sales/new_sale/%E0%A4%A') === '');
 check('gravar a tela leva o pedido aberto junto',
-  /function gravarTelaNoEndereco\(modulo, sub, \{ substituir = false \} = \{\}\) \{\s*const alvo = enderecoDaTela\(modulo, sub\) \+ sufixoDoPedido\(modulo, sub\);/.test(app)
+  /function gravarTelaNoEndereco\(modulo, sub, \{ substituir = false \} = \{\}\) \{\s*const alvo = enderecoDaTela\(modulo, sub\) \+ sufixoDoPedido\(modulo, sub\) \+ sufixoDoLancamentoFinanceiro\(modulo, sub\);/.test(app)
   && /const aberto = modulo === 'sales' && sub === 'new_sale' && state\.salesDraft && state\.salesDraft\.editRecord;/.test(app));
 check('o link de menu continua sem pedido (Nova Venda é venda nova)',
   /function enderecoDaTela\(modulo, sub\) \{[^}]*return `\$\{window\.location\.pathname\}\$\{PREFIXO_DA_TELA\}\$\{m\}\$\{sub \? '\/' \+ encodeURIComponent\(String\(sub\)\) : ''\}`;/.test(app));
@@ -44,7 +44,7 @@ check('ao abrir pelo endereço, a tela do pedido sabe qual é',
   /if \(doEndereco\.module === 'sales' && doEndereco\.sub === 'new_sale'\) state\.pedidoDoEndereco = registroDoEndereco\(\);/.test(app));
 check('o Voltar entre dois pedidos troca de pedido',
   /const mesmoPedido = !\(doEndereco\.module === 'sales' && doEndereco\.sub === 'new_sale'\) \|\| registroDoEndereco\(\) === pedidoAberto;/.test(app)
-  && /&& mesmoPedido\) return;/.test(app));
+  && /&& mesmoPedido && mesmoTitulo\) return;/.test(app));
 
 console.log('\n--- a tela do pedido ---');
 const tela = app.slice(app.indexOf("if (sub === 'new_sale') {"), app.indexOf("if (sub === 'new_sale') {") + 4500);

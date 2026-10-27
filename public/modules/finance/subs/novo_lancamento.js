@@ -7,6 +7,22 @@ const FINANCE_TYPE_TOGGLE = [
   { value: 'TRANSFERENCIA', label: 'Transferência' }
 ];
 
+// O rascunho fica nesta aba: sobrevive ao F5 e à troca de módulo, sem misturar
+// o que está sendo digitado com os dados gravados ou com outra pessoa logada.
+const FINANCE_DRAFT_KEY = 'mavisone:lancamento-financeiro:';
+let guardarRascunhoFinanceiroAtivo = null;
+let avisoFalhaRascunhoFinanceiro = false;
+
+['input', 'change'].forEach((tipo) => {
+  document.addEventListener(tipo, (evento) => {
+    const alvo = evento.target;
+    if (alvo?.closest?.('#financeEntryForm, #financeParcelas')) {
+      setTimeout(() => guardarRascunhoFinanceiroAtivo?.(), 0);
+    }
+  }, true);
+});
+window.addEventListener('pagehide', () => guardarRascunhoFinanceiroAtivo?.());
+
 window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFinanceNovoLancamento(ctx) {
   const { content, api, showToast, state, loadModule, escapeHtml } = ctx;
 
@@ -19,15 +35,35 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   // `resumido`, 548 KB no lugar de 2.818 (169 KB no fio, contra 569).
   const idEmEdicao = state.financeEditEntryId;
   state.financeEditEntryId = null;
+  state.financeOpenedEntryId = idEmEdicao || null;
+  const chaveDoRascunho = `${FINANCE_DRAFT_KEY}${state.user?.id || 'usuario'}:${idEmEdicao || 'novo'}`;
+  let rascunhoSalvo = null;
+  try {
+    const salvo = sessionStorage.getItem(chaveDoRascunho);
+    if (salvo) rascunhoSalvo = JSON.parse(salvo);
+  } catch (error) {
+    if (!avisoFalhaRascunhoFinanceiro) {
+      avisoFalhaRascunhoFinanceiro = true;
+      showToast(`Não foi possível recuperar o rascunho do lançamento: ${error.message || 'armazenamento indisponível.'}`, 'warning');
+    }
+  }
+  const rascunhoDaMemoria = state.financeRascunhoLancamento;
+  const rascunhoInicial = rascunhoDaMemoria && (rascunhoDaMemoria.editId || null) === (idEmEdicao || null)
+    ? rascunhoDaMemoria
+    : rascunhoSalvo;
   // EDIÇÃO DE TÍTULO (14/10/2026) é esta mesma tela com outro nome. Sem título
   // escolhido (F5, "Novo Lançamento" de dentro dela) ela volta a ser a de novo.
   if (state.activeSub === 'edicao_titulo' && !idEmEdicao) {
     state.activeSub = 'novo_lancamento';
+    if (typeof gravarTelaNoEndereco === 'function') {
+      gravarTelaNoEndereco('finance', 'novo_lancamento', { substituir: true });
+    }
     if (typeof renderApp === 'function') renderApp();
   }
   // Vindo de Contas a Pagar / a Receber, o novo nasce no tipo da tela.
   const tipoSugerido = state.financeNovoTipo;
   state.financeNovoTipo = null;
+  content.innerHTML = '<div class="panel"><p>Carregando lançamento...</p></div>';
   const [respostaMeta, respostaEdicao] = await Promise.allSettled([
     api('/api/finance/meta?produtos=0&diretorio=resumido'),
     idEmEdicao ? api(`/api/finance/entries/${idEmEdicao}`) : Promise.resolve(null)
@@ -100,7 +136,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   const podeTrocarEstab = meta.podeTrocarEstabelecimento === true;
   let estabelecimentoAtual = editEntry
     ? (editEntry.estabelecimentoId || '')
-    : (meta.estabelecimentoDoUsuario || '');
+    : (rascunhoInicial?.estabelecimentoAtual ?? meta.estabelecimentoDoUsuario ?? '');
   // O campo so' aparece quando ha' o que dizer: sem estabelecimento cadastrado,
   // ou com a pessoa presa ao seu e sem vinculo nenhum, ele seria um select com
   // uma opcao so' — ruido no formulario mais usado do Financeiro.
@@ -132,7 +168,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     return validos.length === 1 ? validos[0].id : '';
   };
 
-  let formType = editEntry ? String(editEntry.type).toUpperCase() : (tipoSugerido || 'DESPESA');
+  let formType = editEntry ? String(editEntry.type).toUpperCase() : (rascunhoInicial?.formType || tipoSugerido || 'DESPESA');
   // Vinculado a pedido/NF-e: dá para editar, mas só o que a origem não possui.
   // Travar na tela é o que evita o beco sem saída — antes o formulário aceitava
   // tudo e o servidor recusava depois de preenchido.
@@ -666,8 +702,23 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       if (busca) rotulos[id] = busca.value;
     });
     state.financeRascunhoLancamento = {
-      editId: editEntry ? editEntry.id : null, formType, estabelecimentoAtual, campos, rotulos, kind, alvo
+      editId: editEntry ? editEntry.id : null,
+      formType,
+      estabelecimentoAtual,
+      campos,
+      rotulos,
+      parcelas: parcelas.map((parcela) => ({ ...parcela })),
+      kind,
+      alvo
     };
+    try {
+      sessionStorage.setItem(chaveDoRascunho, JSON.stringify(state.financeRascunhoLancamento));
+    } catch (error) {
+      if (!avisoFalhaRascunhoFinanceiro) {
+        avisoFalhaRascunhoFinanceiro = true;
+        showToast(`Não foi possível guardar o rascunho do lançamento: ${error.message || 'armazenamento indisponível.'}`, 'warning');
+      }
+    }
     if (kind === 'category') state.planoDeContasNovo = { type: formType === 'RECEITA' ? 'receita' : 'despesa' };
     if (kind === 'costCenter') state.centroDeCustoNovo = { estabelecimentoIds: estabelecimentoAtual ? [estabelecimentoAtual] : [] };
     if (kind === 'bankAccount') state.cadastroEditBankAccountId = null;
@@ -680,9 +731,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
 
   /** Volta o que estava digitado antes do "+", com o cadastro novo escolhido. */
   function restaurarRascunho() {
-    const r = state.financeRascunhoLancamento;
+    const r = rascunhoInicial;
     if (!r || (r.editId || null) !== (editEntry ? editEntry.id : null)) return;
-    state.financeRascunhoLancamento = null;
+    if (state.financeRascunhoLancamento === r) state.financeRascunhoLancamento = null;
     const form = document.getElementById('financeEntryForm');
     if (!form) return;
     Object.entries(r.campos || {}).forEach(([nome, valor]) => {
@@ -700,10 +751,59 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       parte.value = (r.campos || {}).clientSupplierId || '';
       parteBusca.value = (r.rotulos || {}).financeParty || '';
     }
-    // As parcelas saem de novo dos campos que voltaram (quantidade, intervalo,
-    // vencimento e total); datas e valores acertados à mão na tabela não.
-    gerarParcelas();
+    // As parcelas saem dos campos restaurados; ajustes manuais também ficam no
+    // rascunho, para a volta não recalcular datas ou valores já conferidos.
+    if (Array.isArray(r.parcelas) && r.parcelas.length) {
+      parcelas = r.parcelas.map((parcela) => ({
+        dueDate: String(parcela.dueDate || ''),
+        amount: Number(parcela.amount) || 0
+      }));
+      desenharParcelas();
+    } else {
+      gerarParcelas();
+    }
     if (r.criadoId) showToast('Cadastrado e já escolhido no lançamento.', 'success');
+  }
+
+  function salvarRascunhoFinanceiro() {
+    const form = document.getElementById('financeEntryForm');
+    if (!form) return;
+    const campos = {};
+    [...form.elements].forEach((el) => {
+      if (el.name && !['submit', 'button'].includes(el.type)) campos[el.name] = el.value;
+    });
+    const rotulos = {};
+    ['financeParty', ...Object.keys(CAMPOS_DE_BUSCA)].forEach((id) => {
+      const busca = document.getElementById(`${id}Input`);
+      if (busca) rotulos[id] = busca.value;
+    });
+    const rascunho = {
+      editId: editEntry ? editEntry.id : null,
+      formType,
+      estabelecimentoAtual,
+      campos,
+      rotulos,
+      parcelas: [...document.querySelectorAll('#financeParcelas [data-parcela-data]')].map((campo, indice) => ({
+        dueDate: campo.value,
+        amount: Number(document.querySelector(`#financeParcelas [data-parcela-valor="${indice}"]`)?.value) || 0
+      }))
+    };
+    const rascunhoAtual = state.financeRascunhoLancamento;
+    if (rascunhoAtual && (rascunhoAtual.editId || null) === (editEntry ? editEntry.id : null)) {
+      Object.assign(rascunho, {
+        kind: rascunhoAtual.kind,
+        alvo: rascunhoAtual.alvo,
+        criadoId: rascunhoAtual.criadoId
+      });
+    }
+    try {
+      sessionStorage.setItem(chaveDoRascunho, JSON.stringify(rascunho));
+    } catch (error) {
+      if (!avisoFalhaRascunhoFinanceiro) {
+        avisoFalhaRascunhoFinanceiro = true;
+        showToast(`Não foi possível guardar o rascunho do lançamento: ${error.message || 'armazenamento indisponível.'}`, 'warning');
+      }
+    }
   }
 
   // Fase EI: trocar Receita/Despesa/Transferência leva junto o que já foi
@@ -858,6 +958,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         });
         // As parcelas saem dos campos que acabaram de voltar.
         gerarParcelas();
+        salvarRascunhoFinanceiro();
       });
     });
 
@@ -1040,6 +1141,14 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         } else {
           result = await api('/api/finance/entries', { method: 'POST', body: JSON.stringify(payload) });
         }
+        try {
+          sessionStorage.removeItem(chaveDoRascunho);
+        } catch (error) {
+          if (!avisoFalhaRascunhoFinanceiro) {
+            avisoFalhaRascunhoFinanceiro = true;
+            showToast(`Lançamento salvo, mas não foi possível limpar o rascunho desta aba: ${error.message || 'armazenamento indisponível.'}`, 'warning');
+          }
+        }
         const quantas = Array.isArray(result.entries) ? result.entries.length : 1;
         // A 1ª parcela da entrada de NF-e dá a escolha das outras e encerra a
         // fila (23/10/2026): copia, e segue para o fim (resumo da entrada).
@@ -1092,13 +1201,14 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   if (editEntry && String(editEntry.rawStatus || 'pending') !== 'pending') {
     renderSomenteLeitura(editEntry);
   } else {
-    const rascunho = state.financeRascunhoLancamento;
+    const rascunho = rascunhoInicial;
     if (rascunho && (rascunho.editId || null) === (editEntry ? editEntry.id : null)) {
       if (!editEntry && rascunho.formType) formType = rascunho.formType;
       if (rascunho.estabelecimentoAtual !== undefined) estabelecimentoAtual = rascunho.estabelecimentoAtual;
     }
     renderForm();
     restaurarRascunho();
+    guardarRascunhoFinanceiroAtivo = salvarRascunhoFinanceiro;
   }
 };
 

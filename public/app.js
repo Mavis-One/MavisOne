@@ -161,6 +161,7 @@ function restoreLastRoute() {
 //   - Voltar/Avançar do navegador trocam de tela (popstate, abaixo);
 //   - F5, guia nova e link colado abrem a tela do endereço (a sessão a guia
 //     nova pede às abertas — ver "AS ABAS DO MESMO NAVEGADOR DIVIDEM A SESSÃO");
+//     títulos em edição também levam o id no endereço para sobreviver ao F5;
 //   - menus e blocos são <a href> de verdade (linkDaTela): Ctrl+clique, botão
 //     do meio e "Abrir link em nova guia" funcionam como em qualquer site.
 // Com "#", o servidor não muda: tudo continua sendo a mesma página.
@@ -179,10 +180,14 @@ function linkDaTela(modulo, sub) {
 function telaDoEndereco(hash = window.location.hash) {
   const texto = String(hash || '');
   if (!texto.startsWith(PREFIXO_DA_TELA)) return null;
-  const [modulo, sub] = texto.slice(PREFIXO_DA_TELA.length).split('/');
+  const [modulo, sub, registro] = texto.slice(PREFIXO_DA_TELA.length).split('/');
   if (!modulo) return null;
   try {
-    return { module: decodeURIComponent(modulo), sub: sub ? decodeURIComponent(sub) : null };
+    return {
+      module: decodeURIComponent(modulo),
+      sub: sub ? decodeURIComponent(sub) : null,
+      recordId: registro ? decodeURIComponent(registro) : ''
+    };
   } catch (_) {
     return null;
   }
@@ -195,7 +200,7 @@ function telaDoEndereco(hash = window.location.hash) {
  * lista de vendas guarda no endereço.
  */
 function gravarTelaNoEndereco(modulo, sub, { substituir = false } = {}) {
-  const alvo = enderecoDaTela(modulo, sub) + sufixoDoPedido(modulo, sub);
+  const alvo = enderecoDaTela(modulo, sub) + sufixoDoPedido(modulo, sub) + sufixoDoLancamentoFinanceiro(modulo, sub);
   const atual = window.location.pathname + window.location.hash;
   const passo = Number((window.history.state && window.history.state.mavisPasso) || 0);
   try {
@@ -235,6 +240,13 @@ function registroDoEndereco(hash = window.location.hash) {
 function sufixoDoPedido(modulo, sub) {
   const aberto = modulo === 'sales' && sub === 'new_sale' && state.salesDraft && state.salesDraft.editRecord;
   return aberto && aberto.id ? `/${encodeURIComponent(aberto.id)}` : '';
+}
+
+function sufixoDoLancamentoFinanceiro(modulo, sub) {
+  const id = modulo === 'finance' && sub === 'edicao_titulo'
+    ? state.financeEditEntryId || state.financeOpenedEntryId
+    : '';
+  return id ? `/${encodeURIComponent(id)}` : '';
 }
 
 /** A tela do pedido corrige o endereço para o pedido que ela abriu (ou nenhum). */
@@ -299,6 +311,10 @@ function aplicarTelaDoEndereco() {
   state.selectedModule = getSecondarySidebarConfig(doEndereco.module) ? doEndereco.module : null;
   // O pedido do endereço ('' = venda nova): a tela do pedido o lê uma vez.
   if (doEndereco.module === 'sales' && doEndereco.sub === 'new_sale') state.pedidoDoEndereco = registroDoEndereco();
+  if (doEndereco.module === 'finance' && doEndereco.sub === 'edicao_titulo') {
+    state.financeEditEntryId = doEndereco.recordId || null;
+    state.financeOpenedEntryId = doEndereco.recordId || null;
+  }
   return true;
 }
 
@@ -311,7 +327,9 @@ window.addEventListener('popstate', () => {
   // Na tela do pedido, outro pedido no endereço também é outra tela.
   const pedidoAberto = (state.salesDraft && state.salesDraft.editRecord && state.salesDraft.editRecord.id) || '';
   const mesmoPedido = !(doEndereco.module === 'sales' && doEndereco.sub === 'new_sale') || registroDoEndereco() === pedidoAberto;
-  if (doEndereco.module === state.activeModule && (doEndereco.sub || null) === (state.activeSub || null) && mesmoPedido) return;
+  const mesmoTitulo = !(doEndereco.module === 'finance' && doEndereco.sub === 'edicao_titulo')
+    || doEndereco.recordId === (state.financeOpenedEntryId || '');
+  if (doEndereco.module === state.activeModule && (doEndereco.sub || null) === (state.activeSub || null) && mesmoPedido && mesmoTitulo) return;
   state.isNavigatingBack = true;
   if (!aplicarTelaDoEndereco()) gravarTelaNoEndereco(state.activeModule, state.activeSub, { substituir: true });
   renderApp();
@@ -3096,6 +3114,11 @@ async function loadModule(moduleName) {
     return;
   }
 
+  if (moduleName !== 'finance' || state.activeSub !== 'edicao_titulo') {
+    state.financeOpenedEntryId = null;
+  } else if (state.financeEditEntryId) {
+    state.financeOpenedEntryId = state.financeEditEntryId;
+  }
   trackRouteChange(moduleName, state.activeSub);
   syncBackButtonState();
   // Tela nova: nada digitado nela ainda (ver dados_ao_vivo.js).
