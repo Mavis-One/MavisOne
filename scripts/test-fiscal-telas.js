@@ -24,6 +24,7 @@ const serverSrc = ler('server.js');
 const indexSrc = ler('public/index.html');
 const espelhoSrc = ler('public/modules/fiscal/subs/nfe_espelho.js');
 const nfeEmitidasSrc = ler('public/modules/finance/subs/nfe_emitidas.js');
+const eventosSrc = ler('public/modules/fiscal/subs/eventos.js');
 
 function extrairConst(nome) {
   const i = appSrc.indexOf(`const ${nome} = {`);
@@ -207,7 +208,10 @@ check('o corpo da função foi recortado de verdade', inicioFn >= 0 && fimFn > 2
 const corpoFn = corpo.slice(0, fimFn + 2);
 check('NÃO filtra por nfe_id (senão a inutilização some de novo)', !/eq\(['"]nfe_id/.test(corpoFn));
 check('filtra por estabelecimento', /eq\('estabelecimento_id'/.test(corpoFn));
+check('filtro de estabelecimento é opcional para consultar todos', /if \(estabelecimentoId\) query = query\.eq\('estabelecimento_id'/.test(corpoFn));
 check('traz a nota embutida numa consulta só', /nfe\(/.test(corpoFn));
+check('inclui protocolo de autorização da NF-e para o PDF da carta', /chave_acesso, protocolo, status/.test(corpoFn)
+  && /protocolo: row\.nfe\.protocolo/.test(corpoFn));
 
 console.log('\n--- a rota de eventos existe e pede a permissão certa ---');
 check('rota GET /api/fiscal/eventos', serverSrc.includes("pathname === '/api/fiscal/eventos' && req.method === 'GET'"));
@@ -216,6 +220,15 @@ check('resolve para fiscal.visualizar', serverSrc.includes("if (pathname === '/a
 // filtro", e não um filtro que não casa com nada.
 check('o tipo do filtro é validado contra a lista da tabela',
   /\['CCE', 'CANCELAMENTO', 'INUTILIZACAO'\]\.includes/.test(serverSrc));
+check('a tela consulta eventos sem exigir um estabelecimento',
+  /new URLSearchParams\(\)/.test(eventosSrc) && !/new URLSearchParams\(\{ estabelecimentoId:/.test(eventosSrc));
+check('a tela carrega também os nomes de estabelecimentos inativos',
+  /api\('\/api\/fiscal\/estabelecimentos'\)/.test(eventosSrc) && !/F\.carregarEstabelecimentos\(ctx\)/.test(eventosSrc));
+check('a tela identifica o estabelecimento em cada evento',
+  /<th>Estabelecimento<\/th>/.test(eventosSrc) && /nomePorId\.get\(ev\.estabelecimentoId\)/.test(eventosSrc));
+check('Carta de Correção oferece PDF com cabeçalho fiscal',
+  /Baixar Carta de Correção \(PDF\)/.test(eventosSrc) && /CARTA DE CORREÇÃO ELETRÔNICA/.test(eventosSrc)
+    && /Chave de acesso/.test(eventosSrc) && /TEXTO DA CORREÇÃO/.test(eventosSrc));
 
 console.log('\n--- a tela de inutilizar repete as regras da SEFAZ ---');
 const inutSrc = ler('public/modules/fiscal/subs/inutilizar.js');
