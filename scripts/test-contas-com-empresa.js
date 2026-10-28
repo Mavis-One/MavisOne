@@ -30,8 +30,10 @@ const receber = catalogo.relatorio('contas-a-receber');
 
 console.log('--- as colunas ---');
 const ordem = (def) => def.colunas.map((c) => c.campo).join('/');
-check('a pagar: vencimento/código/empresa/fornecedor/categoria/conta/banco/situação/valor/pago/aberto',
-  ordem(pagar) === 'vencimento/codigo/empresa/pessoa/categoria/conta/banco/situacao/valor/pago/emAberto', ordem(pagar));
+// A forma de pagamento depois do banco (28/10/2026: "os relatórios de contas,
+// quando encaminhados para PDF, me mostrem a forma de pagamento").
+check('a pagar: vencimento/código/empresa/fornecedor/categoria/conta/banco/forma/situação/valor/pago/aberto',
+  ordem(pagar) === 'vencimento/codigo/empresa/pessoa/categoria/conta/banco/forma/situacao/valor/pago/emAberto', ordem(pagar));
 check('a receber: a mesma ordem, com o cliente', ordem(receber) === ordem(pagar) && receber.colunas.find((c) => c.campo === 'pessoa').rotulo === 'Cliente');
 check('sem a descrição', !pagar.colunas.some((c) => c.campo === 'descricao') && !receber.colunas.some((c) => c.campo === 'descricao'));
 check('Títulos Pagos herda (sem descrição, com a empresa)', (() => {
@@ -43,7 +45,7 @@ console.log('\n--- a empresa de cada título ---');
 const CONTAS = [{ id: 'c1', name: 'ITAU PLUS', bank: 'Itaú', bankCode: '341' }];
 const LINHAS = [
   { id: 'e1', codigo: 1, vencimento: '2026-10-20', emissao: '2026-10-01', pessoa: 'CLARO', categoria: 'TELEFONE', conta_id: 'c1', conta: 'ITAU PLUS', status: 'pending', vencida: false, valor: '57.89', pago_total: '0', pago_periodo: '0', data_pagamento: null, estabelecimento_id: null, nfe_id: null, reference_id: null, conta_do_lancamento: 'c1' },
-  { id: 'e2', codigo: 2, vencimento: '2026-10-20', emissao: '2026-10-01', pessoa: 'FGTS', categoria: 'FGTS', conta_id: 'c1', conta: 'ITAU PLUS', status: 'pending', vencida: false, valor: '100', pago_total: '0', pago_periodo: '0', data_pagamento: null, estabelecimento_id: 'est-1', nfe_id: null, reference_id: null, conta_do_lancamento: 'c1' }
+  { id: 'e2', codigo: 2, vencimento: '2026-10-20', emissao: '2026-10-01', pessoa: 'FGTS', categoria: 'FGTS', forma: 'BOLETO', conta_id: 'c1', conta: 'ITAU PLUS', status: 'pending', vencida: false, valor: '100', pago_total: '0', pago_periodo: '0', data_pagamento: null, estabelecimento_id: 'est-1', nfe_id: null, reference_id: null, conta_do_lancamento: 'c1' }
 ];
 (async () => {
   const pedidos = [];
@@ -58,6 +60,8 @@ const LINHAS = [
   check('a regra recebe os títulos com estabelecimento, nota, pedido e conta',
     pedidos.length === 1 && JSON.stringify(pedidos[0][1]) === JSON.stringify({ id: 'e2', estabelecimentoId: 'est-1', nfeId: '', referenceId: '', bankAccountId: 'c1' }));
   check('a empresa na linha, com o nome curto', r.linhas.map((l) => l.empresa).join(' | ') === 'SAL INFINITY PLUS | SAL INFINITY ELECTRIC', r.linhas.map((l) => l.empresa).join(' | '));
+  check('a forma de pagamento do título na linha (sem ela, vazia)', r.linhas.map((l) => l.forma).join('|') === '|BOLETO', r.linhas.map((l) => l.forma).join('|'));
+  check('  lida do próprio lançamento', /coalesce\(e\.payment_method_name, ''\) as forma/.test(fs.readFileSync(path.join(__dirname, '..', 'lib/relatorios/financeiro.js'), 'utf8')));
   const semRegra = await motor.executar(pagar, motor.normalizarFiltros(pagar, {}, '2026-10-20T10:00:00Z'), { sql });
   check('sem a regra (outro chamador), a coluna sai vazia, sem erro', semRegra.linhas.every((l) => l.empresa === ''));
 
