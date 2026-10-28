@@ -420,10 +420,32 @@ iniciosDeRota.forEach((de, n) => {
   });
 });
 // Fora das rotas: um helper que chame um carregador parcial esconderia a rota
-// de cima. Hoje nenhum chama; o dia em que um chamar, ele entra aqui revisado.
+// de cima. Quem chama entra aqui revisado, com as rotas que o chamam.
 // (O despachante, que contém as rotas, não conta: as rotas já foram vistas.)
+const HELPERS_REVISADOS = {
+  // 28/10/2026: a conciliação automática lê os títulos em aberto e as baixas
+  // deles (syncLancamentosEmAberto, o universo das sugestões de conciliação) e
+  // grava baixas novas; relê o db.json antes de gravar. Chamada no fim da
+  // importação do extrato e pelo botão "Conciliar automático".
+  conciliarAutomaticamente: ['/api/finance/bank-transactions/import POST', '/api/finance/bank-transactions/conciliar-automatico POST']
+};
+const chamadoresDe = (helper) => {
+  const rotas = new Set();
+  iniciosDeRota.forEach((de, n) => {
+    const ate = n + 1 < iniciosDeRota.length ? iniciosDeRota[n + 1] : linhas.length;
+    const corpo = linhas.slice(de, ate).filter((l) => !ehComentario(l)).join('\n');
+    if (corpo.includes(`${helper}(`)) rotas.add(rotaNormalizada(linhas[de]));
+  });
+  return [...rotas];
+};
+Object.entries(HELPERS_REVISADOS).forEach(([helper, rotas]) => {
+  const chamadores = chamadoresDe(helper);
+  check(`${helper} (revisado): só nas rotas conferidas`,
+    chamadores.length === rotas.length && chamadores.every((r) => rotas.includes(r)), chamadores.join(' ; '));
+});
 const helpersComParcial = [...FUNCOES.keys()]
   .filter((nome) => !Object.prototype.hasOwnProperty.call(PARCIAIS, nome))
+  .filter((nome) => !Object.prototype.hasOwnProperty.call(HELPERS_REVISADOS, nome))
   .filter((nome) => {
     const ini = linhas.findIndex((l) => l.startsWith(`function ${nome}(`) || l.startsWith(`async function ${nome}(`));
     if (ini < 0) return false;

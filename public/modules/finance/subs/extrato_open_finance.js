@@ -241,10 +241,48 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     }
   }
 
+  // CONCILIAR AUTOMÁTICO (28/10/2026, pedido do usuário: "a conciliação deve
+  // ocorrer com os dados batendo, empresa, fornecedor, valores e datas"). Vale
+  // para as não conciliadas do filtro da tela; o servidor só concilia quando
+  // tudo bate e o valor é único dos dois lados (lib/conciliacao-automatica.js).
+  async function conciliarAutomatico(botao) {
+    if (botao.disabled) return;
+    const confirmed = await confirmModal('Conciliar automaticamente as movimentações não conciliadas do filtro atual? '
+      + 'Só entram as que têm empresa, fornecedor, valor e data batendo com um único título em aberto.');
+    if (!confirmed) return;
+    botao.disabled = true;
+    try {
+      const resultado = await api('/api/finance/bank-transactions/conciliar-automatico', {
+        method: 'POST',
+        body: JSON.stringify({ filtros: filters })
+      });
+      const ficaram = resultado.analisadas - resultado.conciliadas;
+      const principal = (resultado.motivos || [])[0];
+      showToast(
+        `${resultado.conciliadas} de ${resultado.analisadas} movimentação(ões) conciliada(s) automaticamente.`
+        + (ficaram ? ` ${ficaram} ficaram para conciliar à mão${principal ? ` (a maioria: ${principal.motivo})` : ''}.` : ''),
+        resultado.conciliadas ? 'success' : 'info'
+      );
+      load();
+    } catch (error) {
+      showToast(error.message || 'Erro na conciliação automática.', 'error');
+    } finally {
+      botao.disabled = false;
+    }
+  }
+
   function linhaDaTransacao(tx) {
     const marcada = selecionadas.has(tx.id);
     const sync = tx.source === 'open_finance';
     const conciliadoCom = tx.matchedEntryDescription || 'Ver lançamento';
+    // Vários títulos (28/10/2026): "3 títulos", e cada um com o valor no title.
+    const varios = Array.isArray(tx.conciliacoes) && tx.conciliacoes.length > 1;
+    const tituloDoVinculo = varios
+      ? tx.conciliacoes.map((c) => `${c.description || c.entryId}: ${financeFormatBRL(c.valor)}`).join('\n')
+      : conciliadoCom;
+    const selo = tx.conciliadoAutomaticamente
+      ? ' <span class="finance-badge finance-badge-info" title="Conciliada automaticamente: empresa, fornecedor, valor e data batem">Auto</span>'
+      : '';
     // DESCRIÇÃO CORTADA, INTEIRA NO TÍTULO (fase EI). `.table td` não quebra
     // linha, e a descrição do OFX vem do MEMO inteiro ("PIX RECEBIDO - NOME -
     // CPF - BANCO AG CC"): a tabela passava da tela e Valor, Status e Ações
@@ -258,8 +296,8 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         <td class="col-valor ${tx.type === 'entrada' ? 'finance-positive' : 'finance-negative'}">${tx.type === 'entrada' ? '+' : '-'} ${escapeHtml(financeFormatBRL(tx.amount))}</td>
         <td>${tx.type === 'entrada' ? 'Entrada' : 'Saída'}</td>
         <td>${escapeHtml(tx.bankAccountName || '-')}</td>
-        <td>${bankTxStatusBadge(tx.status)}</td>
-        <td>${tx.matchedEntryId ? `<span class="finance-clickable-row texto-cortado is-curto" data-view-entry="${escapeHtml(tx.matchedEntryId)}" title="${escapeHtml(conciliadoCom)}">${escapeHtml(conciliadoCom)}</span>` : '<span class="muted">-</span>'}</td>
+        <td>${bankTxStatusBadge(tx.status)}${selo}</td>
+        <td>${tx.matchedEntryId ? `<span class="finance-clickable-row texto-cortado is-curto" data-view-entry="${escapeHtml(tx.matchedEntryId)}" title="${escapeHtml(tituloDoVinculo)}">${escapeHtml(conciliadoCom)}</span>` : '<span class="muted">-</span>'}</td>
         <td class="finance-extrato-actions">
           ${tx.status === 'nao_conciliado' ? `
             <button type="button" class="secondary" data-conciliar="${escapeHtml(tx.id)}">Conciliar</button>
@@ -294,6 +332,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         <div class="cadastro-list-actions">
           <button type="button" id="extratoNewBtn">+ Nova movimentação</button>
           <button type="button" class="secondary" id="extratoImportBtn">Importar extrato (OFX/CSV)</button>
+          <button type="button" class="secondary" id="extratoAutoBtn" title="Concilia sozinho o que tem empresa, fornecedor, valor e data batendo, com valor único (um título e uma movimentação com esse valor)">Conciliar automático</button>
           <button type="button" class="secondary" id="extratoRefreshBtn">Atualizar</button>
         </div>
       </div>
@@ -490,6 +529,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     document.getElementById('extratoRefreshBtn')?.addEventListener('click', () => load());
     document.getElementById('extratoNewBtn')?.addEventListener('click', openNewTransactionModal);
     document.getElementById('extratoImportBtn')?.addEventListener('click', openImportModal);
+    document.getElementById('extratoAutoBtn')?.addEventListener('click', (event) => conciliarAutomatico(event.currentTarget));
 
     document.getElementById('extratoFilterForm')?.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -761,6 +801,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         showToast(
           `${result.count} movimentação(ões) importada(s)`
           + (result.repetidas ? `, ${result.repetidas} já existia(m)` : '')
+          + (result.conciliadasAutomaticamente ? `, ${result.conciliadasAutomaticamente} conciliada(s) automaticamente` : '')
           + (result.skipped ? `, ${result.skipped} linha(s) inválida(s) ignorada(s)` : '')
           + '.',
           result.count === 0 && result.repetidas ? 'info' : 'success'
@@ -821,6 +862,17 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     // (conciliacoesEmAndamento); esta evita até o pedido.
     let enviando = false;
 
+    // UM PAGAMENTO, VÁRIOS TÍTULOS (28/10/2026, pedido do usuário: "um valor
+    // de pagamento através do arquivo OFX pode descontar de vários lançamentos
+    // diferentes"). Os marcados em "Juntar" ficam aqui com o valor que a
+    // movimentação baixa de cada um, e continuam marcados quando a busca ou o
+    // filtro redesenham as listas. O valor começa no esperado no extrato (o
+    // líquido, no cartão), até o que falta para fechar a movimentação.
+    const centavos = (v) => Math.round(Number(v || 0) * 100);
+    const juntos = new Map();
+    const vistos = new Map();
+    const somaDosJuntos = () => [...juntos.values()].reduce((soma, j) => soma + centavos(j.valor), 0);
+
     const empresaDoTitulo = (m) => {
       if (!m.empresaNome && !m.empresaCnpj) return '-';
       const cnpj = cnpjFormatado(m.empresaCnpj);
@@ -835,6 +887,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         </div>
         <div class="finance-due-item-amount">
           ${financeFormatBRL(m.remaining)}
+          <label class="muted" title="Marque vários para a movimentação baixar todos (um pagamento, vários títulos)"><input type="checkbox" data-juntar="${escapeHtml(m.id)}" ${juntos.has(m.id) ? 'checked' : ''} /> Juntar</label>
           <button type="button" class="secondary" data-match-entry="${escapeHtml(m.id)}" ${enviando ? 'disabled' : ''}>Conciliar com este</button>
         </div>
       </div>`;
@@ -867,6 +920,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
             </select>
           </label>
         </div>
+        <div class="panel" id="extratoJuntos" hidden></div>
         <div class="finance-due-list" id="extratoMatchesList"></div>
 
         <h4 style="margin-top:16px;">Buscar manualmente</h4>
@@ -886,7 +940,90 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
 
     const botoesDeConciliar = (desligar) => {
       overlay.querySelectorAll('[data-match-entry]').forEach((b) => { b.disabled = desligar; });
+      atualizarSomaDosJuntos();
     };
+
+    // A soma e o botão, sem redesenhar o quadro (o campo em edição não perde o foco).
+    function atualizarSomaDosJuntos() {
+      const alvo = centavos(tx.amount);
+      const soma = somaDosJuntos();
+      const diferenca = alvo - soma;
+      const texto = document.getElementById('extratoJuntosSoma');
+      if (texto) {
+        texto.className = diferenca ? 'finance-negative' : 'finance-positive';
+        texto.textContent = `Soma ${financeFormatBRL(soma / 100)} de ${financeFormatBRL(alvo / 100)}`
+          + (diferenca ? ` · ${diferenca > 0 ? 'faltam' : 'sobram'} ${financeFormatBRL(Math.abs(diferenca) / 100)}` : '');
+      }
+      const botao = document.getElementById('extratoConciliarJuntos');
+      if (botao) botao.disabled = enviando || Boolean(diferenca) || !juntos.size;
+    }
+
+    function desenharJuntos() {
+      const area = document.getElementById('extratoJuntos');
+      if (!area) return;
+      area.hidden = !juntos.size;
+      if (!juntos.size) { area.innerHTML = ''; return; }
+      area.innerHTML = `
+        <h4>Um pagamento, vários títulos</h4>
+        <p class="muted">A movimentação de ${escapeHtml(financeFormatBRL(tx.amount))} baixa os títulos marcados, cada um pelo valor ao lado. A soma tem de ser igual à movimentação.</p>
+        ${[...juntos.values()].map(({ m, valor }) => `
+          <div class="finance-due-item">
+            <div>
+              <strong>${escapeHtml(m.description)}</strong>
+              <div class="muted">${escapeHtml(m.clienteFornecedor || '-')} · Vencimento: ${escapeHtml(financeFormatDate(m.dueDate))} · Em aberto: ${escapeHtml(financeFormatBRL(m.remaining))}</div>
+            </div>
+            <div class="finance-due-item-amount">
+              <input type="number" min="0.01" step="0.01" data-valor-junto="${escapeHtml(m.id)}" value="${(centavos(valor) / 100).toFixed(2)}" style="width:120px" aria-label="Valor a baixar deste título" />
+              <button type="button" class="btn-muted" data-tirar-junto="${escapeHtml(m.id)}">Tirar</button>
+            </div>
+          </div>`).join('')}
+        <div class="modal-actions">
+          <span id="extratoJuntosSoma"></span>
+          <button type="button" class="btn" id="extratoConciliarJuntos">Conciliar com os ${juntos.size} marcados</button>
+        </div>`;
+      area.querySelectorAll('[data-valor-junto]').forEach((input) => {
+        input.addEventListener('input', () => {
+          const junto = juntos.get(input.dataset.valorJunto);
+          if (junto) junto.valor = Number(input.value) || 0;
+          atualizarSomaDosJuntos();
+        });
+      });
+      area.querySelectorAll('[data-tirar-junto]').forEach((btn) => {
+        btn.addEventListener('click', () => marcarJunto(btn.dataset.tirarJunto, false));
+      });
+      document.getElementById('extratoConciliarJuntos')?.addEventListener('click', doConciliarJuntos);
+      atualizarSomaDosJuntos();
+    }
+
+    function marcarJunto(id, marcar) {
+      if (marcar && !juntos.has(id) && vistos.has(id)) {
+        const m = vistos.get(id);
+        const falta = centavos(tx.amount) - somaDosJuntos();
+        const esperado = centavos(m.esperado !== undefined ? m.esperado : m.remaining);
+        juntos.set(id, { m, valor: (falta > 0 ? Math.min(esperado, falta) : esperado) / 100 });
+      } else if (!marcar) {
+        juntos.delete(id);
+      }
+      overlay.querySelectorAll(`[data-juntar="${CSS.escape(id)}"]`).forEach((caixa) => { caixa.checked = juntos.has(id); });
+      desenharJuntos();
+    }
+
+    async function doConciliarJuntos() {
+      if (enviando || !juntos.size || somaDosJuntos() !== centavos(tx.amount)) return;
+      enviando = true;
+      botoesDeConciliar(true);
+      try {
+        const itens = [...juntos.values()].map(({ m, valor }) => ({ entryId: m.id, valor: centavos(valor) / 100 }));
+        await api(`/api/finance/bank-transactions/${txId}/conciliar`, { method: 'POST', body: JSON.stringify({ itens }) });
+        showToast(`Movimentação conciliada com ${itens.length} título(s).`, 'success');
+        closeExtratoModal();
+        load();
+      } catch (error) {
+        showToast(error.message || 'Erro ao conciliar.', 'error');
+        enviando = false;
+        botoesDeConciliar(false);
+      }
+    }
 
     async function doConciliar(entryId) {
       if (enviando) return;
@@ -906,9 +1043,13 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
 
     const desenhar = (container, lista, vazio) => {
       if (!container) return;
+      lista.forEach((m) => vistos.set(m.id, m));
       container.innerHTML = lista.length ? lista.map(itemDoTitulo).join('') : `<p class="muted">${vazio}</p>`;
       container.querySelectorAll('[data-match-entry]').forEach((btn) => {
         btn.addEventListener('click', () => doConciliar(btn.dataset.matchEntry));
+      });
+      container.querySelectorAll('[data-juntar]').forEach((caixa) => {
+        caixa.addEventListener('change', () => marcarJunto(caixa.dataset.juntar, caixa.checked));
       });
     };
     const desenharSugestoes = (lista) => desenhar(document.getElementById('extratoMatchesList'), lista, 'Nenhuma correspondência automática encontrada.');

@@ -184,6 +184,8 @@ const listaDeLancamentos = require('./public/modules/shared/lancamentos_lista');
 // Fase EI: a Conciliação Bancária — data da linha importada, ordem da lista e
 // os cartões de resumo. Ver o cabeçalho do arquivo.
 const extratoBancario = require('./lib/extrato-bancario');
+// A conciliação automática do extrato (28/10/2026). Ver o cabeçalho do arquivo.
+const conciliacaoAutomatica = require('./lib/conciliacao-automatica');
 // Fase AS: categoria da VENDA (Varejo, Atacado, Bonificacao) — nao a do produto.
 const categoriasVendaDb = require('./lib/db/categorias-venda');
 // Fase AZ: origem da VENDA (Balcao, Televendas, E-commerce). Era uma lista
@@ -2415,9 +2417,10 @@ function resolveFinanceCounterpartyDocument(entry, data) {
 }
 
 // Score nomeado de conciliação (seção 17-18 do documento de Open Finance):
-// puramente informativo pra ordenar/destacar candidatos na tela — a regra de
-// ouro continua sendo que NENHUM score, por mais alto que seja, concilia
-// sozinho. O clique do usuário é sempre obrigatório (ver rota /conciliar).
+// puramente informativo pra ordenar/destacar candidatos na tela — NENHUM
+// score, por mais alto que seja, concilia sozinho. O que concilia sem clique
+// (28/10/2026, a pedido do usuário) é a regra de lib/conciliacao-automatica.js:
+// empresa, fornecedor, valor e data batendo, com valor único dos dois lados.
 function scoreBankTransactionMatch({ amountDiff, daysDiff, remaining, nameMatch, documentMatch }) {
   const exactAmount = amountDiff < 0.01;
   const amountToleranceRelativa = remaining > 0 ? amountDiff / remaining <= 0.02 : false;
@@ -6163,6 +6166,9 @@ function ordenarNfes(list, query) {
 
 function serializeBankTransaction(tx, data) {
   const matchedEntry = tx.matchedEntryId ? (data.finance || []).find((entry) => entry.id === tx.matchedEntryId) : null;
+  // Os títulos que ela baixou, quando são vários (28/10/2026).
+  const conciliacoes = conciliacoesDaTransacao(tx);
+  const varios = conciliacoes.length > 1;
   return {
     id: tx.id,
     bankAccountId: tx.bankAccountId || '',
@@ -6173,7 +6179,12 @@ function serializeBankTransaction(tx, data) {
     type: tx.type,
     status: tx.status,
     matchedEntryId: tx.matchedEntryId || '',
-    matchedEntryDescription: matchedEntry ? matchedEntry.description : '',
+    matchedEntryDescription: varios ? `${conciliacoes.length} títulos` : (matchedEntry ? matchedEntry.description : ''),
+    conciliacoes: varios ? conciliacoes.map((c) => {
+      const entry = (data.finance || []).find((item) => item.id === c.entryId);
+      return { entryId: c.entryId, valor: Number(c.valor || 0), description: entry ? entry.description : '' };
+    }) : [],
+    conciliadoAutomaticamente: Boolean(tx.conciliadoAutomaticamente),
     source: tx.source || 'manual',
     createdByName: tx.createdByName || '',
     createdAt: tx.createdAt || ''
@@ -6243,6 +6254,184 @@ function filterBankTransactions(data, query) {
 // (Desconciliar só apaga uma). O servidor roda num processo só (PM2 em fork,
 // instances: 1), então um Set em memória vale para todas as requisições.
 const conciliacoesEmAndamento = new Set();
+
+// OS TÍTULOS DE UMA MOVIMENTAÇÃO CONCILIADA (28/10/2026, pedido do usuário: "um
+// valor de pagamento através do arquivo OFX pode descontar de vários
+// lançamentos diferentes"). Com um título, a movimentação guarda só
+// matchedEntryId/matchedPaymentId, como sempre; com vários, guarda também
+// `conciliacoes` ({ entryId, paymentId, valor }), e o matched* aponta para o
+// primeiro. Quem lê a conciliação lê por aqui.
+function conciliacoesDaTransacao(tx) {
+  if (Array.isArray(tx.conciliacoes) && tx.conciliacoes.length) return tx.conciliacoes;
+  return tx.matchedEntryId ? [{ entryId: tx.matchedEntryId, paymentId: tx.matchedPaymentId || '', valor: Number(tx.amount || 0) }] : [];
+}
+
+/**
+ * BAIXA OS TÍTULOS QUE A MOVIMENTAÇÃO PAGA — um por item ({ entry, valor }),
+ * cada um com a sua baixa. Quem chama já conferiu tipo, saldo e soma. Se uma
+ * baixa falhar no meio, as já gravadas saem: ou a movimentação concilia com
+ * todos, ou com nenhum. Devolve as conciliações para marcarConciliada.
+ */
+async function baixarTitulosDaTransacao(data, tx, itens, user, { automatico = false } = {}) {
+  const criadas = [];
+  const sufixo = itens.length > 1 ? `, um de ${itens.length} títulos` : '';
+  try {
+    for (const { entry, valor } of itens) {
+      const taxaDoCartao = descontoDaTaxaDoCartao(entry, getFinanceEntryPayments(data, entry.id), valor);
+      const payment = await db.createFinancialPayment({
+        entryId: entry.id,
+        amount: valor,
+        date: tx.date,
+        bankAccountId: tx.bankAccountId,
+        interest: 0,
+        fine: 0,
+        // A taxa da maquininha, quando o crédito é exatamente o líquido. Sem
+        // ela o título ficava "parcial" com a taxa em aberto para sempre.
+        discount: taxaDoCartao,
+        note: (automatico
+          ? `Conciliado automaticamente pelo Extrato (transação ${String(tx.id).slice(-8)}${sufixo}): empresa, fornecedor, valor e data batem.`
+          : `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)}${sufixo})`)
+          + (taxaDoCartao > 0 ? ` Taxa da credenciadora (${entry.feePercent}%) abatida como desconto.` : ''),
+        createdBy: user.id,
+        createdByName: user.name
+      });
+      data.financialPayments.push(payment);
+      criadas.push({ entry, payment, valor });
+    }
+  } catch (erro) {
+    for (const { payment } of criadas) {
+      await db.deleteFinancialPayment(payment.id).catch(() => {});
+      data.financialPayments = data.financialPayments.filter((p) => p.id !== payment.id);
+    }
+    throw erro;
+  }
+  for (const { entry, payment, valor } of criadas) {
+    entry.status = recomputeFinanceEntryStatus(entry, data);
+    entry.updatedAt = new Date().toISOString();
+    await db.updateFinancialEntry(entry.id, { status: entry.status });
+    await addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount: valor, origem: automatico ? 'conciliacao_automatica' : 'conciliacao', transacaoId: tx.id } });
+  }
+  const conciliacoes = criadas.map(({ entry, payment, valor }) => ({ entryId: entry.id, paymentId: payment.id, valor }));
+  await addFinanceAuditLog(data, {
+    action: 'conciliarTransacao',
+    entry: { id: tx.id, description: `Transação ${String(tx.id).slice(-8)} · ${tx.description}` },
+    byId: user.id,
+    byName: user.name,
+    details: {
+      entryId: conciliacoes[0].entryId,
+      ...(conciliacoes.length > 1 ? { entryIds: conciliacoes.map((c) => c.entryId) } : {}),
+      ...(automatico ? { automatico: true, regra: 'empresa, fornecedor, valor e data batem; valor único dos dois lados' } : {})
+    }
+  });
+  return conciliacoes;
+}
+
+function marcarConciliada(tx, conciliacoes, { automatico = false } = {}) {
+  tx.status = 'conciliado';
+  tx.matchedEntryId = conciliacoes[0].entryId;
+  tx.matchedPaymentId = conciliacoes[0].paymentId;
+  if (conciliacoes.length > 1) tx.conciliacoes = conciliacoes;
+  else delete tx.conciliacoes;
+  if (automatico) tx.conciliadoAutomaticamente = true;
+  else delete tx.conciliadoAutomaticamente;
+  tx.updatedAt = new Date().toISOString();
+}
+
+function desmarcarConciliada(tx) {
+  tx.status = 'nao_conciliado';
+  tx.matchedEntryId = '';
+  tx.matchedPaymentId = '';
+  delete tx.conciliacoes;
+  delete tx.conciliadoAutomaticamente;
+  tx.updatedAt = new Date().toISOString();
+}
+
+/**
+ * A CONCILIAÇÃO AUTOMÁTICA (28/10/2026): as movimentações não conciliadas que
+ * `escolher` aceita e que casam com um título pela regra de
+ * lib/conciliacao-automatica.js (empresa, fornecedor, valor e data batendo;
+ * valor único dos dois lados) são conciliadas, uma baixa cada.
+ *
+ * Roda no fim da importação e pelo botão "Conciliar automático". As
+ * movimentações tentadas ficam travadas em conciliacoesEmAndamento enquanto
+ * isso; e o db.json é RELIDO antes de gravar, para não apagar o que outra
+ * requisição gravou durante as idas ao banco.
+ */
+async function conciliarAutomaticamente(user, escolher) {
+  const data = loadData();
+  const naoConciliadas = (data.bankTransactions || []).filter((tx) => tx.status === 'nao_conciliado');
+  const alvos = naoConciliadas.filter((tx) => escolher(tx) && !conciliacoesEmAndamento.has(tx.id));
+  if (!alvos.length) return { conciliadas: 0, analisadas: 0, motivos: {} };
+  const travadas = alvos.map((tx) => tx.id);
+  travadas.forEach((id) => conciliacoesEmAndamento.add(id));
+  try {
+    await Promise.all([
+      syncCadastroData(data),
+      syncPurchasesData(data),
+      syncFinanceCadastroData(data),
+      syncLancamentosEmAberto(data)
+    ]);
+    const abertos = data.finance.filter((entry) => ['pending', 'parcial'].includes(String(entry.status || '').toLowerCase())
+      && ['receita', 'despesa'].includes(classifyFinanceEntry(entry)));
+    const empresaDe = await resolvedorDeEmpresas(abertos, data);
+    const raizDe = (empresa) => conciliacaoAutomatica.raizDoCnpj(empresa && empresa.cnpj);
+    const raizDaConta = new Map();
+    const raizDaContaDe = (contaId) => {
+      if (!raizDaConta.has(contaId)) raizDaConta.set(contaId, raizDe(empresaDe({ bankAccountId: contaId })));
+      return raizDaConta.get(contaId);
+    };
+    const titulos = abertos.map((entry) => {
+      const payments = getFinanceEntryPayments(data, entry.id);
+      const pago = financeEntryPaidTotal(payments);
+      const restante = Math.round((financeEntryEffectiveDue(entry, payments) - pago) * 100) / 100;
+      return {
+        id: entry.id,
+        tipo: classifyFinanceEntry(entry),
+        esperado: esperadoNoExtrato(entry, restante, pago),
+        restante,
+        raiz: raizDe(empresaDe(entry)),
+        vencimento: financeEntryDueDate(entry),
+        nome: resolveFinanceCounterparty(entry, data),
+        documento: resolveFinanceCounterpartyDocument(entry, data)
+      };
+    });
+    const movimentacoes = naoConciliadas.map((tx) => ({
+      id: tx.id,
+      tipo: tx.type === 'entrada' ? 'receita' : 'despesa',
+      valor: Number(tx.amount || 0),
+      data: tx.date,
+      raiz: raizDaContaDe(String(tx.bankAccountId || '')),
+      texto: [tx.description, tx.counterpartyName, tx.merchantName].filter(Boolean).join(' '),
+      documentos: [tx.counterpartyDocument, tx.merchantDocument].filter(Boolean)
+    }));
+    const { pares, motivos } = conciliacaoAutomatica.paresAutomaticos({ movimentacoes, alvos: travadas, titulos });
+    const titulosPorId = new Map(titulos.map((t) => [t.id, t]));
+    const feitas = new Map();
+    for (const par of pares) {
+      const tx = alvos.find((item) => item.id === par.movimentacaoId);
+      const entry = data.finance.find((item) => item.id === par.tituloId);
+      const titulo = titulosPorId.get(par.tituloId);
+      // O que entra é o valor da movimentação, e nunca mais que o saldo.
+      if (!tx || !entry || !titulo || Number(tx.amount || 0) > titulo.restante + 0.01) continue;
+      try {
+        feitas.set(tx.id, await baixarTitulosDaTransacao(data, tx, [{ entry, valor: Number(tx.amount || 0) }], user, { automatico: true }));
+      } catch (erro) {
+        console.error(`[conciliação automática] movimentação ${tx.id}:`, (erro && erro.stack) || erro);
+        motivos[tx.id] = 'erro ao gravar a baixa';
+      }
+    }
+    if (feitas.size) {
+      const atual = loadData();
+      (atual.bankTransactions || []).forEach((tx) => {
+        if (feitas.has(tx.id)) marcarConciliada(tx, feitas.get(tx.id), { automatico: true });
+      });
+      saveData(atual);
+    }
+    return { conciliadas: feitas.size, analisadas: alvos.length, motivos };
+  } finally {
+    travadas.forEach((id) => conciliacoesEmAndamento.delete(id));
+  }
+}
 
 function buildBankTransaction(body, user, source) {
   return {
@@ -6329,23 +6518,27 @@ function findBankTransactionMatches(tx, data, { filtro = null, limite = 8 } = {}
       const paid = financeEntryPaidTotal(payments);
       const remaining = Math.round((due - paid) * 100) / 100;
       // Contra o LÍQUIDO no título de cartão: é o que a credenciadora credita.
-      const amountDiff = Math.abs(esperadoNoExtrato(entry, remaining, paid) - Number(tx.amount || 0));
+      const esperado = esperadoNoExtrato(entry, remaining, paid);
+      const amountDiff = Math.abs(esperado - Number(tx.amount || 0));
       const daysDiff = Math.abs((parseDateOnly(financeEntryDueDate(entry)) - txDate) / 86400000);
 
       const entryDocument = sanitizeDigits(resolveFinanceCounterpartyDocument(entry, data));
       const documentMatch = Boolean(entryDocument && txCounterpartyDocument && entryDocument === txCounterpartyDocument);
       const nameMatch = Boolean(txCounterpartyName) && looseNameMatch(resolveFinanceCounterparty(entry, data), txCounterpartyName);
 
-      return { entry, remaining, amountDiff, daysDiff, documentMatch, nameMatch };
+      return { entry, remaining, esperado, amountDiff, daysDiff, documentMatch, nameMatch };
     })
     .sort((a, b) => (a.amountDiff - b.amountDiff) || (a.daysDiff - b.daysDiff))
     .slice(0, limite);
 
-  return candidates.map(({ entry, remaining, amountDiff, daysDiff, documentMatch, nameMatch }) => ({
+  return candidates.map(({ entry, remaining, esperado, amountDiff, daysDiff, documentMatch, nameMatch }) => ({
     id: entry.id,
     description: entry.description,
     dueDate: financeEntryDueDate(entry),
     remaining,
+    // O que se espera ver no extrato (o líquido, no cartão): o valor que a
+    // tela sugere ao juntar vários títulos numa movimentação (28/10/2026).
+    esperado,
     amountPrevisto: Number(entry.amount || 0),
     clienteFornecedor: resolveFinanceCounterparty(entry, data),
     exactAmountMatch: amountDiff < 0.01,
@@ -23095,7 +23288,12 @@ async function tratarRequisicao(req, res) {
 
       const data = loadData();
       await Promise.all([syncFinanceCadastroData(data), syncLancamentosPorId(data, ids)]);
-      const conciliadasCom = (id) => (data.bankTransactions || []).filter((tx) => tx.matchedEntryId === id);
+      const conciliadasCom = (id) => (data.bankTransactions || []).filter((tx) => conciliacoesDaTransacao(tx).some((c) => c.entryId === id));
+      // A movimentação que pagou VÁRIOS títulos (28/10/2026) não volta pela
+      // metade: excluir um deles deixaria as baixas dos outros sem a
+      // movimentação conciliada. Desconcilia-se pelo extrato antes.
+      const conciliadaComOutros = (id) => conciliadasCom(id).find((tx) => conciliacoesDaTransacao(tx).length > 1);
+      const motivoDaConciliacaoComOutros = (tx) => `Conciliado com mais ${conciliacoesDaTransacao(tx).length - 1} título(s) na mesma movimentação do extrato, de ${String(tx.date || '').split('-').reverse().join('/')}: desconcilie pelo Extrato Bancário antes de excluir.`;
 
       if (previa) {
         const vinculos = await vinculosDosLancamentos(data.finance.filter((e) => ids.includes(e.id)));
@@ -23112,7 +23310,7 @@ async function tratarRequisicao(req, res) {
             valorDasBaixas: Math.round(baixas.reduce((s, p) => s + Number(p.amount || 0), 0) * 100) / 100,
             conciliadas: conciliadasCom(id).length,
             vinculo: vinculos.get(id) || '',
-            motivo: ''
+            motivo: conciliadaComOutros(id) ? motivoDaConciliacaoComOutros(conciliadaComOutros(id)) : ''
           };
         });
         return sendJson(res, { previa: true, itens });
@@ -23135,6 +23333,7 @@ async function tratarRequisicao(req, res) {
         try {
           const [entry] = await db.getFinancialEntriesByIds([id]);
           if (!entry) { ignorados.push({ id, codigo, motivo: 'Lançamento não encontrado.' }); continue; }
+          if (conciliadaComOutros(id)) { ignorados.push({ id, codigo, motivo: motivoDaConciliacaoComOutros(conciliadaComOutros(id)) }); continue; }
           const baixas = await db.getFinancialPaymentsByEntries([id]);
           const transacoes = conciliadasCom(id);
           await db.deleteFinancialEntry(id);
@@ -23473,6 +23672,14 @@ async function tratarRequisicao(req, res) {
       const last = payments[payments.length - 1];
       if (!last) {
         return sendJson(res, { error: 'Não há baixa para estornar neste lançamento.' }, 400);
+      }
+      // A baixa de uma movimentação que pagou VÁRIOS títulos (28/10/2026) não
+      // se estorna sozinha: a movimentação ficaria conciliada pela metade, com
+      // as baixas dos outros títulos. Desconcilia-se pelo extrato.
+      const conciliadaComVarios = (data.bankTransactions || []).find((tx) => conciliacoesDaTransacao(tx).length > 1
+        && conciliacoesDaTransacao(tx).some((c) => c.paymentId === last.id));
+      if (conciliadaComVarios) {
+        return sendJson(res, { error: `Esta baixa veio da conciliação de uma movimentação do extrato com ${conciliacoesDaTransacao(conciliadaComVarios).length} títulos: desconcilie pelo Extrato Bancário.` }, 400);
       }
 
       await db.deleteFinancialPayment(last.id);
@@ -24427,7 +24634,7 @@ async function tratarRequisicao(req, res) {
       // existe mais continua sem descricao, como antes.
       await Promise.all([
         ordenaPorConta ? null : syncFinanceCadastroData(data),
-        syncLancamentosPorId(data, daPagina.map((tx) => tx.matchedEntryId))
+        syncLancamentosPorId(data, daPagina.flatMap((tx) => conciliacoesDaTransacao(tx).map((c) => c.entryId)))
       ]);
       const pageItems = daPagina.map((tx) => serializeBankTransaction(tx, data));
       // OS CARTÕES CONTAM SEM O FILTRO DE SITUAÇÃO (fase EI). Contados sobre a
@@ -24599,6 +24806,19 @@ async function tratarRequisicao(req, res) {
       });
 
       saveData(data);
+      // A CONCILIAÇÃO AUTOMÁTICA (28/10/2026): o que acabou de entrar e casa
+      // com um título pela regra (empresa, fornecedor, valor e data batendo;
+      // valor único) já sai conciliado. Se ela falhar, a importação continua
+      // valendo, e o resto se concilia pelo botão ou à mão.
+      const novas = new Set(created.map((tx) => tx.id));
+      let automatica = { conciliadas: 0 };
+      if (novas.size) {
+        try {
+          automatica = await conciliarAutomaticamente(user, (tx) => novas.has(tx.id));
+        } catch (erro) {
+          console.error('[conciliação automática] na importação:', (erro && erro.stack) || erro);
+        }
+      }
       return sendJson(res, {
         success: true,
         count: created.length,
@@ -24606,11 +24826,42 @@ async function tratarRequisicao(req, res) {
         // A tela precisa poder dizer "N importadas, M já existiam": só o
         // número de importadas faria a segunda importação parecer ter falhado.
         repetidas,
+        conciliadasAutomaticamente: automatica.conciliadas,
         importacaoId: created.length ? importacaoId : '',
         transactions: created.map((tx) => serializeBankTransaction(tx, data))
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao importar extrato', 400);
+    }
+  }
+
+  // CONCILIAR AUTOMÁTICO (28/10/2026): a mesma regra da importação, para as
+  // movimentações não conciliadas que já estão no extrato — as do filtro da
+  // tela (conta, arquivo, período, busca). Responde quantas conciliou e, das
+  // outras, quantas ficaram por cada motivo.
+  if (pathname === '/api/finance/bank-transactions/conciliar-automatico' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      const filtros = new URLSearchParams();
+      Object.entries(body.filtros || {}).forEach(([chave, valor]) => {
+        if (chave !== 'status' && valor !== undefined && valor !== null && String(valor) !== '') filtros.set(chave, String(valor));
+      });
+      const doFiltro = new Set(filterBankTransactions(loadData(), filtros).map((tx) => tx.id));
+      const resultado = await conciliarAutomaticamente(user, (tx) => doFiltro.has(tx.id));
+      const porMotivo = {};
+      Object.values(resultado.motivos || {}).forEach((motivo) => { porMotivo[motivo] = (porMotivo[motivo] || 0) + 1; });
+      return sendJson(res, {
+        success: true,
+        conciliadas: resultado.conciliadas,
+        analisadas: resultado.analisadas,
+        motivos: Object.entries(porMotivo).map(([motivo, quantidade]) => ({ motivo, quantidade })).sort((a, b) => b.quantidade - a.quantidade)
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro na conciliação automática', 400);
     }
   }
 
@@ -24772,11 +25023,23 @@ async function tratarRequisicao(req, res) {
       conciliacaoTravada = id;
 
       const body = await readBody(req);
-      // Fase DS: o lançamento escolhido vem no corpo, e é o ÚNICO que a
-      // conciliação lê — ele e as baixas dele (saldo em aberto, taxa do
+      // Fase DS: os lançamentos escolhidos vêm no corpo, e são os ÚNICOS que a
+      // conciliação lê — eles e as baixas deles (saldo em aberto, taxa do
       // cartão, novo status). As recusas acima continuam na mesma ordem: a
       // carga só acontece depois delas, como as respostas de antes.
       //
+      // VÁRIOS TÍTULOS (28/10/2026, pedido do usuário: "um valor de pagamento
+      // através do arquivo OFX pode descontar de vários lançamentos
+      // diferentes"). `itens` traz cada título com o valor que a movimentação
+      // paga dele, e a soma tem de ser o valor da movimentação. `entryId`
+      // sozinho é o de sempre: um título, pelo valor inteiro da movimentação.
+      const itensPedidos = Array.isArray(body.itens) && body.itens.length
+        ? body.itens.map((item) => ({ entryId: String((item && item.entryId) || ''), valor: Number(item && item.valor) }))
+        : [{ entryId: String(body.entryId || ''), valor: Number(tx.amount || 0) }];
+      const idsPedidos = itensPedidos.map((item) => item.entryId);
+      if (new Set(idsPedidos).size !== idsPedidos.length) {
+        return sendJson(res, { error: 'O mesmo título foi escolhido duas vezes.' }, 400);
+      }
       // Uma ONDA so de ida ao banco, e nao 3 em fila. Cada consulta ao
       // Supabase custa ~300ms de rede (medido), e estes syncs sao independentes:
       // cada um escreve em chaves diferentes de `data` e nenhum le o do outro.
@@ -24785,61 +25048,50 @@ async function tratarRequisicao(req, res) {
         syncCadastroData(data),
         syncPurchasesData(data),
         syncFinanceCadastroData(data),
-        syncLancamentosPorId(data, [body.entryId])
+        syncLancamentosPorId(data, idsPedidos)
       ]);
-      const entry = data.finance.find((item) => item.id === body.entryId);
-      if (!entry) {
-        return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
-      }
       const wantedType = tx.type === 'entrada' ? 'receita' : 'despesa';
-      if (classifyFinanceEntry(entry) !== wantedType) {
-        return sendJson(res, { error: `Uma transação de ${tx.type === 'entrada' ? 'entrada' : 'saída'} só pode ser conciliada com um lançamento de ${wantedType}.` }, 400);
+      const itens = [];
+      for (const pedido of itensPedidos) {
+        const entry = data.finance.find((item) => item.id === pedido.entryId);
+        if (!entry) {
+          return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
+        }
+        if (classifyFinanceEntry(entry) !== wantedType) {
+          return sendJson(res, { error: `Uma transação de ${tx.type === 'entrada' ? 'entrada' : 'saída'} só pode ser conciliada com um lançamento de ${wantedType}.` }, 400);
+        }
+        if (entry.status === 'cancelado') {
+          return sendJson(res, { error: 'Lançamento cancelado não pode receber baixa.' }, 400);
+        }
+        if (!(pedido.valor > 0)) {
+          return sendJson(res, { error: `Informe o valor a baixar de ${entry.description || 'cada título'}.` }, 400);
+        }
+        const existingPayments = getFinanceEntryPayments(data, entry.id);
+        const maxAllowed = financeEntryEffectiveDue(entry, existingPayments) - financeEntryPaidTotal(existingPayments);
+        if (pedido.valor > maxAllowed + 0.01) {
+          return sendJson(res, { error: itensPedidos.length > 1
+            ? `O valor a baixar de ${entry.description || 'um dos títulos'} (${pedido.valor.toFixed(2)}) é maior que o saldo em aberto dele (${Math.max(0, maxAllowed).toFixed(2)}).`
+            : `O valor da transação (${tx.amount.toFixed(2)}) é maior que o saldo em aberto do lançamento (${Math.max(0, maxAllowed).toFixed(2)}).` }, 400);
+        }
+        itens.push({ entry, valor: Math.round(pedido.valor * 100) / 100 });
       }
-      if (entry.status === 'cancelado') {
-        return sendJson(res, { error: 'Lançamento cancelado não pode receber baixa.' }, 400);
+      const reais = (c) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      const somaDosItens = itens.reduce((soma, item) => soma + Math.round(item.valor * 100), 0);
+      const daMovimentacao = Math.round(Number(tx.amount || 0) * 100);
+      if (somaDosItens !== daMovimentacao) {
+        return sendJson(res, { error: `Os valores dos títulos somam ${reais(somaDosItens)}, e a movimentação é de ${reais(daMovimentacao)}: a soma tem de ser igual.` }, 400);
       }
 
-      const existingPayments = getFinanceEntryPayments(data, entry.id);
-      const dueBefore = financeEntryEffectiveDue(entry, existingPayments);
-      const paidBefore = financeEntryPaidTotal(existingPayments);
-      const maxAllowed = dueBefore - paidBefore;
-      if (tx.amount > maxAllowed + 0.01) {
-        return sendJson(res, { error: `O valor da transação (${tx.amount.toFixed(2)}) é maior que o saldo em aberto do lançamento (${Math.max(0, maxAllowed).toFixed(2)}).` }, 400);
-      }
-
-      const taxaDoCartao = descontoDaTaxaDoCartao(entry, existingPayments, tx.amount);
-      const payment = await db.createFinancialPayment({
-        entryId: entry.id,
-        amount: tx.amount,
-        date: tx.date,
-        bankAccountId: tx.bankAccountId,
-        interest: 0,
-        fine: 0,
-        // A taxa da maquininha, quando o crédito é exatamente o líquido. Sem
-        // ela o título ficava "parcial" com a taxa em aberto para sempre.
-        discount: taxaDoCartao,
-        note: taxaDoCartao > 0
-          ? `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)}). `
-            + `Taxa da credenciadora (${entry.feePercent}%) abatida como desconto.`
-          : `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)})`,
-        createdBy: user.id,
-        createdByName: user.name
-      });
-      data.financialPayments.push(payment);
-      entry.status = recomputeFinanceEntryStatus(entry, data);
-      entry.updatedAt = new Date().toISOString();
-      await db.updateFinancialEntry(entry.id, { status: entry.status });
-
-      tx.status = 'conciliado';
-      tx.matchedEntryId = entry.id;
-      tx.matchedPaymentId = payment.id;
-      tx.updatedAt = new Date().toISOString();
-
-      await addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount: tx.amount, origem: 'conciliacao', transacaoId: tx.id } });
-      await addFinanceAuditLog(data, { action: 'conciliarTransacao', entry: { id: tx.id, description: `Transação ${String(tx.id).slice(-8)} · ${tx.description}` }, byId: user.id, byName: user.name, details: { entryId: entry.id } });
+      const conciliacoes = await baixarTitulosDaTransacao(data, tx, itens, user);
+      marcarConciliada(tx, conciliacoes);
 
       saveData(data);
-      return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data), entry: serializeFinanceEntry(entry, data) });
+      return sendJson(res, {
+        success: true,
+        transaction: serializeBankTransaction(tx, data),
+        entry: serializeFinanceEntry(itens[0].entry, data),
+        entries: itens.map((item) => serializeFinanceEntry(item.entry, data))
+      });
     } catch (error) {
       return sendErro(res, error, 'Erro ao conciliar transação', 400);
     } finally {
@@ -24864,27 +25116,28 @@ async function tratarRequisicao(req, res) {
       if (tx.status !== 'conciliado') {
         return sendJson(res, { error: 'Transação não está conciliada' }, 400);
       }
-      // Fase DS: o lançamento que a transação baixou, e as baixas dele — é o
-      // único que o estorno abaixo lê. E o nome da conta, para a resposta.
+      // Fase DS: os lançamentos que a transação baixou, e as baixas deles — são
+      // os únicos que o estorno abaixo lê. E o nome da conta, para a resposta.
+      // Desde 28/10/2026 podem ser vários (conciliacoesDaTransacao): saem
+      // todas as baixas que a movimentação fez.
+      const conciliacoes = conciliacoesDaTransacao(tx);
       await Promise.all([
         syncFinanceCadastroData(data),
-        syncLancamentosPorId(data, [tx.matchedEntryId])
+        syncLancamentosPorId(data, conciliacoes.map((c) => c.entryId))
       ]);
 
-      const entry = data.finance.find((item) => item.id === tx.matchedEntryId);
-      if (entry && tx.matchedPaymentId) {
-        await db.deleteFinancialPayment(tx.matchedPaymentId);
-        data.financialPayments = data.financialPayments.filter((p) => p.id !== tx.matchedPaymentId);
+      for (const conciliacao of conciliacoes) {
+        const entry = data.finance.find((item) => item.id === conciliacao.entryId);
+        if (!entry || !conciliacao.paymentId) continue;
+        await db.deleteFinancialPayment(conciliacao.paymentId);
+        data.financialPayments = data.financialPayments.filter((p) => p.id !== conciliacao.paymentId);
         entry.status = recomputeFinanceEntryStatus(entry, data);
         entry.updatedAt = new Date().toISOString();
         await db.updateFinancialEntry(entry.id, { status: entry.status });
-        await addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: tx.matchedPaymentId, motivo: 'Desconciliação de transação bancária' } });
+        await addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: conciliacao.paymentId, motivo: 'Desconciliação de transação bancária' } });
       }
 
-      tx.status = 'nao_conciliado';
-      tx.matchedEntryId = '';
-      tx.matchedPaymentId = '';
-      tx.updatedAt = new Date().toISOString();
+      desmarcarConciliada(tx);
       saveData(data);
       return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
     } catch (error) {

@@ -138,7 +138,7 @@ const src = ler('server.js');
 // Procurar pelo bruto erra por exatamente a taxa, sempre — é o "Conc. ✗".
 check('o casamento sabe o que esperar no extrato', /function esperadoNoExtrato\(entry, restante, jaPago\)/.test(src));
 check('  e o usa no cálculo da diferença',
-  /esperadoNoExtrato\(entry, remaining, paid\) - Number\(tx\.amount \|\| 0\)/.test(src));
+  /const esperado = esperadoNoExtrato\(entry, remaining, paid\);\s*const amountDiff = Math\.abs\(esperado - Number\(tx\.amount \|\| 0\)\);/.test(src));
 // Com baixa parcial no meio, o que falta já não é o líquido inteiro.
 check('  mas só enquanto nada foi baixado', /if \(jaPago > 0\.005\) return restante;/.test(src));
 check('a taxa fecha o título na conciliação', /function descontoDaTaxaDoCartao\(entry, baixasAnteriores, valorDaTransacao\)/.test(src));
