@@ -55,7 +55,8 @@ check('a recusa diz o número e o porquê', /já tem a NF-e[\s\S]{0,200}dois doc
 // A guarda roda ANTES de montar o payload e de falar com a Focus: recusar
 // depois de transmitir seria tarde.
 const posGuarda = emissao.indexOf('getNfesPorPedido');
-const posEnvio = emissao.indexOf('client.emitirNfe(');
+// A emissão (a ação Retransmitir, d631c11, também chama emitirNfe, antes dela no arquivo).
+const posEnvio = emissao.indexOf('client.emitirNfe(ref, payload)');
 check('a guarda vem antes de transmitir', posGuarda > -1 && posGuarda < posEnvio, `guarda ${posGuarda}, envio ${posEnvio}`);
 
 console.log('\n--- o pedido passa a saber qual nota saiu dele ---');

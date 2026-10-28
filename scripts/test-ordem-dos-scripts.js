@@ -92,7 +92,8 @@ function documentoFalso() {
 
 const armazem = () => ({ getItem: () => null, setItem() {}, removeItem() {}, clear() {} });
 
-const janela = {};
+// O app liga eventos da janela ao carregar (o rascunho do Financeiro, 473efb7).
+const janela = { addEventListener() {}, removeEventListener() {} };
 const contexto = vm.createContext({
   window: janela,
   document: documentoFalso(),

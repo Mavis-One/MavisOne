@@ -43,7 +43,7 @@ const iLanc = app.indexOf("{ key: 'lancamentos', label: 'Lançamentos'");
 check('no menu do Financeiro, antes de Lançamentos', iPagar > 0 && iReceber > iPagar && iLanc > iReceber);
 check('o módulo conhece as duas telas', /const FINANCE_SUB_KEYS = \['dashboard', 'contas_a_pagar', 'contas_a_receber', 'lancamentos',/.test(ler('public/modules/finance/index.js')));
 const novo = ler('public/modules/finance/subs/novo_lancamento.js');
-check('o novo lançamento nasce no tipo da tela', /let formType = editEntry \? String\(editEntry\.type\)\.toUpperCase\(\) : \(tipoSugerido \|\| 'DESPESA'\);/.test(novo)
+check('o novo lançamento nasce no tipo da tela', /let formType = editEntry \? String\(editEntry\.type\)\.toUpperCase\(\) : \(rascunhoInicial\?\.formType \|\| tipoSugerido \|\| 'DESPESA'\);/.test(novo)
   && /state\.financeNovoTipo = tipoFixo \? tipoFixo\.toUpperCase\(\) : null;/.test(tela));
 check('  e salvo volta para a tela de onde veio', /state\.activeSub = state\.financeListaDeOrigem \|\| 'lancamentos';/.test(novo));
 check('o login zera o estado das três', /state\.financeListas = null;/.test(app));
