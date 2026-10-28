@@ -59,13 +59,23 @@
   // tipo: uma despesa com o plano "...CREDITO" caía em Contas a Pagar. Nesses
   // planos o tipo segue o plano — CREDITO é receita, DEBITO é despesa e, sem
   // uma das duas palavras, vale o tipo cadastrado no plano.
-  const PLANO_QUE_DECIDE_O_TIPO = /TRANSFERENCIA ENTRE PORTADORES/;
+  //
+  // EMPRÉSTIMOS / FINANCIAMENTOS (28/10/2026, escolha do usuário: "crédito =
+  // despesa"): ao contrário — "...CREDITO" é despesa e "...DEBITO" é receita,
+  // seja qual for o tipo cadastrado no plano. Sem uma das duas palavras (o
+  // "EMPRESTIMOS / FINANCIAMENTOS" do Viper), vale o tipo do lançamento.
+  const PLANOS_QUE_DECIDEM_O_TIPO = [
+    { nome: /TRANSFERENCIA ENTRE PORTADORES/, credito: 'RECEITA', debito: 'DESPESA', semPalavraValeOPlano: true },
+    { nome: /\bEMPRESTIMOS?\s*\/\s*FINANCIAMENTOS?\b/, credito: 'DESPESA', debito: 'RECEITA', semPalavraValeOPlano: false }
+  ];
   function tipoPeloPlano(plano, tipo) {
     const atual = String(tipo || '').toUpperCase();
     const nome = semAcento(plano && plano.name);
-    if (atual === 'TRANSFERENCIA' || !PLANO_QUE_DECIDE_O_TIPO.test(nome)) return atual;
-    if (/\bCREDITO\b/.test(nome)) return 'RECEITA';
-    if (/\bDEBITO\b/.test(nome)) return 'DESPESA';
+    const regra = atual === 'TRANSFERENCIA' ? null : PLANOS_QUE_DECIDEM_O_TIPO.find((r) => r.nome.test(nome));
+    if (!regra) return atual;
+    if (/\bCREDITO\b/.test(nome)) return regra.credito;
+    if (/\bDEBITO\b/.test(nome)) return regra.debito;
+    if (!regra.semPalavraValeOPlano) return atual;
     const doPlano = String(plano.type || '').toLowerCase();
     return doPlano === 'receita' ? 'RECEITA' : doPlano === 'despesa' ? 'DESPESA' : atual;
   }

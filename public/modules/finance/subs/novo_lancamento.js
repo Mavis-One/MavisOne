@@ -351,7 +351,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     document.querySelector('[data-inline-add="costCenter"]')?.toggleAttribute('disabled', semCentro);
   }
 
-  // TRANSFERÊNCIA ENTRE PORTADORES (28/10/2026): o plano decide receita ou
+  // TRANSFERÊNCIA ENTRE PORTADORES E EMPRÉSTIMOS / FINANCIAMENTOS (28/10/2026): o plano decide receita ou
   // despesa (shared/lancamento_obrigatorios.js, tipoPeloPlano). A tela avisa ao
   // escolher; o envio e o servidor gravam o tipo do plano.
   function avisarTipoDoPlano(valor) {

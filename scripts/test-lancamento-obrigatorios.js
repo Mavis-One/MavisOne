@@ -68,6 +68,15 @@ check('  sem a palavra, vale o tipo do plano; outro plano não muda nada',
   R.tipoPeloPlano(plano('TRANSFERENCIA ENTRE PORTADORES', 'despesa'), 'RECEITA') === 'DESPESA'
   && R.tipoPeloPlano(plano('ALUGUEL', 'despesa'), 'RECEITA') === 'RECEITA' && R.tipoPeloPlano(null, 'despesa') === 'DESPESA');
 check('  a transferência entre contas fica como está', R.tipoPeloPlano(plano('TRANSFERENCIA ENTRE PORTADORES CREDITO', 'receita'), 'TRANSFERENCIA') === 'TRANSFERENCIA');
+// 28/10/2026, escolha do usuário nos empréstimos: "crédito = despesa".
+check('empréstimos / financiamentos: CREDITO é despesa, DEBITO é receita (mesmo com o plano cadastrado ao contrário)',
+  R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS - CREDITO', 'receita'), 'RECEITA') === 'DESPESA'
+  && R.tipoPeloPlano(plano('Empréstimos / Financiamentos - Débito', 'despesa'), 'DESPESA') === 'RECEITA');
+check('  sem a palavra (o plano do Viper), vale o tipo do lançamento; os outros empréstimos não mudam',
+  R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS', 'despesa'), 'RECEITA') === 'RECEITA'
+  && R.tipoPeloPlano(plano('EMPRESTIMO CONCEDIDO A ELECTRIC', 'despesa'), 'RECEITA') === 'RECEITA'
+  && R.tipoPeloPlano(plano('DESPESAS COM FINANCIAMENTOS', 'despesa'), 'RECEITA') === 'RECEITA');
+check('  a transferência entre contas fica como está', R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS - CREDITO', 'receita'), 'TRANSFERENCIA') === 'TRANSFERENCIA');
 
 console.log('\n--- 2. o servidor ---');
 const servidor = semComentarios(ler('server.js'));
@@ -89,6 +98,8 @@ check('  o tipo segue o plano ao criar e na edição livre', servidor.includes("
 check('  a tela recebe a empresa de cada conta', servidor.includes('cnpjDaEmpresaDaConta: Object.fromEntries((data.bankAccounts || [])'));
 check('  e a migração FE corrige os já gravados', /nome ~ '\\mCREDITO\\M' then 'RECEITA'/.test(ler('banco/migrations/fase-fe-transferencia-entre-portadores.sql'))
   && /nome ~ '\\mDEBITO\\M' then 'DESPESA'/.test(ler('banco/migrations/fase-fe-transferencia-entre-portadores.sql')));
+check('  e a FG, os de empréstimos (crédito despesa, débito receita)', /nome ~ '\\mCREDITO\\M' then 'DESPESA'/.test(ler('banco/migrations/fase-fg-emprestimos-credito-e-despesa.sql'))
+  && /nome ~ '\\mDEBITO\\M' then 'RECEITA'/.test(ler('banco/migrations/fase-fg-emprestimos-credito-e-despesa.sql')));
 check('  e consulta CNPJ e centro liberado em uma ida ao banco', servidor.includes('from estabelecimento e')
   && servidor.includes('or $1 = any(estabelecimento_ids)')
   && servidor.includes('return {\n      cnpjDoEstabelecimento: cnpj,')
