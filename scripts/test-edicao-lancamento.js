@@ -104,7 +104,7 @@ check('o PUT confere o estado PROPOSTO, com o registro atual por baixo',
 // Antes dos dois ramos: o vinculado deixa as contas bancárias editáveis.
 const put = src.slice(src.indexOf("if (pathname.startsWith('/api/finance/entries/') && req.method === 'PUT')"));
 // 23/10/2026: com o CNPJ do estabelecimento junto (centro de custo da raiz 43.792.899).
-const posValida = put.indexOf('const invalido = validarLancamentoFinanceiro({ ...proposto, ...(await regraDoCentroDeCusto(');
+const posValida = put.indexOf('const invalido = validarLancamentoFinanceiro({ ...proposto, ...regraDoCentro })');
 const posRamo = put.indexOf('const vinculadoAoPedido');
 check('  e confere ANTES de separar vinculado de livre',
   posValida >= 0 && posRamo >= 0 && posValida < posRamo);

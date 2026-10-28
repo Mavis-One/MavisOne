@@ -387,7 +387,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
 
     function montarParcelasDaEntrada(qtd, primeiro, intervalo) {
       const total = Math.round(totalAPagar() * 100);
-      const n = Math.min(120, Math.max(1, Math.floor(Number(qtd) || 1)));
+      const n = Math.min(240, Math.max(1, Math.floor(Number(qtd) || 1)));
       const dias = Math.max(0, Math.floor(Number(intervalo) || 0));
       const base = Math.floor(total / n);
       const [ano, mes, dia] = String(primeiro || '').split('-').map(Number);
@@ -412,7 +412,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
         <div id="entradaParcelas">
           <div class="cadastro-filter-grid-5">
             <label class="cadastro-field"><span>Parcelas</span>
-              <input type="number" min="1" max="120" step="1" id="entradaParcelasQtd" value="${p.qtd}" /></label>
+              <input type="number" min="1" max="240" step="1" id="entradaParcelasQtd" value="${p.qtd}" /></label>
             <label class="cadastro-field"><span>1º vencimento</span>
               <input type="date" id="entradaParcelasPrimeiro" value="${escapeHtml(p.primeiro)}" /></label>
             <label class="cadastro-field"><span>Intervalo (dias)</span>

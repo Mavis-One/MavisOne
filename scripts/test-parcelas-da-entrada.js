@@ -33,7 +33,8 @@ const semValor = parcelasDaEntrada(nota, [{ vencimento: '2026-11-20' }, { vencim
 check('sem valores (quem não vê custo): partes iguais, o centavo na 1ª', semValor.map((p) => p.valor).join(',') === '204.18,204.16,204.16');
 check('vencimento faltando: recusado', /vencimento/.test(recusa(() => parcelasDaEntrada(nota, [{ vencimento: '' }, { vencimento: '2026-12-20' }]))));
 check('valor zero: recusado', /maior que zero/.test(recusa(() => parcelasDaEntrada(nota, [{ vencimento: '2026-11-20', valor: 612.5 }, { vencimento: '2026-12-20', valor: 0 }]))));
-check('mais de 120: recusado', /120/.test(recusa(() => parcelasDaEntrada(nota, Array.from({ length: 121 }, () => ({ vencimento: '2026-11-20' }))))));
+// 240 desde 28/10/2026 ("aumentar o limite de parcelas de lançamento de títulos para 240").
+check('mais de 240: recusado', /240/.test(recusa(() => parcelasDaEntrada(nota, Array.from({ length: 241 }, () => ({ vencimento: '2026-11-20' }))))));
 const comDup = { ...nota, duplicatas: [{ numero: '001', vencimento: '2026-09-20', valor: 612.5 }] };
 check('com duplicatas no XML, valem as do XML (o digitado não passa por cima)', parcelasDaEntrada(comDup, [{ vencimento: '2027-01-01', valor: 612.5 }])[0].vencimento === '2026-09-20');
 // "Parcelar diferente da nota" (21/10/2026): vencimento único no XML, pago no

@@ -1659,7 +1659,7 @@ function criarTelaDeLancamentos(telaChave) {
           <div id="financeParcelar" class="finance-parcelar" hidden>
             <h4>Parcelar</h4>
             <div class="row">
-              <label>Parcelas<input type="number" min="2" max="120" step="1" id="financeParcelarQtd" value="2" /></label>
+              <label>Parcelas<input type="number" min="2" max="240" step="1" id="financeParcelarQtd" value="2" /></label>
               <label>1º vencimento<input type="date" id="financeParcelarPrimeiro" value="${escapeHtml(String(entry.dueDate || '').slice(0, 10))}" /></label>
               <label>Intervalo (dias)<input type="number" min="0" max="365" step="1" id="financeParcelarIntervalo" value="30" /></label>
             </div>
@@ -1774,7 +1774,7 @@ function criarTelaDeLancamentos(telaChave) {
       celula.classList.toggle('finance-negative', soma !== totalEmCentavos);
     };
     const montarParcelas = () => {
-      const qtd = Math.min(120, Math.max(2, Math.floor(Number(document.getElementById('financeParcelarQtd').value) || 2)));
+      const qtd = Math.min(240, Math.max(2, Math.floor(Number(document.getElementById('financeParcelarQtd').value) || 2)));
       const primeiro = document.getElementById('financeParcelarPrimeiro').value || financeHojeLocal();
       const intervalo = Math.max(0, Math.floor(Number(document.getElementById('financeParcelarIntervalo').value) || 0));
       const base = Math.floor(totalEmCentavos / qtd);

@@ -35,7 +35,7 @@ const parcelar = trecho("if (/^\\/api\\/finance\\/entries\\/[^/]+\\/parcelar$/.t
 check('a rota existe', parcelar.length > 100);
 check('  só título em aberto, sem baixa, que não é transferência',
   /if \(entry\.status !== 'pending' \|\| getFinanceEntryPayments\(data, id\)\.length\)/.test(parcelar) && /classifyFinanceEntry\(entry\) === 'transferencia'/.test(parcelar));
-check('  de 2 a 120 parcelas, cada uma com vencimento e valor', /parcelas\.length < 2 \|\| parcelas\.length > 120/.test(parcelar) && /!dia\.test\(p\.dueDate\) \|\| !\(p\.centavos > 0\)/.test(parcelar));
+check('  de 2 a 240 parcelas (desde 28/10/2026), cada uma com vencimento e valor', /parcelas\.length < 2 \|\| parcelas\.length > 240/.test(parcelar) && /!dia\.test\(p\.dueDate\) \|\| !\(p\.centavos > 0\)/.test(parcelar));
 check('  a soma fecha com o título, ao centavo', /if \(somaDasParcelas !== totalDoTitulo\)/.test(parcelar));
 check('  o título vira a parcela 1 e as outras copiam tudo dele',
   /await db\.updateFinancialEntry\(entry\.id, \{ amount: entry\.amount, dueDate: entry\.dueDate, description: entry\.description \}\);/.test(parcelar)

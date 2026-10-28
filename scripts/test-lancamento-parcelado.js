@@ -52,7 +52,9 @@ check('vão juntas no envio, o valor é a soma e o vencimento o da 1ª',
 check('servidor: confere todas antes de gravar a primeira',
   servidor.indexOf('A parcela ${errada + 1} precisa de vencimento e de valor maior que zero.') > 0
   && servidor.indexOf('A parcela ${errada + 1}') < servidor.indexOf('for (const parte of partes) {'));
-check('  no máximo 120', servidor.includes("No máximo 120 parcelas por lançamento."));
+// 240 desde 28/10/2026 (pedido do usuário: "aumentar o limite de parcelas de
+// lançamento de títulos para 240").
+check('  no máximo 240', servidor.includes("No máximo 240 parcelas por lançamento."));
 check('  "Parcela 1/3 - descrição", com o vencimento e o valor de cada uma',
   servidor.includes('description: `Parcela ${i + 1}/${parcelasPedidas.length} - ${descricao}`') && /dueDate: parte\.dueDate,\s*amount: parte\.amount,/.test(servidor));
 check('  transferência não se parcela', servidor.includes("const parcelasPedidas = type !== 'TRANSFERENCIA' && Array.isArray(body.parcelas) ? body.parcelas : [];"));

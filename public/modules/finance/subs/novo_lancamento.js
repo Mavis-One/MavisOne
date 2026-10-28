@@ -151,12 +151,33 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   const centroDisponivelAqui = () => (meta.costCenters || []).some((c) => centroValeAqui(c));
   const centroObrigatorioAqui = () => Boolean(window.MavisLancamentoObrigatorios
     && window.MavisLancamentoObrigatorios.exigeCentroDeCusto(cnpjDoEstabelecimentoAtual())
-    && centroDisponivelAqui());
+    && centroDisponivelAqui()
+    && !empresaSemCentroAqui());
+  // KACCAU, BY BLUMENAU E ELECTRIC NÃO TÊM CENTRO DE CUSTO (28/10/2026): pela
+  // empresa do estabelecimento ou da conta bancária escolhida (o servidor manda
+  // a empresa de cada conta em cnpjDaEmpresaDaConta).
+  const contaDoLancamento = () => {
+    const id = document.getElementById('financeBankAccountValue')?.value ?? (editEntry ? editEntry.bankAccountId : '');
+    return (meta.bankAccounts || []).find((c) => c.id === id) || null;
+  };
+  const regraDaEmpresaAqui = () => {
+    const conta = contaDoLancamento();
+    return {
+      cnpjDoEstabelecimento: cnpjDoEstabelecimentoAtual(),
+      cnpjDaConta: conta ? (meta.cnpjDaEmpresaDaConta || {})[conta.id] || '' : '',
+      nomeDaConta: conta ? conta.name : ''
+    };
+  };
+  const empresaSemCentroAqui = () => (window.MavisLancamentoObrigatorios && window.MavisLancamentoObrigatorios.empresaSemCentro
+    ? window.MavisLancamentoObrigatorios.empresaSemCentro(regraDaEmpresaAqui())
+    : null);
   // POR QUE A BUSCA NÃO ACHA (24/10/2026, "não está buscando"): a lista só
   // traz os centros liberados para a empresa do título. Havendo centros, mas
   // nenhum para ela, o campo diz isso e onde liberar — "Nenhum resultado"
   // sozinho parecia defeito da busca.
   const avisoDoCentro = () => {
+    const semCentro = empresaSemCentroAqui();
+    if (semCentro) return `Lançamento da ${semCentro.nome} não leva centro de custo.`;
     if (!(meta.costCenters || []).length || centroDisponivelAqui() || !estabelecimentoAtual) return '';
     const empresa = (meta.estabelecimentos || []).find((e) => e.id === estabelecimentoAtual) || {};
     const nome = empresa.nomeFantasia || empresa.razaoSocial || 'esta empresa';
@@ -271,8 +292,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   const CAMPOS_DE_BUSCA = {
     financeSourceAccount: { name: 'sourceBankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta de origem' },
     financeTargetAccount: { name: 'targetBankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta de destino' },
-    financeBankAccount: { name: 'bankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta bancária' },
-    financeCategory: { name: 'category', kind: 'category', opcoes: opcoesDePlano, rotulo: 'Plano de Contas' },
+    financeBankAccount: { name: 'bankAccountId', kind: 'bankAccount', opcoes: opcoesDeConta, rotulo: 'Conta bancária', aoEscolher: () => atualizarCentroDaEmpresa() },
+    financeCategory: { name: 'category', kind: 'category', opcoes: opcoesDePlano, rotulo: 'Plano de Contas', aoEscolher: (valor) => avisarTipoDoPlano(valor) },
     financeCostCenter: { name: 'costCenter', kind: 'costCenter', opcoes: opcoesDeCentro, rotulo: 'Centro de custo' },
     financePaymentMethod: { name: 'paymentMethodId', kind: 'paymentMethod', opcoes: opcoesDeForma, rotulo: 'Forma de pagamento' }
   };
@@ -281,7 +302,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     financeTargetAccount: () => (editEntry ? editEntry.targetBankAccountId : ''),
     financeBankAccount: () => (editEntry ? editEntry.bankAccountId : ''),
     financeCategory: () => (editEntry ? editEntry.category : ''),
-    financeCostCenter: () => (editEntry && editEntry.costCenter) || centroUnicoAqui(),
+    financeCostCenter: () => (empresaSemCentroAqui() ? '' : (editEntry && editEntry.costCenter) || centroUnicoAqui()),
     financePaymentMethod: () => (editEntry ? editEntry.paymentMethodId : '')
   };
 
@@ -307,7 +328,38 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   function ligarCampoDeBusca(id, valor) {
     if (typeof attachSearchableSelect !== 'function') return;
     const valorAtual = valor !== undefined ? valor : (document.getElementById(`${id}Value`)?.value || '');
-    attachSearchableSelect({ id, options: CAMPOS_DE_BUSCA[id].opcoes(valorAtual) });
+    attachSearchableSelect({ id, options: CAMPOS_DE_BUSCA[id].opcoes(valorAtual), onSelect: CAMPOS_DE_BUSCA[id].aoEscolher });
+  }
+
+  // O asterisco, o aviso e o campo do centro acompanham a empresa e a conta:
+  // da Kaccau, By Blumenau ou Electric, o campo esvazia e trava (28/10/2026).
+  function atualizarCentroDaEmpresa() {
+    const asterisco = document.querySelector('[data-centro-asterisco]');
+    if (asterisco) asterisco.textContent = centroObrigatorioAqui() ? ' *' : '';
+    const avisoCentro = document.querySelector('[data-centro-aviso]');
+    if (avisoCentro) {
+      avisoCentro.textContent = avisoDoCentro();
+      avisoCentro.hidden = !avisoCentro.textContent;
+    }
+    const busca = document.getElementById('financeCostCenterInput');
+    if (!busca) return;
+    const semCentro = Boolean(empresaSemCentroAqui());
+    if (semCentro && document.getElementById('financeCostCenterValue')?.value) refazerCampoDeBusca('financeCostCenter', '');
+    else if (!semCentro && busca.disabled) refazerCampoDeBusca('financeCostCenter', centroUnicoAqui());
+    const campo = document.getElementById('financeCostCenterInput');
+    if (campo) campo.disabled = semCentro;
+    document.querySelector('[data-inline-add="costCenter"]')?.toggleAttribute('disabled', semCentro);
+  }
+
+  // TRANSFERÊNCIA ENTRE PORTADORES (28/10/2026): o plano decide receita ou
+  // despesa (shared/lancamento_obrigatorios.js, tipoPeloPlano). A tela avisa ao
+  // escolher; o envio e o servidor gravam o tipo do plano.
+  function avisarTipoDoPlano(valor) {
+    const R = window.MavisLancamentoObrigatorios;
+    const plano = (meta.categories || []).find((c) => c.id === valor);
+    if (!R || !R.tipoPeloPlano || !plano || vinculado || formType === 'TRANSFERENCIA') return;
+    const tipo = R.tipoPeloPlano(plano, formType);
+    if (tipo !== formType) showToast(`${plano.name}: o lançamento será gravado como ${tipo === 'RECEITA' ? 'Receita' : 'Despesa'}.`, 'info');
   }
 
   function nomeDoEstab(e) {
@@ -403,7 +455,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
                só, e transferência não se parcela. */''}
           ${!editEntry && !isTransfer ? `
             <div class="row finance-parcelamento">
-              <label>Parcelas<input type="number" name="parcelasQtd" min="1" max="120" step="1" value="1" /></label>
+              <label>Parcelas<input type="number" name="parcelasQtd" min="1" max="240" step="1" value="1" /></label>
               <label>Intervalo
                 <select name="parcelasIntervalo">
                   <option value="mensal">Mensal (mesmo dia)</option>
@@ -865,7 +917,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     const form = document.getElementById('financeEntryForm');
     const qtd = form && form.elements.namedItem('parcelasQtd');
     if (!qtd) { parcelas = []; return; }
-    const n = Math.min(120, Math.max(1, Math.floor(Number(qtd.value) || 1)));
+    const n = Math.min(240, Math.max(1, Math.floor(Number(qtd.value) || 1)));
     const intervalo = form.elements.namedItem('parcelasIntervalo')?.value || 'mensal';
     const primeira = form.elements.namedItem('dueDate')?.value || hojeLocal();
     const total = centavos(form.elements.namedItem('amount')?.value);
@@ -975,6 +1027,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     Object.keys(CAMPOS_DE_BUSCA).forEach((id) => {
       if (document.getElementById(`${id}Wrapper`)) ligarCampoDeBusca(id);
     });
+    atualizarCentroDaEmpresa();
 
     // O "+" LEVA À TELA DE CADASTRO DE VERDADE (14/10/2026, pedido do usuário).
     // O lançamento em digitação fica guardado (irParaCadastro) e volta
@@ -990,14 +1043,6 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     // preenchimento e' justamente quando isso doeria mais.
     document.getElementById('financeEstabSelect')?.addEventListener('change', (evento) => {
       estabelecimentoAtual = evento.target.value || '';
-      // O asterisco do centro de custo acompanha a empresa (raiz 43.792.899).
-      const asterisco = document.querySelector('[data-centro-asterisco]');
-      if (asterisco) asterisco.textContent = centroObrigatorioAqui() ? ' *' : '';
-      const avisoCentro = document.querySelector('[data-centro-aviso]');
-      if (avisoCentro) {
-        avisoCentro.textContent = avisoDoCentro();
-        avisoCentro.hidden = !avisoCentro.textContent;
-      }
       const permitidas = contasDisponiveis();
       let perdeuAlguma = null;
       ['financeSourceAccount', 'financeTargetAccount', 'financeBankAccount'].forEach((id) => {
@@ -1019,8 +1064,11 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         const escolhido = document.getElementById('financeCostCenterValue')?.value || '';
         const aindaVale = !escolhido || meta.costCenters.some((c) => c.id === escolhido && centroValeAqui(c));
         refazerCampoDeBusca('financeCostCenter', aindaVale && escolhido ? escolhido : centroUnicoAqui());
-        if (!aindaVale) showToast('O centro de custo escolhido não é desta empresa. Escolha outro.', 'warning');
+        if (!aindaVale && !empresaSemCentroAqui()) showToast('O centro de custo escolhido não é desta empresa. Escolha outro.', 'warning');
       }
+      // O asterisco do centro (raiz 43.792.899) e a empresa sem centro, por
+      // último: a troca acima pode ter mudado a conta.
+      atualizarCentroDaEmpresa();
     });
 
     document.getElementById('financeEntryForm')?.addEventListener('submit', async (event) => {
@@ -1100,7 +1148,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       } else {
         payload.bankAccountId = formData.get('bankAccountId') || '';
         payload.category = formData.get('category') || '';
-        payload.costCenter = formData.get('costCenter') || '';
+        // Da Kaccau, By Blumenau ou Electric, sem centro (28/10/2026).
+        payload.costCenter = empresaSemCentroAqui() ? '' : (formData.get('costCenter') || '');
+        // O plano de transferência entre portadores decide o tipo (28/10/2026).
+        if (payload.type && window.MavisLancamentoObrigatorios && window.MavisLancamentoObrigatorios.tipoPeloPlano) {
+          payload.type = window.MavisLancamentoObrigatorios.tipoPeloPlano((meta.categories || []).find((c) => c.id === payload.category), payload.type);
+        }
         payload.paymentMethodId = formData.get('paymentMethodId') || '';
         if (!vinculado) {
           payload.clientSupplierId = formData.get('clientSupplierId') || '';
@@ -1111,7 +1164,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       // usuário; shared/lancamento_obrigatorios.js — o servidor recusa com a
       // mesma regra). Avisa e leva ao primeiro que falta.
       const faltamNoLancamento = window.MavisLancamentoObrigatorios
-        ? window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType, cnpjDoEstabelecimento: cnpjDoEstabelecimentoAtual(), centroDisponivel: centroDisponivelAqui() })
+        ? window.MavisLancamentoObrigatorios.faltando({ ...payload, type: formType, ...regraDaEmpresaAqui(), centroDisponivel: centroDisponivelAqui() })
         : [];
       if (faltamNoLancamento.length) {
         showToast(window.MavisLancamentoObrigatorios.mensagem(faltamNoLancamento), 'warning');

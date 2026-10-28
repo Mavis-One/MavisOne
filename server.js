@@ -5068,8 +5068,28 @@ function financeEntryEmAberto(entry, payments) {
  * consultar o CNPJ pela API fiscal e depois voltar ao banco adicionava uma
  * viagem de rede a cada criação e edição de título. Ver
  * shared/lancamento_obrigatorios.js.
+ *
+ * E a empresa da CONTA BANCÁRIA (28/10/2026): Kaccau, By Blumenau e Electric
+ * não têm centro de custo, e o lançamento é delas também pela conta — pela
+ * mesma regra da coluna Empresa (resolvedorDeEmpresas: conta ligada, depois o
+ * nome da conta). Só com `data`, que traz as contas e as empresas.
  */
-async function regraDoCentroDeCusto(estabelecimentoId) {
+async function regraDoCentroDeCusto(estabelecimentoId, bankAccountId, data) {
+  const [doEstabelecimento, daConta] = await Promise.all([
+    regraDoCentroPeloEstabelecimento(estabelecimentoId),
+    empresaDaContaBancaria(bankAccountId, data)
+  ]);
+  return { ...doEstabelecimento, ...daConta };
+}
+
+async function empresaDaContaBancaria(bankAccountId, data) {
+  const conta = bankAccountId && data ? (data.bankAccounts || []).find((b) => String(b.id) === String(bankAccountId)) : null;
+  if (!conta) return { cnpjDaConta: '', nomeDaConta: '' };
+  const empresa = await resolvedorDeEmpresas([], data).then((daEntrada) => daEntrada({ bankAccountId: conta.id })).catch(() => null);
+  return { cnpjDaConta: (empresa && empresa.cnpj) || '', nomeDaConta: conta.name || '' };
+}
+
+async function regraDoCentroPeloEstabelecimento(estabelecimentoId) {
   if (!estabelecimentoId) return { cnpjDoEstabelecimento: '', centroDisponivel: true };
   try {
     const { rows } = await consultarBanco(
@@ -5097,7 +5117,7 @@ async function regraDoCentroDeCusto(estabelecimentoId) {
   }
 }
 
-function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, costCenter, type, cnpjDoEstabelecimento: cnpj, centroDisponivel }) {
+function validarLancamentoFinanceiro({ description, amount, bankAccountId, targetBankAccountId, costCenter, type, cnpjDoEstabelecimento: cnpj, centroDisponivel, cnpjDaConta, nomeDaConta }) {
   if (!String(description == null ? '' : description).trim()) {
     return 'Informe a descrição do lançamento';
   }
@@ -5117,8 +5137,9 @@ function validarLancamentoFinanceiro({ description, amount, bankAccountId, targe
   // CONTA BANCÁRIA E CENTRO DE CUSTO (23/10/2026, pedido do usuário). A regra
   // e o texto moram em shared/lancamento_obrigatorios.js, como na tela. O
   // centro só é obrigatório na raiz 43.792.899 — por isso o CNPJ do
-  // estabelecimento do título.
-  const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter, cnpjDoEstabelecimento: cnpj, centroDisponivel });
+  // estabelecimento do título; e a conta, que diz se é de uma empresa sem
+  // centro de custo (28/10/2026).
+  const faltam = lancamentoObrigatorios.faltando({ type, bankAccountId, costCenter, cnpjDoEstabelecimento: cnpj, centroDisponivel, cnpjDaConta, nomeDaConta });
   if (faltam.length) return lancamentoObrigatorios.mensagem(faltam);
   return '';
 }
@@ -22503,14 +22524,20 @@ async function tratarRequisicao(req, res) {
     // Isso nao afrouxa nada. A lista e' o que a tela OFERECE; quem RECUSA e' o
     // servidor, na gravacao, com a mesma regra.
     const ehAdministrador = await ehAdmin(user);
-    const [estabelecimentosMeta, vinculosMeta] = await Promise.all([
+    const [estabelecimentosMeta, vinculosMeta, empresaDaEntrada] = await Promise.all([
       fiscalDb.getEstabelecimentos().catch(() => []),
-      contasEstabDb.listarVinculos().catch(() => [])
+      contasEstabDb.listarVinculos().catch(() => []),
+      resolvedorDeEmpresas([], data).catch(() => () => null)
     ]);
     return sendJson(res, {
       categories: data.financialCategories,
       costCenters: data.costCenters,
       bankAccounts: data.bankAccounts,
+      // A empresa (CNPJ) de cada conta, pela regra da coluna Empresa: a conta
+      // da Kaccau, By Blumenau ou Electric tira o centro de custo (28/10/2026).
+      cnpjDaEmpresaDaConta: Object.fromEntries((data.bankAccounts || [])
+        .map((b) => [b.id, ((empresaDaEntrada({ bankAccountId: b.id }) || {}).cnpj) || ''])
+        .filter(([, cnpj]) => cnpj)),
       estabelecimentos: estabelecimentosMeta
         .filter((e) => e.ativo !== false)
         // O CNPJ (23/10/2026): a tela sabe se o centro de custo é obrigatório.
@@ -23185,7 +23212,12 @@ async function tratarRequisicao(req, res) {
         syncLancamentosPorId(data, [])
       ]);
       const body = await readBody(req);
-      const type = String(body.type || 'DESPESA').toUpperCase();
+      // No plano de transferência entre portadores o tipo segue o plano
+      // (28/10/2026: crédito é receita, débito é despesa; ver tipoPeloPlano).
+      const type = lancamentoObrigatorios.tipoPeloPlano(
+        (data.financialCategories || []).find((c) => c.id === body.category),
+        String(body.type || 'DESPESA').toUpperCase()
+      );
       if (!['RECEITA', 'DESPESA', 'TRANSFERENCIA'].includes(type)) {
         return sendJson(res, { error: 'Tipo de lançamento inválido' }, 400);
       }
@@ -23194,8 +23226,11 @@ async function tratarRequisicao(req, res) {
       // conferência desde 23/10/2026: o CNPJ dele decide o centro de custo.
       const escolha = estabelecimentoDaOperacao(user, await ehAdmin(user), body.estabelecimentoId);
       if (escolha.erro) throw escolha.erro;
-      const invalido = validarLancamentoFinanceiro({ ...body, type, amount, ...(await regraDoCentroDeCusto(escolha.id)) });
+      const regraDoCentro = await regraDoCentroDeCusto(escolha.id, body.bankAccountId, data);
+      const invalido = validarLancamentoFinanceiro({ ...body, type, amount, ...regraDoCentro });
       if (invalido) return sendJson(res, { error: invalido }, 400);
+      // Kaccau, By Blumenau e Electric não têm centro de custo (28/10/2026).
+      if (lancamentoObrigatorios.empresaSemCentro(regraDoCentro)) body.costCenter = '';
 
       // PARCELAS (15/10/2026, pedido do usuário: "uma guia de impostos em 2x ou
       // mais precisa ser lançada com datas diferentes"). Duas ou mais viram um
@@ -23203,7 +23238,7 @@ async function tratarRequisicao(req, res) {
       // dela. Todas são conferidas ANTES de gravar a primeira: uma parcela
       // errada no meio não pode deixar metade da guia lançada.
       const parcelasPedidas = type !== 'TRANSFERENCIA' && Array.isArray(body.parcelas) ? body.parcelas : [];
-      if (parcelasPedidas.length > 120) return sendJson(res, { error: 'No máximo 120 parcelas por lançamento.' }, 400);
+      if (parcelasPedidas.length > 240) return sendJson(res, { error: 'No máximo 240 parcelas por lançamento.' }, 400);
       if (parcelasPedidas.length >= 2) {
         const errada = parcelasPedidas.findIndex((p) => !/^\d{4}-\d{2}-\d{2}$/.test(String(p && p.dueDate || ''))
           || !(Math.round(Number(p && p.amount) * 100) > 0));
@@ -23584,8 +23619,8 @@ async function tratarRequisicao(req, res) {
         dueDate: String((p && p.dueDate) || '').slice(0, 10),
         centavos: Math.round(Number((p && p.amount) || 0) * 100)
       }));
-      if (parcelas.length < 2 || parcelas.length > 120) {
-        return sendJson(res, { error: 'Informe de 2 a 120 parcelas.' }, 400);
+      if (parcelas.length < 2 || parcelas.length > 240) {
+        return sendJson(res, { error: 'Informe de 2 a 240 parcelas.' }, 400);
       }
       if (parcelas.some((p) => !dia.test(p.dueDate) || !(p.centavos > 0))) {
         return sendJson(res, { error: 'Cada parcela precisa de vencimento e de valor maior que zero.' }, 400);
@@ -23797,8 +23832,12 @@ async function tratarRequisicao(req, res) {
         body.estabelecimentoId !== undefined ? body.estabelecimentoId : entry.estabelecimentoId
       );
       if (escolhaPut.erro) throw escolhaPut.erro;
-      const invalido = validarLancamentoFinanceiro({ ...proposto, ...(await regraDoCentroDeCusto(escolhaPut.id)) });
+      const regraDoCentro = await regraDoCentroDeCusto(escolhaPut.id, proposto.bankAccountId, data);
+      const invalido = validarLancamentoFinanceiro({ ...proposto, ...regraDoCentro });
       if (invalido) return sendJson(res, { error: invalido }, 400);
+      // Kaccau, By Blumenau e Electric não têm centro de custo (28/10/2026):
+      // salvar o título tira o que ele tinha.
+      if (lancamentoObrigatorios.empresaSemCentro(regraDoCentro)) body.costCenter = '';
 
       // Fase CD, e sobre o estado PROPOSTO pelo mesmo motivo das linhas acima:
       // sem conferir aqui, a regra de contas por estabelecimento seria uma
@@ -23904,6 +23943,13 @@ async function tratarRequisicao(req, res) {
         saveData(data);
         return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
       }
+      // O tipo segue o plano de transferência entre portadores (28/10/2026) —
+      // antes do vencimento, que conta a pagar a prazo leva para o dia útil.
+      // O vinculado (acima) fica com o tipo da origem.
+      entry.type = lancamentoObrigatorios.tipoPeloPlano(
+        (data.financialCategories || []).find((c) => c.id === (body.category !== undefined ? body.category : entry.category)),
+        entry.type
+      );
       if (body.description !== undefined) entry.description = String(body.description).trim();
       if (body.amount !== undefined) entry.amount = Number(body.amount || 0);
       if (body.date !== undefined) entry.date = body.date;
