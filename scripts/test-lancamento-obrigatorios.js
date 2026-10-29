@@ -68,10 +68,19 @@ check('  sem a palavra, vale o tipo do plano; outro plano não muda nada',
   R.tipoPeloPlano(plano('TRANSFERENCIA ENTRE PORTADORES', 'despesa'), 'RECEITA') === 'DESPESA'
   && R.tipoPeloPlano(plano('ALUGUEL', 'despesa'), 'RECEITA') === 'RECEITA' && R.tipoPeloPlano(null, 'despesa') === 'DESPESA');
 check('  a transferência entre contas fica como está', R.tipoPeloPlano(plano('TRANSFERENCIA ENTRE PORTADORES CREDITO', 'receita'), 'TRANSFERENCIA') === 'TRANSFERENCIA');
-// 28/10/2026, escolha do usuário nos empréstimos: "crédito = despesa".
-check('empréstimos / financiamentos: CREDITO é despesa, DEBITO é receita (mesmo com o plano cadastrado ao contrário)',
-  R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS - CREDITO', 'receita'), 'RECEITA') === 'DESPESA'
-  && R.tipoPeloPlano(plano('Empréstimos / Financiamentos - Débito', 'despesa'), 'DESPESA') === 'RECEITA');
+// 29/10/2026, print do usuário: a parcela do empréstimo com "...DEBITO"
+// (cadastrado Despesa) saía como Receita pela regra de 28/10. Vale o cadastro.
+check('empréstimos / financiamentos: vale o tipo cadastrado no plano (o print: DEBITO despesa)',
+  R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS - DEBITO', 'despesa'), 'DESPESA') === 'DESPESA'
+  && R.tipoPeloPlano(plano('Empréstimos / Financiamentos - Débito', 'despesa'), 'RECEITA') === 'DESPESA'
+  && R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS - CREDITO', 'receita'), 'DESPESA') === 'RECEITA');
+check('  cadastrado ao contrário, vale o cadastro; "ambos" deixa o do lançamento',
+  R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS - CREDITO', 'despesa'), 'RECEITA') === 'DESPESA'
+  && R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS - DEBITO', 'ambos'), 'RECEITA') === 'RECEITA');
+check('  só os de CREDITO/DEBITO decidem pelo cadastro',
+  R.planoDecidePeloCadastro(plano('EMPRESTIMOS / FINANCIAMENTOS - DEBITO', 'despesa'))
+  && !R.planoDecidePeloCadastro(plano('EMPRESTIMOS / FINANCIAMENTOS', 'despesa'))
+  && !R.planoDecidePeloCadastro(plano('TRANSFERENCIA ENTRE PORTADORES CREDITO', 'receita')));
 check('  sem a palavra (o plano do Viper), vale o tipo do lançamento; os outros empréstimos não mudam',
   R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS', 'despesa'), 'RECEITA') === 'RECEITA'
   && R.tipoPeloPlano(plano('EMPRESTIMO CONCEDIDO A ELECTRIC', 'despesa'), 'RECEITA') === 'RECEITA'
@@ -98,8 +107,17 @@ check('  o tipo segue o plano ao criar e na edição livre', servidor.includes("
 check('  a tela recebe a empresa de cada conta', servidor.includes('cnpjDaEmpresaDaConta: Object.fromEntries((data.bankAccounts || [])'));
 check('  e a migração FE corrige os já gravados', /nome ~ '\\mCREDITO\\M' then 'RECEITA'/.test(ler('banco/migrations/fase-fe-transferencia-entre-portadores.sql'))
   && /nome ~ '\\mDEBITO\\M' then 'DESPESA'/.test(ler('banco/migrations/fase-fe-transferencia-entre-portadores.sql')));
-check('  e a FG, os de empréstimos (crédito despesa, débito receita)', /nome ~ '\\mCREDITO\\M' then 'DESPESA'/.test(ler('banco/migrations/fase-fg-emprestimos-credito-e-despesa.sql'))
-  && /nome ~ '\\mDEBITO\\M' then 'RECEITA'/.test(ler('banco/migrations/fase-fg-emprestimos-credito-e-despesa.sql')));
+// A FG (28/10) inverteu os de empréstimo; a FH (29/10) os devolve ao tipo do
+// plano. As duas rodam em ordem, e o resultado é o da FH.
+const fh = ler('banco/migrations/fase-fh-emprestimos-pelo-tipo-do-plano.sql');
+check('  e a FH devolve os de empréstimos ao tipo do plano (desfaz a FG)',
+  /case lower\(coalesce\(type, ''\)\) when 'receita' then 'RECEITA' when 'despesa' then 'DESPESA' end as tipo/.test(fh)
+  && /nome ~ '\\m\(CREDITO\|DEBITO\)\\M'/.test(fh) && /set type = c\.tipo,/.test(fh));
+const rotaDoPlano = servidor.slice(servidor.indexOf("/^\\/api\\/finance\\/categories\\/[^/]+$/.test(pathname) && req.method === 'PUT'"));
+check('trocar o tipo do plano de empréstimo troca o dos lançamentos dele',
+  /if \(tipoNovo && lancamentoObrigatorios\.planoDecidePeloCadastro\(category\)\) \{/.test(rotaDoPlano)
+  && /where category_id = \$2 and type in \('RECEITA', 'DESPESA'\) and type <> \$1/.test(rotaDoPlano)
+  && /return sendJson\(res, \{ success: true, category, lancamentosAjustados \}\);/.test(rotaDoPlano));
 check('  e consulta CNPJ e centro liberado em uma ida ao banco', servidor.includes('from estabelecimento e')
   && servidor.includes('or $1 = any(estabelecimento_ids)')
   && servidor.includes('return {\n      cnpjDoEstabelecimento: cnpj,')

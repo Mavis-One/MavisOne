@@ -22815,7 +22815,31 @@ async function tratarRequisicao(req, res) {
       }
       const category = await db.updateFinancialCategory(id, { name, type: TIPOS_DO_PLANO.includes(body.type) ? body.type : 'ambos' });
       if (!category) return sendJson(res, { error: 'Plano de contas não encontrado' }, 404);
-      return sendJson(res, { success: true, category });
+      // EMPRÉSTIMOS / FINANCIAMENTOS - CREDITO/DEBITO (29/10/2026): o tipo
+      // cadastrado decide o dos lançamentos (tipoPeloPlano). Trocar o tipo do
+      // plano troca o dos lançamentos dele, para o relatório não ficar com os
+      // antigos no tipo velho. Transferência entre contas não muda.
+      let lancamentosAjustados = 0;
+      const tipoNovo = { receita: 'RECEITA', despesa: 'DESPESA' }[String(category.type || '').toLowerCase()];
+      if (tipoNovo && lancamentoObrigatorios.planoDecidePeloCadastro(category)) {
+        const ajuste = await consultarBanco(
+          `update financial_entries set type = $1, updated_at = now()
+            where category_id = $2 and type in ('RECEITA', 'DESPESA') and type <> $1`,
+          [tipoNovo, id]
+        );
+        lancamentosAjustados = ajuste.rowCount || 0;
+        if (lancamentosAjustados) {
+          await registrarAuditoria({
+            action: 'tipoDoPlanoNosLancamentos',
+            targetId: id,
+            targetUsername: `Plano de contas ${category.name}`,
+            byId: user.id,
+            byName: user.name,
+            details: { tipo: tipoNovo, lancamentos: lancamentosAjustados }
+          });
+        }
+      }
+      return sendJson(res, { success: true, category, lancamentosAjustados });
     } catch (error) {
       return sendErro(res, error, 'Erro ao salvar o plano de contas', 400);
     }

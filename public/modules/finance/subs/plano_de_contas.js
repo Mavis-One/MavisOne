@@ -123,12 +123,16 @@ window.MavisSubscreenRegistry.finance.plano_de_contas = async function renderPla
       const corpo = { name: String(dados.get('name') || '').trim(), type: dados.get('type') || 'despesa' };
       try {
         let criado = null;
+        let ajustados = 0;
         if (editando.id) {
-          await api(`/api/finance/categories/${encodeURIComponent(editando.id)}`, { method: 'PUT', body: JSON.stringify(corpo) });
+          // Plano de empréstimo (29/10/2026): o tipo dele decide o dos lançamentos, e o servidor diz quantos mudaram.
+          ajustados = (await api(`/api/finance/categories/${encodeURIComponent(editando.id)}`, { method: 'PUT', body: JSON.stringify(corpo) })).lancamentosAjustados || 0;
         } else {
           criado = (await api('/api/finance/categories', { method: 'POST', body: JSON.stringify(corpo) })).category;
         }
-        showToast('Plano de contas salvo.', 'success');
+        showToast(ajustados
+          ? `Plano de contas salvo. ${ajustados} lançamento(s) dele passaram a ${corpo.type === 'receita' ? 'Receita' : 'Despesa'}.`
+          : 'Plano de contas salvo.', 'success');
         if (criado && vindoDoLancamento && window.MavisRascunhoLancamento.voltar(ctx, criado.id)) return;
         editando = null;
         if (await carregar()) desenhar();

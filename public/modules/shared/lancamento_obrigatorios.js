@@ -60,24 +60,37 @@
   // planos o tipo segue o plano — CREDITO é receita, DEBITO é despesa e, sem
   // uma das duas palavras, vale o tipo cadastrado no plano.
   //
-  // EMPRÉSTIMOS / FINANCIAMENTOS (28/10/2026, escolha do usuário: "crédito =
-  // despesa"): ao contrário — "...CREDITO" é despesa e "...DEBITO" é receita,
-  // seja qual for o tipo cadastrado no plano. Sem uma das duas palavras (o
+  // EMPRÉSTIMOS / FINANCIAMENTOS (29/10/2026): vale o TIPO CADASTRADO NO
+  // PLANO. O usuário cadastrou "...CREDITO" como Receita e "...DEBITO" como
+  // Despesa; a regra de 28/10 (crédito despesa, débito receita, pelo nome)
+  // gravou a parcela do empréstimo com "...DEBITO" como Receita — print de
+  // 29/10, "já estou pedindo desde ontem para consertar esse erro". Agora
+  // quem decide é o Plano de Contas: trocar o tipo lá troca o dos lançamentos
+  // (rota PUT /api/finance/categories/:id). Sem uma das duas palavras (o
   // "EMPRESTIMOS / FINANCIAMENTOS" do Viper), vale o tipo do lançamento.
   const PLANOS_QUE_DECIDEM_O_TIPO = [
     { nome: /TRANSFERENCIA ENTRE PORTADORES/, credito: 'RECEITA', debito: 'DESPESA', semPalavraValeOPlano: true },
-    { nome: /\bEMPRESTIMOS?\s*\/\s*FINANCIAMENTOS?\b/, credito: 'DESPESA', debito: 'RECEITA', semPalavraValeOPlano: false }
+    { nome: /\bEMPRESTIMOS?\s*\/\s*FINANCIAMENTOS?\b/, peloCadastro: true }
   ];
+  const tipoCadastrado = (plano) => {
+    const doPlano = String((plano && plano.type) || '').toLowerCase();
+    return doPlano === 'receita' ? 'RECEITA' : doPlano === 'despesa' ? 'DESPESA' : '';
+  };
+  /** O plano de empréstimo com CREDITO/DEBITO, cujo tipo cadastrado decide o dos lançamentos. */
+  function planoDecidePeloCadastro(plano) {
+    const nome = semAcento(plano && plano.name);
+    return PLANOS_QUE_DECIDEM_O_TIPO.some((r) => r.peloCadastro && r.nome.test(nome)) && /\b(CREDITO|DEBITO)\b/.test(nome);
+  }
   function tipoPeloPlano(plano, tipo) {
     const atual = String(tipo || '').toUpperCase();
     const nome = semAcento(plano && plano.name);
     const regra = atual === 'TRANSFERENCIA' ? null : PLANOS_QUE_DECIDEM_O_TIPO.find((r) => r.nome.test(nome));
     if (!regra) return atual;
+    if (regra.peloCadastro) return (planoDecidePeloCadastro(plano) && tipoCadastrado(plano)) || atual;
     if (/\bCREDITO\b/.test(nome)) return regra.credito;
     if (/\bDEBITO\b/.test(nome)) return regra.debito;
     if (!regra.semPalavraValeOPlano) return atual;
-    const doPlano = String(plano.type || '').toLowerCase();
-    return doPlano === 'receita' ? 'RECEITA' : doPlano === 'despesa' ? 'DESPESA' : atual;
+    return tipoCadastrado(plano) || atual;
   }
 
   /**
@@ -105,7 +118,7 @@
     return `Informe ${faltam.map((c) => c.rotulo).join(' e ')} do lançamento.`;
   }
 
-  const api = { CAMPOS, RAIZES_COM_CENTRO, exigeCentroDeCusto, EMPRESAS_SEM_CENTRO, empresaSemCentro, tipoPeloPlano, faltando, mensagem };
+  const api = { CAMPOS, RAIZES_COM_CENTRO, exigeCentroDeCusto, EMPRESAS_SEM_CENTRO, empresaSemCentro, tipoPeloPlano, planoDecidePeloCadastro, faltando, mensagem };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisLancamentoObrigatorios = api;
 })(typeof window !== 'undefined' ? window : globalThis);
