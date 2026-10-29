@@ -4083,8 +4083,11 @@ async function loadModule(moduleName) {
         // O vendedor só mexe em orçamento ou pedido em aberto (16/10/2026; ver
         // lib/venda-do-vendedor.js): aprovado por alguém, abre para consulta,
         // como a venda de colega. O servidor recusa do mesmo jeito.
+        // Desde 29/10/2026 também o Pedido Não Faturado — o pedido que voltou
+        // quando a NF-e foi cancelada —, para o vendedor reaproveitar o mesmo
+        // pedido (lib/venda-do-vendedor.js, vendedorAltera).
         const aprovadoParaOVendedor = Boolean(isEditing && meuVendedor.soCria
-          && !['orcamento', 'pedido'].includes(SalesStatus.normalizar(editRecord.status)));
+          && !['orcamento', 'pedido', 'pedido-nao-faturado'].includes(SalesStatus.normalizar(editRecord.status)));
         // PEDIDO APROVADO NÃO SE ALTERA (16/10/2026): para todos, administrador
         // inclusive. Abre para consulta; gerar a nota e cancelar continuam no
         // Mais Ações. O servidor recusa do mesmo jeito.

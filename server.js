@@ -4428,13 +4428,15 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
   if (user) {
     const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: await ehAdmin(user) });
     if (vendaDoVendedor.soCria(escopo)) {
-      const rascunho = (s) => vendaDoVendedor.ehRascunho(s, (x) => salesStatus.normalizar(x, undefined));
-      if (!rascunho(current.status)) {
+      // Desde 29/10/2026 também o pedido que voltou do faturamento (NF-e
+      // cancelada): ver vendaDoVendedor.vendedorAltera.
+      const normalizar = (x) => salesStatus.normalizar(x, undefined);
+      if (!vendaDoVendedor.vendedorAltera(current.status, normalizar)) {
         const erro = new Error(vendaDoVendedor.MOTIVO_APROVADA);
         erro.status = 403;
         throw erro;
       }
-      if (!rascunho(statusNovo)) {
+      if (!vendaDoVendedor.vendedorGrava(statusNovo, current.status, normalizar)) {
         const erro = new Error(vendaDoVendedor.MOTIVO_SO_CRIA);
         erro.status = 403;
         throw erro;

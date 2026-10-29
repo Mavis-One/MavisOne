@@ -48,12 +48,20 @@ check('  administrador vê tudo', V.podeVerVenda(admin, 'v2') && V.podeVerVenda(
 const n = (s) => S.normalizar(s, undefined);
 check('rascunho: só orçamento e pedido', V.ehRascunho('orcamento', n) && V.ehRascunho('pedido', n)
   && !['pedido-pre-faturado', 'pedido-faturado', 'pedido-cancelado', 'orcamento-aprovado', 'pedido-aprovado-sem-faturamento'].some((s) => V.ehRascunho(s, n)));
+// 29/10/2026: "os vendedores não conseguem alterar um pedido já faturado que
+// teve a NF vinculada cancelada". Cancelar a NF-e devolve o pedido a Pedido Não
+// Faturado, e o vendedor reaproveita o mesmo pedido.
+check('altera também o pedido que voltou do faturamento (NF-e cancelada)', V.vendedorAltera('pedido-nao-faturado', n)
+  && V.vendedorAltera('pedido', n) && !['pedido-pre-faturado', 'pedido-faturado', 'pedido-cancelado'].some((s) => V.vendedorAltera(s, n)));
+check('  e grava mantendo Pedido Não Faturado ou voltando a Pedido, nunca aprovando',
+  V.vendedorGrava('pedido-nao-faturado', 'pedido-nao-faturado', n) && V.vendedorGrava('pedido', 'pedido-nao-faturado', n)
+  && !V.vendedorGrava('pedido-pre-faturado', 'pedido-nao-faturado', n) && !V.vendedorGrava('pedido-nao-faturado', 'pedido', n));
 
 console.log('\n--- o servidor cobra em cada porta ---');
 const server = semComentarios(fs.readFileSync(path.join(RAIZ, 'server.js'), 'utf8'));
 const efeitos = (server.match(/async function aplicarEfeitosDeStatus\([^)]*\) \{[\s\S]*?\n\}/) || [''])[0];
 check('gravar e lote (aplicarEfeitosDeStatus): só rascunho, antes de tudo',
-  /if \(vendaDoVendedor\.soCria\(escopo\)\) \{[\s\S]{0,200}if \(!rascunho\(current\.status\)\)[\s\S]{0,200}MOTIVO_APROVADA[\s\S]{0,200}if \(!rascunho\(statusNovo\)\)[\s\S]{0,200}MOTIVO_SO_CRIA/.test(efeitos)
+  /if \(vendaDoVendedor\.soCria\(escopo\)\) \{[\s\S]{0,200}if \(!vendaDoVendedor\.vendedorAltera\(current\.status, normalizar\)\)[\s\S]{0,200}MOTIVO_APROVADA[\s\S]{0,200}if \(!vendaDoVendedor\.vendedorGrava\(statusNovo, current\.status, normalizar\)\)[\s\S]{0,200}MOTIVO_SO_CRIA/.test(efeitos)
   && efeitos.indexOf('vendaDoVendedor.soCria(escopo)') < efeitos.indexOf('const eraFaturado'));
 check('criar: só rascunho', /if \(vendaDoVendedor\.soCria\(escopoDoUsuario\)\s*&& \(type === 'nfe' \|\| !vendaDoVendedor\.ehRascunho\(status,/.test(server));
 check('excluir (rota e lote): recusado', /if \(escopoDaExclusao && vendaDoVendedor\.soCria\(escopoDaExclusao\)\) \{/.test(server));
@@ -108,7 +116,7 @@ check('Mais Ações: as do vendedor desligadas', /const SALES_LOTE_SO_QUEM_NAO_E
   && /const doVendedor = vendedorSoCria && SALES_LOTE_SO_QUEM_NAO_E_VENDEDOR\.includes\(acao\.id\);/.test(app));
 // E, desde 16/10/2026, sem lixeira também no pedido aprovado (test-titulos-na-aprovacao.js).
 check('lista sem lixeira para o vendedor', /\$\{vendedorSoCria \|\| [^?]*\? '' : `<button class="icon-button sales-delete-record"/.test(app));
-check('pedido aprovado abre só para consulta', /const aprovadoParaOVendedor = Boolean\(isEditing && meuVendedor\.soCria\s*&& !\['orcamento', 'pedido'\]\.includes\(SalesStatus\.normalizar\(editRecord\.status\)\)\);/.test(app));
+check('pedido aprovado abre só para consulta', /const aprovadoParaOVendedor = Boolean\(isEditing && meuVendedor\.soCria\s*&& !\['orcamento', 'pedido', 'pedido-nao-faturado'\]\.includes\(SalesStatus\.normalizar\(editRecord\.status\)\)\);/.test(app));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
 process.exit(falhas ? 1 : 0);
