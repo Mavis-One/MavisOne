@@ -258,7 +258,7 @@ window.MavisSubscreenRegistry.stock.products = async function renderStockProduct
           <div class="row">
             <label>Buscar<input type="search" name="search" value="${S.escape(filters.search)}" placeholder="Nome, SKU ou código de barras" /></label>
             <label>Categoria<select name="categoryId">${S.options(meta.productCategories, filters.categoryId, { empty: 'Todas' })}</select></label>
-            <label>Depósito<select name="depositId">${S.options(meta.deposits, filters.depositId, { empty: 'Todos' })}</select></label>
+            <label>Depósito<select name="depositId">${S.options(depositosParaEscolha(meta.deposits, filters.depositId), filters.depositId, { empty: 'Todos' })}</select></label>
             <label>Status
               <select name="status">
                 <option value="">Todos</option>

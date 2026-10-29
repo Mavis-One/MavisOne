@@ -316,14 +316,14 @@ window.MavisSubscreenRegistry.stock.new_product = async function renderNewProduc
               ` : `
                 <label>Estoque inicial<input type="number" step="0.001" min="0" name="stockQuantity" value="0" /></label>
                 ${/* À vista no produto novo: estoque inicial exige o depósito. */''}
-                <label>Depósito padrão<select name="defaultDepositId">${S.options(meta.deposits, '', { empty: 'Nenhum' })}</select></label>
+                <label>Depósito padrão<select name="defaultDepositId">${S.options(depositosParaEscolha(meta.deposits), '', { empty: 'Nenhum' })}</select></label>
               `}
               <label>Estoque Mínimo<input type="number" step="0.001" min="0" name="minStock" value="${current ? Number(current.minStock || 0) : 0}" /></label>
             </div>
             ${completo(`
               <div class="produto-linha produto-linha-deposito">
                 <label>Estoque máximo<input type="number" step="0.001" min="0" name="maxStock" value="${current ? Number(current.maxStock || 0) : 0}" /></label>
-                ${current ? `<label>Depósito padrão<select name="defaultDepositId">${S.options(meta.deposits, current.defaultDepositId, { empty: 'Nenhum' })}</select></label>` : ''}
+                ${current ? `<label>Depósito padrão<select name="defaultDepositId">${S.options(depositosParaEscolha(meta.deposits, current.defaultDepositId), current.defaultDepositId, { empty: 'Nenhum' })}</select></label>` : ''}
                 <label>Localização<input name="location" value="${value('location')}" placeholder="Ex.: Corredor 3, prateleira B" /></label>
                 ${current ? '' : `<label>Categoria da movimentação inicial<select name="movementCategoryId">${S.options(meta.movementCategories, '', { empty: 'Sem categoria' })}</select></label>`}
               </div>

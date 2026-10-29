@@ -166,7 +166,7 @@ window.MavisSubscreenRegistry.stock.movements = async function renderStockMoveme
             <label>Produto
               ${renderSearchableSelect({ id: 'movFiltroProduto', name: 'productId', options: opcoesProduto, selectedValue: filters.productId, placeholder: 'Todos — busque por nome ou SKU' })}
             </label>
-            <label>Depósito<select name="depositId">${S.options(meta.deposits, filters.depositId, { empty: 'Todos' })}</select></label>
+            <label>Depósito<select name="depositId">${S.options(depositosParaEscolha(meta.deposits, filters.depositId), filters.depositId, { empty: 'Todos' })}</select></label>
           </div>
           <div class="row">
             <label>Categoria<select name="categoryId">${S.options(meta.movementCategories, filters.categoryId, { empty: 'Todas' })}</select></label>

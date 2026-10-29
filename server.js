@@ -14464,7 +14464,9 @@ async function tratarRequisicao(req, res) {
       if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
       const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
       const [depositos, contas, vendedores, filiais, estabelecimentos] = await Promise.all([
-        consultarBanco('select id, name from deposits order by name'),
+        // Só os ativos, como as contas abaixo (29/10/2026: "quando um depósito
+        // estiver inativo ele não apareça para seleção dentre campos").
+        consultarBanco("select id, name from deposits where coalesce(status, 'ativo') <> 'inativo' order by name"),
         consultarBanco('select id, name, bank, bank_code from bank_accounts where coalesce(ativo, true) order by name'),
         escopo.podeEscolherVendedor
           ? consultarBanco(`select id, name from people where extra->'roles' @> '["Vendedor"]'::jsonb order by name`)
@@ -19751,7 +19753,12 @@ async function tratarRequisicao(req, res) {
             .filter((p) => !inativos.has(p.id))
             .map((p) => ({ id: p.id, name: p.name, sku: p.sku || '', ean: p.ean || '' }));
         })(),
-        depositos: (data.deposits || []).map((d) => ({ id: d.id, name: d.name })),
+        // Só os ativos (29/10/2026, "quando um depósito estiver inativo ele não
+        // apareça para seleção"). O padrão do CNPJ, se for inativo, fica de
+        // fora da lista e a tela cai no primeiro ativo.
+        depositos: (data.deposits || [])
+          .filter((d) => String(d.status || 'ativo').toLowerCase() !== 'inativo')
+          .map((d) => ({ id: d.id, name: d.name })),
         // A forma de pagamento dos títulos (22/10/2026): as ativas, e a que o
         // XML declara, quando casa com uma delas (entradaNfe.formaSugerida).
         formasDePagamento: (data.paymentMethods || [])

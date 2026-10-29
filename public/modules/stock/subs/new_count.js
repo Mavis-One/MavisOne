@@ -80,7 +80,7 @@ window.MavisSubscreenRegistry.stock.new_count = async function renderNewCount(ct
         ` : `
           <form id="countOpenForm" class="form-grid">
             <div class="row">
-              <label>Depósito<select name="depositId" required>${S.options(meta.deposits, '', { empty: 'Selecione' })}</select></label>
+              <label>Depósito<select name="depositId" required>${S.options(depositosParaEscolha(meta.deposits), '', { empty: 'Selecione' })}</select></label>
               <label>Data<input type="date" name="date" required value="${hoje}" /></label>
             </div>
             <label>Observação<textarea name="note" rows="2" placeholder="Inventário do mês, carga inicial da loja, recontagem do corredor 3..."></textarea></label>

@@ -15,7 +15,8 @@ window.MavisSubscreenRegistry.purchases.entrada_nfe_manual = async function rend
   const produtos = data.products || [];
   const produtosPorId = new Map(produtos.map((p) => [p.id, p]));
   const fornecedores = (data.directory || []).map((c) => ({ value: c.id, label: c.name }));
-  const depositos = data.deposits || [];
+  // Só os ativos (29/10/2026, ver depositosParaEscolha): a nota nova começa no primeiro deles.
+  const depositos = depositosParaEscolha(data.deposits);
   // Produto inativo fica fora da busca (22/10/2026), como na entrada pelo XML.
   const produtosAtivos = produtos.filter((p) => p.inativo !== true);
   const opcoesProduto = window.MavisRotuloProduto ? window.MavisRotuloProduto.opcoes(produtosAtivos) : produtosAtivos.map((p) => ({ value: p.id, label: p.name }));
@@ -56,7 +57,7 @@ window.MavisSubscreenRegistry.purchases.entrada_nfe_manual = async function rend
         <label>Natureza da operação<input id="manualNatureza" value="${escapeHtml(nota.naturezaOperacao)}" /></label>
         <label>Depósito de entrada
           <select id="manualDeposito">
-            ${depositos.map((d) => `<option value="${escapeHtml(d.id)}" ${nota.depositoId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
+            ${depositosParaEscolha(data.deposits, nota.depositoId).map((d) => `<option value="${escapeHtml(d.id)}" ${nota.depositoId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
           </select>
         </label>
       </div>`;

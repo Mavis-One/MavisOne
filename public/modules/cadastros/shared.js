@@ -118,7 +118,7 @@ window.MavisCadastros = window.MavisCadastros || {};
             required: Boolean(def.required)
           });
         }
-        const list = busca.lista(def, meta);
+        const list = busca.lista(def, meta, val);
         return `<select name="${def.name}" ${def.attrs || ''}>${C.options(list, val, { empty: def.empty ?? 'Selecione' })}</select>`;
       }
       if (def.type === 'textarea') {

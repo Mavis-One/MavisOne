@@ -38,8 +38,10 @@
   // O corte em 200 é onde a rolagem de um <select> deixa de caber numa tela.
   const LIMITE = 200;
 
-  function lista(def, meta) {
-    return typeof def.options === 'function' ? def.options(meta) : (def.options || []);
+  // `atual` (29/10/2026): o valor do registro, para a lista que esconde
+  // inativos manter o que ele já tem (depositosParaEscolha).
+  function lista(def, meta, atual) {
+    return typeof def.options === 'function' ? def.options(meta, atual) : (def.options || []);
   }
 
   function ehDeBusca(def, meta) {

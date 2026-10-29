@@ -249,7 +249,7 @@ window.MavisSubscreenRegistry.stock.new_movement = async function renderNewMovem
 
           <div class="form-grid">
             <div class="row">
-              <label>Depósito *<select name="depositId" id="movementDeposit" required>${S.options(meta.deposits, '', { empty: 'Selecione' })}</select></label>
+              <label>Depósito *<select name="depositId" id="movementDeposit" required>${S.options(depositosParaEscolha(meta.deposits), '', { empty: 'Selecione' })}</select></label>
               <label>Data *<input type="date" name="date" required value="${hoje}" /></label>
               <label>Categoria<select name="categoryId" id="movementCategoria">${categoryOptions('')}</select></label>
               <label>Documento<input name="document" placeholder="NF, pedido, romaneio..." /></label>

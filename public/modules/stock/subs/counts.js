@@ -85,7 +85,7 @@ window.MavisSubscreenRegistry.stock.counts = async function renderStockCounts(ct
                 <option value="cancelada" ${filters.status === 'cancelada' ? 'selected' : ''}>Cancelada</option>
               </select>
             </label>
-            <label>Depósito<select name="depositId">${S.options(meta.deposits, filters.depositId, { empty: 'Todos' })}</select></label>
+            <label>Depósito<select name="depositId">${S.options(depositosParaEscolha(meta.deposits, filters.depositId), filters.depositId, { empty: 'Todos' })}</select></label>
           </div>
           <div class="finance-actions-row">
             <button type="submit">Filtrar</button>

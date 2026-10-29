@@ -49,7 +49,9 @@ window.MavisSubscreenRegistry.cadastros.novo_equipamento = window.MavisCadastros
           title: 'Onde está o equipamento',
           fields: [
             { name: 'personId', label: 'Cliente/proprietário', type: 'select', empty: 'Nenhum', options: (meta) => meta.directory },
-            { name: 'depositId', label: 'Depósito', type: 'select', empty: 'Nenhum', options: (meta) => meta.deposits },
+            // Só os ativos, e o gravado (29/10/2026; a regra de depositosParaEscolha, no app.js,
+            // escrita aqui porque esta tela também é desenhada fora do navegador).
+            { name: 'depositId', label: 'Depósito', type: 'select', empty: 'Nenhum', options: (meta, atual) => (meta.deposits || []).filter((d) => String(d.status || 'ativo').toLowerCase() !== 'inativo' || (atual && d.id === atual)) },
             { name: 'location', label: 'Localização física' }
           ]
         }

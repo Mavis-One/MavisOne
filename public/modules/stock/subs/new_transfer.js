@@ -231,8 +231,8 @@ window.MavisSubscreenRegistry.stock.new_transfer = async function renderNewTrans
           ${S.pageHead('Nova Transferência Entre Depósitos')}
           <div class="form-grid">
             <div class="row">
-              <label>Depósito de origem *<select name="originDepositId" id="transferOrigem" required>${S.options(meta.deposits, '', { empty: 'Selecione' })}</select></label>
-              <label>Depósito de destino *<select name="destinationDepositId" required>${S.options(meta.deposits, '', { empty: 'Selecione' })}</select></label>
+              <label>Depósito de origem *<select name="originDepositId" id="transferOrigem" required>${S.options(depositosParaEscolha(meta.deposits), '', { empty: 'Selecione' })}</select></label>
+              <label>Depósito de destino *<select name="destinationDepositId" required>${S.options(depositosParaEscolha(meta.deposits), '', { empty: 'Selecione' })}</select></label>
               <label>Data da movimentação *<input type="date" name="date" required value="${hoje}" /></label>
             </div>
             <div class="row">

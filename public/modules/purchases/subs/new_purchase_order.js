@@ -33,7 +33,8 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
   // item, e o erro so' aparece quando a nota do fornecedor nao bate.
   const opcoesProduto = window.MavisRotuloProduto.opcoes(produtos);
   const opcoesFornecedor = directory.map((e) => ({ value: e.id, label: e.name }));
-  const depositos = data.deposits || [];
+  // Só os ativos, e o que o pedido já tem (29/10/2026, ver depositosParaEscolha):
+  // a lista sai no desenho do campo, quando o pedido já está carregado.
 
   const editandoId = state.purchaseDocumentId || null;
   // Entrar por Cotações e sair com uma ordem seria a tela decidindo por quem
@@ -146,7 +147,7 @@ window.MavisSubscreenRegistry.purchases.new_purchase_order = async function rend
             <label>Depósito de entrada
               <select id="compraDeposito">
                 <option value="">— sem depósito —</option>
-                ${depositos.map((d) => `<option value="${d.id}" ${documento.depositId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
+                ${depositosParaEscolha(data.deposits, documento.depositId).map((d) => `<option value="${d.id}" ${documento.depositId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
               </select>
             </label>
           </div>

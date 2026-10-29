@@ -2668,6 +2668,17 @@ const LUPA_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" st
  * o pedido antigo abriria com o depósito em branco e a próxima escolha apagaria
  * o histórico de verdade.
  */
+/**
+ * OS DEPÓSITOS QUE SE OFERECEM NUM CAMPO (29/10/2026, pedido do usuário:
+ * "quando um depósito estiver inativo ele não apareça para seleção dentre
+ * campos"). Só os ativos — e o que o registro já tem, mesmo inativo, para a
+ * edição não trocar nem apagar o depósito gravado sem ninguém pedir.
+ */
+function depositosParaEscolha(lista, atual) {
+  const doRegistro = String(atual || '').trim();
+  return (lista || []).filter((d) => String(d.status || 'ativo').toLowerCase() !== 'inativo' || (doRegistro && d.id === doRegistro));
+}
+
 function depositosDaLoja(meta, companyId, depositoAtual) {
   const atual = String(depositoAtual || '').trim();
   // Depósito inativo (o "Depósito Matriz - Montados", unido ao Depósito Matriz

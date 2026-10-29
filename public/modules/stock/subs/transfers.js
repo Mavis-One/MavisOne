@@ -73,7 +73,7 @@ async function renderTransfers(ctx, situacaoInicial) {
             <label>Produto
               ${renderSearchableSelect({ id: 'transferFiltroProduto', name: 'productId', options: opcoesProduto, selectedValue: filters.productId, placeholder: 'Todos — busque por nome ou SKU' })}
             </label>
-            <label>Depósito (origem ou destino)<select name="depositId">${S.options(meta.deposits, filters.depositId, { empty: 'Todos' })}</select></label>
+            <label>Depósito (origem ou destino)<select name="depositId">${S.options(depositosParaEscolha(meta.deposits, filters.depositId), filters.depositId, { empty: 'Todos' })}</select></label>
             <label>Situação<select name="status">${S.options(SITUACOES, filters.status, { empty: 'Todas' })}</select></label>
           </div>
           <div class="finance-actions-row">
