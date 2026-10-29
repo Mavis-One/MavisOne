@@ -531,6 +531,15 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
     }
 
     function blocoFinanceiro() {
+      // Transferência não tem conta a pagar (29/10/2026): sem parcelas nem caixa.
+      if (tela.conferencia.transferencia) {
+        return `
+        <section class="panel">
+          <h4>Contas a pagar</h4>
+          <p class="muted">Transferência entre filiais: entra no estoque, sem contas a pagar.</p>
+        </section>
+      `;
+      }
       const duplicatas = tela.conferencia.nota.duplicatas;
       const doViper = tela.conferencia.titulosDoViper || [];
       return `
@@ -1017,10 +1026,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       tela.conferencia = { nota: resposta.nota, fornecedor: resposta.fornecedor, itens: resposta.itens, bloqueios: resposta.bloqueios, avisos: resposta.avisos, transferencia: Boolean(resposta.transferencia), titulosDoViper: resposta.titulosDoViper || [] };
       // A CADA NOTA (15/10/2026): marcado. Desligado numa nota, o "Gerar contas
       // a pagar" seguia desligado nas seguintes, e sem conta a pagar a Edição
-      // de Título não abria depois de lançar. Desde 16/10/2026 vale também na
-      // transferência entre filiais (pedido do usuário: a Edição de Título em
-      // todos os tipos de lançamento).
-      tela.gerarFinanceiro = true;
+      // de Título não abria depois de lançar. Menos na transferência entre
+      // filiais, que não tem conta a pagar (de 16/10 a 29/10/2026 tinha; o
+      // usuário desfez).
+      tela.gerarFinanceiro = !resposta.transferencia;
       // JÁ LANÇADA NO VIPER (19/10/2026, decisão do usuário): financeiro e
       // estoque vêm desmarcados — a nota fica registrada sem duplicar.
       tela.jaNoViper = tela.conferencia.titulosDoViper.length > 0;

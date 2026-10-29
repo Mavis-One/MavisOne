@@ -328,8 +328,8 @@ console.log('\n--- nota de uma filial para outra ---');
 {
   const E = require('../lib/entradaNfe');
   const proprios = ['43792899000135', '43792899001107', '46877837000114'];
-  const conferir = (emit, dest) => E.montarConferencia({
-    nota: { chave: '4'.repeat(44), itens: [{ numero: 1, descricao: 'X', quantidade: 1, valorUnitario: 1, valorTotal: 1 }],
+  const conferir = (emit, dest, cfops = ['5102']) => E.montarConferencia({
+    nota: { chave: '4'.repeat(44), itens: cfops.map((cfop, i) => ({ numero: i + 1, descricao: 'X', cfop, quantidade: 1, valorUnitario: 1, valorTotal: 1 })),
       emitente: { documento: emit, nome: 'EMIT' }, destinatario: { documento: dest, nome: 'DEST' } },
     documentosProprios: proprios
   });
@@ -338,6 +338,14 @@ console.log('\n--- nota de uma filial para outra ---');
   check('matriz -> filial (mesma raiz): entra, como transferência', !bloqueado(transf) && transf.transferencia === true && transf.avisos.some((a) => a.chave === 'transferencia'));
   const grupo = conferir('43792899000135', '46877837000114');
   check('Plus -> Electric (raízes diferentes): entra como compra', !bloqueado(grupo) && grupo.transferencia === false);
+  // 29/10/2026: entre empresas do grupo, a nota que se declara transferência
+  // pelo CFOP (todo item) também é transferência.
+  check('Plus -> Electric com CFOP 5152 é transferência', conferir('43792899000135', '46877837000114', ['5152', '6409']).transferencia === true);
+  check('  com um item de venda no meio, não', conferir('43792899000135', '46877837000114', ['5152', '5102']).transferencia === false);
+  check('  CFOP de transferência para cliente não é transferência', conferir('43792899000135', '07000399961', ['5152']).transferencia === false);
+  check('  nem de fornecedor de fora', conferir('05824631000149', '43792899000135', ['5152']).transferencia === false);
+  check('  os CFOPs de transferência', ['5151', '5152', '5409', '6152', '6408', '5552', '5557'].every((c) => E.notaDeTransferencia({ itens: [{ cfop: c }] }))
+    && !['5102', '5405', '5202', '5949', '1152', '2152', ''].some((c) => E.notaDeTransferencia({ itens: [{ cfop: c }] })) && !E.notaDeTransferencia({ itens: [] }));
   // 15/10/2026, segunda parte: nenhuma nota própria é barrada; vira aviso.
   const avisado = (c) => c.avisos.some((a) => a.chave === 'emitente-proprio');
   const paraCliente = conferir('43792899000135', '07000399961');
@@ -346,14 +354,15 @@ console.log('\n--- nota de uma filial para outra ---');
   check('mesmo CNPJ nos dois lados entra, com aviso', !bloqueado(mesmoCnpj) && avisado(mesmoCnpj));
   check('fornecedor -> nós segue normal', !bloqueado(conferir('05824631000149', '43792899000135')));
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  // Desde 16/10/2026 a transferência gera contas a pagar como as outras: o
-  // usuário quer a Edição de Título em TODOS os lançamentos pelas Notas contra
-  // CNPJ. Quem decide é só a caixa "Gerar contas a pagar".
-  check('transferência gera contas a pagar como as outras (servidor)', srv.includes('const querFinanceiro = body.gerarFinanceiro !== false;')
-    && !srv.includes('&& !conferencia.transferencia'));
+  // De 16/10 a 29/10/2026 a transferência gerou contas a pagar (para abrir a
+  // Edição de Título); o usuário desfez: "essas notas são de TRANSFERENCIA!".
+  check('transferência não gera contas a pagar (servidor), nem com a caixa marcada', srv.includes('const querFinanceiro = body.gerarFinanceiro !== false && !conferencia.transferencia;'));
+  check('  o aviso diz que fica sem contas a pagar', transf.avisos.some((a) => a.chave === 'transferencia' && /sem contas a pagar/.test(a.mensagem)));
   const telaEntrada = fs.readFileSync(path.join(__dirname, '..', 'public/modules/purchases/subs/entrada_nfe.js'), 'utf8');
-  check('  e a tela vem com o financeiro ligado em toda nota, transferência inclusive', telaEntrada.includes('tela.gerarFinanceiro = true;')
-    && !/id="entradaGerarFinanceiro"[^>]*transferencia/.test(telaEntrada));
+  check('  e a tela vem com o financeiro desligado', telaEntrada.includes('tela.gerarFinanceiro = !resposta.transferencia;'));
+  const quadro = telaEntrada.slice(telaEntrada.indexOf('function blocoFinanceiro() {'), telaEntrada.indexOf('const duplicatas = tela.conferencia.nota.duplicatas;', telaEntrada.indexOf('function blocoFinanceiro() {')));
+  check('  sem parcelas nem caixa no quadro Contas a pagar', /if \(tela\.conferencia\.transferencia\) \{\s*return `[\s\S]*?sem contas a pagar\.<\/p>[\s\S]*?`;\s*\}/.test(quadro)
+    && !quadro.includes('entradaGerarFinanceiro') && !quadro.includes('areaDoParcelamento'));
 }
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
