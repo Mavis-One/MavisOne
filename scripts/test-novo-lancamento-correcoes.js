@@ -69,7 +69,7 @@ check('o PUT, sem o campo, usa o estabelecimento que o lançamento já tem',
 
 console.log('\n--- 2. lançamento já baixado ou cancelado não abre formulário ---');
 check('a tela decide pelo rawStatus antes de desenhar',
-  /if \(editEntry && String\(editEntry\.rawStatus \|\| 'pending'\) !== 'pending'\) \{\s*renderSomenteLeitura\(editEntry\);\s*\} else \{[\s\S]*?renderForm\(\);\s*restaurarRascunho\(\);\s*guardarRascunhoFinanceiroAtivo = salvarRascunhoFinanceiro;\s*\}\s*\};/.test(tela));
+  /if \(editEntry && String\(editEntry\.rawStatus \|\| 'pending'\) !== 'pending'\) \{\s*renderSomenteLeitura\(editEntry\);\s*\} else \{[\s\S]*?renderForm\(\);[\s\S]*?restaurarRascunho\(\);[\s\S]*?guardarRascunhoFinanceiroAtivo = salvarRascunhoFinanceiro;\s*\}\s*\};/.test(tela));
 const leitura = tela.slice(tela.indexOf('function renderSomenteLeitura('), tela.indexOf('function acoesDeSaida('));
 check('o aviso só de leitura não tem formulário nem botão de salvar', leitura.length > 200
   && !/<form/.test(leitura) && !/type="submit"/.test(leitura));

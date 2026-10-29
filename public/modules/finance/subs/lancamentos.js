@@ -204,7 +204,36 @@ function criarTelaDeLancamentos(telaChave) {
   // toda volta à tela — abrir um lançamento para editar e voltar, ir ao pedido
   // e voltar — recomeçava na página 1, sem filtro, sem a ordem escolhida.
   // Seleção, filtros, página e ordem agora sobrevivem à navegação da sessão.
+  //
+  // E SOBREVIVEM AO F5 E A OUTRA ABA (29/10/2026, pedido do usuário: "sumirem
+  // informações após sair da aba ou atualizar a página"). O `state` morre com
+  // a página: filtros, página, ordem e o painel avançado ficam também no
+  // navegador, por usuário e por tela. A seleção não — é um retrato dos
+  // títulos daquele momento.
   const preferencia = (state.preferences && state.preferences.finance_lancamentos) || {};
+  const chaveDaLista = `mavisone:lista-financeiro:${state.user?.id || 'usuario'}:${telaChave}`;
+  const listaGuardada = () => {
+    try {
+      const g = JSON.parse(localStorage.getItem(chaveDaLista) || 'null');
+      if (!g || typeof g !== 'object') return {};
+      return {
+        filtros: Object.assign(financeFiltrosVazios(), g.filtros || {}),
+        page: Math.max(1, Number(g.page) || 1),
+        sort: String(g.sort || ''),
+        dir: g.dir === 'asc' ? 'asc' : 'desc',
+        showAdvanced: g.showAdvanced === true
+      };
+    } catch (_) {
+      return {};
+    }
+  };
+  const guardarLista = () => {
+    try {
+      localStorage.setItem(chaveDaLista, JSON.stringify({
+        filtros: lista.filtros, page: lista.page, sort: lista.sort, dir: lista.dir, showAdvanced: lista.showAdvanced
+      }));
+    } catch (_) { /* sem armazenamento: vale só nesta página */ }
+  };
   state.financeListas = state.financeListas || {};
   const lista = state.financeListas[telaChave] || (state.financeListas[telaChave] = {
     filtros: financeFiltrosVazios(),
@@ -214,7 +243,8 @@ function criarTelaDeLancamentos(telaChave) {
     dir: 'desc',
     selecao: {},
     showAdvanced: false,
-    showColunas: false
+    showColunas: false,
+    ...listaGuardada()
   });
   // QUEM CHEGA COM UM FILTRO PRONTO, uma vez: o pedido faturado em várias
   // parcelas manda para cá procurando pelo código dele (app.js). Esse filtro
@@ -436,8 +466,10 @@ function criarTelaDeLancamentos(telaChave) {
     // um deles pelo modal, e a barra continuaria somando o saldo de antes e
     // oferecendo "Baixar" para um título já pago.
     (result.entries || []).forEach((entry) => { if (estaSelecionado(entry.id)) marcar(entry, true); });
-    // O painel aberto precisa das listas dos selects antes de desenhar.
-    if (lista.showAdvanced) await Promise.all([metaPronto, carregarDiretorio()]);
+    // O painel aberto precisa das listas dos selects antes de desenhar — e a
+    // etiqueta do cliente/fornecedor filtrado, do nome dele (painel fechado
+    // depois do F5 mostrava "selecionado").
+    if (lista.showAdvanced || lista.filtros.clientSupplierId) await Promise.all([metaPronto, carregarDiretorio()]);
     if (meu !== pedidoAtual || !telaAtiva()) return;
     renderView(result);
   }
@@ -446,7 +478,7 @@ function criarTelaDeLancamentos(telaChave) {
   // desde ela (a busca digitada e ainda não enviada, por exemplo).
   async function redesenhar() {
     if (!ultimoResultado || consulta().toString() !== ultimaConsulta) return load();
-    if (lista.showAdvanced) await Promise.all([metaPronto, carregarDiretorio()]);
+    if (lista.showAdvanced || lista.filtros.clientSupplierId) await Promise.all([metaPronto, carregarDiretorio()]);
     if (!telaAtiva()) return undefined;
     renderView(ultimoResultado);
     return undefined;
@@ -795,6 +827,7 @@ function criarTelaDeLancamentos(telaChave) {
 
   function renderView(result) {
     const foco = lembrarFoco();
+    guardarLista();
     const f = lista.filtros;
     const limit = porPagina();
     const total = result.total || 0;

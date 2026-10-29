@@ -7,11 +7,37 @@ const FINANCE_TYPE_TOGGLE = [
   { value: 'TRANSFERENCIA', label: 'Transferência' }
 ];
 
-// O rascunho fica nesta aba: sobrevive ao F5 e à troca de módulo, sem misturar
-// o que está sendo digitado com os dados gravados ou com outra pessoa logada.
+// O rascunho sobrevive ao F5 e à troca de módulo, sem misturar o que está
+// sendo digitado com os dados gravados ou com outra pessoa logada.
+//
+// GUARDADO NO NAVEGADOR, NÃO NA ABA (29/10/2026, pedido do usuário: "sumirem
+// informações após sair da aba ou atualizar a página ainda não está voltando").
+// No sessionStorage ele morria com a aba: fechá-la, ou abrir o sistema noutra,
+// perdia o que estava digitado. No localStorage, por usuário, ele vale em
+// qualquer aba até salvar o lançamento ou "Descartar rascunho". O de antes,
+// por aba, ainda é lido (quem estava com a tela aberta na atualização).
 const FINANCE_DRAFT_KEY = 'mavisone:lancamento-financeiro:';
 let guardarRascunhoFinanceiroAtivo = null;
 let avisoFalhaRascunhoFinanceiro = false;
+const lerRascunhoGuardado = (chave) => {
+  const salvo = localStorage.getItem(chave) || sessionStorage.getItem(chave);
+  return salvo ? JSON.parse(salvo) : null;
+};
+const gravarRascunhoGuardado = (chave, rascunho) => {
+  localStorage.setItem(chave, JSON.stringify({ ...rascunho, salvoEm: Date.now() }));
+};
+const apagarRascunhoGuardado = (chave) => {
+  localStorage.removeItem(chave);
+  sessionStorage.removeItem(chave);
+};
+// O título como estava gravado quando o rascunho da edição começou. Se mudou
+// depois (outra pessoa, outra aba, uma baixa), o rascunho velho não volta por
+// cima do que está gravado.
+const impressaoDoTitulo = (entry) => (entry ? JSON.stringify([
+  entry.type, entry.date, entry.dueDate, entry.description, entry.document, entry.note, entry.category,
+  entry.costCenter, entry.bankAccountId, entry.targetBankAccountId, entry.clientSupplierId, entry.amountPrevisto,
+  entry.paymentMethodId, entry.estabelecimentoId, entry.rawStatus
+]) : '');
 
 ['input', 'change'].forEach((tipo) => {
   document.addEventListener(tipo, (evento) => {
@@ -39,8 +65,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   const chaveDoRascunho = `${FINANCE_DRAFT_KEY}${state.user?.id || 'usuario'}:${idEmEdicao || 'novo'}`;
   let rascunhoSalvo = null;
   try {
-    const salvo = sessionStorage.getItem(chaveDoRascunho);
-    if (salvo) rascunhoSalvo = JSON.parse(salvo);
+    rascunhoSalvo = lerRascunhoGuardado(chaveDoRascunho);
   } catch (error) {
     if (!avisoFalhaRascunhoFinanceiro) {
       avisoFalhaRascunhoFinanceiro = true;
@@ -48,7 +73,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     }
   }
   const rascunhoDaMemoria = state.financeRascunhoLancamento;
-  const rascunhoInicial = rascunhoDaMemoria && (rascunhoDaMemoria.editId || null) === (idEmEdicao || null)
+  let rascunhoInicial = rascunhoDaMemoria && (rascunhoDaMemoria.editId || null) === (idEmEdicao || null)
     ? rascunhoDaMemoria
     : rascunhoSalvo;
   // EDIÇÃO DE TÍTULO (14/10/2026) é esta mesma tela com outro nome. Sem título
@@ -82,6 +107,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     } else {
       showToast('Não foi possível carregar o lançamento para edição.', 'error');
     }
+  }
+  if (rascunhoInicial && rascunhoInicial === rascunhoSalvo && editEntry && rascunhoInicial.base
+    && rascunhoInicial.base !== impressaoDoTitulo(editEntry)) {
+    rascunhoInicial = null;
+    try { apagarRascunhoGuardado(chaveDoRascunho); } catch (_) { /* fica para a próxima */ }
+    showToast('Este título foi alterado depois do seu rascunho: abri o que está gravado.', 'warning', 8000);
   }
 
   // Fase EI: "Voltar ao pedido" só para lançamento DAQUELE pedido.
@@ -760,11 +791,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       campos,
       rotulos,
       parcelas: parcelas.map((parcela) => ({ ...parcela })),
+      base: impressaoDoTitulo(editEntry),
       kind,
       alvo
     };
     try {
-      sessionStorage.setItem(chaveDoRascunho, JSON.stringify(state.financeRascunhoLancamento));
+      gravarRascunhoGuardado(chaveDoRascunho, state.financeRascunhoLancamento);
     } catch (error) {
       if (!avisoFalhaRascunhoFinanceiro) {
         avisoFalhaRascunhoFinanceiro = true;
@@ -817,6 +849,33 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     if (r.criadoId) showToast('Cadastrado e já escolhido no lançamento.', 'success');
   }
 
+  // O RASCUNHO QUE VOLTOU DO NAVEGADOR fica à vista, com a saída para começar
+  // do zero: guardado até salvar, sem o botão ele não teria como ir embora.
+  let rascunhoRecuperadoEm = 0;
+  const retratoDoForm = () => {
+    const form = document.getElementById('financeEntryForm');
+    return form ? JSON.stringify([...form.elements]
+      .filter((el) => el.name && !['submit', 'button'].includes(el.type))
+      .map((el) => [el.name, el.value])) : '';
+  };
+  function mostrarDescartar() {
+    const salvar = document.querySelector('#financeEntryForm button[type="submit"]');
+    if (!rascunhoRecuperadoEm || !salvar || document.getElementById('financeDescartarRascunho')) return;
+    const quando = new Date(rascunhoRecuperadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    salvar.insertAdjacentHTML('afterend', `
+      <button type="button" class="secondary" id="financeDescartarRascunho">Descartar rascunho</button>
+      <span class="muted" id="financeRascunhoRecuperado">Rascunho não salvo recuperado (guardado em ${escapeHtml(quando)}).</span>`);
+    document.getElementById('financeDescartarRascunho').addEventListener('click', () => {
+      guardarRascunhoFinanceiroAtivo = null;
+      try { apagarRascunhoGuardado(chaveDoRascunho); } catch (_) { /* some com a próxima gravação */ }
+      state.financeRascunhoLancamento = null;
+      state.financeEditEntryId = editEntry ? editEntry.id : null;
+      state.financeNovoTipo = tipoSugerido || null;
+      showToast('Rascunho descartado.', 'info');
+      loadModule('finance');
+    });
+  }
+
   function salvarRascunhoFinanceiro() {
     const form = document.getElementById('financeEntryForm');
     if (!form) return;
@@ -838,7 +897,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       parcelas: [...document.querySelectorAll('#financeParcelas [data-parcela-data]')].map((campo, indice) => ({
         dueDate: campo.value,
         amount: Number(document.querySelector(`#financeParcelas [data-parcela-valor="${indice}"]`)?.value) || 0
-      }))
+      })),
+      base: impressaoDoTitulo(editEntry)
     };
     const rascunhoAtual = state.financeRascunhoLancamento;
     if (rascunhoAtual && (rascunhoAtual.editId || null) === (editEntry ? editEntry.id : null)) {
@@ -849,7 +909,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       });
     }
     try {
-      sessionStorage.setItem(chaveDoRascunho, JSON.stringify(rascunho));
+      gravarRascunhoGuardado(chaveDoRascunho, rascunho);
     } catch (error) {
       if (!avisoFalhaRascunhoFinanceiro) {
         avisoFalhaRascunhoFinanceiro = true;
@@ -1071,6 +1131,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       atualizarCentroDaEmpresa();
     });
 
+    mostrarDescartar();
+
     document.getElementById('financeEntryForm')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const submitBtn = event.target.querySelector('button[type="submit"]');
@@ -1195,11 +1257,11 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
           result = await api('/api/finance/entries', { method: 'POST', body: JSON.stringify(payload) });
         }
         try {
-          sessionStorage.removeItem(chaveDoRascunho);
+          apagarRascunhoGuardado(chaveDoRascunho);
         } catch (error) {
           if (!avisoFalhaRascunhoFinanceiro) {
             avisoFalhaRascunhoFinanceiro = true;
-            showToast(`Lançamento salvo, mas não foi possível limpar o rascunho desta aba: ${error.message || 'armazenamento indisponível.'}`, 'warning');
+            showToast(`Lançamento salvo, mas não foi possível limpar o rascunho: ${error.message || 'armazenamento indisponível.'}`, 'warning');
           }
         }
         const quantas = Array.isArray(result.entries) ? result.entries.length : 1;
@@ -1260,7 +1322,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       if (rascunho.estabelecimentoAtual !== undefined) estabelecimentoAtual = rascunho.estabelecimentoAtual;
     }
     renderForm();
+    const emBranco = rascunho && rascunho === rascunhoSalvo ? retratoDoForm() : null;
     restaurarRascunho();
+    if (emBranco !== null && retratoDoForm() !== emBranco) {
+      rascunhoRecuperadoEm = Number(rascunho.salvoEm) || Date.now();
+      mostrarDescartar();
+    }
     guardarRascunhoFinanceiroAtivo = salvarRascunhoFinanceiro;
   }
 };

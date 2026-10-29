@@ -10,6 +10,7 @@ const vm = require('vm');
 const raiz = path.join(__dirname, '..');
 const app = fs.readFileSync(path.join(raiz, 'public/app.js'), 'utf8');
 const tela = fs.readFileSync(path.join(raiz, 'public/modules/finance/subs/novo_lancamento.js'), 'utf8');
+const lista = fs.readFileSync(path.join(raiz, 'public/modules/finance/subs/lancamentos.js'), 'utf8');
 let falhas = 0;
 const check = (nome, cond) => {
   console.log(`${cond ? '  OK ' : '  XX '} ${nome}`);
@@ -54,11 +55,15 @@ check('o id da edição segue no endereço ao trocar de tela',
   && contextoSufixo.sufixoDoLancamentoFinanceiro('finance', 'edicao_titulo') === '/titulo%2F123'
   && contextoSufixo.sufixoDoLancamentoFinanceiro('finance', 'novo_lancamento') === '');
 
-console.log('\n--- rascunho persistente por aba ---');
-check('guarda o rascunho no sessionStorage isolado por usuário e título',
+console.log('\n--- rascunho guardado no navegador (29/10/2026) ---');
+check('guarda o rascunho no localStorage, isolado por usuário e título',
   /FINANCE_DRAFT_KEY = 'mavisone:lancamento-financeiro:'/.test(tela)
-  && /sessionStorage\.setItem\(chaveDoRascunho, JSON\.stringify/.test(tela)
-  && /state\.user\?\.id/.test(tela));
+  && /localStorage\.setItem\(chave, JSON\.stringify\(\{ \.\.\.rascunho, salvoEm: Date\.now\(\) \}\)\)/.test(tela)
+  && /gravarRascunhoGuardado\(chaveDoRascunho, rascunho\)/.test(tela)
+  && /state\.user\?\.id/.test(tela)
+  && !/sessionStorage\.setItem/.test(tela));
+check('o de antes, por aba, ainda é lido uma vez',
+  /localStorage\.getItem\(chave\) \|\| sessionStorage\.getItem\(chave\)/.test(tela));
 check('persiste alterações ao digitar, alterar campos ou sair da página',
   /document\.addEventListener\(tipo,[\s\S]*?guardarRascunhoFinanceiroAtivo\?\.\(\)/.test(tela)
   && /window\.addEventListener\('pagehide', \(\) => guardarRascunhoFinanceiroAtivo\?\.\(\)\)/.test(tela));
@@ -67,10 +72,30 @@ check('restaura tipo, campos, rótulos e parcelas já ajustadas',
   && /const r = rascunhoInicial/.test(tela)
   && /parcelas = r\.parcelas\.map/.test(tela)
   && /Object\.keys\(CAMPOS_DE_BUSCA\)\.forEach/.test(tela));
-check('remove o rascunho depois que o lançamento foi salvo',
-  /sessionStorage\.removeItem\(chaveDoRascunho\)/.test(tela));
+check('remove o rascunho (dos dois armazenamentos) depois que o lançamento foi salvo',
+  /apagarRascunhoGuardado\(chaveDoRascunho\);\s*\} catch \(error\) \{[\s\S]{0,200}Lançamento salvo, mas/.test(tela)
+  && /localStorage\.removeItem\(chave\);\s*sessionStorage\.removeItem\(chave\);/.test(tela));
+check('rascunho da edição não volta por cima do título alterado depois dele',
+  /base: impressaoDoTitulo\(editEntry\)/.test(tela)
+  && /rascunhoInicial\.base !== impressaoDoTitulo\(editEntry\)/.test(tela));
+check('"Descartar rascunho" aparece só quando o rascunho mudou o formulário',
+  /retratoDoForm\(\) !== emBranco/.test(tela)
+  && /id="financeDescartarRascunho">Descartar rascunho</.test(tela)
+  && /mostrarDescartar\(\);\s*\n\s*document\.getElementById\('financeEntryForm'\)\?\.addEventListener\('submit'/.test(tela));
 check('informa que o formulário está carregando em vez de mostrar uma área vazia',
   /content\.innerHTML = '<div class="panel"><p>Carregando lançamento\.\.\.<\/p><\/div>'/.test(tela));
+
+console.log('\n--- filtros das listas do Financeiro (29/10/2026) ---');
+check('Lançamentos, Contas a Pagar e a Receber guardam filtros, página, ordem e painel por usuário e tela',
+  /mavisone:lista-financeiro:\$\{state\.user\?\.id \|\| 'usuario'\}:\$\{telaChave\}/.test(lista)
+  && /filtros: lista\.filtros, page: lista\.page, sort: lista\.sort, dir: lista\.dir, showAdvanced: lista\.showAdvanced/.test(lista)
+  && /showColunas: false,\s*\.\.\.listaGuardada\(\)/.test(lista));
+check('a seleção não é guardada',
+  !/selecao: lista\.selecao/.test(lista));
+check('guarda a cada desenho da lista',
+  /function renderView\(result\) \{\s*const foco = lembrarFoco\(\);\s*guardarLista\(\);/.test(lista));
+check('a etiqueta do cliente/fornecedor filtrado tem o nome depois do F5',
+  (lista.match(/if \(lista\.showAdvanced \|\| lista\.filtros\.clientSupplierId\) await/g) || []).length === 2);
 
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
