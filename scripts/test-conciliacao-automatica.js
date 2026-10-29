@@ -71,6 +71,34 @@ check('só os alvos (o arquivo importado, o filtro)', r.pares.length === 1 && r.
 r = pares({ movimentacoes: [mov('m1'), mov('m2')], alvos: ['m1'], titulos: [tit('t1')] });
 check('  mas a unicidade olha todas as não conciliadas', !r.pares.length);
 
+console.log('\n--- 3b. a parcela do mês (29/10/2026) ---');
+const parcelas = ['2026-09-10', '2026-10-10', '2026-11-10', '2026-12-10'].map((v, i) => tit(`p${i + 1}`, { vencimento: v }));
+r = pares({ movimentacoes: [mov('m1', { data: '2026-10-10' })], titulos: parcelas });
+check('várias parcelas: fica com a que vence na data', r.pares.length === 1 && r.pares[0].tituloId === 'p2', JSON.stringify(r));
+r = pares({ movimentacoes: [mov('m1', { data: '2026-11-03' })], titulos: parcelas });
+check('  paga antes do vencimento: a do mês', r.pares.length === 1 && r.pares[0].tituloId === 'p3', JSON.stringify(r));
+r = pares({ movimentacoes: [mov('m1', { data: '2026-10-20' })], titulos: parcelas });
+check('  paga depois do dia útil seguinte, ainda no mês: a do mês', r.pares.length === 1 && r.pares[0].tituloId === 'p2');
+r = pares({ movimentacoes: [mov('m1', { data: '2026-10-31' })], titulos: [tit('a', { vencimento: '2026-10-30' }), tit('b', { vencimento: '2026-11-30' })] });
+check('  a da data vem antes da do mês (vence 30/10, paga no dia útil seguinte)', r.pares.length === 1 && r.pares[0].tituloId === 'a');
+r = pares({ movimentacoes: [mov('m1', { data: '2026-10-10' }), mov('m2', { data: '2026-11-10' }), mov('m3', { data: '2026-12-09' })], titulos: parcelas });
+check('três meses no mesmo extrato: cada movimentação com a sua parcela',
+  r.pares.length === 3 && r.pares.map((p) => p.tituloId).join() === 'p2,p3,p4', JSON.stringify(r.pares));
+r = pares({ movimentacoes: [mov('m1', { data: '2026-11-05' }), mov('m2', { data: '2026-11-20' })], titulos: parcelas });
+check('duas movimentações para a mesma parcela: nenhuma', !r.pares.length && /mais de uma movimentação/.test(r.motivos.m1) && /mais de uma movimentação/.test(r.motivos.m2));
+r = pares({ movimentacoes: [mov('m1', { data: '2026-11-05' }), mov('m2', { data: '2026-11-20' })], alvos: ['m2'], titulos: parcelas });
+check('  mesmo com a outra fora do arquivo importado', !r.pares.length && Object.keys(r.motivos).join() === 'm2');
+r = pares({ movimentacoes: [mov('m1', { data: '2026-11-12' })], titulos: [...parcelas, tit('x', { vencimento: '2026-11-25' })] });
+check('duas parcelas do mesmo valor no mês: não', !r.pares.length && /vence no mês/.test(r.motivos.m1));
+r = pares({ movimentacoes: [mov('m1', { data: '2027-02-10' })], titulos: parcelas });
+check('nenhuma parcela no mês: não', !r.pares.length && /nenhuma parcela/.test(r.motivos.m1));
+r = pares({ movimentacoes: [mov('m1', { data: '2026-11-10' })], titulos: [...parcelas, tit('v1', { nome: 'VIVO S.A.', vencimento: '2026-11-10' })] });
+check('título de outro fornecedor com o mesmo valor não atrapalha', r.pares.length === 1 && r.pares[0].tituloId === 'p3');
+r = pares({ movimentacoes: [mov('m1', { data: '2026-11-10' })], titulos: [...parcelas, tit('s1', { raiz: '', vencimento: '2026-11-10' })] });
+check('parcela do mesmo fornecedor sem empresa no mesmo dia: não', !r.pares.length && /mais de um título/.test(r.motivos.m1));
+r = pares({ movimentacoes: [mov('m1', { data: '2026-11-10', texto: 'PAGAMENTO VIVO' })], titulos: parcelas });
+check('fornecedor que não é o das parcelas: não', !r.pares.length && /fornecedor/.test(r.motivos.m1));
+
 console.log('\n--- 4. o servidor ---');
 const servidor = ler('server.js');
 check('a importação concilia o que acabou de entrar', /automatica = await conciliarAutomaticamente\(user, \(tx\) => novas\.has\(tx\.id\)\);/.test(servidor)

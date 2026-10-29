@@ -248,7 +248,8 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
   async function conciliarAutomatico(botao) {
     if (botao.disabled) return;
     const confirmed = await confirmModal('Conciliar automaticamente as movimentações não conciliadas do filtro atual? '
-      + 'Só entram as que têm empresa, fornecedor, valor e data batendo com um único título em aberto.');
+      + 'Só entram as que têm empresa, fornecedor, valor e data batendo com um único título em aberto. '
+      + 'Título em várias parcelas do mesmo valor: entra a parcela que vence no mês da movimentação.');
     if (!confirmed) return;
     botao.disabled = true;
     try {
@@ -281,7 +282,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       ? tx.conciliacoes.map((c) => `${c.description || c.entryId}: ${financeFormatBRL(c.valor)}`).join('\n')
       : conciliadoCom;
     const selo = tx.conciliadoAutomaticamente
-      ? ' <span class="finance-badge finance-badge-info" title="Conciliada automaticamente: empresa, fornecedor, valor e data batem">Auto</span>'
+      ? ' <span class="finance-badge finance-badge-info" title="Conciliada automaticamente: empresa, fornecedor, valor e data (ou o mês da parcela) batem">Auto</span>'
       : '';
     // DESCRIÇÃO CORTADA, INTEIRA NO TÍTULO (fase EI). `.table td` não quebra
     // linha, e a descrição do OFX vem do MEMO inteiro ("PIX RECEBIDO - NOME -
@@ -332,7 +333,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         <div class="cadastro-list-actions">
           <button type="button" id="extratoNewBtn">+ Nova movimentação</button>
           <button type="button" class="secondary" id="extratoImportBtn">Importar extrato (OFX/CSV)</button>
-          <button type="button" class="secondary" id="extratoAutoBtn" title="Concilia sozinho o que tem empresa, fornecedor, valor e data batendo, com valor único (um título e uma movimentação com esse valor)">Conciliar automático</button>
+          <button type="button" class="secondary" id="extratoAutoBtn" title="Concilia sozinho o que tem empresa, fornecedor, valor e data batendo, com valor único (um título e uma movimentação com esse valor). Parcelas do mesmo valor: a que vence no mês da movimentação">Conciliar automático</button>
           <button type="button" class="secondary" id="extratoRefreshBtn">Atualizar</button>
         </div>
       </div>
