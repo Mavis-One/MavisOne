@@ -42,7 +42,22 @@ check('o botão de cadastrar aparece em todo item, ligado ou não',
   && !/criar\.hidden/.test(tela) && !/escolha\.produtoId \? 'hidden'/.test(tela));
 check('  "Criar produto" sem produto, "Criar código novo" com', /return produtoId \? 'Criar código novo' : 'Criar produto';/.test(tela));
 check('  o aviso diz qual código o item deixa de usar', /O item deixa de usar o código \$\{codigoAtual\}, que continua cadastrado/.test(tela));
-check('  e sem a ficha o clique avisa, em vez de não fazer nada', /if \(!item\.sugestaoProduto\) \{\s*showToast\(/.test(tela));
+// 30/10/2026: com o servidor de antes (sem a ficha no item ligado) o clique
+// parava em "Abra a nota de novo". A tela monta a mesma ficha com o item.
+check('  sem a ficha do servidor, a tela monta a mesma com o item', /const s = fichaDoItem\(item\);/.test(tela)
+  && /if \(item\.sugestaoProduto\) return item\.sugestaoProduto;/.test(tela) && !/Abra a nota de novo/.test(tela));
+{
+  const fonte = /function fichaDoItem\(item\) \{[\s\S]*?\n    \}/.exec(tela);
+  const E = require('../lib/entradaNfe');
+  const item = { numero: 1, codigo: '10766', descricao: 'ALGARISMO 125MM', ean: '7896112466314', ncm: '83100000', cest: '1234567',
+    unidade: 'PC', unidadeTributavel: 'UN', icms: { origem: '0' }, valorUnitario: 4.5 };
+  // eslint-disable-next-line no-new-func
+  const daTela = fonte ? new Function(`${fonte[0]}\nreturn fichaDoItem;`)()(item) : null;
+  const doServidor = E.sugerirProdutoDoItem(item);
+  const campos = ['name', 'sku', 'ean', 'ncm', 'cest', 'unidadeComercial', 'unidadeTributavel', 'origem', 'costPrice'];
+  check('  e a ficha da tela é a do servidor, campo a campo', Boolean(daTela) && campos.every((c) => daTela[c] === doServidor[c]),
+    daTela && campos.filter((c) => daTela[c] !== doServidor[c]).join(','));
+}
 {
   const E = require('../lib/entradaNfe');
   const c = E.montarConferencia({

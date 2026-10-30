@@ -264,6 +264,26 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       return produtoId ? 'Criar código novo' : 'Criar produto';
     }
 
+    // A ficha do produto novo. O servidor manda a dele (sugerirProdutoDoItem,
+    // lib/entradaNfe.js); servidor de antes de 30/10/2026 só mandava para item
+    // sem produto, e o clique no item ligado parava num aviso. A mesma ficha,
+    // montada aqui com o item da nota.
+    function fichaDoItem(item) {
+      if (item.sugestaoProduto) return item.sugestaoProduto;
+      const origem = item.icms ? item.icms.origem : undefined;
+      return {
+        name: item.descricao,
+        sku: item.codigo || '',
+        ean: item.ean || '',
+        ncm: item.ncm || '',
+        cest: item.cest || '',
+        unidadeComercial: item.unidade || '',
+        unidadeTributavel: item.unidadeTributavel || item.unidade || '',
+        origem: origem !== undefined && origem !== null && origem !== '' ? Number(origem) : null,
+        costPrice: Number(item.valorUnitario || 0)
+      };
+    }
+
     function escolhaDoItem(item) {
       const guardada = tela.escolhas.get(item.numero);
       if (guardada) return guardada;
@@ -1090,11 +1110,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
     async function cadastrarProduto(numeroItem) {
       const item = tela.conferencia.itens.find((i) => i.numero === numeroItem);
       if (!item) return;
-      if (!item.sugestaoProduto) {
-        showToast('Abra a nota de novo para cadastrar o produto deste item.', 'error');
-        return;
-      }
-      const s = item.sugestaoProduto;
+      const s = fichaDoItem(item);
       const atual = escolhaDoItem(item).produtoId;
       const codigoAtual = atual ? codigoDoProduto(atual) : '';
       const confirmado = await confirmModal(
