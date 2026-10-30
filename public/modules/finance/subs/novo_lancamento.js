@@ -50,7 +50,9 @@ const impressaoDoTitulo = (entry) => (entry ? JSON.stringify([
 window.addEventListener('pagehide', () => guardarRascunhoFinanceiroAtivo?.());
 
 window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFinanceNovoLancamento(ctx) {
-  const { content, api, showToast, state, loadModule, escapeHtml } = ctx;
+  const { api, showToast, state, loadModule, escapeHtml } = ctx;
+  // `let`: o renderApp() abaixo refaz a página, e o conteúdo antigo sai dela.
+  let { content } = ctx;
 
   let meta = { categories: [], costCenters: [], bankAccounts: [], directory: [], estabelecimentos: [], contasPorEstabelecimento: [] };
   // AS DUAS CARGAS SAEM JUNTAS, e o meta só com o que esta tela lê (fase DS).
@@ -59,7 +61,16 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
   // Uma não depende da outra. E do meta esta tela não lê produtos (só a
   // emissão de NF-e lê), e do diretório lê id, nome e código — o recorte
   // `resumido`, 548 KB no lugar de 2.818 (169 KB no fio, contra 569).
-  const idEmEdicao = state.financeEditEntryId;
+  // O TÍTULO ABERTO SOBREVIVE AO REDESENHO (30/10/2026, pedido do usuário:
+  // "novamente o mesmo erro [...] URGENTE"). Voltando à aba com algo gravado
+  // por outra pessoa, os dados ao vivo redesenham a tela (loadModule). O id já
+  // tinha sido consumido abaixo, a Edição de Título virava Novo Lançamento, e o
+  // renderApp() deixava a página em branco; o F5 depois abria um lançamento
+  // vazio. O id do título aberto continua em financeOpenedEntryId (e no
+  // endereço) enquanto a tela é a Edição de Título.
+  const idEmEdicao = state.financeEditEntryId
+    || (state.activeSub === 'edicao_titulo' ? state.financeOpenedEntryId : null)
+    || null;
   state.financeEditEntryId = null;
   state.financeOpenedEntryId = idEmEdicao || null;
   const chaveDoRascunho = `${FINANCE_DRAFT_KEY}${state.user?.id || 'usuario'}:${idEmEdicao || 'novo'}`;
@@ -83,7 +94,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     if (typeof gravarTelaNoEndereco === 'function') {
       gravarTelaNoEndereco('finance', 'novo_lancamento', { substituir: true });
     }
-    if (typeof renderApp === 'function') renderApp();
+    if (typeof renderApp === 'function') {
+      renderApp();
+      // O renderApp() troca o #moduleContent: escrever no antigo era a página
+      // em branco (30/10/2026).
+      content = document.getElementById('moduleContent') || content;
+    }
   }
   // Vindo de Contas a Pagar / a Receber, o novo nasce no tipo da tela.
   const tipoSugerido = state.financeNovoTipo;
@@ -753,6 +769,9 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       // (TypeError no console). Custa recarregar o meta, o mesmo de abrir a
       // tela pelo menu. O pedido de origem fica para trás junto.
       evento.currentTarget.disabled = true;
+      // O título editado não é mais o aberto: sem isto, a Edição de Título
+      // reabriria ele em vez de um lançamento novo (30/10/2026).
+      state.financeOpenedEntryId = null;
       state.financeReturnTo = null;
       renderFinanceNovoLancamento(ctx);
     });

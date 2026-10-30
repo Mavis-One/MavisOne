@@ -97,5 +97,21 @@ check('guarda a cada desenho da lista',
 check('a etiqueta do cliente/fornecedor filtrado tem o nome depois do F5',
   (lista.match(/if \(lista\.showAdvanced \|\| lista\.filtros\.clientSupplierId\) await/g) || []).length === 2);
 
+// 30/10/2026, pedido do usuário: "novamente o mesmo erro [...] URGENTE". Na
+// Edição de Título, voltar à aba com algo gravado por outra pessoa redesenha a
+// tela (dados ao vivo -> loadModule). O id já consumido virava Novo
+// Lançamento, o renderApp() trocava o #moduleContent e a página ficava em
+// branco; o F5 depois abria um lançamento vazio. Provado na 3099: antes, hash
+// #/finance/novo_lancamento e conteúdo vazio; depois, o mesmo título aberto.
+console.log('\n--- o redesenho da Edição de Título ---');
+check('o título aberto vem de financeOpenedEntryId quando a tela é a Edição de Título',
+  /const idEmEdicao = state\.financeEditEntryId\s*\|\| \(state\.activeSub === 'edicao_titulo' \? state\.financeOpenedEntryId : null\)/.test(tela));
+check('depois do renderApp() a tela escreve no #moduleContent novo',
+  /let \{ content \} = ctx;/.test(tela)
+  && /renderApp\(\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*content = document\.getElementById\('moduleContent'\) \|\| content;/.test(tela));
+check('"Novo Lançamento" de dentro da edição não reabre o mesmo título',
+  /state\.financeOpenedEntryId = null;\s*state\.financeReturnTo = null;\s*renderFinanceNovoLancamento\(ctx\);/.test(tela));
+check('o redesenho dos dados ao vivo é o loadModule da tela aberta', /redesenhar: \(\) => loadModule\(state\.activeModule\)/.test(app));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
