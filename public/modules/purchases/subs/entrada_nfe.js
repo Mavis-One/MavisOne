@@ -257,6 +257,13 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       return produto && produto.sku ? produto.sku : '—';
     }
 
+    // O botão de cadastrar fica à vista mesmo com o item ligado a um produto
+    // (30/10/2026, pedido do usuário: "permita criar códigos novos por sku
+    // mesmo que já tenha códigos antigos").
+    function rotuloDoCriar(produtoId) {
+      return produtoId ? 'Criar código novo' : 'Criar produto';
+    }
+
     function escolhaDoItem(item) {
       const guardada = tela.escolhas.get(item.numero);
       if (guardada) return guardada;
@@ -322,10 +329,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                         })}
                         ${selo ? `<span class="finance-badge ${selo.classe} entrada-selo">${selo.texto}</span>` : ''}
                         ${tela.permissoes.cadastrarProduto ? `
-                          <button type="button" class="btn btn-muted entrada-btn-produto" data-cadastrar-produto="${item.numero}"
-                            ${escolha.produtoId ? 'hidden' : ''}>
-                            Criar produto
-                          </button>
+                          <button type="button" class="btn btn-muted entrada-btn-produto" data-cadastrar-produto="${item.numero}">${rotuloDoCriar(escolha.produtoId)}</button>
                         ` : ''}
                         ${!escolha.produtoId && !tela.permissoes.cadastrarProduto ? '<span class="muted entrada-selo">sem produto — precisa do módulo Estoque para cadastrar</span>' : ''}
                       </td>
@@ -809,10 +813,10 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
             escolha.produtoId = valor || '';
             const celula = document.querySelector(`[data-codigo-item="${item.numero}"]`);
             if (celula) celula.textContent = codigoDoProduto(escolha.produtoId);
-            // "Criar produto" aparece sempre que o item fica sem produto
-            // (22/10/2026) — inclusive ao limpar um palpite errado.
+            // O botão de cadastrar está sempre à vista (desde 30/10/2026,
+            // também com produto escolhido); só o rótulo muda.
             const criar = document.querySelector(`[data-cadastrar-produto="${item.numero}"]`);
-            if (criar) criar.hidden = Boolean(escolha.produtoId);
+            if (criar) criar.textContent = rotuloDoCriar(escolha.produtoId);
             // Sem produto não há estoque a movimentar: desmarca e desliga a
             // caixa, em vez de deixar marcada uma opção que o servidor
             // recusaria depois.
@@ -1085,10 +1089,17 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
 
     async function cadastrarProduto(numeroItem) {
       const item = tela.conferencia.itens.find((i) => i.numero === numeroItem);
-      if (!item || !item.sugestaoProduto) return;
+      if (!item) return;
+      if (!item.sugestaoProduto) {
+        showToast('Abra a nota de novo para cadastrar o produto deste item.', 'error');
+        return;
+      }
       const s = item.sugestaoProduto;
+      const atual = escolhaDoItem(item).produtoId;
+      const codigoAtual = atual ? codigoDoProduto(atual) : '';
       const confirmado = await confirmModal(
         `Cadastrar "${s.name}" como produto novo? O código sai da sequência${s.sku ? ` e o do fornecedor (${s.sku}) fica em C.Fabricante` : ''}; NCM, unidade e código de barras vêm da nota; o preço de venda fica zerado.`
+        + (atual ? ` O item deixa de usar o código ${codigoAtual}, que continua cadastrado; lançada esta nota, as próximas deste fornecedor já vêm com o código novo.` : '')
       );
       if (!confirmado) return;
       try {

@@ -33,9 +33,26 @@ check('o do fornecedor continua embaixo da descrição', /cód\. fornecedor \$\{
 // trouxe o item "já vinculado antes".
 check('o código do produto na FRENTE do nome, no campo e na busca', /label: p\.sku \? `\$\{p\.sku\} — \$\{p\.name\}` : p\.name/.test(tela));
 check('o selo "código igual ao SKU" saiu', !/código igual ao SKU/.test(tela));
-check('"Criar produto" aparece sempre que o item está sem produto',
-  /data-cadastrar-produto="\$\{item\.numero\}"\s*\$\{escolha\.produtoId \? 'hidden' : ''\}>\s*Criar produto/.test(tela)
-  && /if \(criar\) criar\.hidden = Boolean\(escolha\.produtoId\);/.test(tela));
+// 30/10/2026, pedido do usuário: "permita criar códigos novos por sku mesmo
+// que já tenha códigos antigos". O botão fica à vista também com o item ligado
+// a um produto ("Criar código novo"), e a ficha da nota vem em todo item.
+check('o botão de cadastrar aparece em todo item, ligado ou não',
+  /data-cadastrar-produto="\$\{item\.numero\}">\$\{rotuloDoCriar\(escolha\.produtoId\)\}<\/button>/.test(tela)
+  && /if \(criar\) criar\.textContent = rotuloDoCriar\(escolha\.produtoId\);/.test(tela)
+  && !/criar\.hidden/.test(tela) && !/escolha\.produtoId \? 'hidden'/.test(tela));
+check('  "Criar produto" sem produto, "Criar código novo" com', /return produtoId \? 'Criar código novo' : 'Criar produto';/.test(tela));
+check('  o aviso diz qual código o item deixa de usar', /O item deixa de usar o código \$\{codigoAtual\}, que continua cadastrado/.test(tela));
+check('  e sem a ficha o clique avisa, em vez de não fazer nada', /if \(!item\.sugestaoProduto\) \{\s*showToast\(/.test(tela));
+{
+  const E = require('../lib/entradaNfe');
+  const c = E.montarConferencia({
+    nota: { chave: '4'.repeat(44), emitente: { documento: '05824631000149', nome: 'F' }, destinatario: { documento: '43792899000135' },
+      itens: [{ numero: 1, codigo: 'A1', descricao: 'PARAFUSO 10MM', ean: '7891234567895', ncm: '73181500', quantidade: 1, valorUnitario: 2, valorTotal: 2 }] },
+    produtos: [{ id: 'p-velho', sku: '000123', name: 'PARAFUSO ANTIGO', ean: '7891234567895' }]
+  });
+  check('  item ligado a produto antigo também traz a ficha da nota', c.itens[0].vinculo && c.itens[0].vinculo.produtoId === 'p-velho'
+    && c.itens[0].sugestaoProduto && c.itens[0].sugestaoProduto.name === 'PARAFUSO 10MM');
+}
 check('  e o item fica ligado ao produto criado, sem perder o resto da conferência',
   /tela\.escolhas\.set\(numeroItem, \{ produtoId: novo\.id, movimentarEstoque: !tela\.jaNoViper \}\);/.test(tela)
   && /escolhidos\.forEach\(\(e, numero\) => tela\.escolhas\.set\(numero, e\)\);/.test(tela)
