@@ -7000,6 +7000,12 @@ async function loadModule(moduleName) {
                 return ano && mes && d ? `${d}/${mes}/${ano}` : '-';
               };
               const abreTitulo = (state.user?.allowedModules || []).includes('finance');
+              // EXCLUIR O TÍTULO DAQUI (30/10/2026, pedido do usuário: "preciso de
+              // um botão pra excluir para lançamentos de título por essa tela").
+              // A mesma permissão da lista de Lançamentos (Financeiro › excluir);
+              // o servidor confere de novo.
+              const excluiTitulo = abreTitulo && (usuarioEhAdmin()
+                || (Array.isArray(state.user?.permissions) && state.user.permissions.includes('finance.excluir')));
               // Fase ES: se a NF-e deste pedido já pode sair.
               const liberacao = await api(`/api/sales/records/${encodeURIComponent(editRecord.id)}/liberacao-nfe`).catch(() => null);
               const l = liberacao && liberacao.liberacao;
@@ -7009,7 +7015,7 @@ async function loadModule(moduleName) {
               alvo.innerHTML = linhaDaNfe + (titulos.length ? `
                 <div class="table-scroll">
                   <table class="table">
-                    <thead><tr><th>Título</th><th>Descrição</th><th>Forma</th><th>Conta</th><th>Plano de contas</th><th>Vencimento</th><th class="col-valor">Valor</th><th class="col-valor">Recebido</th><th class="col-valor">Em aberto</th><th>Situação</th></tr></thead>
+                    <thead><tr><th>Título</th><th>Descrição</th><th>Forma</th><th>Conta</th><th>Plano de contas</th><th>Vencimento</th><th class="col-valor">Valor</th><th class="col-valor">Recebido</th><th class="col-valor">Em aberto</th><th>Situação</th>${excluiTitulo ? '<th></th>' : ''}</tr></thead>
                     <tbody>
                       ${titulos.map((t) => `
                         <tr class="${abreTitulo ? 'cadastro-row-clickable' : ''} ${t.rawStatus === 'cancelado' ? 'is-cancelado' : ''}" data-titulo="${escapeHtml(t.id)}">
@@ -7023,11 +7029,18 @@ async function loadModule(moduleName) {
                           <td class="col-valor">${salesFormatBRL(t.amountRealizado)}</td>
                           <td class="col-valor">${salesFormatBRL(t.emAberto)}</td>
                           <td>${escapeHtml(t.status || '')}</td>
+                          ${excluiTitulo ? `<td><button type="button" class="entrada-link is-danger" data-excluir-titulo="${escapeHtml(t.id)}" data-codigo="${escapeHtml(t.codigo || '')}">excluir</button></td>` : ''}
                         </tr>`).join('')}
                     </tbody>
                   </table>
                 </div>` : '<p class="muted">Nenhum lançamento financeiro.</p>');
               if (!abreTitulo) return;
+              alvo.querySelectorAll('[data-excluir-titulo]').forEach((botao) => {
+                botao.addEventListener('click', (evento) => {
+                  evento.stopPropagation(); // a linha abre a Edição de Título
+                  excluirTituloDoPedido(botao);
+                });
+              });
               alvo.querySelectorAll('[data-titulo]').forEach((linha) => {
                 linha.addEventListener('click', () => {
                   state.financeReturnTo = { module: 'sales', sub: 'new_sale', recordId: editRecord.id };
@@ -7040,6 +7053,72 @@ async function loadModule(moduleName) {
               });
             } catch (erro) {
               alvo.innerHTML = `<p class="muted">${escapeHtml(erro.message || 'Não consegui ler os lançamentos financeiros.')}</p>`;
+            }
+          };
+          // O mesmo caminho da lista de Lançamentos (excluirLancamentos em
+          // finance/subs/lancamentos.js), para um título: a prévia diz o que sai
+          // junto (baixas, conciliação do extrato) antes do motivo, que vai à
+          // auditoria. O último título de um Pré-Faturado devolve o pedido a
+          // "Pedido Não Faturado" (21/10/2026): a tela reabre com o status novo.
+          const excluirTituloDoPedido = async (botao) => {
+            const id = botao.dataset.excluirTitulo;
+            const codigo = botao.dataset.codigo || 'o título';
+            const mensagem = (erro, padrao) => (/finance\.excluir/.test(String(erro && erro.message))
+              ? 'Você não tem a permissão Financeiro › excluir.'
+              : ((erro && erro.message) || padrao));
+            botao.disabled = true;
+            let item;
+            try {
+              const previa = await api('/api/finance/entries', { method: 'DELETE', body: JSON.stringify({ ids: [id], previa: true }) });
+              item = (previa.itens || [])[0];
+            } catch (erro) {
+              botao.disabled = false;
+              showToast(mensagem(erro, 'Não foi possível conferir o título.'), 'error');
+              return;
+            }
+            if (!item || item.motivo) {
+              botao.disabled = false;
+              showToast(`${codigo} não pode ser excluído agora: ${item ? item.motivo : 'título não encontrado.'}`, 'warning', 8000);
+              return;
+            }
+            const avisos = [];
+            if (item.baixas > 0) avisos.push(`${item.baixas} ${item.baixas === 1 ? 'baixa' : 'baixas'} de ${salesFormatBRL(item.valorDasBaixas)} ${item.baixas === 1 ? 'sai' : 'saem'} junto.`);
+            if (item.conciliadas) avisos.push(`${item.conciliadas} ${item.conciliadas === 1 ? 'movimentação do extrato volta' : 'movimentações do extrato voltam'} a Não conciliado.`);
+            if (editRecord.status === 'pedido-pre-faturado') avisos.push('Se for o último título, o pedido volta a "Pedido Não Faturado".');
+            const motivo = await promptModal({
+              titulo: `Excluir ${item.codigo || codigo}`,
+              descricao: ['O lançamento sai do Financeiro e deste pedido; o motivo fica na auditoria.', ...avisos].join(' '),
+              rotulo: 'Motivo da exclusão',
+              placeholder: 'Ex.: lançado em duplicidade',
+              minimo: 10,
+              maximo: 300,
+              confirmar: 'Excluir lançamento'
+            });
+            if (!motivo) {
+              botao.disabled = false;
+              return;
+            }
+            try {
+              const resposta = await api('/api/finance/entries', { method: 'DELETE', body: JSON.stringify({ ids: [id], motivo }) });
+              const ignorado = (resposta.ignorados || [])[0];
+              if (ignorado) {
+                botao.disabled = false;
+                showToast(`${codigo} não foi excluído: ${ignorado.motivo}`, 'warning', 8000);
+                return;
+              }
+              showToast('Lançamento excluído.', 'success');
+              if ((resposta.pedidosEstornados || []).length) {
+                showToast(resposta.resumo, 'info', 8000);
+                const { record } = await api(`/api/sales/records/${encodeURIComponent(editRecord.id)}`);
+                state.salesDraft.editRecord = record || null;
+                renderApp();
+                loadModule('sales');
+                return;
+              }
+              await carregarTitulosDoPedido();
+            } catch (erro) {
+              botao.disabled = false;
+              showToast(mensagem(erro, 'Não foi possível excluir.'), 'error');
             }
           };
           content.querySelectorAll('[data-subaba-botao]').forEach((botao) => {
