@@ -150,13 +150,16 @@ check('  o checkbox "Contribuinte de ICMS" nasce do cadastro',
   /name="destContribuinte" \$\{destinatario\.contribuinte \? 'checked' : ''\}/.test(emissaoSrc));
 check('  a IE do cadastro entra só de contribuinte, na carga e na troca de cliente',
   // Só os do destinatário: desde 13/10/2026 a aba Transporte também passa a IE
-  // da transportadora por paraNota (`t.stateRegistration`).
-  (emissaoSrc.match(/MavisInscricaoEstadual\.paraNota\((?!t\.stateRegistration)/g) || []).length === 2);
+  // da transportadora por paraNota (`t.stateRegistration`). E desde 30/10/2026
+  // o fornecedor fora do cadastro, na devolução da nota de entrada (`ie`).
+  (emissaoSrc.match(/MavisInscricaoEstadual\.paraNota\((?!t\.stateRegistration)/g) || []).length === 3
+  && /MavisInscricaoEstadual\.paraNota\(ie\)/.test(emissaoSrc));
 // Na troca de cliente pelo seletor o checkbox também acompanha — antes ficava
 // como estava. A carga do pedido sozinha já satisfaria uma contagem de 1.
 check('  e na troca de cliente o checkbox acompanha a regra',
   /\[name="destContribuinte"\]'\)\.checked = window\.MavisInscricaoEstadual\.ehContribuinte\(found\.stateRegistration\)/.test(emissaoSrc)
-  && (emissaoSrc.match(/MavisInscricaoEstadual\.ehContribuinte\(/g) || []).length === 2);
+  && (emissaoSrc.match(/MavisInscricaoEstadual\.ehContribuinte\(/g) || []).length === 3
+  && /destinatario\.contribuinte = window\.MavisInscricaoEstadual\.ehContribuinte\(ie\);/.test(emissaoSrc));
 
 console.log('\n--- 4. o payload nunca leva IE de quem não é contribuinte ---');
 const ESTAB = {

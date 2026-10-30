@@ -216,6 +216,11 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // tela: seria a nota errada, com os itens de um pedido antigo.
   const doPedido = state.nfeFromOrder || null;
   if (doPedido) delete state.nfeFromOrder;
+  // A DEVOLUÇÃO DE UMA NOTA DE ENTRADA (30/10/2026, botão "devolver" nas Notas
+  // de Entrada): a chave da nota devolvida e a forma "90 — Sem pagamento" já
+  // vêm preenchidas. A chave fica guardada aqui para sobreviver ao redesenho.
+  let chaveReferenciada = String((doPedido && doPedido.devolucaoChave) || '').replace(/\D/g, '');
+  const formaInicial = (doPedido && doPedido.formaPagamento) || '99';
   // Fase EF: a categoria de venda do pedido diz a operação (Transferência,
   // Remessa, Bonificação...). A pessoa ainda pode trocar na tela.
   if (doPedido && doPedido.tipoOperacao && NFE_FOCUS_TIPO_OPERACAO_OPTIONS.some((o) => o.value === doPedido.tipoOperacao)) {
@@ -395,7 +400,8 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     selectedClienteId = doPedido.clientSupplierId || '';
     const cliente = meta.directory.find((c) => c.id === selectedClienteId);
     destinatario.nome = cliente?.name || doPedido.clientName || '';
-    destinatario.documento = cliente?.document || '';
+    // Sem cadastro, o documento que veio junto (o fornecedor da nota devolvida).
+    destinatario.documento = cliente?.document || doPedido.clientDocument || '';
     // A IE do cadastro entra só quando é de contribuinte: "ISENTO" fica fora
     // do campo, e o checkbox nasce desmarcado.
     destinatario.inscricaoEstadual = window.MavisInscricaoEstadual.paraNota(cliente?.stateRegistration) || '';
@@ -417,6 +423,21 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     if (end.municipio) destinatario.municipio = end.municipio;
     if (end.uf) destinatario.uf = end.uf;
     destinatario.codigoMunicipio = end.codigoMunicipio || '';
+    // FORNECEDOR FORA DO CADASTRO, NA DEVOLUÇÃO (30/10/2026): nome, documento,
+    // IE e endereço vêm da nota devolvida (o emitente dela).
+    const daNota = !cliente && doPedido.destinatarioDaNota;
+    if (daNota) {
+      const ie = daNota.inscricaoEstadual || '';
+      destinatario.nome = daNota.nome || destinatario.nome;
+      destinatario.documento = daNota.documento || destinatario.documento;
+      destinatario.inscricaoEstadual = window.MavisInscricaoEstadual.paraNota(ie) || '';
+      destinatario.contribuinte = window.MavisInscricaoEstadual.ehContribuinte(ie);
+      const e = daNota.endereco || {};
+      Object.assign(destinatario, {
+        cep: e.cep || '', logradouro: e.logradouro || '', numero: e.numero || '', complemento: e.complemento || '',
+        bairro: e.bairro || '', municipio: e.municipio || '', uf: e.uf || '', codigoMunicipio: e.codigoMunicipio || ''
+      });
+    }
     if (Array.isArray(doPedido.items) && doPedido.items.length) {
       itens = doPedido.items.map((item) => ({
         produtoId: item.produtoId || item.productId || '',
@@ -424,8 +445,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
         codigoProduto: item.code || '',
         // NCM e origem vêm do CADASTRO do produto, no servidor. Deixar em
         // branco aqui é intencional: preencher com palpite faria a nota sair
-        // com classificação diferente da do produto.
-        ncm: '',
+        // com classificação diferente da do produto. Só a devolução manda o
+        // NCM, e não é palpite: é o da nota devolvida, para o item sem produto.
+        ncm: item.ncm || '',
         quantidade: Number(item.quantity || 0),
         valorUnitario: Number(item.unitPrice || 0),
         unidadeComercial: item.unit || 'UN',
@@ -971,7 +993,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             </div>
             ${NFE_FOCUS_REFERE_NOTA[tipoOperacao] ? `
             <label>${NFE_FOCUS_REFERE_NOTA[tipoOperacao]} *
-              <input name="devolucaoChave" required inputmode="numeric" maxlength="44" placeholder="44 dígitos" />
+              <input name="devolucaoChave" required inputmode="numeric" maxlength="44" placeholder="44 dígitos" value="${escapeHtml(chaveReferenciada)}" />
             </label>` : ''}
             ${tipoOperacao === 'RETORNO' ? `
             <label>Chave da NF-e de remessa (se houver)
@@ -1138,7 +1160,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
             <div class="row">
               ${pagamentosDoPedido.length ? '' : `<label>Forma de pagamento
                 <select name="formaPagamento">
-                  ${NFE_FORMAS_PAGAMENTO.map((f) => `<option value="${f.value}" ${f.value === '99' ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
+                  ${NFE_FORMAS_PAGAMENTO.map((f) => `<option value="${f.value}" ${f.value === formaInicial ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
                 </select>
               </label>`}
               <label id="nfeFocusCondicao">Condição
@@ -2639,6 +2661,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // "90 — Sem pagamento" tira condição, parcelas e cobrança (notaSemPagamento).
     document.querySelector('#nfeFocusForm [name="formaPagamento"]')?.addEventListener('change', aplicarSemPagamento);
     aplicarSemPagamento();
+    document.querySelector('#nfeFocusForm [name="devolucaoChave"]')?.addEventListener('input', (evento) => {
+      chaveReferenciada = evento.target.value;
+    });
 
     // Trocar de operação redesenha a tela: no complemento não há aba de itens
     // nem de pagamento, e há uma de nota original. Esconder por CSS deixaria

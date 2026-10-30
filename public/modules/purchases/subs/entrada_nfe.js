@@ -685,7 +685,7 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
           <div class="table-scroll">
             <table class="table">
               <thead>
-                <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th>${veValores ? '<th class="entrada-col-num">Total</th>' : ''}<th>Situação</th><th>Consultar</th>${veValores ? '<th>XML</th>' : ''}<th>Corrigir</th></tr>
+                <tr><th>Nota</th><th>Fornecedor</th><th>Emissão</th>${veValores ? '<th class="entrada-col-num">Total</th>' : ''}<th>Situação</th><th>Consultar</th>${veValores ? '<th>XML</th>' : ''}<th>Corrigir</th>${moduloDaEmissao() ? '<th>Devolução</th>' : ''}</tr>
               </thead>
               <tbody>
                 ${visiveis.map((e) => `
@@ -714,6 +714,9 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
                       <button type="button" class="entrada-link" data-refazer-entrada="${escapeHtml(e.id)}">refazer</button><br />
                       <button type="button" class="entrada-link is-danger" data-excluir-entrada="${escapeHtml(e.id)}">excluir</button>
                     </td>
+                    ${moduloDaEmissao() ? `<td>${String(e.chave || '').length === 44
+                      ? `<button type="button" class="entrada-link" data-devolver-entrada="${escapeHtml(e.id)}">devolver</button>`
+                      : '<span class="muted" title="A entrada não tem a chave de acesso da NF-e">—</span>'}</td>` : ''}
                   </tr>
                 `).join('')}
               </tbody>
@@ -807,6 +810,16 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
       });
       content.querySelectorAll('[data-refazer-entrada]').forEach((botao) => {
         botao.addEventListener('click', () => excluirEntrada(botao.dataset.refazerEntrada, { refazer: true }));
+      });
+      content.querySelectorAll('[data-devolver-entrada]').forEach((botao) => {
+        botao.addEventListener('click', async () => {
+          botao.disabled = true;
+          try {
+            await devolverEntrada(botao.dataset.devolverEntrada);
+          } finally {
+            botao.disabled = false;
+          }
+        });
       });
       // O resumo da entrada (15/10/2026): a mesma janela das Notas contra CNPJ.
       content.querySelectorAll('[data-resumo-entrada]').forEach((botao) => {
@@ -919,6 +932,88 @@ window.MavisSubscreenRegistry.purchases = window.MavisSubscreenRegistry.purchase
     // A PLANILHA (16/10/2026, pedido do usuário: "um botão para baixar uma
     // planilha já formatada"): todas as entradas e os itens, num .xlsx — ver
     // lib/planilha-entradas.js. O nome do arquivo vem do servidor, com a data.
+    /**
+     * Em qual módulo a emissão de NF-e abre para esta pessoa (a mesma tela
+     * está no Fiscal e no Financeiro); vazio = ela não emite, e o botão
+     * "devolver" nem aparece.
+     */
+    function moduloDaEmissao() {
+      const modulos = (state.user && state.user.allowedModules) || [];
+      if (modulos.includes('fiscal')) return 'fiscal';
+      if (modulos.includes('finance')) return 'finance';
+      return '';
+    }
+
+    /**
+     * A NF-e DE DEVOLUÇÃO DA NOTA DE ENTRADA (30/10/2026, pedido do usuário:
+     * "um botão de ação para fazer notas fiscais de devolução dentro da tela de
+     * notas de entrada"). Abre a emissão já como Devolução: emitente = a
+     * empresa que recebeu a nota (travado), destinatário = o fornecedor, os
+     * itens com as quantidades e os valores da nota, a chave dela referenciada
+     * e "90 — Sem pagamento". Devolução parcial: tirar itens ou quantidades lá.
+     */
+    async function devolverEntrada(entradaId) {
+      const modulo = moduloDaEmissao();
+      if (!modulo) return;
+      let entrada;
+      try {
+        entrada = (await api(`/api/purchases/entrada-nfe/${encodeURIComponent(entradaId)}`)).entrada;
+      } catch (erro) {
+        showToast(erro.message || 'Não consegui abrir a entrada.', 'error');
+        return;
+      }
+      if (!entrada || String(entrada.chave || '').length !== 44) {
+        showToast('Esta entrada não tem a chave de acesso da NF-e para referenciar.', 'error');
+        return;
+      }
+      // A NF-e avulsa em edição é uma por pessoa (fase EL): a devolução ocupa o
+      // lugar dela, e a salva voltaria por cima da devolução.
+      try {
+        const salva = await api('/api/fiscal/nfe/rascunho?pedido=');
+        if (salva && salva.rascunho) {
+          const quando = salva.rascunho.atualizadoEm ? new Date(salva.rascunho.atualizadoEm).toLocaleString('pt-BR') : '';
+          const seguir = await confirmModal(`Você tem uma NF-e avulsa em edição${quando ? ` (salva em ${quando})` : ''}. Abrir a devolução descarta essa nota. Continuar?`);
+          if (!seguir) return;
+          await api('/api/fiscal/nfe/rascunho?pedido=', { method: 'DELETE' });
+        }
+      } catch (_) {
+        // Sem permissão de emitir: a própria emissão diz.
+      }
+      const itens = entrada.itens || [];
+      state.nfeFromOrder = {
+        orderId: '',
+        tipoOperacao: 'DEVOLUCAO',
+        devolucaoChave: entrada.chave,
+        formaPagamento: '90',
+        empresaCnpj: entrada.destinatarioDocumento || '',
+        clientSupplierId: entrada.cadastroId || '',
+        clientName: entrada.emitenteNome || '',
+        clientDocument: entrada.emitenteDocumento || '',
+        // Fora do cadastro, o destinatário sai do emitente da nota (resumo).
+        destinatarioDaNota: (entrada.resumo && entrada.resumo.emitente) || null,
+        taxNotes: `Devolução da NF-e ${entrada.numero}${entrada.serie ? `, série ${entrada.serie}` : ''}, de ${dataBr(entrada.dataEmissao)}. Chave de acesso ${entrada.chave}.`,
+        items: itens.map((item) => ({
+          productId: item.produtoId || '',
+          code: item.codigo || '',
+          description: item.descricao || '',
+          ncm: item.ncm || '',
+          unit: item.unidade || 'UN',
+          quantity: Number(item.quantidade || 0),
+          unitPrice: Number(item.valorUnitario || 0)
+        }))
+      };
+      if (!entrada.cadastroId) {
+        showToast('O fornecedor não está no cadastro: o Destinatário veio da nota devolvida. Confira antes de emitir.', 'warning', 9000);
+      }
+      if (itens.some((item) => !(Number(item.valorUnitario) > 0))) {
+        showToast('Os valores da nota não vieram (custo só para administrador): preencha o valor de cada item antes de emitir.', 'warning', 9000);
+      }
+      state.activeModule = modulo;
+      state.activeSub = 'emitir_nfe_focus';
+      if (typeof renderApp === 'function') renderApp();
+      ctx.loadModule(modulo);
+    }
+
     /**
      * EXCLUIR A ENTRADA LANÇADA ERRADA, OU EXCLUIR E LANÇAR DE NOVO (17/10/2026,
      * pedido do usuário: "permitir excluir uma NF-e de entrada lançada errada,
