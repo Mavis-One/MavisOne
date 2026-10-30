@@ -31,7 +31,8 @@ const {
   limparEdicaoFiscal,
   resumoFiscalDaPrevia,
   semPagamento,
-  conferirDifalDaNota
+  conferirDifalDaNota,
+  conferirRegimeDoIcms
 } = require('./lib/nfePayloadBuilder');
 // Os limites de texto da SEFAZ, no mesmo catalogo que a tela usa.
 const textoNfe = require('./public/modules/shared/nfe_texto_padrao');
@@ -9444,7 +9445,9 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
       difal: !nfce && !dentroDoEstado && !destinatario.contribuinte,
       // Percentual de crédito do Simples: é da EMPRESA (faixa do SN), não do
       // item. Só sai na nota quando o CSOSN é 101 ou 201.
-      aliquotaCreditoSn: empresa.aliquotaCreditoIcmsSn
+      aliquotaCreditoSn: empresa.aliquotaCreditoIcmsSn,
+      // Decide entre o CST e o CSOSN da regra que tem os dois (30/10/2026).
+      simplesNacional: [1, 4].includes(Number(empresa.crt))
     });
   }
 
@@ -9641,6 +9644,16 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   const escalaIncompleta = conferirEscalaDosItens(payload);
   if (escalaIncompleta) {
     const err = new Error(escalaIncompleta);
+    err.status = 400;
+    throw err;
+  }
+
+  // CST no Simples Nacional (ou CSOSN fora dele) volta como rejeição 590,
+  // com o número gasto (30/10/2026). Ver conferirRegimeDoIcms. Não na prévia:
+  // é nela (aba Impostos) que o código se corrige.
+  const regimeTrocado = opcoes.semConferirRegime ? '' : conferirRegimeDoIcms(payload);
+  if (regimeTrocado) {
+    const err = new Error(regimeTrocado);
     err.status = 400;
     throw err;
   }
@@ -18563,7 +18576,7 @@ async function tratarRequisicao(req, res) {
       // recusas também: destinatário incompleto, item sem regra, sem estoque.
       if (pathname === '/api/fiscal/nfe/previa' && req.method === 'POST') {
         const body = await readBody(req);
-        const { payload } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true, semExigencias: true, semConferirPagamentos: true });
+        const { payload } = await prepararNfeParaTransmitir(body, { semTravaDePagamento: true, semExigencias: true, semConferirPagamentos: true, semConferirRegime: true });
         return sendJson(res, resumoFiscalDaPrevia(payload));
       }
 

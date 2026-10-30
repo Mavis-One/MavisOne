@@ -74,7 +74,7 @@ check('a trava fica na preparação, só na NF-e de pedido, depois do estoque', 
   && servidor.indexOf('if (!nfce && pedido && !opcoes.semTravaDePagamento)') > servidor.indexOf('Sem estoque para faturar:'));
 check('  recusa com 422 e os números', /err\.status = 422;\s*err\.travaDePagamento = liberacao;/.test(servidor));
 // A prévia de impostos também não confere as exigências do cliente (fase FB).
-check('  a prévia e a DANFE de prévia não são travadas', (servidor.match(/prepararNfeParaTransmitir\(body, \{ semTravaDePagamento: true(, semExigencias: true)?, semConferirPagamentos: true \}\)/g) || []).length === 2);
+check('  a prévia e a DANFE de prévia não são travadas', (servidor.match(/prepararNfeParaTransmitir\(body, \{ semTravaDePagamento: true(, semExigencias: true)?, semConferirPagamentos: true(, semConferirRegime: true)? \}\)/g) || []).length === 2);
 check('o recebido soma as baixas (com o desconto da taxa) e o NSU do cartão', /recebido: \(baixasPorTitulo\.get\(l\.id\) \|\| \[\]\)\.reduce\(\(s, p\) => s \+ Number\(p\.amount \|\| 0\) \+ Number\(p\.discount \|\| 0\), 0\)/.test(servidor)
   && /cartaoComNsu: Boolean\(String\(l\.cardAuthorization \|\| ''\)\.trim\(\)\)/.test(servidor)
   && /String\(l\.type \|\| ''\)\.toUpperCase\(\) === 'RECEITA'/.test(servidor));

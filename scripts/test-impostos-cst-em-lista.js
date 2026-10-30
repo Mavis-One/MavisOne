@@ -28,7 +28,10 @@ check('as listas vêm das mesmas tabelas das Regras Fiscais', tela.includes("api
 check('CST de IPI, PIS, COFINS e IBS/CBS em lista',
   tela.includes("const LISTA_DO_CST = { cstIpi: 'cstIpi', cstPis: 'cstPisCofins', cstCofins: 'cstPisCofins', cstIbsCbs: 'cstIbsCbs' };"));
 check('o do ICMS separa CSOSN (3 dígitos) de CST (2)',
-  tela.includes('<optgroup label="CSOSN (Simples Nacional)">') && tela.includes("grupos = codigo.length === 3 ? csosn : codigo.length === 2 ? cst : csosn + cst;"));
+  tela.includes('<optgroup label="CSOSN (Simples Nacional)">') && tela.includes(': codigo.length === 3 ? csosn : codigo.length === 2 ? cst : csosn + cst;'));
+// Desde 30/10/2026 a lista segue primeiro o regime do EMITENTE (CRT da
+// empresa); o tamanho do código só decide quando o regime não é conhecido.
+// Ver scripts/test-cst-csosn-pelo-regime.js.
 check('código fora da tabela continua aparecendo (não some em silêncio)',
   tela.includes("(codigo && !conhecido ? `<option value=\"${escapeHtml(codigo)}\" selected>"));
 check('sem permissão de ler as tabelas, volta a ser texto', tela.includes('if (!tabelasFiscais) return null;'));

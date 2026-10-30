@@ -92,7 +92,7 @@ check('  o texto do pedido entra nas informações complementares (uma vez)', /!
 const posConferir = preparar.indexOf('exigenciasNfe.conferir({');
 check('a conferência roda na nota montada, antes do limite de texto', posConferir > preparar.indexOf('buildNfePayload({') && posConferir < preparar.indexOf('conferirLimitesDeTexto(payload'));
 check('  menos na prévia automática de impostos', /if \(perfilDoCliente && !opcoes\.semExigencias\)/.test(preparar)
-  && /prepararNfeParaTransmitir\(body, \{ semTravaDePagamento: true, semExigencias: true, semConferirPagamentos: true \}\);\s*return sendJson\(res, resumoFiscalDaPrevia\(payload\)\)/.test(servidor));
+  && /prepararNfeParaTransmitir\(body, \{ semTravaDePagamento: true, semExigencias: true, semConferirPagamentos: true, semConferirRegime: true \}\);\s*return sendJson\(res, resumoFiscalDaPrevia\(payload\)\)/.test(servidor));
 check('o pré-check lê os perfis uma vez', /perfisDeExigencia: \(\) => umaVez\('perfis-de-exigencia', \(\) => exigenciasNfeDb\.listar\(\)\)/.test(servidor));
 check('o pedido de venda guarda o pedido do cliente (cabeçalho e linha)', /pedidoCliente: \(\(\{ condicaoPagamento, centro, deposito \}\) => \(\{ condicaoPagamento, centro, deposito \}\)\)\(/.test(servidor)
   && /\.\.\.exigenciasNfe\.normalizarItem\(item\),\s*quantity,/.test(servidor));

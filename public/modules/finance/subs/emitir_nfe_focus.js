@@ -116,6 +116,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
   // de quem ASSINA a nota — com mais de uma empresa no sistema, um texto único
   // faria a nota de uma prometer a garantia da outra.
   let empresasPorId = new Map();
+  // O CRT de cada empresa (30/10/2026): Simples Nacional (1, ou 4 no MEI)
+  // declara o ICMS em CSOSN, os outros em CST. Ver regimeDoEmitente.
+  let crtPorEmpresa = new Map();
   let travadoEmHomologacao = false;
 
   // O ambiente que a nota VAI usar, e não o que está salvo no estabelecimento:
@@ -167,6 +170,31 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // Vazio na empresa = usa o padrão do sistema. É o comportamento de antes da
     // fase AO, e é o que vale para quem nunca preencher o campo.
     return daEmpresa || (TextoPadrao ? TextoPadrao.PADRAO : '');
+  }
+
+  /** 'simples' (CSOSN), 'normal' (CST) ou '' quando não se sabe. */
+  function regimeDoEmitente(estabelecimentoId = selectedEstabelecimentoId) {
+    const estab = estabelecimentos.find((e) => e.id === estabelecimentoId);
+    const crt = estab ? Number(crtPorEmpresa.get(estab.empresaId)) : 0;
+    if (crt === 1 || crt === 4) return 'simples';
+    if (crt === 2 || crt === 3) return 'normal';
+    return '';
+  }
+
+  // O CÓDIGO DIGITADO DO OUTRO REGIME SAI (30/10/2026). CST escolhido com um
+  // emitente da Plus ficava na nota trocada para a Electric (Simples), ou na
+  // nota recusada aberta em "Corrigir nota", e a SEFAZ devolvia 590. Sem ele,
+  // vale o da regra do emitente.
+  function desfazerCodigoDoOutroRegime() {
+    const regime = regimeDoEmitente();
+    if (!regime) return;
+    const campo = regime === 'simples' ? 'cstIcms' : 'csosn';
+    const desfeitos = itens.filter((item) => item.fiscal && item.fiscal[campo] !== undefined);
+    desfeitos.forEach((item) => { delete item.fiscal[campo]; });
+    if (!desfeitos.length) return;
+    showToast(regime === 'simples'
+      ? `O emitente é do Simples Nacional: o CST de ${desfeitos.length} item(ns) saiu e vale o CSOSN da regra. Confira na aba Impostos.`
+      : `O emitente não é do Simples Nacional: o CSOSN de ${desfeitos.length} item(ns) saiu e vale o CST da regra. Confira na aba Impostos.`, 'warning');
   }
   // A observação que veio do pedido, guardada à parte: ela tem de sobreviver à
   // troca de emitente, que só substitui a BASE do texto.
@@ -347,6 +375,9 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     // quando os estabelecimentos vieram, como quando ela era pedida depois.)
     empresasPorId = resEmpresas.status === 'fulfilled'
       ? new Map((resEmpresas.value.empresas || []).map((emp) => [emp.id, emp.observacaoPadraoNfe || '']))
+      : new Map();
+    crtPorEmpresa = resEmpresas.status === 'fulfilled'
+      ? new Map((resEmpresas.value.empresas || []).map((emp) => [emp.id, emp.crt]))
       : new Map();
   } else {
     const error = resEstab.reason;
@@ -1487,12 +1518,22 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
     }).join('');
     let grupos;
     if (campo === 'cstIcms') {
-      // Três dígitos é CSOSN (Simples Nacional), dois é CST: a lista segue o
-      // regime do que a regra fiscal carregou. Sem código ainda, as duas.
+      // Três dígitos é CSOSN (Simples Nacional), dois é CST. A lista segue o
+      // regime do EMITENTE (30/10/2026): com o código da regra preso nela, o
+      // CST de outro emitente não deixava escolher CSOSN, e a nota voltava
+      // 590. Sem saber o regime, segue o código; sem código, as duas.
       const csosn = `<optgroup label="CSOSN (Simples Nacional)">${opcoes(tabelasFiscais.csosn)}</optgroup>`;
       const cst = `<optgroup label="CST (Regime Normal)">${opcoes(tabelasFiscais.cstIcms)}</optgroup>`;
-      grupos = codigo.length === 3 ? csosn : codigo.length === 2 ? cst : csosn + cst;
+      const regime = regimeDoEmitente();
+      grupos = regime === 'simples' ? csosn
+        : regime === 'normal' ? cst
+          : codigo.length === 3 ? csosn : codigo.length === 2 ? cst : csosn + cst;
       if (!(tabelasFiscais.csosn || []).length && !(tabelasFiscais.cstIcms || []).length) return null;
+      const doOutroRegime = codigo && ((regime === 'simples' && codigo.length !== 3) || (regime === 'normal' && codigo.length !== 2));
+      if (doOutroRegime) {
+        return `<option value="${escapeHtml(codigo)}" selected>${escapeHtml(codigo)} — ${regime === 'simples' ? 'CST não vale no Simples: escolha um CSOSN' : 'CSOSN não vale fora do Simples: escolha um CST'}</option>`
+          + `<option value="">—</option>${grupos}`;
+      }
     } else {
       const linhas = tabelasFiscais[LISTA_DO_CST[campo]] || [];
       if (!linhas.length) return null;
@@ -1749,6 +1790,7 @@ window.MavisSubscreenRegistry.finance.emitir_nfe_focus = async function renderEm
       return;
     }
     previaAguardando = '';
+    desfazerCodigoDoOutroRegime();
     const formData = new FormData(form);
     const referencia = validarReferenciaDaNota(formData);
     if (referencia.erro) {
