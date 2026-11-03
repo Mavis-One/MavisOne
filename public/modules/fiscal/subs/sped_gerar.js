@@ -78,6 +78,54 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     return { ano: d.getFullYear(), mes: d.getMonth() + 1 };
   }
 
+  function padraoGeracao(state, estabelecimentoId) {
+    const preferencias = state.preferences && state.preferences.sped_gerar;
+    const porEstabelecimento = preferencias && preferencias.estabelecimentos;
+    return porEstabelecimento && porEstabelecimento[estabelecimentoId]
+      ? porEstabelecimento[estabelecimentoId]
+      : {};
+  }
+
+  function atualizarPadraoGeracao(state, estabelecimentoId, alteracoes) {
+    const atual = padraoGeracao(state, estabelecimentoId);
+    const vencimentos = atual.vencimentos && typeof atual.vencimentos === 'object' && !Array.isArray(atual.vencimentos)
+      ? { ...atual.vencimentos } : {};
+    const retificadoras = atual.retificadoras && typeof atual.retificadoras === 'object' && !Array.isArray(atual.retificadoras)
+      ? { ...atual.retificadoras } : {};
+    const competencia = `${alteracoes.ano}-${String(alteracoes.mes).padStart(2, '0')}`;
+    if (Object.prototype.hasOwnProperty.call(alteracoes, 'vencimento')) {
+      if (alteracoes.vencimento) vencimentos[competencia] = alteracoes.vencimento;
+      else delete vencimentos[competencia];
+    }
+    if (Object.prototype.hasOwnProperty.call(alteracoes, 'retificadora')) {
+      retificadoras[competencia] = alteracoes.retificadora === true;
+    }
+    const novo = { ...atual, ...alteracoes, vencimentos, retificadoras };
+    delete novo.vencimento;
+    delete novo.retificadora;
+    const preferencias = state.preferences || {};
+    state.preferences = {
+      ...preferencias,
+      sped_gerar: {
+        ...(preferencias.sped_gerar || {}),
+        estabelecimentos: {
+          ...((preferencias.sped_gerar && preferencias.sped_gerar.estabelecimentos) || {}),
+          [estabelecimentoId]: novo
+        }
+      }
+    };
+    return novo;
+  }
+
+  async function salvarPadraoGeracao(api, state) {
+    const valor = state.preferences && state.preferences.sped_gerar;
+    const resposta = await api('/api/preferencias', {
+      method: 'PUT',
+      body: JSON.stringify({ tela: 'sped_gerar', valor })
+    });
+    if (resposta.gravado === false) throw new Error('Não foi possível salvar o padrão do SPED no servidor.');
+  }
+
   /** O vencimento sugerido: o dia configurado, no mês seguinte à competência. */
   function vencimentoSugerido(ano, mes, dia) {
     if (!dia) return '';
@@ -265,8 +313,11 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
     const estab = estabs.find((e) => e.id === escolhido);
     const q = `estabelecimentoId=${encodeURIComponent(escolhido)}`;
     const padrao = mesPassado();
-    const ano = Number(state.spedAno || padrao.ano);
-    const mes = Number(state.spedMes || padrao.mes);
+    const salvo = padraoGeracao(state, escolhido);
+    const anoSalvo = Number(salvo.ano);
+    const mesSalvo = Number(salvo.mes);
+    const ano = Number.isInteger(anoSalvo) && anoSalvo >= 1900 && anoSalvo <= new Date().getFullYear() ? anoSalvo : padrao.ano;
+    const mes = Number.isInteger(mesSalvo) && mesSalvo >= 1 && mesSalvo <= 12 ? mesSalvo : padrao.mes;
 
     let cfg = {};
     let falta = [];
@@ -283,11 +334,16 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
       return;
     }
     // O vencimento: o que a pessoa digitou para ESTA competência, ou o sugerido
-    // pelo dia configurado. Trocar mês/ano volta ao sugerido.
+    // pelo dia configurado. Cada competência pode ter seu vencimento próprio.
     const chave = `${escolhido}|${ano}-${mes}`;
-    const vencimento = state.spedVencimentoChave === chave ? state.spedVencimento : vencimentoSugerido(ano, mes, cfg.e116_dia_vencimento);
+    const competencia = `${ano}-${String(mes).padStart(2, '0')}`;
+    const vencimentoSalvo = salvo.vencimentos && salvo.vencimentos[competencia];
+    const retificadoraSalva = salvo.retificadoras && salvo.retificadoras[competencia] === true;
+    const vencimento = typeof vencimentoSalvo === 'string'
+      ? vencimentoSalvo
+      : state.spedVencimentoChave === chave ? state.spedVencimento : vencimentoSugerido(ano, mes, cfg.e116_dia_vencimento);
     const anoAtual = new Date().getFullYear();
-    const anos = [anoAtual - 2, anoAtual - 1, anoAtual];
+    const anos = [...new Set([anoAtual - 2, anoAtual - 1, anoAtual, ano])].sort((a, b) => a - b);
 
     content.innerHTML = `
       <div class="panel">
@@ -306,7 +362,8 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           </label>
         </div>
         <div class="row checkbox-grid" style="gap: 16px; align-items: center; margin-top: 12px;">
-          <label><input type="checkbox" id="spedRetificadora" /> Arquivo retificador (substitui um já entregue)</label>
+          <label><input type="checkbox" id="spedRetificadora" ${retificadoraSalva ? 'checked' : ''} /> Arquivo retificador (substitui um já entregue)</label>
+          <button type="button" class="secondary" id="spedSalvarPadrao">Salvar padrão</button>
           <button type="button" id="spedGerar">Gerar SPED</button>
         </div>
         ${restrito && falta.length ? `<p class="fiscal-aviso-cst">Os dados do SPED deste estabelecimento estão incompletos
@@ -323,18 +380,58 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
 
     const redesenhar = () => desenhar(ctx);
     F.ligarSeletor(ctx, redesenhar);
-    content.querySelector('#spedMes').addEventListener('change', (ev) => { state.spedMes = ev.target.value; resultado = null; redesenhar(); });
-    content.querySelector('#spedAno').addEventListener('change', (ev) => { state.spedAno = ev.target.value; resultado = null; redesenhar(); });
+    content.querySelector('#spedMes').addEventListener('change', (ev) => {
+      atualizarPadraoGeracao(state, escolhido, { ano, mes: Number(ev.target.value) });
+      resultado = null;
+      redesenhar();
+    });
+    content.querySelector('#spedAno').addEventListener('change', (ev) => {
+      atualizarPadraoGeracao(state, escolhido, { ano: Number(ev.target.value), mes });
+      resultado = null;
+      redesenhar();
+    });
     content.querySelector('#spedVencimento').addEventListener('change', (ev) => {
       state.spedVencimento = ev.target.value;
       state.spedVencimentoChave = chave;
+      atualizarPadraoGeracao(state, escolhido, { ano, mes, vencimento: ev.target.value });
+    });
+    content.querySelector('#spedRetificadora').addEventListener('change', (ev) => {
+      atualizarPadraoGeracao(state, escolhido, { ano, mes, retificadora: ev.target.checked });
+    });
+
+    content.querySelector('#spedSalvarPadrao').addEventListener('click', async (ev) => {
+      const botao = ev.currentTarget;
+      botao.disabled = true;
+      try {
+        atualizarPadraoGeracao(state, escolhido, {
+          ano, mes,
+          vencimento: content.querySelector('#spedVencimento').value,
+          retificadora: content.querySelector('#spedRetificadora').checked
+        });
+        await salvarPadraoGeracao(api, state);
+        showToast('Padrão de geração do SPED salvo.', 'success');
+      } catch (e) {
+        showToast(e.message || 'Não foi possível salvar o padrão do SPED.', 'error');
+      } finally {
+        botao.disabled = false;
+      }
     });
 
     content.querySelector('#spedGerar').addEventListener('click', async (ev) => {
       const botao = ev.currentTarget;
-      const competencia = `${ano}-${String(mes).padStart(2, '0')}`;
+      const competenciaGerada = `${ano}-${String(mes).padStart(2, '0')}`;
       botao.disabled = true;
       botao.textContent = 'Gerando...';
+      atualizarPadraoGeracao(state, escolhido, {
+        ano, mes,
+        vencimento: content.querySelector('#spedVencimento').value,
+        retificadora: content.querySelector('#spedRetificadora').checked
+      });
+      try {
+        await salvarPadraoGeracao(api, state);
+      } catch (e) {
+        showToast(e.message || 'Não foi possível salvar o padrão do SPED.', 'error');
+      }
       try {
         // fetch cru, e não api(): o 409 traz a LISTA do que impede, e api() só
         // repassa a mensagem.
@@ -342,18 +439,18 @@ window.MavisSubscreenRegistry.fiscal = window.MavisSubscreenRegistry.fiscal || {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-auth-token': token() },
           body: JSON.stringify({
-            estabelecimentoId: escolhido, competencia,
+            estabelecimentoId: escolhido, competencia: competenciaGerada,
             vencimento: content.querySelector('#spedVencimento').value || null,
             retificadora: content.querySelector('#spedRetificadora').checked
           })
         });
         const j = await resposta.json().catch(() => ({}));
         if (resposta.status === 409 && j.impedimentos) {
-          resultado = { competencia, impedimentos: j.impedimentos };
+          resultado = { competencia: competenciaGerada, impedimentos: j.impedimentos };
         } else if (!resposta.ok) {
           throw new Error(j.error || `Falha ao gerar o SPED (${resposta.status}).`);
         } else {
-          resultado = { competencia, resumo: j.resumo, apuracao: j.apuracao, avisos: j.avisos };
+          resultado = { competencia: competenciaGerada, resumo: j.resumo, apuracao: j.apuracao, avisos: j.avisos };
           await baixar(j.arquivo.id);
         }
         redesenhar();
