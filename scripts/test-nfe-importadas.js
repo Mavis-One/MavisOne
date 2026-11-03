@@ -149,6 +149,12 @@ check('  por isso a importada NASCE fora do SPED (escriturar no insert)',
   && /modalidade_frete,\s*escriturar\s*\) values/.test(ler('lib/db/fiscal-documentos.js'))
   && /payload\.escriturar === undefined \? true : Boolean\(payload\.escriturar\)/.test(ler('lib/db/fiscal-documentos.js')));
 check('reimportar não duplica (chave, ou referência)', /select 1 from fiscal_documentos where chave_acesso = \$1/.test(dbImp) && /importacao_ref = \$1/.test(dbImp));
+const migFi = ler('banco/migrations/fase-fi-chave-unica-so-para-documentos-escrituraveis.sql');
+check('chave única só conflita entre documentos escrituráveis',
+  /drop index if exists idx_fiscal_documentos_chave[\s\S]*create unique index idx_fiscal_documentos_chave[\s\S]*where chave_acesso is not null and escriturar/.test(migFi));
+const zero = ler('banco/RECRIAR-DO-ZERO.sql');
+check('o banco recriado aplica a mesma regra depois da fase DY',
+  /fase-fi-chave-unica-so-para-documentos-escrituraveis\.sql[\s\S]*create unique index idx_fiscal_documentos_chave[\s\S]*where chave_acesso is not null and escriturar/.test(zero));
 check('participante do cadastro vem com a ficha inteira (endereço do 0150)', /\.\.\.\(pessoa\.extra \|\| \{\}\)/.test(dbImp));
 const server = semComentarios(ler('server.js'));
 check('a rota de importação é só de administrador',

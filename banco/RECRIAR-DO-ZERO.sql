@@ -146,6 +146,7 @@
 --   109. banco/migrations/fase-ff-plano-seguros-diversos.sql
 --   110. banco/migrations/fase-fg-emprestimos-credito-e-despesa.sql
 --   111. banco/migrations/fase-fh-emprestimos-pelo-tipo-do-plano.sql
+--   112. banco/migrations/fase-fi-chave-unica-so-para-documentos-escrituraveis.sql
 -- ============================================================================
 
 
@@ -11878,4 +11879,27 @@ update financial_entries e
  where e.category_id = c.id
    and e.type in ('RECEITA', 'DESPESA')
    and e.type <> c.tipo;
+
+
+-- ============================================================================
+-- >>> banco/migrations/fase-fi-chave-unica-so-para-documentos-escrituraveis.sql
+-- ============================================================================
+
+-- ============================================================================
+-- FASE FI — O HISTÓRICO IMPORTADO NÃO BLOQUEIA A ESCRITURAÇÃO ATUAL
+-- ============================================================================
+--
+-- As NF-e importadas do Viper são guardadas como histórico e ficam com
+-- `escriturar = false` (fase DY). Uma entrada atual pode ter a mesma chave da
+-- nota histórica; a unicidade global anterior impedia que ela fosse escriturada
+-- no SPED, embora o registro histórico não entre no arquivo.
+--
+-- A chave continua única entre documentos escrituráveis. Assim não se permite
+-- duplicidade no SPED e o histórico pode coexistir com a escrituração atual.
+-- ============================================================================
+
+drop index if exists idx_fiscal_documentos_chave;
+create unique index idx_fiscal_documentos_chave
+  on fiscal_documentos (chave_acesso)
+  where chave_acesso is not null and escriturar;
 
