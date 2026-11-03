@@ -90,7 +90,7 @@ check('  e sem linha para o CFOP, vale a regra genérica', cfopDeEntrada('6405',
 const comTabela = documentoDoXml(xml, { cnpjEstabelecimento: ESTAB.cnpj, conversoesCfop: { 5102: '1556' } });
 check('  no documento: o item sai com o CFOP da tabela, e isso não vira aviso',
   comTabela.itens.every((i) => i.cfop === '1556') && !comTabela.avisos.some((a) => /CFOP de entrada derivado/.test(a)));
-check('CSOSN vira CST 90 com a origem na frente', cstIcms(0, '102').cst === '090' && cstIcms(1, '00').cst === '100');
+check('CSOSN vai como veio, como o Viper escrevia; CST ganha a origem na frente', cstIcms(0, '102').cst === '102' && cstIcms(1, '00').cst === '100');
 
 console.log('\n--- 2. o mês ---');
 const m = montarEscrituracao({ ...base, documentos: [entrada, saida, cancelada] });
@@ -109,7 +109,7 @@ check('a entrada de terceiro tem C110 (informação complementar) e C170 por ite
 const c170 = C.filter((r) => r.REG === 'C170');
 check('  o item vinculado usa o código do cadastro', c170[0].COD_ITEM === '1001', c170[0].COD_ITEM);
 check('  o sem vínculo usa fornecedor-código', c170[1].COD_ITEM === '11222333000181-FORN-9902', c170[1].COD_ITEM);
-check('  com CFOP de entrada e CST de 3 posições', c170[0].CFOP === '1102' && c170[0].CST_ICMS === '000' && c170[1].CST_ICMS === '090');
+check('  com CFOP de entrada e CST de 3 posições', c170[0].CFOP === '1102' && c170[0].CST_ICMS === '000' && c170[1].CST_ICMS === '102');
 check('  PIS/COFINS de quem compra no presumido: CST 70', c170[0].CST_PIS === '70' && c170[0].CST_COFINS === '70');
 check('  IPI fora do VL_IPI (não contribuinte) e dentro do VL_OPR do C190',
   c170[0].VL_IPI === '' && C.find((r) => r.REG === 'C190' && r.CFOP === '1102' && r.CST_ICMS === '000').VL_OPR === 262.5);
@@ -160,7 +160,16 @@ check('ICMS-ST retido na saída impede (E200 ainda não é gerado)', montarEscri
 const comDifal = { ...saida, numero: '3004', chaveAcesso: '7'.repeat(44), itens: [{ ...saida.itens[0], tributos: { ...saida.itens[0].tributos, ICMS_DIFAL: { valor: 30 } } }] };
 check('DIFAL impede (E300 ainda não é gerado)', montarEscrituracao({ ...base, documentos: [comDifal] }).impedimentos.some((i) => i.codigo === 'DIFAL'));
 check('Bloco K obrigatório impede', montarEscrituracao({ ...base, configuracao: { ...CONFIG, bloco_k_obrigatorio: true }, documentos: [] }).impedimentos.some((i) => i.codigo === 'BLOCO_K'));
-check('CSOSN convertido é AVISO, não impedimento', m.avisos.some((a) => a.codigo === 'CSOSN'));
+check('o item do fornecedor do Simples sai com o CSOSN no CST_ICMS (C170 e C190), sem aviso',
+  m.blocos.C.some((r) => r.REG === 'C170' && r.CST_ICMS === '102') && m.blocos.C.some((r) => r.REG === 'C190' && r.CST_ICMS === '102')
+  && !m.avisos.some((a) => a.codigo === 'CSOSN'));
+const comStEntrada = comoDoBanco(doXml);
+comStEntrada.itens = comStEntrada.itens.map((it, i) => (i === 0 ? { ...it, tributos: { ...it.tributos, ICMS_ST: { base: 140, aliquota: 17, valor: 6.8 } } } : it));
+const mStEnt = montarEscrituracao({ ...base, documentos: [comStEntrada] });
+check('ICMS-ST da entrada fica no C170, sem crédito de ST (sem E200/E210), sem aviso e sem impedir',
+  mStEnt.blocos.C.some((r) => r.REG === 'C170' && Number(r.VL_ICMS_ST) === 6.8)
+  && !mStEnt.blocos.E.some((r) => /^E2/.test(r.REG)) && !mStEnt.avisos.some((a) => /ST/.test(a.codigo)) && !mStEnt.impedimentos.length,
+  mStEnt.impedimentos.map((i) => i.codigo).join(' '));
 const iC100 = m.blocos.C.findIndex((r) => r.REG === 'C100' && r.IND_EMIT === '1');
 const c110 = m.blocos.C[iC100 + 1];
 const r0450 = m.blocos['0'].filter((r) => r.REG === '0450');
@@ -174,24 +183,15 @@ const nfceComObs = { ...saida, modelo: '65', numero: '77', chaveAcesso: '9'.repe
 check('  NFC-e não leva C110', !montarEscrituracao({ ...base, documentos: [nfceComObs] }).blocos.C.some((r) => r.REG === 'C110'));
 const divergente = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'PARAFUSO', unidade: 'CX', ncm: '73181500' } });
 const mDiv = montarEscrituracao({ ...base, documentos: [divergente] });
-check('unidade da nota diferente da do cadastro: escritura o item do fornecedor e avisa',
-  mDiv.blocos.C.find((r) => r.REG === 'C170').COD_ITEM === '11222333000181-FORN-4471' && mDiv.avisos.some((a) => a.codigo === 'UNIDADE'));
-const outroNome = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'PARAFUSO', unidade: 'un', ncm: '73181500' } });
+const c170Div = mDiv.blocos.C.find((r) => r.REG === 'C170');
+check('unidade da nota diferente da do cadastro: mantém a unidade da nota, no item do fornecedor, sem aviso',
+  c170Div.COD_ITEM === '11222333000181-FORN-4471' && c170Div.UNID === 'PC'
+  && mDiv.blocos['0'].some((r) => r.REG === '0200' && r.COD_ITEM === c170Div.COD_ITEM && r.UNID_INV === 'PC')
+  && !mDiv.avisos.some((a) => a.codigo === 'UNIDADE'), `${c170Div.COD_ITEM} em ${c170Div.UNID}`);
+const outroNome = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'PARAFUSO', unidade: 'UN', ncm: '73181500' } });
 outroNome.itens = outroNome.itens.map((it, i) => (i === 0 ? { ...it, unidade: 'UND' } : it));
-const mApelido = montarEscrituracao({ ...base, documentos: [outroNome] });
-const c170Ap = mApelido.blocos.C.find((r) => r.REG === 'C170');
-check('a mesma unidade com outro nome (nota em UND, cadastro em UN) usa o código e a unidade do cadastro, sem aviso',
-  c170Ap.COD_ITEM === '1001' && c170Ap.UNID === 'UN'
-  && mApelido.blocos['0'].some((r) => r.REG === '0200' && r.COD_ITEM === '1001' && r.UNID_INV === 'UN')
-  && mApelido.blocos['0'].some((r) => r.REG === '0190' && r.UNID === 'UN') && !mApelido.avisos.some((a) => a.codigo === 'UNIDADE'),
-  `${c170Ap.COD_ITEM} em ${c170Ap.UNID}`);
-const litro = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'OLEO', unidade: 'LT', ncm: '27101932' } });
-litro.itens = litro.itens.map((it, i) => (i === 0 ? { ...it, unidade: 'L' } : it));
-const kg = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'GRAXA', unidade: 'UN', ncm: '27101932' } });
-kg.itens = kg.itens.map((it, i) => (i === 0 ? { ...it, unidade: 'KG' } : it));
-check('  L e LT também; KG e UN continuam o item do fornecedor, com aviso',
-  montarEscrituracao({ ...base, documentos: [litro] }).blocos.C.find((r) => r.REG === 'C170').COD_ITEM === '1001'
-  && montarEscrituracao({ ...base, documentos: [kg] }).avisos.some((a) => a.codigo === 'UNIDADE'));
+const c170Ap = montarEscrituracao({ ...base, documentos: [outroNome] }).blocos.C.find((r) => r.REG === 'C170');
+check('  até UND contra UN: fica UND, a unidade da nota', c170Ap.UNID === 'UND' && c170Ap.COD_ITEM !== '1001', `${c170Ap.COD_ITEM} em ${c170Ap.UNID}`);
 
 console.log('\n--- 5. o arquivo, conferido pela tela que confere o SPED dos outros ---');
 const arquivo = g.gerarEfd({ registro0000: m.registro0000, blocos: m.blocos });
