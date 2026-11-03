@@ -176,6 +176,14 @@ check('o arquivo gerado é relido campo a campo pelo leitor', g.lerEfd(latin).le
 const vazioMes = montarEscrituracao({ ...base, documentos: [] });
 const confVazio = conferirEfd(g.paraLatin1(g.gerarEfd(vazioMes).texto).buffer, { nome: 'v.txt' });
 check('mês sem movimento também sai limpo', confVazio.problemas.length === 0 && vazioMes.blocos.C.length === 0, confVazio.problemas.map((p) => p.codigo).join(' ') || 'limpo');
+const comBarra = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'AUTOPROPELIDO MAVIS AYLA 500W | 2026 | 02', unidade: 'pc', ncm: '87116000', tipoItem: 'NORMAL' } });
+comBarra.itens = comBarra.itens.map((it, i) => (i === 1 ? { ...it, descricao: 'ITEM DO FORNECEDOR\nCOR | AZUL' } : it));
+const mBarra = montarEscrituracao({ ...base, documentos: [comBarra] });
+let arqBarra = null;
+try { arqBarra = g.gerarEfd({ registro0000: mBarra.registro0000, blocos: mBarra.blocos }); } catch (e) { arqBarra = { erro: e.message }; }
+check('nome com "|" ou quebra de linha sai sem eles, como o Viper escrevia (não derruba o arquivo)',
+  arqBarra && !arqBarra.erro && arqBarra.linhas.some((l) => l.includes('|AUTOPROPELIDO MAVIS AYLA 500W  2026  02|'))
+  && arqBarra.linhas.some((l) => l.includes('|ITEM DO FORNECEDOR COR  AZUL|')), arqBarra && arqBarra.erro);
 
 console.log(falhas ? `\n===== ${falhas} CHECK(S) FALHARAM =====` : '\n===== TODOS OS CHECKS PASSARAM =====');
 process.exit(falhas ? 1 : 0);
