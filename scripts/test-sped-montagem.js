@@ -104,7 +104,8 @@ check('  e sem C190 depois dela', C[C.indexOf(c100[1]) + 1].REG === 'C100');
 const iSaida = C.indexOf(c100[0]);
 check('a saída própria NÃO tem C170, só C190', C[iSaida + 1].REG === 'C190');
 const iEntrada = C.indexOf(c100[2]);
-check('a entrada de terceiro tem C170 por item', C[iEntrada + 1].REG === 'C170' && C[iEntrada + 2].REG === 'C170');
+check('a entrada de terceiro tem C110 (informação complementar) e C170 por item',
+  C[iEntrada + 1].REG === 'C110' && C[iEntrada + 2].REG === 'C170' && C[iEntrada + 3].REG === 'C170');
 const c170 = C.filter((r) => r.REG === 'C170');
 check('  o item vinculado usa o código do cadastro', c170[0].COD_ITEM === '1001', c170[0].COD_ITEM);
 check('  o sem vínculo usa fornecedor-código', c170[1].COD_ITEM === '11222333000181-FORN-9902', c170[1].COD_ITEM);
@@ -159,12 +160,38 @@ check('ICMS-ST retido na saída impede (E200 ainda não é gerado)', montarEscri
 const comDifal = { ...saida, numero: '3004', chaveAcesso: '7'.repeat(44), itens: [{ ...saida.itens[0], tributos: { ...saida.itens[0].tributos, ICMS_DIFAL: { valor: 30 } } }] };
 check('DIFAL impede (E300 ainda não é gerado)', montarEscrituracao({ ...base, documentos: [comDifal] }).impedimentos.some((i) => i.codigo === 'DIFAL'));
 check('Bloco K obrigatório impede', montarEscrituracao({ ...base, configuracao: { ...CONFIG, bloco_k_obrigatorio: true }, documentos: [] }).impedimentos.some((i) => i.codigo === 'BLOCO_K'));
-check('CSOSN convertido e informação complementar são AVISOS, não impedimentos',
-  m.avisos.some((a) => a.codigo === 'CSOSN') && m.avisos.some((a) => a.codigo === 'C110'));
+check('CSOSN convertido é AVISO, não impedimento', m.avisos.some((a) => a.codigo === 'CSOSN'));
+const iC100 = m.blocos.C.findIndex((r) => r.REG === 'C100' && r.IND_EMIT === '1');
+const c110 = m.blocos.C[iC100 + 1];
+const r0450 = m.blocos['0'].filter((r) => r.REG === '0450');
+check('a informação complementar vira C110 logo depois do C100, apontando para o 0450',
+  !!entrada.observacaoFiscal && c110 && c110.REG === 'C110' && r0450.length === 1 && r0450[0].COD_INF === c110.COD_INF
+  && r0450[0].TXT === c110.TXT_COMPL && !m.avisos.some((a) => a.codigo === 'C110'));
+const mesmoTexto = montarEscrituracao({ ...base, documentos: [entrada, { ...entrada, numero: '9999', chaveAcesso: '8'.repeat(44) }] });
+check('  texto igual em duas notas: dois C110, um 0450 só',
+  mesmoTexto.blocos.C.filter((r) => r.REG === 'C110').length === 2 && mesmoTexto.blocos['0'].filter((r) => r.REG === '0450').length === 1);
+const nfceComObs = { ...saida, modelo: '65', numero: '77', chaveAcesso: '9'.repeat(44), participante: null, observacaoFiscal: 'TROCO R$ 0,00' };
+check('  NFC-e não leva C110', !montarEscrituracao({ ...base, documentos: [nfceComObs] }).blocos.C.some((r) => r.REG === 'C110'));
 const divergente = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'PARAFUSO', unidade: 'CX', ncm: '73181500' } });
 const mDiv = montarEscrituracao({ ...base, documentos: [divergente] });
 check('unidade da nota diferente da do cadastro: escritura o item do fornecedor e avisa',
   mDiv.blocos.C.find((r) => r.REG === 'C170').COD_ITEM === '11222333000181-FORN-4471' && mDiv.avisos.some((a) => a.codigo === 'UNIDADE'));
+const outroNome = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'PARAFUSO', unidade: 'un', ncm: '73181500' } });
+outroNome.itens = outroNome.itens.map((it, i) => (i === 0 ? { ...it, unidade: 'UND' } : it));
+const mApelido = montarEscrituracao({ ...base, documentos: [outroNome] });
+const c170Ap = mApelido.blocos.C.find((r) => r.REG === 'C170');
+check('a mesma unidade com outro nome (nota em UND, cadastro em UN) usa o código e a unidade do cadastro, sem aviso',
+  c170Ap.COD_ITEM === '1001' && c170Ap.UNID === 'UN'
+  && mApelido.blocos['0'].some((r) => r.REG === '0200' && r.COD_ITEM === '1001' && r.UNID_INV === 'UN')
+  && mApelido.blocos['0'].some((r) => r.REG === '0190' && r.UNID === 'UN') && !mApelido.avisos.some((a) => a.codigo === 'UNIDADE'),
+  `${c170Ap.COD_ITEM} em ${c170Ap.UNID}`);
+const litro = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'OLEO', unidade: 'LT', ncm: '27101932' } });
+litro.itens = litro.itens.map((it, i) => (i === 0 ? { ...it, unidade: 'L' } : it));
+const kg = comoDoBanco(doXml, { p1: { codigo: '1001', descricao: 'GRAXA', unidade: 'UN', ncm: '27101932' } });
+kg.itens = kg.itens.map((it, i) => (i === 0 ? { ...it, unidade: 'KG' } : it));
+check('  L e LT também; KG e UN continuam o item do fornecedor, com aviso',
+  montarEscrituracao({ ...base, documentos: [litro] }).blocos.C.find((r) => r.REG === 'C170').COD_ITEM === '1001'
+  && montarEscrituracao({ ...base, documentos: [kg] }).avisos.some((a) => a.codigo === 'UNIDADE'));
 
 console.log('\n--- 5. o arquivo, conferido pela tela que confere o SPED dos outros ---');
 const arquivo = g.gerarEfd({ registro0000: m.registro0000, blocos: m.blocos });
