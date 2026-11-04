@@ -2018,6 +2018,9 @@ tr[data-detail] { cursor: pointer; }
 .finance-inline-add input { flex: 1; }
 
 .finance-extrato-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* As regras do extrato (04/11/2026): a janela é estreita, o texto quebra linha. */
+.extrato-regras td { white-space: normal; }
+.extrato-cadastro-lista { margin: 4px 0 12px 18px; }
 
 /* ---------------------------------------------------------------------------
    Painel de ações fiscais (NF-e Emitidas)

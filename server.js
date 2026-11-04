@@ -187,6 +187,7 @@ const listaDeLancamentos = require('./public/modules/shared/lancamentos_lista');
 const extratoBancario = require('./lib/extrato-bancario');
 // A conciliação automática do extrato (28/10/2026). Ver o cabeçalho do arquivo.
 const conciliacaoAutomatica = require('./lib/conciliacao-automatica');
+const regrasExtrato = require('./lib/regras-extrato');
 // Fase AS: categoria da VENDA (Varejo, Atacado, Bonificacao) — nao a do produto.
 const categoriasVendaDb = require('./lib/db/categorias-venda');
 // Fase AZ: origem da VENDA (Balcao, Televendas, E-commerce). Era uma lista
@@ -265,6 +266,8 @@ const initialData = {
   // sao orders/quotes, no banco.
   sales: [],
   bankTransactions: [],
+  // As regras do extrato (04/11/2026, lib/regras-extrato.js).
+  regrasExtrato: [],
   companies: [],
   productCategories: [],
   movementCategories: [],
@@ -6188,6 +6191,10 @@ function serializeBankTransaction(tx, data) {
       return { entryId: c.entryId, valor: Number(c.valor || 0), description: entry ? entry.description : '' };
     }) : [],
     conciliadoAutomaticamente: Boolean(tx.conciliadoAutomaticamente),
+    // A SUGESTÃO DE 1 CLIQUE e A REGRA DO EXTRATO (04/11/2026): o título que a
+    // automática achou faltando só o nome, e a regra que lançou ou ignorou.
+    sugestao: tx.status === 'nao_conciliado' && tx.sugestao ? tx.sugestao : null,
+    regra: tx.regra || '',
     source: tx.source || 'manual',
     createdByName: tx.createdByName || '',
     createdAt: tx.createdAt || ''
@@ -6275,7 +6282,9 @@ function conciliacoesDaTransacao(tx) {
  * baixa falhar no meio, as já gravadas saem: ou a movimentação concilia com
  * todos, ou com nenhum. Devolve as conciliações para marcarConciliada.
  */
-async function baixarTitulosDaTransacao(data, tx, itens, user, { automatico = false } = {}) {
+// `nota` (04/11/2026): o texto da baixa quando ela não é a da conciliação de
+// sempre — a sugestão confirmada, a regra do extrato.
+async function baixarTitulosDaTransacao(data, tx, itens, user, { automatico = false, nota = '' } = {}) {
   const criadas = [];
   const sufixo = itens.length > 1 ? `, um de ${itens.length} títulos` : '';
   try {
@@ -6291,9 +6300,9 @@ async function baixarTitulosDaTransacao(data, tx, itens, user, { automatico = fa
         // A taxa da maquininha, quando o crédito é exatamente o líquido. Sem
         // ela o título ficava "parcial" com a taxa em aberto para sempre.
         discount: taxaDoCartao,
-        note: (automatico
+        note: (nota || (automatico
           ? `Conciliado automaticamente pelo Extrato (transação ${String(tx.id).slice(-8)}${sufixo}): empresa, fornecedor, valor e data batem.`
-          : `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)}${sufixo})`)
+          : `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)}${sufixo})`))
           + (taxaDoCartao > 0 ? ` Taxa da credenciadora (${entry.feePercent}%) abatida como desconto.` : ''),
         createdBy: user.id,
         createdByName: user.name
@@ -6337,6 +6346,7 @@ function marcarConciliada(tx, conciliacoes, { automatico = false } = {}) {
   else delete tx.conciliacoes;
   if (automatico) tx.conciliadoAutomaticamente = true;
   else delete tx.conciliadoAutomaticamente;
+  delete tx.sugestao;
   tx.updatedAt = new Date().toISOString();
 }
 
@@ -6346,6 +6356,7 @@ function desmarcarConciliada(tx) {
   tx.matchedPaymentId = '';
   delete tx.conciliacoes;
   delete tx.conciliadoAutomaticamente;
+  delete tx.regra;
   tx.updatedAt = new Date().toISOString();
 }
 
@@ -6407,7 +6418,7 @@ async function conciliarAutomaticamente(user, escolher) {
       texto: [tx.description, tx.counterpartyName, tx.merchantName].filter(Boolean).join(' '),
       documentos: [tx.counterpartyDocument, tx.merchantDocument].filter(Boolean)
     }));
-    const { pares, motivos } = conciliacaoAutomatica.paresAutomaticos({ movimentacoes, alvos: travadas, titulos });
+    const { pares, motivos, sugestoes } = conciliacaoAutomatica.paresAutomaticos({ movimentacoes, alvos: travadas, titulos });
     const titulosPorId = new Map(titulos.map((t) => [t.id, t]));
     const feitas = new Map();
     for (const par of pares) {
@@ -6423,14 +6434,215 @@ async function conciliarAutomaticamente(user, escolher) {
         motivos[tx.id] = 'erro ao gravar a baixa';
       }
     }
-    if (feitas.size) {
-      const atual = loadData();
-      (atual.bankTransactions || []).forEach((tx) => {
-        if (feitas.has(tx.id)) marcarConciliada(tx, feitas.get(tx.id), { automatico: true });
+
+    // AS SUGESTÕES DE 1 CLIQUE (04/11/2026): o título que casou em tudo menos
+    // no nome fica guardado na movimentação, para a tela pedir confirmação.
+    const sugestaoDe = new Map();
+    for (const s of sugestoes) {
+      const titulo = titulosPorId.get(s.tituloId);
+      const entry = data.finance.find((item) => item.id === s.tituloId);
+      if (feitas.has(s.movimentacaoId) || !titulo || !entry) continue;
+      sugestaoDe.set(s.movimentacaoId, {
+        entryId: titulo.id, descricao: entry.description || '', nome: titulo.nome && titulo.nome !== '-' ? titulo.nome : '',
+        vencimento: titulo.vencimento || '', valor: titulo.esperado
       });
-      saveData(atual);
+      motivos[s.movimentacaoId] = 'sugerida para confirmar (só falta o nome do fornecedor/cliente na descrição)';
     }
-    return { conciliadas: feitas.size, analisadas: alvos.length, motivos };
+
+    // AS REGRAS DO EXTRATO (04/11/2026): o último passo, só para o que não
+    // casou com título nem virou sugestão.
+    const pelaRegra = await aplicarRegrasDoExtrato(data, alvos.filter((tx) => !feitas.has(tx.id) && !sugestaoDe.has(tx.id)), user, motivos);
+
+    const tentadas = new Set(travadas);
+    const atual = loadData();
+    let mudou = false;
+    (atual.bankTransactions || []).forEach((tx) => {
+      if (!tentadas.has(tx.id) || tx.status !== 'nao_conciliado') return;
+      const regra = pelaRegra.get(tx.id);
+      if (feitas.has(tx.id)) {
+        marcarConciliada(tx, feitas.get(tx.id), { automatico: true });
+      } else if (regra && regra.conciliacoes) {
+        marcarConciliada(tx, regra.conciliacoes, { automatico: true });
+        tx.regra = regra.texto;
+      } else if (regra && regra.ignorar) {
+        tx.status = 'ignorado';
+        tx.regra = regra.texto;
+        delete tx.sugestao;
+        tx.updatedAt = new Date().toISOString();
+      } else if (sugestaoDe.has(tx.id)) {
+        tx.sugestao = sugestaoDe.get(tx.id);
+      } else if (tx.sugestao) {
+        delete tx.sugestao;
+      } else return;
+      mudou = true;
+    });
+    if (mudou) saveData(atual);
+    const lancadas = [...pelaRegra.values()].filter((r) => r.conciliacoes).length;
+    return {
+      conciliadas: feitas.size + lancadas,
+      analisadas: alvos.length,
+      motivos,
+      sugeridas: sugestaoDe.size,
+      lancadasPelaRegra: lancadas,
+      ignoradasPelaRegra: [...pelaRegra.values()].filter((r) => r.ignorar).length
+    };
+  } finally {
+    travadas.forEach((id) => conciliacoesEmAndamento.delete(id));
+  }
+}
+
+/**
+ * AS REGRAS DO EXTRATO (04/11/2026, lib/regras-extrato.js) sobre as
+ * movimentações que sobraram da conciliação automática. "ignorar" só é
+ * anotado aqui (quem grava é conciliarAutomaticamente); "lancar" cria o
+ * lançamento e dá a baixa já agora. O que a regra resolve sai de `motivos`; a
+ * regra que não conseguiu lançar deixa o porquê no lugar.
+ *
+ * Devolve Map(movimentacaoId -> { texto, ignorar } | { texto, conciliacoes }).
+ */
+async function aplicarRegrasDoExtrato(data, candidatas, user, motivos) {
+  const feitas = new Map();
+  const regras = (data.regrasExtrato || []).filter((r) => r.ativa !== false);
+  if (!regras.length) return feitas;
+  for (const tx of candidatas) {
+    const regra = regrasExtrato.regraQueCasa(regras, tx);
+    if (!regra) continue;
+    if (regra.acao === 'ignorar') {
+      feitas.set(tx.id, { texto: regra.texto, ignorar: true });
+      delete motivos[tx.id];
+      continue;
+    }
+    try {
+      feitas.set(tx.id, { texto: regra.texto, conciliacoes: await lancarPelaRegra(data, tx, regra, user) });
+      delete motivos[tx.id];
+    } catch (erro) {
+      // Só a recusa da regra (texto escrito para a pessoa) vai para a tela; o
+      // erro do sistema fica no log.
+      const daRegra = Boolean(erro && erro.daRegra);
+      if (!daRegra) console.error(`[regra do extrato] movimentação ${tx.id}:`, (erro && erro.stack) || erro);
+      motivos[tx.id] = `a regra "${regra.texto}" não lançou: ${daRegra ? erro.message : 'erro ao gravar o lançamento'}`;
+    }
+  }
+  return feitas;
+}
+
+/**
+ * O que a regra precisa para lançar, conferido como o lançamento da tela
+ * (POST /api/finance/entries): plano de contas que existe e é do sentido da
+ * movimentação, conta e centro de custo obrigatórios pela empresa, conta
+ * liberada para o estabelecimento. Devolve o corpo do lançamento, ou lança o
+ * erro (com `daRegra`, que não é falha do sistema).
+ */
+async function lancamentoDaRegra(data, regra, { amount, bankAccountId, sentido, description }) {
+  const recusa = (mensagem) => Object.assign(new Error(mensagem), { daRegra: true, status: 400 });
+  const plano = (data.financialCategories || []).find((c) => c.id === regra.category);
+  if (!plano) throw recusa('o plano de contas da regra não existe mais');
+  const type = lancamentoObrigatorios.tipoPeloPlano(plano, sentido);
+  if (type !== sentido) {
+    throw recusa(`o plano "${plano.name}" é de ${type === 'RECEITA' ? 'receita' : 'despesa'} e a movimentação é ${sentido === 'RECEITA' ? 'uma entrada' : 'uma saída'}`);
+  }
+  const estabelecimentoId = regra.estabelecimentoId || '';
+  const regraDoCentro = await regraDoCentroDeCusto(estabelecimentoId, bankAccountId, data);
+  const corpo = { type, description, amount, bankAccountId, costCenter: regra.costCenter || '', category: regra.category, estabelecimentoId };
+  const invalido = validarLancamentoFinanceiro({ ...corpo, ...regraDoCentro });
+  if (invalido) throw recusa(invalido);
+  if (lancamentoObrigatorios.empresaSemCentro(regraDoCentro)) corpo.costCenter = '';
+  try {
+    await conferirContasDoEstabelecimento({ estabelecimentoId, contaIds: [bankAccountId] });
+  } catch (erro) {
+    throw recusa(erro.message);
+  }
+  return corpo;
+}
+
+/** O lançamento da regra, já baixado pela movimentação. Devolve as conciliacoes. */
+async function lancarPelaRegra(data, tx, regra, user) {
+  const corpo = await lancamentoDaRegra(data, regra, {
+    amount: Number(tx.amount || 0),
+    bankAccountId: tx.bankAccountId || '',
+    sentido: tx.type === 'entrada' ? 'RECEITA' : 'DESPESA',
+    description: String(regra.descricao || tx.description || '').trim().slice(0, 1000)
+  });
+  const entry = await db.createFinancialEntry({
+    ...corpo,
+    date: tx.date,
+    dueDate: tx.date,
+    document: '',
+    note: `Lançado pela regra do extrato "${regra.texto}".`,
+    targetBankAccountId: '',
+    clientSupplierId: '',
+    clientSupplierName: '',
+    referenceId: '',
+    status: 'pending',
+    createdBy: user.id,
+    createdByName: user.name
+  });
+  data.finance.push(entry);
+  try {
+    const conciliacoes = await baixarTitulosDaTransacao(data, tx, [{ entry, valor: Number(tx.amount || 0) }], user, {
+      automatico: true,
+      nota: `Lançado e conciliado pela regra do extrato "${regra.texto}" (transação ${String(tx.id).slice(-8)}).`
+    });
+    await addFinanceAuditLog(data, { action: 'criarLancamento', entry, byId: user.id, byName: user.name, details: { origem: 'regra_do_extrato', regraId: regra.id, transacaoId: tx.id } });
+    return conciliacoes;
+  } catch (erro) {
+    // Sem a baixa, o lançamento não fica sozinho em aberto: sai.
+    await db.deleteFinancialEntry(entry.id).catch(() => {});
+    data.finance = data.finance.filter((item) => item.id !== entry.id);
+    throw erro;
+  }
+}
+
+/**
+ * CONFIRMAR AS SUGESTÕES (04/11/2026): as movimentações não conciliadas que
+ * `escolher` aceita e têm sugestão são conciliadas com o título sugerido —
+ * conferido de novo agora (existe, não cancelado, do mesmo sentido, com saldo
+ * para o valor). A que não passa perde a sugestão e volta para o clique.
+ */
+async function confirmarSugestoes(user, escolher) {
+  const data = loadData();
+  const alvos = (data.bankTransactions || []).filter((tx) => tx.status === 'nao_conciliado'
+    && tx.sugestao && tx.sugestao.entryId && escolher(tx) && !conciliacoesEmAndamento.has(tx.id));
+  if (!alvos.length) return { confirmadas: 0, recusadas: [] };
+  const travadas = alvos.map((tx) => tx.id);
+  travadas.forEach((id) => conciliacoesEmAndamento.add(id));
+  try {
+    await Promise.all([
+      syncCadastroData(data),
+      syncPurchasesData(data),
+      syncFinanceCadastroData(data),
+      syncLancamentosPorId(data, alvos.map((tx) => tx.sugestao.entryId))
+    ]);
+    const feitas = new Map();
+    const recusadas = [];
+    const usados = new Set();
+    for (const tx of alvos) {
+      const recusar = (motivo) => recusadas.push({ id: tx.id, descricao: tx.description, motivo });
+      const entry = data.finance.find((item) => item.id === tx.sugestao.entryId);
+      if (!entry || entry.status === 'cancelado') { recusar('o título sugerido não existe mais ou foi cancelado'); continue; }
+      if (usados.has(entry.id)) { recusar('o título já foi usado por outra sugestão'); continue; }
+      if (classifyFinanceEntry(entry) !== (tx.type === 'entrada' ? 'receita' : 'despesa')) { recusar('o título sugerido é do outro sentido'); continue; }
+      const payments = getFinanceEntryPayments(data, entry.id);
+      const restante = financeEntryEffectiveDue(entry, payments) - financeEntryPaidTotal(payments);
+      if (Number(tx.amount || 0) > restante + 0.01) { recusar('o título já não tem esse saldo em aberto'); continue; }
+      try {
+        feitas.set(tx.id, await baixarTitulosDaTransacao(data, tx, [{ entry, valor: Number(tx.amount || 0) }], user, {
+          nota: `Sugestão da conciliação automática confirmada por ${user.name} (transação ${String(tx.id).slice(-8)}): empresa, valor e data batem.`
+        }));
+        usados.add(entry.id);
+      } catch (erro) {
+        console.error(`[confirmar sugestão] movimentação ${tx.id}:`, (erro && erro.stack) || erro);
+        recusar('erro ao gravar a baixa');
+      }
+    }
+    const recusadasIds = new Set(recusadas.map((r) => r.id));
+    const atual = loadData();
+    (atual.bankTransactions || []).forEach((tx) => {
+      if (feitas.has(tx.id) && tx.status === 'nao_conciliado') marcarConciliada(tx, feitas.get(tx.id));
+      else if (recusadasIds.has(tx.id)) delete tx.sugestao;
+    });
+    saveData(atual);
+    return { confirmadas: feitas.size, recusadas };
   } finally {
     travadas.forEach((id) => conciliacoesEmAndamento.delete(id));
   }
@@ -24690,7 +24902,11 @@ async function tratarRequisicao(req, res) {
       // desenho das abas de Lançamentos. Agora com o valor de cada situação.
       const semStatus = new URLSearchParams(url.searchParams);
       semStatus.delete('status');
-      const summary = extratoBancario.resumoDoExtrato(filterBankTransactions(data, semStatus));
+      const doFiltroSemStatus = filterBankTransactions(data, semStatus);
+      const summary = extratoBancario.resumoDoExtrato(doFiltroSemStatus);
+      // As sugestões de 1 clique do filtro (04/11/2026): o botão "Confirmar
+      // sugestões" age sobre elas, não só sobre a página.
+      summary.sugeridas = doFiltroSemStatus.filter((tx) => tx.status === 'nao_conciliado' && tx.sugestao).length;
       // Os arquivos importados, cada um com o que sobra a conciliar (15/10/2026).
       const importacoes = extratoBancario.importacoesDoExtrato(data.bankTransactions).lista
         .map((imp) => ({ ...imp, bankAccountName: resolveById(data.bankAccounts, imp.bankAccountId) }));
@@ -24873,6 +25089,8 @@ async function tratarRequisicao(req, res) {
         // número de importadas faria a segunda importação parecer ter falhado.
         repetidas,
         conciliadasAutomaticamente: automatica.conciliadas,
+        sugeridas: automatica.sugeridas || 0,
+        ignoradasPelaRegra: automatica.ignoradasPelaRegra || 0,
         importacaoId: created.length ? importacaoId : '',
         transactions: created.map((tx) => serializeBankTransaction(tx, data))
       });
@@ -24904,10 +25122,168 @@ async function tratarRequisicao(req, res) {
         success: true,
         conciliadas: resultado.conciliadas,
         analisadas: resultado.analisadas,
+        sugeridas: resultado.sugeridas || 0,
+        lancadasPelaRegra: resultado.lancadasPelaRegra || 0,
+        ignoradasPelaRegra: resultado.ignoradasPelaRegra || 0,
         motivos: Object.entries(porMotivo).map(([motivo, quantidade]) => ({ motivo, quantidade })).sort((a, b) => b.quantidade - a.quantidade)
       });
     } catch (error) {
       return sendErro(res, error, 'Erro na conciliação automática', 400);
+    }
+  }
+
+  // CONFIRMAR AS SUGESTÕES (04/11/2026): `ids` (a linha, ou as marcadas) ou,
+  // sem eles, todas as sugeridas do filtro da tela.
+  if (pathname === '/api/finance/bank-transactions/confirmar-sugestoes' && req.method === 'POST') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const body = await readBody(req);
+      let escolher;
+      if (Array.isArray(body.ids) && body.ids.length) {
+        const ids = new Set(body.ids.map(String));
+        escolher = (tx) => ids.has(tx.id);
+      } else {
+        const filtros = new URLSearchParams();
+        Object.entries(body.filtros || {}).forEach(([chave, valor]) => {
+          if (chave !== 'status' && valor !== undefined && valor !== null && String(valor) !== '') filtros.set(chave, String(valor));
+        });
+        const doFiltro = new Set(filterBankTransactions(loadData(), filtros).map((tx) => tx.id));
+        escolher = (tx) => doFiltro.has(tx.id);
+      }
+      const resultado = await confirmarSugestoes(user, escolher);
+      return sendJson(res, { success: true, ...resultado });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao confirmar as sugestões', 400);
+    }
+  }
+
+  // O QUE ATRAPALHA A AUTOMÁTICA NO CADASTRO (04/11/2026): título em aberto
+  // sem empresa conhecida (nunca é o par), cliente/fornecedor de título em
+  // aberto sem CPF/CNPJ (o Pix que traz só o documento não acha ninguém) e
+  // conta bancária sem empresa (o extrato dela não concilia nada sozinho).
+  // `bankAccountId` limita à empresa da conta.
+  if (pathname === '/api/finance/bank-transactions/pendencias-cadastro' && req.method === 'GET') {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const data = loadData();
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceCadastroData(data),
+        syncLancamentosEmAberto(data)
+      ]);
+      const abertos = data.finance.filter((entry) => ['pending', 'parcial'].includes(String(entry.status || '').toLowerCase())
+        && ['receita', 'despesa'].includes(classifyFinanceEntry(entry)));
+      const empresaDe = await resolvedorDeEmpresas(abertos, data);
+      const raizDe = (empresa) => conciliacaoAutomatica.raizDoCnpj(empresa && empresa.cnpj);
+      const contaId = String(url.searchParams.get('bankAccountId') || '');
+      const raizDaConta = contaId ? raizDe(empresaDe({ bankAccountId: contaId })) : '';
+      const semEmpresa = [];
+      const semDocumento = new Map();
+      for (const entry of abertos) {
+        const raiz = raizDe(empresaDe(entry));
+        const nome = resolveFinanceCounterparty(entry, data);
+        const resumo = { descricao: entry.description || '', nome: nome && nome !== '-' ? nome : '', valor: Number(entry.amount || 0), vencimento: financeEntryDueDate(entry) || '' };
+        if (!raiz) { semEmpresa.push(resumo); continue; }
+        if (raizDaConta && raiz !== raizDaConta) continue;
+        const documento = String(resolveFinanceCounterpartyDocument(entry, data) || '').replace(/\D/g, '');
+        if (!resumo.nome || documento.length >= 11) continue;
+        const chave = conciliacaoAutomatica.palavrasDoNome(resumo.nome).join(' ') || resumo.nome.toUpperCase();
+        const atual = semDocumento.get(chave) || { nome: resumo.nome, titulos: 0, valor: 0 };
+        atual.titulos += 1;
+        atual.valor = Math.round((atual.valor + resumo.valor) * 100) / 100;
+        semDocumento.set(chave, atual);
+      }
+      const cadastros = [...semDocumento.values()].sort((a, b) => b.titulos - a.titulos || b.valor - a.valor);
+      const contasSemEmpresa = (data.bankAccounts || [])
+        .filter((c) => c.active !== false && !raizDe(empresaDe({ bankAccountId: c.id })))
+        .map((c) => c.name || c.id);
+      return sendJson(res, {
+        titulosSemEmpresa: { total: semEmpresa.length, exemplos: semEmpresa.sort((a, b) => b.valor - a.valor).slice(0, 10) },
+        cadastrosSemDocumento: { total: cadastros.length, titulos: cadastros.reduce((s, c) => s + c.titulos, 0), exemplos: cadastros.slice(0, 15) },
+        contasSemEmpresa
+      });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao conferir o cadastro', 400);
+    }
+  }
+
+  // AS REGRAS DO EXTRATO (04/11/2026, lib/regras-extrato.js): a lista, criar,
+  // alterar e excluir. Ao gravar, a regra de lançar é conferida como um
+  // lançamento de verdade (plano, sentido, centro, conta), para o erro
+  // aparecer agora e não escondido na próxima importação.
+  if (pathname === '/api/finance/regras-extrato' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    if (!user || !user.allowedModules.includes('finance')) {
+      return sendJson(res, { error: 'Sem permissão' }, 403);
+    }
+    return sendJson(res, { regras: loadData().regrasExtrato || [] });
+  }
+
+  if ((pathname === '/api/finance/regras-extrato' && req.method === 'POST')
+    || (/^\/api\/finance\/regras-extrato\/[^/]+$/.test(pathname) && ['PUT', 'DELETE'].includes(req.method))) {
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = req.method === 'POST' ? '' : decodeURIComponent(pathname.split('/')[4]);
+      const existentes = loadData().regrasExtrato || [];
+      const anterior = id ? existentes.find((r) => r.id === id) : null;
+      if (id && !anterior) return sendJson(res, { error: 'Regra não encontrada' }, 404);
+
+      let regra = null;
+      if (req.method !== 'DELETE') {
+        const validada = regrasExtrato.validarRegra(await readBody(req));
+        if (validada.erro) return sendJson(res, { error: validada.erro }, 400);
+        regra = validada.regra;
+        if (regra.acao === 'lancar') {
+          const escolha = estabelecimentoDaOperacao(user, await ehAdmin(user), regra.estabelecimentoId);
+          if (escolha.erro) throw escolha.erro;
+          regra.estabelecimentoId = escolha.id;
+          const paraConferir = loadData();
+          await syncFinanceCadastroData(paraConferir);
+          try {
+            // Sem conta na regra, cada movimentação traz a dela: aqui a conta
+            // só precisa não faltar.
+            await lancamentoDaRegra(paraConferir, regra, {
+              amount: 1, bankAccountId: regra.bankAccountId || '(conta do extrato)',
+              sentido: regra.tipo === 'entrada' ? 'RECEITA' : 'DESPESA', description: regra.descricao || regra.texto
+            });
+          } catch (erro) {
+            // A recusa da regra (com status) chega inteira pelo sendErro do
+            // catch de fora; erro do sistema, escondido sob o código.
+            if (erro && erro.daRegra) erro.message = `A regra não conseguiria lançar: ${erro.message}`;
+            throw erro;
+          }
+        }
+      }
+
+      // Relê antes de gravar: a conferência acima foi ao banco.
+      const data = loadData();
+      data.regrasExtrato = data.regrasExtrato || [];
+      const agora = new Date().toISOString();
+      if (req.method === 'DELETE') {
+        data.regrasExtrato = data.regrasExtrato.filter((r) => r.id !== id);
+      } else if (anterior) {
+        const i = data.regrasExtrato.findIndex((r) => r.id === id);
+        if (i < 0) return sendJson(res, { error: 'Regra não encontrada' }, 404);
+        data.regrasExtrato[i] = { ...data.regrasExtrato[i], ...regra, atualizadoEm: agora, atualizadoPor: user.name };
+        regra = data.regrasExtrato[i];
+      } else {
+        regra = { id: createId('rex'), ...regra, criadoEm: agora, criadoPor: user.name };
+        data.regrasExtrato.push(regra);
+      }
+      saveData(data);
+      return sendJson(res, { success: true, regra, regras: data.regrasExtrato });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao gravar a regra', 400);
     }
   }
 
@@ -25206,6 +25582,7 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { error: 'Desconcilie a transação antes de ignorá-la.' }, 400);
     }
     tx.status = 'ignorado';
+    delete tx.sugestao;
     tx.updatedAt = new Date().toISOString();
     saveData(data);
     return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });
@@ -25226,6 +25603,7 @@ async function tratarRequisicao(req, res) {
       return sendJson(res, { error: 'Transação não está ignorada' }, 400);
     }
     tx.status = 'nao_conciliado';
+    delete tx.regra;
     tx.updatedAt = new Date().toISOString();
     saveData(data);
     return sendJson(res, { success: true, transaction: serializeBankTransaction(tx, data) });

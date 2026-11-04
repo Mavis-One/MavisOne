@@ -107,7 +107,7 @@ const rotaLista = rotaQueContem("pathname === '/api/finance/bank-transactions' &
 check('a lista ordena por ?sort=/?dir=', /extratoBancario\.ordemDoExtrato\(url\.searchParams\)/.test(rotaLista) && /extratoBancario\.ordenarExtrato\(/.test(rotaLista));
 check('  e lê o cadastro de contas ANTES de ordenar por conta', /if \(ordenaPorConta\) await syncFinanceCadastroData\(data\);[\s\S]*ordenarExtrato\(/.test(rotaLista));
 check('os cartões contam SEM o filtro de situação',
-  /const semStatus = new URLSearchParams\(url\.searchParams\);\s*semStatus\.delete\('status'\);\s*const summary = extratoBancario\.resumoDoExtrato\(filterBankTransactions\(data, semStatus\)\);/.test(rotaLista));
+  /const semStatus = new URLSearchParams\(url\.searchParams\);\s*semStatus\.delete\('status'\);\s*const doFiltroSemStatus = filterBankTransactions\(data, semStatus\);\s*const summary = extratoBancario\.resumoDoExtrato\(doFiltroSemStatus\);/.test(rotaLista));
 
 console.log('\n--- 3. busca por valor e faixa de valor (a função do server.js) ---');
 const caixa = { listaDeLancamentos, URLSearchParams };

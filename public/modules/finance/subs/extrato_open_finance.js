@@ -56,6 +56,10 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
   // Cada carga ganha um número; resposta de uma carga antiga (dois cliques
   // rápidos de ordenação) não sobrescreve a mais nova.
   let cargaAtual = 0;
+  // O resumo da última carga (o botão "Confirmar sugestões" diz quantas) e a
+  // conta para a qual o painel do cadastro foi conferido (04/11/2026).
+  let ultimoResumo = null;
+  let pendenciasDaConta = null;
 
   function bankAccountOptions(selectedId) {
     return meta.bankAccounts.map((acc) => `<option value="${acc.id}" ${selectedId === acc.id ? 'selected' : ''}>${escapeHtml(acc.name)}</option>`).join('');
@@ -249,7 +253,8 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     if (botao.disabled) return;
     const confirmed = await confirmModal('Conciliar automaticamente as movimentações não conciliadas do filtro atual? '
       + 'Só entram as que têm empresa, fornecedor, valor e data batendo com um único título em aberto. '
-      + 'Título em várias parcelas do mesmo valor: entra a parcela que vence no mês da movimentação.');
+      + 'Título em várias parcelas do mesmo valor: entra a parcela que vence no mês da movimentação. '
+      + 'Depois, o que só não tem o nome do fornecedor/cliente fica sugerido para confirmar, e as regras do extrato lançam ou ignoram o resto.');
     if (!confirmed) return;
     botao.disabled = true;
     try {
@@ -257,14 +262,21 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         method: 'POST',
         body: JSON.stringify({ filtros: filters })
       });
-      const ficaram = resultado.analisadas - resultado.conciliadas;
+      const ignoradas = resultado.ignoradasPelaRegra || 0;
+      const sugeridas = resultado.sugeridas || 0;
+      const ficaram = resultado.analisadas - resultado.conciliadas - ignoradas - sugeridas;
       // TODOS os motivos, com a contagem (04/11/2026): só o primeiro escondia
-      // o resto ("a maioria: ..." com 45 de 45 não dizia o que fazer).
-      const porque = (resultado.motivos || []).map((m) => `${m.quantidade} — ${m.motivo}`).join('; ');
+      // o resto ("a maioria: ..." com 45 de 45 não dizia o que fazer). A
+      // sugestão tem frase própria, e por isso sai da lista.
+      const porque = (resultado.motivos || []).filter((m) => !/^sugerida/.test(m.motivo))
+        .map((m) => `${m.quantidade} — ${m.motivo}`).join('; ');
       showToast(
-        `${resultado.conciliadas} de ${resultado.analisadas} movimentação(ões) conciliada(s) automaticamente.`
-        + (ficaram ? ` ${ficaram} ficaram para conciliar à mão${porque ? `: ${porque}` : ''}.` : ''),
-        resultado.conciliadas ? 'success' : 'info'
+        `${resultado.conciliadas} de ${resultado.analisadas} movimentação(ões) conciliada(s) automaticamente`
+        + (resultado.lancadasPelaRegra ? ` (${resultado.lancadasPelaRegra} lançada(s) pela regra do extrato)` : '') + '.'
+        + (ignoradas ? ` ${ignoradas} ignorada(s) pela regra do extrato.` : '')
+        + (sugeridas ? ` ${sugeridas} sugerida(s): confira e clique em "Confirmar sugestões".` : '')
+        + (ficaram > 0 ? ` ${ficaram} ficaram para conciliar à mão${porque ? `: ${porque}` : ''}.` : ''),
+        resultado.conciliadas || sugeridas ? 'success' : 'info'
       );
       load();
     } catch (error) {
@@ -272,6 +284,214 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     } finally {
       botao.disabled = false;
     }
+  }
+
+  // CONFIRMAR SUGESTÕES (04/11/2026): `ids` é a linha; sem ele, todas as
+  // sugeridas do filtro (o botão do cabeçalho). O servidor confere cada título
+  // de novo antes da baixa.
+  async function confirmarSugestoes(ids, botao) {
+    if (botao && botao.disabled) return;
+    if (!ids) {
+      const n = (ultimoResumo && ultimoResumo.sugeridas) || 0;
+      const ok = await confirmModal(`Conciliar ${n} sugestão(ões) do filtro atual com o título sugerido de cada uma? `
+        + 'Empresa, valor e data batem; só o nome do fornecedor/cliente não está na descrição. Confira a coluna Conciliação antes.');
+      if (!ok) return;
+    }
+    if (botao) botao.disabled = true;
+    try {
+      const r = await api('/api/finance/bank-transactions/confirmar-sugestoes', {
+        method: 'POST',
+        body: JSON.stringify(ids ? { ids } : { filtros: filters })
+      });
+      const recusadas = r.recusadas || [];
+      showToast(`${r.confirmadas} sugestão(ões) conciliada(s).`
+        + (recusadas.length ? ` ${recusadas.length} não: ${[...new Set(recusadas.map((x) => x.motivo))].join('; ')}.` : ''),
+        r.confirmadas ? 'success' : 'warning');
+      load();
+    } catch (error) {
+      showToast(error.message || 'Erro ao confirmar as sugestões.', 'error');
+      if (botao) botao.disabled = false;
+    }
+  }
+
+  // O QUE ATRAPALHA A AUTOMÁTICA NO CADASTRO (04/11/2026): carrega só quando
+  // a pessoa abre o painel (vai ao banco), e vale para a conta do filtro.
+  let pendenciasDoCadastro = null;
+  function painelDoCadastro() {
+    const aberto = state.extratoCadastroAberto === true;
+    return `
+      <details class="panel extrato-arquivos" id="extratoCadastro" ${aberto ? 'open' : ''}>
+        <summary><strong>O que atrapalha a conciliação automática</strong> <span class="muted">(cadastro)</span></summary>
+        <div id="extratoCadastroCorpo">${pendenciasDoCadastro ? corpoDoCadastro(pendenciasDoCadastro) : '<p class="muted">Abrindo, o sistema confere os títulos em aberto e os cadastros.</p>'}</div>
+      </details>`;
+  }
+  function corpoDoCadastro(p) {
+    const semEmp = p.titulosSemEmpresa || { total: 0, exemplos: [] };
+    const semDoc = p.cadastrosSemDocumento || { total: 0, titulos: 0, exemplos: [] };
+    const contas = p.contasSemEmpresa || [];
+    if (!semEmp.total && !semDoc.total && !contas.length) {
+      return '<p class="muted">Nada no cadastro atrapalha: os títulos em aberto têm empresa, e os clientes/fornecedores deles têm CPF/CNPJ.</p>';
+    }
+    const lista = (itens, linha) => `<ul class="extrato-cadastro-lista">${itens.map(linha).join('')}</ul>`;
+    return `
+      ${contas.length ? `<p><strong>${contas.length} conta(s) bancária(s) sem empresa</strong> — o extrato delas não concilia nada sozinho. Ligue a conta a uma empresa no cadastro de contas bancárias.</p>
+        ${lista(contas, (c) => `<li>${escapeHtml(c)}</li>`)}` : ''}
+      ${semEmp.total ? `<p><strong>${semEmp.total} título(s) em aberto sem empresa</strong> — nunca entram sozinhos, e travam outro título do mesmo valor. Informe o estabelecimento ou a conta bancária do título.</p>
+        ${lista(semEmp.exemplos, (t) => `<li>${escapeHtml(t.descricao || '-')}${t.nome ? ` — ${escapeHtml(t.nome)}` : ''} · ${escapeHtml(financeFormatBRL(t.valor))}${t.vencimento ? ` · venc. ${escapeHtml(financeFormatDate(t.vencimento))}` : ''}</li>`)}` : ''}
+      ${semDoc.total ? `<p><strong>${semDoc.total} cliente(s)/fornecedor(es) sem CPF/CNPJ</strong> em ${semDoc.titulos} título(s) em aberto — o Pix que traz só o documento não acha ninguém. Complete o cadastro.</p>
+        ${lista(semDoc.exemplos, (c) => `<li>${escapeHtml(c.nome)} · ${c.titulos} título(s), ${escapeHtml(financeFormatBRL(c.valor))}</li>`)}` : ''}`;
+  }
+  async function carregarPendenciasDoCadastro() {
+    const corpo = document.getElementById('extratoCadastroCorpo');
+    if (corpo) corpo.innerHTML = '<p class="muted">Conferindo o cadastro...</p>';
+    try {
+      const q = filters.bankAccountId ? `?bankAccountId=${encodeURIComponent(filters.bankAccountId)}` : '';
+      pendenciasDoCadastro = await api(`/api/finance/bank-transactions/pendencias-cadastro${q}`);
+      const atual = document.getElementById('extratoCadastroCorpo');
+      if (atual) atual.innerHTML = corpoDoCadastro(pendenciasDoCadastro);
+    } catch (error) {
+      const atual = document.getElementById('extratoCadastroCorpo');
+      if (atual) atual.innerHTML = `<p class="muted">Não foi possível conferir o cadastro: ${escapeHtml(error.message || 'erro')}</p>`;
+    }
+  }
+
+  // AS REGRAS DO EXTRATO (04/11/2026, lib/regras-extrato.js). `modelo` vem do
+  // botão "Regra" de uma linha: o texto e o sentido dela já preenchidos.
+  const SUGESTOES_DE_TEXTO = ['TARIFA', 'IOF', 'JUROS', 'TRANSF', 'APLIC', 'RESGATE', 'CESTA'];
+  async function openRegrasModal(modelo = null) {
+    closeExtratoModal();
+    let regras = [];
+    try {
+      regras = (await api('/api/finance/regras-extrato')).regras || [];
+    } catch (error) {
+      showToast(error.message || 'Erro ao carregar as regras.', 'error');
+      return;
+    }
+    const nomeDe = (lista, id) => ((lista || []).find((x) => x.id === id) || {}).name || '';
+    const estabelecimentos = meta.estabelecimentos || [];
+    const opcoes = (lista, sel, vazio) => `<option value="">${vazio}</option>${(lista || []).map((x) => `<option value="${escapeHtml(x.id)}" ${x.id === sel ? 'selected' : ''}>${escapeHtml(x.name)}${x.code ? ` (${escapeHtml(x.code)})` : ''}</option>`).join('')}`;
+    const opcoesEstab = (sel) => estabelecimentos.map((e) => `<option value="${escapeHtml(e.id)}" ${e.id === sel ? 'selected' : ''}>${escapeHtml(e.nomeFantasia || e.razaoSocial || e.id)}</option>`).join('');
+    const ACAO = { lancar: 'Lançar e conciliar', ignorar: 'Ignorar' };
+    const TIPO = { entrada: 'Entrada', saida: 'Saída', ambos: 'Entrada e saída' };
+
+    const overlay = document.createElement('div');
+    overlay.id = 'extratoModal';
+    overlay.className = 'modal-overlay';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (event) => { if (event.target === overlay) closeExtratoModal(); });
+    let editando = null;
+
+    const desenhar = () => {
+      const r = editando || modelo || { texto: '', tipo: 'saida', acao: 'lancar', estabelecimentoId: meta.estabelecimentoDoUsuario || '' };
+      overlay.innerHTML = `
+        <div class="modal modal-lg">
+          <h3>Regras do extrato</h3>
+          <p class="muted">Depois de casar com os títulos, a conciliação automática aplica a regra cujo texto está na descrição da movimentação (vale a de texto mais longo). Nunca passa por cima de um título.</p>
+          <div class="table-scroll">
+            <table class="table table-actions extrato-regras">
+              <thead><tr><th>Descrição contém</th><th>Faz</th><th>Lança em</th><th>Ações</th></tr></thead>
+              <tbody>
+                ${regras.length ? regras.map((x) => `
+                  <tr class="${x.ativa === false ? 'muted' : ''}">
+                    <td><strong>${escapeHtml(x.texto)}</strong>${x.ativa === false ? ' <span class="finance-badge finance-badge-muted">desativada</span>' : ''}</td>
+                    <td>${escapeHtml(ACAO[x.acao] || x.acao)} <span class="muted">· ${escapeHtml((TIPO[x.tipo] || x.tipo).toLowerCase())}</span></td>
+                    <td>${x.acao === 'lancar' ? `${escapeHtml(nomeDe(meta.categories, x.category) || '(plano excluído)')} <span class="muted">· </span>` : ''}<span class="muted">${x.bankAccountId ? escapeHtml(nomeDe(meta.bankAccounts, x.bankAccountId) || '-') : 'todas as contas'}</span></td>
+                    <td class="finance-extrato-actions">
+                      <button type="button" class="secondary" data-regra-editar="${escapeHtml(x.id)}">Editar</button>
+                      <button type="button" class="secondary" data-regra-excluir="${escapeHtml(x.id)}">Excluir</button>
+                    </td>
+                  </tr>`).join('') : '<tr><td colspan="4" class="muted">Nenhuma regra ainda.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+          <h4>${editando ? 'Alterar regra' : 'Nova regra'}</h4>
+          <form id="extratoRegraForm" class="form-grid">
+            <label>A descrição contém<input name="texto" required maxlength="120" value="${escapeHtml(r.texto || '')}" placeholder="ex.: TARIFA" /></label>
+            <p class="muted">Comuns: ${SUGESTOES_DE_TEXTO.map((t) => `<button type="button" class="secondary" data-regra-texto="${t}">${t}</button>`).join(' ')}</p>
+            <label>Vale para<select name="tipo">${Object.entries(TIPO).map(([v, l]) => `<option value="${v}" ${r.tipo === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+            <label>O que faz<select name="acao">${Object.entries(ACAO).map(([v, l]) => `<option value="${v}" ${r.acao === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+            <div class="form-grid" data-so-lancar ${r.acao === 'ignorar' ? 'hidden' : ''}>
+              <label>Plano de contas<select name="category">${opcoes(meta.categories, r.category, 'Selecione')}</select></label>
+              <label>Centro de custo<select name="costCenter">${opcoes(meta.costCenters, r.costCenter, 'Nenhum')}</select></label>
+              ${estabelecimentos.length ? `<label>Estabelecimento do lançamento<select name="estabelecimentoId"><option value="">O meu</option>${opcoesEstab(r.estabelecimentoId)}</select></label>` : ''}
+              <label>Descrição do lançamento<input name="descricao" maxlength="200" value="${escapeHtml(r.descricao || '')}" placeholder="vazia = a do extrato" /></label>
+            </div>
+            <label>Só nesta conta<select name="bankAccountId"><option value="">Todas as contas</option>${bankAccountOptions(r.bankAccountId || '')}</select></label>
+            <label class="checkbox-inline"><input type="checkbox" name="ativa" ${r.ativa === false ? '' : 'checked'} /> Ativa</label>
+            <div class="modal-actions">
+              <button type="button" class="btn-muted" id="extratoRegraFechar">Fechar</button>
+              ${editando ? '<button type="button" class="secondary" id="extratoRegraNova">Nova regra</button>' : ''}
+              <button type="submit" class="btn">${editando ? 'Salvar alteração' : 'Criar regra'}</button>
+            </div>
+          </form>
+        </div>`;
+
+      overlay.querySelector('#extratoRegraFechar')?.addEventListener('click', () => { closeExtratoModal(); load(); });
+      overlay.querySelector('#extratoRegraNova')?.addEventListener('click', () => { editando = null; modelo = null; desenhar(); });
+      const form = overlay.querySelector('#extratoRegraForm');
+      form.querySelector('[name="acao"]').addEventListener('change', (e) => {
+        form.querySelector('[data-so-lancar]').hidden = e.target.value === 'ignorar';
+      });
+      overlay.querySelectorAll('[data-regra-texto]').forEach((b) => b.addEventListener('click', () => {
+        form.querySelector('[name="texto"]').value = b.dataset.regraTexto;
+        if (/^(TRANSF|APLIC|RESGATE)$/.test(b.dataset.regraTexto)) {
+          form.querySelector('[name="acao"]').value = 'ignorar';
+          form.querySelector('[name="tipo"]').value = 'ambos';
+          form.querySelector('[data-so-lancar]').hidden = true;
+        }
+      }));
+      overlay.querySelectorAll('[data-regra-editar]').forEach((b) => b.addEventListener('click', () => {
+        editando = regras.find((x) => x.id === b.dataset.regraEditar) || null;
+        desenhar();
+      }));
+      overlay.querySelectorAll('[data-regra-excluir]').forEach((b) => b.addEventListener('click', async () => {
+        const x = regras.find((item) => item.id === b.dataset.regraExcluir);
+        if (!x || !(await confirmModal(`Excluir a regra "${x.texto}"? O que ela já lançou ou ignorou fica como está.`))) return;
+        try {
+          regras = (await api(`/api/finance/regras-extrato/${encodeURIComponent(x.id)}`, { method: 'DELETE' })).regras || [];
+          if (editando && editando.id === x.id) editando = null;
+          showToast('Regra excluída.', 'success');
+          desenhar();
+        } catch (error) {
+          showToast(error.message || 'Erro ao excluir a regra.', 'error');
+        }
+      }));
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const botao = form.querySelector('button[type="submit"]');
+        if (botao.disabled) return;
+        botao.disabled = true;
+        const fd = new FormData(form);
+        const corpo = {
+          texto: fd.get('texto'), tipo: fd.get('tipo'), acao: fd.get('acao'),
+          category: fd.get('category') || '', costCenter: fd.get('costCenter') || '',
+          estabelecimentoId: fd.get('estabelecimentoId') || '', descricao: fd.get('descricao') || '',
+          bankAccountId: fd.get('bankAccountId') || '', ativa: fd.get('ativa') === 'on'
+        };
+        try {
+          const resp = await api(editando ? `/api/finance/regras-extrato/${encodeURIComponent(editando.id)}` : '/api/finance/regras-extrato', {
+            method: editando ? 'PUT' : 'POST',
+            body: JSON.stringify(corpo)
+          });
+          regras = resp.regras || regras;
+          showToast(editando ? 'Regra alterada.' : 'Regra criada. Ela vale na próxima importação e no "Conciliar automático".', 'success');
+          editando = null;
+          modelo = null;
+          desenhar();
+        } catch (error) {
+          showToast(error.message || 'Erro ao gravar a regra.', 'error');
+          botao.disabled = false;
+        }
+      });
+    };
+    desenhar();
+  }
+
+  /** O começo da descrição que identifica o lançamento ("TARIFA COBRANCA 02/10" -> "TARIFA COBRANCA"). */
+  function textoDaRegra(descricao) {
+    const palavras = String(descricao || '').toUpperCase().split(/\s+/)
+      .filter((p) => p && !/\d/.test(p) && !/^[-–—·|:/]+$/.test(p));
+    return palavras.slice(0, 2).join(' ').slice(0, 60);
   }
 
   function linhaDaTransacao(tx) {
@@ -283,8 +503,22 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     const tituloDoVinculo = varios
       ? tx.conciliacoes.map((c) => `${c.description || c.entryId}: ${financeFormatBRL(c.valor)}`).join('\n')
       : conciliadoCom;
-    const selo = tx.conciliadoAutomaticamente
-      ? ' <span class="finance-badge finance-badge-info" title="Conciliada automaticamente: empresa, fornecedor, valor e data (ou o mês da parcela) batem">Auto</span>'
+    const selo = (tx.regra
+      ? ` <span class="finance-badge finance-badge-info" title="${escapeHtml(`Pela regra do extrato "${tx.regra}"`)}">Regra</span>`
+      : (tx.conciliadoAutomaticamente
+        ? ' <span class="finance-badge finance-badge-info" title="Conciliada automaticamente: empresa, fornecedor, valor e data (ou o mês da parcela) batem">Auto</span>'
+        : ''))
+      + (tx.sugestao ? ' <span class="finance-badge finance-badge-warning" title="Empresa, valor e data batem com um único título; só o nome do fornecedor/cliente não está na descrição">Sugerida</span>' : '');
+    // A SUGESTÃO DE 1 CLIQUE (04/11/2026): o título que a automática achou,
+    // na coluna Conciliação, com o vencimento e o nome do cadastro no title.
+    const sug = tx.sugestao;
+    // Texto puro: os dois são escapados inteiros onde entram no HTML.
+    const vencDaSugestao = sug && sug.vencimento ? financeFormatDate(sug.vencimento) : '';
+    const textoDaSugestao = sug
+      ? `${sug.descricao || 'Título'}${vencDaSugestao ? ` · venc. ${vencDaSugestao}` : ''}`
+      : '';
+    const tituloDaSugestao = sug
+      ? `Sugestão: ${sug.descricao || 'título'}${sug.nome ? ` — ${sug.nome}` : ''}${vencDaSugestao ? `, vence ${vencDaSugestao}` : ''}, ${financeFormatBRL(sug.valor)}`
       : '';
     // DESCRIÇÃO CORTADA, INTEIRA NO TÍTULO (fase EI). `.table td` não quebra
     // linha, e a descrição do OFX vem do MEMO inteiro ("PIX RECEBIDO - NOME -
@@ -300,9 +534,12 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         <td>${tx.type === 'entrada' ? 'Entrada' : 'Saída'}</td>
         <td>${escapeHtml(tx.bankAccountName || '-')}</td>
         <td>${bankTxStatusBadge(tx.status)}${selo}</td>
-        <td>${tx.matchedEntryId ? `<span class="finance-clickable-row texto-cortado is-curto" data-view-entry="${escapeHtml(tx.matchedEntryId)}" title="${escapeHtml(tituloDoVinculo)}">${escapeHtml(conciliadoCom)}</span>` : '<span class="muted">-</span>'}</td>
+        <td>${tx.matchedEntryId
+          ? `<span class="finance-clickable-row texto-cortado is-curto" data-view-entry="${escapeHtml(tx.matchedEntryId)}" title="${escapeHtml(tituloDoVinculo)}">${escapeHtml(conciliadoCom)}</span>`
+          : (sug ? `<span class="texto-cortado is-curto" title="${escapeHtml(tituloDaSugestao)}">${escapeHtml(textoDaSugestao)}</span>` : '<span class="muted">-</span>')}</td>
         <td class="finance-extrato-actions">
           ${tx.status === 'nao_conciliado' ? `
+            ${sug ? `<button type="button" data-confirmar-sugestao="${escapeHtml(tx.id)}" title="${escapeHtml(tituloDaSugestao)}">Confirmar</button>` : ''}
             <button type="button" class="secondary" data-conciliar="${escapeHtml(tx.id)}">Conciliar</button>
             <button type="button" class="secondary" data-ignorar="${escapeHtml(tx.id)}">Ignorar</button>
           ` : ''}
@@ -316,6 +553,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
   function renderView(result) {
     const totalPages = Math.max(1, Math.ceil(result.total / limit));
     const summary = result.summary || { naoConciliado: 0, conciliado: 0, ignorado: 0 };
+    ultimoResumo = summary;
     const valores = summary.valores || {};
     transacoesDaPagina = result.transactions || [];
     importacoes = result.importacoes || [];
@@ -335,7 +573,9 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         <div class="cadastro-list-actions">
           <button type="button" id="extratoNewBtn">+ Nova movimentação</button>
           <button type="button" class="secondary" id="extratoImportBtn">Importar extrato (OFX/CSV)</button>
-          <button type="button" class="secondary" id="extratoAutoBtn" title="Concilia sozinho o que tem empresa, fornecedor, valor e data batendo, com valor único (um título e uma movimentação com esse valor). Parcelas do mesmo valor: a que vence no mês da movimentação">Conciliar automático</button>
+          <button type="button" class="secondary" id="extratoAutoBtn" title="Concilia sozinho o que tem empresa, fornecedor, valor e data batendo, com valor único (um título e uma movimentação com esse valor). Parcelas do mesmo valor: a que vence no mês da movimentação. Depois, sugere o que só não tem o nome e aplica as regras do extrato">Conciliar automático</button>
+          ${summary.sugeridas ? `<button type="button" id="extratoConfirmarSugestoesBtn" title="Concilia cada sugestão do filtro com o título sugerido (empresa, valor e data batem; só falta o nome na descrição)">Confirmar sugestões (${escapeHtml(String(summary.sugeridas))})</button>` : ''}
+          <button type="button" class="secondary" id="extratoRegrasBtn" title="Tarifa, IOF, juros, transferência, aplicação: o que nunca tem título é lançado ou ignorado sozinho">Regras do extrato</button>
           <button type="button" class="secondary" id="extratoRefreshBtn">Atualizar</button>
         </div>
       </div>
@@ -399,6 +639,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       </form>
 
       ${painelDeArquivos()}
+      ${painelDoCadastro()}
 
       <div class="panel">
         <div id="extratoLote" class="sales-lote-barra hidden" role="region" aria-label="Ações nas movimentações selecionadas"></div>
@@ -533,6 +774,16 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     document.getElementById('extratoNewBtn')?.addEventListener('click', openNewTransactionModal);
     document.getElementById('extratoImportBtn')?.addEventListener('click', openImportModal);
     document.getElementById('extratoAutoBtn')?.addEventListener('click', (event) => conciliarAutomatico(event.currentTarget));
+    document.getElementById('extratoConfirmarSugestoesBtn')?.addEventListener('click', (event) => confirmarSugestoes(null, event.currentTarget));
+    document.getElementById('extratoRegrasBtn')?.addEventListener('click', () => openRegrasModal());
+    // O painel do cadastro carrega ao abrir, e de novo se a conta do filtro mudou.
+    document.getElementById('extratoCadastro')?.addEventListener('toggle', (event) => {
+      state.extratoCadastroAberto = event.target.open;
+      if (event.target.open && (!pendenciasDoCadastro || pendenciasDaConta !== filters.bankAccountId)) {
+        pendenciasDaConta = filters.bankAccountId;
+        carregarPendenciasDoCadastro();
+      }
+    });
 
     document.getElementById('extratoFilterForm')?.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -626,6 +877,9 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         const tx = (result.transactions || []).find((item) => item.id === btn.dataset.conciliar);
         if (tx) openConciliarModal(tx);
       });
+    });
+    content.querySelectorAll('[data-confirmar-sugestao]').forEach((btn) => {
+      btn.addEventListener('click', () => confirmarSugestoes([btn.dataset.confirmarSugestao], btn));
     });
     content.querySelectorAll('[data-ignorar]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -776,7 +1030,17 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
             + (lido.ignoradas.length ? ` · ${lido.ignoradas.length} sem data ou valor (fora)` : '');
         } else {
           event.target.form.querySelector('[name="csvText"]').value = texto;
-          resumo.textContent = 'CSV carregado no campo abaixo.';
+          // O CSV DO BANCO (04/11/2026, shared/extrato_csv.js): o resumo já
+          // diz quantos lançamentos ele achou; o envio lê o campo de novo.
+          let lido = null;
+          try { lido = window.MavisExtratoCsv.lerCsvExtrato(texto); } catch (erroCsv) { lido = null; }
+          if (lido) {
+            const entradas = lido.transacoes.filter((t) => t.type === 'entrada').length;
+            resumo.textContent = `CSV do banco: ${lido.transacoes.length} lançamento(s) (${entradas} entrada(s), ${lido.transacoes.length - entradas} saída(s))`
+              + (lido.ignoradas.length ? ` · ${lido.ignoradas.length} linha(s) de saldo ou sem data/valor (fora)` : '');
+          } else {
+            resumo.textContent = 'CSV carregado no campo abaixo.';
+          }
         }
         resumo.hidden = false;
       } catch (erro) {
@@ -791,9 +1055,17 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       submitBtn.disabled = true;
       const formData = new FormData(event.target);
       try {
+        // CSV (escolhido ou colado) passa pelo leitor de CSV de banco; o que ele
+        // não reconhece vai como texto, para o leitor antigo do servidor.
+        let linhasDoCsv = null;
+        if (!linhasDoOfx) {
+          try { linhasDoCsv = window.MavisExtratoCsv.lerCsvExtrato(formData.get('csvText')).transacoes; } catch (erroCsv) { linhasDoCsv = null; }
+        }
         const corpo = linhasDoOfx
           ? { bankAccountId: formData.get('bankAccountId'), rows: linhasDoOfx, origem: 'ofx', arquivo: nomeDoArquivoEscolhido }
-          : { bankAccountId: formData.get('bankAccountId'), text: formData.get('csvText'), arquivo: nomeDoArquivoEscolhido };
+          : (linhasDoCsv && linhasDoCsv.length
+            ? { bankAccountId: formData.get('bankAccountId'), rows: linhasDoCsv, arquivo: nomeDoArquivoEscolhido }
+            : { bankAccountId: formData.get('bankAccountId'), text: formData.get('csvText'), arquivo: nomeDoArquivoEscolhido });
         const result = await api('/api/finance/bank-transactions/import', {
           method: 'POST',
           body: JSON.stringify(corpo)
@@ -805,6 +1077,8 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
           `${result.count} movimentação(ões) importada(s)`
           + (result.repetidas ? `, ${result.repetidas} já existia(m)` : '')
           + (result.conciliadasAutomaticamente ? `, ${result.conciliadasAutomaticamente} conciliada(s) automaticamente` : '')
+          + (result.ignoradasPelaRegra ? `, ${result.ignoradasPelaRegra} ignorada(s) pela regra do extrato` : '')
+          + (result.sugeridas ? `, ${result.sugeridas} sugerida(s) para confirmar` : '')
           + (result.skipped ? `, ${result.skipped} linha(s) inválida(s) ignorada(s)` : '')
           + '.',
           result.count === 0 && result.repetidas ? 'info' : 'success'
@@ -934,12 +1208,19 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
 
         <div class="modal-actions">
           <button type="button" class="btn-muted" id="extratoConciliarCancel">Fechar</button>
+          <button type="button" class="secondary" id="extratoConciliarRegra" title="Tarifa, IOF, transferência: o que nunca tem título vira uma regra do extrato, e a próxima importação lança ou ignora sozinha">Sem título? Criar regra</button>
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (event) => { if (event.target === overlay) closeExtratoModal(); });
     document.getElementById('extratoConciliarCancel')?.addEventListener('click', closeExtratoModal);
+    // A REGRA A PARTIR DESTA MOVIMENTAÇÃO (04/11/2026): o texto e o sentido dela
+    // já preenchidos na janela das regras.
+    document.getElementById('extratoConciliarRegra')?.addEventListener('click', () => openRegrasModal({
+      texto: textoDaRegra(tx.description), tipo: tx.type === 'entrada' ? 'entrada' : 'saida', acao: 'lancar',
+      bankAccountId: '', estabelecimentoId: meta.estabelecimentoDoUsuario || ''
+    }));
 
     const botoesDeConciliar = (desligar) => {
       overlay.querySelectorAll('[data-match-entry]').forEach((b) => { b.disabled = desligar; });

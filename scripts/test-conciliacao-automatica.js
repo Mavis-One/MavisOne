@@ -99,6 +99,32 @@ check('parcela do mesmo fornecedor sem empresa no mesmo dia: não', !r.pares.len
 r = pares({ movimentacoes: [mov('m1', { data: '2026-11-10', texto: 'PAGAMENTO VIVO' })], titulos: parcelas });
 check('fornecedor que não é o das parcelas: não', !r.pares.length && /fornecedor/.test(r.motivos.m1));
 
+console.log('\n--- 3c. a sugestão de 1 clique (04/11/2026) ---');
+const SEM_NOME = { texto: 'DEB.TIT.COMPE EFETIVADO' };
+r = pares({ movimentacoes: [mov('m1', SEM_NOME)], titulos: [tit('t1'), tit('t2', { esperado: 50 })] });
+check('só o nome falta (empresa, valor único e data batem): não concilia, SUGERE',
+  !r.pares.length && /fornecedor/.test(r.motivos.m1) && r.sugestoes.length === 1 && r.sugestoes[0].tituloId === 't1', JSON.stringify(r.sugestoes));
+r = pares({ movimentacoes: [mov('m1', { ...SEM_NOME, data: '2026-11-25' })], titulos: [tit('t1')] });
+check('  sem nome e com a data fora do mês do vencimento: nem sugere', !r.sugestoes.length);
+r = pares({ movimentacoes: [mov('m1', { ...SEM_NOME, data: '2026-10-17' })], titulos: [tit('t1')] });
+check('  pago antes do vencimento, no mesmo mês: sugere (a automática não concilia)', !r.pares.length && r.sugestoes.length === 1);
+r = pares({ movimentacoes: [mov('m1', { ...SEM_NOME, data: '2026-10-17' })], titulos: [tit('t1'), tit('t2', { vencimento: '2026-10-28' })] });
+check('  dois títulos com o valor no mês e nenhum na data: não sugere', !r.sugestoes.length);
+r = pares({ movimentacoes: [mov('m1', { ...SEM_NOME, data: '2026-10-17' })], titulos: [tit('t1'), tit('t2', { vencimento: '2026-11-20' })] });
+check('  um só no mês: sugere esse', r.sugestoes.length === 1 && r.sugestoes[0].tituloId === 't1');
+r = pares({ movimentacoes: [mov('m1', SEM_NOME), mov('m2', SEM_NOME)], titulos: [tit('t1')] });
+check('  duas movimentações com o valor: nem sugere', !r.sugestoes.length);
+r = pares({ movimentacoes: [mov('m1', SEM_NOME)], titulos: [tit('t1'), tit('t2', { vencimento: '2026-11-20' })] });
+check('  dois títulos com o valor, um só vence na data: sugere esse', r.sugestoes.length === 1 && r.sugestoes[0].tituloId === 't1', JSON.stringify(r.sugestoes));
+r = pares({ movimentacoes: [mov('m1', SEM_NOME)], titulos: [tit('t1'), tit('t2')] });
+check('  dois títulos com o valor vencendo na data: não sugere', !r.sugestoes.length);
+r = pares({ movimentacoes: [mov('m1', SEM_NOME)], titulos: [tit('t1'), tit('s1', { raiz: '' })] });
+check('  outro título sem empresa na mesma data: não sugere', !r.sugestoes.length);
+r = pares({ movimentacoes: [mov('m1'), mov('m2', { ...SEM_NOME, data: '2026-10-21' })], titulos: [tit('t1'), tit('t2', { vencimento: '2026-11-20' })] });
+check('  título que um par já levou não é sugerido para outra', r.pares.length === 1 && !r.sugestoes.some((s) => s.tituloId === r.pares[0].tituloId), JSON.stringify(r));
+r = pares({ movimentacoes: [mov('m1', SEM_NOME), mov('m2', { valor: 50, ...SEM_NOME })], alvos: ['m2'], titulos: [tit('t1'), tit('t2', { esperado: 50 })] });
+check('  só as dos alvos', r.sugestoes.length === 1 && r.sugestoes[0].movimentacaoId === 'm2');
+
 console.log('\n--- 4. o servidor ---');
 const servidor = ler('server.js');
 check('a importação concilia o que acabou de entrar', /automatica = await conciliarAutomaticamente\(user, \(tx\) => novas\.has\(tx\.id\)\);/.test(servidor)
@@ -108,7 +134,9 @@ check('  e o botão, as do filtro da tela', servidor.includes("pathname === '/ap
 const auto = servidor.slice(servidor.indexOf('async function conciliarAutomaticamente('));
 check('  trava as movimentações tentadas e destrava no fim', /travadas\.forEach\(\(id\) => conciliacoesEmAndamento\.add\(id\)\);/.test(auto)
   && /\} finally \{\s*travadas\.forEach\(\(id\) => conciliacoesEmAndamento\.delete\(id\)\);/.test(auto));
-check('  e relê o db.json antes de gravar', /const atual = loadData\(\);[\s\S]{0,200}marcarConciliada\(tx, feitas\.get\(tx\.id\), \{ automatico: true \}\);[\s\S]{0,40}saveData\(atual\);/.test(auto));
+check('  e relê o db.json antes de gravar (a baixa, a regra e a sugestão)', /const atual = loadData\(\);[\s\S]{0,400}marcarConciliada\(tx, feitas\.get\(tx\.id\), \{ automatico: true \}\);[\s\S]{0,900}if \(mudou\) saveData\(atual\);/.test(auto));
+check('  a sugestão fica guardada na movimentação, e sai quando ela é conciliada ou ignorada',
+  /tx\.sugestao = sugestaoDe\.get\(tx\.id\);/.test(auto) && /delete tx\.sugestao;\s*tx\.updatedAt/.test(servidor));
 const rota = servidor.slice(servidor.indexOf("bank-transactions\\/[^/]+\\/conciliar$/"));
 check('vários títulos: a soma tem de ser o valor da movimentação', /if \(somaDosItens !== daMovimentacao\) \{/.test(rota));
 check('  cada um até o seu saldo em aberto', /if \(pedido\.valor > maxAllowed \+ 0\.01\) \{/.test(rota));

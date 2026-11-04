@@ -375,8 +375,10 @@ const PARCIAIS = {
     '/api/finance/bank-transactions/:id/conciliar POST',
     '/api/finance/bank-transactions/:id/desconciliar POST'
   ],
-  // Só pendentes e parciais: o universo de findBankTransactionMatches.
-  syncLancamentosEmAberto: ['/api/finance/bank-transactions/:id/matches GET'],
+  // Só pendentes e parciais: o universo de findBankTransactionMatches. E as
+  // pendências do cadastro (04/11/2026): título EM ABERTO sem empresa, e o
+  // cliente/fornecedor de título em aberto sem CPF/CNPJ — só lê, não serializa.
+  syncLancamentosEmAberto: ['/api/finance/bank-transactions/:id/matches GET', '/api/finance/bank-transactions/pendencias-cadastro GET'],
   // As parcelas de algumas NF-e manuais, sem baixa nenhuma.
   syncLancamentosDasNotas: [
     '/api/finance/nfe GET',
@@ -427,7 +429,11 @@ const HELPERS_REVISADOS = {
   // deles (syncLancamentosEmAberto, o universo das sugestões de conciliação) e
   // grava baixas novas; relê o db.json antes de gravar. Chamada no fim da
   // importação do extrato e pelo botão "Conciliar automático".
-  conciliarAutomaticamente: ['/api/finance/bank-transactions/import POST', '/api/finance/bank-transactions/conciliar-automatico POST']
+  conciliarAutomaticamente: ['/api/finance/bank-transactions/import POST', '/api/finance/bank-transactions/conciliar-automatico POST'],
+  // 04/11/2026: confirmar as sugestões lê SÓ os títulos sugeridos e as baixas
+  // deles (syncLancamentosPorId), como a conciliação de uma movimentação, e
+  // grava as baixas; relê o db.json antes de gravar. Não serializa nada.
+  confirmarSugestoes: ['/api/finance/bank-transactions/confirmar-sugestoes POST']
 };
 const chamadoresDe = (helper) => {
   const rotas = new Set();
