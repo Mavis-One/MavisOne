@@ -50,6 +50,17 @@ check('crédito = entrada, com data ISO', r.transacoes[0].type === 'entrada' && 
 check('dois PIX iguais no mesmo dia, FITIDs diferentes', r.transacoes[0].fitid === 'A1' && r.transacoes[1].fitid === 'A2');
 check('débito = saída, valor sem sinal, vírgula decimal', r.transacoes[2].type === 'saida' && r.transacoes[2].amount === 25.5);
 check('sem MEMO usa NAME', r.transacoes[2].description === 'TARIFA BANCÁRIA');
+const comNome = lerOfx(`<OFX><BANKTRANLIST>
+<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261010<TRNAMT>-890.00<FITID>B1<MEMO>PIX EMIT.OUTRA IF<NAME>GE MATERIAIS DE CONSTRUCAO
+<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261010<TRNAMT>-50.00<FITID>B2<MEMO>DEB.TIT.COMPE POSTO GRID<NAME>POSTO GRID
+</BANKTRANLIST></OFX>`).transacoes;
+check('MEMO e NAME juntos: o tipo do lançamento e quem recebeu (o que a conciliação automática procura)',
+  comNome[0].description === 'PIX EMIT.OUTRA IF - GE MATERIAIS DE CONSTRUCAO', comNome[0].description);
+check('  NAME que já está no MEMO não se repete', comNome[1].description === 'DEB.TIT.COMPE POSTO GRID', comNome[1].description);
+const { fornecedorBate } = require('../lib/conciliacao-automatica');
+check('  e o fornecedor do título passa a bater pela descrição',
+  fornecedorBate({ texto: comNome[0].description, nome: 'GE MATERIAIS DE CONSTRUCAO LTDA.' })
+  && !fornecedorBate({ texto: 'PIX EMIT.OUTRA IF', nome: 'GE MATERIAIS DE CONSTRUCAO LTDA.' }));
 
 console.log('\n--- 2. OFX 2.x (XML, UTF-8) ---');
 const xml = `<?xml version="1.0" encoding="UTF-8"?><?OFX OFXHEADER="200" VERSION="211"?>

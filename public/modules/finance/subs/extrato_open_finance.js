@@ -258,10 +258,12 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         body: JSON.stringify({ filtros: filters })
       });
       const ficaram = resultado.analisadas - resultado.conciliadas;
-      const principal = (resultado.motivos || [])[0];
+      // TODOS os motivos, com a contagem (04/11/2026): só o primeiro escondia
+      // o resto ("a maioria: ..." com 45 de 45 não dizia o que fazer).
+      const porque = (resultado.motivos || []).map((m) => `${m.quantidade} — ${m.motivo}`).join('; ');
       showToast(
         `${resultado.conciliadas} de ${resultado.analisadas} movimentação(ões) conciliada(s) automaticamente.`
-        + (ficaram ? ` ${ficaram} ficaram para conciliar à mão${principal ? ` (a maioria: ${principal.motivo})` : ''}.` : ''),
+        + (ficaram ? ` ${ficaram} ficaram para conciliar à mão${porque ? `: ${porque}` : ''}.` : ''),
         resultado.conciliadas ? 'success' : 'info'
       );
       load();

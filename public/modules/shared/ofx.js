@@ -9,7 +9,7 @@
 //     (<TRNAMT>-25.50 e a linha acaba);
 //   - OFX 2.x (XML): <TRNAMT>-25.50</TRNAMT>.
 // Cada <STMTTRN> vira uma movimentação: data (DTPOSTED), valor (TRNAMT, o
-// sinal diz entrada/saída), descrição (MEMO, senão NAME) e o FITID — o
+// sinal diz entrada/saída), descrição (MEMO e NAME juntos) e o FITID — o
 // identificador que o banco dá a cada lançamento. É ele que permite importar
 // o mesmo arquivo duas vezes sem duplicar, e ainda assim aceitar dois PIX
 // iguais no mesmo dia (cada um tem o seu FITID).
@@ -78,7 +78,15 @@
     for (const b of blocos) {
       const v = valor(tag(b, 'TRNAMT'));
       const dia = data(tag(b, 'DTPOSTED'));
-      const descricao = decodificarEntidades(tag(b, 'MEMO') || tag(b, 'NAME')).replace(/\s+/g, ' ').trim();
+      // MEMO E NAME JUNTOS (04/11/2026). Era um OU o outro, e muito banco põe
+      // no MEMO só o tipo ("PIX EMIT.OUTRA IF", "DEB.TIT.COMPE") e no NAME
+      // quem pagou ou recebeu — justamente o que a conciliação automática
+      // procura. Um contido no outro fica só o maior.
+      const limpo = (s) => decodificarEntidades(s).replace(/\s+/g, ' ').trim();
+      const memo = limpo(tag(b, 'MEMO'));
+      const nome = limpo(tag(b, 'NAME'));
+      const descricao = !memo || memo.toUpperCase().includes(nome.toUpperCase()) ? (memo || nome)
+        : nome.toUpperCase().includes(memo.toUpperCase()) ? nome : `${memo} - ${nome}`;
       if (!Number.isFinite(v) || v === 0 || !dia) {
         ignoradas.push({ motivo: !dia ? 'sem data' : 'sem valor', trecho: b.replace(/\s+/g, ' ').slice(0, 80) });
         continue;
