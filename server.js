@@ -2425,7 +2425,7 @@ function resolveFinanceCounterpartyDocument(entry, data) {
 // puramente informativo pra ordenar/destacar candidatos na tela — NENHUM
 // score, por mais alto que seja, concilia sozinho. O que concilia sem clique
 // (28/10/2026, a pedido do usuário) é a regra de lib/conciliacao-automatica.js:
-// empresa, fornecedor, valor e data batendo, com valor único dos dois lados.
+// empresa, valor e data batendo (sem o fornecedor desde 05/11/2026), com valor único dos dois lados.
 function scoreBankTransactionMatch({ amountDiff, daysDiff, remaining, nameMatch, documentMatch }) {
   const exactAmount = amountDiff < 0.01;
   const amountToleranceRelativa = remaining > 0 ? amountDiff / remaining <= 0.02 : false;
@@ -6302,7 +6302,7 @@ async function baixarTitulosDaTransacao(data, tx, itens, user, { automatico = fa
         // ela o título ficava "parcial" com a taxa em aberto para sempre.
         discount: taxaDoCartao,
         note: (nota || (automatico
-          ? `Conciliado automaticamente pelo Extrato (transação ${String(tx.id).slice(-8)}${sufixo}): empresa, fornecedor, valor e data batem.`
+          ? `Conciliado automaticamente pelo Extrato (transação ${String(tx.id).slice(-8)}${sufixo}): empresa, valor e data batem.`
           : `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)}${sufixo})`))
           + (taxaDoCartao > 0 ? ` Taxa da credenciadora (${entry.feePercent}%) abatida como desconto.` : ''),
         createdBy: user.id,
@@ -6333,7 +6333,7 @@ async function baixarTitulosDaTransacao(data, tx, itens, user, { automatico = fa
     details: {
       entryId: conciliacoes[0].entryId,
       ...(conciliacoes.length > 1 ? { entryIds: conciliacoes.map((c) => c.entryId) } : {}),
-      ...(automatico ? { automatico: true, regra: 'empresa, fornecedor, valor e data batem; valor único dos dois lados' } : {})
+      ...(automatico ? { automatico: true, regra: 'empresa, valor e data batem; valor único dos dois lados' } : {})
     }
   });
   return conciliacoes;
@@ -6364,7 +6364,7 @@ function desmarcarConciliada(tx) {
 /**
  * A CONCILIAÇÃO AUTOMÁTICA (28/10/2026): as movimentações não conciliadas que
  * `escolher` aceita e que casam com um título pela regra de
- * lib/conciliacao-automatica.js (empresa, fornecedor, valor e data batendo;
+ * lib/conciliacao-automatica.js (empresa, valor e data batendo;
  * valor único dos dois lados) são conciliadas, uma baixa cada.
  *
  * Roda no fim da importação e pelo botão "Conciliar automático". As
@@ -6406,8 +6406,9 @@ async function conciliarAutomaticamente(user, escolher) {
         restante,
         raiz: raizDe(empresaDe(entry)),
         vencimento: financeEntryDueDate(entry),
-        nome: resolveFinanceCounterparty(entry, data),
-        documento: resolveFinanceCounterpartyDocument(entry, data)
+        // Só para a sugestão mostrar de quem é o título: desde 05/11/2026 a
+        // regra é empresa, valor e data — o nome não decide nada.
+        nome: resolveFinanceCounterparty(entry, data)
       };
     });
     const movimentacoes = naoConciliadas.map((tx) => ({
@@ -6415,9 +6416,7 @@ async function conciliarAutomaticamente(user, escolher) {
       tipo: tx.type === 'entrada' ? 'receita' : 'despesa',
       valor: Number(tx.amount || 0),
       data: tx.date,
-      raiz: raizDaContaDe(String(tx.bankAccountId || '')),
-      texto: [tx.description, tx.counterpartyName, tx.merchantName].filter(Boolean).join(' '),
-      documentos: [tx.counterpartyDocument, tx.merchantDocument].filter(Boolean)
+      raiz: raizDaContaDe(String(tx.bankAccountId || ''))
     }));
     const { pares, motivos, sugestoes } = conciliacaoAutomatica.paresAutomaticos({ movimentacoes, alvos: travadas, titulos });
     const titulosPorId = new Map(titulos.map((t) => [t.id, t]));
@@ -6447,7 +6446,7 @@ async function conciliarAutomaticamente(user, escolher) {
         entryId: titulo.id, descricao: entry.description || '', nome: titulo.nome && titulo.nome !== '-' ? titulo.nome : '',
         vencimento: titulo.vencimento || '', valor: titulo.esperado
       });
-      motivos[s.movimentacaoId] = 'sugerida para confirmar (só falta o nome do fornecedor/cliente na descrição)';
+      motivos[s.movimentacaoId] = 'sugerida para confirmar (vence no mesmo mês, não na data)';
     }
 
     // AS REGRAS DO EXTRATO (04/11/2026): o último passo, só para o que não
@@ -6628,7 +6627,7 @@ async function confirmarSugestoes(user, escolher) {
       if (Number(tx.amount || 0) > restante + 0.01) { recusar('o título já não tem esse saldo em aberto'); continue; }
       try {
         feitas.set(tx.id, await baixarTitulosDaTransacao(data, tx, [{ entry, valor: Number(tx.amount || 0) }], user, {
-          nota: `Sugestão da conciliação automática confirmada por ${user.name} (transação ${String(tx.id).slice(-8)}): empresa, valor e data batem.`
+          nota: `Sugestão da conciliação automática confirmada por ${user.name} (transação ${String(tx.id).slice(-8)}): empresa e valor batem, vence no mesmo mês.`
         }));
         usados.add(entry.id);
       } catch (erro) {
@@ -25154,7 +25153,7 @@ async function tratarRequisicao(req, res) {
 
       saveData(data);
       // A CONCILIAÇÃO AUTOMÁTICA (28/10/2026): o que acabou de entrar e casa
-      // com um título pela regra (empresa, fornecedor, valor e data batendo;
+      // com um título pela regra (empresa, valor e data batendo;
       // valor único) já sai conciliado. Se ela falhar, a importação continua
       // valendo, e o resto se concilia pelo botão ou à mão.
       const novas = new Set(created.map((tx) => tx.id));
@@ -25246,10 +25245,11 @@ async function tratarRequisicao(req, res) {
   }
 
   // O QUE ATRAPALHA A AUTOMÁTICA NO CADASTRO (04/11/2026): título em aberto
-  // sem empresa conhecida (nunca é o par), cliente/fornecedor de título em
-  // aberto sem CPF/CNPJ (o Pix que traz só o documento não acha ninguém) e
-  // conta bancária sem empresa (o extrato dela não concilia nada sozinho).
-  // `bankAccountId` limita à empresa da conta.
+  // sem empresa conhecida (nunca é o par) e conta bancária sem empresa (o
+  // extrato dela não concilia nada sozinho). Desde 05/11/2026 a automática é
+  // empresa, valor e data: cliente/fornecedor sem CPF/CNPJ não atrapalha mais,
+  // e saiu daqui. `bankAccountId` não muda a lista (o título sem empresa pode
+  // ser de qualquer conta), mas fica no endereço por compatibilidade.
   if (pathname === '/api/finance/bank-transactions/pendencias-cadastro' && req.method === 'GET') {
     try {
       const user = await getCurrentUser(req);
@@ -25267,31 +25267,17 @@ async function tratarRequisicao(req, res) {
         && ['receita', 'despesa'].includes(classifyFinanceEntry(entry)));
       const empresaDe = await resolvedorDeEmpresas(abertos, data);
       const raizDe = (empresa) => conciliacaoAutomatica.raizDoCnpj(empresa && empresa.cnpj);
-      const contaId = String(url.searchParams.get('bankAccountId') || '');
-      const raizDaConta = contaId ? raizDe(empresaDe({ bankAccountId: contaId })) : '';
       const semEmpresa = [];
-      const semDocumento = new Map();
       for (const entry of abertos) {
-        const raiz = raizDe(empresaDe(entry));
+        if (raizDe(empresaDe(entry))) continue;
         const nome = resolveFinanceCounterparty(entry, data);
-        const resumo = { descricao: entry.description || '', nome: nome && nome !== '-' ? nome : '', valor: Number(entry.amount || 0), vencimento: financeEntryDueDate(entry) || '' };
-        if (!raiz) { semEmpresa.push(resumo); continue; }
-        if (raizDaConta && raiz !== raizDaConta) continue;
-        const documento = String(resolveFinanceCounterpartyDocument(entry, data) || '').replace(/\D/g, '');
-        if (!resumo.nome || documento.length >= 11) continue;
-        const chave = conciliacaoAutomatica.palavrasDoNome(resumo.nome).join(' ') || resumo.nome.toUpperCase();
-        const atual = semDocumento.get(chave) || { nome: resumo.nome, titulos: 0, valor: 0 };
-        atual.titulos += 1;
-        atual.valor = Math.round((atual.valor + resumo.valor) * 100) / 100;
-        semDocumento.set(chave, atual);
+        semEmpresa.push({ descricao: entry.description || '', nome: nome && nome !== '-' ? nome : '', valor: Number(entry.amount || 0), vencimento: financeEntryDueDate(entry) || '' });
       }
-      const cadastros = [...semDocumento.values()].sort((a, b) => b.titulos - a.titulos || b.valor - a.valor);
       const contasSemEmpresa = (data.bankAccounts || [])
         .filter((c) => c.active !== false && !raizDe(empresaDe({ bankAccountId: c.id })))
         .map((c) => c.name || c.id);
       return sendJson(res, {
         titulosSemEmpresa: { total: semEmpresa.length, exemplos: semEmpresa.sort((a, b) => b.valor - a.valor).slice(0, 10) },
-        cadastrosSemDocumento: { total: cadastros.length, titulos: cadastros.reduce((s, c) => s + c.titulos, 0), exemplos: cadastros.slice(0, 15) },
         contasSemEmpresa
       });
     } catch (error) {

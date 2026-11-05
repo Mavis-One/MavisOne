@@ -18,17 +18,10 @@ const check = (nome, cond, det) => {
   if (!cond) falhas++;
 };
 
-console.log('--- 1. o fornecedor na descrição ---');
-check('as duas primeiras palavras do nome, fora LTDA/DE/COMERCIO',
-  C.fornecedorBate({ texto: 'PAG BOLETO MAIS CLEAN DISTRIB', nome: 'MAIS CLEAN DISTRIBUIDORA LTDA' }));
-check('  com acento e caixa diferentes', C.fornecedorBate({ texto: 'PIX RECEBIDO - Joao da Silva', nome: 'JOÃO DA SILVA' }));
-check('  o MEI com o CNPJ na frente do nome', C.fornecedorBate({ texto: 'PIX ENVIADO DALVAN JOSE', nome: '68.501.208 DALVAN JOSE PEDRI' }));
-check('  a palavra cortada pelo banco (4 letras ou mais)', C.fornecedorBate({ texto: 'TED JOAO SILV', nome: 'JOAO SILVA' }));
-check('  outro nome não bate', !C.fornecedorBate({ texto: 'PIX RECEBIDO MARIA SOUZA', nome: 'JOAO SILVA' }));
-check('  só uma das duas palavras não basta', !C.fornecedorBate({ texto: 'PIX RECEBIDO JOAO PEREIRA', nome: 'JOAO SILVA' }));
-check('  nome vazio não bate', !C.fornecedorBate({ texto: 'PIX', nome: '' }));
-check('pelo CNPJ na descrição, com pontuação', C.fornecedorBate({ texto: 'PIX 12.345.678/0001-90 PAGTO', nome: 'OUTRO NOME', documento: '12345678000190' }));
-check('  pelo documento da contraparte (Open Finance)', C.fornecedorBate({ texto: 'PIX', documentos: ['123.456.789-01'], nome: 'X', documento: '12345678901' }));
+// SÓ TRÊS COISAS DESDE 05/11/2026 (pedido do usuário: "valores, empresa
+// selecionada, e data"): o fornecedor na descrição saiu da regra.
+console.log('--- 1. o fornecedor não decide mais ---');
+check('a biblioteca não tem mais a regra do nome', typeof C.fornecedorBate === 'undefined' && typeof C.palavrasDoNome === 'undefined');
 
 console.log('\n--- 2. a data ---');
 check('no vencimento', C.dataBate('2026-10-20', '2026-10-20'));
@@ -56,8 +49,8 @@ r = pares({ movimentacoes: [mov('m1')], titulos: [tit('t1'), tit('t2', { raiz: '
 check('outro título com o valor e SEM empresa: não (pode ser o mesmo)', !r.pares.length && /mais de um título/.test(r.motivos.m1));
 r = pares({ movimentacoes: [mov('m1', { raiz: '' })], titulos: [tit('t1')] });
 check('conta sem empresa: não', !r.pares.length && /empresa/.test(r.motivos.m1));
-r = pares({ movimentacoes: [mov('m1', { texto: 'PAGAMENTO VIVO' })], titulos: [tit('t1')] });
-check('fornecedor diferente: não', !r.pares.length && /fornecedor/.test(r.motivos.m1));
+r = pares({ movimentacoes: [mov('m1', { texto: 'DEB.TIT.COMPE EFETIVADO' })], titulos: [tit('t1')] });
+check('sem nome nenhum na descrição: concilia (empresa, valor e data batem)', r.pares.length === 1 && r.pares[0].tituloId === 't1', JSON.stringify(r));
 r = pares({ movimentacoes: [mov('m1', { data: '2026-10-25' })], titulos: [tit('t1')] });
 check('data fora: não', !r.pares.length && /data/.test(r.motivos.m1));
 r = pares({ movimentacoes: [mov('m1', { valor: 100.01 })], titulos: [tit('t1')] });
@@ -93,36 +86,29 @@ check('duas parcelas do mesmo valor no mês: não', !r.pares.length && /vence no
 r = pares({ movimentacoes: [mov('m1', { data: '2027-02-10' })], titulos: parcelas });
 check('nenhuma parcela no mês: não', !r.pares.length && /nenhuma parcela/.test(r.motivos.m1));
 r = pares({ movimentacoes: [mov('m1', { data: '2026-11-10' })], titulos: [...parcelas, tit('v1', { nome: 'VIVO S.A.', vencimento: '2026-11-10' })] });
-check('título de outro fornecedor com o mesmo valor não atrapalha', r.pares.length === 1 && r.pares[0].tituloId === 'p3');
+check('outro título do mesmo valor na mesma data (de qualquer fornecedor): não concilia sozinho',
+  !r.pares.length && /mais de um título/.test(r.motivos.m1));
 r = pares({ movimentacoes: [mov('m1', { data: '2026-11-10' })], titulos: [...parcelas, tit('s1', { raiz: '', vencimento: '2026-11-10' })] });
-check('parcela do mesmo fornecedor sem empresa no mesmo dia: não', !r.pares.length && /mais de um título/.test(r.motivos.m1));
+check('título sem empresa do mesmo valor no mesmo dia: não', !r.pares.length && /mais de um título/.test(r.motivos.m1));
 r = pares({ movimentacoes: [mov('m1', { data: '2026-11-10', texto: 'PAGAMENTO VIVO' })], titulos: parcelas });
-check('fornecedor que não é o das parcelas: não', !r.pares.length && /fornecedor/.test(r.motivos.m1));
+check('o nome na descrição não importa: fica com a parcela da data', r.pares.length === 1 && r.pares[0].tituloId === 'p3');
 
-console.log('\n--- 3c. a sugestão de 1 clique (04/11/2026) ---');
-const SEM_NOME = { texto: 'DEB.TIT.COMPE EFETIVADO' };
-r = pares({ movimentacoes: [mov('m1', SEM_NOME)], titulos: [tit('t1'), tit('t2', { esperado: 50 })] });
-check('só o nome falta (empresa, valor único e data batem): não concilia, SUGERE',
-  !r.pares.length && /fornecedor/.test(r.motivos.m1) && r.sugestoes.length === 1 && r.sugestoes[0].tituloId === 't1', JSON.stringify(r.sugestoes));
-r = pares({ movimentacoes: [mov('m1', { ...SEM_NOME, data: '2026-11-25' })], titulos: [tit('t1')] });
-check('  sem nome e com a data fora do mês do vencimento: nem sugere', !r.sugestoes.length);
-r = pares({ movimentacoes: [mov('m1', { ...SEM_NOME, data: '2026-10-17' })], titulos: [tit('t1')] });
-check('  pago antes do vencimento, no mesmo mês: sugere (a automática não concilia)', !r.pares.length && r.sugestoes.length === 1);
-r = pares({ movimentacoes: [mov('m1', { ...SEM_NOME, data: '2026-10-17' })], titulos: [tit('t1'), tit('t2', { vencimento: '2026-10-28' })] });
-check('  dois títulos com o valor no mês e nenhum na data: não sugere', !r.sugestoes.length);
-r = pares({ movimentacoes: [mov('m1', { ...SEM_NOME, data: '2026-10-17' })], titulos: [tit('t1'), tit('t2', { vencimento: '2026-11-20' })] });
-check('  um só no mês: sugere esse', r.sugestoes.length === 1 && r.sugestoes[0].tituloId === 't1');
-r = pares({ movimentacoes: [mov('m1', SEM_NOME), mov('m2', SEM_NOME)], titulos: [tit('t1')] });
+// Desde 05/11/2026 (sem o nome): o título ÚNICO com o valor, que vence em
+// outro dia do mesmo mês — a data é a única coisa que não bate em cheio.
+console.log('\n--- 3c. a sugestão de 1 clique ---');
+r = pares({ movimentacoes: [mov('m1', { data: '2026-10-17' })], titulos: [tit('t1'), tit('t2', { esperado: 50 })] });
+check('pago antes do vencimento, no mesmo mês: não concilia, SUGERE',
+  !r.pares.length && /data/.test(r.motivos.m1) && r.sugestoes.length === 1 && r.sugestoes[0].tituloId === 't1', JSON.stringify(r.sugestoes));
+r = pares({ movimentacoes: [mov('m1')], titulos: [tit('t1')] });
+check('  na data: concilia, e não sugere', r.pares.length === 1 && !r.sugestoes.length);
+r = pares({ movimentacoes: [mov('m1', { data: '2026-11-25' })], titulos: [tit('t1')] });
+check('  fora do mês do vencimento: nem sugere', !r.pares.length && !r.sugestoes.length);
+r = pares({ movimentacoes: [mov('m1', { data: '2026-10-17' }), mov('m2', { data: '2026-10-18' })], titulos: [tit('t1')] });
 check('  duas movimentações com o valor: nem sugere', !r.sugestoes.length);
-r = pares({ movimentacoes: [mov('m1', SEM_NOME)], titulos: [tit('t1'), tit('t2', { vencimento: '2026-11-20' })] });
-check('  dois títulos com o valor, um só vence na data: sugere esse', r.sugestoes.length === 1 && r.sugestoes[0].tituloId === 't1', JSON.stringify(r.sugestoes));
-r = pares({ movimentacoes: [mov('m1', SEM_NOME)], titulos: [tit('t1'), tit('t2')] });
-check('  dois títulos com o valor vencendo na data: não sugere', !r.sugestoes.length);
-r = pares({ movimentacoes: [mov('m1', SEM_NOME)], titulos: [tit('t1'), tit('s1', { raiz: '' })] });
-check('  outro título sem empresa na mesma data: não sugere', !r.sugestoes.length);
-r = pares({ movimentacoes: [mov('m1'), mov('m2', { ...SEM_NOME, data: '2026-10-21' })], titulos: [tit('t1'), tit('t2', { vencimento: '2026-11-20' })] });
-check('  título que um par já levou não é sugerido para outra', r.pares.length === 1 && !r.sugestoes.some((s) => s.tituloId === r.pares[0].tituloId), JSON.stringify(r));
-r = pares({ movimentacoes: [mov('m1', SEM_NOME), mov('m2', { valor: 50, ...SEM_NOME })], alvos: ['m2'], titulos: [tit('t1'), tit('t2', { esperado: 50 })] });
+r = pares({ movimentacoes: [mov('m1', { data: '2026-10-17' })], titulos: [tit('t1'), tit('t2', { vencimento: '2026-11-20' })] });
+check('  títulos do mesmo valor, um só no mês: esse concilia (a parcela do mês)', r.pares.length === 1 && r.pares[0].tituloId === 't1' && !r.sugestoes.length);
+r = pares({ movimentacoes: [mov('m1', { data: '2026-10-17' }), mov('m2', { valor: 50, data: '2026-10-17' })], alvos: ['m2'],
+  titulos: [tit('t1'), tit('t2', { esperado: 50 })] });
 check('  só as dos alvos', r.sugestoes.length === 1 && r.sugestoes[0].movimentacaoId === 'm2');
 
 console.log('\n--- 4. o servidor ---');

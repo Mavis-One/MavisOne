@@ -57,10 +57,9 @@ const comNome = lerOfx(`<OFX><BANKTRANLIST>
 check('MEMO e NAME juntos: o tipo do lançamento e quem recebeu (o que a conciliação automática procura)',
   comNome[0].description === 'PIX EMIT.OUTRA IF - GE MATERIAIS DE CONSTRUCAO', comNome[0].description);
 check('  NAME que já está no MEMO não se repete', comNome[1].description === 'DEB.TIT.COMPE POSTO GRID', comNome[1].description);
-const { fornecedorBate } = require('../lib/conciliacao-automatica');
-check('  e o fornecedor do título passa a bater pela descrição',
-  fornecedorBate({ texto: comNome[0].description, nome: 'GE MATERIAIS DE CONSTRUCAO LTDA.' })
-  && !fornecedorBate({ texto: 'PIX EMIT.OUTRA IF', nome: 'GE MATERIAIS DE CONSTRUCAO LTDA.' }));
+// Desde 05/11/2026 a conciliação automática não olha o nome (só empresa,
+// valor e data): o NAME fica para quem lê o extrato e para a busca da tela.
+check('  e o nome de quem recebeu aparece na descrição', /GE MATERIAIS DE CONSTRUCAO/.test(comNome[0].description));
 
 console.log('\n--- 2. OFX 2.x (XML, UTF-8) ---');
 const xml = `<?xml version="1.0" encoding="UTF-8"?><?OFX OFXHEADER="200" VERSION="211"?>

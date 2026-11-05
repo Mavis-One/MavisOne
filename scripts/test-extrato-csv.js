@@ -10,7 +10,6 @@
 'use strict';
 
 const { lerCsvExtrato, valor, data } = require('../public/modules/shared/extrato_csv');
-const { fornecedorBate } = require('../lib/conciliacao-automatica');
 
 let falhas = 0;
 const check = (nome, cond, det) => {
@@ -51,8 +50,8 @@ check('o histórico das linhas de baixo entra na descrição',
   s.transacoes[0].description === 'PIX RECEB.OUTRA IF - Recebimento Pix - JOAO DA SILVA - ***.123.456-**', s.transacoes[0].description);
 check('débito com D é saída, e o favorecido está na descrição',
   s.transacoes[1].type === 'saida' && s.transacoes[1].amount === 890 && /GE MATERIAIS/.test(s.transacoes[1].description), s.transacoes[1].description);
-check('  e a conciliação automática acha o fornecedor por ela',
-  fornecedorBate({ texto: s.transacoes[1].description, nome: 'GE MATERIAIS DE CONSTRUCAO LTDA.' }));
+// (Desde 05/11/2026 a conciliação automática não olha o nome: o favorecido na
+// descrição fica para quem lê o extrato e para a busca da tela.)
 check('a coluna Documento (número) não vai para a descrição', !/\b123\b/.test(s.transacoes[1].description));
 
 console.log('\n--- 3. histórico com quebra de linha dentro da aspa ---');
