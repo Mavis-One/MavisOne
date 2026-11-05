@@ -5644,9 +5644,31 @@ async function resolvedorDeEmpresas(entries, data) {
   ]);
   const estabDaNfe = new Map(nfes.map((n) => [String(n.id), n.estabelecimento_id]));
   const companhiaDoPedido = new Map(pedidos.map((p) => [String(p.id), p.company_id]));
-  const estabDaConta = new Map();
-  contasLigadas.forEach((l) => { if (!estabDaConta.has(String(l.bank_account_id))) estabDaConta.set(String(l.bank_account_id), l.estabelecimento_id); });
-  (data.bankAccounts || []).forEach((b) => { if (b.estabelecimentoId && !estabDaConta.has(String(b.id))) estabDaConta.set(String(b.id), b.estabelecimentoId); });
+  // A EMPRESA DA CONTA (05/11/2026, "verifique a conciliação por parte da
+  // electric"). Era o PRIMEIRO vínculo de Contas por Estabelecimento que o
+  // banco devolvesse, sem ordem nenhuma, antes até do dono da conta — e o
+  // vínculo é PERMISSÃO de usar a conta, não dono: a conta da Electric
+  // liberada também para a matriz podia sair como Plus, e o extrato dela não
+  // casava com título nenhum. Agora, nesta ordem: o dono declarado na conta
+  // (donoDaConta); o nome da conta, quando aponta uma empresa só
+  // (pelaContaUmaVez); e só então os vínculos, se forem todos de UMA empresa
+  // (raiz do CNPJ), preferindo a matriz dela.
+  const donoDaConta = new Map();
+  (data.bankAccounts || []).forEach((b) => { if (b.estabelecimentoId) donoDaConta.set(String(b.id), b.estabelecimentoId); });
+  const vinculosDaConta = new Map();
+  contasLigadas.forEach((l) => {
+    const conta = String(l.bank_account_id);
+    if (!vinculosDaConta.has(conta)) vinculosDaConta.set(conta, []);
+    vinculosDaConta.get(conta).push(estabPorId.get(String(l.estabelecimento_id)));
+  });
+  const vinculoUnicoDaConta = new Map();
+  vinculosDaConta.forEach((lista, conta) => {
+    const ligados = lista.filter(Boolean);
+    const raizes = new Set(ligados.map((e) => soDigitosLocal(e.cnpj).slice(0, 8)).filter((r) => r.length === 8));
+    if (raizes.size !== 1) return;
+    const matriz = ligados.find((e) => soDigitosLocal(e.cnpj).slice(8, 12) === '0001');
+    vinculoUnicoDaConta.set(conta, (matriz || ligados[0]).id);
+  });
 
   // A palavra que só uma empresa (raiz de CNPJ) tem na razão social.
   const palavras = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length >= 4);
@@ -5671,10 +5693,19 @@ async function resolvedorDeEmpresas(entries, data) {
     const razao = (razoes.find((r) => r.raiz === raiz) || {}).razao || '';
     return { nome: razao, cnpj: raiz };
   };
+  // A palavra da conta que é a da razão social, ou a começa com uma palavra
+  // dela de 5 letras ou mais: "SICOOB ELECTRICS" é da Electric (05/11/2026 —
+  // ficava sem empresa, e o extrato dela não conciliava nada sozinho).
+  const raizesDaPalavraDaConta = (w) => {
+    if (raizesDaPalavra.has(w)) return raizesDaPalavra.get(w);
+    const juntas = new Set();
+    raizesDaPalavra.forEach((raizes, daRazao) => { if (daRazao.length >= 5 && w.startsWith(daRazao)) raizes.forEach((r) => juntas.add(r)); });
+    return juntas.size ? juntas : null;
+  };
   const pelaConta = (contaId) => {
     const conta = (data.bankAccounts || []).find((b) => String(b.id) === String(contaId));
     if (!conta) return null;
-    const unica = palavras(conta.name).map((w) => raizesDaPalavra.get(w)).find((r) => r && r.size === 1);
+    const unica = palavras(conta.name).map(raizesDaPalavraDaConta).find((r) => r && r.size === 1);
     return unica ? empresaDaRaiz([...unica][0]) : null;
   };
 
@@ -5690,8 +5721,9 @@ async function resolvedorDeEmpresas(entries, data) {
   return (e) => doEstab(estabPorId.get(String(e.estabelecimentoId || '')))
     || doEstab(estabPorId.get(String(estabDaNfe.get(String(e.nfeId || '')) || '')))
     || daCompanhia(companhiaPorId.get(companhiaDoPedido.get(String(e.referenceId || ''))))
-    || doEstab(estabPorId.get(String(estabDaConta.get(String(e.bankAccountId || '')) || '')))
-    || pelaContaUmaVez(e.bankAccountId);
+    || doEstab(estabPorId.get(String(donoDaConta.get(String(e.bankAccountId || '')) || '')))
+    || pelaContaUmaVez(e.bankAccountId)
+    || doEstab(estabPorId.get(String(vinculoUnicoDaConta.get(String(e.bankAccountId || '')) || '')));
 }
 
 // O VALOR REALIZADO DE UM LANÇAMENTO. Entradas antigas de vendas/compras

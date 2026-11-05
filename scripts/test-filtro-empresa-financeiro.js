@@ -32,7 +32,8 @@ console.log('--- a mesma regra da coluna Empresa ---');
 check('a coluna usa o resolvedor', /async function empresasDosTitulos\(entries, data\) \{[\s\S]{0,200}const empresaDe = await resolvedorDeEmpresas\(entries, data\);/.test(servidor));
 check('o filtro também', /async function filtrarPorEmpresaDoTitulo\(entries, query, data\) \{[\s\S]{0,400}const empresaDe = await resolvedorDeEmpresas\(entries, data\);/.test(servidor));
 check('  empresa pela raiz, filial pelo CNPJ inteiro', /return filial \? cnpj === filial : cnpj\.slice\(0, 8\) === raiz;/.test(servidor));
-check('  o título antigo entra pela conta bancária (o nome da conta)', /\|\| pelaContaUmaVez\(e\.bankAccountId\);/.test(servidor));
+// (05/11/2026: depois do nome ainda vêm os vínculos de uma empresa só.)
+check('  o título antigo entra pela conta bancária (o nome da conta)', /\|\| pelaContaUmaVez\(e\.bankAccountId\)\s*\|\| doEstab\(estabPorId\.get\(String\(vinculoUnicoDaConta/.test(servidor));
 
 console.log('\n--- a lista inteira, não só a página ---');
 check('a lista filtra antes das abas e dos totais',
