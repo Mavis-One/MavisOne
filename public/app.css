@@ -4674,6 +4674,38 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 }
 .rel-filtros-acoes > div { display: flex; flex-wrap: wrap; gap: 10px; }
 
+/* A BARRA DE AÇÕES DE TODO RELATÓRIO (04/11/2026, catalogo.js barraDeAcoes):
+   à esquerda o que mexe nos filtros; à direita, num bloco com moldura, o que
+   baixa — Excel, PDF, CSV e Imprimir, sempre nessa ordem. */
+.rel-barra { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.rel-barra-grupo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rel-baixar {
+  padding: 6px 8px 6px 12px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--primary) 40%, var(--border));
+  background: color-mix(in srgb, var(--primary) 7%, var(--panel));
+}
+.rel-barra-rotulo { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-right: 2px; }
+.rel-baixar-botao {
+  min-width: 74px; padding: 7px 14px; font-weight: 700;
+  background: var(--panel); color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 55%, var(--border)); border-radius: 8px;
+}
+.rel-baixar-botao:hover:not(:disabled) { background: var(--primary); color: #fff; }
+
+/* PROCURAR, SEPARAR E A ORDEM, acima da tabela (04/11/2026). */
+.rel-visao { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.rel-visao label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.rel-visao-procurar { flex: 1 1 280px; }
+.rel-visao-procurar input { width: 100%; }
+.rel-visao select { min-width: 200px; }
+.rel-visao-ordem { font-size: 13px; padding-bottom: 6px; }
+.rel-visao-tirar { margin-left: 6px; padding: 3px 10px; }
+.rel-tabela-grupo td { background: color-mix(in srgb, var(--primary) 10%, var(--panel)); border-top: 2px solid color-mix(in srgb, var(--primary) 35%, var(--border)); }
+.rel-tabela-subtotal td { background: var(--panel-alt); }
+/* A lista de relatórios do grupo: o campo de procurar ao lado do título. */
+.rel-lista-topo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.rel-lista-topo input { max-width: 320px; }
+
 /* Tabela x Por vendedor: sao duas leituras do MESMO conjunto, nao dois
    relatorios. Por isso pilulas, e nao abas com moldura -- aba sugere que o
    conteudo de baixo troca por inteiro. */
@@ -4757,7 +4789,7 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
    nao pode sair com menu, filtros e botoes. Fica so' o relatorio. */
 @media print {
   /* .inv-sem-impressao: busca e botões da folha do inventário (fase EG). */
-  .sidebar, .secondary-sidebar, .topbar, .rel-filtros-acoes, .rel-visoes, .inv-sem-impressao { display: none !important; }
+  .sidebar, .secondary-sidebar, .topbar, .rel-filtros-acoes, .rel-visoes, .rel-visao, .rel-lista-topo input, .inv-sem-impressao { display: none !important; }
   .panel { break-inside: avoid; box-shadow: none; }
 }
 

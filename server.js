@@ -14554,6 +14554,16 @@ async function tratarRequisicao(req, res) {
     });
   }
 
+  // AS TELAS ESPECIAIS NO MESMO ARQUIVO DO CATÁLOGO (04/11/2026): Vendas,
+  // Síntese Financeira e Estoque só baixavam CSV. Com as colunas delas no
+  // formato do motor ({ campo, rotulo, tipo }), a planilha e o PDF saem por
+  // exportarRelatorio, como os 84 do catálogo. `somar` = os campos do total.
+  function resultadoDaTela({ key, titulo, colunas, linhas, somar = [], de = '', ate = '' }) {
+    const totais = {};
+    for (const campo of somar) totais[campo] = Math.round(linhas.reduce((s, l) => s + Number(l[campo] || 0), 0) * 100) / 100;
+    return { key, titulo, colunas, linhas, totais, filtros: { de, ate, hoje: motorDeRelatorios.hojeNoBrasil() } };
+  }
+
   // A EXPORTAÇÃO DOS RELATÓRIOS DO CATÁLOGO E DO PERSONALIZADO (16/10/2026):
   // a planilha .xlsx formatada (motorDeRelatorios.paraXlsx), ou o CSV de
   // antes com ?formato=csv. Montada ANTES do cabeçalho: se a montagem falhar,
@@ -14744,7 +14754,12 @@ async function tratarRequisicao(req, res) {
         const { erro, status } = executado;
         if (erro) return sendJson(res, { error: erro }, status);
         // Sem colunas de custo para quem não é administrador — na tela e no CSV.
-        const resultado = res.__ocultarCusto ? custoOculto.relatorioSemCusto(executado.resultado) : executado.resultado;
+        // A VISÃO (04/11/2026: procurar, ordenar, separar) vem depois: não se
+        // ordena nem se separa por coluna que a pessoa não vê.
+        const resultado = motorDeRelatorios.aplicarVisao(
+          res.__ocultarCusto ? custoOculto.relatorioSemCusto(executado.resultado) : executado.resultado,
+          Object.fromEntries(url.searchParams.entries())
+        );
         if (casa[2]) return exportarRelatorio(res, resultado, url);
         // A TELA MOSTRA ATÉ 2.000 LINHAS; o arquivo leva todas. Os totais são
         // sempre do resultado inteiro, e a tela diz quantas ficaram de fora.
@@ -14829,7 +14844,10 @@ async function tratarRequisicao(req, res) {
             id: rel.id
           });
           await relatoriosPersonalizadosDb.marcarExecucao(rel.id);
-          const resultado = res.__ocultarCusto ? custoOculto.relatorioSemCusto(executadoPersonalizado) : executadoPersonalizado;
+          const resultado = motorDeRelatorios.aplicarVisao(
+            res.__ocultarCusto ? custoOculto.relatorioSemCusto(executadoPersonalizado) : executadoPersonalizado,
+            Object.fromEntries(url.searchParams.entries())
+          );
           if (casa[3]) return exportarRelatorio(res, resultado, url);
           const LIMITE = 2000;
           return sendJson(res, { ...resultado, linhas: resultado.linhas.slice(0, LIMITE), totalLinhas: resultado.linhas.length });
@@ -14898,6 +14916,22 @@ async function tratarRequisicao(req, res) {
         contexto.filtros.ordem,
         contexto.filtros.direcao
       );
+      // Excel e PDF (04/11/2026): as MESMAS colunas do CSV, na mesma ordem.
+      const formato = url.searchParams.get('formato');
+      if (formato === 'xlsx' || formato === 'pdf') {
+        const TIPO = { dinheiro: 'moeda', numero: 'quantidade', texto: 'texto' };
+        const colunas = relatoriosVendas.COLUNAS_CSV.map(([rotulo, , tipo], i) => ({ campo: `c${i}`, rotulo, tipo: TIPO[tipo] || 'texto' }));
+        const somar = colunas.filter((c) => ['Quantidade', 'Desconto', 'Valor total'].includes(c.rotulo)).map((c) => c.campo);
+        return exportarRelatorio(res, resultadoDaTela({
+          key: 'vendas',
+          titulo: 'Relatório de Vendas',
+          colunas,
+          linhas: linhas.map((l) => Object.fromEntries(relatoriosVendas.COLUNAS_CSV.map(([, ler], i) => [`c${i}`, ler(l)]))),
+          somar,
+          de: url.searchParams.get('dataDe') || '',
+          ate: url.searchParams.get('dataAte') || ''
+        }), url);
+      }
       const csv = relatoriosVendas.montarCsv(linhas);
       const hoje = new Date().toISOString().slice(0, 10);
       return enviarCsv(res, csv, `relatorio-de-vendas-${hoje}.csv`);
@@ -14930,6 +14964,50 @@ async function tratarRequisicao(req, res) {
       const qual = exportacaoGeral[1];
       const porta = await portaDosRelatoriosGerais(req);
       if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
+
+      // EXCEL DOS DOIS E PDF DO ESTOQUE (04/11/2026): as mesmas linhas do CSV,
+      // pela exportação do catálogo. O PDF da Síntese é o de baixo (com o resumo).
+      const formatoPedido = url.searchParams.get('formato');
+      if (formatoPedido === 'xlsx' || (formatoPedido === 'pdf' && qual === 'estoque')) {
+        if (qual === 'financeiro') {
+          const base = await baseFinanceiraDosRelatorios(url.searchParams);
+          const r2 = (v) => Math.round(Number(v || 0) * 100) / 100;
+          const linhas = (base.serieFinanceiro || []).map((ponto) => ({
+            periodo: ponto.label || '', de: ponto.from || '', ate: ponto.to || '',
+            receitas: r2(ponto.receitas), despesas: r2(ponto.despesas), saldo: r2(Number(ponto.receitas || 0) - Number(ponto.despesas || 0))
+          }));
+          return exportarRelatorio(res, resultadoDaTela({
+            key: 'sintese-financeira',
+            titulo: 'Síntese Financeira',
+            colunas: [
+              { campo: 'periodo', rotulo: 'Período', tipo: 'texto' },
+              { campo: 'de', rotulo: 'De', tipo: 'data' },
+              { campo: 'ate', rotulo: 'Até', tipo: 'data' },
+              { campo: 'receitas', rotulo: 'Receitas', tipo: 'moeda' },
+              { campo: 'despesas', rotulo: 'Despesas', tipo: 'moeda' },
+              { campo: 'saldo', rotulo: 'Saldo', tipo: 'moeda' }
+            ],
+            linhas,
+            somar: ['receitas', 'despesas', 'saldo'],
+            de: linhas.length ? linhas[0].de : '',
+            ate: linhas.length ? linhas[linhas.length - 1].ate : ''
+          }), url);
+        }
+        const base = await baseDeEstoqueDosRelatorios();
+        return exportarRelatorio(res, resultadoDaTela({
+          key: 'estoque',
+          titulo: 'Relatório de Estoque',
+          colunas: [
+            { campo: 'name', rotulo: 'Produto', tipo: 'texto' },
+            { campo: 'sku', rotulo: 'SKU', tipo: 'codigo' },
+            { campo: 'quantidade', rotulo: 'Quantidade', tipo: 'quantidade' },
+            { campo: 'custo', rotulo: 'Custo', tipo: 'moeda' },
+            { campo: 'valor', rotulo: 'Valor parado', tipo: 'moeda' }
+          ],
+          linhas: base.produtosComSaldo.slice().sort((a, b) => b.valor - a.valor),
+          somar: ['quantidade', 'valor']
+        }), url);
+      }
 
       // O PDF DA SÍNTESE FINANCEIRA (19/10/2026, pedido do usuário: "todos os
       // relatórios [do Financeiro] com uma opção de baixar em PDF, de forma

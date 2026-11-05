@@ -234,10 +234,7 @@ function relBarraDeFiltros(ctx, rel) {
         </label>
       </div>
 
-      ${relAcoes(`
-        <button type="button" id="relAplicar">Aplicar filtros</button>
-        <button type="button" class="secondary" id="relLimpar">Limpar</button>
-      `)}
+      ${relAcoes({ filtros: true })}
     </section>
   `;
 }
@@ -250,28 +247,17 @@ function relBarraDeFiltros(ctx, rel) {
  * eles teria de chamar a barra inteira, com os filtros de vendedor, cliente e
  * produto que não existem naqueles dois.
  *
- * `antes` é o que cada tela tem de próprio à esquerda (Vendas tem "Aplicar" e
- * "Limpar"; os outros dois não têm filtro para aplicar). Atualizar, exportar e
- * imprimir são de todos.
+ * Desde 04/11/2026 é a BARRA DE AÇÕES do catálogo (catalogo.js,
+ * barraDeAcoes): a mesma ordem e o mesmo lugar em todo relatório — Aplicar,
+ * Limpar e Atualizar à esquerda; Excel, PDF, CSV e Imprimir juntos à direita.
+ * `filtros` = a tela tem filtro para aplicar (Vendas e Por Vendedor).
+ *
+ * A exportação NÃO monta arquivo com o que está na tela: ela chama o servidor,
+ * que refaz a permissão e o filtro. Gerar no navegador significaria que os
+ * dados já teriam saído do servidor antes de alguém checar se podiam sair.
  */
-function relAcoes(antes, { pdf = false } = {}) {
-  return `
-    <div class="rel-filtros-acoes">
-      <div>
-        ${antes || ''}
-        <button type="button" class="secondary" id="relAtualizar">Atualizar</button>
-      </div>
-      <div>
-        <!-- A exportação NÃO monta arquivo com o que está na tela: ela chama o
-             servidor, que refaz a permissão e o filtro. Gerar no navegador
-             significaria que os dados já teriam saído do servidor antes de
-             alguém checar se podiam sair. -->
-        <button type="button" class="secondary" id="relExportar">Excel (CSV)</button>
-        ${pdf ? '<button type="button" class="secondary" id="relPdf">Salvar PDF</button>' : ''}
-        <button type="button" class="secondary" id="relImprimir">Imprimir</button>
-      </div>
-    </div>
-  `;
+function relAcoes({ filtros = false } = {}) {
+  return `<div class="rel-filtros-acoes">${window.MavisRelatoriosCatalogo.barraDeAcoes({}, { filtros })}</div>`;
 }
 
 function relLigarFiltros(ctx) {
@@ -325,16 +311,16 @@ function relLigarFiltros(ctx) {
     loadModule('reports');
   });
 
-  content.querySelector('#relAplicar')?.addEventListener('click', () => loadModule('reports'));
-  content.querySelector('#relAtualizar')?.addEventListener('click', () => loadModule('reports'));
-  content.querySelector('#relLimpar')?.addEventListener('click', () => {
-    state.reportsVendasFiltros = null;
-    loadModule('reports');
+  const endereco = `/api/reports/vendas/export?${relQueryDeFiltros(f)}`;
+  const aviso = 'Exportação gerada com os mesmos filtros da tela.';
+  window.MavisRelatoriosCatalogo.ligarBarra(content, {
+    aplicar: () => loadModule('reports'),
+    limpar: () => { state.reportsVendasFiltros = null; loadModule('reports'); },
+    atualizar: () => loadModule('reports'),
+    xlsx: () => relBaixar(ctx, `${endereco}&formato=xlsx`, 'relatorio-de-vendas.xlsx', aviso),
+    pdf: () => relBaixar(ctx, `${endereco}&formato=pdf`, 'relatorio-de-vendas.pdf', aviso),
+    csv: () => relBaixar(ctx, endereco, 'relatorio-de-vendas.csv', aviso)
   });
-  content.querySelector('#relImprimir')?.addEventListener('click', () => window.print());
-
-  relLigarExportacao(ctx, `/api/reports/vendas/export?${relQueryDeFiltros(f)}`, 'vendas',
-    'Exportação gerada com os mesmos filtros da tela.');
 }
 
 /**
@@ -349,47 +335,52 @@ function relLigarFiltros(ctx) {
  * que a tela mostra. Dizer "gerado com os filtros da tela" nos dois faria a
  * segunda mensagem ser falsa, e a diferença de contagem pareceria defeito.
  */
-function relLigarExportacao(ctx, endpoint, nome, aviso) {
-  const { content, showToast } = ctx;
-  content.querySelector('#relExportar')?.addEventListener('click', async () => {
-    let url = null;
-    try {
-      const resposta = await fetch(endpoint, {
-        headers: { 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' }
-      });
-      if (!resposta.ok) {
-        const corpo = await resposta.json().catch(() => ({}));
-        showToast(corpo.error || `Não consegui exportar (HTTP ${resposta.status}).`, 'error');
-        return;
-      }
-      const blob = await resposta.blob();
-      url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `relatorio-de-${nome}-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      showToast(aviso, 'success', 6000);
-    } catch (erro) {
-      showToast(erro.message || 'Não consegui exportar.', 'error');
-    } finally {
-      if (url) setTimeout(() => URL.revokeObjectURL(url), 10000);
+async function relBaixar(ctx, endpoint, nomePadrao, aviso) {
+  const { showToast } = ctx;
+  let url = null;
+  try {
+    const resposta = await fetch(endpoint, {
+      headers: { 'x-auth-token': (typeof getSessionToken === 'function' ? getSessionToken() : '') || '' }
+    });
+    if (!resposta.ok) {
+      const corpo = await resposta.json().catch(() => ({}));
+      showToast(corpo.error || `Não consegui exportar (HTTP ${resposta.status}).`, 'error');
+      return;
     }
-  });
+    // O nome que o servidor deu (com a data); o padrão só se ele não disser.
+    const nome = (/filename="([^"]+)"/.exec(resposta.headers.get('Content-Disposition') || '') || [])[1] || nomePadrao;
+    url = URL.createObjectURL(await resposta.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = nome;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    if (aviso) showToast(aviso, 'success', 6000);
+  } catch (erro) {
+    showToast(erro.message || 'Não consegui exportar.', 'error');
+  } finally {
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
 }
 
 /**
- * Atualizar + imprimir + exportar, para as telas que não têm barra de filtros.
+ * Atualizar + baixar (Excel, PDF, CSV) + imprimir, para as telas que não têm
+ * barra de filtros (Síntese Financeira, Estoque). O CSV é o endereço sem
+ * `formato`, como sempre foi.
  *
  * `relLigarFiltros` faz isso para Vendas junto de uma dúzia de outros eventos;
  * chamá-la aqui ligaria eventos a campos que não existem nestas telas.
  */
 function relLigarAcoes(ctx, endpoint, nome, aviso) {
   const { content, loadModule } = ctx;
-  content.querySelector('#relAtualizar')?.addEventListener('click', () => loadModule('reports'));
-  content.querySelector('#relImprimir')?.addEventListener('click', () => window.print());
-  relLigarExportacao(ctx, endpoint, nome, aviso);
+  const comFormato = (formato) => `${endpoint}${endpoint.includes('?') ? '&' : '?'}formato=${formato}`;
+  window.MavisRelatoriosCatalogo.ligarBarra(content, {
+    atualizar: () => loadModule('reports'),
+    xlsx: () => relBaixar(ctx, comFormato('xlsx'), `relatorio-de-${nome}.xlsx`, aviso),
+    pdf: () => relBaixar(ctx, comFormato('pdf'), `relatorio-de-${nome}.pdf`, aviso),
+    csv: () => relBaixar(ctx, endpoint, `relatorio-de-${nome}.csv`, aviso)
+  });
 }
 
 // ===========================================================================
@@ -854,15 +845,14 @@ window.MavisRelatoriosEspeciais.financeiro = async function relFinanceiro(ctx) {
         </div>
       </section>
 
-      ${relAcoes('', { pdf: true })}
+      ${relAcoes()}
     </div>
   `;
   relLigarPeriodo(ctx);
+  // O PDF (19/10/2026): os cartões e o fluxo período a período, na ordem da
+  // tela; a planilha (04/11/2026), o mesmo fluxo com o total.
   relLigarAcoes(ctx, `/api/reports/financeiro/export?granularity=${encodeURIComponent(ctx.granularidade || 'month')}`,
     'financeiro', 'Exportação gerada com o mesmo recorte de período da tela.');
-  // O PDF (19/10/2026): os cartões e o fluxo período a período, na ordem da tela.
-  content.querySelector('#relPdf')?.addEventListener('click', () => window.MavisRelatoriosCatalogo.baixar(ctx,
-    `/api/reports/financeiro/export?granularity=${encodeURIComponent(ctx.granularidade || 'month')}&formato=pdf`, 'sintese-financeira.pdf'));
 };
 
 // --- Relatório de Estoque --------------------------------------------------
@@ -909,7 +899,7 @@ window.MavisRelatoriosEspeciais.estoque = async function relEstoque(ctx) {
         </div>
       </section>
 
-      ${relAcoes('')}
+      ${relAcoes()}
     </div>
   `;
   relLigarAcoes(ctx, '/api/reports/estoque/export', 'estoque',

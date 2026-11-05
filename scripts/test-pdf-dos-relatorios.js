@@ -54,9 +54,12 @@ const servidor = ler('server.js');
 check('a exportação aceita formato=pdf (catálogo e personalizado)',
   /if \(url\.searchParams\.get\('formato'\) === 'pdf'\) \{\s*const pdf = motorDeRelatorios\.paraPdf\(resultado, \{ emitidoEm \}\);/.test(servidor)
   && /'Content-Type': 'application\/pdf'/.test(servidor));
-check('Salvar PDF no catálogo', /id="relCatPdf">Salvar PDF<\/button>/.test(ler('public/modules/reports/subs/catalogo.js'))
+// Desde 04/11/2026 o botão é o "PDF" da barra comum (catalogo.js barraDeAcoes),
+// ao lado de Excel e CSV, em todo relatório.
+check('PDF no catálogo', /formatos = \['xlsx', 'pdf', 'csv'\]/.test(ler('public/modules/reports/subs/catalogo.js'))
   && /exportar\(ctx, def, filtros, 'pdf'\)/.test(ler('public/modules/reports/subs/catalogo.js')));
-check('  e no personalizado', /id="relPersPdf">Salvar PDF<\/button>/.test(ler('public/modules/reports/subs/personalizado.js')));
+check('  e no personalizado', /catalogo\.barraDeAcoes\(ctx/.test(ler('public/modules/reports/subs/personalizado.js'))
+  && /pdf: \(\) => exportar\('pdf'\)/.test(ler('public/modules/reports/subs/personalizado.js')));
 
 console.log('\n--- 3. o relatório Títulos Pagos ---');
 const def = financeiro.find((r) => r.key === 'titulos-pagos');
@@ -94,8 +97,8 @@ check('  a pagar ou a receber', def && JSON.stringify(def.escolhas) === JSON.str
   check('o menos tipográfico vale um hífen no PDF', motorPdf.codigoWinAnsi('−') === 45);
   check('a Síntese Financeira também sai em PDF, com os números dos cartões',
     /if \(qual === 'financeiro' && url\.searchParams\.get\('formato'\) === 'pdf'\) \{/.test(servidor) && /`A receber \$\{brl\(receber\.total\)\}/.test(servidor)
-    && /id="relPdf">Salvar PDF<\/button>/.test(ler('public/modules/reports/subs/relatorios.js'))
-    && /relAcoes\('', \{ pdf: true \}\)/.test(ler('public/modules/reports/subs/relatorios.js')));
+    && /pdf: \(\) => relBaixar\(ctx, comFormato\('pdf'\)/.test(ler('public/modules/reports/subs/relatorios.js'))
+    && /\/api\/reports\/financeiro\/export\?granularity=/.test(ler('public/modules/reports/subs/relatorios.js')));
 
   console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
   process.exit(falhas ? 1 : 0);

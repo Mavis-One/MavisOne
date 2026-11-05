@@ -130,11 +130,13 @@ check('  e a exportação também',
   exportacao.indexOf('portaDosRelatoriosGerais(req)') > -1
   && exportacao.indexOf('portaDosRelatoriosGerais(req)') < exportacao.indexOf('baseFinanceiraDosRelatorios('));
 // DUAS chamadas de cada base: a do overview e a da exportação (TRÊS na
-// Síntese desde 19/10/2026: a exportação em PDF também sai da mesma base).
+// Síntese desde 19/10/2026: a exportação em PDF também sai da mesma base;
+// QUATRO desde 04/11/2026, com a planilha. No Estoque, duas na exportação: o
+// CSV e a planilha/PDF.
 check('a tela e o arquivo da Síntese saem da mesma base',
-  (servidor.match(/baseFinanceiraDosRelatorios\(url\.searchParams\)/g) || []).length === 3);
+  (servidor.match(/baseFinanceiraDosRelatorios\(url\.searchParams\)/g) || []).length === 4);
 check('a tela e o arquivo do Estoque saem da mesma base',
-  (servidor.match(/await baseDeEstoqueDosRelatorios\(\)/g) || []).length === 1
+  (servidor.match(/await baseDeEstoqueDosRelatorios\(\)/g) || []).length === 2
   // Desde 14/10/2026 o Valor em Estoque também não é calculado para quem não é
   // administrador (é todo a custo) — a base continua a mesma da exportação.
   && /parte === 'financeiro'( \|\| res\.__ocultarCusto)? \? null : baseDeEstoqueDosRelatorios\(\)/.test(overview));
@@ -166,11 +168,12 @@ const tela = ler('public/modules/reports/subs/relatorios.js');
 // A LINHA DE AÇÕES TEM UM DONO. Estava dentro da barra de filtros de Vendas, e
 // era por isso que dar o botão aos outros dois exigiria arrastar os filtros de
 // vendedor, cliente e produto junto.
-check('relAcoes existe', /function relAcoes\(antes, \{ pdf = false \} = \{\}\)/.test(tela));
+// Desde 04/11/2026 é a barra do catálogo (barraDeAcoes), a mesma de todo relatório.
+check('relAcoes existe', /function relAcoes\(\{ filtros = false \} = \{\}\)[\s\S]{0,200}MavisRelatoriosCatalogo\.barraDeAcoes/.test(tela));
 check('  e os três relatórios a usam',
   (tela.match(/\$\{relAcoes\(/g) || []).length === 3,
   'vendas (com Aplicar/Limpar), financeiro e estoque');
-check('o download tem um dono só', /function relLigarExportacao\(ctx, endpoint, nome, aviso\)/.test(tela));
+check('o download tem um dono só', /async function relBaixar\(ctx, endpoint, nomePadrao, aviso\)/.test(tela));
 check('  fetch + blob, e não <a href>', /headers: \{ 'x-auth-token'/.test(tela));
 // CONTADO PELOS ENDPOINTS, e não por `relLigar...(ctx, `: aquele padrão casa
 // também com a DEFINIÇÃO das duas funções e com a chamada de uma dentro da

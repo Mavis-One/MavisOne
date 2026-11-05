@@ -170,7 +170,7 @@
    * CABEÇALHO DAS COLUNAS EM TODA PÁGINA (da segunda em diante, a DRE Anual
    * era uma grade de números sem saber de que mês).
    */
-  function desenharTabela(doc, { colunas, larguras, linhas, tamanho, linhaDeTotal }) {
+  function desenharTabela(doc, { colunas, larguras, linhas, tamanho, linhaDeTotal, destaques = new Set() }) {
     const passo = tamanho + 2;
     const limite = motor.MARGEM + 6;
     const alinhar = colunas.map((c) => (NUMERICOS.includes(c.tipo) ? 'direita' : 'esquerda'));
@@ -202,12 +202,13 @@
     comCabecalho();
     linhas.forEach((celulas, indice) => {
       const ehTotal = Boolean(linhaDeTotal) && indice === linhas.length - 1;
-      const quebradas = preparar(celulas, ehTotal);
+      const ehSubtotal = destaques.has(indice);
+      const quebradas = preparar(celulas, ehTotal || ehSubtotal);
       if (doc.y - alturaDe(quebradas) < limite) {
         doc.novaPagina();
         comCabecalho();
       }
-      desenhar(quebradas, { negrito: ehTotal, fundo: ehTotal ? 0.9 : (indice % 2 ? 0.965 : null) });
+      desenhar(quebradas, { negrito: ehTotal || ehSubtotal, fundo: ehTotal ? 0.9 : (ehSubtotal ? 0.93 : (indice % 2 ? 0.965 : null)) });
     });
   }
 
@@ -221,7 +222,9 @@
         const t = formatar(c.tipo, v);
         return semCifrao && c.tipo === 'moeda' ? t.replace(/R\$\s/, '') : t;
       };
-      const corpo = linhas.map((l) => cols.map((c) => celula(c, l[c.campo])));
+      // `__destaque` (04/11/2026): o subtotal de um grupo — o texto vai na
+      // primeira coluna, e a linha sai em negrito (ver desenharTabela).
+      const corpo = linhas.map((l) => cols.map((c, i) => (l.__destaque && i === 0 ? String(l.__destaque) : celula(c, l[c.campo]))));
       const total = Object.keys(totais || {}).length > 0
         ? cols.map((c, i) => (Object.prototype.hasOwnProperty.call(totais, c.campo) ? celula(c, totais[c.campo]) : (i === 0 ? 'Total' : '')))
         : null;
@@ -266,7 +269,8 @@
         larguras: fracoes.map((f) => f * doc.larguraUtil),
         linhas: todasAsLinhas,
         tamanho,
-        linhaDeTotal: Boolean(linhaTotal)
+        linhaDeTotal: Boolean(linhaTotal),
+        destaques: new Set(linhas.map((l, i) => (l && l.__destaque ? i : -1)).filter((i) => i >= 0))
       });
     }
 

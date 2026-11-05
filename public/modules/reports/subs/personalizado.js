@@ -302,37 +302,41 @@ window.MavisRelatoriosPersonalizados = (function () {
         <section class="panel rel-filtros">
           ${periodo ? `<div class="rel-filtros-grade">${periodo}</div>` : ''}
           <div class="rel-filtros-acoes"${periodo ? '' : ' style="margin-top:0;padding-top:0;border-top:0;"'}>
-            <div>${periodo ? '<button type="button" id="relPersAplicar">Aplicar</button>' : ''}
-              <button type="button" class="secondary" id="relPersAtualizar">Atualizar</button>
-              ${salvo.podeEditar ? '<button type="button" class="secondary" id="relPersEditar">Editar</button>' : ''}</div>
-            <div>
-              <button type="button" class="secondary" id="relPersExportar" title="Planilha do Excel formatada, pronta para imprimir">Exportar Excel</button>
-              <button type="button" class="secondary" id="relPersPdf">Salvar PDF</button>
-              <button type="button" class="secondary" id="relPersImprimir">Imprimir</button>
-            </div>
+            ${catalogo.barraDeAcoes(ctx, {
+              filtros: Boolean(periodo),
+              extraEsquerda: salvo.podeEditar ? '<button type="button" class="secondary" id="relPersEditar">Editar</button>' : ''
+            })}
           </div>
         </section>
         ${r.limitado ? `<section class="panel"><p class="form-error">O resultado passou de ${Number(r.limiteDeLinhas).toLocaleString('pt-BR')} linhas e foi cortado. Use um filtro ou um período menor.</p></section>` : ''}
-        ${catalogo.tabela(ctx, r)}
+        <section class="panel">
+          ${catalogo.barraDaVisao(ctx, r)}
+          ${catalogo.tabela(ctx, r, { ordenavel: true })}
+        </section>
       </div>`;
 
+    // O período e a visão (procurar, separar, ordem — 04/11/2026) ficam em
+    // st.periodo: a tela e o arquivo pedem com os mesmos parâmetros.
     const ler = () => content.querySelectorAll('[data-rel-pers-periodo]').forEach((i) => { st.periodo[i.dataset.relPersPeriodo] = i.value; });
+    const exportar = (formato) => {
+      ler();
+      const q = catalogo.query(st.periodo);
+      const extra = formato === 'xlsx' ? '' : `${q ? '&' : ''}formato=${formato}`;
+      return catalogo.baixar(ctx, `/api/reports/personalizados/${encodeURIComponent(salvo.id)}/executar/export?${q}${extra}`, `relatorio-personalizado.${formato}`);
+    };
     content.querySelector('[data-rel-pers-voltar]').addEventListener('click', () => irPara(ctx, { tela: 'lista' }));
-    content.querySelector('#relPersAplicar')?.addEventListener('click', () => { ler(); ctx.loadModule('reports'); });
-    content.querySelector('#relPersAtualizar').addEventListener('click', () => ctx.loadModule('reports'));
-    content.querySelector('#relPersImprimir').addEventListener('click', () => window.print());
     content.querySelector('#relPersEditar')?.addEventListener('click', () => {
       irPara(ctx, { tela: 'editor', id: salvo.id, rascunho: JSON.parse(JSON.stringify({ nome: salvo.nome, fonte: salvo.fonte, colunas: salvo.colunas, filtros: salvo.filtros, ordem: salvo.ordem, compartilhado: salvo.compartilhado })) });
     });
-    content.querySelector('#relPersExportar').addEventListener('click', () => {
-      ler();
-      catalogo.baixar(ctx, `/api/reports/personalizados/${encodeURIComponent(salvo.id)}/executar/export?${catalogo.query(st.periodo)}`, 'relatorio-personalizado.xlsx');
-    });
-    // O PDF (17/10/2026), como no catálogo.
-    content.querySelector('#relPersPdf').addEventListener('click', () => {
-      ler();
-      const q = catalogo.query(st.periodo);
-      catalogo.baixar(ctx, `/api/reports/personalizados/${encodeURIComponent(salvo.id)}/executar/export?${q}${q ? '&' : ''}formato=pdf`, 'relatorio-personalizado.pdf');
+    catalogo.ligarVisao(content, r, (mudanca) => { ler(); Object.assign(st.periodo, mudanca); ctx.loadModule('reports'); });
+    catalogo.ligarBarra(content, {
+      aplicar: () => { ler(); ctx.loadModule('reports'); },
+      limpar: () => { st.periodo = {}; ctx.loadModule('reports'); },
+      atualizar: () => ctx.loadModule('reports'),
+      // O PDF (17/10/2026), como no catálogo; o CSV (04/11/2026) também.
+      xlsx: () => exportar('xlsx'),
+      pdf: () => exportar('pdf'),
+      csv: () => exportar('csv')
     });
   }
 
