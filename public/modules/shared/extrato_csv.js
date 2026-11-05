@@ -22,7 +22,7 @@
 //
 // Função pura (o navegador lê o arquivo; o teste roda sem navegador).
 (function (raiz) {
-  const semAcento = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const semAcento = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const cabecalho = (s) => semAcento(s).toUpperCase().replace(/\(R\$\)|R\$/g, '').replace(/[:.]+$/g, '')
     .replace(/\s+/g, ' ').trim();
   const espaco = (s) => String(s || '').replace(/\s+/g, ' ').trim();
