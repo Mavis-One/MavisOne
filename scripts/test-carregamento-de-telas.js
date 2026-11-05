@@ -125,8 +125,10 @@ const posTransforma = corpoServe.indexOf('opcoes.transformar(bruto)');
 const posEtag = corpoServe.indexOf("createHash('sha1').update(content)");
 check('  e transforma ANTES de calcular o ETag',
   posTransforma > -1 && posEtag > posTransforma, `transforma ${posTransforma}, etag ${posEtag}`);
+// (05/11/2026: carimbado e com a versão do sistema no <head> — paginaComVersao
+// carimba primeiro; ver scripts/test-versao-nova-recarrega.js.)
 check('o index.html é servido carimbado',
-  /transformar: \(html\) => versaoEstatica\.carimbarHtml\(html\.toString\('utf8'\), PUBLIC_DIR\)/.test(servidor));
+  /transformar: \(html\) => versaoEstatica\.paginaComVersao\(html\.toString\('utf8'\), PUBLIC_DIR\)/.test(servidor));
 check('o um ano só sai com o carimbo conferido',
   /versaoEstatica\.versaoConfere\(filePath, pedido\) \? CACHE_IMUTAVEL : 'no-cache'/.test(servidor));
 check('  e um ano é um ano, com immutable',

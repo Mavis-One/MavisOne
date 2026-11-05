@@ -1029,6 +1029,69 @@ document.addEventListener('submit', (evento) => {
   form.__ultimoEnvio = agora;
 }, true);
 
+// ---------------------------------------------------------------------------
+// A ABA QUE FICOU ABERTA DURANTE O DEPLOY (05/11/2026)
+//
+// O sistema é uma página só: trocar de tela não recarrega o JavaScript. A aba
+// aberta antes de um deploy seguia com a tela de antes, falando com o servidor
+// novo — foi o "[object Object]" no filtro dos relatórios, que continuou
+// depois do conserto publicado. Agora a página sabe com que versão abriu (o
+// <meta name="mavis-versao"> do index.html) e cada resposta da API diz a de
+// agora (X-Versao-Sistema; ver lib/versao-dos-estaticos.js). Diferentes: aparece
+// o aviso, e a próxima troca de tela recarrega a página já na tela pedida.
+//
+// Sair do pedido ou da edição de título não recarrega (o que foi digitado e não
+// salvo ficaria pelo caminho): o aviso fica, e a troca seguinte recarrega.
+// E uma vez só por versão: se a página recarregada ainda vier velha, não entra
+// em laço — fica o aviso com o botão.
+// ---------------------------------------------------------------------------
+const VERSAO_DA_PAGINA = (document.querySelector('meta[name="mavis-versao"]') || {}).content || '';
+const RECARREGOU_PARA_KEY = 'mavisone:recarregou-para-versao';
+const TELAS_QUE_NAO_RECARREGAM_AO_SAIR = new Set(['sales/new_sale', 'finance/edicao_titulo']);
+let versaoNovaDoSistema = '';
+let telaAbertaAgora = '';
+
+function conferirVersaoDoSistema(doServidor) {
+  const versao = String(doServidor || '');
+  if (!versao || !VERSAO_DA_PAGINA || versao === VERSAO_DA_PAGINA || versao === versaoNovaDoSistema) return;
+  versaoNovaDoSistema = versao;
+  mostrarAvisoDeVersaoNova();
+}
+
+function mostrarAvisoDeVersaoNova() {
+  if (!document.body || document.getElementById('avisoVersaoNova')) return;
+  const aviso = document.createElement('div');
+  aviso.id = 'avisoVersaoNova';
+  aviso.className = 'aviso-versao-nova';
+  aviso.setAttribute('role', 'status');
+  aviso.innerHTML = '<span>O sistema foi atualizado. A página recarrega sozinha na próxima troca de tela.</span>'
+    + '<button type="button" class="finance-pill finance-pill-sm" data-recarregar-agora>Recarregar agora</button>';
+  aviso.querySelector('[data-recarregar-agora]').addEventListener('click', () => recarregarParaVersaoNova(true));
+  document.body.appendChild(aviso);
+}
+
+function recarregarParaVersaoNova(pedidoPeloUsuario) {
+  try {
+    if (!pedidoPeloUsuario && window.sessionStorage.getItem(RECARREGOU_PARA_KEY) === versaoNovaDoSistema) return false;
+    window.sessionStorage.setItem(RECARREGOU_PARA_KEY, versaoNovaDoSistema);
+  } catch (_) {
+    // Sem sessionStorage não há como saber se já recarregou: só pelo botão.
+    if (!pedidoPeloUsuario) return false;
+  }
+  window.location.reload();
+  return true;
+}
+
+/** Trocou de tela com versão nova no servidor: recarrega (o endereço já é o da tela nova). */
+function recarregarSeVersaoNova(modulo, sub) {
+  const tela = `${modulo}/${sub || ''}`;
+  const anterior = telaAbertaAgora;
+  telaAbertaAgora = tela;
+  if (!versaoNovaDoSistema || !anterior || anterior === tela) return false;
+  if (TELAS_QUE_NAO_RECARREGAM_AO_SAIR.has(anterior)) return false;
+  return recarregarParaVersaoNova(false);
+}
+
 async function apiDireto(path, options = {}, jaRepetiu = false) {
   const headers = {};
   if (options.body) {
@@ -1040,6 +1103,7 @@ async function apiDireto(path, options = {}, jaRepetiu = false) {
   }
 
   const response = await fetch(path, { ...options, headers });
+  conferirVersaoDoSistema(response.headers.get('X-Versao-Sistema'));
   const data = await response.json().catch(() => ({}));
 
   // Sessão encerrada pelo servidor — login em outra máquina ('outro-dispositivo')
@@ -3137,6 +3201,9 @@ async function loadModule(moduleName) {
   state.activeModule = moduleName;
   persistLastRoute();
   gravarTelaNoEndereco(moduleName, state.activeSub);
+  // Deploy com a aba aberta: a tela nova abre do código novo (ver
+  // conferirVersaoDoSistema). O endereço e a última rota já são os dela.
+  if (recarregarSeVersaoNova(moduleName, state.activeSub)) return;
   // De novo: o passo novo no histórico é o que habilita o Voltar.
   syncBackButtonState();
   const content = document.getElementById('moduleContent');

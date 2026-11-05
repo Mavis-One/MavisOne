@@ -1455,6 +1455,13 @@ function sendJson(res, payload, statusCode = 200) {
   // A guarda de gravação repetida guarda o que a primeira respondeu, para
   // devolver igual à repetida (ver guardaDeGravacaoRepetida).
   if (typeof res.__capturarJson === 'function') res.__capturarJson(payload, statusCode);
+  // A versão do sistema em toda resposta (05/11/2026): a aba aberta antes de
+  // um deploy descobre que está com a tela velha e recarrega na próxima troca
+  // de tela. Ver lib/versao-dos-estaticos.js, paginaComVersao.
+  if (!res.headersSent && typeof res.setHeader === 'function') {
+    const versaoDoSistema = versaoEstatica.versaoDoSistema(PUBLIC_DIR);
+    if (versaoDoSistema) res.setHeader('X-Versao-Sistema', versaoDoSistema);
+  }
   // Gravou (ver versaoDosDados): a versão sobe e vai no cabeçalho, para a aba
   // que gravou não tomar a própria gravação por novidade.
   if (res.__mudaDados && statusCode < 400 && !res.headersSent) {
@@ -26564,7 +26571,7 @@ async function tratarRequisicao(req, res) {
     // que carrega os endereços carimbados de todos os outros. Ver
     // lib/versao-dos-estaticos.js.
     serveStatic(res, path.join(PUBLIC_DIR, 'index.html'), req, {
-      transformar: (html) => versaoEstatica.carimbarHtml(html.toString('utf8'), PUBLIC_DIR)
+      transformar: (html) => versaoEstatica.paginaComVersao(html.toString('utf8'), PUBLIC_DIR)
     });
     return;
   }

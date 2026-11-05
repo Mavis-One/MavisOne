@@ -39,7 +39,12 @@ const corpoSendJson = (/function sendJson\(res, payload, statusCode = 200\) \{[\
 const fim = src.indexOf(corpoSendJson) + corpoSendJson.length;
 check('o trecho do sendJson foi encontrado no server.js', inicio > 0 && corpoSendJson.length > 0 && fim > inicio);
 // eslint-disable-next-line no-new-func
-const { sendJson, etagConfere } = new Function('zlib', 'crypto', `${src.slice(inicio, fim)}\nreturn { sendJson, etagConfere };`)(zlib, crypto);
+// (05/11/2026: o sendJson também põe a versão do sistema — X-Versao-Sistema;
+// ver scripts/test-versao-nova-recarrega.js.)
+const versaoEstatica = require('../lib/versao-dos-estaticos');
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const { sendJson, etagConfere } = new Function('zlib', 'crypto', 'versaoEstatica', 'PUBLIC_DIR',
+  `${src.slice(inicio, fim)}\nreturn { sendJson, etagConfere };`)(zlib, crypto, versaoEstatica, PUBLIC_DIR);
 
 // O "banco" do teste: o que cada rota devolve AGORA. Mudar daqui é a tela
 // mudando de verdade.
@@ -80,6 +85,8 @@ servidor.listen(0, '127.0.0.1', async () => {
     check('  sem corpo', r2.corpo.length === 0, r2.corpo.length);
     check('  com o mesmo ETag e o Cache-Control', r2.h.etag === r1.h.etag && r2.h['cache-control'] === 'private, no-cache');
     check('  e o Vary', /Accept-Encoding/.test(r2.h.vary || ''));
+    check('  e a versão do sistema, no 200 e no 304', Boolean(r1.h['x-versao-sistema']) && r2.h['x-versao-sistema'] === r1.h['x-versao-sistema']
+      && r1.h['x-versao-sistema'] === versaoEstatica.versaoDoSistema(PUBLIC_DIR), r1.h['x-versao-sistema']);
     const r2b = await pedir('/grande', { cabecalhos: { 'if-none-match': `"outro", ${r1.h.etag.slice(2)}` } });
     check('comparação fraca e em lista também bate', r2b.status === 304, r2b.status);
     const r2c = await pedir('/grande', { cabecalhos: { 'if-none-match': r1.h.etag, 'accept-encoding': 'gzip' } });

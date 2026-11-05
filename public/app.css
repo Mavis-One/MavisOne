@@ -5316,3 +5316,28 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .sales-cartao-opcoes tr.is-escolhida td { background: rgba(var(--text-rgb), 0.06); }
 .sales-cartao-opcoes tr.is-indisponivel td { opacity: 0.6; }
 .cartao-fatores input, .cartao-taxas input { width: 110px; }
+
+/* O sistema foi atualizado com a aba aberta (05/11/2026; app.js,
+   conferirVersaoDoSistema). Embaixo, no meio, acima do conteúdo e abaixo dos
+   toasts; na tela de celular quebra a linha em vez de passar da borda. */
+.aviso-versao-nova {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 1900;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--primary);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shadow);
+  font-size: 0.9rem;
+}
