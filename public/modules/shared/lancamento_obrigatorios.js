@@ -81,11 +81,19 @@
     const nome = semAcento(plano && plano.name);
     return PLANOS_QUE_DECIDEM_O_TIPO.some((r) => r.peloCadastro && r.nome.test(nome)) && /\b(CREDITO|DEBITO)\b/.test(nome);
   }
+  // TODO PLANO COM TIPO DECIDE (05/11/2026, print do usuário: "conta contábil
+  // rendimento de aplicação é receita, porém está aparecendo como despesa").
+  // Fora as duas regras acima, valia o tipo da TELA: o rendimento lançado em
+  // Contas a Pagar (ou com Despesa marcado) virava despesa. Agora o plano
+  // cadastrado como Receita faz receita, e como Despesa, despesa; o plano
+  // "ambos" deixa a escolha com quem lança. Medido no banco: dos 27.355
+  // lançamentos com plano receita/despesa, nenhum discordava do tipo do plano.
   function tipoPeloPlano(plano, tipo) {
     const atual = String(tipo || '').toUpperCase();
+    if (atual === 'TRANSFERENCIA') return atual;
     const nome = semAcento(plano && plano.name);
-    const regra = atual === 'TRANSFERENCIA' ? null : PLANOS_QUE_DECIDEM_O_TIPO.find((r) => r.nome.test(nome));
-    if (!regra) return atual;
+    const regra = PLANOS_QUE_DECIDEM_O_TIPO.find((r) => r.nome.test(nome));
+    if (!regra) return tipoCadastrado(plano) || atual;
     if (regra.peloCadastro) return (planoDecidePeloCadastro(plano) && tipoCadastrado(plano)) || atual;
     if (/\bCREDITO\b/.test(nome)) return regra.credito;
     if (/\bDEBITO\b/.test(nome)) return regra.debito;
@@ -118,7 +126,17 @@
     return `Informe ${faltam.map((c) => c.rotulo).join(' e ')} do lançamento.`;
   }
 
-  const api = { CAMPOS, RAIZES_COM_CENTRO, exigeCentroDeCusto, EMPRESAS_SEM_CENTRO, empresaSemCentro, tipoPeloPlano, planoDecidePeloCadastro, faltando, mensagem };
+  /**
+   * O plano decide sozinho o tipo dos lançamentos — o mesmo, venha a tela com
+   * Receita ou Despesa — e esse tipo é o cadastrado nele. É quando trocar o
+   * tipo no Plano de Contas troca o dos lançamentos (PUT /api/finance/categories/:id).
+   */
+  function planoDecideOTipo(plano) {
+    const cadastrado = tipoCadastrado(plano);
+    return Boolean(cadastrado) && tipoPeloPlano(plano, 'RECEITA') === cadastrado && tipoPeloPlano(plano, 'DESPESA') === cadastrado;
+  }
+
+  const api = { CAMPOS, RAIZES_COM_CENTRO, exigeCentroDeCusto, EMPRESAS_SEM_CENTRO, empresaSemCentro, tipoPeloPlano, planoDecidePeloCadastro, planoDecideOTipo, faltando, mensagem };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else raiz.MavisLancamentoObrigatorios = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -64,9 +64,19 @@ const plano = (name, type) => ({ name, type });
 check('transferência entre portadores: CREDITO é receita, DEBITO é despesa',
   R.tipoPeloPlano(plano('TRANSFERENCIA ENTRE PORTADORES CREDITO', 'receita'), 'DESPESA') === 'RECEITA'
   && R.tipoPeloPlano(plano('Transferência entre portadores débito', 'despesa'), 'RECEITA') === 'DESPESA');
-check('  sem a palavra, vale o tipo do plano; outro plano não muda nada',
-  R.tipoPeloPlano(plano('TRANSFERENCIA ENTRE PORTADORES', 'despesa'), 'RECEITA') === 'DESPESA'
-  && R.tipoPeloPlano(plano('ALUGUEL', 'despesa'), 'RECEITA') === 'RECEITA' && R.tipoPeloPlano(null, 'despesa') === 'DESPESA');
+check('  sem a palavra, vale o tipo do plano',
+  R.tipoPeloPlano(plano('TRANSFERENCIA ENTRE PORTADORES', 'despesa'), 'RECEITA') === 'DESPESA');
+// TODO PLANO COM TIPO DECIDE (05/11/2026, print do usuário: "conta contábil
+// rendimento de aplicação é receita, porém está aparecendo como despesa").
+check('todo plano Receita/Despesa decide o tipo: o rendimento lançado como despesa vira receita',
+  R.tipoPeloPlano(plano('RENDIMENTOS DE APLICACAO', 'receita'), 'DESPESA') === 'RECEITA'
+  && R.tipoPeloPlano(plano('ALUGUEL', 'despesa'), 'RECEITA') === 'DESPESA');
+check('  plano "ambos" e sem plano: vale o que veio da tela',
+  R.tipoPeloPlano(plano('DIVERSOS', 'ambos'), 'RECEITA') === 'RECEITA' && R.tipoPeloPlano(null, 'despesa') === 'DESPESA');
+check('  quando o plano decide sozinho (planoDecideOTipo)',
+  R.planoDecideOTipo(plano('RENDIMENTOS DE APLICACAO', 'receita')) && !R.planoDecideOTipo(plano('DIVERSOS', 'ambos'))
+  && !R.planoDecideOTipo(plano('EMPRESTIMOS / FINANCIAMENTOS', 'despesa'))
+  && R.planoDecideOTipo(plano('EMPRESTIMOS / FINANCIAMENTOS - DEBITO', 'despesa')));
 check('  a transferência entre contas fica como está', R.tipoPeloPlano(plano('TRANSFERENCIA ENTRE PORTADORES CREDITO', 'receita'), 'TRANSFERENCIA') === 'TRANSFERENCIA');
 // 29/10/2026, print do usuário: a parcela do empréstimo com "...DEBITO"
 // (cadastrado Despesa) saía como Receita pela regra de 28/10. Vale o cadastro.
@@ -81,10 +91,10 @@ check('  só os de CREDITO/DEBITO decidem pelo cadastro',
   R.planoDecidePeloCadastro(plano('EMPRESTIMOS / FINANCIAMENTOS - DEBITO', 'despesa'))
   && !R.planoDecidePeloCadastro(plano('EMPRESTIMOS / FINANCIAMENTOS', 'despesa'))
   && !R.planoDecidePeloCadastro(plano('TRANSFERENCIA ENTRE PORTADORES CREDITO', 'receita')));
-check('  sem a palavra (o plano do Viper), vale o tipo do lançamento; os outros empréstimos não mudam',
+check('  sem a palavra (o plano do Viper), vale o tipo do lançamento; os outros planos seguem o cadastro deles',
   R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS', 'despesa'), 'RECEITA') === 'RECEITA'
-  && R.tipoPeloPlano(plano('EMPRESTIMO CONCEDIDO A ELECTRIC', 'despesa'), 'RECEITA') === 'RECEITA'
-  && R.tipoPeloPlano(plano('DESPESAS COM FINANCIAMENTOS', 'despesa'), 'RECEITA') === 'RECEITA');
+  && R.tipoPeloPlano(plano('EMPRESTIMO CONCEDIDO A ELECTRIC', 'despesa'), 'RECEITA') === 'DESPESA'
+  && R.tipoPeloPlano(plano('DESPESAS COM FINANCIAMENTOS', 'despesa'), 'RECEITA') === 'DESPESA');
 check('  a transferência entre contas fica como está', R.tipoPeloPlano(plano('EMPRESTIMOS / FINANCIAMENTOS - CREDITO', 'receita'), 'TRANSFERENCIA') === 'TRANSFERENCIA');
 
 console.log('\n--- 2. o servidor ---');
@@ -114,10 +124,14 @@ check('  e a FH devolve os de empréstimos ao tipo do plano (desfaz a FG)',
   /case lower\(coalesce\(type, ''\)\) when 'receita' then 'RECEITA' when 'despesa' then 'DESPESA' end as tipo/.test(fh)
   && /nome ~ '\\m\(CREDITO\|DEBITO\)\\M'/.test(fh) && /set type = c\.tipo,/.test(fh));
 const rotaDoPlano = servidor.slice(servidor.indexOf("/^\\/api\\/finance\\/categories\\/[^/]+$/.test(pathname) && req.method === 'PUT'"));
-check('trocar o tipo do plano de empréstimo troca o dos lançamentos dele',
-  /if \(tipoNovo && lancamentoObrigatorios\.planoDecidePeloCadastro\(category\)\) \{/.test(rotaDoPlano)
-  && /where category_id = \$2 and type in \('RECEITA', 'DESPESA'\) and type <> \$1/.test(rotaDoPlano)
+check('trocar o tipo de um plano que decide troca o dos lançamentos dele (fora os vinculados a pedido/compra)',
+  /if \(tipoNovo && lancamentoObrigatorios\.planoDecideOTipo\(category\)\) \{/.test(rotaDoPlano)
+  && /where category_id = \$2 and type in \('RECEITA', 'DESPESA'\) and type <> \$1\s*and coalesce\(reference_id, ''\) = ''/.test(rotaDoPlano)
   && /return sendJson\(res, \{ success: true, category, lancamentosAjustados \}\);/.test(rotaDoPlano));
+const fj = fs.readFileSync(path.join(__dirname, '..', 'banco', 'migrations', 'fase-fj-lancamento-com-o-tipo-do-plano.sql'), 'utf8');
+check('  e a FJ acerta os já gravados: tipo do plano, fora portadores, empréstimos e vinculados',
+  /nome !~ 'TRANSFERENCIA ENTRE PORTADORES'/.test(fj) && /nome !~ '\\mEMPRESTIMOS\?\\s\*\/\\s\*FINANCIAMENTOS\?\\M'/.test(fj)
+  && /and coalesce\(e\.reference_id, ''\) = ''/.test(fj) && /set type = c\.tipo,/.test(fj));
 check('  e consulta CNPJ e centro liberado em uma ida ao banco', servidor.includes('from estabelecimento e')
   && servidor.includes('or $1 = any(estabelecimento_ids)')
   && servidor.includes('return {\n      cnpjDoEstabelecimento: cnpj,')

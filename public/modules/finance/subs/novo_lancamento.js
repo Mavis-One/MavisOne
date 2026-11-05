@@ -398,9 +398,11 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     document.querySelector('[data-inline-add="costCenter"]')?.toggleAttribute('disabled', semCentro);
   }
 
-  // TRANSFERÊNCIA ENTRE PORTADORES E EMPRÉSTIMOS / FINANCIAMENTOS (28/10/2026): o plano decide receita ou
-  // despesa (shared/lancamento_obrigatorios.js, tipoPeloPlano). A tela avisa ao
-  // escolher; o envio e o servidor gravam o tipo do plano.
+  // O PLANO DECIDE RECEITA OU DESPESA (shared/lancamento_obrigatorios.js,
+  // tipoPeloPlano): transferência entre portadores e empréstimos desde 28-29/10,
+  // todo plano cadastrado como Receita ou Despesa desde 05/11/2026 (o
+  // rendimento de aplicação lançado em Contas a Pagar virava despesa). A tela
+  // avisa ao escolher; o envio e o servidor gravam o tipo do plano.
   function avisarTipoDoPlano(valor) {
     const R = window.MavisLancamentoObrigatorios;
     const plano = (meta.categories || []).find((c) => c.id === valor);
