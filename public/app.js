@@ -5952,8 +5952,17 @@ async function loadModule(moduleName) {
                                     ${semCadastro ? '-' : salesFormatBRL(produto.salePrice)}
                                   </td>
                                   <td><input type="number" min="1" step="1" class="sales-item-qty" data-index="${index}" value="${item.quantity}" style="width: 80px;" /></td>
-                                  <td><input type="number" min="0" step="0.01" class="sales-item-price" data-index="${index}" value="${item.unitPrice}" style="width: 110px;" /></td>
-                                  <td class="sales-item-readonly"><strong>${salesFormatBRL(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</strong></td>
+                                  <td><input type="number" min="0" step="0.01" class="sales-item-price" data-index="${index}" value="${item.unitPrice}" style="width: 110px;"
+                                             ${Math.round(Number(item.unitPrice || 0) * 100) / 100 !== Number(item.unitPrice || 0) ? `title="Unitário exato: ${String(item.unitPrice).replace('.', ',')} — saiu do total digitado; a tela mostra 2 casas, o pedido e a NF-e levam todas."` : ''} /></td>
+                                  <!-- O TOTAL DA LINHA É DIGITÁVEL (04/11/2026, pedido do usuário:
+                                       acertar os centavos do total de certos produtos). Digitar o
+                                       total refaz o UNITÁRIO, com até 10 casas, e a quantidade
+                                       não muda: quantidade × unitário continua dando o total ao
+                                       centavo — é a conta que o servidor refaz ao gravar e que a
+                                       SEFAZ confere no vProd da NF-e (como na emissão de NF-e). -->
+                                  <td><input type="number" min="0" step="0.01" class="sales-item-total" data-index="${index}"
+                                             value="${(Math.round(Number(item.quantity || 0) * Number(item.unitPrice || 0) * 100) / 100).toFixed(2)}" style="width: 130px;"
+                                             title="Total da linha: digite para acertar os centavos. O unitário é refeito (até 10 casas); a quantidade não muda." /></td>
                                   <td class="sales-item-acoes">
                                     <!-- A ordem das linhas é a ordem em que o
                                          produto aparece no documento impresso e
@@ -6933,6 +6942,19 @@ async function loadModule(moduleName) {
             input.addEventListener('change', () => {
               items[Number(input.dataset.index)].unitPrice = Math.max(0, Number(input.value || 0));
               refazTotalDoItem(items[Number(input.dataset.index)]);
+              syncFormState();
+              renderForm();
+            });
+          });
+          // O TOTAL DIGITADO (04/11/2026): muda o unitário, não a quantidade.
+          // Até 10 casas (o máximo do vUnCom), para quantidade × unitário dar
+          // o total ao centavo — refazTotalDoItem chega ao mesmo valor.
+          content.querySelectorAll('.sales-item-total').forEach((input) => {
+            input.addEventListener('change', () => {
+              const item = items[Number(input.dataset.index)];
+              const quantidade = Number(item.quantity || 0);
+              if (quantidade > 0) item.unitPrice = Math.round((Math.max(0, Number(input.value || 0)) / quantidade) * 1e10) / 1e10;
+              refazTotalDoItem(item);
               syncFormState();
               renderForm();
             });

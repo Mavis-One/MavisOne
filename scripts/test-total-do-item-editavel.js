@@ -53,5 +53,26 @@ check('quantidade e unitário refazem o total', /const campoTotal = campoDaLinha
 check('ao sair, o total mostra o que a nota leva', /input\[data-field="valorTotal"\]'\)\.forEach[\s\S]{0,200}addEventListener\('change'[\s\S]{0,150}input\.value = itemTotal\(item\);/.test(tela));
 check('o corpo da emissão leva o unitário inteiro, sem arredondar', /valorUnitario: Number\(item\.valorUnitario \|\| 0\),/.test(tela));
 
+// O PEDIDO E O ORÇAMENTO (04/11/2026, pedido do usuário: acertar os centavos
+// do total de certos produtos no pedido). A mesma regra: o total digitado
+// refaz o unitário (até 10 casas) e não mexe na quantidade.
+console.log('\n--- o pedido (app.js) ---');
+const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+check('o Total da linha do pedido é um campo de dinheiro',
+  /<input type="number" min="0" step="0\.01" class="sales-item-total" data-index="\$\{index\}"/.test(app)
+  && !/<td class="sales-item-readonly"><strong>\$\{salesFormatBRL\(Number\(item\.quantity/.test(app));
+const handler = (app.match(/querySelectorAll\('\.sales-item-total'\)\.forEach[\s\S]*?\n {10}\}\);/) || [])[0] || '';
+check('  digitar refaz o unitário com 10 casas, e não a quantidade',
+  /item\.unitPrice = Math\.round\(\(Math\.max\(0, Number\(input\.value \|\| 0\)\) \/ quantidade\) \* 1e10\) \/ 1e10;/.test(handler)
+  && !/item\.quantity =/.test(handler) && /refazTotalDoItem\(item\);/.test(handler));
+const pedidoUnitario = (total, quantidade) => Math.round((Math.max(0, Number(total || 0)) / quantidade) * 1e10) / 1e10;
+const totalDoServidor = (q, u) => Math.round(q * u * 100) / 100; // normalizeSalesItems e buildNfeItemPayload
+check('  o caso do print: 4 × 257,67 = 1.030,68, digitado 1.030,70 -> unitário 257,675',
+  pedidoUnitario(1030.70, 4) === 257.675 && totalDoServidor(4, pedidoUnitario(1030.70, 4)) === 1030.70);
+check('  e o servidor grava o unitário inteiro e refaz o mesmo total',
+  /const unitPrice = Number\(item\.unitPrice \|\| 0\);[\s\S]{0,2500}total: Math\.round\(quantity \* unitPrice \* 100\) \/ 100/.test(fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')));
+check('  e a NF-e do pedido leva esse unitário (vProd = quantidade × unitário)',
+  /const valorBruto = round2\(quantidade \* valorUnitario\);/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'nfePayloadBuilder.js'), 'utf8')));
+
 console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
 process.exit(falhas ? 1 : 0);
