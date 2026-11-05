@@ -68,7 +68,10 @@ console.log('\n--- 3. os nomes ---');
     /\.\.\.nomesDasEmpresas\.todos\(\)\.sort\(porNome\)/.test(servidor) && /\.\.\.soNoViper\.sort\(porNome\)/.test(servidor)
     && /id: relatoriosComum\.SEM_EMPRESA, name: 'Empresa não identificada'/.test(servidor));
   check('a tela chama o campo de "Empresa (faturamento)", com o CNPJ no valor',
-    /select\('filial', 'Empresa \(faturamento\)', opcoes\.filiais, 'Todas', \(o\) => o\.id, \(o\) => o\.name\)/.test(ler('public/modules/reports/subs/catalogo.js')));
+    /select\('filial', 'Empresa \(faturamento\)', opcoes\.empresasDeFaturamento, 'Todas', \(o\) => o\.id, \(o\) => o\.name\)/.test(ler('public/modules/reports/subs/catalogo.js')));
+  // A lista mudou de nome (05/11/2026): a tela aberta antes do deploy lia os
+  // objetos novos em `filiais` como texto e mostrava "[object Object]".
+  check('  a lista vem como empresasDeFaturamento, e não mais como filiais', /empresasDeFaturamento: \[/.test(servidor) && !/\n\s*filiais: \[/.test(servidor));
 
   console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
   process.exit(falhas ? 1 : 0);

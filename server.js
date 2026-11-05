@@ -14769,8 +14769,11 @@ async function tratarRequisicao(req, res) {
           bancos: bancosDasContas(contas.rows.map((c) => ({ name: c.name, bank: c.bank, bankCode: c.bank_code }))),
           vendedores: vendedores.rows,
           // { id: CNPJ, name }; depois as que só existiram no Viper; e, no
-          // fim, o pedido de que não se sabe a empresa.
-          filiais: [
+          // fim, o pedido de que não se sabe a empresa. NOME NOVO DE PROPÓSITO
+          // (05/11/2026): era `filiais`, uma lista de textos; a tela aberta
+          // antes do deploy lia os objetos como texto e mostrava "[object
+          // Object]" no campo. Com outro nome, ela só mostra "Todas" até recarregar.
+          empresasDeFaturamento: [
             ...nomesDasEmpresas.todos().sort(porNome),
             ...soNoViper.sort(porNome),
             { id: relatoriosComum.SEM_EMPRESA, name: 'Empresa não identificada' }
