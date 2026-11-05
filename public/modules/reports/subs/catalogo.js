@@ -237,7 +237,8 @@ window.MavisRelatoriosCatalogo = (function () {
       usa('conta') ? select('contaId', 'Conta', opcoes.contas, 'Todas') : '',
       usa('banco') ? select('banco', 'Banco', opcoes.bancos, 'Todos', (o) => o, (o) => o) : '',
       usa('vendedor') && opcoes.podeEscolherVendedor ? select('vendedorId', 'Vendedor', opcoes.vendedores, 'Todos') : '',
-      usa('filial') ? select('filial', 'Filial', opcoes.filiais, 'Todas', (o) => o, (o) => o) : '',
+      // A empresa onde o pedido foi faturado (05/11/2026): o CNPJ no valor.
+      usa('filial') ? select('filial', 'Empresa (faturamento)', opcoes.filiais, 'Todas', (o) => o.id, (o) => o.name) : '',
       usa('estabelecimento') ? select('estabelecimentoId', 'Estabelecimento', opcoes.estabelecimentos, 'Todos') : '',
       // As escolhas não têm "Todos": o primeiro item já é o padrão do relatório.
       ...(def.escolhas || []).map((e) => `

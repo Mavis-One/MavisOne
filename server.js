@@ -146,6 +146,7 @@ const cargasDosRelatorios = require('./lib/relatorios-cargas');
 // O catálogo de relatórios por grupo (Financeiro, Vendas, Estoque...): uma
 // definição por relatório e um motor só para filtrar, somar e exportar.
 const catalogoDeRelatorios = require('./lib/relatorios');
+const relatoriosComum = require('./lib/relatorios/comum');
 const motorDeRelatorios = require('./lib/relatorios/motor');
 const relatorioPersonalizado = require('./lib/relatorios/personalizado');
 const relatoriosPersonalizadosDb = require('./lib/db/relatorios-personalizados');
@@ -14708,25 +14709,25 @@ async function tratarRequisicao(req, res) {
         escopo.podeEscolherVendedor
           ? consultarBanco(`select id, name from people where extra->'roles' @> '["Vendedor"]'::jsonb order by name`)
           : Promise.resolve({ rows: [] }),
-        // As filiais saem das CATEGORIAS distintas (22 neste banco), e não de
-        // cada um dos 14.864 pedidos: o `regexp_replace` rodava uma vez por
-        // pedido para chegar aos mesmos 12 nomes. 40 -> 15 ms, mesma lista.
-        // O `order by` decide qual grafia fica quando duas viram a mesma
-        // chave abaixo ("Timbo" antes de "Timbó"); sem ele, a escolha era a
-        // ordem do `distinct`, que nenhum plano promete.
-        consultarBanco(`select distinct btrim(regexp_replace(category, '^.*/', '')) as nome
-                          from (select distinct category from orders) c
-                         where position('/' in coalesce(category, '')) > 0
-                         order by 1`),
+        // O FILTRO "EMPRESA (FATURAMENTO)" (05/11/2026, pedido do usuário:
+        // "quero que apareça as empresas aonde os pedidos foram faturados"):
+        // as empresas que emitem nota, pelo CNPJ (lib/relatorios/comum.js,
+        // empresaDoPedidoSql), e as que só existiram no Viper (o "Empresa:" da
+        // observação do pedido importado). Era o fim da categoria do pedido —
+        // a LOJA da venda (Assistência, Peças, Kaccau...), que não diz onde
+        // faturou. Aqui, os nomes do Viper distintos (14 neste banco).
+        consultarBanco(`select distinct ${relatoriosComum.nomeDaEmpresaNoViperSql('o')} as nome
+                          from orders o
+                         where o.note like 'Importado do ViperERP%' and position('Empresa: ' in o.note) > 0`),
         consultarBanco(`select id::text as id, coalesce(nullif(btrim(nome_fantasia), ''), razao_social) as name
                           from estabelecimento where coalesce(ativo, true) order by 2`)
       ]);
-      // Duas grafias da mesma loja ("Timbó" e "Timbo") são uma opção só.
-      const porChave = new Map();
-      for (const { nome } of filiais.rows) {
-        const chave = filialDaVenda.chaveDaFilial(nome);
-        if (chave && !porChave.has(chave)) porChave.set(chave, nome);
-      }
+      const nomesDasEmpresas = await relatoriosComum.nomesDasEmpresas(
+        async (texto, parametros) => (await consultarBanco(texto, parametros)).rows, loadData().companies);
+      const soNoViper = filiais.rows.map((l) => l.nome)
+        .filter((nome) => nome && !Object.prototype.hasOwnProperty.call(relatoriosComum.EMPRESAS_DA_LISTAGEM, nome))
+        .map((nome) => ({ id: `viper:${nome}`, name: `${nome} (só no Viper)` }));
+      const porNome = (a, b) => a.name.localeCompare(b.name, 'pt-BR');
       return sendJson(res, {
         grupos: catalogoDeRelatorios.catalogoVisivel(porta.user, porta.ehAdministrador),
         opcoes: {
@@ -14736,7 +14737,13 @@ async function tratarRequisicao(req, res) {
           // vazio do Viper, e o nome da conta é que diz "ITAU PLUS".
           bancos: bancosDasContas(contas.rows.map((c) => ({ name: c.name, bank: c.bank, bankCode: c.bank_code }))),
           vendedores: vendedores.rows,
-          filiais: [...porChave.values()].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+          // { id: CNPJ, name }; depois as que só existiram no Viper; e, no
+          // fim, o pedido de que não se sabe a empresa.
+          filiais: [
+            ...nomesDasEmpresas.todos().sort(porNome),
+            ...soNoViper.sort(porNome),
+            { id: relatoriosComum.SEM_EMPRESA, name: 'Empresa não identificada' }
+          ],
           estabelecimentos: estabelecimentos.rows,
           podeEscolherVendedor: escopo.podeEscolherVendedor
         }
