@@ -5341,3 +5341,16 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
   box-shadow: 0 8px 24px var(--shadow);
   font-size: 0.9rem;
 }
+
+/* O campo Empresa no topo da Síntese Financeira e do Valor em Estoque
+   (06/11/2026; reports/subs/relatorios.js, relCampoEmpresaGeral). */
+.rel-empresa-geral {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 240px;
+  max-width: 100%;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.rel-empresa-geral select { width: 100%; }

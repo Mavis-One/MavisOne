@@ -14510,11 +14510,14 @@ async function tratarRequisicao(req, res) {
     const granularity = params.get('granularity') || 'month';
     // O baixado dos parciais vem junto, na mesma onda (fase EI): sem ele a
     // Síntese contaria o parcial cheio em "a receber", e discordaria do painel.
-    const [todos, pagoDosParciais] = await Promise.all([
+    const [todos, pagoDosParciais, recorte] = await Promise.all([
       cargasDosRelatorios.lancamentosDaSintese(),
-      db.getPagoDosParciais()
+      db.getPagoDosParciais(),
+      // A EMPRESA (06/11/2026): os títulos dela, pela regra da coluna Empresa.
+      titulosEContasDaEmpresa(params.get('empresa'))
     ]);
-    const lancamentos = todos.filter((entry) => !isFinanceEntryCancelled(entry));
+    const daEmpresa = recorte ? new Set(recorte.titulos) : null;
+    const lancamentos = todos.filter((entry) => !isFinanceEntryCancelled(entry) && (!daEmpresa || daEmpresa.has(entry.id)));
     return {
       granularity,
       serieFinanceiro: buildFinanceChartSeries(lancamentos, granularity),
@@ -14523,10 +14526,22 @@ async function tratarRequisicao(req, res) {
   }
 
   /** O Valor em Estoque: cada produto com o valor parado nele. Tela e arquivo. */
-  async function baseDeEstoqueDosRelatorios() {
-    const products = await cargasDosRelatorios.produtosDoValorEmEstoque();
+  async function baseDeEstoqueDosRelatorios(params) {
+    // A EMPRESA (06/11/2026): o saldo do produto nos depósitos dela, pelo
+    // razão (lib/relatorios/comum.js, depositoDaEmpresaSql); sem empresa, o
+    // saldo geral do produto, como sempre.
+    const pedida = relatoriosComum.empresaPedida(params && params.get('empresa'));
+    const [products, saldos] = await Promise.all([
+      cargasDosRelatorios.produtosDoValorEmEstoque(),
+      pedida
+        ? consultarBanco(`select m.product_id, sum(${relatoriosComum.SALDO_DO_RAZAO}) as saldo
+                            from stock_movements m
+                           where ${relatoriosComum.depositoDaEmpresaSql('m.deposit_id', '$1', loadData().companies)}
+                           group by 1`, [pedida]).then((r) => new Map(r.rows.map((l) => [l.product_id, Number(l.saldo || 0)])))
+        : Promise.resolve(null)
+    ]);
     const produtosComSaldo = products.map((produto) => {
-      const quantidade = Number(produto.stockQuantity || 0);
+      const quantidade = saldos ? (saldos.get(produto.id) || 0) : Number(produto.stockQuantity || 0);
       const custo = Number(produto.costPrice || 0);
       return {
         id: produto.id,
@@ -14682,9 +14697,59 @@ async function tratarRequisicao(req, res) {
       ordem: params.get('ordem') || 'data',
       direcao: params.get('direcao') || 'desc',
       pagina: params.get('pagina') || 1,
-      porPagina: params.get('porPagina') || 25
+      porPagina: params.get('porPagina') || 25,
+      empresa: relatoriosComum.empresaPedida(params.get('empresa')),
+      pedidosDaEmpresa: await pedidosDaEmpresaDoRelatorio(relatoriosComum.empresaPedida(params.get('empresa')), data)
     };
-    return { relatorio: relatoriosVendas.montarRelatorio({ registros, filtros, escopo }), filtros, escopo, registros };
+    const relatorio = relatoriosVendas.montarRelatorio({ registros, filtros, escopo });
+    // O campo Empresa da tela (06/11/2026): a mesma lista do catálogo.
+    relatorio.opcoes = { ...relatorio.opcoes, empresas: await empresasDosRelatorios() };
+    return { relatorio, filtros, escopo, registros };
+  }
+
+  /**
+   * OS PEDIDOS E ORÇAMENTOS DE UMA EMPRESA, para Pedidos e Vendas por Vendedor
+   * (06/11/2026). O pedido é da empresa do faturamento (comum.js,
+   * empresaDoPedidoSql); o orçamento, que não fatura, da Empresa dele ou do
+   * depósito. null = sem filtro.
+   */
+  async function pedidosDaEmpresaDoRelatorio(pedida, data) {
+    if (!pedida) return null;
+    const empresas = data.companies;
+    const doOrcamento = `coalesce(nullif(${relatoriosComum.mapaDeEmpresasSql(empresas)} ->> coalesce(q.company_id, ''), ''),
+      ${relatoriosComum.empresaDoDepositoSql('q.deposit_id', empresas)})`;
+    const [pedidos, orcamentos] = await Promise.all([
+      consultarBanco(`select o.id from orders o where ${relatoriosComum.filtroDeEmpresaSql('o', '$1', empresas)}`, [pedida]),
+      consultarBanco(`select q.id from quotes q where ${relatoriosComum.condicaoDeEmpresaSql(doOrcamento, '$1')}`, [pedida])
+    ]);
+    return new Set([...pedidos.rows, ...orcamentos.rows].map((r) => r.id));
+  }
+
+  /**
+   * A lista do campo Empresa dos relatórios: as empresas (a de várias lojas,
+   * inteira e loja por loja), as que só existiram no Viper e "não
+   * identificada". O catálogo e as telas de Pedidos, Síntese e Estoque usam a
+   * mesma (06/11/2026).
+   */
+  async function empresasDosRelatorios({ doViper = true } = {}) {
+    const sqlDoBanco = async (texto, parametros) => (await consultarBanco(texto, parametros)).rows;
+    const [nomes, viper] = await Promise.all([
+      relatoriosComum.nomesDasEmpresas(sqlDoBanco, loadData().companies),
+      doViper
+        ? sqlDoBanco(`select distinct ${relatoriosComum.nomeDaEmpresaNoViperSql('o')} as nome
+                        from orders o
+                       where o.note like 'Importado do ViperERP%' and position('Empresa: ' in o.note) > 0`)
+        : Promise.resolve([])
+    ]);
+    const soNoViper = viper.map((l) => l.nome)
+      .filter((nome) => nome && !Object.prototype.hasOwnProperty.call(relatoriosComum.EMPRESAS_DA_LISTAGEM, nome))
+      .map((nome) => ({ id: `viper:${nome}`, name: `${nome} (só no Viper)` }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    return [
+      ...empresasDoFiltroDosRelatorios(nomes.todos()),
+      ...soNoViper,
+      { id: relatoriosComum.SEM_EMPRESA, name: 'Empresa não identificada' }
+    ];
   }
 
   // ==========================================================================
@@ -14729,9 +14794,61 @@ async function tratarRequisicao(req, res) {
         const dados = loadData();
         await syncFinanceCadastroData(dados);
         return resolvedorDeEmpresas(titulos, dados);
-      }
+      },
+      titulosDaEmpresa: titulosEContasDaEmpresa
     });
     return { resultado };
+  }
+
+  /**
+   * OS TÍTULOS E AS CONTAS DE UMA EMPRESA, para o campo Empresa dos relatórios
+   * que leem lançamentos (06/11/2026; lib/relatorios/motor.js,
+   * titulosPelaEmpresa). A regra é a da coluna Empresa de Contas a Pagar e a
+   * Receber (resolvedorDeEmpresas), aplicada a todos os títulos de uma vez; a
+   * conta bancária, pela mesma regra, como um título que só tem a conta.
+   * Empresa que só existiu no Viper não tem título aqui: listas vazias.
+   */
+  async function titulosEContasDaEmpresa(valor) {
+    const pedida = relatoriosComum.empresaPedida(valor);
+    if (!pedida) return null;
+    if (pedida.startsWith('viper:')) return { titulos: [], contas: [] };
+    const [{ rows }, dados] = await Promise.all([
+      consultarBanco('select id, estabelecimento_id, nfe_id, reference_id, bank_account_id from financial_entries'),
+      (async () => { const d = loadData(); await syncFinanceCadastroData(d); return d; })()
+    ]);
+    const titulos = rows.map((r) => ({
+      id: r.id, estabelecimentoId: r.estabelecimento_id, nfeId: r.nfe_id, referenceId: r.reference_id, bankAccountId: r.bank_account_id
+    }));
+    const contas = (dados.bankAccounts || []).map((b) => ({ id: `conta:${b.id}`, contaId: b.id, bankAccountId: b.id }));
+    const empresaDe = await resolvedorDeEmpresas(titulos, dados);
+    const daEmpresa = (t) => relatoriosComum.empresaConfere(String((empresaDe(t) || {}).cnpj || ''), pedida);
+    return {
+      titulos: titulos.filter(daEmpresa).map((t) => t.id),
+      contas: contas.filter(daEmpresa).map((c) => c.contaId)
+    };
+  }
+
+  /**
+   * A LISTA DO CAMPO EMPRESA DOS RELATÓRIOS (06/11/2026): cada empresa pelo
+   * CNPJ; a que tem várias lojas ganha antes delas a opção da empresa inteira
+   * (a raiz do CNPJ, "todas as lojas"). `nomes` = nomesDasEmpresas(...).todos().
+   */
+  function empresasDoFiltroDosRelatorios(nomes) {
+    const porNome = (a, b) => a.name.localeCompare(b.name, 'pt-BR');
+    const porRaiz = new Map();
+    nomes.forEach((e) => {
+      const raiz = String(e.id).slice(0, 8);
+      if (!porRaiz.has(raiz)) porRaiz.set(raiz, []);
+      porRaiz.get(raiz).push(e);
+    });
+    const grupos = [...porRaiz.entries()].map(([raiz, lojas]) => {
+      lojas.sort(porNome);
+      if (lojas.length < 2) return { nome: lojas[0].name, itens: lojas };
+      const matriz = lojas.find((e) => String(e.id).slice(8, 12) === '0001') || lojas[0];
+      const nome = String(matriz.name).replace(/\s*\([^)]*\)\s*$/, '').trim() || matriz.name;
+      return { nome, itens: [{ id: raiz, name: `${nome} — todas as lojas` }, ...lojas] };
+    });
+    return grupos.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).flatMap((g) => g.itens);
   }
 
   if (pathname === '/api/reports/catalogo' && req.method === 'GET') {
@@ -14739,7 +14856,7 @@ async function tratarRequisicao(req, res) {
       const porta = await portaDoCatalogo(req);
       if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
       const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
-      const [depositos, contas, vendedores, filiais, estabelecimentos] = await Promise.all([
+      const [depositos, contas, vendedores, empresas] = await Promise.all([
         // Só os ativos, como as contas abaixo (29/10/2026: "quando um depósito
         // estiver inativo ele não apareça para seleção dentre campos").
         consultarBanco("select id, name from deposits where coalesce(status, 'ativo') <> 'inativo' order by name"),
@@ -14747,25 +14864,12 @@ async function tratarRequisicao(req, res) {
         escopo.podeEscolherVendedor
           ? consultarBanco(`select id, name from people where extra->'roles' @> '["Vendedor"]'::jsonb order by name`)
           : Promise.resolve({ rows: [] }),
-        // O FILTRO "EMPRESA (FATURAMENTO)" (05/11/2026, pedido do usuário:
-        // "quero que apareça as empresas aonde os pedidos foram faturados"):
-        // as empresas que emitem nota, pelo CNPJ (lib/relatorios/comum.js,
-        // empresaDoPedidoSql), e as que só existiram no Viper (o "Empresa:" da
-        // observação do pedido importado). Era o fim da categoria do pedido —
-        // a LOJA da venda (Assistência, Peças, Kaccau...), que não diz onde
-        // faturou. Aqui, os nomes do Viper distintos (14 neste banco).
-        consultarBanco(`select distinct ${relatoriosComum.nomeDaEmpresaNoViperSql('o')} as nome
-                          from orders o
-                         where o.note like 'Importado do ViperERP%' and position('Empresa: ' in o.note) > 0`),
-        consultarBanco(`select id::text as id, coalesce(nullif(btrim(nome_fantasia), ''), razao_social) as name
-                          from estabelecimento where coalesce(ativo, true) order by 2`)
+        // O CAMPO EMPRESA (05/11/2026 nas vendas, pedido do usuário: "quero que
+        // apareça as empresas aonde os pedidos foram faturados"; 06/11/2026 em
+        // todo relatório: "coloque opção de seleção de empresas em todos os
+        // modulos"). Ver empresasDosRelatorios.
+        empresasDosRelatorios()
       ]);
-      const nomesDasEmpresas = await relatoriosComum.nomesDasEmpresas(
-        async (texto, parametros) => (await consultarBanco(texto, parametros)).rows, loadData().companies);
-      const soNoViper = filiais.rows.map((l) => l.nome)
-        .filter((nome) => nome && !Object.prototype.hasOwnProperty.call(relatoriosComum.EMPRESAS_DA_LISTAGEM, nome))
-        .map((nome) => ({ id: `viper:${nome}`, name: `${nome} (só no Viper)` }));
-      const porNome = (a, b) => a.name.localeCompare(b.name, 'pt-BR');
       return sendJson(res, {
         grupos: catalogoDeRelatorios.catalogoVisivel(porta.user, porta.ehAdministrador),
         opcoes: {
@@ -14775,17 +14879,12 @@ async function tratarRequisicao(req, res) {
           // vazio do Viper, e o nome da conta é que diz "ITAU PLUS".
           bancos: bancosDasContas(contas.rows.map((c) => ({ name: c.name, bank: c.bank, bankCode: c.bank_code }))),
           vendedores: vendedores.rows,
-          // { id: CNPJ, name }; depois as que só existiram no Viper; e, no
-          // fim, o pedido de que não se sabe a empresa. NOME NOVO DE PROPÓSITO
+          // { id: CNPJ ou raiz, name }; depois as que só existiram no Viper; e,
+          // no fim, "Empresa não identificada". NOME NOVO DE PROPÓSITO
           // (05/11/2026): era `filiais`, uma lista de textos; a tela aberta
           // antes do deploy lia os objetos como texto e mostrava "[object
           // Object]" no campo. Com outro nome, ela só mostra "Todas" até recarregar.
-          empresasDeFaturamento: [
-            ...nomesDasEmpresas.todos().sort(porNome),
-            ...soNoViper.sort(porNome),
-            { id: relatoriosComum.SEM_EMPRESA, name: 'Empresa não identificada' }
-          ],
-          estabelecimentos: estabelecimentos.rows,
+          empresasDeFaturamento: empresas,
           podeEscolherVendedor: escopo.podeEscolherVendedor
         }
       });
@@ -15041,7 +15140,7 @@ async function tratarRequisicao(req, res) {
             ate: linhas.length ? linhas[linhas.length - 1].ate : ''
           }), url);
         }
-        const base = await baseDeEstoqueDosRelatorios();
+        const base = await baseDeEstoqueDosRelatorios(url.searchParams);
         return exportarRelatorio(res, resultadoDaTela({
           key: 'estoque',
           titulo: 'Relatório de Estoque',
@@ -15110,7 +15209,7 @@ async function tratarRequisicao(req, res) {
         const base = await baseFinanceiraDosRelatorios(url.searchParams);
         conteudo = relatoriosCsv.financeiro(base.serieFinanceiro);
       } else {
-        const base = await baseDeEstoqueDosRelatorios();
+        const base = await baseDeEstoqueDosRelatorios(url.searchParams);
         // A LISTA INTEIRA, e não os 15 da tela. A tela responde "o que mais
         // prende dinheiro?", e quinze linhas bastam para isso; ninguém abre uma
         // planilha para reler o que já estava na tela. Ordenada pelo mesmo
@@ -15292,10 +15391,16 @@ async function tratarRequisicao(req, res) {
     const granularity = url.searchParams.get('granularity') || 'month';
     const [financeira, estoque] = await Promise.all([
       parte === 'estoque' ? null : baseFinanceiraDosRelatorios(url.searchParams),
-      parte === 'financeiro' || res.__ocultarCusto ? null : baseDeEstoqueDosRelatorios()
+      parte === 'financeiro' || res.__ocultarCusto ? null : baseDeEstoqueDosRelatorios(url.searchParams)
     ]);
 
-    const resposta = { granularity };
+    // O campo Empresa das duas telas (06/11/2026): a lista do catálogo, sem as
+    // empresas que só existiram no Viper (não têm título nem estoque aqui).
+    const resposta = {
+      granularity,
+      empresa: relatoriosComum.empresaPedida(url.searchParams.get('empresa')),
+      empresas: await empresasDosRelatorios({ doViper: false })
+    };
     if (financeira) {
       resposta.serieFinanceiro = financeira.serieFinanceiro;
       resposta.financeiro = {

@@ -237,8 +237,13 @@ window.MavisRelatoriosCatalogo = (function () {
       usa('conta') ? select('contaId', 'Conta', opcoes.contas, 'Todas') : '',
       usa('banco') ? select('banco', 'Banco', opcoes.bancos, 'Todos', (o) => o, (o) => o) : '',
       usa('vendedor') && opcoes.podeEscolherVendedor ? select('vendedorId', 'Vendedor', opcoes.vendedores, 'Todos') : '',
-      // A empresa onde o pedido foi faturado (05/11/2026): o CNPJ no valor.
-      usa('filial') ? select('filial', 'Empresa (faturamento)', opcoes.empresasDeFaturamento, 'Todas', (o) => o.id, (o) => o.name) : '',
+      // A EMPRESA (05/11/2026 nas vendas; 06/11/2026 em todo relatório): o CNPJ
+      // da loja, ou a raiz do CNPJ para a empresa inteira, no valor. O rótulo
+      // diz de onde ela sai (faturamento, emitente, destinatária...); as
+      // empresas que só existiram no Viper só servem onde se lê pedido.
+      usa('filial') ? select('filial', def.rotuloDaEmpresa || 'Empresa',
+        (opcoes.empresasDeFaturamento || []).filter((o) => def.empresasDoViper || !String(o.id).startsWith('viper:')),
+        'Todas', (o) => o.id, (o) => o.name) : '',
       usa('estabelecimento') ? select('estabelecimentoId', 'Estabelecimento', opcoes.estabelecimentos, 'Todos') : '',
       // As escolhas não têm "Todos": o primeiro item já é o padrão do relatório.
       ...(def.escolhas || []).map((e) => `

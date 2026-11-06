@@ -102,7 +102,7 @@ console.log('\n--- 3. uma conta só para a tela e para o arquivo ---');
 // a tela e o arquivo de cada um saem da MESMA função.
 const servidor = semComentarios(ler('server.js'));
 check('a base da Síntese Financeira existe', /async function baseFinanceiraDosRelatorios\(params\)/.test(servidor));
-check('a base do Valor em Estoque existe', /async function baseDeEstoqueDosRelatorios\(\)/.test(servidor));
+check('a base do Valor em Estoque existe', /async function baseDeEstoqueDosRelatorios\(params\)/.test(servidor));
 const trecho = (inicio, fim) => {
   const de = servidor.slice(servidor.indexOf(inicio));
   return de.slice(0, de.indexOf(fim));
@@ -117,7 +117,10 @@ check('  e a do Estoque, os produtos com o valor parado', /produtosComSaldo/.tes
 check('  nenhuma das duas volta ao sync do sistema inteiro',
   !/sync(?:Financ|Nfe|Purchases|Cadastro|Sales)\w*\(/.test(corpoFin + corpoEst),
   'leitura enxuta de lib/relatorios-cargas.js');
-check('  nem lê coleção do db.json', !/loadData\(\)|data\.finance/.test(corpoFin + corpoEst));
+// (06/11/2026: com uma EMPRESA escolhida, o Estoque lê do db.json só as
+// empresas do cadastro — de quem é cada depósito. Sem empresa, nada, como antes.)
+check('  nem lê coleção do db.json', !/data\.finance/.test(corpoFin + corpoEst) && !/loadData\(\)/.test(corpoFin)
+  && (corpoEst.match(/loadData\(\)/g) || []).length === 1 && /pedida\s*\?\s*consultarBanco[\s\S]{0,500}loadData\(\)\.companies/.test(corpoEst));
 // A PERMISSÃO ANTES DE LER: trabalho feito para quem vai levar 403.
 const porta = trecho('async function portaDosRelatoriosGerais', '\n  }\n');
 check('a porta confere a permissão', /podeVerRelatorios\(user, await ehAdmin\(user\)\)/.test(porta));
@@ -136,10 +139,10 @@ check('  e a exportação também',
 check('a tela e o arquivo da Síntese saem da mesma base',
   (servidor.match(/baseFinanceiraDosRelatorios\(url\.searchParams\)/g) || []).length === 4);
 check('a tela e o arquivo do Estoque saem da mesma base',
-  (servidor.match(/await baseDeEstoqueDosRelatorios\(\)/g) || []).length === 2
+  (servidor.match(/await baseDeEstoqueDosRelatorios\(url\.searchParams\)/g) || []).length === 2
   // Desde 14/10/2026 o Valor em Estoque também não é calculado para quem não é
   // administrador (é todo a custo) — a base continua a mesma da exportação.
-  && /parte === 'financeiro'( \|\| res\.__ocultarCusto)? \? null : baseDeEstoqueDosRelatorios\(\)/.test(overview));
+  && /parte === 'financeiro'( \|\| res\.__ocultarCusto)? \? null : baseDeEstoqueDosRelatorios\(url\.searchParams\)/.test(overview));
 // A rota de overview não pode ter voltado a montar a série por conta própria.
 check('o overview não recalcula a série', /resposta\.serieFinanceiro = financeira\.serieFinanceiro;/.test(overview),
   'ele repassa a que veio da base');

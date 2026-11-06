@@ -123,7 +123,9 @@ window.MavisModuleRegistry.reports = async function renderReports(ctx) {
   // Estoque não lê lançamento (ver /api/reports/overview em server.js).
   let dados;
   try {
-    dados = await api(`/api/reports/overview?granularity=${encodeURIComponent(granularidade)}&parte=${encodeURIComponent(aberto.especial)}`);
+    // A empresa escolhida no topo da tela (06/11/2026; subs/relatorios.js, relCampoEmpresaGeral).
+    const empresa = state.reportsEmpresaGeral ? `&empresa=${encodeURIComponent(state.reportsEmpresaGeral)}` : '';
+    dados = await api(`/api/reports/overview?granularity=${encodeURIComponent(granularidade)}&parte=${encodeURIComponent(aberto.especial)}${empresa}`);
   } catch (error) {
     return falhar(error);
   }

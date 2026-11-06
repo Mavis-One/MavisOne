@@ -60,7 +60,7 @@ function relNum(valor) {
 // refaz a filtragem a cada ida ao pedido e de volta.
 function relFiltros(state) {
   return (state.reportsVendasFiltros = state.reportsVendasFiltros || {
-    dataDe: '', dataAte: '', vendedorId: '', clienteId: '', produtoId: '',
+    dataDe: '', dataAte: '', vendedorId: '', clienteId: '', produtoId: '', empresa: '',
     status: '', tipo: 'order', busca: '',
     ordem: 'data', direcao: 'desc', pagina: 1, porPagina: 25,
     visao: 'tabela'
@@ -76,6 +76,40 @@ function relQueryDeFiltros(filtros) {
   return p.toString();
 }
 
+/**
+ * O CAMPO EMPRESA DA SÍNTESE E DO VALOR EM ESTOQUE (06/11/2026, "coloque opção
+ * de seleção de empresas em todos os modulos"): a mesma lista do catálogo, que
+ * a rota /api/reports/overview manda em `dados.empresas`. Trocar a empresa
+ * redesenha a tela; a exportação leva a mesma.
+ */
+function relCampoEmpresaGeral(ctx) {
+  const { escapeHtml, dados, state } = ctx;
+  const empresas = (dados && dados.empresas) || [];
+  if (!empresas.length) return '';
+  const atual = state.reportsEmpresaGeral || '';
+  return `
+    <label class="rel-empresa-geral">Empresa
+      <select data-rel-empresa-geral>
+        <option value="">Todas</option>
+        ${empresas.map((o) => `<option value="${escapeHtml(o.id)}" ${o.id === atual ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
+      </select>
+    </label>`;
+}
+
+function relLigarEmpresaGeral(ctx) {
+  const { content, state, loadModule } = ctx;
+  content.querySelector('[data-rel-empresa-geral]')?.addEventListener('change', (evento) => {
+    state.reportsEmpresaGeral = evento.target.value;
+    loadModule('reports');
+  });
+}
+
+/** O `empresa=` das exportações da Síntese e do Estoque ('' sem empresa). */
+function relEmpresaNaConsulta(ctx) {
+  const empresa = (ctx.state && ctx.state.reportsEmpresaGeral) || '';
+  return empresa ? `empresa=${encodeURIComponent(empresa)}` : '';
+}
+
 function relCabecalho(ctx, titulo, comPeriodo) {
   const { escapeHtml, granularidade } = ctx;
   return `
@@ -83,6 +117,7 @@ function relCabecalho(ctx, titulo, comPeriodo) {
       <div>
         <strong>${escapeHtml(titulo)}</strong>
       </div>
+      ${relCampoEmpresaGeral(ctx)}
       ${comPeriodo ? `
         <div class="finance-granularity-group" role="tablist">
           ${REL_GRANULARIDADES.map((g) => `<button type="button" class="finance-pill finance-pill-sm ${g.chave === granularidade ? 'active' : ''}" data-rel-granularidade="${g.chave}">${g.rotulo}</button>`).join('')}
@@ -211,6 +246,12 @@ function relBarraDeFiltros(ctx, rel) {
           <input type="date" data-rel-filtro="dataAte" value="${escapeHtml(f.dataAte)}" />
         </label>
         ${campoPor('vendedorId')}
+        ${(opcoes.empresas || []).length ? `<label>Empresa (faturamento)
+          <select data-rel-filtro="empresa">
+            <option value="">Todas</option>
+            ${opcoes.empresas.map((o) => `<option value="${escapeHtml(o.id)}" ${o.id === f.empresa ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
+          </select>
+        </label>` : ''}
         ${campoPor('clienteId')}
         ${campoPor('produtoId')}
         <label>Situação
@@ -849,9 +890,12 @@ window.MavisRelatoriosEspeciais.financeiro = async function relFinanceiro(ctx) {
     </div>
   `;
   relLigarPeriodo(ctx);
+  relLigarEmpresaGeral(ctx);
   // O PDF (19/10/2026): os cartões e o fluxo período a período, na ordem da
-  // tela; a planilha (04/11/2026), o mesmo fluxo com o total.
-  relLigarAcoes(ctx, `/api/reports/financeiro/export?granularity=${encodeURIComponent(ctx.granularidade || 'month')}`,
+  // tela; a planilha (04/11/2026), o mesmo fluxo com o total. A empresa
+  // escolhida vai junto (06/11/2026).
+  const empresaNaConsulta = relEmpresaNaConsulta(ctx);
+  relLigarAcoes(ctx, `/api/reports/financeiro/export?granularity=${encodeURIComponent(ctx.granularidade || 'month')}${empresaNaConsulta ? `&${empresaNaConsulta}` : ''}`,
     'financeiro', 'Exportação gerada com o mesmo recorte de período da tela.');
 };
 
@@ -902,6 +946,8 @@ window.MavisRelatoriosEspeciais.estoque = async function relEstoque(ctx) {
       ${relAcoes()}
     </div>
   `;
-  relLigarAcoes(ctx, '/api/reports/estoque/export', 'estoque',
+  relLigarEmpresaGeral(ctx);
+  const empresaNaConsulta = relEmpresaNaConsulta(ctx);
+  relLigarAcoes(ctx, `/api/reports/estoque/export${empresaNaConsulta ? `?${empresaNaConsulta}` : ''}`, 'estoque',
     'Exportação gerada com a lista COMPLETA de produtos — a tela mostra só os maiores.');
 };

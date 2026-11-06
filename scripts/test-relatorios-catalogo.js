@@ -85,7 +85,9 @@ const visivelComEscolha = catalogo.catalogoVisivel({ allowedModules: [] }, true)
 check('a tela recebe as escolhas', Boolean(visivelComEscolha) && Array.isArray(visivelComEscolha.escolhas[0].itens));
 const telaCatalogo = ler('public/modules/reports/subs/catalogo.js');
 check('  e desenha um select para cada uma', /\(def\.escolhas \|\| \[\]\)\.map\(\(e\) =>/.test(telaCatalogo) && /data-rel-cat="\$\{escapeHtml\(e\.campo\)\}"/.test(telaCatalogo));
-check('o filtro de estabelecimento chega à tela', /estabelecimentos: estabelecimentos\.rows/.test(servidor) && /usa\('estabelecimento'\)/.test(telaCatalogo));
+// (06/11/2026: o Estabelecimento do Fiscal virou o campo Empresa de todos os
+// relatórios — ver scripts/test-empresa-em-todos-os-relatorios.js.)
+check('o filtro de empresa chega à tela', /empresasDeFaturamento: empresas,/.test(servidor) && /usa\('filial'\) \? select\('filial', def\.rotuloDaEmpresa/.test(telaCatalogo));
 
 console.log('\n--- 5. totais ---');
 (async () => {

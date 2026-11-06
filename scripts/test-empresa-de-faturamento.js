@@ -64,14 +64,17 @@ console.log('\n--- 3. os nomes ---');
   const fiscal = ler('lib/relatorios/fiscal.js');
   check('  Pedidos x NF-e também (filtro e coluna)', /filtroDeEmpresaSql\('o', '\$4', empresas\)/.test(fiscal) && /rotulo: 'Empresa \(faturamento\)'/.test(fiscal));
   const servidor = ler('server.js');
+  // (06/11/2026: a lista virou empresasDosRelatorios, a de todo relatório.)
   check('a lista do filtro: as empresas, as só do Viper e "não identificada"',
-    /\.\.\.nomesDasEmpresas\.todos\(\)\.sort\(porNome\)/.test(servidor) && /\.\.\.soNoViper\.sort\(porNome\)/.test(servidor)
+    /\.\.\.empresasDoFiltroDosRelatorios\(nomes\.todos\(\)\),\s*\.\.\.soNoViper,/.test(servidor)
     && /id: relatoriosComum\.SEM_EMPRESA, name: 'Empresa não identificada'/.test(servidor));
-  check('a tela chama o campo de "Empresa (faturamento)", com o CNPJ no valor',
-    /select\('filial', 'Empresa \(faturamento\)', opcoes\.empresasDeFaturamento, 'Todas', \(o\) => o\.id, \(o\) => o\.name\)/.test(ler('public/modules/reports/subs/catalogo.js')));
+  check('a tela chama o campo de "Empresa (faturamento)" nas vendas, com o CNPJ no valor',
+    /select\('filial', def\.rotuloDaEmpresa \|\| 'Empresa',/.test(ler('public/modules/reports/subs/catalogo.js'))
+    && require('../lib/relatorios').catalogoVisivel({ allowedModules: [] }, true).find((g) => g.key === 'vendas')
+      .relatorios.find((r) => r.key === 'pedidos-faturados').rotuloDaEmpresa === 'Empresa (faturamento)');
   // A lista mudou de nome (05/11/2026): a tela aberta antes do deploy lia os
   // objetos novos em `filiais` como texto e mostrava "[object Object]".
-  check('  a lista vem como empresasDeFaturamento, e não mais como filiais', /empresasDeFaturamento: \[/.test(servidor) && !/\n\s*filiais: \[/.test(servidor));
+  check('  a lista vem como empresasDeFaturamento, e não mais como filiais', /empresasDeFaturamento: empresas,/.test(servidor) && !/\n\s*filiais: \[/.test(servidor));
 
   console.log(`\n===== ${falhas === 0 ? 'TODOS OS CHECKS PASSARAM' : falhas + ' FALHA(S)'} =====`);
   process.exit(falhas ? 1 : 0);
