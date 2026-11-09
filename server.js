@@ -95,6 +95,8 @@ const salesStatus = require('./public/modules/shared/sales_status');
 // Empresa, categoria, depósito, vendedor e pagamento obrigatórios no pedido e
 // no orçamento (13/10/2026). A tela confere com o mesmo arquivo.
 const vendaObrigatorios = require('./public/modules/shared/venda_obrigatorios');
+// O 588 (mão de obra) e a forma "Outros" não aprovam nem faturam (09/11/2026).
+const vendaBarrada = require('./public/modules/shared/venda_barrada');
 // Exigências de NF-e por cliente (fase FB, 22/10/2026): a regra é a mesma da
 // tela; o perfil de cada cliente mora no banco.
 const exigenciasNfe = require('./public/modules/shared/exigencias_nfe');
@@ -4492,6 +4494,20 @@ async function aplicarEfeitosDeStatus({ id, current, updated, items, statusNovo,
   if (tipoNovo === 'order' && statusNovo === 'pedido-pre-faturado'
     && salesStatus.normalizar(current.status, undefined) !== 'pedido-pre-faturado') {
     await recusarAprovacaoSemEstoque({ ...current, ...updated, items: items || updated.items || current.items });
+  }
+
+  // O 588 E A FORMA "OUTROS" NÃO APROVAM NEM FATURAM (09/11/2026, pedido do
+  // usuário; shared/venda_barrada.js). Aqui pelo mesmo motivo da conferência
+  // de estoque: a edição e as ações em lote passam por este ponto. Só na
+  // ENTRADA no status — e não quando é a nota autorizada que fatura
+  // (faturarPedidoDaNota passa por aqui): a SEFAZ já aceitou, e quem barra a
+  // nota é a emissão (prepararNfeParaTransmitir), antes de transmitir.
+  if (tipoNovo === 'order' && statusNovo !== salesStatus.normalizar(current.status, undefined)) {
+    const faturaPelaNota = statusNovo === 'pedido-faturado'
+      && Boolean(await notaQueSustentaOFaturamento({ id, nfeId: updated.nfeId || current.nfeId }));
+    if (!faturaPelaNota) {
+      await recusarVendaBarrada({ ...current, ...updated, items: items || updated.items || current.items }, statusNovo);
+    }
   }
 
   // FATURAR EXIGE DOCUMENTO FISCAL (fase AV).
@@ -9234,6 +9250,29 @@ async function recusarAprovacaoSemEstoque(pedido) {
   throw erro;
 }
 
+/**
+ * Recusa (400) o pedido que vai para `statusNovo` com o produto 588 (mão de
+ * obra) ou pago na forma "Outros" — a regra é de
+ * public/modules/shared/venda_barrada.js (09/11/2026). O código do item vem do
+ * cadastro, pelo id; a forma, do cadastro de formas, pelo methodId; e a
+ * categoria diz se o pagamento conta (transferência e remessa não exigem).
+ */
+async function recusarVendaBarrada(pedido, statusNovo) {
+  if (!vendaBarrada.STATUS_APROVADOS.includes(statusNovo)) return;
+  const itens = Array.isArray(pedido.items) ? pedido.items : [];
+  const produtos = await db.getProdutosPorIds(itens.map((item) => item && item.productId));
+  const barrado = vendaBarrada.impedimento(pedido, {
+    statusNovo,
+    formas: loadData().paymentMethods || [],
+    skuDoItem: (item) => (produtos.get(item.productId) || {}).sku,
+    exigePagamento: categoriaVenda.exigePagamento(pedido.category, await categoriasDaVendaParaRegra())
+  });
+  if (!barrado) return;
+  const erro = new Error(barrado.mensagem);
+  erro.status = 400;
+  throw erro;
+}
+
 async function itensSemEstoqueParaFaturar(pedido) {
   if (pedido.stockApplied) return [];
   const regra = await regraDaCategoriaDoPedido(pedido.category);
@@ -9481,6 +9520,19 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   const dataEmissao = body.dataEmissao || new Date().toISOString();
   const dataReferencia = dataEmissao.slice(0, 10);
   const tipoOperacao = body.tipoOperacao || 'VENDA';
+  // A FORMA "OUTROS" NÃO FATURA (09/11/2026, shared/venda_barrada.js). Aqui,
+  // antes da SEFAZ: a autorização fatura o pedido sozinha (faturarPedidoDaNota),
+  // e recusar depois dela deixaria nota válida e pedido sem faturar. Só na
+  // venda; a forma vem do cadastro pelo methodId das linhas do pedido. As
+  // prévias (impostos, DANFE sem valor) não conferem pagamento, e esta também não.
+  const pagamentoBarrado = !opcoes.semConferirPagamentos && vendaBarrada.impedimentoDaNota({
+    pagamentos: body.pagamentos, formas: loadData().paymentMethods || [], venda: tipoOperacao === 'VENDA'
+  });
+  if (pagamentoBarrado) {
+    const err = new Error(pagamentoBarrado);
+    err.status = 400;
+    throw err;
+  }
   // NFC-e é sempre operação interna (idDest 1): a venda presencial acontece
   // na loja, more onde morar o consumidor. A regra fiscal é a de dentro do
   // estado, para não contribuinte.
@@ -9636,6 +9688,15 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
         geraFinanceiro: produto.geraFinanceiro !== false
       }
       : bruto;
+
+    // O 588, MÃO DE OBRA, NÃO SAI EM NOTA (09/11/2026, shared/venda_barrada.js).
+    // Pelo código do cadastro, que é o que vai à nota (codigoProduto acima).
+    const naoFatura = vendaBarrada.produtoQueNaoFatura(item.codigoProduto);
+    if (naoFatura) {
+      const err = new Error(vendaBarrada.mensagemDoItemNaNota({ indice: index, sku: naoFatura.sku, nome: item.descricao || naoFatura.nome }));
+      err.status = 400;
+      throw err;
+    }
 
     // VALORES FISCAIS EDITADOS NA EMISSÃO (13/10/2026, aba Impostos). Só os
     // campos conhecidos (limparEdicaoFiscal). NCM e origem editados valem já
@@ -16138,6 +16199,8 @@ async function tratarRequisicao(req, res) {
         const regraCategoria = await regraDaCategoriaDoPedido(record.category);
         // Nascer aprovado é aprovar: a mesma conferência de estoque.
         if (type === 'order' && status === 'pedido-pre-faturado') await recusarAprovacaoSemEstoque(record);
+        // E as mesmas travas do 588 e da forma "Outros" (09/11/2026).
+        if (type === 'order') await recusarVendaBarrada(record, status);
         const geraFinanceiroAgora = type === 'order' && salesStatus.criaTitulos(status) && regraCategoria.geraFinanceiro;
         if (geraFinanceiroAgora) {
           const pagamentosInvalidos = pagamentosCabemNoPedido(record);
