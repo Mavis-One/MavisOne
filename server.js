@@ -147,6 +147,7 @@ const cargasDosRelatorios = require('./lib/relatorios-cargas');
 // definição por relatório e um motor só para filtrar, somar e exportar.
 const catalogoDeRelatorios = require('./lib/relatorios');
 const relatoriosComum = require('./lib/relatorios/comum');
+const { horaDoPedido } = require('./lib/hora-do-pedido');
 const motorDeRelatorios = require('./lib/relatorios/motor');
 const relatorioPersonalizado = require('./lib/relatorios/personalizado');
 const relatoriosPersonalizadosDb = require('./lib/db/relatorios-personalizados');
@@ -3904,6 +3905,9 @@ function serializeSalesRecord(record, data) {
     category: record.category || '',
     priceTable: record.priceTable || '',
     registrationTime: record.registrationTime || '',
+    // A hora que as listas mostram ao lado da data (09/11/2026): o campo Hora,
+    // sem o '00:00' que o Viper mandava quando não tinha hora (lib/hora-do-pedido.js).
+    hora: horaDoPedido(record.registrationTime),
     clientStatus: record.clientStatus || '',
     clientContact: record.clientContact || '',
     customerPoCode: record.customerPoCode || '',
@@ -4928,8 +4932,8 @@ function buildSalesDashboardSummary(data, escopo) {
       valorTotal,
       ticketMedio: sellerOrders.length ? Math.round((valorTotal / sellerOrders.length) * 100) / 100 : 0,
       orders: sellerOrders
-        .map((o) => ({ id: o.id, code: o.code, customer: o.customer, amount: o.amount, date: o.date, status: o.status }))
-        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+        .map((o) => ({ id: o.id, code: o.code, customer: o.customer, amount: o.amount, date: o.date, hora: o.hora || '', status: o.status }))
+        .sort((a, b) => `${b.date || ''} ${b.hora}`.localeCompare(`${a.date || ''} ${a.hora}`))
     };
   });
 
@@ -5027,8 +5031,8 @@ function resumoDoPainelDeVendas(data, escopo, filtro = null) {
 function pedidosDoVendedorNoPainel(registros, data) {
   return registros
     .map((record) => serializeSalesRecord(record, data))
-    .map((o) => ({ id: o.id, code: o.code, customer: o.customer, amount: o.amount, date: o.date, status: o.status }))
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    .map((o) => ({ id: o.id, code: o.code, customer: o.customer, amount: o.amount, date: o.date, hora: o.hora || '', status: o.status }))
+    .sort((a, b) => `${b.date || ''} ${b.hora}`.localeCompare(`${a.date || ''} ${a.hora}`));
 }
 
 function getFinanceEntryPayments(data, entryId) {
@@ -11026,7 +11030,9 @@ async function inutilizarNumeracaoFiscal(body, user) {
 // lista em ordem de id, que não é ordem nenhuma para quem lê.
 const CAMPOS_ORDENAVEIS = {
   code: (r) => Number(r.code) || 0,
-  date: (r) => String(r.date || ''),
+  // Data e hora (09/11/2026): no mesmo dia, o mais tarde primeiro. Sem hora,
+  // fica depois dos que têm ('2026-11-06 ' < '2026-11-06 14:32').
+  date: (r) => `${String(r.date || '')} ${horaDoPedido(r.registrationTime)}`,
   updatedAt: (r) => String(r.updatedAt || ''),
   status: (r) => String(r.status || ''),
   companyName: (r) => String(r.companyName || '').toLowerCase(),

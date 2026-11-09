@@ -162,8 +162,10 @@ check('  o total paginado conhece o conjunto inteiro', paginado.paginacao.total 
 check('a soma dos grupos bate com o card', somaGrupos === paginado.indicadores.faturamento,
   `${somaGrupos} vs ${paginado.indicadores.faturamento}`);
 const csvTudo = rel.montarCsv(rel.filtrar(REGISTROS.flatMap(rel.linhasDoRegistro), {}, escopoDe(usuarioEduardo)));
+// A coluna pelo nome do cabeçalho: a Hora (09/11/2026) entrou depois da Data.
+const colunaDoValor = csvTudo.replace(/^﻿/, '').split('\r\n')[0].split(';').indexOf('Valor total');
 const somaCsv = csvTudo.split('\r\n').slice(1).filter(Boolean)
-  .map((l) => Number(l.split(';')[9].replace(',', '.'))).reduce((a, b) => a + b, 0);
+  .map((l) => Number(l.split(';')[colunaDoValor].replace(',', '.'))).reduce((a, b) => a + b, 0);
 check('e o CSV soma exatamente o mesmo', Math.round(somaCsv * 100) / 100 === comoEduardo.indicadores.faturamento,
   `${somaCsv} vs ${comoEduardo.indicadores.faturamento}`);
 

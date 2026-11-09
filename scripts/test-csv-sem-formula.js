@@ -129,16 +129,20 @@ const linhaEnvenenada = {
 };
 const arquivo = rv.montarCsv([linhaEnvenenada]);
 const celulas = arquivo.split('\r\n')[1].split(';');
-check('o cliente saiu neutralizado', celulas[3] === "'=1+1", celulas[3]);
-check('o produto também, dentro das aspas', celulas[4].startsWith('"\'=HYPERLINK'), celulas[4].slice(0, 20));
-check('o código do produto também', celulas[5] === "'@SUM(A1:A9)", celulas[5]);
-check('e o status', celulas[10] === "'+1", celulas[10]);
+// Pelo nome no cabeçalho, e não pela posição: a Hora (09/11/2026) entrou
+// depois da Data e empurrou as colunas.
+const cabecalho = arquivo.replace(/^﻿/, '').split('\r\n')[0].split(';');
+const coluna = (rotulo) => celulas[cabecalho.indexOf(rotulo)];
+check('o cliente saiu neutralizado', coluna('Cliente') === "'=1+1", coluna('Cliente'));
+check('o produto também, dentro das aspas', coluna('Produto').startsWith('"\'=HYPERLINK'), coluna('Produto').slice(0, 20));
+check('o código do produto também', coluna('Código do produto') === "'@SUM(A1:A9)", coluna('Código do produto'));
+check('e o status', coluna('Status') === "'+1", coluna('Status'));
 // As colunas numéricas atravessam intactas: é o que garante que a planilha
 // ainda soma.
-check('quantidade intacta', celulas[6] === '1,5', celulas[6]);
-check('valor unitário intacto', celulas[7] === '10,00', celulas[7]);
-check('desconto negativo intacto', celulas[8] === '-2,00', celulas[8]);
-check('total intacto', celulas[9] === '13,00', celulas[9]);
+check('quantidade intacta', coluna('Quantidade') === '1,5', coluna('Quantidade'));
+check('valor unitário intacto', coluna('Valor unitário') === '10,00', coluna('Valor unitário'));
+check('desconto negativo intacto', coluna('Desconto') === '-2,00', coluna('Desconto'));
+check('total intacto', coluna('Valor total') === '13,00', coluna('Valor total'));
 check('nenhuma célula viva sobrou na linha',
   celulas.every((c) => !csv.INICIO_DE_FORMULA.test(c.startsWith('"') ? c.slice(1) : c)
     || /^-?\d/.test(c)),

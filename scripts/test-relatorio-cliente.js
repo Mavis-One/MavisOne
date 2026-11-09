@@ -89,7 +89,10 @@ check('com nomes distintos (o <select> não vira N vezes "Sem cliente")',
 
 console.log('\n--- 6. o CSV ---');
 const csv = rv.montarCsv(rv.linhasDoRegistro(pedido(1, 'ACME LTDA', 300)));
-const colunaCliente = csv.split('\n')[1].split(';')[3];
+// Pela posição no cabeçalho, e não por um número fixo: a Hora (09/11/2026)
+// entrou depois da Data e empurrou as colunas.
+const [cabecalho, primeira] = csv.replace(/^﻿/, '').split(/\r?\n/);
+const colunaCliente = primeira.split(';')[cabecalho.split(';').indexOf('Cliente')];
 check('a coluna Cliente do CSV traz o nome', colunaCliente === 'ACME LTDA', colunaCliente);
 
 console.log('\n--- 7. os outros formatos de entrada continuam servidos ---');

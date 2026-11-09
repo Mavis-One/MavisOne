@@ -280,7 +280,10 @@ window.MavisRelatoriosCatalogo = (function () {
       const seta = ativa ? (v.sentido === 'desc' ? ' ▼' : ' ▲') : '';
       return `<th${classe}><button type="button" class="sales-ordenar${ativa ? ' is-ativa' : ''}" data-rel-ordenar="${escapeHtml(c.campo)}" title="Ordenar por ${escapeHtml(c.rotulo)}">${escapeHtml(c.rotulo)}${seta}</button></th>`;
     }).join('');
-    const celulas = (l) => colunas.map((c) => `<td${ehNumero(c) ? ' class="rel-num"' : ''}>${escapeHtml(formatar(c, l[c.campo]))}</td>`).join('');
+    // Data e coluna `inteira` (a Hora, a Empresa do título) numa linha só
+    // (09/11/2026): "08:13" quebrava em "08:1" / "3".
+    const classeDaCelula = (c) => (ehNumero(c) ? ' class="rel-num"' : (c.inteira || c.tipo === 'data') ? ' class="rel-inteira"' : '');
+    const celulas = (l) => colunas.map((c) => `<td${classeDaCelula(c)}>${escapeHtml(formatar(c, l[c.campo]))}</td>`).join('');
     const somaDe = (totais, rotulo) => colunas.map((c, i) => {
       if (Object.prototype.hasOwnProperty.call(totais || {}, c.campo)) return `<td class="rel-num"><strong>${escapeHtml(formatar(c, totais[c.campo]))}</strong></td>`;
       return i === 0 ? `<td><strong>${escapeHtml(rotulo)}</strong></td>` : '<td></td>';

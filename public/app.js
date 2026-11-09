@@ -717,7 +717,9 @@ const SALES_LOTE_SO_QUEM_NAO_E_VENDEDOR = ['aprovar', 'aprovar_sem_faturamento',
 const SALES_COLUNAS = [
   { chave: 'code', rotulo: 'Código', ordenavel: true, fixa: true, valor: (r) => escapeHtml(String(r.code)) + botaoDaNotaDoPedido(r) },
   { chave: 'type', rotulo: 'Tipo', ordenavel: false, valor: (r) => (r.type === 'quote' ? 'Orçamento' : 'Pedido') },
-  { chave: 'date', rotulo: 'Data', ordenavel: true, valor: (r, f) => f.data(r.date) },
+  // Data e hora do pedido (09/11/2026): a hora é o campo Hora do pedido, e
+  // sem ela sai só a data (lib/hora-do-pedido.js).
+  { chave: 'date', rotulo: 'Data/Hora', ordenavel: true, valor: (r, f) => f.data(r.date) + (r.hora ? ` ${escapeHtml(r.hora)}` : '') },
   { chave: 'updatedAt', rotulo: 'Data de Alteração', ordenavel: true, valor: (r, f) => (r.updatedAt ? f.data(String(r.updatedAt).slice(0, 10)) : '-') },
   // Fase ES: o pedido aprovado que espera a NF-e diz se o pagamento já foi
   // confirmado (o servidor manda `liberacaoNfe` só para esses).
@@ -7824,7 +7826,7 @@ async function loadModule(moduleName) {
             </div>
             <div class="table-scroll">
               <table class="table">
-                <thead><tr><th>Pedido</th><th>Cliente</th><th>NF-e</th><th>Valor</th><th>Data</th><th>Status</th></tr></thead>
+                <thead><tr><th>Pedido</th><th>Cliente</th><th>NF-e</th><th>Valor</th><th>Data/Hora</th><th>Status</th></tr></thead>
                 <tbody>
                   ${painel.vendas.length ? painel.vendas.map((v) => `
                     <tr>
@@ -7834,7 +7836,7 @@ async function loadModule(moduleName) {
                         ? `<span class="finance-badge finance-badge-success">${escapeHtml(v.nfeNumero || 'emitida')}</span>`
                         : '<span class="muted">Sem nota</span>'}</td>
                       <td>${salesFormatBRL(v.valor)}</td>
-                      <td>${salesFormatDate(v.data)}</td>
+                      <td>${salesFormatDate(v.data)}${v.hora ? ` ${escapeHtml(v.hora)}` : ''}</td>
                       <td>${salesStatusBadge(v.status)}</td>
                     </tr>
                   `).join('') : '<tr><td colspan="6" class="muted">Nenhuma venda sua neste período.</td></tr>'}
@@ -7961,14 +7963,14 @@ async function loadModule(moduleName) {
             <h3>Painel do Vendedor</h3>
             <div class="table-scroll">
               <table class="table">
-                <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Data</th><th>Status</th></tr></thead>
+                <thead><tr><th>Pedido</th><th>Cliente</th><th>Valor</th><th>Data/Hora</th><th>Status</th></tr></thead>
                 <tbody>
                   ${selected.orders.length ? selected.orders.map((o) => `
                     <tr>
                       <td>${escapeHtml(o.code)}</td>
                       <td>${escapeHtml(o.customer)}</td>
                       <td>${salesFormatBRL(o.amount)}</td>
-                      <td>${salesFormatDate(o.date)}</td>
+                      <td>${salesFormatDate(o.date)}${o.hora ? ` ${escapeHtml(o.hora)}` : ''}</td>
                       <td>${salesStatusBadge(o.status)}</td>
                     </tr>
                   `).join('') : '<tr><td colspan="5" class="muted">Nenhuma venda realizada</td></tr>'}

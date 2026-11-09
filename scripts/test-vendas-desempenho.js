@@ -64,6 +64,8 @@ const contexto = {
   bandeiraCartao: require(path.join(RAIZ, 'public/modules/shared/bandeira_cartao')),
   // Fase FB: salesDelivery normaliza o pedido de compra do cliente.
   exigenciasNfe: require(path.join(RAIZ, 'public/modules/shared/exigencias_nfe')),
+  // 09/11/2026: o serializer manda a hora do pedido.
+  horaDoPedido: require(path.join(RAIZ, 'lib/hora-do-pedido')).horaDoPedido,
   console
 };
 let fontes = '';

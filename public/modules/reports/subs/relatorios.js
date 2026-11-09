@@ -50,6 +50,14 @@ function relData(iso) {
   return `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}`;
 }
 
+// Data e hora do pedido (09/11/2026): "06/11/2026 14:32", ou só a data
+// quando o pedido não tem hora — o servidor manda `hora` já limpa
+// (lib/hora-do-pedido.js).
+function relDataHora(linha) {
+  const dia = relData(linha.data);
+  return linha.hora ? `${dia} ${linha.hora}` : dia;
+}
+
 function relNum(valor) {
   const x = Number(valor || 0);
   return Number.isInteger(x) ? String(x) : x.toFixed(2).replace('.', ',');
@@ -442,7 +450,7 @@ function relIndicadores(rel) {
 // As colunas da tabela e o que cada uma sabe fazer. A ordenação sai daqui, e
 // não de uma lista paralela — coluna nova nasce ordenável ou explicitamente não.
 const REL_COLUNAS = [
-  { chave: 'data', rotulo: 'Data', ordenavel: true },
+  { chave: 'data', rotulo: 'Data/Hora', ordenavel: true },
   { chave: 'pedido', rotulo: 'Pedido', ordenavel: true },
   { chave: 'vendedor', rotulo: 'Vendedor', ordenavel: true },
   { chave: 'cliente', rotulo: 'Cliente', ordenavel: true },
@@ -460,8 +468,8 @@ function relLinhaDaTabela(linha, escapeHtml) {
   // ERP. O relatório não reimplementa nenhuma delas — ele leva até lá.
   return `
     <tr>
-      <td>${relData(linha.data)}</td>
-      <td><button type="button" class="rel-link" data-rel-pedido="${escapeHtml(linha.pedidoId)}" title="Abrir o pedido">#${escapeHtml(String(linha.pedidoCodigo || '-'))}</button></td>
+      <td class="rel-inteira">${escapeHtml(relDataHora(linha))}</td>
+      <td class="rel-inteira"><button type="button" class="rel-link" data-rel-pedido="${escapeHtml(linha.pedidoId)}" title="Abrir o pedido">#${escapeHtml(String(linha.pedidoCodigo || '-'))}</button></td>
       <td><button type="button" class="rel-link" data-rel-vendedor="${escapeHtml(linha.vendedorId)}" title="Ver o desempenho deste vendedor">${escapeHtml(linha.vendedorNome)}</button></td>
       <td><button type="button" class="rel-link" data-rel-cliente="${escapeHtml(linha.clienteId)}" data-rel-cliente-nome="${escapeHtml(linha.clienteNome)}" title="Abrir o cadastro do cliente">${escapeHtml(linha.clienteNome)}</button></td>
       <td>
@@ -561,14 +569,14 @@ function relPorVendedor(ctx, rel) {
           <div class="table-scroll">
             <table class="table rel-tabela">
               <thead><tr>
-                <th>Data</th><th>Pedido</th><th>Cliente</th><th>Produto</th>
+                <th>Data/Hora</th><th>Pedido</th><th>Cliente</th><th>Produto</th>
                 <th class="rel-num">Qtd.</th><th class="rel-num">Total</th>
               </tr></thead>
               <tbody>
                 ${grupo.linhas.map((linha) => `
                   <tr>
-                    <td>${relData(linha.data)}</td>
-                    <td><button type="button" class="rel-link" data-rel-pedido="${escapeHtml(linha.pedidoId)}">#${escapeHtml(String(linha.pedidoCodigo || '-'))}</button></td>
+                    <td class="rel-inteira">${escapeHtml(relDataHora(linha))}</td>
+                    <td class="rel-inteira"><button type="button" class="rel-link" data-rel-pedido="${escapeHtml(linha.pedidoId)}">#${escapeHtml(String(linha.pedidoCodigo || '-'))}</button></td>
                     <td>${escapeHtml(linha.clienteNome)}</td>
                     <td>${escapeHtml(linha.produtoNome)}</td>
                     <td class="rel-num">${relNum(linha.quantidade)}</td>

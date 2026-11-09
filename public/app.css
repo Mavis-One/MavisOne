@@ -4737,6 +4737,9 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
    um nome de produto de 173 caracteres empurrava as colunas de número para
    fora da tela. Número continua numa linha só (.rel-num). */
 .rel-tabela td:not(.rel-num) { white-space: normal; max-width: 420px; overflow-wrap: anywhere; }
+/* Data, hora e coluna `inteira` não quebram (09/11/2026): "08:13" saía em
+   "08:1" / "3" e a data em "01/08/" / "2026". */
+.rel-tabela td.rel-inteira { white-space: nowrap; overflow-wrap: normal; }
 /* `.table th, .table td { text-align: left }` vence `.rel-num` sozinho (elemento
    + classe contra só classe): o número saía alinhado à esquerda. */
 .rel-tabela .rel-num { text-align: right; }
