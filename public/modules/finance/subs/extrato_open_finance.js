@@ -245,16 +245,15 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     }
   }
 
-  // CONCILIAR AUTOMÁTICO (28/10/2026; desde 05/11/2026 só três coisas, pedido
-  // do usuário: "valores, empresa selecionada, e data"). Vale para as não
-  // conciliadas do filtro da tela; o servidor só concilia quando as três batem
-  // e o valor é único dos dois lados (lib/conciliacao-automatica.js).
+  // CONCILIAR AUTOMÁTICO (28/10/2026; desde 10/11/2026 quatro coisas, pedido
+  // do usuário: "conta bancária, fornecedor, valor e data"). Vale para as não
+  // conciliadas do filtro da tela; o servidor só concilia quando as quatro batem
+  // com um título só, escolhido por uma movimentação só (lib/conciliacao-automatica.js).
   async function conciliarAutomatico(botao) {
     if (botao.disabled) return;
     const confirmed = await confirmModal('Conciliar automaticamente as movimentações não conciliadas do filtro atual? '
-      + 'Só entram as que têm empresa, valor e data (o vencimento, até o dia útil seguinte) batendo com um único título em aberto. '
-      + 'Títulos do mesmo valor: entra o que vence na data, ou o único que vence no mês da movimentação. '
-      + 'Depois, o título único que vence em outro dia do mesmo mês fica sugerido para confirmar, e as regras do extrato lançam ou ignoram o resto.');
+      + 'Só entram as que têm conta bancária, fornecedor/cliente (o nome ou o CPF/CNPJ na descrição), valor e data (o vencimento, até o dia útil seguinte) batendo com um único título em aberto. '
+      + 'Depois, o título único da mesma conta e valor que vence no mês fica sugerido para confirmar (quando só faltou o nome ou a data), e as regras do extrato lançam ou ignoram o resto.');
     if (!confirmed) return;
     botao.disabled = true;
     try {
@@ -294,7 +293,7 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     if (!ids) {
       const n = (ultimoResumo && ultimoResumo.sugeridas) || 0;
       const ok = await confirmModal(`Conciliar ${n} sugestão(ões) do filtro atual com o título sugerido de cada uma? `
-        + 'Empresa e valor batem, e o título vence no mesmo mês (não na data). Confira a coluna Conciliação antes.');
+        + 'Conta bancária e valor batem, e o título vence no mês; faltou o nome na descrição ou a data é outra. Confira a coluna Conciliação antes.');
       if (!ok) return;
     }
     if (botao) botao.disabled = true;
@@ -326,19 +325,20 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
       </details>`;
   }
   function corpoDoCadastro(p) {
-    // Desde 05/11/2026 a automática é empresa, valor e data: o que atrapalha
-    // é só a empresa que falta (na conta ou no título).
-    const semEmp = p.titulosSemEmpresa || { total: 0, exemplos: [] };
-    const contas = p.contasSemEmpresa || [];
-    if (!semEmp.total && !contas.length) {
-      return '<p class="muted">Nada no cadastro atrapalha: as contas bancárias e os títulos em aberto têm empresa.</p>';
+    // Desde 10/11/2026 a automática é conta bancária, fornecedor, valor e
+    // data: o que atrapalha no cadastro é o título sem conta ou sem
+    // cliente/fornecedor.
+    const semConta = p.titulosSemConta || { total: 0, exemplos: [] };
+    const semFornecedor = p.titulosSemFornecedor || { total: 0, exemplos: [] };
+    if (!semConta.total && !semFornecedor.total) {
+      return '<p class="muted">Nada no cadastro atrapalha: os títulos em aberto têm conta bancária e cliente/fornecedor.</p>';
     }
-    const lista = (itens, linha) => `<ul class="extrato-cadastro-lista">${itens.map(linha).join('')}</ul>`;
+    const lista = (itens) => `<ul class="extrato-cadastro-lista">${itens.map((t) => `<li>${escapeHtml(t.descricao || '-')}${t.nome ? ` — ${escapeHtml(t.nome)}` : ''} · ${escapeHtml(financeFormatBRL(t.valor))}${t.vencimento ? ` · venc. ${escapeHtml(financeFormatDate(t.vencimento))}` : ''}</li>`).join('')}</ul>`;
     return `
-      ${contas.length ? `<p><strong>${contas.length} conta(s) bancária(s) sem empresa</strong> — o extrato delas não concilia nada sozinho. Ligue a conta a uma empresa no cadastro de contas bancárias.</p>
-        ${lista(contas, (c) => `<li>${escapeHtml(c)}</li>`)}` : ''}
-      ${semEmp.total ? `<p><strong>${semEmp.total} título(s) em aberto sem empresa</strong> — nunca entram sozinhos, e travam outro título do mesmo valor. Informe o estabelecimento ou a conta bancária do título.</p>
-        ${lista(semEmp.exemplos, (t) => `<li>${escapeHtml(t.descricao || '-')}${t.nome ? ` — ${escapeHtml(t.nome)}` : ''} · ${escapeHtml(financeFormatBRL(t.valor))}${t.vencimento ? ` · venc. ${escapeHtml(financeFormatDate(t.vencimento))}` : ''}</li>`)}` : ''}`;
+      ${semConta.total ? `<p><strong>${semConta.total} título(s) em aberto sem conta bancária</strong> — nunca entram sozinhos, e travam outro título do mesmo fornecedor, valor e data. Informe a conta bancária do título.</p>
+        ${lista(semConta.exemplos)}` : ''}
+      ${semFornecedor.total ? `<p><strong>${semFornecedor.total} título(s) em aberto sem cliente/fornecedor${filters.bankAccountId ? ' nesta conta' : ''}</strong> — o nome nunca está na descrição do extrato: só entram pela sugestão ou à mão. Informe o cliente/fornecedor do título.</p>
+        ${lista(semFornecedor.exemplos)}` : ''}`;
   }
   async function carregarPendenciasDoCadastro() {
     const corpo = document.getElementById('extratoCadastroCorpo');
@@ -505,9 +505,9 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
     const selo = (tx.regra
       ? ` <span class="finance-badge finance-badge-info" title="${escapeHtml(`Pela regra do extrato "${tx.regra}"`)}">Regra</span>`
       : (tx.conciliadoAutomaticamente
-        ? ' <span class="finance-badge finance-badge-info" title="Conciliada automaticamente: empresa, valor e data (ou o mês, entre títulos do mesmo valor) batem">Auto</span>'
+        ? ' <span class="finance-badge finance-badge-info" title="Conciliada automaticamente: conta bancária, fornecedor/cliente, valor e data batem">Auto</span>'
         : ''))
-      + (tx.sugestao ? ' <span class="finance-badge finance-badge-warning" title="Empresa e valor batem com um único título, que vence em outro dia do mesmo mês: confira e confirme">Sugerida</span>' : '');
+      + (tx.sugestao ? ' <span class="finance-badge finance-badge-warning" title="Conta bancária e valor batem com um único título que vence no mês; faltou o nome na descrição ou a data é outra: confira e confirme">Sugerida</span>' : '');
     // A SUGESTÃO DE 1 CLIQUE (04/11/2026): o título que a automática achou,
     // na coluna Conciliação, com o vencimento e o nome do cadastro no title.
     const sug = tx.sugestao;
@@ -572,8 +572,8 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         <div class="cadastro-list-actions">
           <button type="button" id="extratoNewBtn">+ Nova movimentação</button>
           <button type="button" class="secondary" id="extratoImportBtn">Importar extrato (OFX/CSV)</button>
-          <button type="button" class="secondary" id="extratoAutoBtn" title="Concilia sozinho o que tem empresa, valor e data batendo, com valor único (um título e uma movimentação com esse valor). Títulos do mesmo valor: o que vence na data, ou o único do mês da movimentação. Depois, sugere o título único que vence em outro dia do mês e aplica as regras do extrato">Conciliar automático</button>
-          ${summary.sugeridas ? `<button type="button" id="extratoConfirmarSugestoesBtn" title="Concilia cada sugestão do filtro com o título sugerido (empresa, valor e data batem; só falta o nome na descrição)">Confirmar sugestões (${escapeHtml(String(summary.sugeridas))})</button>` : ''}
+          <button type="button" class="secondary" id="extratoAutoBtn" title="Concilia sozinho o que tem conta bancária, fornecedor/cliente, valor e data batendo com um único título (e uma só movimentação para ele). Depois, sugere o título único da mesma conta e valor que vence no mês e aplica as regras do extrato">Conciliar automático</button>
+          ${summary.sugeridas ? `<button type="button" id="extratoConfirmarSugestoesBtn" title="Concilia cada sugestão do filtro com o título sugerido (conta bancária e valor batem; faltou o nome ou a data)">Confirmar sugestões (${escapeHtml(String(summary.sugeridas))})</button>` : ''}
           <button type="button" class="secondary" id="extratoRegrasBtn" title="Tarifa, IOF, juros, transferência, aplicação: o que nunca tem título é lançado ou ignorado sozinho">Regras do extrato</button>
           <button type="button" class="secondary" id="extratoRefreshBtn">Atualizar</button>
         </div>
