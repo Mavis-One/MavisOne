@@ -30,6 +30,43 @@ const apagarRascunhoGuardado = (chave) => {
   localStorage.removeItem(chave);
   sessionStorage.removeItem(chave);
 };
+// RASCUNHO ENCERRADO NÃO VOLTA (10/11/2026, pedido do usuário: "não estou
+// conseguindo fazer novos lançamentos pois o mesmo não apaga as informações de
+// lançamentos já finalizados"). O localStorage é de TODAS as abas: salvar numa
+// aba apagava o rascunho, e outra aba com o mesmo formulário na tela o gravava
+// de volta ao ser fechada ou recarregada (pagehide) — o lançamento já salvo
+// voltava no Novo Lançamento seguinte, e o "Descartar rascunho" também não
+// durava. Provado com duas abas na porta 3999. Agora cada rascunho tem um id;
+// salvar ou descartar põe o id na lista dos encerrados (por usuário), e nenhuma
+// aba grava de novo um rascunho encerrado. E a aba só grava o que foi digitado
+// NELA: abrir o formulário e fechar a aba não escreve nada.
+const RASCUNHOS_ENCERRADOS_KEY = 'mavisone:lancamento-financeiro-encerrados:';
+const novoIdDeRascunho = () => `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+const rascunhosEncerrados = (usuarioId) => {
+  try {
+    const lista = JSON.parse(localStorage.getItem(`${RASCUNHOS_ENCERRADOS_KEY}${usuarioId}`) || '[]');
+    return Array.isArray(lista) ? lista : [];
+  } catch (_) {
+    return [];
+  }
+};
+const rascunhoEncerrado = (usuarioId, rascunho) => Boolean(rascunho && rascunho.rascunhoId
+  && rascunhosEncerrados(usuarioId).includes(rascunho.rascunhoId));
+/** Salvo ou descartado: o id entra na lista e o rascunho sai, se ainda for ele. */
+const encerrarRascunho = (usuarioId, chave, rascunhoId) => {
+  const lista = rascunhosEncerrados(usuarioId).filter((id) => id !== rascunhoId);
+  lista.push(rascunhoId);
+  localStorage.setItem(`${RASCUNHOS_ENCERRADOS_KEY}${usuarioId}`, JSON.stringify(lista.slice(-100)));
+  // Outra aba pode ter posto ali um rascunho DELA (outro id): esse fica.
+  let guardado = null;
+  try { guardado = lerRascunhoGuardado(chave); } catch (_) { guardado = null; }
+  if (!guardado || !guardado.rascunhoId || guardado.rascunhoId === rascunhoId) apagarRascunhoGuardado(chave);
+};
+// Outra aba salvou ou descartou: a tela aberta aqui confere se era o rascunho dela.
+let aoEncerrarEmOutraAba = null;
+window.addEventListener('storage', (evento) => {
+  if (evento.key && evento.key.startsWith(RASCUNHOS_ENCERRADOS_KEY)) aoEncerrarEmOutraAba?.();
+});
 // O título como estava gravado quando o rascunho da edição começou. Se mudou
 // depois (outra pessoa, outra aba, uma baixa), o rascunho velho não volta por
 // cima do que está gravado.
@@ -43,11 +80,11 @@ const impressaoDoTitulo = (entry) => (entry ? JSON.stringify([
   document.addEventListener(tipo, (evento) => {
     const alvo = evento.target;
     if (alvo?.closest?.('#financeEntryForm, #financeParcelas')) {
-      setTimeout(() => guardarRascunhoFinanceiroAtivo?.(), 0);
+      setTimeout(() => guardarRascunhoFinanceiroAtivo?.({ digitou: true }), 0);
     }
   }, true);
 });
-window.addEventListener('pagehide', () => guardarRascunhoFinanceiroAtivo?.());
+window.addEventListener('pagehide', () => guardarRascunhoFinanceiroAtivo?.({ aoSair: true }));
 
 window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFinanceNovoLancamento(ctx) {
   const { api, showToast, state, loadModule, escapeHtml } = ctx;
@@ -73,10 +110,17 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     || null;
   state.financeEditEntryId = null;
   state.financeOpenedEntryId = idEmEdicao || null;
-  const chaveDoRascunho = `${FINANCE_DRAFT_KEY}${state.user?.id || 'usuario'}:${idEmEdicao || 'novo'}`;
+  const usuarioDoRascunho = state.user?.id || 'usuario';
+  const chaveDoRascunho = `${FINANCE_DRAFT_KEY}${usuarioDoRascunho}:${idEmEdicao || 'novo'}`;
   let rascunhoSalvo = null;
   try {
     rascunhoSalvo = lerRascunhoGuardado(chaveDoRascunho);
+    // Já salvo ou descartado (noutra aba, que o regravou antes desta correção).
+    if (rascunhoEncerrado(usuarioDoRascunho, rascunhoSalvo)) {
+      apagarRascunhoGuardado(chaveDoRascunho);
+      rascunhoSalvo = null;
+    }
+    if (rascunhoEncerrado(usuarioDoRascunho, state.financeRascunhoLancamento)) state.financeRascunhoLancamento = null;
   } catch (error) {
     if (!avisoFalhaRascunhoFinanceiro) {
       avisoFalhaRascunhoFinanceiro = true;
@@ -130,6 +174,12 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     try { apagarRascunhoGuardado(chaveDoRascunho); } catch (_) { /* fica para a próxima */ }
     showToast('Este título foi alterado depois do seu rascunho: abri o que está gravado.', 'warning', 8000);
   }
+  // O id do rascunho desta tela: o do que voltou, ou um novo. `mexeu` só fica
+  // verdadeiro com algo digitado nesta tela; `encerradoAqui`, depois de salvo
+  // ou descartado (aqui ou noutra aba), e então nada mais é gravado.
+  const rascunhoId = (rascunhoInicial && rascunhoInicial.rascunhoId) || novoIdDeRascunho();
+  let mexeu = false;
+  let encerradoAqui = false;
 
   // Fase EI: "Voltar ao pedido" só para lançamento DAQUELE pedido.
   //
@@ -806,6 +856,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       if (busca) rotulos[id] = busca.value;
     });
     state.financeRascunhoLancamento = {
+      rascunhoId,
       editId: editEntry ? editEntry.id : null,
       formType,
       estabelecimentoAtual,
@@ -888,7 +939,8 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       <span class="muted" id="financeRascunhoRecuperado">Rascunho não salvo recuperado (guardado em ${escapeHtml(quando)}).</span>`);
     document.getElementById('financeDescartarRascunho').addEventListener('click', () => {
       guardarRascunhoFinanceiroAtivo = null;
-      try { apagarRascunhoGuardado(chaveDoRascunho); } catch (_) { /* some com a próxima gravação */ }
+      encerradoAqui = true;
+      try { encerrarRascunho(usuarioDoRascunho, chaveDoRascunho, rascunhoId); } catch (_) { /* some com a próxima gravação */ }
       state.financeRascunhoLancamento = null;
       state.financeEditEntryId = editEntry ? editEntry.id : null;
       state.financeNovoTipo = tipoSugerido || null;
@@ -897,7 +949,13 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
     });
   }
 
-  function salvarRascunhoFinanceiro() {
+  function salvarRascunhoFinanceiro({ digitou = false } = {}) {
+    if (digitou) mexeu = true;
+    if (!mexeu || encerradoAqui) return;
+    if (rascunhoEncerrado(usuarioDoRascunho, { rascunhoId })) {
+      encerradoAqui = true;
+      return;
+    }
     const form = document.getElementById('financeEntryForm');
     if (!form) return;
     const campos = {};
@@ -910,6 +968,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       if (busca) rotulos[id] = busca.value;
     });
     const rascunho = {
+      rascunhoId,
       editId: editEntry ? editEntry.id : null,
       formType,
       estabelecimentoAtual,
@@ -1277,8 +1336,13 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
         } else {
           result = await api('/api/finance/entries', { method: 'POST', body: JSON.stringify(payload) });
         }
+        // Salvo: este rascunho acabou, aqui e em qualquer aba que o mostre.
+        encerradoAqui = true;
+        if (state.financeRascunhoLancamento && state.financeRascunhoLancamento.rascunhoId === rascunhoId) {
+          state.financeRascunhoLancamento = null;
+        }
         try {
-          apagarRascunhoGuardado(chaveDoRascunho);
+          encerrarRascunho(usuarioDoRascunho, chaveDoRascunho, rascunhoId);
         } catch (error) {
           if (!avisoFalhaRascunhoFinanceiro) {
             avisoFalhaRascunhoFinanceiro = true;
@@ -1349,7 +1413,26 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
       rascunhoRecuperadoEm = Number(rascunho.salvoEm) || Date.now();
       mostrarDescartar();
     }
+    // A volta do "+" traz o cadastro recém-criado, que o guardado ainda não tem.
+    if (rascunho && rascunho !== rascunhoSalvo && (rascunho.editId || null) === (editEntry ? editEntry.id : null)) mexeu = true;
     guardarRascunhoFinanceiroAtivo = salvarRascunhoFinanceiro;
+    // SALVO OU DESCARTADO NOUTRA ABA (10/11/2026): sem nada digitado aqui, a
+    // tela recomeça (do zero, ou com o título como ficou gravado); com algo
+    // digitado, fica, mas não é mais guardado como rascunho e avisa do dobro.
+    aoEncerrarEmOutraAba = () => {
+      if (encerradoAqui || guardarRascunhoFinanceiroAtivo !== salvarRascunhoFinanceiro) return;
+      if (!rascunhoEncerrado(usuarioDoRascunho, { rascunhoId })) return;
+      encerradoAqui = true;
+      if (!document.getElementById('financeEntryForm')) return;
+      if (mexeu) {
+        showToast('Este lançamento foi salvo ou descartado em outra aba. O que está nesta tela não é mais guardado como rascunho: confira antes de salvar, para não lançar em dobro.', 'warning', 12000);
+        return;
+      }
+      state.financeEditEntryId = editEntry ? editEntry.id : null;
+      state.financeNovoTipo = tipoSugerido || null;
+      showToast('Este lançamento foi salvo ou descartado em outra aba: a tela recomeçou.', 'info');
+      loadModule('finance');
+    };
   }
 };
 
