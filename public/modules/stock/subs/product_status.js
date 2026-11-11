@@ -13,8 +13,26 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
   // nome sozinho nao distingue qual das sete "SETA" e' esta.
   const opcoesProduto = window.MavisRotuloProduto.opcoes(meta.products);
 
-  let productId = state.stockStatusProductId || (meta.products[0] ? meta.products[0].id : '');
+  // O PRODUTO ABERTO SOBREVIVE AO REDESENHO (11/11/2026, pedido do usuário:
+  // "toda vez que eu troco de aba ou faço algum movimento fora dessa página
+  // ela joga pra essa outra"). Voltar à aba redesenha a tela (dados ao vivo ->
+  // loadModule); o produto escolhido só valia no primeiro desenho, e o
+  // seguinte abria o primeiro da lista ("0,100 UN PB314P..."). Agora o aberto
+  // fica em state.stockStatusAbertoId (e no endereço, para o F5); o pedido de
+  // fora (lista de produtos, cadastro, endereço) vem antes dele.
+  const existe = (id) => Boolean(id) && meta.products.some((p) => p.id === id);
+  let productId = [state.stockStatusProductId, state.stockStatusAbertoId].find(existe)
+    || (meta.products[0] ? meta.products[0].id : '');
   state.stockStatusProductId = null;
+  const abrirProduto = (id) => {
+    productId = id;
+    state.stockStatusAbertoId = id || null;
+    // Só com esta tela na frente: a carga do meta demora, e a pessoa pode ter saído.
+    if (typeof gravarTelaNoEndereco === 'function' && state.activeModule === 'stock' && state.activeSub === 'product_status') {
+      gravarTelaNoEndereco('stock', 'product_status', { substituir: true });
+    }
+  };
+  abrirProduto(productId);
 
   async function load() {
     if (!productId) return null;
@@ -124,7 +142,7 @@ window.MavisSubscreenRegistry.stock.product_status = async function renderProduc
       id: 'statusProduto',
       options: opcoesProduto,
       onSelect: (value) => {
-        productId = value;
+        abrirProduto(value);
         render();
       }
     });

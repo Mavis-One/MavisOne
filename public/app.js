@@ -200,7 +200,8 @@ function telaDoEndereco(hash = window.location.hash) {
  * lista de vendas guarda no endereço.
  */
 function gravarTelaNoEndereco(modulo, sub, { substituir = false } = {}) {
-  const alvo = enderecoDaTela(modulo, sub) + sufixoDoPedido(modulo, sub) + sufixoDoLancamentoFinanceiro(modulo, sub);
+  const alvo = enderecoDaTela(modulo, sub) + sufixoDoPedido(modulo, sub) + sufixoDoLancamentoFinanceiro(modulo, sub)
+    + sufixoDoStatusDoProduto(modulo, sub);
   const atual = window.location.pathname + window.location.hash;
   const passo = Number((window.history.state && window.history.state.mavisPasso) || 0);
   try {
@@ -245,6 +246,15 @@ function sufixoDoPedido(modulo, sub) {
 function sufixoDoLancamentoFinanceiro(modulo, sub) {
   const id = modulo === 'finance' && sub === 'edicao_titulo'
     ? state.financeEditEntryId || state.financeOpenedEntryId
+    : '';
+  return id ? `/${encodeURIComponent(id)}` : '';
+}
+
+// O produto aberto no Status do Produto (11/11/2026): o pedido de fora (lista
+// de produtos, cadastro) antes do que já estava aberto.
+function sufixoDoStatusDoProduto(modulo, sub) {
+  const id = modulo === 'stock' && sub === 'product_status'
+    ? state.stockStatusProductId || state.stockStatusAbertoId
     : '';
   return id ? `/${encodeURIComponent(id)}` : '';
 }
@@ -315,6 +325,9 @@ function aplicarTelaDoEndereco() {
     state.financeEditEntryId = doEndereco.recordId || null;
     state.financeOpenedEntryId = doEndereco.recordId || null;
   }
+  if (doEndereco.module === 'stock' && doEndereco.sub === 'product_status' && doEndereco.recordId) {
+    state.stockStatusProductId = doEndereco.recordId;
+  }
   return true;
 }
 
@@ -329,7 +342,10 @@ window.addEventListener('popstate', () => {
   const mesmoPedido = !(doEndereco.module === 'sales' && doEndereco.sub === 'new_sale') || registroDoEndereco() === pedidoAberto;
   const mesmoTitulo = !(doEndereco.module === 'finance' && doEndereco.sub === 'edicao_titulo')
     || doEndereco.recordId === (state.financeOpenedEntryId || '');
-  if (doEndereco.module === state.activeModule && (doEndereco.sub || null) === (state.activeSub || null) && mesmoPedido && mesmoTitulo) return;
+  const mesmoProduto = !(doEndereco.module === 'stock' && doEndereco.sub === 'product_status')
+    || !doEndereco.recordId || doEndereco.recordId === (state.stockStatusAbertoId || '');
+  if (doEndereco.module === state.activeModule && (doEndereco.sub || null) === (state.activeSub || null)
+    && mesmoPedido && mesmoTitulo && mesmoProduto) return;
   state.isNavigatingBack = true;
   if (!aplicarTelaDoEndereco()) gravarTelaNoEndereco(state.activeModule, state.activeSub, { substituir: true });
   renderApp();
@@ -2312,6 +2328,7 @@ function renderApp() {
     state.isNavigatingBack = false;
     // Evita vazar rascunhos/depósitos não salvos do usuário anterior para o próximo login na mesma aba.
     state.cadastroDraft = { people: {}, cnpjs: {} };
+    state.stockStatusAbertoId = null;
     applyTheme('light');
     renderAuth();
   });
