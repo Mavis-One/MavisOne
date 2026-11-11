@@ -9486,16 +9486,13 @@ async function prepararNfeParaTransmitir(body, opcoes = {}) {
   }
 
   const destinatario = body.destinatario || {};
-  if (nfce) {
-    // NFC-e é para CONSUMIDOR FINAL. Quem tem inscrição estadual é
-    // contribuinte, e a venda a ele sai em NF-e — a SEFAZ não aceita NFC-e com
-    // indicador de contribuinte.
-    if (destinatario.contribuinte) {
-      const err = new Error('O cliente deste pedido tem inscrição estadual (é contribuinte do ICMS): a venda sai em NF-e, não em NFC-e.');
-      err.status = 400;
-      throw err;
-    }
-  } else {
+  // CLIENTE COM INSCRIÇÃO ESTADUAL TAMBÉM LEVA NFC-e (11/11/2026, pedido do
+  // usuário: "mesmo que meu cliente seja um CNPJ eu posso faturar uma NFC-e,
+  // retire essa trava!"). A recusa ("a venda sai em NF-e") saiu. A NFC-e vai
+  // como consumidor final NÃO contribuinte de qualquer jeito: o montador
+  // (buildNfcePayload) manda indIEDest 9, sem a IE, com o CNPJ e o nome; e a
+  // regra fiscal é a de dentro do estado, sem contribuinte (mais abaixo).
+  if (!nfce) {
     if (!destinatario.nome || !destinatario.documento || !destinatario.uf) {
       const err = new Error('Preencha os dados do destinatário (nome, documento e UF).');
       err.status = 400;

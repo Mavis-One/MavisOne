@@ -114,7 +114,15 @@ console.log('\n--- 5. o cliente da Focus fala com /nfce ---');
   check('o estoque é conferido ANTES de transmitir',
     /const faltando = await itensSemEstoqueParaFaturar\(pedido\);\s*if \(faltando\.length\) \{\s*recusar\(`Sem estoque para faturar:[\s\S]{0,600}return emitirNfeFiscal\(/.test(doPedidoInteiro));
   check('o estabelecimento precisa ter "Emite NFC-e"', /nfce \? estabelecimento\.emiteNfce : estabelecimento\.emiteNfe/.test(preparar));
-  check('contribuinte é recusado (vai em NF-e)', /if \(nfce\) \{[\s\S]{0,400}destinatario\.contribuinte/.test(preparar));
+  // 11/11/2026, pedido do usuário: "mesmo que meu cliente seja um CNPJ eu posso
+  // faturar uma NFC-e, retire essa trava!". A recusa do contribuinte saiu; a
+  // nota vai como consumidor final não contribuinte (indIEDest 9, sem a IE).
+  check('cliente com inscrição estadual não é mais recusado na NFC-e',
+    !/a venda sai em NF-e, não em NFC-e/.test(servidor) && /if \(!nfce\) \{\s*if \(!destinatario\.nome \|\| !destinatario\.documento/.test(preparar));
+  const comIe = montar({ destinatario: { nome: 'Oficina', documento: '11.222.333/0001-81', contribuinte: true, inscricaoEstadual: '254.123.456' } });
+  check('  e a NFC-e dele sai com o CNPJ, indIEDest 9 e sem a IE',
+    comIe.cnpj_destinatario === '11222333000181' && comIe.indicador_inscricao_estadual_destinatario === '9'
+    && comIe.inscricao_estadual_destinatario === undefined);
   check('frete, seguro e despesa acessória são recusados', /nfce && \(Number\(body\.frete/.test(preparar));
   check('a regra fiscal é a de dentro do estado, sem contribuinte', /const dentroDoEstado = nfce \|\|/.test(preparar) && /destinatarioContribuinte: nfce \? false/.test(preparar));
   check('o endereço do consumidor não é cobrado', /nfce \? null : conferirDestinatarioDaNota\(payload\)/.test(preparar));
