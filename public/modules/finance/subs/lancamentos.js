@@ -1588,7 +1588,18 @@ function criarTelaDeLancamentos(telaChave) {
     // O que a credenciadora credita de fato. É este valor que vai aparecer no
     // extrato — baixar pelo bruto deixa o título em "parcial" pela taxa, para
     // sempre.
-    const valorSugerido = taxaAAbater > 0 ? entry.netAmount : saldoRestante;
+    // JUROS, MULTA E DESCONTO COMBINADOS NO TÍTULO (fase FK, 13/11/2026): salvos
+    // sem baixar pelo botão abaixo. Os campos já vêm com eles, e o valor
+    // sugerido é o saldo com eles — o mesmo que a conciliação espera no extrato.
+    const combinado = {
+      juros: Number(entry.jurosABaixar || 0),
+      multa: Number(entry.multaABaixar || 0),
+      desconto: Number(entry.descontoABaixar || 0)
+    };
+    const temCombinado = combinado.juros > 0 || combinado.multa > 0 || combinado.desconto > 0;
+    const valorSugerido = temCombinado && entry.emAbertoComCombinado != null
+      ? entry.emAbertoComCombinado
+      : (taxaAAbater > 0 ? entry.netAmount : saldoRestante);
 
     const overlay = document.createElement('div');
     overlay.id = 'financeEntryModal';
@@ -1617,6 +1628,8 @@ function criarTelaDeLancamentos(telaChave) {
           <div><span class="muted">Valor previsto</span><strong>${financeFormatBRL(entry.amountPrevisto)}</strong></div>
           <div><span class="muted">Valor realizado</span><strong>${financeFormatBRL(entry.amountRealizado)}</strong></div>
           <div><span class="muted">Saldo em aberto</span><strong>${financeFormatBRL(saldoRestante)}</strong></div>
+          ${temCombinado ? `<div><span class="muted">Com juros/multa/desconto a baixar</span><strong>${financeFormatBRL(entry.emAbertoComCombinado)}</strong>
+            <span class="muted">${[combinado.juros ? `juros ${financeFormatBRL(combinado.juros)}` : '', combinado.multa ? `multa ${financeFormatBRL(combinado.multa)}` : '', combinado.desconto ? `desconto ${financeFormatBRL(combinado.desconto)}` : ''].filter(Boolean).join(' · ')}</span></div>` : ''}
         </div>
         ${entry.cardAcquirerName || entry.feeAmount != null ? `
           <div class="finance-cartao-box">
@@ -1677,12 +1690,14 @@ function criarTelaDeLancamentos(telaChave) {
               <label>Conta bancária<select name="bankAccountId"><option value="">Selecione</option>${optionListInline(entry, 'bankAccounts')}</select></label>
             </div>
             <div class="row">
-              <label>Juros<input type="number" step="0.01" name="interest" value="0" /></label>
-              <label>Multa<input type="number" step="0.01" name="fine" value="0" /></label>
-              <label>Desconto<input type="number" step="0.01" name="discount" value="${Number(taxaAAbater).toFixed(2)}" /></label>
+              <label>Juros<input type="number" step="0.01" name="interest" value="${combinado.juros.toFixed(2)}" /></label>
+              <label>Multa<input type="number" step="0.01" name="fine" value="${combinado.multa.toFixed(2)}" /></label>
+              <label>Desconto<input type="number" step="0.01" name="discount" value="${Number(temCombinado ? combinado.desconto : taxaAAbater).toFixed(2)}" /></label>
             </div>
             <label>Observação<input name="note" /></label>
             <button type="submit">Registrar ${isReceita ? 'recebimento' : 'pagamento'}</button>
+            <button type="button" class="secondary" id="financeSalvarCombinado"
+              title="Guarda juros, multa e desconto no título sem dar baixa. A conciliação do extrato espera o saldo com eles e os baixa junto.">Salvar juros, multa e desconto (sem baixar)</button>
           </form>
         ` : ''}
 
@@ -1746,6 +1761,34 @@ function criarTelaDeLancamentos(telaChave) {
       } catch (error) {
         showToast(error.message || 'Erro ao registrar baixa.', 'error');
         if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+
+    // SALVAR SEM BAIXAR (fase FK, 13/11/2026, pedido do usuário: "preciso de um
+    // botão de salvar sem precisar especificamente lançar o título ou editá-lo,
+    // pois o juros e ou a multa precisam ser baixados com a conciliação
+    // também"). Guarda só juros, multa e desconto; valor, data e conta são da
+    // baixa e ficam de fora.
+    document.getElementById('financeSalvarCombinado')?.addEventListener('click', async (event) => {
+      const botao = event.currentTarget;
+      if (botao.disabled) return;
+      const form = document.getElementById('financePaymentForm');
+      const ler = (nome) => Number(form?.querySelector(`[name="${nome}"]`)?.value || 0);
+      botao.disabled = true;
+      try {
+        const resposta = await api(`/api/finance/entries/${entry.id}/combinado`, {
+          method: 'POST',
+          body: JSON.stringify({ interest: ler('interest'), fine: ler('fine'), discount: ler('discount') })
+        });
+        const salvo = resposta && resposta.entry;
+        const algum = salvo && (salvo.jurosABaixar > 0 || salvo.multaABaixar > 0 || salvo.descontoABaixar > 0);
+        showToast(algum
+          ? `Salvo sem baixar. A conciliação do extrato vai esperar ${financeFormatBRL(salvo.emAbertoComCombinado)} e baixar juros, multa e desconto junto.`
+          : 'Juros, multa e desconto zerados: a conciliação espera só o saldo em aberto.', 'success', 8000);
+        await openEntryModal(entry.id, options);
+      } catch (error) {
+        showToast(error.message || 'Erro ao salvar juros, multa e desconto.', 'error');
+        botao.disabled = false;
       }
     });
 

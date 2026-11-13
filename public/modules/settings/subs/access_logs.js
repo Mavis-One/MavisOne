@@ -11,6 +11,7 @@ const ACCESS_AUDIT_ACTION_LABELS = {
   editarLancamento: 'Edição de lançamento',
   baixarLancamento: 'Baixa de lançamento',
   estornarLancamento: 'Estorno de baixa',
+  combinadoDoTitulo: 'Juros, multa e desconto a baixar',
   cancelarLancamento: 'Cancelamento de lançamento',
   excluirLancamento: 'Exclusão de lançamento',
   excluirCentroDeCusto: 'Exclusão de centro de custo',

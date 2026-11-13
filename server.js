@@ -5072,6 +5072,58 @@ function financeEntryEmAberto(entry, payments) {
 }
 
 /**
+ * O COMBINADO NO TÍTULO, AINDA NÃO BAIXADO (fase FK, 13/11/2026, pedido do
+ * usuário: "preciso de um botão de salvar sem precisar especificamente lançar o
+ * título ou editá-lo, pois o juros e ou a multa precisam ser baixados com a
+ * conciliação também"). Juros + multa − desconto: o quanto o extrato vai
+ * mostrar a mais (ou a menos) que o saldo. Fica FORA do saldo em aberto (os
+ * relatórios de contas seguem como sempre) e entra na conciliação.
+ */
+function ajusteABaixar(entry) {
+  if (!entry || isFinanceEntryRealized(entry) || isFinanceEntryCancelled(entry)) return 0;
+  return Math.round((Number(entry.jurosABaixar || 0) + Number(entry.multaABaixar || 0) - Number(entry.descontoABaixar || 0)) * 100) / 100;
+}
+
+function temCombinadoABaixar(entry) {
+  return Boolean(entry) && (Number(entry.jurosABaixar || 0) > 0 || Number(entry.multaABaixar || 0) > 0 || Number(entry.descontoABaixar || 0) > 0);
+}
+
+/**
+ * O valor de uma movimentação cabe neste título? Até o saldo em aberto, ou
+ * EXATAMENTE o saldo com o combinado (fase FK) — entre os dois, a baixa sairia
+ * maior que o devido, com juros que ninguém combinou.
+ */
+function valorCabeNoTitulo(entry, payments, valor) {
+  const restante = financeEntryEffectiveDue(entry, payments) - financeEntryPaidTotal(payments);
+  if (Number(valor) <= restante + 0.01) return true;
+  return temCombinadoABaixar(entry) && Math.abs(Number(valor) - (restante + ajusteABaixar(entry))) < 0.005;
+}
+
+/** A baixa levou o combinado (ou o título fechou sem ele): zera no título. */
+async function zerarCombinadoABaixar(entry) {
+  if (!temCombinadoABaixar(entry)) return;
+  entry.jurosABaixar = 0;
+  entry.multaABaixar = 0;
+  entry.descontoABaixar = 0;
+  await db.updateFinancialEntry(entry.id, { jurosABaixar: 0, multaABaixar: 0, descontoABaixar: 0 });
+}
+
+/**
+ * A baixa que levou o combinado (ajusteCombinado) foi estornada ou
+ * desconciliada: ele volta ao título, para a próxima conciliação esperar o
+ * mesmo valor. Só se o título não tiver outro combinado guardado depois.
+ */
+async function devolverCombinadoAoTitulo(entry, payment) {
+  if (!entry || !payment || !payment.ajusteCombinado || temCombinadoABaixar(entry)) return;
+  entry.jurosABaixar = Number(payment.interest || 0);
+  entry.multaABaixar = Number(payment.fine || 0);
+  entry.descontoABaixar = Number(payment.discount || 0);
+  await db.updateFinancialEntry(entry.id, {
+    jurosABaixar: entry.jurosABaixar, multaABaixar: entry.multaABaixar, descontoABaixar: entry.descontoABaixar
+  });
+}
+
+/**
  * O QUE UM LANÇAMENTO PRECISA RESPEITAR — AO NASCER E AO SER EDITADO (fase BG).
  *
  * As regras existiam só no POST. O PUT não repetia nenhuma delas, e o
@@ -5845,6 +5897,12 @@ function serializeFinanceEntry(entry, data, baixasDoLancamento) {
     feePercent: entry.feePercent == null ? null : Number(entry.feePercent),
     feeAmount: entry.feeAmount == null ? null : Number(entry.feeAmount),
     netAmount: entry.netAmount == null ? null : Number(entry.netAmount),
+    // Fase FK (13/11/2026): o combinado ainda não baixado, e o saldo com ele —
+    // o que a conciliação espera ver no extrato.
+    jurosABaixar: Number(entry.jurosABaixar || 0),
+    multaABaixar: Number(entry.multaABaixar || 0),
+    descontoABaixar: Number(entry.descontoABaixar || 0),
+    emAbertoComCombinado: Math.max(0, Math.round((financeEntryEmAberto(entry, payments) + ajusteABaixar(entry)) * 100) / 100),
     payments: payments
       .slice()
       .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
@@ -6349,20 +6407,27 @@ async function baixarTitulosDaTransacao(data, tx, itens, user, { automatico = fa
   const sufixo = itens.length > 1 ? `, um de ${itens.length} títulos` : '';
   try {
     for (const { entry, valor } of itens) {
-      const taxaDoCartao = descontoDaTaxaDoCartao(entry, getFinanceEntryPayments(data, entry.id), valor);
+      const anteriores = getFinanceEntryPayments(data, entry.id);
+      // O COMBINADO DO TÍTULO (fase FK): o valor da movimentação é o saldo com
+      // os juros, a multa e o desconto guardados — eles vão para esta baixa.
+      const comCombinado = temCombinadoABaixar(entry)
+        && Math.abs(valor - (financeEntryEmAberto(entry, anteriores) + ajusteABaixar(entry))) < 0.005;
+      const taxaDoCartao = comCombinado ? 0 : descontoDaTaxaDoCartao(entry, anteriores, valor);
       const payment = await db.createFinancialPayment({
         entryId: entry.id,
         amount: valor,
         date: tx.date,
         bankAccountId: tx.bankAccountId,
-        interest: 0,
-        fine: 0,
+        interest: comCombinado ? Number(entry.jurosABaixar || 0) : 0,
+        fine: comCombinado ? Number(entry.multaABaixar || 0) : 0,
         // A taxa da maquininha, quando o crédito é exatamente o líquido. Sem
         // ela o título ficava "parcial" com a taxa em aberto para sempre.
-        discount: taxaDoCartao,
+        discount: comCombinado ? Number(entry.descontoABaixar || 0) : taxaDoCartao,
+        ajusteCombinado: comCombinado,
         note: (nota || (automatico
           ? `Conciliado automaticamente pelo Extrato (transação ${String(tx.id).slice(-8)}${sufixo}): conta bancária, fornecedor/cliente, valor e data batem.`
           : `Conciliado via Extrato Open Finance (transação ${String(tx.id).slice(-8)}${sufixo})`))
+          + (comCombinado ? ' Juros, multa e desconto combinados no título baixados junto.' : '')
           + (taxaDoCartao > 0 ? ` Taxa da credenciadora (${entry.feePercent}%) abatida como desconto.` : ''),
         createdBy: user.id,
         createdByName: user.name
@@ -6381,6 +6446,8 @@ async function baixarTitulosDaTransacao(data, tx, itens, user, { automatico = fa
     entry.status = recomputeFinanceEntryStatus(entry, data);
     entry.updatedAt = new Date().toISOString();
     await db.updateFinancialEntry(entry.id, { status: entry.status });
+    // Levado pela baixa, ou o título fechou sem ele: nada mais a baixar.
+    if (payment.ajusteCombinado || isFinanceEntryRealized(entry)) await zerarCombinadoABaixar(entry);
     await addFinanceAuditLog(data, { action: 'baixarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: payment.id, amount: valor, origem: automatico ? 'conciliacao_automatica' : 'conciliacao', transacaoId: tx.id } });
   }
   const conciliacoes = criadas.map(({ entry, payment, valor }) => ({ entryId: entry.id, paymentId: payment.id, valor }));
@@ -6483,7 +6550,7 @@ async function conciliarAutomaticamente(user, escolher) {
       const titulo = titulosPorId.get(par.tituloId);
       // O que entra é o valor da movimentação, e nunca mais que o saldo; e
       // nunca título de outra conta (10/11/2026), conferido de novo aqui.
-      if (!tx || !entry || !titulo || Number(tx.amount || 0) > titulo.restante + 0.01) continue;
+      if (!tx || !entry || !titulo || !valorCabeNoTitulo(entry, getFinanceEntryPayments(data, entry.id), Number(tx.amount || 0))) continue;
       if (!tx.bankAccountId || String(entry.bankAccountId || '') !== String(tx.bankAccountId)) continue;
       try {
         feitas.set(tx.id, await baixarTitulosDaTransacao(data, tx, [{ entry, valor: Number(tx.amount || 0) }], user, { automatico: true }));
@@ -6685,7 +6752,7 @@ async function confirmarSugestoes(user, escolher) {
       if (!tx.bankAccountId || String(entry.bankAccountId || '') !== String(tx.bankAccountId)) { recusar('o título sugerido é de outra conta bancária'); continue; }
       const payments = getFinanceEntryPayments(data, entry.id);
       const restante = financeEntryEffectiveDue(entry, payments) - financeEntryPaidTotal(payments);
-      if (Number(tx.amount || 0) > restante + 0.01) { recusar('o título já não tem esse saldo em aberto'); continue; }
+      if (!valorCabeNoTitulo(entry, payments, Number(tx.amount || 0))) { recusar('o título já não tem esse saldo em aberto'); continue; }
       try {
         feitas.set(tx.id, await baixarTitulosDaTransacao(data, tx, [{ entry, valor: Number(tx.amount || 0) }], user, {
           nota: `Sugestão da conciliação automática confirmada por ${user.name} (transação ${String(tx.id).slice(-8)}): conta bancária e valor batem.`
@@ -6740,6 +6807,8 @@ function buildBankTransaction(body, user, source) {
  * já não é o líquido inteiro, e supor que é inventaria um número.
  */
 function esperadoNoExtrato(entry, restante, jaPago) {
+  // O combinado do título (fase FK): o saldo com os juros, a multa e o desconto.
+  if (temCombinadoABaixar(entry)) return Math.max(0, Math.round((restante + ajusteABaixar(entry)) * 100) / 100);
   if (jaPago > 0.005) return restante;
   const liquido = Number(entry.netAmount || 0);
   if (!(liquido > 0)) return restante;
@@ -24065,6 +24134,69 @@ async function tratarRequisicao(req, res) {
     }
   }
 
+  // SALVAR JUROS, MULTA E DESCONTO SEM BAIXAR (fase FK, 13/11/2026, pedido do
+  // usuário: "preciso de um botão de salvar sem precisar especificamente lançar
+  // o título ou editá-lo, pois o juros e ou a multa precisam ser baixados com a
+  // conciliação também"). Guarda o combinado no título em aberto; a conciliação
+  // espera o saldo com ele e o leva para a baixa. Zeros apagam o combinado.
+  if (/^\/api\/finance\/entries\/[^/]+\/combinado$/.test(pathname) && req.method === 'POST') {
+    let travado = null;
+    try {
+      const user = await getCurrentUser(req);
+      if (!user || !user.allowedModules.includes('finance')) {
+        return sendJson(res, { error: 'Sem permissão' }, 403);
+      }
+      const id = decodeURIComponent(pathname.split('/')[4]);
+      if (lancamentosEmGravacao.has(id)) {
+        return sendJson(res, { error: 'Este lançamento está sendo baixado ou cancelado agora. Confira a lista e tente de novo.' }, 409);
+      }
+      lancamentosEmGravacao.add(id);
+      travado = id;
+      const data = loadData();
+      await Promise.all([
+        syncCadastroData(data),
+        syncPurchasesData(data),
+        syncFinanceCadastroData(data),
+        syncLancamentosPorId(data, [id])
+      ]);
+      const entry = data.finance.find((item) => item.id === id);
+      if (!entry) {
+        return sendJson(res, { error: 'Lançamento não encontrado' }, 404);
+      }
+      if (!['pending', 'parcial'].includes(String(entry.status || '').toLowerCase())) {
+        return sendJson(res, { error: 'Só título em aberto guarda juros, multa e desconto para baixar depois.' }, 400);
+      }
+      const body = await readBody(req);
+      const emReais = (v) => Math.round(Number(v || 0) * 100) / 100;
+      const juros = emReais(body.interest);
+      const multa = emReais(body.fine);
+      const desconto = emReais(body.discount);
+      if (![juros, multa, desconto].every(Number.isFinite) || juros < 0 || multa < 0 || desconto < 0) {
+        return sendJson(res, { error: 'Juros, multa e desconto não podem ser negativos' }, 400);
+      }
+      const emAberto = financeEntryEmAberto(entry, getFinanceEntryPayments(data, entry.id));
+      if (desconto > emAberto + juros + multa + 0.005) {
+        return sendJson(res, { error: `O desconto (${desconto.toFixed(2)}) é maior que o saldo em aberto com juros e multa (${(emAberto + juros + multa).toFixed(2)}).` }, 400);
+      }
+      const antes = { juros: Number(entry.jurosABaixar || 0), multa: Number(entry.multaABaixar || 0), desconto: Number(entry.descontoABaixar || 0) };
+      entry.jurosABaixar = juros;
+      entry.multaABaixar = multa;
+      entry.descontoABaixar = desconto;
+      entry.updatedAt = new Date().toISOString();
+      await db.updateFinancialEntry(entry.id, { jurosABaixar: juros, multaABaixar: multa, descontoABaixar: desconto });
+      await addFinanceAuditLog(data, {
+        action: 'combinadoDoTitulo', entry, byId: user.id, byName: user.name,
+        details: { antes, depois: { juros, multa, desconto } }
+      });
+      saveData(data);
+      return sendJson(res, { success: true, entry: serializeFinanceEntry(entry, data) });
+    } catch (error) {
+      return sendErro(res, error, 'Erro ao salvar juros, multa e desconto', 400);
+    } finally {
+      if (travado) lancamentosEmGravacao.delete(travado);
+    }
+  }
+
   if (/^\/api\/finance\/entries\/[^/]+\/payments$/.test(pathname) && req.method === 'POST') {
     // A trava do lote (fase EI) vale aqui também: a baixa avulsa e a do lote
     // sobre o mesmo título, juntas, leriam o mesmo saldo antes de gravar.
@@ -24165,6 +24297,10 @@ async function tratarRequisicao(req, res) {
 
       // Só encerrar (valor zero com ajuste): nenhuma baixa nova — o valor do
       // título já desceu ao que foi pago, e o status recalculado fecha.
+      // O combinado do título (fase FK) entra por aqui também: a tela traz os
+      // campos já preenchidos com ele. Baixa com juros, multa ou desconto leva
+      // o combinado (e o estorno o devolve).
+      const levaCombinado = !soEncerrar && temCombinadoABaixar(entry) && (interest > 0 || fine > 0 || discount > 0);
       const payment = soEncerrar ? null : await db.createFinancialPayment({
         entryId: entry.id,
         amount,
@@ -24173,6 +24309,7 @@ async function tratarRequisicao(req, res) {
         interest,
         fine,
         discount,
+        ajusteCombinado: levaCombinado,
         note: body.note || '',
         createdBy: user.id,
         createdByName: user.name
@@ -24183,6 +24320,7 @@ async function tratarRequisicao(req, res) {
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
       await db.updateFinancialEntry(entry.id, { status: entry.status });
+      if (levaCombinado || isFinanceEntryRealized(entry)) await zerarCombinadoABaixar(entry);
       await addFinanceAuditLog(data, {
         action: 'baixarLancamento', entry, byId: user.id, byName: user.name,
         details: { paymentId: payment ? payment.id : '', amount, ...(valorAnterior !== null ? { valorAjustadoDe: valorAnterior, valorAjustadoPara: entry.amount } : {}) }
@@ -24261,6 +24399,8 @@ async function tratarRequisicao(req, res) {
       entry.status = recomputeFinanceEntryStatus(entry, data);
       entry.updatedAt = new Date().toISOString();
       await db.updateFinancialEntry(entry.id, { status: entry.status });
+      // A baixa levava o combinado do título (fase FK): ele volta.
+      await devolverCombinadoAoTitulo(entry, last);
       await addFinanceAuditLog(data, {
         action: 'estornarLancamento', entry, byId: user.id, byName: user.name,
         details: {
@@ -25776,7 +25916,12 @@ async function tratarRequisicao(req, res) {
         }
         const existingPayments = getFinanceEntryPayments(data, entry.id);
         const maxAllowed = financeEntryEffectiveDue(entry, existingPayments) - financeEntryPaidTotal(existingPayments);
-        if (pedido.valor > maxAllowed + 0.01) {
+        // O saldo com o combinado do título (fase FK) também cabe, exato.
+        if (!valorCabeNoTitulo(entry, existingPayments, pedido.valor)) {
+          if (temCombinadoABaixar(entry)) {
+            const comCombinado = Math.round((maxAllowed + ajusteABaixar(entry)) * 100) / 100;
+            return sendJson(res, { error: `O valor a baixar de ${entry.description || 'um dos títulos'} (${pedido.valor.toFixed(2)}) não é o saldo em aberto (${Math.max(0, maxAllowed).toFixed(2)}) nem o saldo com os juros, a multa e o desconto combinados (${comCombinado.toFixed(2)}).` }, 400);
+          }
           return sendJson(res, { error: itensPedidos.length > 1
             ? `O valor a baixar de ${entry.description || 'um dos títulos'} (${pedido.valor.toFixed(2)}) é maior que o saldo em aberto dele (${Math.max(0, maxAllowed).toFixed(2)}).`
             : `O valor da transação (${tx.amount.toFixed(2)}) é maior que o saldo em aberto do lançamento (${Math.max(0, maxAllowed).toFixed(2)}).` }, 400);
@@ -25837,11 +25982,14 @@ async function tratarRequisicao(req, res) {
       for (const conciliacao of conciliacoes) {
         const entry = data.finance.find((item) => item.id === conciliacao.entryId);
         if (!entry || !conciliacao.paymentId) continue;
+        const baixa = (data.financialPayments || []).find((p) => p.id === conciliacao.paymentId);
         await db.deleteFinancialPayment(conciliacao.paymentId);
         data.financialPayments = data.financialPayments.filter((p) => p.id !== conciliacao.paymentId);
         entry.status = recomputeFinanceEntryStatus(entry, data);
         entry.updatedAt = new Date().toISOString();
         await db.updateFinancialEntry(entry.id, { status: entry.status });
+        // A baixa levava o combinado do título (fase FK): ele volta.
+        await devolverCombinadoAoTitulo(entry, baixa);
         await addFinanceAuditLog(data, { action: 'estornarLancamento', entry, byId: user.id, byName: user.name, details: { paymentId: conciliacao.paymentId, motivo: 'Desconciliação de transação bancária' } });
       }
 

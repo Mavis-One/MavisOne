@@ -133,7 +133,7 @@ check('  a sugestão fica guardada na movimentação, e sai quando ela é concil
   /tx\.sugestao = sugestaoDe\.get\(tx\.id\);/.test(auto) && /delete tx\.sugestao;\s*tx\.updatedAt/.test(servidor));
 const rota = servidor.slice(servidor.indexOf("bank-transactions\\/[^/]+\\/conciliar$/"));
 check('vários títulos: a soma tem de ser o valor da movimentação', /if \(somaDosItens !== daMovimentacao\) \{/.test(rota));
-check('  cada um até o seu saldo em aberto', /if \(pedido\.valor > maxAllowed \+ 0\.01\) \{/.test(rota));
+check('  cada um até o seu saldo em aberto (ou o saldo com o combinado, fase FK)', /if \(!valorCabeNoTitulo\(entry, existingPayments, pedido\.valor\)\) \{/.test(rota));
 check('  o mesmo título duas vezes, não', /O mesmo título foi escolhido duas vezes\./.test(rota));
 check('  e entryId sozinho continua sendo um título pelo valor inteiro',
   /: \[\{ entryId: String\(body\.entryId \|\| ''\), valor: Number\(tx\.amount \|\| 0\) \}\];/.test(rota));

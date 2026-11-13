@@ -352,6 +352,9 @@ const PARCIAIS = {
     '/api/finance/entries/* GET',
     '/api/finance/entries/* PUT',
     '/api/finance/entries/:id/payments POST',
+    // Fase FK (13/11/2026): salvar juros, multa e desconto sem baixar — o
+    // título e as baixas dele (o saldo em aberto), como a baixa.
+    '/api/finance/entries/:id/combinado POST',
     '/api/finance/entries/:id/estorno POST',
     '/api/finance/entries/:id/cancelar POST',
     // 17/10/2026: parcelar UM título — ele, as baixas dele (tem de não ter) e

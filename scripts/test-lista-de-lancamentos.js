@@ -55,6 +55,8 @@ const NOMES = [
   'resolveFinanceCounterparty', 'resolveFinanceCounterpartyDocument', 'filterFinanceEntries',
   'compararLancamentosDaLista', 'filtrarListaDeLancamentos', 'getFinanceEntryPayments',
   'financeEntryEffectiveDue', 'financeEntryPaidTotal', 'esperadoNoExtrato', 'scoreBankTransactionMatch',
+  // Fase FK: o combinado do título entra no esperado no extrato.
+  'ajusteABaixar', 'temCombinadoABaixar',
   'looseNameMatch', 'findBankTransactionMatches', 'getPeriodRange', 'getPreviousPeriodRange',
   'buildPeriodBuckets', 'buildFinanceChartSeries', 'buildFinanceDashboardSummary',
   // Fase EI: a ordem por coluna e o resumo das abas.

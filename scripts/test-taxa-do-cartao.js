@@ -145,7 +145,7 @@ check('a taxa fecha o título na conciliação', /function descontoDaTaxaDoCarta
 // Um crédito de outro valor não é essa taxa; abater seria inventar um desconto.
 check('  só quando a transação É o líquido',
   /if \(Math\.abs\(liquido - Number\(valorDaTransacao \|\| 0\)\) > 0\.01\) return 0;/.test(src));
-check('  e a baixa da conciliação a usa', /discount: taxaDoCartao,/.test(src));
+check('  e a baixa da conciliação a usa', /discount: comCombinado \? Number\(entry\.descontoABaixar \|\| 0\) : taxaDoCartao,/.test(src));
 // O débito também tem taxa. Até 17/10/2026 a venda à vista nascia quitada,
 // com baixa automática pelo líquido; desde então todo título de pedido nasce
 // em aberto (conciliação; test-titulos-do-pedido-em-aberto.js), e o líquido e a
@@ -172,7 +172,7 @@ check('o lançamento mostra o bloco do cartão', /finance-cartao-box/.test(tela)
 check('  com o crédito previsto', /Crédito previsto/.test(tela));
 // Sem preencher, quem baixa digita o bruto e o título fica "parcial" pela taxa.
 check('a baixa já nasce com o líquido', /value="\$\{Number\(valorSugerido\)\.toFixed\(2\)\}"/.test(tela));
-check('  e com a taxa no desconto', /name="discount" value="\$\{Number\(taxaAAbater\)\.toFixed\(2\)\}"/.test(tela));
+check('  e com a taxa no desconto (ou o desconto combinado, fase FK)', /name="discount" value="\$\{Number\(temCombinado \? combinado\.desconto : taxaAAbater\)\.toFixed\(2\)\}"/.test(tela));
 // Com baixa parcial no meio, sugerir o líquido inteiro colocaria número errado.
 check('  só na primeira baixa', /&& !entry\.payments\.length/.test(tela));
 

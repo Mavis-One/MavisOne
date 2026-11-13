@@ -38,7 +38,9 @@ check('nem existe mais a baixa da venda à vista', !/baixaDaVendaAVista|adiarAVi
 console.log('\n--- 3. o que continua ---');
 check('cancelar o pedido ainda desfaz a baixa automática de título antigo',
   /const automaticas = baixas\.filter\(\(baixa\) => baixa\.origem === 'automatica'\);/.test(efeito));
-check('a conciliação baixa com a taxa do cartão', /discount: taxaDoCartao,/.test(servidor));
+// Desde a fase FK (13/11/2026) o desconto é o combinado do título quando a
+// baixa o leva; senão, a taxa do cartão, como sempre.
+check('a conciliação baixa com a taxa do cartão', /discount: comCombinado \? Number\(entry\.descontoABaixar \|\| 0\) : taxaDoCartao,/.test(servidor));
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TUDO OK =====');
 process.exit(falhas ? 1 : 0);
