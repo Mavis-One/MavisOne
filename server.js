@@ -8779,23 +8779,48 @@ async function desfaturarPedidoDaNota(nfe, user, { refazendo = false } = {}) {
  * cancelamento da NF-e, por mudarStatusSalesRecord (as mesmas regras). Dali
  * ele é corrigido e aprovado de novo, e a aprovação cria os títulos outra vez.
  *
- * Só o Pré-Faturado: o faturado tem NF-e por trás, e quem o desfaz é o
- * cancelamento da nota. Com algum título ainda valendo (uma parcela de três
- * excluída, ou o título parcelado), o pedido fica como está.
+ * O FATURADO TAMBÉM, SEM NOTA VALENDO (13/11/2026, pedido do usuário, sobre o
+ * 17175: "pedido não está sendo permitido alteração depois de excluído o
+ * título, preciso que ele seja liberado pra alteração e faturamento
+ * novamente"). Até aqui só o Pré-Faturado voltava, porque o faturado tem NF-e
+ * por trás e quem o desfaz é o cancelamento da nota. Isso continua: com
+ * NF-e/NFC-e AUTORIZADA ou em PROCESSAMENTO (notaQueSustentaOFaturamento), o
+ * pedido fica, e `avisos` recebe o caminho (cancelar a nota) — refaturar por
+ * cima daria nota em dobro. Sem nota valendo, ele volta como o Pré-Faturado.
+ * Só o faturado PELO MAVISONE (stock_applied): o "faturado só no status" das
+ * vendas até 10/10 (scripts/faturar-vendas-ate.js) teve a nota no Viper.
+ *
+ * Com algum título ainda valendo (uma parcela de três excluída, ou o título
+ * parcelado), o pedido fica como está.
  *
  * Devolve o código do pedido estornado, ou ''. A falha não sobe: o título já
  * saiu, e a resposta da exclusão não pode dizer que ela falhou.
  */
-async function estornarPedidoSemTitulos(pedidoId, user) {
+async function estornarPedidoSemTitulos(pedidoId, user, avisos = null) {
   if (!pedidoId) return '';
   try {
     const pedido = await db.getOrderById(pedidoId);
-    if (!pedido || salesStatus.normalizar(pedido.status) !== 'pedido-pre-faturado') return '';
+    const situacao = pedido ? salesStatus.normalizar(pedido.status) : '';
+    if (!['pedido-pre-faturado', 'pedido-faturado'].includes(situacao)) return '';
     const { rows } = await consultarBanco(
       "select count(*)::int as valendo from financial_entries where reference_id = $1 and coalesce(status, '') <> 'cancelado'",
       [pedidoId]
     );
     if (Number(rows[0] && rows[0].valendo) > 0) return '';
+    if (situacao === 'pedido-faturado') {
+      // O importado do Viper (histórico, sem itens) também teve a nota lá.
+      if (!pedido.stockApplied || /^Importado do ViperERP/.test(String(pedido.note || ''))) return '';
+      const nota = await notaQueSustentaOFaturamento(pedido);
+      if (nota) {
+        if (Array.isArray(avisos)) {
+          const modelo = Number(nota.modelo) === 65 ? 'NFC-e' : 'NF-e';
+          avisos.push(`O pedido ${pedido.code || pedido.id} ficou sem títulos, mas a ${modelo} ${nota.numero || nota.referencia || ''} dele continua `
+            + `${String(nota.status || '').toUpperCase() === 'PROCESSANDO' ? 'em processamento' : 'autorizada'}: para alterar e faturar de novo, `
+            + 'cancele a nota (em NF-e Emitidas). O cancelamento devolve o pedido para "Pedido Não Faturado".');
+        }
+        return '';
+      }
+    }
     // Só este pedido e os lançamentos dele, como a gravação do pedido (fase DS).
     const dataVendas = loadData();
     await Promise.all([
@@ -8858,7 +8883,8 @@ async function estornarPedidosQueFicaramSemTitulos() {
   try {
     ({ rows: pedidos } = await consultarBanco(
       `select o.id from orders o
-        where o.status = 'pedido-pre-faturado'
+        where (o.status = 'pedido-pre-faturado'
+               or (o.status = 'pedido-faturado' and o.stock_applied and coalesce(o.note, '') not like 'Importado do ViperERP%'))
           and not exists (select 1 from financial_entries f where f.reference_id = o.id and coalesce(f.status, '') <> 'cancelado')
           and (exists (select 1 from financial_entries f where f.reference_id = o.id and f.status = 'cancelado')
                or exists (select 1 from audit_logs a where a.action = 'excluirLancamento'
@@ -23864,10 +23890,13 @@ async function tratarRequisicao(req, res) {
         }
       }
       saveData(data);
-      // Pedido Pré-Faturado que ficou sem título volta (estornarPedidoSemTitulos).
+      // Pedido Pré-Faturado (ou Faturado sem nota valendo, 13/11/2026) que
+      // ficou sem título volta (estornarPedidoSemTitulos); o faturado com nota
+      // fica, e o aviso diz o caminho.
       const pedidosEstornados = [];
+      const avisosDosPedidos = [];
       for (const referencia of referenciasCanceladas) {
-        const codigoDoPedido = await estornarPedidoSemTitulos(referencia, user);
+        const codigoDoPedido = await estornarPedidoSemTitulos(referencia, user, avisosDosPedidos);
         if (codigoDoPedido) pedidosEstornados.push(codigoDoPedido);
       }
       return sendJson(res, {
@@ -23875,7 +23904,8 @@ async function tratarRequisicao(req, res) {
         processados,
         ignorados,
         pedidosEstornados,
-        resumo: [listaDeLancamentos.resumo(processados.length, ignorados.length), fraseDosPedidosEstornados(pedidosEstornados)].filter(Boolean).join(' ')
+        avisosDosPedidos,
+        resumo: [listaDeLancamentos.resumo(processados.length, ignorados.length), fraseDosPedidosEstornados(pedidosEstornados), ...avisosDosPedidos].filter(Boolean).join(' ')
       });
     } catch (error) {
       return sendErro(res, error, 'Erro na ação em lote', 400);
@@ -23999,10 +24029,13 @@ async function tratarRequisicao(req, res) {
         }
       }
       saveData(data);
-      // Pedido Pré-Faturado que ficou sem título volta (estornarPedidoSemTitulos).
+      // Pedido Pré-Faturado (ou Faturado sem nota valendo, 13/11/2026) que
+      // ficou sem título volta (estornarPedidoSemTitulos); o faturado com nota
+      // fica, e o aviso diz o caminho.
       const pedidosEstornados = [];
+      const avisosDosPedidos = [];
       for (const referencia of referenciasExcluidas) {
-        const codigoDoPedido = await estornarPedidoSemTitulos(referencia, user);
+        const codigoDoPedido = await estornarPedidoSemTitulos(referencia, user, avisosDosPedidos);
         if (codigoDoPedido) pedidosEstornados.push(codigoDoPedido);
       }
       return sendJson(res, {
@@ -24010,7 +24043,8 @@ async function tratarRequisicao(req, res) {
         processados,
         ignorados,
         pedidosEstornados,
-        resumo: [listaDeLancamentos.resumo(processados.length, ignorados.length), fraseDosPedidosEstornados(pedidosEstornados)].filter(Boolean).join(' ')
+        avisosDosPedidos,
+        resumo: [listaDeLancamentos.resumo(processados.length, ignorados.length), fraseDosPedidosEstornados(pedidosEstornados), ...avisosDosPedidos].filter(Boolean).join(' ')
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao excluir lançamentos', 400);
@@ -24668,12 +24702,16 @@ async function tratarRequisicao(req, res) {
       // a leitura, onde quem abre o lançamento procura. Ver a migração fase-ax.
       await addFinanceAuditLog(data, { action: 'cancelarLancamento', entry, byId: user.id, byName: user.name, details: { motivo } });
       saveData(data);
-      // Pedido Pré-Faturado que ficou sem título volta (estornarPedidoSemTitulos).
-      const pedidoEstornado = await estornarPedidoSemTitulos(entry.referenceId, user);
+      // Pedido Pré-Faturado (ou Faturado sem nota valendo, 13/11/2026) que
+      // ficou sem título volta (estornarPedidoSemTitulos).
+      const avisosDoPedido = [];
+      const pedidoEstornado = await estornarPedidoSemTitulos(entry.referenceId, user, avisosDoPedido);
+      const avisoDoPedido = [pedidoEstornado ? fraseDosPedidosEstornados([pedidoEstornado]) : '', ...avisosDoPedido].filter(Boolean).join(' ');
       return sendJson(res, {
         success: true,
         entry: serializeFinanceEntry(entry, data),
-        ...(pedidoEstornado ? { pedidoEstornado, aviso: fraseDosPedidosEstornados([pedidoEstornado]) } : {})
+        ...(pedidoEstornado ? { pedidoEstornado } : {}),
+        ...(avisoDoPedido ? { aviso: avisoDoPedido } : {})
       });
     } catch (error) {
       return sendErro(res, error, 'Erro ao cancelar lançamento', 400);

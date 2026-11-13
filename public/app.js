@@ -7215,6 +7215,10 @@ async function loadModule(moduleName) {
                 return;
               }
               showToast('Lançamento excluído.', 'success');
+              // Faturado com nota valendo fica, e o aviso diz o caminho (13/11/2026).
+              if (!(resposta.pedidosEstornados || []).length && (resposta.avisosDosPedidos || []).length) {
+                showToast(resposta.avisosDosPedidos.join(' '), 'warning', 12000);
+              }
               if ((resposta.pedidosEstornados || []).length) {
                 showToast(resposta.resumo, 'info', 8000);
                 const { record } = await api(`/api/sales/records/${encodeURIComponent(editRecord.id)}`);

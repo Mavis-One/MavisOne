@@ -1507,7 +1507,7 @@ function criarTelaDeLancamentos(telaChave) {
         : `${vinculados.length} ${plural(vinculados.length, 'ligado', 'ligados')} a pedido ou nota (${vinculados[0].vinculo}${vinculados.length > 1 ? ' e outros' : ''}). Continuam lá, sem o título.`);
       // 21/10/2026: o pedido aprovado (Pré-Faturado) sem nenhum título volta.
       if (vinculados.some((i) => /^Pedido /.test(i.vinculo))) {
-        avisos.push('Pedido Pré-Faturado que ficar sem nenhum título volta a "Pedido Não Faturado".');
+        avisos.push('Pedido Pré-Faturado que ficar sem nenhum título volta a "Pedido Não Faturado"; o Faturado também, se não tiver NF-e/NFC-e valendo (com nota autorizada, cancele a nota).');
       }
     }
     if (ignorados.length) avisos.push(`${ignorados.length} de fora: ${ignorados[0].motivo}`);
@@ -1533,7 +1533,9 @@ function criarTelaDeLancamentos(telaChave) {
         delete lista.selecao[um.id];
         showToast('Lançamento excluído.', 'success');
         // Era o último título de um pedido Pré-Faturado: ele voltou (21/10/2026).
+        // Faturado com nota valendo fica, e o aviso diz o caminho (13/11/2026).
         if ((resposta.pedidosEstornados || []).length) showToast(resposta.resumo, 'info', 8000);
+        else if ((resposta.avisosDosPedidos || []).length) showToast(resposta.avisosDosPedidos.join(' '), 'warning', 12000);
         await load();
       } else {
         await mostrarResultadoDoLote(resposta);
