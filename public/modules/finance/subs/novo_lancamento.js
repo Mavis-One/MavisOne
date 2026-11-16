@@ -1377,9 +1377,28 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
             + `${copiados === 1 ? 'a outra parcela' : `as outras ${copiados}`}. Para mudar uma delas, abra em Financeiro › Contas a Pagar.`
             + (falhas ? ` ${falhas} não ${falhas === 1 ? 'aceitou' : 'aceitaram'} a cópia: confira ${falhas === 1 ? 'essa' : 'essas'} à mão.` : ''),
           falhas ? 'warning' : 'success', 9000);
-        } else {
-          showToast(editEntry ? 'Lançamento atualizado com sucesso.'
-            : (quantas > 1 ? `${quantas} parcelas lançadas.` : 'Lançamento criado com sucesso.'), 'success');
+        } else if (editEntry) {
+          showToast('Lançamento atualizado com sucesso.', 'success');
+        }
+        // LANÇAMENTO NOVO SALVO, FORMULÁRIO LIMPO (16/11/2026, pedido do
+        // usuário: "eu quero que o sistema descarte os lançamentos
+        // automaticamente após o usuário salvar o lançamento ao invés de um
+        // botão"). A tela "Lançamento salvo com sucesso" pedia um clique em
+        // "Novo Lançamento" para voltar ao formulário; agora ele volta sozinho,
+        // em branco e no mesmo tipo, e o aviso diz o código salvo. O rascunho
+        // já foi encerrado acima. A edição de título segue com a tela de
+        // sempre (Ver Lançamento, Voltar ao pedido, a fila da entrada).
+        if (!editEntry) {
+          const salvos = (Array.isArray(result.entries) && result.entries.length ? result.entries : [result.entry])
+            .map((e) => e && e.codigo).filter(Boolean);
+          showToast(quantas > 1
+            ? `${quantas} parcelas lançadas${salvos.length ? ` (${salvos[0]} a ${salvos[salvos.length - 1]})` : ''}. Formulário limpo para o próximo.`
+            : `Lançamento ${salvos[0] || ''} salvo. Formulário limpo para o próximo.`.replace('  ', ' '), 'success', 6000);
+          state.financeOpenedEntryId = null;
+          state.financeReturnTo = null;
+          state.financeNovoTipo = formType;
+          await renderFinanceNovoLancamento(ctx);
+          return;
         }
         renderSuccess(result.entry, result.entries);
         // O ÚLTIMO TÍTULO DA ENTRADA FECHA O LANÇAMENTO (15/10/2026, pedido do

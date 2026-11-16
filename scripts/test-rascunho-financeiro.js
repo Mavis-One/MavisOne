@@ -130,6 +130,19 @@ check('"Descartar rascunho" aparece só quando o rascunho mudou o formulário',
 check('informa que o formulário está carregando em vez de mostrar uma área vazia',
   /content\.innerHTML = '<div class="panel"><p>Carregando lançamento\.\.\.<\/p><\/div>'/.test(tela));
 
+// 16/11/2026, pedido do usuário: "eu quero que o sistema descarte os
+// lançamentos automaticamente após o usuário salvar o lançamento ao invés de um
+// botão". Provado na 3999: Receita salva, o formulário volta em branco e em
+// Receita, aviso "Lançamento LF28428 salvo", sem "Descartar rascunho" e sem
+// rascunho guardado.
+console.log('\n--- salvou um novo: o formulário volta limpo sozinho (16/11/2026) ---');
+check('lançamento novo salvo reabre o formulário em branco, no mesmo tipo, sem a tela de sucesso',
+  /if \(!editEntry\) \{[\s\S]{0,700}state\.financeNovoTipo = formType;\s*await renderFinanceNovoLancamento\(ctx\);\s*return;\s*\}\s*renderSuccess\(result\.entry, result\.entries\);/.test(tela));
+check('  e o aviso diz o código salvo', /`Lançamento \$\{salvos\[0\] \|\| ''\} salvo\. Formulário limpo para o próximo\.`/.test(tela));
+check('  depois de encerrar o rascunho', tela.indexOf('encerrarRascunho(usuarioDoRascunho, chaveDoRascunho, rascunhoId);\n        } catch (error) {')
+  < tela.indexOf('state.financeNovoTipo = formType;'));
+check('a edição de título segue com a tela de sempre', /\} else if \(editEntry\) \{\s*showToast\('Lançamento atualizado com sucesso\.', 'success'\);/.test(tela));
+
 console.log('\n--- filtros das listas do Financeiro (29/10/2026) ---');
 check('Lançamentos, Contas a Pagar e a Receber guardam filtros, página, ordem e painel por usuário e tela',
   /mavisone:lista-financeiro:\$\{state\.user\?\.id \|\| 'usuario'\}:\$\{telaChave\}/.test(lista)
