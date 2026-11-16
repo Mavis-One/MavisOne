@@ -2847,7 +2847,7 @@ function renderSearchableSelect({ id, name, options, selectedValue, placeholder,
     <div class="searchable-select" id="${id}Wrapper">
       <input type="text" class="searchable-select-input" id="${id}Input" autocomplete="off"
         placeholder="${escapeHtml(placeholder || 'Buscar...')}" value="${escapeHtml(selected ? selected.label : '')}" ${required ? 'required' : ''} ${readonly ? 'readonly tabindex="-1"' : ''} />
-      ${readonly ? '' : `<button type="button" class="searchable-select-lupa" id="${id}Lupa"
+      ${readonly ? '' : `<button type="button" class="searchable-select-lupa" id="${id}Lupa" tabindex="-1"
         title="Ver todas as opções" aria-label="Ver todas as opções">${LUPA_SVG}</button>`}
       <input type="hidden" name="${name}" id="${id}Value" value="${escapeHtml(selectedValue || '')}" />
       <div class="searchable-select-dropdown" id="${id}Dropdown" hidden></div>
@@ -3046,7 +3046,36 @@ function attachSearchableSelect({ id, options, onSelect }) {
     dropdown.innerHTML = mostrados.length
       ? mostrados.map(({ opcao }) => `<div class="searchable-select-option" data-value="${escapeHtml(String(opcao.value))}">${escapeHtml(opcao.label)}${opcao.detalhe ? ` <span class="searchable-select-detalhe">${escapeHtml(opcao.detalhe)}</span>` : ''}</div>`).join('') + aviso
       : '<div class="searchable-select-empty">Nenhum resultado</div>';
+    // A primeira opção já vem destacada: é a que o Tab/Enter escolhe.
+    ativa = 0;
+    navegouComSetas = false;
+    destacar();
     abrirLista();
+  }
+
+  // ESCOLHER PELO TECLADO (16/11/2026, pedido do usuário: "quero poder apertar
+  // TAB pra selecionar as opções pra melhor navegação dentro do sistema").
+  // Antes só o Esc respondia: digitar "dinh" mostrava "CAIXA DINHEIRO
+  // ELECTRIC", e o Tab saía do campo sem escolher nada. Agora:
+  //   - ↓ / ↑ andam pela lista (a destacada é a que vai ser escolhida);
+  //   - Tab escolhe a destacada e segue para o próximo campo, como sempre;
+  //   - Enter escolhe a destacada e NÃO envia o formulário (só com a lista
+  //     aberta — fechada, o Enter faz o que sempre fez).
+  // O Tab só escolhe com algo digitado ainda sem escolha, ou depois das setas:
+  // abrir a lista inteira pela lupa e sair com Tab não marca a primeira opção
+  // por conta própria, nem passar pelo campo já preenchido troca a escolha.
+  let ativa = 0;
+  let navegouComSetas = false;
+  const opcoesNaLista = () => [...dropdown.querySelectorAll('.searchable-select-option')];
+  function destacar() {
+    opcoesNaLista().forEach((el, i) => el.classList.toggle('ativa', i === ativa));
+  }
+  function escolher(value) {
+    const found = options.find((o) => String(o.value) === String(value));
+    hidden.value = value;
+    input.value = found ? found.label : '';
+    fecharLista();
+    if (onSelect) onSelect(value, found);
   }
 
   input.addEventListener('input', () => {
@@ -3062,6 +3091,35 @@ function attachSearchableSelect({ id, options, onSelect }) {
     if (evento.key === 'Escape' && !dropdown.hidden) {
       evento.stopPropagation();
       fecharLista();
+      return;
+    }
+    const lista = dropdown.hidden ? [] : opcoesNaLista();
+    if ((evento.key === 'ArrowDown' || evento.key === 'ArrowUp') && lista.length) {
+      evento.preventDefault();
+      ativa = (ativa + (evento.key === 'ArrowDown' ? 1 : -1) + lista.length) % lista.length;
+      navegouComSetas = true;
+      destacar();
+      lista[ativa].scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if (evento.key === 'Enter' && lista.length) {
+      evento.preventDefault();
+      escolher(lista[Math.min(ativa, lista.length - 1)].dataset.value);
+      return;
+    }
+    if (evento.key === 'Tab' && !evento.shiftKey && lista.length
+      && (navegouComSetas || (input.value.trim() && !hidden.value))) {
+      // Sem preventDefault: o Tab segue para o próximo campo.
+      escolher(lista[Math.min(ativa, lista.length - 1)].dataset.value);
+    }
+  });
+  // O mouse em cima também destaca, para o Tab/Enter seguirem o que se vê.
+  dropdown.addEventListener('mousemove', (evento) => {
+    const el = evento.target.closest('.searchable-select-option');
+    const i = el ? opcoesNaLista().indexOf(el) : -1;
+    if (i >= 0 && i !== ativa) {
+      ativa = i;
+      destacar();
     }
   });
   // A saída para quem não sabe o nome: abre tudo, sob demanda.
@@ -3086,12 +3144,7 @@ function attachSearchableSelect({ id, options, onSelect }) {
     const optionEl = event.target.closest('.searchable-select-option');
     if (!optionEl) return;
     event.preventDefault();
-    const value = optionEl.dataset.value;
-    const found = options.find((o) => String(o.value) === String(value));
-    hidden.value = value;
-    input.value = found ? found.label : '';
-    fecharLista();
-    if (onSelect) onSelect(value, found);
+    escolher(optionEl.dataset.value);
   });
 }
 

@@ -572,13 +572,13 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
               <label>Conta de origem
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeSourceAccount')}
-                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" data-inline-alvo="financeSourceAccount" title="Nova conta bancária">+</button>
+                  <button type="button" class="icon-button edit" tabindex="-1" data-inline-add="bankAccount" data-inline-alvo="financeSourceAccount" title="Nova conta bancária">+</button>
                 </div>
               </label>
               <label>Conta de destino
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeTargetAccount')}
-                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" data-inline-alvo="financeTargetAccount" title="Nova conta bancária">+</button>
+                  <button type="button" class="icon-button edit" tabindex="-1" data-inline-add="bankAccount" data-inline-alvo="financeTargetAccount" title="Nova conta bancária">+</button>
                 </div>
               </label>
             </div>
@@ -602,13 +602,13 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
               <label>Conta bancária *
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeBankAccount')}
-                  <button type="button" class="icon-button edit" data-inline-add="bankAccount" data-inline-alvo="financeBankAccount" title="Nova conta bancária">+</button>
+                  <button type="button" class="icon-button edit" tabindex="-1" data-inline-add="bankAccount" data-inline-alvo="financeBankAccount" title="Nova conta bancária">+</button>
                 </div>
               </label>
               <label>Plano de Contas
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeCategory')}
-                  <button type="button" class="icon-button edit" data-inline-add="category" data-inline-alvo="financeCategory" title="Nova categoria">+</button>
+                  <button type="button" class="icon-button edit" tabindex="-1" data-inline-add="category" data-inline-alvo="financeCategory" title="Nova categoria">+</button>
                 </div>
               </label>
               <!-- O asterisco dentro do mesmo <span> do rótulo: solto, ele virava
@@ -616,7 +616,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
               <label><span>Centro de custo<span data-centro-asterisco>${centroObrigatorioAqui() ? ' *' : ''}</span></span>
                 <div class="finance-inline-select">
                   ${campoDeBusca('financeCostCenter')}
-                  <button type="button" class="icon-button edit" data-inline-add="costCenter" data-inline-alvo="financeCostCenter" title="Novo centro de custo">+</button>
+                  <button type="button" class="icon-button edit" tabindex="-1" data-inline-add="costCenter" data-inline-alvo="financeCostCenter" title="Novo centro de custo">+</button>
                 </div>
               </label>
             </div>
@@ -626,7 +626,7 @@ window.MavisSubscreenRegistry.finance.novo_lancamento = async function renderFin
               <label>Forma de pagamento
                 <div class="finance-inline-select">
                   ${campoDeBusca('financePaymentMethod')}
-                  <button type="button" class="icon-button edit" data-inline-add="paymentMethod" data-inline-alvo="financePaymentMethod" title="Nova forma de pagamento">+</button>
+                  <button type="button" class="icon-button edit" tabindex="-1" data-inline-add="paymentMethod" data-inline-alvo="financePaymentMethod" title="Nova forma de pagamento">+</button>
                 </div>
               </label>
             </div>
