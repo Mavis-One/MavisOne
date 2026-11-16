@@ -5939,7 +5939,15 @@ function filterFinanceEntries(data, query) {
   // previsto ou, no cartão, o líquido que a credenciadora credita. Sem acento
   // e sem diferença de maiúscula, pela mesma normalizeText do resto do sistema.
   const search = String(query.get('search') || '').trim().toLowerCase();
-  if (search) {
+  // VÁRIOS CÓDIGOS DE UMA VEZ (16/11/2026, os 131 títulos duplicados de 25/11
+  // que o usuário colou: "LF32217, LF32221, ..."): a lista traz exatamente
+  // esses títulos, para conferir na tela e excluir em lote pela regra de
+  // sempre. Um código só segue pela busca normal, logo abaixo.
+  const codigosDaLista = listaDeLancamentos.codigosDaBusca(search);
+  if (codigosDaLista) {
+    const procurados = new Set(codigosDaLista);
+    entries = entries.filter((entry) => procurados.has(Number(entry.code)));
+  } else if (search) {
     const termo = normalizeText(search);
     const valor = listaDeLancamentos.valorDaBusca(search);
     const emCentavos = valor === null ? null : listaDeLancamentos.centavos(valor);

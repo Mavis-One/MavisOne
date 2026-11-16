@@ -102,6 +102,20 @@
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
+  /**
+   * VÁRIOS CÓDIGOS COLADOS DE UMA VEZ (16/11/2026): "LF32217, LF32221 LF32225"
+   * -> [32217, 32221, 32225]. Dois ou mais, separados por vírgula, ponto e
+   * vírgula, espaço ou quebra de linha, e nada além de códigos — senão null, e
+   * a busca segue como sempre (um código só, texto, valor, documento).
+   */
+  function codigosDaBusca(texto) {
+    const partes = String(texto || '').split(/[\s,;]+/).filter(Boolean);
+    if (partes.length < 2) return null;
+    const numeros = partes.map(codigoDaBusca);
+    if (numeros.some((n) => n === null)) return null;
+    return [...new Set(numeros)];
+  }
+
   // --- Ações em lote --------------------------------------------------------
   //
   // `rawStatus` é o status gravado ('pending', 'parcial', 'paid', 'cancelado'),
@@ -165,7 +179,7 @@
 
   const api = {
     ORDENAVEIS, COMECA_CRESCENTE, ABAS, ACOES, MAXIMO_DO_LOTE,
-    situacoesDoFiltro, valorDaBusca, centavos, codigoDaBusca, avaliar, resumo
+    situacoesDoFiltro, valorDaBusca, centavos, codigoDaBusca, codigosDaBusca, avaliar, resumo
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (raiz) raiz.MavisListaDeLancamentos = api;
