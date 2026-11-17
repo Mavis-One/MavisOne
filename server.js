@@ -14834,7 +14834,8 @@ async function tratarRequisicao(req, res) {
     if (!podeVerRelatorios(user, ehAdministrador)) {
       return { erro: 'Sem permissão', status: 403 };
     }
-    const escopo = escopoLib.escopoDeVendas(user, { ehAdmin: ehAdministrador });
+    // Nos relatórios, todos veem todas as vendas (17/11/2026, escopoDosRelatorios).
+    const escopo = escopoLib.escopoDosRelatorios(user);
 
     const data = loadData();
     // Uma ONDA so de ida ao banco, e nao 2 em fila: o cadastro (nome do
@@ -14950,7 +14951,8 @@ async function tratarRequisicao(req, res) {
       return { erro: 'Sem permissão', status: 403 };
     }
     const filtros = motorDeRelatorios.normalizarFiltros(def, Object.fromEntries(params.entries()));
-    const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
+    // Nos relatórios, todos veem todas as vendas (17/11/2026, escopoDosRelatorios).
+    const escopo = escopoLib.escopoDosRelatorios(porta.user);
     const resultado = await motorDeRelatorios.executar(def, filtros, {
       sql: async (texto, parametros) => (await consultarBanco(texto, parametros)).rows,
       // db.json: tarefas, agendamentos, contatos e metadados de produto ainda moram lá.
@@ -15024,7 +15026,9 @@ async function tratarRequisicao(req, res) {
     try {
       const porta = await portaDoCatalogo(req);
       if (porta.erro) return sendJson(res, { error: porta.erro }, porta.status);
-      const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
+      // Nos relatórios, todos veem todas as vendas e escolhem o vendedor
+      // (17/11/2026, escopoDosRelatorios).
+      const escopo = escopoLib.escopoDosRelatorios(porta.user);
       const [depositos, contas, vendedores, empresas] = await Promise.all([
         // Só os ativos, como as contas abaixo (29/10/2026: "quando um depósito
         // estiver inativo ele não apareça para seleção dentre campos").
@@ -15148,7 +15152,8 @@ async function tratarRequisicao(req, res) {
         if (casa[2] && req.method === 'GET') {
           const de = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('de') || '') ? url.searchParams.get('de') : '';
           const ate = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('ate') || '') ? url.searchParams.get('ate') : '';
-          const escopo = escopoLib.escopoDeVendas(porta.user, { ehAdmin: porta.ehAdministrador });
+          // Nos relatórios, todos veem todas as vendas (17/11/2026, escopoDosRelatorios).
+          const escopo = escopoLib.escopoDosRelatorios(porta.user);
           // A definição gravada é conferida de novo: a fonte pode ter perdido
           // um campo desde que o relatório foi salvo.
           const def = relatorioPersonalizado.validarDefinicao(rel);
