@@ -4665,6 +4665,29 @@ button.topbar-usuario[aria-expanded="true"] .topbar-conta-seta { transform: rota
 .rel-filtros-grade label { min-width: 0; }
 .rel-filtros-grade select { width: 100%; min-width: 0; }
 
+/* O CAMPO CATEGORIAS (17/11/2026, catalogo.js campoDeCategorias): parece um
+   <select>, e abre uma lista de caixas de marcar por cima da tela. */
+.rel-categorias { display: grid; gap: 10px; font-weight: 600; min-width: 0; position: relative; }
+.rel-categorias-caixa { position: relative; min-width: 0; }
+.rel-categorias-caixa > summary {
+  list-style: none; cursor: pointer; padding: 13px 34px 13px 14px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--input-bg); color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative;
+}
+.rel-categorias-caixa > summary::-webkit-details-marker { display: none; }
+.rel-categorias-caixa > summary::after { content: "▾"; position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+.rel-categorias-caixa[open] > summary { border-color: var(--primary); }
+.rel-categorias-lista {
+  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); min-width: 240px;
+  max-height: 320px; overflow-y: auto; padding: 8px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--panel); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+  display: grid; gap: 2px;
+}
+.rel-categorias-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-weight: 400; cursor: pointer; }
+.rel-categorias-item:hover { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.rel-categorias-item input { padding: 0; width: 16px; height: 16px; flex: none; }
+.rel-categorias-limpar { justify-self: start; margin-top: 4px; }
+
 .rel-filtros-acoes {
   display: flex;
   flex-wrap: wrap;

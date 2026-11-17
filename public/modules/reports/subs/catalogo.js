@@ -245,6 +245,8 @@ window.MavisRelatoriosCatalogo = (function () {
         (opcoes.empresasDeFaturamento || []).filter((o) => def.empresasDoViper || !String(o.id).startsWith('viper:')),
         'Todas', (o) => o.id, (o) => o.name) : '',
       usa('estabelecimento') ? select('estabelecimentoId', 'Estabelecimento', opcoes.estabelecimentos, 'Todos') : '',
+      // As categorias do pedido (17/11/2026). Sem escolha, só as vendas.
+      usa('categoria') ? campoDeCategorias(ctx, { opcoes: opcoes.categoriasDeVenda, valor: filtros.categorias }) : '',
       // As escolhas não têm "Todos": o primeiro item já é o padrão do relatório.
       ...(def.escolhas || []).map((e) => `
         <label>${escapeHtml(e.rotulo)}
@@ -260,6 +262,70 @@ window.MavisRelatoriosCatalogo = (function () {
           ${barraDeAcoes(ctx, { filtros: Boolean(campos) })}
         </div>
       </section>`;
+  }
+
+  /**
+   * O CAMPO CATEGORIAS (17/11/2026, pedido do usuário: "filtros de categorias
+   * para que eu consiga diferenciar quais categorias eu quero pegar, exemplo:
+   * vendas ou transferência entre filiais, garantia e etc"). Caixas de marcar
+   * numa lista que abre; o valor mora num campo escondido, com as chaves
+   * separadas por "|" (shared/categoria_venda.js, lerFiltro). `atributo` é o
+   * do campo escondido: data-rel-cat no catálogo, data-rel-filtro em Pedidos.
+   * `vazio` diz o que vale sem escolha — no catálogo, só as vendas; em
+   * Pedidos, todas.
+   */
+  function resumoDasCategorias(opcoes, escolhidas, vazio) {
+    if (!escolhidas.length) return vazio;
+    if (escolhidas.length === 1) return ((opcoes || []).find((o) => o.id === escolhidas[0]) || {}).name || escolhidas[0];
+    return `${escolhidas.length} categorias`;
+  }
+
+  function campoDeCategorias(ctx, { opcoes = [], valor = '', atributo = 'data-rel-cat', vazio = 'Só vendas (padrão)' } = {}) {
+    const { escapeHtml } = ctx;
+    const escolhidas = [...new Set(String(valor || '').split('|').filter(Boolean))];
+    const itens = (opcoes || []).map((o) => `
+      <label class="rel-categorias-item"><input type="checkbox" value="${escapeHtml(o.id)}" ${escolhidas.includes(o.id) ? 'checked' : ''} /><span>${escapeHtml(o.name)}</span></label>`).join('');
+    return `
+      <div class="rel-categorias" data-rel-categorias data-vazio="${escapeHtml(vazio)}">
+        <span class="rel-categorias-rotulo">Categorias</span>
+        <details class="rel-categorias-caixa">
+          <summary>${escapeHtml(resumoDasCategorias(opcoes, escolhidas, vazio))}</summary>
+          <div class="rel-categorias-lista">
+            ${itens || '<p class="muted">Nenhuma categoria nos pedidos.</p>'}
+            <button type="button" class="secondary rel-categorias-limpar" data-rel-categorias-limpar>Limpar escolha</button>
+          </div>
+        </details>
+        <input type="hidden" ${atributo}="categorias" value="${escapeHtml(escolhidas.join('|'))}" />
+      </div>`;
+  }
+
+  function ligarCategorias(raiz) {
+    raiz.querySelectorAll('[data-rel-categorias]').forEach((campo) => {
+      const caixa = campo.querySelector('details');
+      const resumo = campo.querySelector('summary');
+      const escondido = campo.querySelector('input[type="hidden"]');
+      const caixas = () => [...campo.querySelectorAll('input[type="checkbox"]')];
+      const atualizar = () => {
+        const marcadas = caixas().filter((c) => c.checked);
+        escondido.value = marcadas.map((c) => c.value).join('|');
+        resumo.textContent = !marcadas.length ? campo.dataset.vazio
+          : marcadas.length === 1 ? marcadas[0].nextElementSibling.textContent : `${marcadas.length} categorias`;
+        // Escrever no campo escondido por código não dispara 'change' — e é
+        // por ele que a tela de Pedidos guarda o filtro.
+        escondido.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      caixas().forEach((c) => c.addEventListener('change', atualizar));
+      campo.querySelector('[data-rel-categorias-limpar]')?.addEventListener('click', () => {
+        caixas().forEach((c) => { c.checked = false; });
+        atualizar();
+      });
+      // Clicar fora fecha a lista.
+      const fora = (evento) => { if (!campo.contains(evento.target)) caixa.open = false; };
+      caixa.addEventListener('toggle', () => {
+        if (caixa.open) document.addEventListener('click', fora);
+        else document.removeEventListener('click', fora);
+      });
+    });
   }
 
   /**
@@ -384,6 +450,7 @@ window.MavisRelatoriosCatalogo = (function () {
         </section>
       </div>`;
     ligarVoltar(ctx, grupo);
+    ligarCategorias(content);
 
     const ler = () => {
       content.querySelectorAll('[data-rel-cat]').forEach((campo) => { filtros[campo.dataset.relCat] = campo.value; });
@@ -402,5 +469,5 @@ window.MavisRelatoriosCatalogo = (function () {
     });
   }
 
-  return { lista, relatorio, comVolta, formatar, tabela, baixar, query, barraDeAcoes, ligarBarra, barraDaVisao, ligarVisao, LIMITE_NA_TELA };
+  return { lista, relatorio, comVolta, formatar, tabela, baixar, query, barraDeAcoes, ligarBarra, barraDaVisao, ligarVisao, campoDeCategorias, ligarCategorias, LIMITE_NA_TELA };
 }());

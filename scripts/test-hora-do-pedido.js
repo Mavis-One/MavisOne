@@ -97,7 +97,7 @@ const COM_HORA = { vendas: ['pedidos-faturados', 'itens-dos-pedidos', 'lucrativi
   const carregadores = ler('lib/db/vendas-compras.js');
   check('  os carregadores da lista e dos painéis leem registration_time',
     /const COLUNAS_DE_AGREGADO = '[^']*registration_time'/.test(carregadores) && /client_status, registration_time, '/.test(carregadores)
-    && /'registration_time'\n\]\.join/.test(ler('lib/relatorios-cargas.js')));
+    && /'registration_time',[^\]]*\]\.join/.test(ler('lib/relatorios-cargas.js')));
   const app = ler('public/app.js');
   check('  a coluna da lista se chama Data/Hora e mostra a hora',
     /chave: 'date', rotulo: 'Data\/Hora', ordenavel: true, valor: \(r, f\) => f\.data\(r\.date\) \+ \(r\.hora \?/.test(app));

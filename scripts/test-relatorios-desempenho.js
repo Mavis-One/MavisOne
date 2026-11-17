@@ -210,7 +210,9 @@ const recortar = (fonte, nome) => {
   for (const c of ['id', 'code', 'type', 'date', 'status', 'seller_id', 'client_supplier_id', 'client_supplier_name', 'customer',
     'discount_amount', 'discount_percent', 'items',
     // a hora do pedido (09/11/2026, lib/hora-do-pedido.js)
-    'registration_time']) {
+    'registration_time',
+    // a categoria (17/11/2026, o filtro Categorias)
+    'category']) {
     check(`  a coluna ${c} vem`, colunas.includes(c));
   }
   check('  pedidos e orçamentos em código decrescente, empates pela posição física (a ordem do índice de hoje)',
@@ -218,7 +220,7 @@ const recortar = (fonte, nome) => {
   // O que o relatório lê do registro serializado tem de estar coberto acima.
   const lidos = new Set([...ler('lib/relatorios-vendas.js').matchAll(/registro\.(\w+)/g)].map((m) => m[1]));
   const cobertos = new Set(['id', 'code', 'type', 'date', 'status', 'sellerId', 'sellerName', 'clientSupplierId', 'customer',
-    'clientSupplierName', 'discountAmount', 'discountPercent', 'items', 'registrationTime']);
+    'clientSupplierName', 'discountAmount', 'discountPercent', 'items', 'registrationTime', 'category']);
   const descobertos = [...lidos].filter((c) => !cobertos.has(c));
   check('  e lib/relatorios-vendas.js não lê do registro nada além disso', descobertos.length === 0, descobertos.join(', ') || [...lidos].join(', '));
 

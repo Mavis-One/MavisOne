@@ -129,7 +129,9 @@ console.log('\n--- 4. os títulos da empresa ---');
     /async function titulosEContasDaEmpresa\(valor\) \{[\s\S]{0,1600}const empresaDe = await resolvedorDeEmpresas\(titulos, dados\);[\s\S]{0,300}relatoriosComum\.empresaConfere/.test(servidor));
   check('  e chegam ao catálogo', /titulosDaEmpresa: titulosEContasDaEmpresa/.test(servidor));
   check('a mesma lista no catálogo, em Pedidos e na Síntese/Estoque (estas sem as do Viper)',
-    /empresasDosRelatorios\(\)\s*\]\);/.test(servidor) && /relatorio\.opcoes = \{ \.\.\.relatorio\.opcoes, empresas: await empresasDosRelatorios\(\) \};/.test(servidor)
+    // 17/11/2026: junto com as categorias (o campo Categorias) — a mesma lista ainda.
+    /empresasDosRelatorios\(\),\s*categoriasDosRelatorios\(\)\s*\]\);/.test(servidor)
+    && /const \[empresasDaTela, categoriasDaTela\] = await Promise\.all\(\[empresasDosRelatorios\(\), categoriasDosRelatorios\(\)\]\);\s*relatorio\.opcoes = \{ \.\.\.relatorio\.opcoes, empresas: empresasDaTela,/.test(servidor)
     && /empresas: await empresasDosRelatorios\(\{ doViper: false \}\)/.test(servidor));
   check('Pedidos e Vendas por Vendedor: os pedidos e orçamentos da empresa', /pedidosDaEmpresa: await pedidosDaEmpresaDoRelatorio\(/.test(servidor));
   check('a Síntese: os títulos da empresa; o Valor em Estoque: o razão nos depósitos dela',

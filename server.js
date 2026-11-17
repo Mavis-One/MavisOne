@@ -14869,11 +14869,15 @@ async function tratarRequisicao(req, res) {
       pagina: params.get('pagina') || 1,
       porPagina: params.get('porPagina') || 25,
       empresa: relatoriosComum.empresaPedida(params.get('empresa')),
-      pedidosDaEmpresa: await pedidosDaEmpresaDoRelatorio(relatoriosComum.empresaPedida(params.get('empresa')), data)
+      pedidosDaEmpresa: await pedidosDaEmpresaDoRelatorio(relatoriosComum.empresaPedida(params.get('empresa')), data),
+      // As categorias do pedido (17/11/2026); vazio = todas, como sempre foi aqui.
+      categorias: categoriaVenda.lerFiltro(params.get('categorias'))
     };
     const relatorio = relatoriosVendas.montarRelatorio({ registros, filtros, escopo });
-    // O campo Empresa da tela (06/11/2026): a mesma lista do catálogo.
-    relatorio.opcoes = { ...relatorio.opcoes, empresas: await empresasDosRelatorios() };
+    // O campo Empresa da tela (06/11/2026): a mesma lista do catálogo. E o
+    // campo Categorias (17/11/2026), também a do catálogo.
+    const [empresasDaTela, categoriasDaTela] = await Promise.all([empresasDosRelatorios(), categoriasDosRelatorios()]);
+    relatorio.opcoes = { ...relatorio.opcoes, empresas: empresasDaTela, categorias: categoriasDaTela };
     return { relatorio, filtros, escopo, registros };
   }
 
@@ -14968,7 +14972,28 @@ async function tratarRequisicao(req, res) {
       },
       titulosDaEmpresa: titulosEContasDaEmpresa
     });
+    // O filtro de categorias (17/11/2026) no alto do Excel e do PDF, pelo nome:
+    // um relatório impresso de "Garantia" não pode parecer o de vendas.
+    if (filtros.categorias) {
+      const nomes = new Map((await categoriasDosRelatorios()).map((c) => [c.id, c.name]));
+      resultado.categoriasEscolhidas = categoriaVenda.lerFiltro(filtros.categorias).map((k) => nomes.get(k) || k);
+    }
     return { resultado };
+  }
+
+  /**
+   * AS OPÇÕES DO CAMPO "Categorias" DOS RELATÓRIOS DE VENDA (17/11/2026,
+   * pedido do usuário: "filtros de categorias para que eu consiga diferenciar
+   * quais categorias eu quero pegar, exemplo: vendas ou transferência entre
+   * filiais, garantia e etc"). As que os pedidos usam, sem a filial, e as
+   * cadastradas (categoriaVenda.opcoesDoFiltro): { id: chave, name }.
+   */
+  async function categoriasDosRelatorios() {
+    const [usadas, cadastradas] = await Promise.all([
+      consultarBanco("select coalesce(category, '') as category, count(*)::int as total from orders group by 1"),
+      consultarBanco('select name from sales_categories')
+    ]);
+    return categoriaVenda.opcoesDoFiltro(usadas.rows, cadastradas.rows);
   }
 
   /**
@@ -15029,7 +15054,7 @@ async function tratarRequisicao(req, res) {
       // Nos relatórios, todos veem todas as vendas e escolhem o vendedor
       // (17/11/2026, escopoDosRelatorios).
       const escopo = escopoLib.escopoDosRelatorios(porta.user);
-      const [depositos, contas, vendedores, empresas] = await Promise.all([
+      const [depositos, contas, vendedores, empresas, categoriasDeVenda] = await Promise.all([
         // Só os ativos, como as contas abaixo (29/10/2026: "quando um depósito
         // estiver inativo ele não apareça para seleção dentre campos").
         consultarBanco("select id, name from deposits where coalesce(status, 'ativo') <> 'inativo' order by name"),
@@ -15041,7 +15066,8 @@ async function tratarRequisicao(req, res) {
         // apareça as empresas aonde os pedidos foram faturados"; 06/11/2026 em
         // todo relatório: "coloque opção de seleção de empresas em todos os
         // modulos"). Ver empresasDosRelatorios.
-        empresasDosRelatorios()
+        empresasDosRelatorios(),
+        categoriasDosRelatorios()
       ]);
       return sendJson(res, {
         grupos: catalogoDeRelatorios.catalogoVisivel(porta.user, porta.ehAdministrador),
@@ -15058,6 +15084,8 @@ async function tratarRequisicao(req, res) {
           // antes do deploy lia os objetos como texto e mostrava "[object
           // Object]" no campo. Com outro nome, ela só mostra "Todas" até recarregar.
           empresasDeFaturamento: empresas,
+          // O campo Categorias (17/11/2026): { id: chave sem a filial, name }.
+          categoriasDeVenda,
           podeEscolherVendedor: escopo.podeEscolherVendedor
         }
       });

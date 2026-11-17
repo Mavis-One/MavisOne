@@ -112,7 +112,60 @@
     return !/transfer|remessa/.test(texto);
   }
 
-  const api = { FINALIDADES, OPERACOES, finalidade, semFilial, categoriaDoPedido, regraDaCategoria, exigePagamento };
+  /**
+   * O FILTRO DE CATEGORIAS DOS RELATÓRIOS (17/11/2026). Pedido do usuário:
+   * "preciso que os relatórios tenham filtros de categorias para que eu
+   * consiga diferenciar quais categorias eu quero pegar, exemplo: vendas ou
+   * transferência entre filiais, garantia e etc".
+   *
+   * A categoria do filtro é a do pedido SEM a filial ("Venda de Materiais e
+   * Serviços / Timbo" e "... / Araquari" são a mesma "Venda de Materiais e
+   * Serviços" — a loja já tem o campo Empresa), comparada sem acento e sem
+   * caixa. Pedido sem categoria tem a chave SEM_CATEGORIA. O SQL dos
+   * relatórios repete a mesma conta (lib/relatorios/comum.js, categoriaSql).
+   */
+  const SEM_CATEGORIA = 'sem-categoria';
+  const SEPARADOR_DO_FILTRO = '|';
+
+  function chaveDoFiltro(nome) {
+    return chave(semFilial(nome)) || SEM_CATEGORIA;
+  }
+
+  /** "a|b|a" (da tela) -> ['a', 'b']: chaves já normalizadas, sem repetir. */
+  function lerFiltro(valor) {
+    const lista = Array.isArray(valor) ? valor : String(valor || '').split(SEPARADOR_DO_FILTRO);
+    const vistas = new Set();
+    for (const item of lista) {
+      const k = String(item || '').trim() === SEM_CATEGORIA ? SEM_CATEGORIA : chave(item).slice(0, 120);
+      if (k) vistas.add(k);
+      if (vistas.size >= 60) break;
+    }
+    return [...vistas];
+  }
+
+  /**
+   * As opções do campo: [{ category, total }] (o que os pedidos usam) e as
+   * categorias cadastradas -> [{ id: chave, name }]. O nome é a grafia mais
+   * usada daquela chave; "Sem categoria" vai por último.
+   */
+  function opcoesDoFiltro(usadas, cadastradas) {
+    const porChave = new Map();
+    const somar = (nome, total) => {
+      const k = chaveDoFiltro(nome);
+      const item = porChave.get(k) || new Map();
+      const exibido = k === SEM_CATEGORIA ? 'Sem categoria' : semFilial(nome).replace(/\s+/g, ' ');
+      item.set(exibido, (item.get(exibido) || 0) + total);
+      porChave.set(k, item);
+    };
+    for (const u of usadas || []) somar(u.category, Number(u.total) || 1);
+    for (const c of cadastradas || []) somar(c.name, 0);
+    return [...porChave.entries()]
+      .map(([id, grafias]) => ({ id, name: [...grafias.entries()].sort((a, b) => b[1] - a[1])[0][0] }))
+      .sort((a, b) => (a.id === SEM_CATEGORIA) - (b.id === SEM_CATEGORIA) || a.name.localeCompare(b.name, 'pt-BR'));
+  }
+
+  const api = { FINALIDADES, OPERACOES, finalidade, semFilial, categoriaDoPedido, regraDaCategoria, exigePagamento,
+    SEM_CATEGORIA, SEPARADOR_DO_FILTRO, chaveDoFiltro, lerFiltro, opcoesDoFiltro };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (raiz) raiz.MavisCategoriaVenda = api;
 })(typeof window !== 'undefined' ? window : null);

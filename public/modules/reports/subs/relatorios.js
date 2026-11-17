@@ -68,7 +68,7 @@ function relNum(valor) {
 // refaz a filtragem a cada ida ao pedido e de volta.
 function relFiltros(state) {
   return (state.reportsVendasFiltros = state.reportsVendasFiltros || {
-    dataDe: '', dataAte: '', vendedorId: '', clienteId: '', produtoId: '', empresa: '',
+    dataDe: '', dataAte: '', vendedorId: '', clienteId: '', produtoId: '', empresa: '', categorias: '',
     status: '', tipo: 'order', busca: '',
     ordem: 'data', direcao: 'desc', pagina: 1, porPagina: 25,
     visao: 'tabela'
@@ -260,6 +260,9 @@ function relBarraDeFiltros(ctx, rel) {
             ${opcoes.empresas.map((o) => `<option value="${escapeHtml(o.id)}" ${o.id === f.empresa ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
           </select>
         </label>` : ''}
+        ${window.MavisRelatoriosCatalogo.campoDeCategorias(ctx, {
+    opcoes: opcoes.categorias, valor: f.categorias || '', atributo: 'data-rel-filtro', vazio: 'Todas'
+  })}
         ${campoPor('clienteId')}
         ${campoPor('produtoId')}
         <label>Situação
@@ -312,6 +315,7 @@ function relAcoes({ filtros = false } = {}) {
 function relLigarFiltros(ctx) {
   const { content, state, loadModule, showToast } = ctx;
   const f = relFiltros(state);
+  window.MavisRelatoriosCatalogo.ligarCategorias(content);
 
   content.querySelectorAll('[data-rel-filtro]').forEach((campo) => {
     campo.addEventListener('change', () => {
