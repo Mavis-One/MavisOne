@@ -204,6 +204,9 @@ const equipamentosDb = require('./lib/db/equipamentos');
 const garantia = require('./public/modules/shared/garantia');
 // Fase AR: as notas que emitiram CONTRA o nosso CNPJ (Distribuicao de DF-e).
 const dfeDb = require('./lib/db/dfe');
+const dfeImportacao = require('./lib/dfe-importacao');
+// Arquivos por requisição na importação de XMLs antigos (a tela divide).
+const MAXIMO_DE_XMLS_POR_LOTE = 100;
 const manifestacao = require('./public/modules/shared/manifestacao');
 // A tabela tBand da NF-e. O MESMO catalogo que a tela oferece na linha de
 // pagamento e que o cadastro de credenciadoras valida.
@@ -18220,6 +18223,91 @@ async function tratarRequisicao(req, res) {
           });
         } catch (erro) {
           return sendErro(res, erro, 'Erro ao consultar a SEFAZ', 400);
+        }
+      }
+
+      // NOTAS ANTIGAS PELO ARQUIVO XML (19/11/2026, pedido do usuário: "preciso
+      // puxar notas mais antigas, faça um botão que somente o ADMIN vê"). A
+      // SEFAZ só distribui os últimos 90 dias e a Focus só tem desde 12/05/2026
+      // — o anterior vem dos XMLs do Viper, do contador ou do fornecedor (ver
+      // lib/dfe-importacao.js). SÓ ADMINISTRADOR. A tela manda em lotes
+      // (MAXIMO_DE_XMLS_POR_LOTE), com as notas antes dos cancelamentos.
+      if (pathname === '/api/fiscal/dfe/importar-xml' && req.method === 'POST') {
+        try {
+          const user = await getCurrentUser(req);
+          if (!await ehAdmin(user)) {
+            return sendJson(res, { error: 'Importar XMLs de notas antigas é só para administrador.' }, 403);
+          }
+          const body = await readBody(req, 16 * 1024 * 1024);
+          const arquivos = Array.isArray(body.arquivos) ? body.arquivos : [];
+          if (!arquivos.length) return sendJson(res, { error: 'Nenhum arquivo XML enviado.' }, 400);
+          if (arquivos.length > MAXIMO_DE_XMLS_POR_LOTE) {
+            return sendJson(res, { error: `No máximo ${MAXIMO_DE_XMLS_POR_LOTE} arquivos por vez.` }, 400);
+          }
+          // A nota é de quem é o DESTINATÁRIO, pelo CNPJ inteiro do XML.
+          const estabelecimentos = await fiscalDb.getEstabelecimentos();
+          const porCnpj = new Map(estabelecimentos
+            .map((e) => [String(e.cnpj || '').replace(/\D/g, ''), e])
+            .filter(([cnpj]) => cnpj.length === 14));
+
+          const resultados = [];
+          for (const arquivo of arquivos) {
+            const nome = String((arquivo && arquivo.nome) || 'arquivo.xml').slice(0, 200);
+            const xml = String((arquivo && arquivo.xml) || '');
+            try {
+              const lido = dfeImportacao.lerArquivoRecebido(xml);
+              if (lido.tipo === 'cancelamento') {
+                const mudadas = await dfeDb.marcarCanceladaPeloXml(lido.chave, { protocolo: lido.protocolo, usuarioNome: user.name });
+                resultados.push(mudadas
+                  ? { nome, chave: lido.chave, situacao: 'cancelada' }
+                  : { nome, chave: lido.chave, situacao: 'ignorado', motivo: 'Cancelamento de uma nota que não está na lista (ou que já estava cancelada).' });
+                continue;
+              }
+              const nota = lido.nota;
+              const estabelecimento = porCnpj.get(nota.destinatarioDocumento);
+              if (!estabelecimento) {
+                resultados.push({
+                  nome, chave: nota.chave, situacao: 'recusado',
+                  motivo: nota.destinatarioDocumento
+                    ? `O destinatário (${nota.destinatarioDocumento}) não é empresa do grupo: a nota não foi emitida contra nós.`
+                    : 'A nota não tem destinatário com CNPJ.'
+                });
+                continue;
+              }
+              const gravado = await dfeDb.importarDoXml({
+                cnpjDestinatario: nota.destinatarioDocumento,
+                empresaNome: estabelecimento.nomeFantasia || estabelecimento.razaoSocial || '',
+                nota, xml, arquivo: nome, usuarioNome: user.name
+              });
+              resultados.push({
+                nome, chave: nota.chave, situacao: gravado.situacao,
+                ...(nota.protocolo ? {} : { aviso: 'XML sem o protocolo de autorização da SEFAZ.' })
+              });
+            } catch (erroDoArquivo) {
+              if (!erroDoArquivo || !erroDoArquivo.status || erroDoArquivo.status >= 500) throw erroDoArquivo;
+              resultados.push({ nome, situacao: 'recusado', motivo: erroDoArquivo.message });
+            }
+          }
+
+          const contar = (situacao) => resultados.filter((r) => r.situacao === situacao).length;
+          const resumo = {
+            novas: contar('nova'), completadas: contar('completada'), jaExistiam: contar('ja-existia'),
+            canceladas: contar('cancelada'), ignorados: contar('ignorado'), recusados: contar('recusado')
+          };
+          await db.rbac.registrarAcesso({
+            userId: user.id, userName: user.name, action: 'fiscal.importar_xml_recebidas',
+            resourceType: 'dfe', result: 'PERMITIDO', ip: ipDaRequisicao(req),
+            detail: { arquivos: arquivos.length, ...resumo }
+          });
+          // As entradas do Viper sem chave ganham a da nota que casa com elas —
+          // o mesmo passo da busca na SEFAZ. Falhar aqui não derruba a importação.
+          let chavesCompletadas = 0;
+          if (resumo.novas || resumo.completadas) {
+            try { chavesCompletadas = (await nfeImportadasDb.completarChavesDasRecebidas()).completadas; } catch (erroChaves) { chavesCompletadas = 0; }
+          }
+          return sendJson(res, { success: true, resumo: { ...resumo, chavesCompletadas }, resultados });
+        } catch (erro) {
+          return sendErro(res, erro, 'Erro ao importar os XMLs', 400);
         }
       }
 

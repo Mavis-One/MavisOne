@@ -30,7 +30,9 @@ const entrada = ler('public/modules/purchases/subs/entrada_nfe.js');
 check('a manifestação abre numa janela por cima da lista', lista.includes('<div class="modal-overlay" id="dfeManifestacaoModal">'));
 check('manifestar não lança a entrada sozinho', !/lancarEntrada\(/.test(lista) && !lista.includes("api('/api/purchases/entrada-nfe'"));
 check('Ciência e Confirmação oferecem "Dar entrada"',
-  lista.includes('const podeDarEntrada = (doc) => Boolean(doc.manifestacaoCodigo) && catalogo.liberaXml(doc.manifestacaoCodigo) && !doc.entradaId;')
+  // + a importada do XML, que dá entrada sem manifestação (19/11/2026).
+  lista.includes('const podeDarEntrada = (doc) => !doc.entradaId && (doc.importadaDoXml')
+  && lista.includes(': Boolean(doc.manifestacaoCodigo) && catalogo.liberaXml(doc.manifestacaoCodigo));')
   && lista.includes('data-dar-entrada='));
 check('"Dar entrada" abre a Entrada de NF-e com a nota', lista.includes("state.entradaNfeDoDfe = { dfeId: documentoId, chave: doc ? doc.chave : '' };")
   && lista.includes("state.activeSub = 'entrada_nfe';"));

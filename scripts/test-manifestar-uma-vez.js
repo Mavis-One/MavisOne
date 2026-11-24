@@ -48,7 +48,8 @@ check('recusa da SEFAZ (status "erro", HTTP 200) não vira manifestada',
   && rota.indexOf('if (!aceita) {') < rota.indexOf('dfeDb.registrarManifestacao(id, {'));
 check('  e a duplicidade (573) atualiza a nota pela SEFAZ', /const duplicidade = String\(resposta && resposta\.status_sefaz \|\| ''\) === '573';\s*let depois = duplicidade \? await atualizarPelaSefaz\(\)/.test(rota));
 
-check('tela: Manifestar só sem manifestação ou com ciência', tela.includes("const podeManifestar = (doc) => !doc.manifestacaoCodigo || doc.manifestacaoCodigo === SO_CIENCIA;"));
+// (e nunca na importada do XML, 19/11/2026: a SEFAZ não a distribuiu)
+check('tela: Manifestar só sem manifestação ou com ciência', tela.includes("const podeManifestar = (doc) => !doc.importadaDoXml && (!doc.manifestacaoCodigo || doc.manifestacaoCodigo === SO_CIENCIA);"));
 check('  com ciência, a janela não oferece ciência de novo', tela.includes('catalogo.CATALOGO.filter((m) => !(doc.manifestacaoCodigo === SO_CIENCIA && m.codigo === SO_CIENCIA))'));
 check('  e a janela fecha quando a SEFAZ diz que já está manifestada', /if \(depois && !podeManifestar\(depois\)\) \{\s*tela\.manifestando = null;/.test(tela));
 

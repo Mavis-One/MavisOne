@@ -285,7 +285,11 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
 
   // Ciência e Confirmação liberam o XML: dá para dar entrada. As outras duas
   // dizem que a nota não é nossa ou não aconteceu — não se lança.
-  const podeDarEntrada = (doc) => Boolean(doc.manifestacaoCodigo) && catalogo.liberaXml(doc.manifestacaoCodigo) && !doc.entradaId;
+  // A NOTA IMPORTADA DO XML (19/11/2026) já tem o XML e não passa pela SEFAZ
+  // (é antiga demais para manifestar): dá entrada direto, salvo a cancelada.
+  const podeDarEntrada = (doc) => !doc.entradaId && (doc.importadaDoXml
+    ? doc.situacao !== 'cancelada'
+    : Boolean(doc.manifestacaoCodigo) && catalogo.liberaXml(doc.manifestacaoCodigo));
 
   function colunaEntrada(doc) {
     if (doc.entradaId) return '<span class="finance-badge finance-badge-success">lançada</span>';
@@ -298,7 +302,140 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
   // ciência (provisória — falta a definitiva). Manifestação definitiva não se
   // repete; o servidor ainda confere na SEFAZ antes de mandar.
   const SO_CIENCIA = '210210';
-  const podeManifestar = (doc) => !doc.manifestacaoCodigo || doc.manifestacaoCodigo === SO_CIENCIA;
+  // A importada do XML não: a SEFAZ não a distribuiu, e a Focus não a tem.
+  const podeManifestar = (doc) => !doc.importadaDoXml && (!doc.manifestacaoCodigo || doc.manifestacaoCodigo === SO_CIENCIA);
+
+  // ------------------------------------------- notas antigas pelo XML (admin)
+  // 19/11/2026, pedido do usuário: "preciso puxar notas mais antigas, faça um
+  // botão que somente o ADMIN vê". A SEFAZ só distribui os últimos 90 dias e a
+  // Focus só tem desde 12/05/2026; o anterior vem dos XMLs (Viper, contador,
+  // fornecedor). Aceita vários .xml e .zip de uma vez; o .zip é aberto aqui
+  // (shared/zip_leitor.js) e os XMLs vão em lotes. O servidor confere de novo
+  // que é administrador.
+  const ehAdmin = typeof usuarioEhAdmin === 'function' && usuarioEhAdmin();
+  const XMLS_POR_LOTE = 100;
+  const BYTES_POR_LOTE = 6 * 1024 * 1024;
+  const decodificadorUtf8 = new TextDecoder('utf-8');
+
+  // Os arquivos escolhidos -> [{ nome, xml }], abrindo os .zip; o que não é XML
+  // fica de fora, contado.
+  async function xmlsDosArquivos(lista) {
+    const xmls = [];
+    const deixados = [];
+    for (const arquivo of lista) {
+      const nome = arquivo.name || 'arquivo';
+      if (/\.zip$/i.test(nome)) {
+        try {
+          const dentro = await window.MavisZip.lerZip(await arquivo.arrayBuffer());
+          for (const item of dentro) {
+            const nomeDentro = `${nome} › ${item.nome}`;
+            if (item.erro) { deixados.push({ nome: nomeDentro, motivo: item.erro }); continue; }
+            if (!/\.xml$/i.test(item.nome)) { deixados.push({ nome: nomeDentro, motivo: 'Não é .xml (deixado de lado).', silencioso: true }); continue; }
+            xmls.push({ nome: nomeDentro, xml: decodificadorUtf8.decode(item.bytes) });
+          }
+        } catch (erro) {
+          deixados.push({ nome, motivo: erro.message || 'Não consegui abrir o .zip.' });
+        }
+        continue;
+      }
+      if (!/\.xml$/i.test(nome)) { deixados.push({ nome, motivo: 'Não é .xml nem .zip.' }); continue; }
+      xmls.push({ nome, xml: await arquivo.text() });
+    }
+    // Os cancelamentos por último: a nota precisa estar gravada antes.
+    const ehEvento = (x) => /<(\w+:)?infEvento[\s>]/.test(x.xml) && !/<(\w+:)?infNFe[\s>]/.test(x.xml);
+    xmls.sort((a, b) => Number(ehEvento(a)) - Number(ehEvento(b)));
+    return { xmls, deixados };
+  }
+
+  function lotesDe(xmls) {
+    const lotes = [];
+    let atual = [];
+    let bytes = 0;
+    for (const item of xmls) {
+      const tamanho = item.xml.length + item.nome.length + 32;
+      if (atual.length && (atual.length >= XMLS_POR_LOTE || bytes + tamanho > BYTES_POR_LOTE)) {
+        lotes.push(atual);
+        atual = [];
+        bytes = 0;
+      }
+      atual.push(item);
+      bytes += tamanho;
+    }
+    if (atual.length) lotes.push(atual);
+    return lotes;
+  }
+
+  async function importarArquivos(lista) {
+    if (!lista || !lista.length || tela.ocupado) return;
+    tela.ocupado = true;
+    tela.importacao = { lendo: true };
+    desenhar();
+    const { xmls, deixados } = await xmlsDosArquivos([...lista]);
+    const soma = { novas: 0, completadas: 0, jaExistiam: 0, canceladas: 0, ignorados: 0, recusados: 0, chavesCompletadas: 0 };
+    const problemas = deixados.filter((d) => !d.silencioso).map((d) => ({ nome: d.nome, motivo: d.motivo }));
+    const avisos = [];
+    let enviados = 0;
+    let falhou = '';
+    tela.importacao = { enviados: 0, total: xmls.length };
+    desenhar();
+    for (const lote of lotesDe(xmls)) {
+      try {
+        const r = await api('/api/fiscal/dfe/importar-xml', { method: 'POST', body: JSON.stringify({ arquivos: lote }) });
+        Object.keys(soma).forEach((k) => { soma[k] += Number((r.resumo || {})[k] || 0); });
+        (r.resultados || []).forEach((item) => {
+          if (item.situacao === 'recusado' || item.situacao === 'ignorado') problemas.push({ nome: item.nome, motivo: item.motivo });
+          else if (item.aviso) avisos.push({ nome: item.nome, motivo: item.aviso });
+        });
+      } catch (erro) {
+        falhou = erro.message || 'Erro ao importar.';
+        break;
+      }
+      enviados += lote.length;
+      tela.importacao = { enviados, total: xmls.length };
+      desenhar();
+    }
+    tela.ocupado = false;
+    tela.importacao = {
+      terminado: true, total: xmls.length, enviados, soma, problemas, avisos, falhou,
+      foraDoZip: deixados.filter((d) => d.silencioso).length
+    };
+    showToast(falhou
+      ? `Importação interrompida: ${falhou}`
+      : `${soma.novas} ${soma.novas === 1 ? 'nota nova' : 'notas novas'} na lista.`, falhou ? 'error' : 'success');
+    await carregar();
+  }
+
+  function blocoImportacao() {
+    const imp = tela.importacao;
+    if (!imp || !imp.terminado) return '';
+    const s = imp.soma;
+    const linha = (n, singular, plural) => (n ? `<li><strong>${n.toLocaleString('pt-BR')}</strong> ${n === 1 ? singular : plural}</li>` : '');
+    const listaDe = (itens) => `<ul class="dfe-importacao-lista">${itens.slice(0, 200).map((p) => `<li><strong>${escapeHtml(p.nome)}</strong> — ${escapeHtml(p.motivo || '')}</li>`).join('')}${itens.length > 200 ? `<li class="muted">… e mais ${itens.length - 200}.</li>` : ''}</ul>`;
+    return `
+      <section class="panel dfe-importacao">
+        <h4>Importação de XMLs antigos</h4>
+        ${imp.falhou ? `<p class="finance-badge finance-badge-danger">Parou depois de ${imp.enviados} de ${imp.total} arquivos: ${escapeHtml(imp.falhou)}</p>` : ''}
+        <ul>
+          ${linha(s.novas, 'nota nova entrou na lista', 'notas novas entraram na lista')}
+          ${linha(s.completadas, 'nota que só tinha o resumo ganhou o XML', 'notas que só tinham o resumo ganharam o XML')}
+          ${linha(s.jaExistiam, 'já estava na lista (não mudou)', 'já estavam na lista (não mudaram)')}
+          ${linha(s.canceladas, 'nota marcada como cancelada pelo evento de cancelamento', 'notas marcadas como canceladas pelo evento de cancelamento')}
+          ${linha(s.chavesCompletadas, 'entrada importada do Viper ganhou a chave', 'entradas importadas do Viper ganharam a chave')}
+          ${linha(imp.foraDoZip, 'arquivo do .zip que não é XML ficou de fora', 'arquivos do .zip que não são XML ficaram de fora')}
+          ${imp.total ? '' : '<li>Nenhum XML encontrado nos arquivos escolhidos.</li>'}
+        </ul>
+        ${imp.problemas.length ? `<p><strong>${imp.problemas.length} ${imp.problemas.length === 1 ? 'arquivo não entrou' : 'arquivos não entraram'}:</strong></p>${listaDe(imp.problemas)}` : ''}
+        ${imp.avisos.length ? `<p class="muted">${imp.avisos.length} ${imp.avisos.length === 1 ? 'nota entrou sem' : 'notas entraram sem'} o protocolo de autorização da SEFAZ no XML:</p>${listaDe(imp.avisos)}` : ''}
+        <div class="row"><button type="button" class="secondary" id="dfeFecharImportacao">Fechar</button></div>
+      </section>`;
+  }
+
+  function rotuloDoBotaoImportar() {
+    const imp = tela.importacao;
+    if (imp && imp.lendo) return 'Lendo os arquivos…';
+    if (imp && !imp.terminado && imp.total != null) return `Importando ${imp.enviados} de ${imp.total}…`;
+    return 'Importar XMLs antigos';
+  }
 
   function acoesDaNota(doc) {
     const botoes = [];
@@ -329,11 +466,16 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         <div class="panel-header">
           <h3>Notas emitidas contra CNPJ</h3>
           <div class="dfe-acoes-topo">
+            ${ehAdmin ? `
+              <button type="button" class="secondary" id="dfeImportarXml" ${tela.ocupado ? 'disabled' : ''}
+                title="Notas anteriores às que a SEFAZ ainda distribui: escolha os XMLs (ou um .zip com eles)">${rotuloDoBotaoImportar()}</button>
+              <input type="file" id="dfeArquivosXml" accept=".xml,.zip,text/xml,application/xml,application/zip" multiple hidden />` : ''}
             <button type="button" class="secondary" id="dfeAtualizarTodas" ${tela.ocupado ? 'disabled' : ''}>${tela.todas ? `Atualizando ${tela.todas.feitas + 1} de ${tela.todas.total}…` : 'Atualizar todas as empresas'}</button>
             <button type="button" id="dfeAbrirBusca">Buscar documentos na SEFAZ</button>
           </div>
         </div>
         ${avisoDeToken()}
+        ${blocoImportacao()}
         ${blocoBusca()}
         ${blocoPesquisa(total, docs.length)}
         <div class="table-scroll">
@@ -358,11 +500,15 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
                   <td class="dfe-chave"><code>${escapeHtml(doc.chave)}</code></td>
                   <td class="dfe-data">${dataHora(doc.dataEmissao).replace(' - ', '<br />')}</td>
                   <td>${dinheiro(doc.valorTotal)}</td>
-                  <td>${doc.nsu == null ? '-' : doc.nsu}</td>
-                  <td>${badgeManifestado(doc)}</td>
+                  <td>${doc.importadaDoXml
+                      ? '<span class="finance-badge finance-badge-muted" title="Importada de arquivo XML, não veio da SEFAZ">XML</span>'
+                      : (doc.nsu == null ? '-' : doc.nsu)}</td>
+                  <td>${doc.importadaDoXml && !doc.manifestacaoCodigo ? '<span class="muted" title="Nota antiga, importada do XML: fora do prazo de manifestação">-</span>' : badgeManifestado(doc)}</td>
                   <td class="dfe-tipo">${doc.manifestacaoCodigo
                       ? `${escapeHtml(doc.manifestacaoCodigo)} - ${escapeHtml(catalogo.rotulo(doc.manifestacaoCodigo))}${manifestadaNaSefaz(doc) ? '<br /><span class="muted">já manifestada na SEFAZ</span>' : ''}`
-                      : '<span class="muted">-</span>'}</td>
+                      : (doc.importadaDoXml
+                        ? `<span class="muted">Importada do XML${doc.importadaPorNome ? ` por ${escapeHtml(doc.importadaPorNome)}` : ''}${doc.importadaEm ? ` em ${dataHora(doc.importadaEm).split(' - ')[0]}` : ''}</span>`
+                        : '<span class="muted">-</span>')}${doc.situacao === 'cancelada' ? '<br /><span class="finance-badge finance-badge-danger">cancelada</span>' : ''}</td>
                   <td>${colunaEntrada(doc)}</td>
                   <td class="dfe-acoes"><div class="finance-extrato-actions">${acoesDaNota(doc)}</div></td>
                 </tr>
@@ -589,6 +735,16 @@ window.MavisSubscreenRegistry.fiscal.notas_contra_cnpj = async function renderNo
         desenhar();
       });
     });
+    // Importar XMLs antigos (só admin; ver importarArquivos).
+    document.getElementById('dfeImportarXml')?.addEventListener('click', () => {
+      document.getElementById('dfeArquivosXml')?.click();
+    });
+    document.getElementById('dfeArquivosXml')?.addEventListener('change', (e) => {
+      const lista = e.target.files ? [...e.target.files] : [];
+      e.target.value = '';
+      importarArquivos(lista);
+    });
+    document.getElementById('dfeFecharImportacao')?.addEventListener('click', () => { tela.importacao = null; desenhar(); });
     document.getElementById('dfeAbrirBusca')?.addEventListener('click', () => {
       tela.busca = tela.busca || { modo: 'ultimo-nsu', empresaId: dados.empresas[0]?.id || '' };
       desenhar();

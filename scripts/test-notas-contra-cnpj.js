@@ -244,7 +244,8 @@ check('filtros de manifestação (inclusive "não manifestadas") e de situação
   && /if \(f\.situacao && String\(doc\.situacao \|\| 'autorizada'\) !== f\.situacao\) return false;/.test(tela));
 check('  a situação vem do resumo da Focus', ler('lib/db/dfe.js').includes("situacao: String((row.resumo && row.resumo.situacao) || ''),"));
 check('"Atualizar todas as empresas" à vista no topo, ao lado da busca na SEFAZ',
-  /<div class="dfe-acoes-topo">\s*<button type="button" class="secondary" id="dfeAtualizarTodas"/.test(tela)
+  // Antes dele, só o "Importar XMLs antigos" do admin (19/11/2026).
+  /<div class="dfe-acoes-topo">\s*(\$\{ehAdmin \? `[\s\S]*?` : ''\}\s*)?<button type="button" class="secondary" id="dfeAtualizarTodas"/.test(tela)
   && (tela.match(/id="dfeAtualizarTodas"/g) || []).length === 1);
 
 console.log(falhas ? `\n===== ${falhas} FALHA(S) =====` : '\n===== TODOS OS CHECKS PASSARAM =====');

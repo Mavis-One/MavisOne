@@ -2133,6 +2133,9 @@ tr[data-detail] { cursor: pointer; }
 .dfe-parte .muted { display: block; font-size: 0.8rem; }
 /* Ordenar e "Atualizar todas as empresas" (15/10/2026). */
 .dfe-acoes-topo { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+/* Resultado da importação de XMLs antigos (19/11/2026). */
+.dfe-importacao ul { margin: 6px 0 10px; padding-left: 20px; }
+.dfe-importacao-lista { max-height: 260px; overflow-y: auto; font-size: 0.85rem; overflow-wrap: anywhere; }
 .dfe-ordem { display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
 .dfe-ordem select { min-width: 210px; }
 /* Empresa do título nas listas do Financeiro (15/10/2026). */
