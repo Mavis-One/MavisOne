@@ -37,11 +37,14 @@ const cenario = (pagamentos, cobranca) => buildNfePayload({
 });
 
 console.log('\n--- o montador ---');
-const sem = cenario([{ forma: '90', valor: 100 }], { duplicatas: [{ vencimento: '2026-11-20', valor: 100 }] });
+// A data da duplicata precisa estar depois da emissão (hoje): era fixa em
+// 20/11/2026 e o teste passou a falhar quando o dia chegou (23/11/2026).
+const VENCIMENTO_FUTURO = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+const sem = cenario([{ forma: '90', valor: 100 }], { duplicatas: [{ vencimento: VENCIMENTO_FUTURO, valor: 100 }] });
 check('forma 90 vai com valor de pagamento 0 (rejeição 904)', JSON.stringify(sem.formas_pagamento) === JSON.stringify([{ forma_pagamento: '90', valor_pagamento: 0 }]), sem.formas_pagamento);
 check('  sem fatura e sem duplicatas, mesmo que a tela mande', !sem.duplicatas && sem.valor_liquido_fatura === undefined);
 check('  e o total da nota não muda', sem.valor_total === 100);
-const com = cenario([{ forma: '01', valor: 100 }], { duplicatas: [{ vencimento: '2026-11-20', valor: 100 }] });
+const com = cenario([{ forma: '01', valor: 100 }], { duplicatas: [{ vencimento: VENCIMENTO_FUTURO, valor: 100 }] });
 check('as outras formas seguem com o valor e a cobrança', com.formas_pagamento[0].valor_pagamento === 100 && Array.isArray(com.duplicatas) && com.duplicatas.length === 1);
 check('a conferência da soma não cobra a nota sem pagamento', conferirPagamentosDaNota(sem) === '');
 check('  mas recusa 90 misturado com outra forma',
