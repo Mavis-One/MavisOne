@@ -64,7 +64,8 @@ check('Limpar tira só o que não tem baixa', JSON.stringify(E.SITUACOES_QUE_O_L
 
 console.log('\n--- 2. o servidor ---');
 const server = semComentarios(ler('server.js'));
-check('a lista filtra por arquivo', /const importacao = query\.get\('importacao'\);\s*if \(importacao\) \{\s*const \{ porTransacao \} = extratoBancario\.importacoesDoExtrato\(data\.bankTransactions\);/.test(server));
+// Desde 23/11/2026, o arquivo inteiro (também o que ele trouxe de novo).
+check('a lista filtra por arquivo', /const importacao = query\.get\('importacao'\);\s*if \(importacao\) \{\s*const \{ estaNoArquivo \} = extratoBancario\.importacoesDoExtrato\(data\.bankTransactions\);\s*list = list\.filter\(\(tx\) => estaNoArquivo\(tx, importacao\)\);/.test(server));
 check('  e devolve os arquivos com o nome da conta', /importacoes = extratoBancario\.importacoesDoExtrato\(data\.bankTransactions\)\.lista[\s\S]{0,120}bankAccountName: resolveById\(data\.bankAccounts, imp\.bankAccountId\)/.test(server)
   && /summary, importacoes \}\);/.test(server));
 check('a importação marca cada linha com o arquivo', /const importacaoId = createId\('imp'\);\s*const arquivo = String\(body\.arquivo \|\| ''\)\.trim\(\)\.slice\(0, 200\);/.test(server)
@@ -73,7 +74,7 @@ const ini = server.indexOf("pathname.startsWith('/api/finance/bank-transactions/
 const rotaLimpar = server.slice(ini, ini + 2600);
 check('Limpar é DELETE (o portão cobra finance.excluir)', ini > 0);
 check('  recusa no meio de uma conciliação', /if \(conciliacoesEmAndamento\.size\) \{\s*return sendJson\(res, \{ error: [^}]*\}, 409\);/.test(rotaLimpar));
-check('  tira só as do arquivo e sem baixa', /porTransacao\.get\(tx\.id\) === id && extratoBancario\.SITUACOES_QUE_O_LIMPAR_TIRA\.includes\(tx\.status\)/.test(rotaLimpar));
+check('  tira só as do arquivo e sem baixa', /estaNoArquivo\(tx, id\) && extratoBancario\.SITUACOES_QUE_O_LIMPAR_TIRA\.includes\(tx\.status\)/.test(rotaLimpar));
 check('  e fica na auditoria', /action: 'limparArquivoDoExtrato'/.test(rotaLimpar) && ler('public/modules/settings/subs/access_logs.js').includes("limparArquivoDoExtrato: 'Limpeza de arquivo importado do extrato'"));
 check('sugestões: empresa, conta e busca filtram ANTES de escolher as melhores',
   /function findBankTransactionMatches\(tx, data, \{ filtro = null, limite = 8 \} = \{\}\)/.test(server)

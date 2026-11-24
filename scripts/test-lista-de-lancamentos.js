@@ -77,9 +77,11 @@ function constanteDe(nome) {
 const lancamentoCodigo = require(path.join(RAIZ, 'public/modules/shared/lancamento_codigo'));
 const listaDeLancamentos = require(path.join(RAIZ, 'public/modules/shared/lancamentos_lista'));
 const descricaoLancamento = require(path.join(RAIZ, 'public/modules/shared/descricao_lancamento'));
-const S = new Function('lancamentoCodigo', 'listaDeLancamentos', 'descricaoLancamento',
+// A janela "Conciliar" lê quem pagou na descrição do extrato (23/11/2026).
+const conciliacaoAutomatica = require(path.join(RAIZ, 'lib/conciliacao-automatica'));
+const S = new Function('lancamentoCodigo', 'listaDeLancamentos', 'descricaoLancamento', 'conciliacaoAutomatica',
   `const CACHE_DIRETORIO = new WeakMap();\n${constanteDe('ORDENS_DA_LISTA_DE_LANCAMENTOS')}\n${NOMES.map(corpoDe).join('\n')}\nreturn { ${NOMES.join(', ')} };`
-)(lancamentoCodigo, listaDeLancamentos, descricaoLancamento);
+)(lancamentoCodigo, listaDeLancamentos, descricaoLancamento, conciliacaoAutomatica);
 
 (async () => {
   if (!process.env.DATABASE_URL) {

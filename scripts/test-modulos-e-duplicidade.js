@@ -103,8 +103,9 @@ check('e pula o que já estava lá', /: todas\.has\(chave\);\s*\n\s*if \(repetid
 check('  incluindo repetições dentro do próprio arquivo', /todas\.add\(chave\);\s*\n\s*data\.bankTransactions\.push\(tx\);/.test(src));
 check('a resposta conta as repetidas', /repetidas,/.test(src));
 // Sem esse número, reimportar mostraria "0 importadas" e pareceria falha.
+// (23/11/2026: "já estava(m) no extrato", com quantas já conciliadas)
 check('e a tela mostra esse número',
-  /result\.repetidas \? `, \$\{result\.repetidas\} já existia\(m\)` : ''/.test(ler('public/modules/finance/subs/extrato_open_finance.js')));
+  /result\.repetidas \? `, \$\{result\.repetidas\} já estava\(m\) no extrato/.test(ler('public/modules/finance/subs/extrato_open_finance.js')));
 
 console.log('--- 4. clique duplo não grava dois documentos ---');
 

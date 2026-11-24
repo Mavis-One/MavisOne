@@ -1072,15 +1072,22 @@ window.MavisSubscreenRegistry.finance.extrato_open_finance = async function rend
         // `repetidas` (fase BR) precisa aparecer: sem ele, reimportar o mesmo
         // arquivo mostraria "0 importadas" e pareceria falha, quando na verdade
         // o extrato ja estava todo la.
+        // O ARQUIVO INTEIRO (23/11/2026): quantas linhas ele tem, quantas já
+        // estavam (e conciliadas), e por que o resto não se conciliou sozinho.
+        const porque = (result.motivos || []).filter((m) => !/^sugerida/.test(m.motivo))
+          .map((m) => `${m.quantidade} — ${m.motivo}`).join('; ');
         showToast(
-          `${result.count} movimentação(ões) importada(s)`
-          + (result.repetidas ? `, ${result.repetidas} já existia(m)` : '')
+          (result.noArquivo ? `${result.noArquivo} lançamento(s) no arquivo: ` : '')
+          + `${result.count} movimentação(ões) importada(s)`
+          + (result.repetidas ? `, ${result.repetidas} já estava(m) no extrato${result.jaConciliadas ? ` (${result.jaConciliadas} já conciliada(s))` : ''}` : '')
           + (result.conciliadasAutomaticamente ? `, ${result.conciliadasAutomaticamente} conciliada(s) automaticamente` : '')
           + (result.ignoradasPelaRegra ? `, ${result.ignoradasPelaRegra} ignorada(s) pela regra do extrato` : '')
           + (result.sugeridas ? `, ${result.sugeridas} sugerida(s) para confirmar` : '')
           + (result.skipped ? `, ${result.skipped} linha(s) inválida(s) ignorada(s)` : '')
-          + '.',
-          result.count === 0 && result.repetidas ? 'info' : 'success'
+          + '.'
+          + (porque ? ` Sem título achado: ${porque}.` : ''),
+          result.count === 0 && result.repetidas ? 'info' : 'success',
+          porque ? 15000 : undefined
         );
         closeExtratoModal();
         // A lista abre no arquivo que acabou de entrar.

@@ -113,7 +113,9 @@ check('  a parcela que já casou com uma não é sugerida para outra', r.pares.l
 
 console.log('\n--- 4. o servidor ---');
 const servidor = ler('server.js');
-check('a importação concilia o que acabou de entrar', /automatica = await conciliarAutomaticamente\(user, \(tx\) => novas\.has\(tx\.id\)\);/.test(servidor)
+// Desde 23/11/2026: o arquivo inteiro (as novas e as que ele trouxe de novo sem conciliar).
+check('a importação concilia o que acabou de entrar', /automatica = await conciliarAutomaticamente\(user, \(tx\) => doArquivo\.has\(tx\.id\)\);/.test(servidor)
+  && /\.\.\.jaNoExtrato\.filter\(\(tx\) => tx\.status === 'nao_conciliado'\)\.map\(\(tx\) => tx\.id\)/.test(servidor)
   && /conciliadasAutomaticamente: automatica\.conciliadas,/.test(servidor));
 check('  e o botão, as do filtro da tela', servidor.includes("pathname === '/api/finance/bank-transactions/conciliar-automatico' && req.method === 'POST'")
   && /const resultado = await conciliarAutomaticamente\(user, \(tx\) => doFiltro\.has\(tx\.id\)\);/.test(servidor));

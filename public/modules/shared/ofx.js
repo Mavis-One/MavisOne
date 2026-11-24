@@ -16,18 +16,64 @@
 //
 // Função pura (o navegador lê o arquivo; o teste roda sem navegador).
 (function (raiz) {
-  /** O texto do arquivo, respeitando o CHARSET do cabeçalho (1252 é o comum). */
+  /**
+   * O texto do arquivo.
+   *
+   * UTF-8 DE VERDADE GANHA DO CABEÇALHO (23/11/2026). O extrato do Itaú diz
+   * "CHARSET:1252" e grava os acentos em UTF-8: lido como 1252, "ARAÚJO" virava
+   * "ARAÃšJO", e o nome do cliente deixava de casar na conciliação. Um arquivo
+   * que é mesmo 1252 e tem acento quase nunca forma UTF-8 válido ("É" é o byte
+   * C9 sozinho), então a prova é decodificar como UTF-8 estrito: deu certo e há
+   * byte acima de 127, é UTF-8. Sem acento nenhum, tanto faz.
+   */
   function decodificar(bytes) {
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let utf8 = null;
+    try {
+      utf8 = new TextDecoder('utf-8', { fatal: true }).decode(u8);
+    } catch (e) {
+      // Não é UTF-8 válido: é Windows-1252, declarado ou não (banco que não
+      // preenche o cabeçalho direito).
+      return new TextDecoder('windows-1252').decode(u8);
+    }
+    if (u8.some((b) => b > 0x7f)) return utf8;
     const inicio = new TextDecoder('latin1').decode(u8.slice(0, 600));
     const cp1252 = /CHARSET:\s*(1252|ISO-8859-1|LATIN)/i.test(inicio) || /encoding="?(windows-1252|iso-8859-1)/i.test(inicio);
-    if (cp1252) return new TextDecoder('windows-1252').decode(u8);
+    return cp1252 ? new TextDecoder('windows-1252').decode(u8) : utf8;
+  }
+
+  // O caminho de volta, para consertar o que já entrou errado: o texto em
+  // 1252 vira bytes de novo e é lido como UTF-8 ("ARAÃšJO" -> "ARAÚJO").
+  let byteDoCaractere1252 = null;
+  function bytesEm1252(texto) {
+    if (!byteDoCaractere1252) {
+      byteDoCaractere1252 = new Map();
+      const leitor = new TextDecoder('windows-1252');
+      for (let b = 0; b < 256; b += 1) byteDoCaractere1252.set(leitor.decode(Uint8Array.of(b)), b);
+    }
+    const saida = new Uint8Array(texto.length);
+    for (let i = 0; i < texto.length; i += 1) {
+      const b = byteDoCaractere1252.get(texto[i]);
+      if (b === undefined) return null;
+      saida[i] = b;
+    }
+    return saida;
+  }
+
+  /**
+   * "ARAÃšJO" -> "ARAÚJO": desfaz o UTF-8 lido como 1252 (as movimentações que
+   * entraram antes da correção acima). Só troca quando o texto inteiro volta a
+   * ser UTF-8 válido — "JOÃO" e "TAINÃ SILVA" ficam como estão.
+   */
+  function consertarAcentos(texto) {
+    const t = String(texto == null ? '' : texto);
+    if (!/[ÃÂ]/.test(t)) return t;
+    const bytes = bytesEm1252(t);
+    if (!bytes) return t;
     try {
-      return new TextDecoder('utf-8', { fatal: true }).decode(u8);
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch (e) {
-      // Não declarou 1252 e não é UTF-8 válido: na prática é Windows-1252
-      // (banco que não preenche o cabeçalho direito).
-      return new TextDecoder('windows-1252').decode(u8);
+      return t;
     }
   }
 
@@ -102,7 +148,7 @@
     return { conta, transacoes, ignoradas };
   }
 
-  const api = { lerOfx, decodificar };
+  const api = { lerOfx, decodificar, consertarAcentos };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (raiz) raiz.MavisOfx = api;
 })(typeof window !== 'undefined' ? window : null);

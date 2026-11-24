@@ -189,6 +189,7 @@ const listaDeLancamentos = require('./public/modules/shared/lancamentos_lista');
 // Fase EI: a Conciliação Bancária — data da linha importada, ordem da lista e
 // os cartões de resumo. Ver o cabeçalho do arquivo.
 const extratoBancario = require('./lib/extrato-bancario');
+const leitorOfx = require('./public/modules/shared/ofx');
 // A conciliação automática do extrato (28/10/2026). Ver o cabeçalho do arquivo.
 const conciliacaoAutomatica = require('./lib/conciliacao-automatica');
 const regrasExtrato = require('./lib/regras-extrato');
@@ -6338,10 +6339,12 @@ function filterBankTransactions(data, query) {
 
   // O arquivo importado de onde a movimentação veio (15/10/2026). Ver
   // extratoBancario.importacoesDoExtrato.
+  // Desde 23/11/2026, também as que o arquivo trouxe de novo (já existiam):
+  // o arquivo aparece inteiro.
   const importacao = query.get('importacao');
   if (importacao) {
-    const { porTransacao } = extratoBancario.importacoesDoExtrato(data.bankTransactions);
-    list = list.filter((tx) => porTransacao.get(tx.id) === importacao);
+    const { estaNoArquivo } = extratoBancario.importacoesDoExtrato(data.bankTransactions);
+    list = list.filter((tx) => estaNoArquivo(tx, importacao));
   }
 
   const status = query.get('status');
@@ -6860,6 +6863,16 @@ function findBankTransactionMatches(tx, data, { filtro = null, limite = 8 } = {}
   // sempre funcionou.
   const txCounterpartyName = tx.counterpartyName || tx.merchantName || '';
   const txCounterpartyDocument = sanitizeDigits(tx.counterpartyDocument || tx.merchantDocument || '');
+  // QUEM PAGOU, PELA DESCRIÇÃO DO EXTRATO (23/11/2026, pedido do usuário: "não
+  // estou conseguindo encontrar 100% dos títulos"). O OFX não preenche os
+  // campos acima: o nome e o CPF/CNPJ vêm na descrição ("PIX RECEBIDO ANA
+  // SOUZ23/11 ANA SOUZA 111.111.111-11"). Eram ignorados, e a janela mostrava
+  // os 8 títulos mais perto em valor e data — com dezenas de títulos de
+  // R$ 3.790,00, o do cliente certo ficava de fora. A mesma regra da
+  // conciliação automática (fornecedorBate) agora põe os títulos de quem pagou
+  // no topo.
+  const txTexto = [tx.description, tx.counterpartyName, tx.merchantName].filter(Boolean).join(' ');
+  const txDocumentos = [tx.counterpartyDocument, tx.merchantDocument].filter(Boolean);
 
   const candidates = (data.finance || [])
     .filter((entry) => classifyFinanceEntry(entry) === wantedType)
@@ -6879,12 +6892,19 @@ function findBankTransactionMatches(tx, data, { filtro = null, limite = 8 } = {}
       const daysDiff = Math.abs((parseDateOnly(financeEntryDueDate(entry)) - txDate) / 86400000);
 
       const entryDocument = sanitizeDigits(resolveFinanceCounterpartyDocument(entry, data));
+      const entryName = resolveFinanceCounterparty(entry, data);
       const documentMatch = Boolean(entryDocument && txCounterpartyDocument && entryDocument === txCounterpartyDocument);
-      const nameMatch = Boolean(txCounterpartyName) && looseNameMatch(resolveFinanceCounterparty(entry, data), txCounterpartyName);
+      const nameMatch = Boolean(txCounterpartyName) && looseNameMatch(entryName, txCounterpartyName);
+      const quemPagou = documentMatch || nameMatch
+        || conciliacaoAutomatica.fornecedorBate({ texto: txTexto, documentos: txDocumentos, nome: entryName, documento: entryDocument });
 
-      return { entry, remaining, esperado, amountDiff, daysDiff, documentMatch, nameMatch };
+      return { entry, remaining, esperado, amountDiff, daysDiff, documentMatch, nameMatch: nameMatch || quemPagou, quemPagou };
     })
-    .sort((a, b) => (a.amountDiff - b.amountDiff) || (a.daysDiff - b.daysDiff))
+    // A ordem: quem pagou com o valor exato; depois os outros títulos de quem
+    // pagou; depois o valor exato de qualquer um; depois o resto. Dentro de
+    // cada grupo, o valor e a data mais perto, como antes.
+    .map((c) => ({ ...c, grupo: c.amountDiff < 0.01 ? (c.quemPagou ? 0 : 2) : (c.quemPagou ? 1 : 3) }))
+    .sort((a, b) => (a.grupo - b.grupo) || (a.amountDiff - b.amountDiff) || (a.daysDiff - b.daysDiff))
     .slice(0, limite);
 
   return candidates.map(({ entry, remaining, esperado, amountDiff, daysDiff, documentMatch, nameMatch }) => ({
@@ -25634,6 +25654,8 @@ async function tratarRequisicao(req, res) {
       const created = [];
       let skipped = 0;
       let repetidas = 0;
+      // As linhas válidas, já em forma de movimentação (ainda não gravadas).
+      const candidatas = [];
       rows.forEach((row) => {
         const description = String(row.description || row.descricao || row.Descricao || row['Descrição'] || '').trim();
         const rawAmount = row.amount ?? row.valor ?? row.Valor ?? 0;
@@ -25659,33 +25681,80 @@ async function tratarRequisicao(req, res) {
         if (fitid) tx.providerTransactionId = fitid;
         tx.importacaoId = importacaoId;
         tx.arquivo = arquivo;
-        const chave = chaveDaTransacao(tx);
-        // Os Sets recebem a chave junto: duas linhas iguais DENTRO do mesmo
-        // arquivo também são uma só (no OFX, o mesmo FITID).
-        const repetida = fitid
-          ? comFitid.has(chaveDoFitid(bankAccountId, fitid)) || semFitid.has(chave)
-          : todas.has(chave);
-        if (repetida) {
-          repetidas += 1;
-          return;
-        }
-        if (fitid) comFitid.add(chaveDoFitid(bankAccountId, fitid));
-        else semFitid.add(chave);
-        todas.add(chave);
-        data.bankTransactions.push(tx);
-        created.push(tx);
+        candidatas.push({ tx, fitid });
       });
+
+      // As que o arquivo trouxe e já estavam no extrato (OFX, 23/11/2026).
+      const jaNoExtrato = [];
+      if (origemOfx) {
+        // O OFX NÃO CONFIA SÓ NO FITID (23/11/2026): no Itaú ele é a posição do
+        // lançamento no dia e muda de um download para outro — o lançamento
+        // novo era descartado como "já existia". Agora é pelo conteúdo,
+        // contando, com o FITID como segunda tentativa
+        // (extratoBancario.casarComExistentes).
+        const daConta = (data.bankTransactions || []).filter((tx) => tx.bankAccountId === bankAccountId);
+        const casadas = extratoBancario.casarComExistentes(
+          candidatas.map(({ tx, fitid }) => ({ date: tx.date, amount: tx.amount, type: tx.type, description: tx.description, fitid })),
+          daConta
+        );
+        const agora = new Date().toISOString();
+        candidatas.forEach(({ tx }, i) => {
+          const existente = casadas[i];
+          if (!existente) {
+            data.bankTransactions.push(tx);
+            created.push(tx);
+            return;
+          }
+          repetidas += 1;
+          jaNoExtrato.push(existente);
+          // Este arquivo também a traz: o "Ver" dele mostra o arquivo inteiro.
+          const ligacoes = Array.isArray(existente.tambemNosArquivos) ? existente.tambemNosArquivos : [];
+          if (!ligacoes.some((ligacao) => ligacao && ligacao.id === importacaoId)) {
+            existente.tambemNosArquivos = [...ligacoes, { id: importacaoId, arquivo, em: agora, por: user.name || '' }];
+          }
+          // O acento que entrou quebrado antes da correção ("ARAÃšJO") fica certo.
+          if (existente.description !== tx.description && leitorOfx.consertarAcentos(existente.description) === tx.description) {
+            existente.description = tx.description;
+          }
+          if (!existente.providerTransactionId && tx.providerTransactionId && existente.source === 'ofx') existente.providerTransactionId = tx.providerTransactionId;
+        });
+      } else {
+        candidatas.forEach(({ tx, fitid }) => {
+          const chave = chaveDaTransacao(tx);
+          // Os Sets recebem a chave junto: duas linhas iguais DENTRO do mesmo
+          // arquivo também são uma só.
+          const repetida = fitid
+            ? comFitid.has(chaveDoFitid(bankAccountId, fitid)) || semFitid.has(chave)
+            : todas.has(chave);
+          if (repetida) {
+            repetidas += 1;
+            return;
+          }
+          if (fitid) comFitid.add(chaveDoFitid(bankAccountId, fitid));
+          else semFitid.add(chave);
+          todas.add(chave);
+          data.bankTransactions.push(tx);
+          created.push(tx);
+        });
+      }
 
       saveData(data);
       // A CONCILIAÇÃO AUTOMÁTICA (28/10/2026): o que acabou de entrar e casa
       // com um título pela regra (conta bancária, fornecedor, valor e data
       // batendo; um título e uma movimentação só) já sai conciliado. Se ela falhar, a importação continua
       // valendo, e o resto se concilia pelo botão ou à mão.
-      const novas = new Set(created.map((tx) => tx.id));
+      // O ARQUIVO INTEIRO (23/11/2026): as novas e as que ele trouxe de novo
+      // ainda sem conciliar — o título lançado depois da primeira importação
+      // é achado agora, sem precisar de outro clique.
+      const jaConciliadas = jaNoExtrato.filter((tx) => tx.status === 'conciliado').length;
+      const doArquivo = new Set([
+        ...created.map((tx) => tx.id),
+        ...jaNoExtrato.filter((tx) => tx.status === 'nao_conciliado').map((tx) => tx.id)
+      ]);
       let automatica = { conciliadas: 0 };
-      if (novas.size) {
+      if (doArquivo.size) {
         try {
-          automatica = await conciliarAutomaticamente(user, (tx) => novas.has(tx.id));
+          automatica = await conciliarAutomaticamente(user, (tx) => doArquivo.has(tx.id));
         } catch (erro) {
           console.error('[conciliação automática] na importação:', (erro && erro.stack) || erro);
         }
@@ -25697,10 +25766,20 @@ async function tratarRequisicao(req, res) {
         // A tela precisa poder dizer "N importadas, M já existiam": só o
         // número de importadas faria a segunda importação parecer ter falhado.
         repetidas,
+        // Das que já existiam, quantas já estavam conciliadas (23/11/2026).
+        jaConciliadas,
+        noArquivo: rows.length,
         conciliadasAutomaticamente: automatica.conciliadas,
         sugeridas: automatica.sugeridas || 0,
         ignoradasPelaRegra: automatica.ignoradasPelaRegra || 0,
-        importacaoId: created.length ? importacaoId : '',
+        // O id vale também quando nada é novo: a tela abre o arquivo inteiro.
+        importacaoId: created.length || jaNoExtrato.length ? importacaoId : '',
+        // Por que o resto não se conciliou sozinho, com a contagem (23/11/2026),
+        // como o botão "Conciliar automático" já dizia.
+        motivos: Object.entries(Object.values(automatica.motivos || {}).reduce((soma, motivo) => {
+          soma[motivo] = (soma[motivo] || 0) + 1;
+          return soma;
+        }, {})).map(([motivo, quantidade]) => ({ motivo, quantidade })).sort((a, b) => b.quantidade - a.quantidade),
         transactions: created.map((tx) => serializeBankTransaction(tx, data))
       });
     } catch (error) {
@@ -25899,13 +25978,15 @@ async function tratarRequisicao(req, res) {
       }
       const id = decodeURIComponent(pathname.slice('/api/finance/bank-transactions/importacoes/'.length));
       const data = loadData();
-      const { porTransacao, lista } = extratoBancario.importacoesDoExtrato(data.bankTransactions);
+      const { estaNoArquivo, lista } = extratoBancario.importacoesDoExtrato(data.bankTransactions);
       const importacao = lista.find((imp) => imp.id === id);
       if (!importacao) {
         return sendJson(res, { error: 'Arquivo importado não encontrado.' }, 404);
       }
+      // Tudo o que está no arquivo (23/11/2026: inclusive o que ele trouxe de
+      // novo), como a lista e a contagem do painel mostram.
       const sai = new Set(data.bankTransactions
-        .filter((tx) => porTransacao.get(tx.id) === id && extratoBancario.SITUACOES_QUE_O_LIMPAR_TIRA.includes(tx.status))
+        .filter((tx) => estaNoArquivo(tx, id) && extratoBancario.SITUACOES_QUE_O_LIMPAR_TIRA.includes(tx.status))
         .map((tx) => tx.id));
       if (!sai.size) {
         return sendJson(res, { error: 'Este arquivo não tem movimentação a limpar: as que restam estão conciliadas.' }, 400);
